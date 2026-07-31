@@ -2216,13 +2216,28 @@ async function runApprove(
 
     const outcomes = []
     for (const item of items) {
-      outcomes.push(await executeOrderUpdate({
-        orderId: String(item.orderId ?? ''),
-        invoiceNum: (item.invoiceNum as string | null | undefined) ?? null,
-        status: (item.status as string | null | undefined) ?? null,
-        fields: (item.fields as Record<string, string> | undefined) ?? {},
-        reason: (item.reason as string | null | undefined) ?? null,
-      }))
+      const label = String(item.invoiceNum ?? item.orderId ?? '')
+      try {
+        outcomes.push(await executeOrderUpdate({
+          orderId: String(item.orderId ?? ''),
+          invoiceNum: (item.invoiceNum as string | null | undefined) ?? null,
+          status: (item.status as string | null | undefined) ?? null,
+          fields: (item.fields as Record<string, string> | undefined) ?? {},
+          reason: (item.reason as string | null | undefined) ?? null,
+        }))
+      } catch (err) {
+        // One order throwing (a notification provider, a courier SMS, anything
+        // downstream) must not abandon the rest of an approved batch — nor leave
+        // the card stuck in `approved` while earlier orders already changed.
+        outcomes.push({
+          ok: false,
+          orderId: String(item.orderId ?? ''),
+          label,
+          applied: [],
+          failures: [`threw: ${err instanceof Error ? err.message : String(err)}`],
+          verified: [],
+        })
+      }
     }
 
     const allGood = outcomes.every((o) => o.ok)

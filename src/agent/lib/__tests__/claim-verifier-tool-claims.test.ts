@@ -115,3 +115,18 @@ describe('a fabricated tool RESULT is a claim too', () => {
     ).toEqual([])
   })
 })
+
+describe('recommending a tool is not claiming it ran (bot P2 on #664)', () => {
+  const known = (name: string) => ['update_orders', 'get_orders'].includes(name)
+
+  it('stays quiet when the reply merely suggests the tool', () => {
+    expect(detectToolExecutionClaims('update_orders দিয়ে করা যাবে', [], known)).toEqual([])
+    expect(detectToolExecutionClaims('you should use update_orders for this', [], known)).toEqual([])
+  })
+
+  it('still catches the fabricated result', () => {
+    expect(
+      detectToolExecutionClaims('update_orders success:true — done', [], known),
+    ).toHaveLength(1)
+  })
+})

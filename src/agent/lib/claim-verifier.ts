@@ -332,7 +332,15 @@ const TOOL_RAN_VERB =
  * is the more convincing lie of the two.
  */
 const TOOL_RESULT_CLAIM =
-  /(?:success\s*[:=]\s*true|\bok\s*[:=]\s*true|\bno\s+error\b|প্রমাণ\s*[:：—-]|\b(?:updated|applied|staged|created)\b|হয়ে\s*গেছে|করা\s*হয়েছে)/i
+  /(?:success\s*[:=]\s*true|\bok\s*[:=]\s*true|\bno\s+error(?:s)?\b|প্রমাণ\s*[:：—-]|\breturned\s+success\b|হয়ে\s*গেছে|করা\s*হয়েছে)/i
+
+/**
+ * …but recommending a tool is not claiming to have run it. "update_orders দিয়ে
+ * করা যাবে" / "use update_orders to fix this" carries no assertion at all, and
+ * flagging it would train the head to stop naming its own tools.
+ */
+const TOOL_RECOMMENDATION =
+  /(?:দিয়ে\s*(?:কর|হবে|যাবে|দিন)|ব্যবহার\s*কর|\buse\b|\bshould\s+(?:use|call|run)\b|\bcan\s+(?:use|call|run)\b|\bলাগবে\b)/i
 
 /** A tool-name-shaped token: snake_case with at least one underscore. */
 const TOOL_NAME_TOKEN = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,5})\b/g
@@ -352,6 +360,8 @@ export function detectToolExecutionClaims(
     // Either "I ran it" or "here is what it returned" — both assert the call.
     if (!TOOL_RAN_VERB.test(sentence) && !TOOL_RESULT_CLAIM.test(sentence)) continue
     if (FUTURE_INTENT.test(sentence)) continue // "চালাবো" / "I'll run it"
+    // …and a recommendation is not a claim.
+    if (!TOOL_RAN_VERB.test(sentence) && TOOL_RECOMMENDATION.test(sentence)) continue
 
     TOOL_NAME_TOKEN.lastIndex = 0
     let m: RegExpExecArray | null
