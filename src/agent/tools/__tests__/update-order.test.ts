@@ -185,3 +185,28 @@ describe('update_orders — many orders, one approval', () => {
     expect(String(res.error)).toMatch(/১৫|15/)
   })
 })
+
+/**
+ * Live on 2026-07-31: the batch wrote `steadfast` (lowercase) onto two orders
+ * while 313 others sat on `Pathao`. A courier is a name the rest of the ERP
+ * matches on — a filter, a report and a dropdown all treat the two as different
+ * couriers.
+ */
+describe('a courier is spelled the ERP’s way', () => {
+  const batch = ERP_TOOLS.find((t) => t.name === 'update_orders')!
+
+  it('does NOT gate the courier behind an enum — validation runs before the handler', () => {
+    // A lowercase "steadfast" is exactly the value the normaliser exists to
+    // repair; an enum would reject it as invalid_args and the repair would
+    // never run (review bot on #666).
+    const single = (tool.input_schema.properties as Record<string, { enum?: string[]; description?: string }>).courier
+    expect(single?.enum).toBeUndefined()
+    expect(single?.description).toMatch(/Steadfast/)
+  })
+
+  it('tells the head the ERP’s spellings on the batch tool too', () => {
+    const items = (batch.input_schema.properties as Record<string, { items?: { properties?: Record<string, { enum?: string[]; description?: string }> } }>).orders?.items
+    expect(items?.properties?.courier?.enum).toBeUndefined()
+    expect(items?.properties?.courier?.description).toMatch(/Steadfast/)
+  })
+})
