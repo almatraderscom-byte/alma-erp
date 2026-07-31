@@ -3778,8 +3778,8 @@ label.secondaryButton[aria-disabled='true'] {
   z-index: 110;
   top: auto;
   bottom: 22px;
-  left: 50%;
-  width: min(860px, calc(100vw - 64px));
+  left: calc(50% + 118px);
+  width: min(860px, calc(100vw - 284px));
   max-height: min(690px, calc(100dvh - 108px));
   margin: 0;
   padding: 16px;
@@ -5154,6 +5154,11 @@ label.secondaryButton[aria-disabled='true'] {
     grid-template-columns: 74px minmax(0, 1fr);
   }
 
+  .v3Composer.v4FloatingComposer {
+    left: calc(50% + 37px);
+    width: min(860px, calc(100vw - 122px));
+  }
+
   .sidebar {
     padding-inline: 9px;
   }
@@ -5419,6 +5424,7 @@ label.secondaryButton[aria-disabled='true'] {
 
   .v3Composer.v4FloatingComposer {
     bottom: 68px;
+    left: 50%;
     width: calc(100vw - 16px);
     max-height: calc(100dvh - 136px);
     padding: 10px;
