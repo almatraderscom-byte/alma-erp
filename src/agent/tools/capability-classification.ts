@@ -70,6 +70,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   run_mac_command: stage('mac', 'high'),
   check_mac_command: read('mac'),
   mac_agent_status: read('mac'),
+  // Screenshot of his screen / keep-awake. A direct effect, and a screenshot of a
+  // real desk is genuinely sensitive, so it is not filed as a plain read.
+  mac_desk_control: write('mac', 'medium'),
 
   // M2 — Claude/Codex sessions on that Mac. Opening one in 'bypass' mode is
   // gated behind an approval card (a standing grant, not a single action), which

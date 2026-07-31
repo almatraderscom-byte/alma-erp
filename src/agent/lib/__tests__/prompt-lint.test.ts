@@ -60,6 +60,8 @@ const NON_TOOL_ALLOWLIST = new Set([
   'pair_code',
   // read_cli_session error code the head must recognise and explain to the owner.
   'not_logged_in',
+  // mac_desk_control action values.
+  'keep_awake', 'allow_sleep', 'power_status',
   // The three browser kill-switches the prompt must name apart, because "live
   // browser" in Bangla means two different machines and the head has to pick one.
   'live_browser_enabled', 'browser_live_view_enabled', 'browser_agent_enabled',

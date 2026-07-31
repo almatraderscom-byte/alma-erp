@@ -319,6 +319,33 @@ export function stopAll() {
   return n
 }
 
+/**
+ * Can we actually open a session right now? Checked BEFORE the owner asks for
+ * one, because the failure it catches is invisible otherwise: he is logged into
+ * the Claude *app*, but the standalone CLI keeps its own account login, and an
+ * un-logged-in CLI reports that as an ordinary chat reply ("Please run /login")
+ * rather than as an error. Verified on this Mac 2026-07-31: the keychain entry
+ * holds only MCP OAuth, no account token.
+ */
+export function cliHealth() {
+  const claudeBin = binaryFor('claude')
+  const claudeInstalled = existsSync(claudeBin)
+  const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY?.trim())
+
+  return {
+    claude: {
+      installed: claudeInstalled,
+      path: claudeBin,
+      // The CLI takes either an account login (`claude` → /login, stored in the
+      // keychain) or ANTHROPIC_API_KEY from the environment. We can see the key;
+      // the login itself only reveals itself when a session runs, so the session
+      // driver still reports not_logged_in if it turns out to be missing.
+      apiKeyInEnv: hasApiKey,
+    },
+    codex: { installed: existsSync(binaryFor('codex')) || Boolean(process.env.ALMA_CODEX_BIN) },
+  }
+}
+
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
   const wrap = (fn) => async (params) => {

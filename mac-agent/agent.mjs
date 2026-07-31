@@ -212,6 +212,38 @@ function runShell(command, cwd, timeoutMs) {
   })
 }
 
+/**
+ * Keep-awake. The daemon runs fine while the screen is locked, but a Mac that
+ * SLEEPS stops polling entirely — which is what "my agent went quiet" actually
+ * looks like. `caffeinate` held open for as long as we want it is the supported
+ * way to prevent that; killing the child gives sleep straight back.
+ */
+let caffeinateChild = null
+
+function setKeepAwake(on) {
+  if (!on) {
+    try {
+      caffeinateChild?.kill('SIGTERM')
+    } catch {
+      /* already gone */
+    }
+    caffeinateChild = null
+    return { ok: true, exitCode: 0, stdout: JSON.stringify({ keepAwake: false }) }
+  }
+  if (caffeinateChild && !caffeinateChild.killed) {
+    return { ok: true, exitCode: 0, stdout: JSON.stringify({ keepAwake: true, alreadyOn: true }) }
+  }
+  try {
+    // -i idle, -m disk, -s system. Display sleep is deliberately NOT prevented:
+    // the screen going dark is fine, the machine going to sleep is not.
+    caffeinateChild = spawn('/usr/bin/caffeinate', ['-ims'], { stdio: 'ignore', detached: false })
+    caffeinateChild.on('close', () => { caffeinateChild = null })
+    return { ok: true, exitCode: 0, stdout: JSON.stringify({ keepAwake: true }) }
+  } catch (err) {
+    return { ok: false, exitCode: null, error: String(err?.message ?? err) }
+  }
+}
+
 /** `screencapture` to a temp file, returned as a base64 data URI. */
 function screenshot() {
   return new Promise((resolve) => {
@@ -248,11 +280,36 @@ async function handleCommand(cmd) {
   const params = cmd.params ?? {}
 
   if (cmd.action === 'ping') {
-    return { ok: true, exitCode: 0, stdout: JSON.stringify({ pong: true, host: hostname(), version: AGENT_VERSION }) }
+    // Report CLI readiness with the pong: the owner should learn that the Claude
+    // CLI has no login from a status check, not from a session that silently
+    // does nothing.
+    let cli = null
+    try {
+      const mod = await import('./sessions.mjs')
+      cli = mod.cliHealth()
+    } catch {
+      cli = null
+    }
+    return {
+      ok: true,
+      exitCode: 0,
+      stdout: JSON.stringify({ pong: true, host: hostname(), version: AGENT_VERSION, cli }),
+    }
   }
 
   if (cmd.action === 'screenshot') {
     return await screenshot()
+  }
+
+  if (cmd.action === 'power') {
+    const mode = String(params.mode ?? 'status')
+    if (mode === 'keep_awake') return setKeepAwake(true)
+    if (mode === 'allow_sleep') return setKeepAwake(false)
+    return {
+      ok: true,
+      exitCode: 0,
+      stdout: JSON.stringify({ keepAwake: Boolean(caffeinateChild && !caffeinateChild.killed) }),
+    }
   }
 
   if (cmd.action === 'run_command') {

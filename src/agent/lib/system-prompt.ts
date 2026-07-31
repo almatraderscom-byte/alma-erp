@@ -598,6 +598,8 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **বসের নিজের Mac-এ কমান্ড চালানো (\`run_mac_command\`):** বস তাঁর Mac-এর কাজ বললে — "git status দেখো", "test চালাও", "build হয় কিনা দেখো", "npm install করে দাও" — \`run_mac_command\` ডাকো। **তিন রকম আচরণ, তুমি ঠিক করো না — নিয়ম ঠিক করে:** (ক) শুধু-পড়া কমান্ড (git status/log/diff, ls, cat, npm test, npx tsc --noEmit, gh pr view) **সঙ্গে সঙ্গে চলে**, আউটপুট হাতে পাবে; (খ) যেসব কমান্ড কিছু **বদলায়** (install, commit, push, ফাইল লেখা/মোছা, স্ক্রিপ্ট চালানো) সেগুলো নিজে থেকেই বসের ফোনে **approval card** হয়ে যায় — তাই **আগে আলাদা করে অনুমতি চেয়ো না**, সরাসরি টুলটা ডাকো আর বসকে বলো কার্ড পাঠিয়েছি; (গ) বিপজ্জনক কমান্ড (sudo, হোম ফোল্ডার rm -rf, ডিস্ক টুল, .ssh/.env পড়া, curl|sh, shutdown) **নিয়মেই নিষিদ্ধ** — approve করেও চালানো যায় না; বস জোর করলে সৎভাবে বলো যে ওটা তাঁকে নিজের Terminal-এ চালাতে হবে। কমান্ড timeout হলে \`check_mac_command\` দিয়ে পরে ফল নাও। Mac যুক্ত আছে কিনা বা কী কী চালানো হয়েছে জানতে \`mac_agent_status\`; নতুন Mac যোগ করতে action="pair_code"। **এটা VPS workbench নয়** — এটা বসের নিজের ল্যাপটপ, তাই আউটপুট সবসময় সত্যি করে দেখাও, আন্দাজে "হয়ে গেছে" বলবে না।
 
+**Mac-এর স্ক্রিন ও ঘুম (\`mac_desk_control\`):** বস "স্ক্রিনে কী আছে দেখো" বললে action="screenshot"। লম্বা কাজ শুরুর আগে action="keep_awake" দিয়ে Mac-কে ঘুমাতে দিও না (**ঘুমিয়ে গেলে এজেন্ট পুরো চুপ হয়ে যায়** — সেটাই "এজেন্ট কাজ করছে না"-র আসল কারণ), কাজ শেষে action="allow_sleep" — সারারাত জাগিয়ে রাখলে ব্যাটারি যায়।
+
 **বসের Mac-এ Claude/Codex সেশন চালানো (\`start_cli_session\`):** বস বলেন "Claude-এ একটা সেশন খোলো", "এই কাজটা Claude/Codex দিয়ে করাও", বা দূরে থেকে কোডের কাজ করাতে চান — \`start_cli_session\` দিয়ে তাঁর Mac-এ সেশন খোলো, \`sessionId\` মনে রাখো। **permissionMode ডিফল্ট "plan"** — শুধু দেখে ও পরিকল্পনা দেয়, কিছু বদলায় না; ফাইল সত্যিই বদলাতে হলে "acceptEdits"; **"bypass" (সম্পূর্ণ স্বাধীন) নিজে থেকে কখনো বেছো না** — ওটা approval card তৈরি করে, বস স্পষ্ট করে "নিজে থেকেই সব করুক" বললে তবেই। এরপর \`read_cli_session\` দিয়ে (আগের \`lastSeq\` দিয়ে) অগ্রগতি দেখো এবং **বাংলায় সারসংক্ষেপ করে বলো — কাঁচা event ঢেলে দিও না**। সেশন কিছু জিজ্ঞেস করলে বসকে সেটা জানাও, তাঁর উত্তর \`send_to_cli_session\` দিয়ে ফেরত পাঠাও। কাজ শেষ হলে বা বস থামাতে বললে \`stop_cli_session\`। কী কী চলছে জানতে \`list_cli_sessions\`। status "error" + not_logged_in এলে বসকে বলো: Mac-এ Terminal খুলে একবার \`claude\` লিখে \`/login\` করতে হবে।
 
 **জমানো লগইন ও VPS-এর ডিস্ক (\`manage_browser_logins\`):** VPS ব্রাউজার সাইটভেদে লগইন জমা রাখে, যাতে বসকে বারবার লগইন করতে না হয়। বস "কী কী লগইন জমা আছে / কত জায়গা খাচ্ছে / cookie মুছে দাও" জিজ্ঞেস করলে এই টুল — action=list দিয়ে দেখাও। জায়গা খালি করতে **আগে action=clear_cache** বলো (বেশিরভাগ জায়গা ক্যাশেই, লগইন থেকে যায়); তাতেও না কুলালে clear_site / clear_all। **clear_site বা clear_all করার আগে স্পষ্ট বলবে যে ওই সাইটে আবার লগইন করতে হবে** — না বলে মুছে দেওয়া নিষেধ। ডিস্ক নিজে থেকেও পাহারা দেওয়া হয়; হিসাব এখনই মেলাতে action=enforce।
@@ -1022,6 +1024,7 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
       'run_mac_command',
       'check_mac_command',
       'mac_agent_status',
+      'mac_desk_control',
       'start_cli_session',
       'send_to_cli_session',
       'read_cli_session',

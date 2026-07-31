@@ -271,4 +271,56 @@ const mac_agent_status: AgentTool = {
   },
 }
 
-export const MAC_TOOLS: AgentTool[] = [run_mac_command, check_mac_command, mac_agent_status]
+const mac_desk_control: AgentTool = {
+  name: 'mac_desk_control',
+  description:
+    "Desk-level control of the owner's Mac: take a screenshot of his screen, or stop the Mac from going to sleep " +
+    'while a long job runs (and let it sleep again afterwards). ' +
+    'A sleeping Mac stops answering entirely, so use keep_awake before starting long work he is waiting on, and ' +
+    'allow_sleep when it is done — leaving it awake all night drains his battery. ' +
+    'A screenshot needs Screen Recording permission for the agent; if it fails with that, tell him to grant it in ' +
+    'System Settings → Privacy & Security → Screen Recording.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['screenshot', 'keep_awake', 'allow_sleep', 'power_status'],
+        description: 'What to do.',
+      },
+    },
+    required: ['action'],
+  },
+  handler: async (input) => {
+    const gate = await requireOnlineMac()
+    if (!gate.ok) return { success: false, error: gate.error }
+
+    const action = String(input.action)
+    const isShot = action === 'screenshot'
+    const { id } = await enqueueCommand({
+      deviceId: gate.deviceId,
+      action: isShot ? 'screenshot' : 'power',
+      params: isShot
+        ? {}
+        : { mode: action === 'power_status' ? 'status' : action },
+    })
+
+    const outcome = await awaitResult(id, 60_000)
+    if (outcome.timedOut) return { success: false, error: 'Mac থেকে সময়মতো উত্তর আসেনি।' }
+    if (outcome.status !== 'done') return { success: false, error: outcome.error ?? 'failed' }
+
+    if (isShot) {
+      return {
+        success: true,
+        data: { screenshot: outcome.stdout, device: gate.deviceName, message: 'স্ক্রিনশট নিয়েছি, Boss।' },
+      }
+    }
+    try {
+      return { success: true, data: { ...JSON.parse(outcome.stdout), device: gate.deviceName } }
+    } catch {
+      return { success: true, data: { raw: outcome.stdout } }
+    }
+  },
+}
+
+export const MAC_TOOLS: AgentTool[] = [run_mac_command, check_mac_command, mac_agent_status, mac_desk_control]
