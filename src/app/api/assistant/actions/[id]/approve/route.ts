@@ -2203,31 +2203,51 @@ async function runApprove(
     }
     const reason = (payload as { reason?: string | null }).reason ?? null
 
-    const { updateOrderStatusInPostgres, updateOrderFieldInPostgres } = await import('@/lib/lifestyle/write')
+    // One approval, one execution. Without the claim a double tap (or a client
+    // retry) runs every write twice and appends two completion notes.
+    const claimedOrder = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimedOrder.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { updateOrderTextFieldsInPostgres } = await import('@/lib/lifestyle/write')
+    const { applyOrderStatusChange, normalizeOrderStatus: normalizeOrderStatusForCheck } =
+      await import('@/lib/lifestyle/order-status-workflow')
 
     const applied: string[] = []
     const failures: string[] = []
 
-    // Courier and tracking FIRST, status last. A parcel that is marked shipped
-    // before its tracking id exists is one a customer can be told about and then
-    // not found; the reverse order leaves a tracking id on an order that has not
-    // moved yet, which is harmless and self-correcting.
-    const FIELD_TO_GAS: Record<string, string> = {
-      courier: 'COURIER',
-      trackingId: 'TRACKING_ID',
-      notes: 'NOTES',
-    }
-    for (const [key, value] of Object.entries(fields ?? {})) {
-      const gasField = FIELD_TO_GAS[key]
-      if (!gasField) continue
-      const res = await updateOrderFieldInPostgres({ id: String(orderId), field: gasField, value })
-      if ((res as { error?: string }).error) failures.push(`${key}: ${(res as { error?: string }).error}`)
-      else applied.push(key)
+    // Courier, tracking and the note FIRST, status last. A parcel that is marked
+    // shipped before its tracking id exists is one a customer can be told about
+    // and then not found; the reverse order leaves a tracking id on an order that
+    // has not moved yet, which is harmless and self-correcting. (It also means
+    // the courier SMS the status change queues carries the tracking id.)
+    const textFields = Object.fromEntries(
+      Object.entries(fields ?? {}).filter(([k]) => ['courier', 'trackingId', 'notes'].includes(k)),
+    ) as { courier?: string; trackingId?: string; notes?: string }
+    if (Object.keys(textFields).length) {
+      // A text-only path on purpose: the edit-form helper recalculates sellPrice
+      // and profit on every write, so adding a tracking id would rewrite the
+      // order's financial result.
+      const res = await updateOrderTextFieldsInPostgres(String(orderId), textFields)
+      if ('error' in res) failures.push(`fields: ${res.error}`)
+      else applied.push(...Object.keys(textFields))
     }
 
     if (status) {
-      const res = await updateOrderStatusInPostgres({ id: String(orderId), status, reason })
-      if ((res as { error?: string }).error) failures.push(`status: ${(res as { error?: string }).error}`)
+      // Through the SHARED workflow, never the low-level helper: a status change
+      // also creates or reverses the handler's commission, queues the courier
+      // SMS on Shipped, notifies the role matrix and the handler, and logs.
+      const res = await applyOrderStatusChange({
+        id: String(orderId),
+        status,
+        reason: reason ?? '',
+        actorUserId: 'owner-approval',
+      })
+      if (!res.ok) failures.push(`status: ${res.error}`)
       else applied.push('status')
     }
 
@@ -2249,9 +2269,9 @@ async function runApprove(
     const verified = Object.entries(wanted).map(([field, want]) => {
       const got = liveValue(field)
       const same = field === 'status'
-        // The ERP stores its own casing ("Shipped", "CANCELLED"); compare on the
-        // word, not on how it is written.
-        ? String(got ?? '').trim().toLowerCase().replace(/\s+/g, '_') === String(want).toLowerCase()
+        // The ERP has one spelling per status; both sides go through the same
+        // normaliser so "processing" and "Packed" are not read as a mismatch.
+        ? normalizeOrderStatusForCheck(String(got ?? '')) === normalizeOrderStatusForCheck(String(want))
         : String(got ?? '').trim() === String(want).trim()
       return { field, expected: want, live: got, ok: same }
     })

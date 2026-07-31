@@ -102,3 +102,37 @@ describe('the note is added, never substituted', () => {
     expect(notes?.description).toMatch(/do not narrate/i)
   })
 })
+
+/**
+ * Review-bot round 1 on #661. Three P1s and three P2s, all of them about the
+ * difference between writing a row and changing an order.
+ */
+describe('the ERP status vocabulary is the ERP’s, not the model’s', () => {
+  it('offers "processing" but the ERP word for it is Packed', async () => {
+    const { normalizeOrderStatus, VALID_ORDER_STATUSES } = await import('@/lib/lifestyle/order-status-workflow')
+    // The status list the head sees still contains the word it would say…
+    const statuses = (tool.input_schema.properties as Record<string, { enum?: string[] }>).status?.enum ?? []
+    expect(statuses).toContain('processing')
+    // …and it never reaches the database in that form.
+    expect(normalizeOrderStatus('processing')).toBe('Packed')
+    expect(VALID_ORDER_STATUSES.has(normalizeOrderStatus('processing'))).toBe(true)
+  })
+
+  it('normalises every offered status to something the ERP stores', async () => {
+    const { normalizeOrderStatus, VALID_ORDER_STATUSES } = await import('@/lib/lifestyle/order-status-workflow')
+    const statuses = (tool.input_schema.properties as Record<string, { enum?: string[] }>).status?.enum ?? []
+    for (const s of statuses) {
+      expect(VALID_ORDER_STATUSES.has(normalizeOrderStatus(s))).toBe(true)
+    }
+  })
+
+  it('treats cancelled and returned as final', async () => {
+    const { isTerminalOrderStatus } = await import('@/lib/lifestyle/order-status-workflow')
+    for (const s of ['CANCELLED', 'RETURNED', 'RETURNED_PAID', 'RETURNED_UNPAID']) {
+      expect(isTerminalOrderStatus(s)).toBe(true)
+    }
+    for (const s of ['Pending', 'Shipped', 'Delivered', 'Packed']) {
+      expect(isTerminalOrderStatus(s)).toBe(false)
+    }
+  })
+})

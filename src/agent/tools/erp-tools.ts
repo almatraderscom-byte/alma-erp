@@ -17,6 +17,11 @@ import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka, dhakaMidnightUtc, daysAgoYmd, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import { DEFAULT_AGENT_BUSINESS_ID } from '@/lib/agent-api/constants'
 import type { BusinessId } from '@/lib/businesses'
+import {
+  normalizeOrderStatus,
+  isTerminalOrderStatus,
+  VALID_ORDER_STATUSES,
+} from '@/lib/lifestyle/order-status-workflow'
 import type { AgentTool } from './registry'
 import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
@@ -1145,10 +1150,22 @@ async function findOrderByNumber(orderNumber: string) {
   })
   if (exact) return exact
   if (digits.length < 3) return null
-  return db.lifestyleOrder.findFirst({
+  // Digit-normalised EQUALITY, never `contains`: "123" must not quietly select
+  // ALM-1234 because it is newer. Two matches is a question for Boss, not a
+  // guess — the wrong order is a wrong customer.
+  const candidates = await db.lifestyleOrder.findMany({
     where: { OR: [{ id: { contains: digits } }, { invoiceNum: { contains: digits } }] },
     orderBy: { date: 'desc' },
+    take: 25,
   })
+  const exactByDigits = (candidates as Array<{ id: string; invoiceNum: string | null }>).filter((o) => {
+    const idDigits = String(o.id ?? '').replace(/\D/g, '')
+    const invDigits = String(o.invoiceNum ?? '').replace(/\D/g, '')
+    return idDigits === digits || invDigits === digits
+  })
+  if (exactByDigits.length === 1) return exactByDigits[0]
+  if (exactByDigits.length > 1) return { __ambiguous: exactByDigits.map((o) => o.invoiceNum || o.id) }
+  return null
 }
 
 const update_order: AgentTool = {
@@ -1183,6 +1200,10 @@ const update_order: AgentTool = {
       if (!orderNumber) return { success: false, error: 'কোন order, সেটা বলুন (order/invoice number)।' }
 
       const order = await findOrderByNumber(orderNumber)
+      if (order && (order as { __ambiguous?: string[] }).__ambiguous) {
+        const list = (order as { __ambiguous: string[] }).__ambiguous.join(', ')
+        return { success: false, error: `"${orderNumber}"-এ একাধিক অর্ডার মিলছে (${list}) — কোনটা, সেটা বলুন।` }
+      }
       if (!order) {
         return {
           success: false,
@@ -1195,11 +1216,26 @@ const update_order: AgentTool = {
       const unchanged: string[] = []
 
       if (input.status != null) {
-        const want = String(input.status).trim().toLowerCase()
-        if (!ORDER_STATUSES.includes(want as (typeof ORDER_STATUSES)[number])) {
-          return { success: false, error: `status "${want}" চেনা গেল না — ${ORDER_STATUSES.join(', ')}-এর একটা দিন।` }
+        const raw = String(input.status).trim()
+        // The ERP has ONE spelling per status. "processing" is the word the
+        // agent's order adapter shows for `Packed`; writing it verbatim (as the
+        // first version did) produces an order no pending predicate matches and
+        // no UI transition can move.
+        const want = normalizeOrderStatus(raw)
+        if (!VALID_ORDER_STATUSES.has(want)) {
+          return { success: false, error: `status "${raw}" চেনা গেল না — ${ORDER_STATUSES.join(', ')}-এর একটা দিন।` }
         }
-        if (want === String(order.status ?? '').trim().toLowerCase()) unchanged.push('status')
+        const current = String(order.status ?? '').trim()
+        if (normalizeOrderStatus(current) === want) unchanged.push('status')
+        else if (isTerminalOrderStatus(current)) {
+          // Reopening a cancelled/returned order re-applies the stock deduction.
+          // The ERP's own route refuses this; a chat message must not be a way
+          // around it.
+          return {
+            success: false,
+            error: `${order.invoiceNum || order.id} ইতিমধ্যে ${current} — শেষ হয়ে যাওয়া অর্ডার আবার খোলা যায় না (খুললে স্টকও নড়বে)। দরকার হলে নতুন অর্ডার করুন।`,
+          }
+        }
         else changes.status = { before: order.status, after: want }
       }
 
@@ -1228,8 +1264,15 @@ const update_order: AgentTool = {
       if (input.notes != null) {
         const note = String(input.notes).trim()
         const existing = String(order.notes ?? '')
+        // Compare against the HUMAN part only. The machine payload is a long
+        // JSON string, so a short note ("black", "111", "paid") matches inside
+        // it and would be dropped as already-present though nobody ever wrote it.
+        const humanPart = existing
+          .split('\n')
+          .filter((line) => !line.trim().startsWith('ORDER_ITEMS_JSON'))
+          .join('\n')
         if (!note) unchanged.push('notes')
-        else if (existing.includes(note)) unchanged.push('notes')
+        else if (humanPart.split('\n').some((line) => line.trim() === note)) unchanged.push('notes')
         else {
           const merged = existing ? `${existing}\n${note}` : note
           changes.notes = { before: existing ? '(আগের নোট অপরিবর্তিত থাকবে)' : '(খালি)', after: note }
