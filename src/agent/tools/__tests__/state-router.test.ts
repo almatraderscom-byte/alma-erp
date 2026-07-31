@@ -151,3 +151,44 @@ describe('parallel-call policy (Phase 3 §D)', () => {
     expect(packAllowsParallelToolCalls(names)).toBe(false)
   })
 })
+
+describe('mac pack routing (live-hit 2026-07-31)', () => {
+  it('routes his Mac phrasings to the mac pack', () => {
+    // Registering the tools and naming them in the prompt was not enough: without
+    // a pack the router never put them in the request, so the head answered
+    // "tool available নেই" with the daemon paired and online.
+    for (const text of [
+      'amar mac e git status dekho',
+      'ম্যাকে test চালাও',
+      'terminal e npm install koro',
+      'Claude session khulo',
+      'codex e ekta kaj dao',
+      'স্ক্রিনশট নাও',
+    ]) {
+      expect(matchIntentPacks(text), text).toContain('mac')
+    }
+  })
+
+  it('ordinary business chat does not drag the Mac tools in', () => {
+    for (const text of ['aj koto sale holo', 'নতুন পোস্ট বানাও', 'কে কে অফিসে আছে']) {
+      expect(matchIntentPacks(text), text).not.toContain('mac')
+    }
+  })
+})
+
+describe('Mac tools reach the head (live-hit 2026-07-31)', () => {
+  it('the head diet carries them', async () => {
+    // Registered, grouped, prompted AND pack-routed was still not enough: the
+    // diet is an allowlist and everything off it is find_tool-only, which the
+    // head never reaches for on its own. The owner asked for Mac work daily, so
+    // these belong in the always-on core.
+    const { HEAD_CORE_TOOL_NAMES } = await import('@/agent/tools/select-tools')
+    for (const name of [
+      'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+      'start_cli_session', 'send_to_cli_session', 'read_cli_session',
+      'stop_cli_session', 'list_cli_sessions',
+    ]) {
+      expect(HEAD_CORE_TOOL_NAMES.has(name), name).toBe(true)
+    }
+  })
+})

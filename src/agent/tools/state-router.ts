@@ -192,6 +192,16 @@ export const DOMAIN_PACKS = {
     'research_competitor_creatives', 'manage_competitor_watchlist',
   ],
   camera: ['get_office_camera_snapshot', 'camera_speak', 'get_staff_location', 'get_staff_location_history'],
+  // The owner's own Mac (M1/M2). Registering the tools and naming them in the
+  // prompt is not enough on a routed turn — without a pack the router never puts
+  // them in the request, and the head correctly reports it has no such tool.
+  // Live-hit 2026-07-31: "amar mac e git status dekho" answered "tool available
+  // নেই" with the daemon paired and online.
+  mac: [
+    'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+    'start_cli_session', 'send_to_cli_session', 'read_cli_session', 'stop_cli_session',
+    'list_cli_sessions',
+  ],
 } as const
 
 export type PackKey = keyof typeof DOMAIN_PACKS
@@ -234,6 +244,8 @@ const PACK_HOME_GROUP: Record<PackKey, ToolGroupName[]> = {
   todo: ['base'],
   research: ['growth'],
   camera: ['base'],
+  // Mac tools live in CORE_AGENT_TOOLS, which is spread into `base`.
+  mac: ['base'],
 }
 
 // ── 1-3. Structured state signals (precede text routing) ─────────────────────
@@ -292,6 +304,13 @@ const INTENT_RULES: Array<{ pack: PackKey; re: RegExp }> = [
   { pack: 'todo', re: /todo|টুডু|আমার কাজ|করতে হবে|daily digest|ডাইজেস্ট|আজকের সারাংশ/i },
   { pack: 'research', re: /research|রিসার্চ|competitor|প্রতিযোগী|market (দেখ|ঘেটে)|দাম যাচাই|খুঁজে (দেখ|বের)/i },
   { pack: 'camera', re: /camera|ক্যামেরা|অফিস (দেখাও|দেখি)|কে আছে অফিসে|location|লোকেশন|কোথায় আছে/i },
+  // His Mac: terminal work, and the Claude/Codex sessions that run on it. Kept
+  // narrow — "mac"/"ম্যাক" plus the words he actually uses for developer work,
+  // so ordinary business chat never drags these tools into the request.
+  {
+    pack: 'mac',
+    re: /\bmac\b|ম্যাক|ল্যাপটপ|laptop|terminal|টার্মিনাল|\bgit\b|\bnpm\b|\bbuild\b|টেস্ট চালা|test চালা|\bcommit\b|\bpush\b|claude.{0,12}(session|সেশন)|codex|(session|সেশন).{0,12}(খোল|khol|open)|স্ক্রিনশট (নাও|দাও)|ঘুমাতে দিও না|keep.?awake/i,
+  },
 ]
 
 /** Pure keyword → packs (exported for golden tests). */
@@ -450,6 +469,30 @@ async function readStateSignals(conversationId: string): Promise<{
     add(packsForCheckpointTaskType(String(cp.checkpoint?.taskType ?? '')), `checkpoint:${cp.checkpoint?.taskType ?? 'unknown'}`)
   }
   if ((plans as unknown[]).length > 0) add(['plan'], 'plan:active')
+
+  // What the PREVIOUS turn worked on. Without this, a bare follow-up — "abar try
+  // koro", "ok koro" — carries no keywords, matches no pack, and the head loses
+  // the very tools it was mid-task with. Live-hit 2026-07-31: "amar mac e git
+  // status dekho" routed correctly, then "akhon abar try koro" answered "tool
+  // callable নয়". Only used when the reply IS a continuation (the caller decides
+  // that); a fresh instruction still routes on its own words.
+  if (packs.length === 0) {
+    try {
+      const last = await db.agentMessage.findFirst({
+        where: { conversationId, role: 'assistant' },
+        orderBy: { createdAt: 'desc' },
+        select: { usage: true },
+      })
+      const prev = (last?.usage as { packs?: unknown } | null)?.packs
+      if (Array.isArray(prev)) {
+        const carried = prev.filter((p): p is PackKey => typeof p === 'string' && p in DOMAIN_PACKS)
+        if (carried.length > 0) add(carried, `carried:${carried.join('+')}`)
+      }
+    } catch {
+      /* no history is not an error — the caller falls back */
+    }
+  }
+
   return { packs, signals, workflowTools }
 }
 

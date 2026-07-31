@@ -1,0 +1,212 @@
+/**
+ * The daemon's refusals are the last thing standing between a bad command and the
+ * owner's laptop, so they are tested against the REAL daemon process — not a
+ * stub, not the classifier in isolation.
+ *
+ * A stand-in bus hands the daemon a scripted queue that deliberately includes
+ * commands the server should never have sent (a RED one, an unapproved AMBER one,
+ * a path outside the allowlist). The daemon must refuse those on its own
+ * judgement, which is exactly the property that makes a server-side compromise
+ * survivable.
+ */
+import { describe, it, expect, afterAll } from 'vitest'
+import { createServer, type Server } from 'node:http'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+const AGENT = resolve(__dirname, '../../../../../mac-agent/agent.mjs')
+// A throwaway HOME for the child. The first version pointed the test at the real
+// ~/.alma-mac-agent, which meant running the suite reconfigured the owner's LIVE
+// daemon mid-flight — it started polling 127.0.0.1 and went quiet on him.
+const TEST_HOME = mkdtempSync(join(tmpdir(), 'alma-mac-e2e-'))
+const CONFIG_DIR = join(TEST_HOME, '.alma-mac-agent')
+const CONFIG_FILE = join(CONFIG_DIR, 'config.json')
+const TOKEN = 'e2e-test-token'
+const APPROVED_MARKER = join(tmpdir(), 'alma-mac-e2e-approved.txt')
+const REFUSED_MARKER = join(tmpdir(), 'alma-mac-e2e-refused.txt')
+
+interface Result {
+  commandId: string
+  ok: boolean
+  exitCode: number | null
+  stdout: string
+  error: string | null
+}
+
+const QUEUE = [
+  { id: 'ping', action: 'ping', params: {} },
+  { id: 'green', action: 'run_command', params: { command: 'node -v', cwd: '~/alma-erp' } },
+  { id: 'red', action: 'run_command', params: { command: 'sudo rm -rf /', cwd: '~/alma-erp' } },
+  {
+    id: 'amber_unapproved',
+    action: 'run_command',
+    params: { command: `touch ${REFUSED_MARKER}`, cwd: '~/alma-erp' },
+  },
+  {
+    id: 'amber_approved',
+    action: 'run_command',
+    params: { command: `touch ${APPROVED_MARKER}`, cwd: '~/alma-erp', approved: true },
+  },
+  { id: 'bad_cwd', action: 'run_command', params: { command: 'ls', cwd: '~/.ssh' } },
+  {
+    id: 'timeout',
+    action: 'run_command',
+    params: { command: 'sleep 30', cwd: '~/alma-erp', approved: true, timeoutMs: 1_500 },
+  },
+  // Codex review: only run_command had a daemon-side backstop, so a bus bug could
+  // have opened a fully unattended CLI session with no card ever shown.
+  {
+    id: 'bypass_unapproved',
+    action: 'session_open',
+    params: { tool: 'claude', cwd: '~/alma-erp', permissionMode: 'bypass' },
+  },
+  // Codex review round 2: a tracked symlink inside the checkout pointed outside
+  // it, and a textual path check cannot see that. Only the real path can.
+  {
+    id: 'symlink_escape',
+    action: 'run_command',
+    params: { command: 'cat secret-link', cwd: '~/alma-erp' },
+  },
+]
+
+let server: Server | undefined
+let daemon: ChildProcess | undefined
+
+function startBus(results: Map<string, Result>, done: () => void): Promise<number> {
+  return new Promise((resolvePort) => {
+    const queue = [...QUEUE]
+    server = createServer((req, res) => {
+      if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+        res.writeHead(401).end('{}')
+        return
+      }
+      if (req.url?.endsWith('/poll')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ command: queue.shift() ?? null }))
+        return
+      }
+      if (req.url?.endsWith('/result')) {
+        let body = ''
+        req.on('data', (d) => (body += d))
+        req.on('end', () => {
+          const parsed = JSON.parse(body) as Result
+          results.set(parsed.commandId, parsed)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{"ok":true}')
+          if (results.size === QUEUE.length) done()
+        })
+        return
+      }
+      res.writeHead(404).end()
+    })
+    server.listen(0, () => {
+      const addr = server!.address()
+      resolvePort(typeof addr === 'object' && addr ? addr.port : 0)
+    })
+  })
+}
+
+afterAll(() => {
+  daemon?.kill('SIGKILL')
+  server?.close()
+  rmSync(TEST_HOME, { recursive: true, force: true })
+  rmSync(APPROVED_MARKER, { force: true })
+  rmSync(REFUSED_MARKER, { force: true })
+})
+
+// The daemon runs commands through /bin/zsh and only ever lives on the owner's
+// Mac; on a Linux CI runner the shell is simply absent, so every case would fail
+// for a reason that says nothing about the code. The macOS run (local, and any
+// macOS runner) is the one that means something.
+const describeOnMac = process.platform === 'darwin' ? describe : describe.skip
+
+describeOnMac('mac daemon end-to-end (real process, stand-in bus)', () => {
+  it(
+    'obeys its own policy even when the bus asks for something it should not',
+    async () => {
+      const results = new Map<string, Result>()
+      let finish: () => void = () => {}
+      const allIn = new Promise<void>((r) => (finish = r))
+      const port = await startBus(results, finish)
+
+      if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+      // The daemon derives its allowlist from HOME, so the redirected home needs
+      // the project folder to exist or every command lands on cwd_not_allowed.
+      mkdirSync(join(TEST_HOME, 'alma-erp'), { recursive: true })
+      // A secret outside the project, and a tracked-looking symlink to it inside.
+      const secret = join(TEST_HOME, 'outside-secret.txt')
+      writeFileSync(secret, 'SUPER-SECRET')
+      try {
+        symlinkSync(secret, join(TEST_HOME, 'alma-erp', 'secret-link'))
+      } catch {
+        /* already there from a previous run */
+      }
+      writeFileSync(
+        CONFIG_FILE,
+        JSON.stringify({ token: TOKEN, deviceId: 'e2e', baseUrl: `http://127.0.0.1:${port}` }),
+        { mode: 0o600 },
+      )
+
+      rmSync(APPROVED_MARKER, { force: true })
+      rmSync(REFUSED_MARKER, { force: true })
+
+      daemon = spawn(process.execPath, [AGENT, 'run'], {
+        env: {
+          ...process.env,
+          // HOME redirect keeps this entirely off the owner's real daemon.
+          HOME: TEST_HOME,
+          ALMA_BASE_URL: `http://127.0.0.1:${port}`,
+          ALMA_POLL_MS: '60',
+          ALMA_POLL_IDLE_MS: '60',
+        },
+        stdio: 'ignore',
+      })
+
+      await Promise.race([
+        allIn,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('daemon did not finish the queue')), 25_000)),
+      ])
+
+      // Reads run.
+      expect(results.get('ping')?.ok).toBe(true)
+      expect(results.get('green')?.ok).toBe(true)
+      expect(results.get('green')?.stdout).toMatch(/^v\d+/)
+
+      // The bus asked for `sudo rm -rf /`. The daemon refuses on its own.
+      expect(results.get('red')?.ok).toBe(false)
+      expect(results.get('red')?.error).toContain('refused_by_daemon:sudo')
+
+      // A state-changing command with no approval attached does not run — and the
+      // filesystem proves it, not just the return value.
+      expect(results.get('amber_unapproved')?.ok).toBe(false)
+      expect(results.get('amber_unapproved')?.error).toContain('missing_approval')
+      expect(existsSync(REFUSED_MARKER)).toBe(false)
+
+      // The same command WITH approval does run.
+      expect(results.get('amber_approved')?.ok).toBe(true)
+      expect(existsSync(APPROVED_MARKER)).toBe(true)
+
+      // Outside the allowlisted folders, nothing runs at all.
+      expect(results.get('bad_cwd')?.ok).toBe(false)
+      expect(results.get('bad_cwd')?.error).toContain('cwd_not_allowed')
+
+      // A hung command is killed at its deadline instead of holding the queue.
+      expect(results.get('timeout')?.ok).toBe(false)
+      expect(results.get('timeout')?.error).toContain('timeout')
+
+      // An unattended session with no approval marker never starts, whatever the
+      // bus claims.
+      expect(results.get('bypass_unapproved')?.ok).toBe(false)
+      expect(results.get('bypass_unapproved')?.error).toContain('bypass_requires_approval')
+
+      // A symlink out of the project folder is refused, and the secret it points
+      // at never reaches the result.
+      expect(results.get('symlink_escape')?.ok).toBe(false)
+      expect(results.get('symlink_escape')?.error).toContain('path_escapes_allowlist')
+      expect(results.get('symlink_escape')?.stdout ?? '').not.toContain('SUPER-SECRET')
+    },
+    40_000,
+  )
+})

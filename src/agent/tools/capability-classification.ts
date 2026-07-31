@@ -62,6 +62,28 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   run_browser_recipe: stage('browser'),
   save_learned_recipe: write('browser'),
 
+  // ── the owner's own Mac (M1) ───────────────────────────────────────────────
+  // `stage` is right even though a GREEN command runs immediately: the classifier
+  // (mac-agent/policy.ts) sends every state-CHANGING command to an approval card,
+  // and the only things that bypass the card are reads. High risk regardless —
+  // this is the one tool whose blast radius is the owner's actual laptop.
+  run_mac_command: stage('mac', 'high'),
+  check_mac_command: read('mac'),
+  mac_agent_status: read('mac'),
+  // Screenshot of his screen / keep-awake. A direct effect, and a screenshot of a
+  // real desk is genuinely sensitive, so it is not filed as a plain read.
+  mac_desk_control: write('mac', 'medium'),
+
+  // M2 — Claude/Codex sessions on that Mac. Opening one in 'bypass' mode is
+  // gated behind an approval card (a standing grant, not a single action), which
+  // is why start is 'stage'; the rest only steer or observe a session that the
+  // owner already allowed to exist.
+  start_cli_session: stage('mac', 'high'),
+  send_to_cli_session: write('mac', 'medium'),
+  read_cli_session: read('mac'),
+  stop_cli_session: write('mac'),
+  list_cli_sessions: read('mac'),
+
   // ── native push ────────────────────────────────────────────────────────────
   set_native_push: write('push'),
   test_native_push: { domain: 'push', mode: 'write', risk: 'low', proof: 'external' },

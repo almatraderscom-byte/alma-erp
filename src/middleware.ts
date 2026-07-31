@@ -61,6 +61,15 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/live-browser/pair') return true
   if (pathname === '/api/assistant/live-browser/poll') return true
   if (pathname === '/api/assistant/live-browser/result') return true
+  // Same three-endpoint shape for the Mac daemon, and the same reason: it holds a
+  // bearer token, not a browser cookie, and each handler authenticates that token
+  // itself (constant-time hash compare). Missing this made every pairing attempt
+  // 401 before the code was ever read — caught only by pairing a real Mac.
+  // NOTE: /api/assistant/mac-agent/status is deliberately NOT here; that one is
+  // the owner's own control surface and must stay cookie-authenticated.
+  if (pathname === '/api/assistant/mac-agent/pair') return true
+  if (pathname === '/api/assistant/mac-agent/poll') return true
+  if (pathname === '/api/assistant/mac-agent/result') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

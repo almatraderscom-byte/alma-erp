@@ -13,6 +13,12 @@ import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
+import {
+  activeDevice as activeMacDevice,
+  awaitResult as awaitMacResult,
+  enqueueCommand as enqueueMacCommand,
+} from '@/agent/lib/mac-agent/bus'
+import { classifyCommand } from '@/agent/lib/mac-agent/policy'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -999,6 +1005,136 @@ async function runApprove(
       taskIds: refreshed.taskIds,
       message: 'Tasks approved from current DB proposal. Worker will dispatch to staff via Telegram.',
     })
+  }
+
+  // M1 — an amber Mac command the owner just approved. The command text he saw on
+  // the card is the ONLY thing that runs: we re-read it from the stored payload and
+  // re-classify it here, so an edited or replayed card can't smuggle in something
+  // else, and a rule that turned RED since the card was created still wins.
+  if (action.type === 'mac_command') {
+    const p = payload as { command?: string; cwd?: string | null; timeoutMs?: number | null; deviceId?: string }
+    const command = String(p.command ?? '')
+    const verdict = classifyCommand(command, { cwd: p.cwd ?? undefined })
+    if (verdict.level === 'red') {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+      return Response.json(
+        { success: false, error: `refused_by_policy:${verdict.code}`, message: verdict.reasonBn },
+        { status: 400 },
+      )
+    }
+
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+
+    // Claim the card first: two overlapping approvals both read it as pending and
+    // both enqueued, running the owner's command twice (Codex review round 2).
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'run_command',
+      params: { command, cwd: p.cwd ?? null, timeoutMs: p.timeoutMs ?? null, approved: true },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 100_000)
+    const tail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+    await appendConversationNote(
+      db,
+      action,
+      outcome.timedOut
+        ? `✅ অনুমোদিত — \`${command}\` চলছে এখনো (id: ${commandId})। শেষ হলে জানাবো।`
+        : outcome.status === 'done'
+          ? `✅ অনুমোদিত ও চালানো হয়েছে — \`${command}\`\n\n\`\`\`\n${tail}\n\`\`\``
+          : `⚠️ \`${command}\` চালাতে গিয়ে সমস্যা হয়েছে (exit ${outcome.exitCode ?? '?'}):\n\n\`\`\`\n${tail}\n\`\`\``,
+    )
+
+    return Response.json({
+      success: outcome.status === 'done',
+      commandId,
+      exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      stillRunning: outcome.timedOut,
+    })
+  }
+
+  // M2 — the owner approved an UNATTENDED Claude/Codex session. This is a standing
+  // grant rather than one action, which is exactly why it needed a card: once the
+  // session is open, nothing checks it step by step.
+  if (action.type === 'cli_session_bypass') {
+    const p = payload as {
+      task?: string | null
+      cwd?: string | null
+      tool?: string
+      model?: string | null
+      deviceId?: string
+    }
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss।' },
+        { status: 409 },
+      )
+    }
+
+    // Same race as the mac_command branch above.
+    const claimedSession = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimedSession.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'session_open',
+      params: {
+        task: p.task ?? undefined,
+        cwd: p.cwd ?? undefined,
+        tool: p.tool ?? 'claude',
+        model: p.model ?? undefined,
+        permissionMode: 'bypass',
+        // The daemon refuses an unattended session without this marker.
+        approved: true,
+      },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 60_000)
+    let sessionId: string | null = null
+    try {
+      sessionId = (JSON.parse(outcome.stdout || '{}') as { sessionId?: string }).sessionId ?? null
+    } catch {
+      sessionId = null
+    }
+
+    await appendConversationNote(
+      db,
+      action,
+      sessionId
+        ? `✅ অনুমোদিত — ${p.tool === 'codex' ? 'Codex' : 'Claude'} সেশন চালু হয়েছে (id: ${sessionId})। অগ্রগতি দেখে জানাবো।`
+        : `⚠️ সেশন চালু করতে পারিনি: ${outcome.error ?? outcome.stderr ?? 'unknown'}`,
+    )
+
+    return Response.json({ success: Boolean(sessionId), sessionId, commandId })
   }
 
   if (action.type === 'oxylabs_spend') {
