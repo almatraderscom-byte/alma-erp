@@ -226,43 +226,43 @@ export function StudioV3Home({
   const createCards: CreateCard[] = [
     {
       title: 'Image',
-      description: 'Auto or seven Advanced modes with capability truth.',
+      description: 'Create campaign-ready product visuals with guided or advanced controls.',
       icon: 'image',
       action: () => onNavigate({ id: 'image-lab' }),
     },
     {
       title: 'Video / Reel',
-      description: 'Start from a gallery still, avatar or owned shoot.',
+      description: 'Turn an approved image, avatar, or shoot into motion.',
       icon: 'video',
       action: () => onNavigate({ id: 'video-lab' }),
     },
     {
       title: 'Avatar',
-      description: 'Create, select, and manage reusable model identity references.',
+      description: 'Manage consistent people and model identities for every campaign.',
       icon: 'account',
       action: () => onNavigate({ id: 'desk', desk: 'systems' }),
     },
     {
       title: 'Voice',
-      description: 'Consent, immutable identity versions and lifecycle.',
+      description: 'Create and manage approved brand voices with consent built in.',
       icon: 'voice',
       action: () => onNavigate({ id: 'desk', desk: 'voice' }),
     },
     {
       title: 'Audio',
-      description: 'Music, wish song, dubbing, clean voice and SFX.',
+      description: 'Produce music, dubbing, clean voice, and sound effects.',
       icon: 'audio',
       action: () => onNavigate({ id: 'desk', desk: 'audio' }),
     },
     {
       title: 'Campaign Pack',
-      description: 'Manifest, two drafts, stage retry and hard cap.',
+      description: 'Build a coordinated set of campaign assets in one workflow.',
       icon: 'campaign',
       action: () => onNavigate({ id: 'desk', desk: 'campaign' }),
     },
     {
       title: 'Long-form',
-      description: 'Open the newest accessible composition or create one idempotently.',
+      description: 'Open a versioned canvas for structured, longer creative projects.',
       icon: 'project',
       action: () => {
         if (initialProject) void onOpenComposition(initialProject)
@@ -493,7 +493,7 @@ export function StudioV3Home({
           <span className={styles.eyebrow}>ALMA Creative Studio</span>
           <h1>What are we making today?</h1>
           <p>
-            {activeBrand?.name ?? 'Signed-in workspace'} · production assets, identity and guarded creation in one place.
+            {activeBrand?.name ?? 'Signed-in workspace'} · create, organize, review, and finish every brand asset in one place.
           </p>
         </div>
         <label className={styles.globalSearch}>
@@ -525,21 +525,22 @@ export function StudioV3Home({
           <button onClick={() => void load()} type="button"><StudioV3Icon name="refresh" /> Retry</button>
         </details>
       )}
-      <p className={styles.scopeNotice}>
-        <StudioV3Icon name="lock" />
-        Active brand is selected only from the server-enforced accessible-brand list. Project,
-        recipe, Gallery, and identity reads were re-requested for the exact active brand/project;
-        unscoped legacy records are excluded ({STUDIO_V3_SCOPE_BOUNDARY.gallery}).
-      </p>
+      <details className={styles.scopeDetails}>
+        <summary><StudioV3Icon name="lock" /> Workspace security</summary>
+        <p>
+          Brand, project, Gallery, recipe, and identity data stay inside the selected workspace.
+          Access is verified by the server ({STUDIO_V3_SCOPE_BOUNDARY.gallery}).
+        </p>
+      </details>
 
       <section aria-labelledby="studio-create-heading" className={styles.section}>
         <div className={styles.sectionHeading}>
           <div>
             <span className={styles.eyebrow}>Create</span>
-            <h2 id="studio-create-heading">Choose the right production path</h2>
+            <h2 id="studio-create-heading">Start creating</h2>
           </div>
           <div className={styles.sectionActions}>
-            <span className={styles.sectionMeta}>Paid effects require a second server-gated action</span>
+            <span className={styles.sectionMeta}>Nothing is spent without confirmation</span>
             <button
               className={styles.primaryButton}
               disabled={!activeBrand || activeBrand.role !== 'owner'}
@@ -574,8 +575,8 @@ export function StudioV3Home({
       <section aria-labelledby="studio-inventory-heading" className={styles.section}>
         <div className={styles.sectionHeading}>
           <div>
-            <span className={styles.eyebrow}>Assets, catalog & identity</span>
-            <h2 id="studio-inventory-heading">Start from approved business context</h2>
+            <span className={styles.eyebrow}>Your workspace</span>
+            <h2 id="studio-inventory-heading">Recent assets and saved identities</h2>
           </div>
           <button className={styles.textButton} onClick={() => onNavigate({ id: 'gallery' })} type="button">
             Open Gallery <StudioV3Icon name="arrow" />

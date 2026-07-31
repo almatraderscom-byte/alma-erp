@@ -45,10 +45,7 @@ import {
 } from '@/agent/components/creative-studio/resolution-ui'
 import { StudioConfirmationDialog } from '@/agent/components/creative-studio/StudioUi'
 import { StudioV3Icon } from '@/agent/components/creative-studio-v3/StudioV3Icon'
-import {
-  STUDIO_V3_SCOPE_BOUNDARY,
-  type CreativeStudioV3ProductionPort,
-} from '@/agent/components/creative-studio-v3/ports'
+import type { CreativeStudioV3ProductionPort } from '@/agent/components/creative-studio-v3/ports'
 import type { CreativeStudioV3Navigate } from '@/agent/components/creative-studio-v3/types'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
 
@@ -670,9 +667,9 @@ export function StudioV3ImageLab({
         <div className={styles.workspaceTitle}>
           <span><StudioV3Icon name="image" /></span>
           <div>
-            <span className={styles.eyebrow}>Production create</span>
+            <span className={styles.eyebrow}>Image workspace</span>
             <h1>Image Lab</h1>
-            <p>{activeProject?.name ?? 'Choose a project'} · real catalog, identity and provider contracts.</p>
+            <p>{activeProject?.name ?? 'Choose a project'} · explore ideas, add references, and create from one focused workspace.</p>
           </div>
         </div>
         <div className={styles.segmented}>
@@ -727,22 +724,77 @@ export function StudioV3ImageLab({
         </section>
       ) : (
         <>
-          <section className={styles.historyPanel}>
+          <section className={`${styles.historyPanel} ${styles.v4ScopeBar}`}>
             <header>
               <div>
-                <span className={styles.eyebrow}>Active production scope</span>
+                <span className={styles.eyebrow}>Active project</span>
                 <h2>{activeProject?.name ?? 'No project selected'}</h2>
               </div>
               <span className={styles.serverBadge}>
                 <StudioV3Icon name="lock" />
-                {data.health?.worker.healthy ? 'Worker healthy' : 'Server-gated'}
+                {data.health?.worker.healthy ? 'Ready' : 'Protected'}
               </span>
             </header>
             <p className={styles.scopeNotice}>
               <StudioV3Icon name="lock" />
-              Product, identity and Gallery reads are authenticated and project-scoped:
-              {' '}{STUDIO_V3_SCOPE_BOUNDARY.gallery}; {STUDIO_V3_SCOPE_BOUNDARY.models}.
+              Product, model, and Gallery references stay inside this project.
             </p>
+          </section>
+
+          <section aria-labelledby="image-starting-points" className={styles.v4ExploreSurface}>
+            <header>
+              <div>
+                <span className={styles.eyebrow}>Explore</span>
+                <h2 id="image-starting-points">Start with a proven workflow</h2>
+                <p>Choose a direction, then refine the references and settings in the composer.</p>
+              </div>
+              <button onClick={() => onNavigate({ id: 'gallery', initialType: 'image' })} type="button">
+                Browse all assets <StudioV3Icon name="arrow" />
+              </button>
+            </header>
+            <div className={styles.v4TemplateGrid}>
+              {STUDIO_MODES.slice(0, 6).map((item, index) => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setArchitecture('advanced')
+                    setMode(item.id)
+                  }}
+                  type="button"
+                >
+                  <span aria-hidden="true" data-tone={index + 1}>
+                    <i /><b /><em />
+                  </span>
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{item.short}</small>
+                  </span>
+                  <StudioV3Icon name="arrow" />
+                </button>
+              ))}
+            </div>
+            {data.sources.length > 0 && (
+              <div className={styles.v4RecentStrip}>
+                <header><strong>Continue from a recent image</strong><span>{data.sources.length} ready</span></header>
+                <div>
+                  {data.sources.slice(0, 8).map((asset) => (
+                    <button
+                      aria-label={`Use ${asset.summary ?? asset.mode} as a reference`}
+                      key={asset.id}
+                      onClick={() => {
+                        setSelectedSourceId(asset.id)
+                        setArchitecture('advanced')
+                      }}
+                      type="button"
+                    >
+                      {asset.thumbUrl || asset.previewUrl
+                        ? <img alt="" src={asset.thumbUrl ?? asset.previewUrl ?? ''} />
+                        : <StudioV3Icon name="image" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
 
           <section

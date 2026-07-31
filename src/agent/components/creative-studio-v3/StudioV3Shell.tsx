@@ -19,19 +19,21 @@ type NavItem = {
 }
 
 const primaryNav: NavItem[] = [
-  { label: 'Studio Home', icon: 'home', view: { id: 'home' } },
+  { label: 'Home', icon: 'home', view: { id: 'home' } },
   { label: 'Projects', icon: 'project', view: { id: 'desk', desk: 'projects' } },
-  { label: 'Gallery', icon: 'gallery', view: { id: 'gallery' } },
+  { label: 'Assets & Gallery', icon: 'gallery', view: { id: 'gallery' } },
   { label: 'Finishing', icon: 'finish', view: { id: 'finishing' } },
-  { label: 'Recipes & Models', icon: 'systems', view: { id: 'desk', desk: 'systems' } },
   { label: 'Review', icon: 'review', view: { id: 'desk', desk: 'review' } },
-  { label: 'Operations', icon: 'operations', view: { id: 'desk', desk: 'operations' } },
 ]
 
 const capabilityNav: NavItem[] = [
+  { label: 'Image Lab', icon: 'image', view: { id: 'image-lab' } },
+  { label: 'Video & Reel', icon: 'video', view: { id: 'video-lab' } },
+  { label: 'Avatars & Models', icon: 'account', view: { id: 'desk', desk: 'systems' } },
   { label: 'Voice', icon: 'voice', view: { id: 'desk', desk: 'voice' } },
-  { label: 'Audio', icon: 'audio', view: { id: 'desk', desk: 'audio' } },
-  { label: 'Campaign', icon: 'campaign', view: { id: 'desk', desk: 'campaign' } },
+  { label: 'Audio & Music', icon: 'audio', view: { id: 'desk', desk: 'audio' } },
+  { label: 'Campaign Packs', icon: 'campaign', view: { id: 'desk', desk: 'campaign' } },
+  { label: 'Operations', icon: 'operations', view: { id: 'desk', desk: 'operations' } },
 ]
 
 const mobileNav: NavItem[] = [
@@ -204,7 +206,7 @@ export function StudioV3Shell({
           <Link aria-label="Return to ALMA Agent" className={styles.almaMark} href="/agent">A</Link>
           <div>
             <strong>Creative Studio</strong>
-            <span>{activeBrand?.organization ?? activeBrand?.name ?? 'Signed-in workspace'} · access-scoped</span>
+            <span>{activeBrand?.organization ?? activeBrand?.name ?? 'Signed-in workspace'}</span>
           </div>
         </div>
 
@@ -239,7 +241,7 @@ export function StudioV3Shell({
               ))}
             </select>
           </label>
-          <span className={styles.guardBadge}><StudioV3Icon name="lock" /> Server gated</span>
+          <span className={styles.guardBadge}><StudioV3Icon name="lock" /> Protected</span>
           <button
             className={styles.agentButton}
             disabled={!activeProject || immersive}
@@ -266,13 +268,13 @@ export function StudioV3Shell({
         <aside aria-label="Creative Studio sections" className={styles.sidebar}>
           <nav aria-label="Creative Studio navigation" className={styles.sidebarNav}>{primaryNav.map(navButton)}</nav>
           <div className={styles.sidebarDivider} />
-          <p className={styles.sidebarLabel}>Capability desks</p>
+          <p className={styles.sidebarLabel}>Create</p>
           <nav aria-label="Creative Studio capability navigation" className={styles.sidebarNav}>{capabilityNav.map(navButton)}</nav>
           <div className={styles.sidebarTrust}>
             <StudioV3Icon name="lock" />
             <div>
-              <strong>Production truth</strong>
-              <span>Provider, spend, review and publish authority stay on the server.</span>
+              <strong>Safe by design</strong>
+              <span>Spend, review and publishing always require the correct approval.</span>
             </div>
           </div>
         </aside>
