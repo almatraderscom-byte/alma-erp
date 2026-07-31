@@ -151,3 +151,27 @@ describe('parallel-call policy (Phase 3 §D)', () => {
     expect(packAllowsParallelToolCalls(names)).toBe(false)
   })
 })
+
+describe('mac pack routing (live-hit 2026-07-31)', () => {
+  it('routes his Mac phrasings to the mac pack', () => {
+    // Registering the tools and naming them in the prompt was not enough: without
+    // a pack the router never put them in the request, so the head answered
+    // "tool available নেই" with the daemon paired and online.
+    for (const text of [
+      'amar mac e git status dekho',
+      'ম্যাকে test চালাও',
+      'terminal e npm install koro',
+      'Claude session khulo',
+      'codex e ekta kaj dao',
+      'স্ক্রিনশট নাও',
+    ]) {
+      expect(matchIntentPacks(text), text).toContain('mac')
+    }
+  })
+
+  it('ordinary business chat does not drag the Mac tools in', () => {
+    for (const text of ['aj koto sale holo', 'নতুন পোস্ট বানাও', 'কে কে অফিসে আছে']) {
+      expect(matchIntentPacks(text), text).not.toContain('mac')
+    }
+  })
+})
