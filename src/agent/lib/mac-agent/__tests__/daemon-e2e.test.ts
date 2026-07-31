@@ -116,7 +116,13 @@ afterAll(() => {
   rmSync(REFUSED_MARKER, { force: true })
 })
 
-describe('mac daemon end-to-end (real process, stand-in bus)', () => {
+// The daemon runs commands through /bin/zsh and only ever lives on the owner's
+// Mac; on a Linux CI runner the shell is simply absent, so every case would fail
+// for a reason that says nothing about the code. The macOS run (local, and any
+// macOS runner) is the one that means something.
+const describeOnMac = process.platform === 'darwin' ? describe : describe.skip
+
+describeOnMac('mac daemon end-to-end (real process, stand-in bus)', () => {
   it(
     'obeys its own policy even when the bus asks for something it should not',
     async () => {
