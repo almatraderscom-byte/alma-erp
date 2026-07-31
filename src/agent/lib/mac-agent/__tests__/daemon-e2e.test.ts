@@ -12,12 +12,16 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const AGENT = resolve(__dirname, '../../../../../mac-agent/agent.mjs')
-const CONFIG_DIR = join(homedir(), '.alma-mac-agent')
+// A throwaway HOME for the child. The first version pointed the test at the real
+// ~/.alma-mac-agent, which meant running the suite reconfigured the owner's LIVE
+// daemon mid-flight — it started polling 127.0.0.1 and went quiet on him.
+const TEST_HOME = mkdtempSync(join(tmpdir(), 'alma-mac-e2e-'))
+const CONFIG_DIR = join(TEST_HOME, '.alma-mac-agent')
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json')
 const TOKEN = 'e2e-test-token'
 const APPROVED_MARKER = join(tmpdir(), 'alma-mac-e2e-approved.txt')
@@ -62,7 +66,6 @@ const QUEUE = [
 
 let server: Server | undefined
 let daemon: ChildProcess | undefined
-let savedConfig: string | null = null
 
 function startBus(results: Map<string, Result>, done: () => void): Promise<number> {
   return new Promise((resolvePort) => {
@@ -101,9 +104,7 @@ function startBus(results: Map<string, Result>, done: () => void): Promise<numbe
 afterAll(() => {
   daemon?.kill('SIGKILL')
   server?.close()
-  // Put the owner's real pairing config back exactly as we found it.
-  if (savedConfig !== null) writeFileSync(CONFIG_FILE, savedConfig, { mode: 0o600 })
-  else rmSync(CONFIG_FILE, { force: true })
+  rmSync(TEST_HOME, { recursive: true, force: true })
   rmSync(APPROVED_MARKER, { force: true })
   rmSync(REFUSED_MARKER, { force: true })
 })
@@ -118,11 +119,9 @@ describe('mac daemon end-to-end (real process, stand-in bus)', () => {
       const port = await startBus(results, finish)
 
       if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
-      try {
-        savedConfig = existsSync(CONFIG_FILE) ? require('fs').readFileSync(CONFIG_FILE, 'utf8') : null
-      } catch {
-        savedConfig = null
-      }
+      // The daemon derives its allowlist from HOME, so the redirected home needs
+      // the project folder to exist or every command lands on cwd_not_allowed.
+      mkdirSync(join(TEST_HOME, 'alma-erp'), { recursive: true })
       writeFileSync(
         CONFIG_FILE,
         JSON.stringify({ token: TOKEN, deviceId: 'e2e', baseUrl: `http://127.0.0.1:${port}` }),
@@ -135,6 +134,8 @@ describe('mac daemon end-to-end (real process, stand-in bus)', () => {
       daemon = spawn(process.execPath, [AGENT, 'run'], {
         env: {
           ...process.env,
+          // HOME redirect keeps this entirely off the owner's real daemon.
+          HOME: TEST_HOME,
           ALMA_BASE_URL: `http://127.0.0.1:${port}`,
           ALMA_POLL_MS: '60',
           ALMA_POLL_IDLE_MS: '60',
