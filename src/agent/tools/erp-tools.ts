@@ -1336,7 +1336,14 @@ const update_order: AgentTool = {
     properties: {
       orderNumber: { type: 'string', description: 'Order/invoice number as Boss says it (e.g. "1234", "#ALM-1234"), or the order id.' },
       status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status.' },
-      courier: { type: 'string', enum: [...CANONICAL_COURIERS], description: "Courier name — the ERP's own spelling." },
+      courier: {
+        type: 'string',
+        // NOT an enum: schema validation runs BEFORE the handler, so a lowercase
+        // "steadfast" would be rejected as invalid_args and never reach the
+        // normaliser that exists to repair exactly that. Accept what the model
+        // says; canonicalCourier decides how it is spelled.
+        description: `Courier name. Stored in the ERP's own spelling — one of: ${CANONICAL_COURIERS.join(', ')}.`,
+      },
       trackingId: { type: 'string', description: 'Courier tracking id.' },
       notes: {
         type: 'string',
@@ -1417,7 +1424,10 @@ const update_orders: AgentTool = {
           properties: {
             orderNumber: { type: 'string', description: 'Order/invoice number, or the order id.' },
             status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status for THIS order.' },
-            courier: { type: 'string', enum: [...CANONICAL_COURIERS], description: "Courier name — the ERP's own spelling." },
+            courier: {
+              type: 'string',
+              description: `Courier name for THIS order — stored in the ERP's own spelling (${CANONICAL_COURIERS.join(', ')}).`,
+            },
             trackingId: { type: 'string', description: 'Courier tracking id for THIS order.' },
             notes: { type: 'string', description: 'A note to ADD to this order (appended, never replaces).' },
           },
