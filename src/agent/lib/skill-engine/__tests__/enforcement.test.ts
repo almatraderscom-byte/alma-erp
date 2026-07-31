@@ -112,3 +112,28 @@ describe('the done gate — "হয়ে গেছে" must be earned', () => {
     expect(msg).toContain('"হয়ে গেছে" বলছি না')
   })
 })
+
+describe('Mac tools survive skill isolation (live-hit 2026-08-01)', () => {
+  it('a pinned skill cannot strip the owner’s Mac capabilities', () => {
+    // An unrelated invoice skill got pinned on "amar mac e ekta claude session
+    // kholo" and removed every Mac tool, so the head could not do the one thing
+    // he asked for. These are owner-service tools like ask_user.
+    const manifest = { requiredCapabilities: ['get_orders'] }
+    const tools = [
+      { name: 'get_orders' },
+      { name: 'run_mac_command' },
+      { name: 'start_cli_session' },
+      { name: 'read_cli_session' },
+      { name: 'mac_agent_status' },
+      { name: 'get_sales_summary' },
+    ]
+    const { tools: kept, removed } = filterToolsForSkill(tools, manifest)
+    const keptNames = kept.map((t) => t.name)
+    expect(keptNames).toContain('run_mac_command')
+    expect(keptNames).toContain('start_cli_session')
+    expect(keptNames).toContain('read_cli_session')
+    expect(keptNames).toContain('mac_agent_status')
+    // Unrelated tools are still narrowed away — isolation still works.
+    expect(removed).toContain('get_sales_summary')
+  })
+})

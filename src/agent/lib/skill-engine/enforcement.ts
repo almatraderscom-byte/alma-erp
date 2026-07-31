@@ -32,6 +32,22 @@ export const ALWAYS_ALLOWED = new Set([
   'ask_user',
   'save_memory',
   'request_agent_action',
+  // The owner's own Mac. These are owner-service capabilities, like ask_user:
+  // when he says "open a Claude session on my Mac", that must work regardless of
+  // which skill the router happened to pin. Live-hit 2026-08-01: an unrelated
+  // invoice skill was pinned on exactly that sentence and stripped every Mac
+  // tool, so the head truthfully reported it could not open a session.
+  // Skill isolation is not what keeps these safe — the command classifier and
+  // the approval cards are, and both still apply.
+  'run_mac_command',
+  'check_mac_command',
+  'mac_agent_status',
+  'mac_desk_control',
+  'start_cli_session',
+  'send_to_cli_session',
+  'read_cli_session',
+  'stop_cli_session',
+  'list_cli_sessions',
 ])
 
 /**
