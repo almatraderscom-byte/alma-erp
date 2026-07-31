@@ -175,3 +175,20 @@ describe('mac pack routing (live-hit 2026-07-31)', () => {
     }
   })
 })
+
+describe('Mac tools reach the head (live-hit 2026-07-31)', () => {
+  it('the head diet carries them', async () => {
+    // Registered, grouped, prompted AND pack-routed was still not enough: the
+    // diet is an allowlist and everything off it is find_tool-only, which the
+    // head never reaches for on its own. The owner asked for Mac work daily, so
+    // these belong in the always-on core.
+    const { HEAD_CORE_TOOL_NAMES } = await import('@/agent/tools/select-tools')
+    for (const name of [
+      'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+      'start_cli_session', 'send_to_cli_session', 'read_cli_session',
+      'stop_cli_session', 'list_cli_sessions',
+    ]) {
+      expect(HEAD_CORE_TOOL_NAMES.has(name), name).toBe(true)
+    }
+  })
+})
