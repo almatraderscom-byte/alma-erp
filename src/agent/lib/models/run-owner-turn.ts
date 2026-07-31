@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { stripToolCallMarkup, dropRepeatedBlocks } from '@/agent/lib/model-output-sanitize'
+import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -56,7 +56,7 @@ import { buildSelfCorrectionNudge } from '@/agent/lib/self-correct'
 import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
 import { insertControlNote } from '@/agent/lib/control-note-order'
-import { cleanVisibleThinking } from '@/agent/lib/visible-thinking'
+import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/visible-thinking'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -112,7 +112,7 @@ import {
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
-import { getModel, isKnownModelId, resolveHeadCostTier } from '@/agent/lib/models/registry'
+import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -1661,6 +1661,8 @@ async function* runAlternateProviderTurn(
   // First-line contract (owner rule 2026-07-25): did the head SAY something to
   // Boss before it started running tools? One backstop nudge per turn.
   let preambleSpoken = false
+  // Bounded once per turn: a model that types its calls gets one plain correction.
+  let typedToolCallRetries = 0
   let preambleNudgeSent = false
   // The spoken first line, kept as a FLOOR for finalText: a verification or
   // act-now retry resets the draft, and without this the line Boss already saw
@@ -1963,9 +1965,16 @@ async function* runAlternateProviderTurn(
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
       const toolNames = new Map<string, string>()
       let iterationText = ''
+      // Set below, after the round's calls are known: the model wrote tool calls
+      // as prose and made none.
+      let typedToolCallsThisRound = false
       // Reasoning produced in THIS round only — one timeline segment before this
       // round's tool calls, keeping cross-round order faithful.
       let iterThinking = ''
+      // Thinking streams token by token, so markup in it needs a filter that
+      // survives a call split across deltas. One per round: what it holds back
+      // belongs to this round and is released when the round ends.
+      const thinkingStream = createThinkingStreamFilter()
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -2158,7 +2167,14 @@ async function* runAlternateProviderTurn(
           if (!thinkingStartedAt) thinkingStartedAt = Date.now()
           thinkingText += ev.text
           iterThinking += ev.text
-          yield { type: 'thinking_delta', delta: ev.text }
+          // …but never RAW. Unlike the round's prose, thinking is yielded token by
+          // token, so the once-per-round cleanup below can only fix what gets
+          // stored — and on 2026-07-28 his screen filled live with hundreds of
+          // `<parameter name="fullScanAll…">` while the turn was still running.
+          // The filter holds back an opener until it resolves, so a call split
+          // across deltas cannot slip through in pieces.
+          const safeThinking = thinkingStream.push(ev.text)
+          if (safeThinking) yield { type: 'thinking_delta', delta: safeThinking }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
           yield { type: 'tool_start', id: ev.id, name: ev.name }
@@ -2201,11 +2217,33 @@ async function* runAlternateProviderTurn(
           model: model.id,
         })
       }
+      // Qwen, on the owner's marketing turn 2026-07-27: seven calls TYPED as
+      // ```tool call fences and two actually made. Stripping the markup fixes
+      // what he sees and hides what went wrong — a round that narrates its calls
+      // does no work, which is exactly the missing think → tool → update rhythm
+      // he reported. Remembered here, acted on where the turn would otherwise end.
+      // Live on 2026-07-28, minutes after the first fix shipped: Qwen made ONE
+      // real call and TYPED three more in the same round. The boolean form reads
+      // that as "it called, fine" — so the count is what decides. More typed than
+      // called means most of the work was narrated, and the turn must not settle.
+      typedToolCallsThisRound =
+        typedToolCallsInsteadOfCalling({ rawText: rawIterationText, realToolCallCount: calls.length })
+        || countTypedToolCalls(rawIterationText) > calls.length
+      if (typedToolCallsThisRound) {
+        console.info('[model-output] model TYPED its tool calls instead of calling them', {
+          conversationId,
+          model: model.id,
+        })
+      }
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
       // Plumbing out of the thought before it is shown or stored: he asked to
       // watch the reasoning, not to read our control banners and verifier
       // notes back to himself (visible-thinking.ts).
-      const shownThinking = cleanVisibleThinking(iterThinking)
+      // Release anything the live filter was still holding, then clean the
+      // stored copy the same way: markup out first, harness-chatter out second.
+      const heldThinking = thinkingStream.flush()
+      if (heldThinking) yield { type: 'thinking_delta', delta: heldThinking }
+      const shownThinking = cleanVisibleThinking(stripToolCallMarkup(iterThinking))
       if (shownThinking) timeline.push({ t: 'think', text: shownThinking.slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
@@ -2259,6 +2297,38 @@ async function* runAlternateProviderTurn(
           ]
           continue
         }
+        // The model TYPED its tool calls. It did no work this round, and the
+        // markup has already been stripped, so without this the turn ends on a
+        // confident paragraph about work that never happened — the exact pair of
+        // symptoms the owner reported on 2026-07-27 (machine syntax on screen,
+        // and the missing think → tool → update rhythm).
+        //
+        // Sent back ONCE, with the interface named plainly. `toolChoice: required`
+        // is not used: it would force a call even when the right move is to
+        // answer, and the aim is a model that uses the interface, not one that is
+        // cornered into it.
+        if (
+          !signal?.aborted
+          && typedToolCallsThisRound
+          && typedToolCallRetries < 1
+          && iteration < maxIterations - 1
+        ) {
+          typedToolCallRetries++
+          messages = [
+            ...messages,
+            { role: 'assistant', content: rawIterationText },
+            {
+              role: 'user',
+              content:
+                INTERNAL_NUDGE_MARKER
+                + 'তুমি টুল কলগুলো টেক্সট হিসেবে লিখে ফেলেছ — ওভাবে কিছুই চলে না, Boss শুধু কোড দেখেন। '
+                + 'টুল ব্যবহার করতে হলে tool-call ইন্টারফেস দিয়েই ডাকো (মেসেজে ```tool call বা JSON লিখবে না)। '
+                + 'এখন সত্যিই দরকারি টুলগুলো ডাকো, নয়তো টুল ছাড়াই সোজা উত্তর দাও।',
+            },
+          ]
+          finalText = preambleText
+          continue
+        }
         // Fully empty round → nudge the model to continue instead of silently
         // ending the turn with a blank message. Bounded to 2 retries. Applies to
         // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
@@ -2308,6 +2378,11 @@ async function* runAlternateProviderTurn(
             toolRecords: toolRecords.map((r) => ({ status: r.status, toolName: r.toolName, errorCode: r.errorCode })),
             hasAskCard: emittedAskCards.length > 0,
             ownerRequestedAction: turnAuthorization.allowMutations,
+            // "ফল এলে জানাব" is honest when a crawl or worker job really is
+            // queued — the hop system comes back for it. With nothing queued it
+            // is a promise the ending turn can never keep, so the policy needs
+            // the evidence, not the sentence (owner, live 2026-07-28).
+            hasPendingAsyncJob: summarizeAsyncJobEvidence(toolRecords).pendingJobSeen,
           })
         ) {
           intentNudges++
@@ -3694,6 +3769,7 @@ async function* runAlternateProviderTurn(
           type: 'model_info',
           modelId: cheap.id,
           label: cheap.label,
+          displayName: modelDisplayName(cheap.id),
           variant: modelVariant(cheap),
           tier: 'light',
         }
@@ -3867,6 +3943,10 @@ export async function* runOwnerTurn(
     type: 'model_info',
     modelId: model.id,
     label: model.label,
+    // Owner 2026-07-28: he wants to see WHO answered, whichever model it is.
+    // `variant` only ever knew three families, so Grok/Gemini/GPT showed a bare
+    // "ALMA"; this is the readable name for every model in the registry.
+    displayName: modelDisplayName(model.id),
     variant: modelVariant(model),
     tier: decision.tier,
   }

@@ -379,16 +379,27 @@ struct AlmaVoiceLiveActivity: Widget {
                     .padding(.top, 4)
                 }
             } compactLeading: {
-                AlmaIslandOrb(size: 19, hue: hue)
-                    .padding(.leading, 3)
+                OfficeRobotLiveGlyph(
+                    context: .voice(phase: phase),
+                    size: 23
+                )
+                    .padding(.leading, 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(VoiceHue.status(phase))
             } compactTrailing: {
                 RibbonWave(levels: Array(context.state.levels.suffix(8)), hue: hue)
                     .frame(width: 34, height: 20)
                     .padding(.trailing, 2)
             } minimal: {
-                AlmaIslandOrb(size: 17, hue: hue, animated: false)
+                OfficeRobotLiveGlyph(
+                    context: .voice(phase: phase),
+                    size: 20,
+                    cadenceMultiplier: 1.30
+                )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(VoiceHue.status(phase))
             }
-            .widgetURL(URL(string: "almaerp://agent"))
+            .widgetURL(URL(string: "almaerp://office-robot?target=almaerp%3A%2F%2Fagent"))
             .keylineTint(hcol(hue, 0.8, 0.9))
         }
     }

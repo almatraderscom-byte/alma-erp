@@ -260,6 +260,17 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   'get_gbp_reviews',
   'draft_gbp_reply',
   'draft_gbp_post',
+  // edit_storefront_product is what "এই পণ্যের দাম আর বর্ণনা ঠিক করো" needs, and
+  // that lands on the head as one owner-facing sentence. It stages a single card
+  // like draft_seo_fixes above, so keeping it off the head would buy a delegation
+  // hop and nothing else — and the owner would still approve exactly once.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'edit_storefront_product',
+  // update_order is the ERP's first write and it lands on the head as one plain
+  // sentence — "oi order ta shipped kore dao". Same staging shape as
+  // edit_storefront_product above; a delegation hop would buy nothing.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'update_order',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
@@ -331,7 +342,7 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'get_daily_digest', 'manage_work_todos',
   // comms the owner uses daily (WhatsApp + phone-agent program + camera)
   'send_whatsapp', 'get_wa_inbox', 'outbound_phone_call', 'place_agent_call',
-  'call_boss_with_report', 'place_business_call', 'get_outbound_call_status',
+  'call_boss_with_report', 'call_me_in_app', 'place_business_call', 'get_outbound_call_status',
   'get_office_camera_snapshot', 'camera_speak',
   // salah (owner's most sensitive domain — never behind a discovery hop)
   'get_prayer_times', 'get_salah_status', 'mark_salah',

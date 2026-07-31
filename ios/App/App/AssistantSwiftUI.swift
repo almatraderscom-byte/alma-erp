@@ -695,6 +695,56 @@ struct AgentModelsResponse: Decodable {
     let models: [AgentModelInfo]?
 }
 
+/// Keeps every live "who is answering" label inside a small phone-screen budget.
+/// The stream may send a friendly name or a provider/model id; both take this
+/// single path so newly-added models cannot silently reintroduce a long header.
+enum AgentModelShortName {
+    static func display(_ raw: String) -> String {
+        let cleaned = raw
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "OpenRouter", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "Anthropic", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "Google", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "OpenAI", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
+        let lower = cleaned.lowercased()
+        let version = words.first {
+            $0.rangeOfCharacter(from: .decimalDigits) != nil
+                && !$0.lowercased().hasPrefix("or")
+        }
+
+        let compact: String
+        if lower.contains("deepseek") {
+            compact = ["DS", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("gemini") {
+            compact = ["Gemini", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("qwen") {
+            compact = words.first(where: { $0.lowercased().contains("qwen") })
+                ?? ["Qwen", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("sonnet") {
+            compact = ["Sonnet", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("opus") {
+            compact = ["Opus", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("haiku") {
+            compact = ["Haiku", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("gpt") {
+            compact = ["GPT", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("codex") {
+            compact = ["Codex", version].compactMap { $0 }.joined(separator: " ")
+        } else if lower.contains("grok") {
+            compact = ["Grok", version].compactMap { $0 }.joined(separator: " ")
+        } else {
+            compact = cleaned
+        }
+
+        let result = compact.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.count > 14 else { return result }
+        return String(result.prefix(13)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+}
+
 struct AgentFileRef: Codable, Hashable {
     let bucket: String
     let path: String
@@ -2344,14 +2394,19 @@ final class AssistantVM {
 
     // Model pill + picker (web AgentModelSelector parity)
     var modelLabel: String?          // live label from the stream's model_info event
+    /// The answering model as Boss reads it — "DeepSeek V4 Flash", "Grok 4.20".
+    var answeringModelName: String = ""
     var modelId: String?             // nil or "auto" = Auto (router picks per turn)
     var models: [AgentModelInfo] = []
 
     var isAutoModel: Bool { modelId == nil || modelId == "auto" }
     /// What the pill shows: Auto, or the pinned model's label.
     var modelPillLabel: String {
-        if isAutoModel { return modelLabel.map { "Auto · \($0)" } ?? "Auto" }
-        return models.first { $0.id == modelId }?.label ?? modelId ?? "Auto"
+        if isAutoModel {
+            return modelLabel.map { "Auto · \(AgentModelShortName.display($0))" } ?? "Auto"
+        }
+        let raw = models.first { $0.id == modelId }?.label ?? modelId ?? "Auto"
+        return AgentModelShortName.display(raw)
     }
 
     func loadModels() async {
@@ -2387,6 +2442,9 @@ final class AssistantVM {
     var authExpired = false
     var errorToast: String?
     var exportingConversation = false
+    /// Exact approval-card anchor requested by the global Office Robot.
+    /// The screen consumes it only after the target conversation has loaded.
+    var pendingActionScrollId: String?
 
     // Signed image URLs (path → url), resolved lazily per thumbnail
     var signedURLs: [String: URL] = [:]
@@ -2412,9 +2470,14 @@ final class AssistantVM {
         // Cost drill-down asked to open a specific chat before this tab was mounted.
         // Drain it AFTER recovery so it wins over both the last-active pointer and a
         // restored persisted turn (explicit → bypasses the mid-turn guard).
+        let pendingAction = AlmaAgentNav.pendingActionId
         if let pendingConv = AlmaAgentNav.pendingConversationId {
             AlmaAgentNav.pendingConversationId = nil
+            AlmaAgentNav.pendingActionId = nil
             await openConversation(pendingConv, explicit: true)
+        }
+        if let pendingAction, !pendingAction.isEmpty {
+            pendingActionScrollId = pendingAction
         }
         async let drive: Void = loadPlanDrive()
         async let todos: Void = loadDailyAgentTodos()
@@ -2629,9 +2692,14 @@ final class AssistantVM {
         lifecycleTokens.tokens.append(nc.addObserver(forName: .almaOpenAgentConversation,
                                               object: nil, queue: .main) { [weak self] note in
             guard let id = note.userInfo?["conversationId"] as? String, !id.isEmpty else { return }
+            let actionId = note.userInfo?["actionId"] as? String
             Task { @MainActor in
                 AlmaAgentNav.pendingConversationId = nil
+                AlmaAgentNav.pendingActionId = nil
                 await self?.openConversation(id, explicit: true)
+                if let actionId, !actionId.isEmpty {
+                    self?.pendingActionScrollId = actionId
+                }
             }
         })
     }
@@ -3756,7 +3824,11 @@ final class AssistantVM {
         // on-screen resume of the PRIOR chat is dropped so the tap always lands.
         if explicit { recoverableTurn = nil }
         persistCurrentComposerDraft()
-        restoreTick += 1     // screen replays the session-opening awakening
+        // Enter the restore state BEFORE removing the previous timeline. This
+        // makes the session switch one atomic visual handoff: the old reply
+        // wordmark cannot remain behind the loader, and the new-chat hero never
+        // owns an intermediate empty frame.
+        loadingHistory = true
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
         conversationId = id
@@ -3781,7 +3853,8 @@ final class AssistantVM {
         // transaction may re-create its waiting owner intent; it must land in
         // the destination conversation, never briefly in the previous one.
         restoreCurrentComposerDraft()
-        await loadMessages(showSpinner: true)
+        restoreTick += 1     // screen replays the single session-opening loader
+        await loadMessages()
         restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
@@ -5017,8 +5090,14 @@ final class AssistantVM {
                 }
             case .personalMode(let active):
                 personalMode = active
-            case .modelInfo(let label):
+            case .modelInfo(let label, let displayName):
                 if !label.isEmpty { modelLabel = label }
+                // Owner, 2026-07-28: he wants to see WHO answered, every time —
+                // the live row used to name only the three families the old
+                // `variant` knew, so Grok and Gemini turns read as a bare ALMA.
+                if !displayName.isEmpty {
+                    answeringModelName = AgentModelShortName.display(displayName)
+                }
             case .thinkingDelta(let chunk):
                 guard !chunk.isEmpty else { break }
                 if reconnecting { reconnecting = false }   // live content flows again
@@ -8210,6 +8289,7 @@ struct AgentMessageRow: View {
                         AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
                             Task { await vm.approveAction(card.id, approve: approve) }
                         }
+                        .id("action:\(card.id)")
                     }
                     let inlineAskIds = Set(message.blocks.compactMap { b -> String? in
                         if case .askCard(_, let aid) = b { return aid }; return nil
@@ -8232,6 +8312,7 @@ struct AgentMessageRow: View {
                     // Single starburst — bottom-left INSIDE the card while the turn runs.
                     if showWorkingIndicator {
                         AgentThinkingRow(mode: vm.liveMode, pal: pal,
+                                         modelName: vm.answeringModelName,
                                          message: message,
                                          lastThinkingGrowthAt: vm.lastThinkingGrowthAt,
                                          reconnecting: vm.reconnecting,
@@ -10124,6 +10205,7 @@ struct AgentTurnBlocksView: View {
                         AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
                             Task { await vm.approveAction(card.id, approve: approve) }
                         }
+                        .id("action:\(card.id)")
                     }
                 case .askCard(_, let aid):
                     if let card = message.askCards.first(where: { $0.id == aid }) {
@@ -10320,6 +10402,8 @@ struct AgentModelSwitchCardView: View {
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
+    /// The answering model's name (owner, 2026-07-28: "shob model er name nai").
+    var modelName: String = ""
     /// The streaming tail — live token estimate for the status label.
     var message: AgentChatMessage? = nil
     /// Thinking-delta freshness from the VM: quiet thinking ⇒ "almost done".
@@ -10338,6 +10422,13 @@ struct AgentThinkingRow: View {
         HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
             AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            if !modelName.isEmpty {
+                Text("· \(AgentModelShortName.display(modelName))")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
             if reconnecting {
                 Text("· কাজ চলছে — সংযোগ ফিরছে…")
                     .font(.system(size: 12, weight: .medium))
@@ -14373,7 +14464,10 @@ struct AssistantScreen: View {
                     // blanking the viewport before correcting to an older offset.
                     VStack(alignment: .leading, spacing: 0) {
                         if vm.loadingHistory && vm.messages.isEmpty {
-                            AlmaPageLoader()
+                            // AgentAwakeningOverlay is the ONE session loader.
+                            // Keeping the timeline transparent here prevents a
+                            // second loader from appearing underneath it.
+                            Color.clear.frame(height: 1)
                         }
                         // 4.1 — history above the loaded window, on demand. Anchor
                         // is preserved: the previous top row is scrolled back to
@@ -14406,7 +14500,11 @@ struct AssistantScreen: View {
                             .buttonStyle(AlmaAgentPressStyle())
                             .padding(.bottom, 6)
                         }
-                        if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
+                        // The hero belongs only to a genuinely new chat. An
+                        // existing conversation is temporarily empty while its
+                        // history loads and must never flash the home Robot+ALMA.
+                        if vm.conversationId == nil
+                            && !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
                         }
                         ForEach(vm.messages) { msg in
@@ -14562,6 +14660,13 @@ struct AssistantScreen: View {
                     withTransaction(tx) { proxy.scrollTo(target, anchor: .center) }
                     timelineScrollTarget = nil
                 }
+                .onChange(of: vm.pendingActionScrollId) { _, actionId in
+                    guard let actionId, !actionId.isEmpty else { return }
+                    withAnimation(.easeOut(duration: 0.32)) {
+                        proxy.scrollTo("action:\(actionId)", anchor: .center)
+                    }
+                    vm.pendingActionScrollId = nil
+                }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
@@ -14674,6 +14779,11 @@ struct AssistantScreen: View {
                 rawEnv[k] == "1" || args.contains("\(k)=1")
             }
             let env = rawEnv
+            #if DEBUG
+            if let demoModel = rawEnv["ALMA_MODEL_LABEL_DEMO"], !demoModel.isEmpty {
+                vm.answeringModelName = AgentModelShortName.display(demoModel)
+            }
+            #endif
             if argFlag("ALMA_ASSISTANT_VOICE") {
                 Task { try? await Task.sleep(nanoseconds: 2_500_000_000); vm.showVoice = true }
             }

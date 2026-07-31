@@ -271,6 +271,14 @@ async function runApprove(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         businessId: businessId as any,
         conversationId,
+        // PM-5: restore the turn this delegation was staged from — its mode and
+        // its read-only authorization still bind the worker, even though the run
+        // happens later and from a different entry point. The origin is
+        // overridden last: this run exists because Boss pressed Approve.
+        toolContext: {
+          ...((payload.parentToolContext as Record<string, unknown> | undefined) ?? {}),
+          instructionOrigin: 'owner_direct',
+        },
       })
       const note = result.success
         ? `🤝 ${result.roleLabel} (${result.modelLabel}) সম্পন্ন করেছে:\n\n${result.summary}`
@@ -2058,6 +2066,249 @@ async function runApprove(
     return Response.json({ success: true, ...result })
   }
 
+  if (action.type === 'website_edit_product') {
+    const {
+      productId,
+      fields,
+      imageAlts,
+      publishTo,
+      featuredTo,
+      expected,
+    } = payload as {
+      productId: string
+      fields?: Record<string, unknown>
+      imageAlts?: Array<{ url: string; alt: string }>
+      publishTo?: boolean | null
+      featuredTo?: boolean | null
+      expected?: Record<string, unknown>
+    }
+
+    const {
+      updateWebsiteProductFields,
+      updateWebsiteProductImageAlts,
+      publishWebsiteProduct,
+      unpublishWebsiteProduct,
+      setWebsiteProductFeatured,
+    } = await import('@/lib/website/write.service')
+    const { getWebsiteProduct } = await import('@/lib/website/catalog.service')
+
+    const applied: string[] = []
+    const failures: string[] = []
+
+    // Order is a safety property. Hiding comes FIRST so a half-finished page is
+    // never public, and publishing comes LAST so nothing goes live before its
+    // copy and price landed. A partial failure in between leaves a product that
+    // is either still hidden or still showing its old, complete self.
+    if (publishTo === false) {
+      const res = await unpublishWebsiteProduct(String(productId))
+      if (res.ok) applied.push('unpublished')
+      else failures.push(`unpublish: ${res.error}`)
+    }
+
+    if (fields && Object.keys(fields).length) {
+      const res = await updateWebsiteProductFields(String(productId), fields)
+      if (res.ok) applied.push(...Object.keys(fields))
+      else failures.push(`fields: ${res.error}`)
+    }
+
+    if (Array.isArray(imageAlts) && imageAlts.length) {
+      const res = await updateWebsiteProductImageAlts(String(productId), imageAlts)
+      if (res.ok) applied.push(`imageAlts×${res.updated}`)
+      else failures.push(`imageAlts: ${res.error}`)
+    }
+
+    if (featuredTo != null) {
+      const res = await setWebsiteProductFeatured(String(productId), featuredTo === true)
+      if (res.ok) applied.push(`featured=${featuredTo}`)
+      else failures.push(`featured: ${res.error}`)
+    }
+
+    if (publishTo === true) {
+      const res = await publishWebsiteProduct(String(productId))
+      if (res.ok) applied.push('published')
+      else failures.push(`publish: ${res.error}`)
+    }
+
+    // The write reporting success is not the evidence. Read the row back and
+    // compare it to what the card promised, field by field.
+    const live = await getWebsiteProduct(String(productId))
+    const liveValue = (field: string): unknown => {
+      switch (field) {
+        case 'title': return live?.name ?? null
+        case 'shortDescription': return live?.shortDescription ?? null
+        case 'description': return live?.description ?? null
+        case 'priceBdt': return live?.price ?? null
+        case 'category': return live?.category ?? null
+        case 'published': return live?.published ?? null
+        case 'featured': return live?.featured ?? null
+        default: return null
+      }
+    }
+
+    const verified: Array<{ field: string; expected: unknown; live: unknown; ok: boolean }> = []
+    for (const [field, want] of Object.entries(expected ?? {})) {
+      const got = liveValue(field)
+      verified.push({ field, expected: want, live: got, ok: got === want })
+    }
+    const altsLive = (imageAlts ?? []).filter((a) => {
+      const img = live?.images.find((i) => i.url === a.url)
+      return img?.alt === a.alt
+    }).length
+    if (Array.isArray(imageAlts) && imageAlts.length) {
+      verified.push({
+        field: 'imageAlts',
+        expected: imageAlts.length,
+        live: altsLive,
+        ok: altsLive === imageAlts.length,
+      })
+    }
+
+    const notVerified = verified.filter((v) => !v.ok).map((v) => v.field)
+    const allGood = failures.length === 0 && notVerified.length === 0
+    const result = {
+      ok: allGood,
+      productId: String(productId),
+      slug: live?.slug ?? String(productId),
+      applied,
+      failures,
+      verified,
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: allGood ? 'executed' : 'failed', resolvedAt: new Date(), result },
+    })
+
+    const verifiedLines = verified
+      .map((v) => `${v.ok ? '✅' : '❌'} ${v.field}: ${String(v.live ?? '(খালি)').slice(0, 60)}`)
+      .join('\n')
+    const note = allGood
+      ? `✅ পণ্য এডিট হয়েছে — /products/${result.slug}\nসাইট থেকে পড়ে মিলিয়ে দেখা হলো:\n${verifiedLines}\n⚠️ ISR/cache — live page-এ দেখতে কিছুক্ষণ লাগতে পারে।`
+      : `⚠️ পণ্য এডিট আংশিক — /products/${result.slug}\n${verifiedLines}`
+        + (failures.length ? `\nব্যর্থ: ${failures.join(' · ')}` : '')
+        + `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`
+    await appendConversationNote(db, action, note)
+
+    return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {
+      status: allGood ? 200 : 502,
+    })
+  }
+
+  if (action.type === 'erp_order_update') {
+    const { orderId, status, fields } = payload as {
+      orderId: string
+      status?: string | null
+      fields?: Record<string, string>
+      changes?: Record<string, { before: unknown; after: unknown }>
+    }
+    const reason = (payload as { reason?: string | null }).reason ?? null
+
+    // One approval, one execution. Without the claim a double tap (or a client
+    // retry) runs every write twice and appends two completion notes.
+    const claimedOrder = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimedOrder.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { updateOrderTextFieldsInPostgres } = await import('@/lib/lifestyle/write')
+    const { applyOrderStatusChange, normalizeOrderStatus: normalizeOrderStatusForCheck } =
+      await import('@/lib/lifestyle/order-status-workflow')
+
+    const applied: string[] = []
+    const failures: string[] = []
+
+    // Courier, tracking and the note FIRST, status last. A parcel that is marked
+    // shipped before its tracking id exists is one a customer can be told about
+    // and then not found; the reverse order leaves a tracking id on an order that
+    // has not moved yet, which is harmless and self-correcting. (It also means
+    // the courier SMS the status change queues carries the tracking id.)
+    const textFields = Object.fromEntries(
+      Object.entries(fields ?? {}).filter(([k]) => ['courier', 'trackingId', 'notes'].includes(k)),
+    ) as { courier?: string; trackingId?: string; notes?: string }
+    if (Object.keys(textFields).length) {
+      // A text-only path on purpose: the edit-form helper recalculates sellPrice
+      // and profit on every write, so adding a tracking id would rewrite the
+      // order's financial result.
+      const res = await updateOrderTextFieldsInPostgres(String(orderId), textFields)
+      if ('error' in res) failures.push(`fields: ${res.error}`)
+      else applied.push(...Object.keys(textFields))
+    }
+
+    if (status) {
+      // Through the SHARED workflow, never the low-level helper: a status change
+      // also creates or reverses the handler's commission, queues the courier
+      // SMS on Shipped, notifies the role matrix and the handler, and logs.
+      const res = await applyOrderStatusChange({
+        id: String(orderId),
+        status,
+        reason: reason ?? '',
+        actorUserId: 'owner-approval',
+      })
+      if (!res.ok) failures.push(`status: ${res.error}`)
+      else applied.push('status')
+    }
+
+    // The write reporting success is not the evidence — read the row back.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const live = await (db as any).lifestyleOrder.findUnique({ where: { id: String(orderId) } })
+    const liveValue = (field: string): unknown => {
+      switch (field) {
+        case 'status': return live?.status ?? null
+        case 'courier': return live?.courier ?? null
+        case 'trackingId': return live?.trackingId ?? null
+        case 'notes': return live?.notes ?? null
+        default: return null
+      }
+    }
+    const wanted: Record<string, unknown> = { ...(fields ?? {}) }
+    if (status) wanted.status = status
+
+    const verified = Object.entries(wanted).map(([field, want]) => {
+      const got = liveValue(field)
+      const same = field === 'status'
+        // The ERP has one spelling per status; both sides go through the same
+        // normaliser so "processing" and "Packed" are not read as a mismatch.
+        ? normalizeOrderStatusForCheck(String(got ?? '')) === normalizeOrderStatusForCheck(String(want))
+        : String(got ?? '').trim() === String(want).trim()
+      return { field, expected: want, live: got, ok: same }
+    })
+
+    const allGood = failures.length === 0 && verified.every((v) => v.ok)
+    const result = {
+      ok: allGood,
+      orderId: String(orderId),
+      invoiceNum: live?.invoiceNum ?? null,
+      applied,
+      failures,
+      verified,
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: allGood ? 'executed' : 'failed', resolvedAt: new Date(), result },
+    })
+
+    const lines = verified
+      .map((v) => `${v.ok ? '✅' : '❌'} ${v.field}: ${String(v.live ?? '(খালি)').slice(0, 60)}`)
+      .join('\n')
+    await appendConversationNote(
+      db,
+      action,
+      allGood
+        ? `✅ অর্ডার আপডেট হয়েছে — ${live?.invoiceNum || orderId}\nERP থেকে পড়ে মিলিয়ে দেখা হলো:\n${lines}`
+        : `⚠️ অর্ডার আপডেট আংশিক — ${live?.invoiceNum || orderId}\n${lines}`
+          + (failures.length ? `\nব্যর্থ: ${failures.join(' · ')}` : '')
+          + `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`,
+    )
+
+    return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {
+      status: allGood ? 200 : 502,
+    })
+  }
+
   if (action.type === 'auto_fix') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },
@@ -2477,6 +2728,10 @@ export async function POST(
     // hiccup must never surface as an approval failure.
     console.warn('[approve] continuation enqueue failed (approval unaffected):', err instanceof Error ? err.message : err)
     if (progress?.turnId) await finalizeTurnIfRunning(progress.turnId, 'done')
+  }
+  if (res.status >= 200 && res.status < 300) {
+    const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
+    await pushCurrentPulseLiveActivity()
   }
   return res
 }

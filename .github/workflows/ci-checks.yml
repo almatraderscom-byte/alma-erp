@@ -13,7 +13,43 @@ on:
   pull_request:
 
 jobs:
+  # Docs-only fast path (owner rule 2026-07-30): a PR that touches nothing but
+  # markdown/docs cannot break types or lint — skip the 8-minute install+tsc
+  # and let the required summary pass in seconds. ANY non-docs file (code,
+  # config, workflows, assets) disables the fast path.
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          # merge-base (...) so base-branch commits never defeat the fast path,
+          # and --no-renames so a code→docs rename still shows the code side.
+          CHANGED=$(git diff --no-renames --name-only "$BASE...$HEAD")
+          echo "$CHANGED"
+          DOCS_ONLY=true
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              *.md|docs/*|*/docs/*) ;;
+              *) DOCS_ONLY=false; break ;;
+            esac
+          done <<< "$CHANGED"
+          # An empty diff is NOT docs-only — fail safe into the full checks.
+          [ -n "$CHANGED" ] || DOCS_ONLY=false
+          echo "docs_only=$DOCS_ONLY" >> "$GITHUB_OUTPUT"
+
   checks:
+    needs: [classify]
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,3 +64,27 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npx next lint --max-warnings=9999
+
+  # Branch protection requires the status context "CI Checks" — the workflow
+  # NAME is not a context, so this summary job reports it explicitly.
+  ci-checks:
+    name: CI Checks
+    needs: [classify, checks]
+    # always() + explicit result check: a SKIPPED required job reads as
+    # "Success" to branch protection (review-bot P1) — run unconditionally.
+    # Pass only when the real checks succeeded OR they were skipped BECAUSE
+    # the classifier proved the PR is docs-only.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [ "${{ needs.classify.outputs.docs_only }}" = "true" ] \
+             && [ "${{ needs.checks.result }}" = "skipped" ]; then
+            echo "docs-only PR — checks skipped by design"
+            exit 0
+          fi
+          test "${{ needs.checks.result }}" = "success" || {
+            echo "checks job result: ${{ needs.checks.result }}" >&2
+            exit 1
+          }
+          echo "all checks green"

@@ -9,7 +9,7 @@
  * back untouched, or the repair would be worse than the defect.
  */
 import { describe, expect, it } from 'vitest'
-import { dropRepeatedBlocks, stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
 
 describe('tool-call markup never reaches the owner', () => {
   it('removes the exact leak from his screen', () => {
@@ -161,5 +161,98 @@ describe('the same answer twice — third sighting', () => {
     const a = 'বস, আজকের সেল ৳১৫,১৫৮ — সাতটা অর্ডার, তার মধ্যে তিনটা delivered হয়ে গেছে।'
     const b = 'স্টকে পাঞ্জাবি মাত্র ছয়টা বাকি — boost চললে দুই দিনেই শেষ হয়ে যাবে বস।'
     expect(dropRepeatedBlocks(`${a}\n\n${b}`)).toBe(`${a}\n\n${b}`)
+  })
+})
+
+describe('the FIFTH shape — live skill test, 2026-07-28', () => {
+  it('strips {"name": …, "arguments": …}, which no pattern covered at all', () => {
+    // Verbatim from the campaign turn: four of these in a row, each in its own
+    // fenced block the UI labelled "TOOL".
+    const raw = [
+      'বস, একটা meta campaign চালু করতে বলছেন — alma-meta-campaign-launch skill ধরে এগোচ্ছি।',
+      '',
+      '```tool',
+      '{"name": "marketing_report", "arguments": {"period": "last_7_days"}}',
+      '```',
+      '```tool',
+      '{"name": "list_audiences", "arguments": {}}',
+      '```',
+      '',
+      'এবার প্ল্যান তৈরি করছি।',
+    ].join('\n')
+    const out = stripToolCallMarkup(raw)
+
+    expect(out).not.toContain('marketing_report')
+    expect(out).not.toContain('arguments')
+    // …and the fence goes with it, so no empty card is left behind.
+    expect(out).not.toContain('```')
+    expect(out).toContain('meta campaign চালু করতে বলছেন')
+    expect(out).toContain('এবার প্ল্যান তৈরি করছি')
+  })
+
+  it('strips a bare <parameter …> — the pattern existed, the GUARD blocked it', () => {
+    // The customer-support turn. `<parameter>` was already in STRAY_MARKERS, but
+    // the cheap guard did not list it, so the function returned untouched.
+    const raw = 'বস, ইনবক্স স্ক্যান করছি।\n\n<parameter name="limit">20</parameter>'
+    const out = stripToolCallMarkup(raw)
+
+    expect(out).not.toContain('parameter')
+    expect(out).not.toContain('limit')
+    expect(out).toContain('ইনবক্স স্ক্যান করছি')
+  })
+
+  it('leaves JSON he actually asked for alone', () => {
+    // The guard for this shape is the tool-name/arguments PAIR, so ordinary
+    // JSON — even JSON with a `name` field — survives.
+    const json = 'এই যে বস: {"name": "Panjabi Blue", "price": 1200, "stock": 8}'
+    expect(stripToolCallMarkup(json)).toBe(json)
+  })
+
+  it('leaves a normal code block alone — only tool-labelled fences go', () => {
+    const md = 'এই কোডটা:\n\n```json\n{"ok": true}\n```\n\nচালাও'
+    expect(stripToolCallMarkup(md)).toBe(md)
+  })
+})
+
+describe('the STREAMING case — his screen, live, 2026-07-28', () => {
+  const run = (deltas: string[]) => {
+    const f = createMarkupStreamFilter()
+    return deltas.map((d) => f.push(d)).join('') + f.flush()
+  }
+
+  it('never shows markup that arrives split across deltas', () => {
+    // How it actually came off the wire: the tag spans four deltas.
+    const out = run(['ইনবক্স দেখছি। ', '<param', 'eter name="fullScan"', '>true</parameter>', ' এখন খসড়া।'])
+
+    expect(out).not.toContain('parameter')
+    expect(out).not.toContain('fullScan')
+    expect(out).toContain('ইনবক্স দেখছি')
+    expect(out).toContain('এখন খসড়া')
+  })
+
+  it('holds the repeated spill and shows none of it', () => {
+    // The live failure was hundreds of these in a row.
+    const spam = Array.from({ length: 50 }, (_, i) => `<parameter name="fullScanAll${i}">true</parameter>`)
+    const out = run(['যাচাই করছি।', ...spam])
+
+    expect(out).not.toContain('parameter')
+    expect(out.trim()).toBe('যাচাই করছি।')
+  })
+
+  it('does not stall ordinary reasoning that contains a "<"', () => {
+    // A held tail that never becomes markup must be released, not swallowed.
+    const filler = 'x'.repeat(400)
+    const out = run(['স্টক ', '< ', '১০ হলে reorder করতে হবে। ', filler])
+
+    expect(out).toContain('স্টক')
+    expect(out).toContain('reorder করতে হবে')
+    expect(out).toContain(filler)
+  })
+
+  it('flush releases whatever was still held', () => {
+    const f = createMarkupStreamFilter()
+    f.push('বস, এখন ')
+    f.push('<')
+    expect(f.flush()).toBe('<')
   })
 })

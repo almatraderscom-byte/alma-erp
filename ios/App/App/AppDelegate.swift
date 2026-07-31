@@ -19,6 +19,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
         #if DEBUG
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
+        if #available(iOS 17.0, *) {
+            FloatingChatHead.shared.debugRunInteractionSelfTestIfRequested()
+        }
         runCacheSelfTestIfRequested()
         if #available(iOS 17.0, *) { runCallResetCrashReproIfRequested() }
         #endif
@@ -113,13 +116,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
                         let _: OkResp = try await AlmaAPI.shared.send(
                             "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
                     }
-                    UserDefaults.standard.removeObject(forKey: "alma.pulse.lastNativeSyncAt")
-                    if #available(iOS 16.1, *) { PulseNativeSync.syncNow(reason: "intent") }
+                    await MainActor.run {
+                        UserDefaults.standard.removeObject(
+                            forKey: "alma.pulse.lastNativeSyncAt")
+                        PulseNativeSync.syncNow(reason: "intent")
+                    }
                     return true
                 } catch {
-                    if #available(iOS 16.1, *) {
-                        LiveActivityBridgePlugin.breadcrumb("intent_failed")
-                    }
+                    LiveActivityBridgePlugin.breadcrumb("intent_failed")
                     return false
                 }
             }
@@ -239,6 +243,83 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
         // .almaOpenPath and let AlmaTabBarController.routeNotificationTap decide
         // (native / tab / allowlisted web / fail-loud) via AlmaNavCoordinator.
         if url.scheme == "almaerp" {
+            // Dynamic Island Robot taps use a dedicated host so the app can
+            // finish the system-owned launch with its own small-to-large Robot
+            // arrival. The nested target stays restricted to this app's custom
+            // scheme; an invalid or external target safely falls back to Agent.
+            if url.host == "office-robot" {
+                let components = URLComponents(
+                    url: url,
+                    resolvingAgainstBaseURL: false
+                )
+                let targetValue = components?.queryItems?
+                    .first(where: { $0.name == "target" })?.value
+                let targetURL = targetValue.flatMap(URL.init(string:))
+                var path = "/agent"
+                if let targetURL, targetURL.scheme == "almaerp" {
+                    path = "/" + (targetURL.host ?? "") + targetURL.path
+                    if path.count > 1, path.hasSuffix("/") {
+                        path = String(path.dropLast())
+                    }
+                    if let query = targetURL.query, !query.isEmpty {
+                        path += "?\(query)"
+                    }
+                }
+
+                AlmaPerfLog.event("route.dynamicIslandRobot", path)
+                if path.hasPrefix("/agent"),
+                   let conversationId = targetURL.flatMap({
+                       URLComponents(url: $0, resolvingAgainstBaseURL: false)?
+                           .queryItems?
+                           .first(where: { $0.name == "conversationId" })?
+                           .value
+                   }),
+                   !conversationId.isEmpty {
+                    AlmaAgentNav.pendingConversationId = conversationId
+                    NotificationCenter.default.post(
+                        name: .almaOpenAgentConversation,
+                        object: nil,
+                        userInfo: ["conversationId": conversationId]
+                    )
+                    path = "/agent"
+                }
+                if #available(iOS 17.0, *) {
+                    Task { @MainActor in
+                        FloatingChatHead.shared.requestIslandEntryTransition()
+                    }
+                }
+                NotificationCenter.default.post(
+                    name: .almaOpenPath,
+                    object: nil,
+                    userInfo: ["path": path]
+                )
+                return true
+            }
+
+            #if DEBUG
+            // Sim harness (plan C2): VoIP pushes can't reach the simulator, so
+            // almaerp://agent-call-test?id=<uuid> drives the same incoming-ring
+            // path CallKit takes on a real device.
+            if url.host == "agent-call-test" {
+                let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                let q = { (n: String) in comps?.queryItems?.first(where: { $0.name == n })?.value ?? "" }
+                let id = q("id")
+                if #available(iOS 17.0, *), !id.isEmpty {
+                    if q("answer") == "1" {
+                        // Skip CallKit (sim can't render its UI) — drive the answered
+                        // hand-off directly: call screen + Gemini session + brief.
+                        Task { @MainActor in
+                            AgentCallController.shared.start(
+                                callId: id, purpose: q("purpose"), callKitManaged: false)
+                        }
+                    } else {
+                        CallKitVoIP.shared.debugSimulateAgentRing(callId: id)
+                    }
+                }
+                return true
+            }
+            #endif
+
             #if DEBUG
             // Headless voice-conversation test hook (simulator only): inject a
             // "spoken" user turn into a live AI call. simctl openurl

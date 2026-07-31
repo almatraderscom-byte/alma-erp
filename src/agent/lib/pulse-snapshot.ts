@@ -262,7 +262,7 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
   ].map((q) => q.catch(() => [{ n: 0 }]))) as Array<Array<{ n: number }>>
   const erpApprovalCount = erpPendingCounts.reduce((sum, rows) => sum + (rows[0]?.n ?? 0), 0)
 
-  const [ordersToday, latest, pendingRows, taskRows, orderStatusRows, mismatch] = await Promise.all([
+  const [ordersToday, latest, pendingRows, taskRows, taskItems, orderStatusRows, mismatch] = await Promise.all([
     prisma.lifestyleOrder.count({ where: todayWhere }),
     prisma.lifestyleOrder.findFirst({
       where: todayWhere,
@@ -282,6 +282,26 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
       by: ['status'],
       where: { businessId: BUSINESS_ID, status: { in: ['open', 'running'] } },
       _count: { _all: true },
+    }),
+    // The count alone produced an unexplained "tasks:pending" aggregate in the
+    // Island. Keep the aggregate for the compact slot, but also carry the three
+    // newest real tasks so expanded/lock-screen views can explain them line by
+    // line and deep-link to the correct Agent conversation.
+    prisma.agentOpenTask.findMany({
+      where: { businessId: BUSINESS_ID, status: { in: ['open', 'running'] } },
+      orderBy: [
+        { updatedAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: 3,
+      select: {
+        id: true,
+        conversationId: true,
+        title: true,
+        status: true,
+        resumeNote: true,
+        updatedAt: true,
+      },
     }),
     // All order statuses at once (uses @@index([businessId, status])); we fold
     // case in JS because the DB holds mixed-case variants of the same status.
@@ -376,7 +396,17 @@ export async function buildPulseSnapshot(now: Date = new Date()): Promise<PulseS
       : copy.subtitle
 
   const items = topPulseItems(
-    buildItems({ approval, urgentAlert, runningOrderCount, advancedOrderCount, waitingOrderCount, orderProgress, pendingTaskCount, now }),
+    buildItems({
+      approval,
+      urgentAlert,
+      runningOrderCount,
+      advancedOrderCount,
+      waitingOrderCount,
+      orderProgress,
+      pendingTaskCount,
+      agentTasks: taskItems,
+      now,
+    }),
   )
 
   return {
@@ -432,6 +462,14 @@ function buildItems(a: {
   waitingOrderCount: number
   orderProgress?: number
   pendingTaskCount: number
+  agentTasks: Array<{
+    id: string
+    conversationId: string | null
+    title: string
+    status: string
+    resumeNote: string
+    updatedAt: Date
+  }>
   now: Date
 }): PulseItem[] {
   const items: PulseItem[] = []
@@ -478,7 +516,23 @@ function buildItems(a: {
     })
   }
 
-  if (a.pendingTaskCount > 0) {
+  for (const task of a.agentTasks) {
+    const detail = task.resumeNote.replace(/\s+/g, ' ').trim()
+    items.push({
+      id: `agent-task:${task.id}`,
+      kind: 'pendingTask',
+      title: task.title,
+      subtitle: detail.length > 90 ? `${detail.slice(0, 89).trimEnd()}…` : detail,
+      valueText: task.status === 'running' ? 'চলছে' : 'বাকি',
+      severity: task.status === 'running' ? 'attention' : 'normal',
+      createdAt: task.updatedAt.toISOString(),
+      link: task.conversationId
+        ? `almaerp://agent?conversationId=${encodeURIComponent(task.conversationId)}`
+        : LINK_AGENT_HUB,
+    })
+  }
+
+  if (a.pendingTaskCount > 0 && a.agentTasks.length === 0) {
     items.push({
       id: 'tasks:pending',
       kind: 'pendingTask',

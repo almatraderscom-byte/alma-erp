@@ -21,6 +21,13 @@ export default function AgentSalahTimesSettings() {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [ok, setOk] = useState(false)
+  const [abroadOff, setAbroadOff] = useState<boolean | null>(null)
+  const [abroadSaving, setAbroadSaving] = useState(false)
+  const [abroadErr, setAbroadErr] = useState<string | null>(null)
+  const [locLabel, setLocLabel] = useState<string | null>(null)
+  const [locOffset, setLocOffset] = useState<number | null>(null)
+  const [locBusy, setLocBusy] = useState(false)
+  const [locMsg, setLocMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -34,9 +41,88 @@ export default function AgentSalahTimesSettings() {
     }
   }, [])
 
+  const loadAbroad = useCallback(async () => {
+    try {
+      const res = await fetch('/api/assistant/salah/abroad-calls', { cache: 'no-store' })
+      if (!res.ok) throw new Error('load failed')
+      const data = await res.json() as { off: boolean }
+      setAbroadOff(data.off)
+      setAbroadErr(null)
+    } catch {
+      setAbroadErr('টগল লোড হয়নি')
+    }
+  }, [])
+
+  async function toggleAbroad() {
+    if (abroadOff === null || abroadSaving) return
+    const next = !abroadOff
+    setAbroadSaving(true)
+    setAbroadErr(null)
+    try {
+      const res = await fetch('/api/assistant/salah/abroad-calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ off: next }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      const data = await res.json() as { off: boolean }
+      setAbroadOff(data.off)
+    } catch {
+      setAbroadErr('সেভ হয়নি — আবার চেষ্টা করুন')
+    } finally {
+      setAbroadSaving(false)
+    }
+  }
+
+  const loadLocation = useCallback(async () => {
+    try {
+      const res = await fetch('/api/assistant/salah/location', { cache: 'no-store' })
+      if (!res.ok) throw new Error('load failed')
+      const data = await res.json() as { offsetMin: number; label: string }
+      setLocOffset(data.offsetMin)
+      setLocLabel(data.label)
+    } catch {
+      setLocMsg('লোকেশন লোড হয়নি')
+    }
+  }, [])
+
+  // Presets: label · UTC offset (min) · AlAdhan city/country/method.
+  const LOCATION_PRESETS = [
+    { label: 'বাংলাদেশ (ঢাকা)', offsetMin: 360, city: 'Dhaka', country: 'Bangladesh', method: 1 },
+    { label: 'UAE (দুবাই)', offsetMin: 240, city: 'Dubai', country: 'United Arab Emirates', method: 8 },
+  ] as const
+
+  async function applyLocation(preset: (typeof LOCATION_PRESETS)[number]) {
+    setLocBusy(true)
+    setLocMsg(null)
+    try {
+      const res = await fetch('/api/assistant/salah/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          offsetMin: preset.offsetMin,
+          label: preset.label,
+          autofill: { city: preset.city, country: preset.country, method: preset.method },
+        }),
+      })
+      const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; config?: SalahTimeConfig }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'save failed')
+      setLocOffset(preset.offsetMin)
+      setLocLabel(preset.label)
+      if (data.config) setCfg(data.config)
+      setLocMsg(`✓ ${preset.label} — নামাজের সময় অটো বসেছে`)
+    } catch (e) {
+      setLocMsg(e instanceof Error ? e.message : 'সেভ হয়নি')
+    } finally {
+      setLocBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (open && !cfg) void load()
-  }, [open, cfg, load])
+    if (open && abroadOff === null) void loadAbroad()
+    if (open && locOffset === null) void loadLocation()
+  }, [open, cfg, load, abroadOff, loadAbroad, locOffset, loadLocation])
 
   function patch(waqt: WaqtKey, field: keyof SalahTimeConfig[WaqtKey], value: string) {
     if (!cfg) return
@@ -88,8 +174,66 @@ export default function AgentSalahTimesSettings() {
 
       {open && (
         <div className="border-t border-border-subtle px-4 py-4">
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-card/60 px-3 py-2.5">
+            <div>
+              <p className="text-xs font-semibold text-cream">🌍 দেশের বাইরে আছি — ফোন কলে দেবে না</p>
+              <p className="mt-0.5 text-[10px] text-muted">
+                চালু থাকলে এজেন্ট BD নম্বরে কোনো কল দেবে না (নামাজের কলসহ)। Telegram/notification আগের মতোই আসবে।
+              </p>
+              {abroadErr && <p className="mt-0.5 text-[10px] txt-neg">{abroadErr}</p>}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={abroadOff === true}
+              aria-label="দেশের বাইরে — ফোন কল বন্ধ"
+              onClick={() => void toggleAbroad()}
+              disabled={abroadOff === null || abroadSaving}
+              className={cn(
+                'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+                abroadOff ? 'bg-[#E07A5F]' : 'bg-white/10',
+                (abroadOff === null || abroadSaving) && 'opacity-50',
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                  abroadOff ? 'left-[22px]' : 'left-0.5',
+                )}
+              />
+            </button>
+          </div>
+
+          <div className="mb-4 rounded-lg border border-border-subtle bg-card/60 px-3 py-2.5">
+            <p className="text-xs font-semibold text-cream">📍 লোকেশন: <span className="text-[#E07A5F]">{locLabel ?? '…'}</span></p>
+            <p className="mt-0.5 text-[10px] text-muted">
+              যে দেশে আছেন সেটা বেছে নিন — নামাজের সময়, রিমাইন্ডার ও কল-শিডিউল সব সেই লোকেশনের ঘড়িতে চলবে।
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {LOCATION_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => void applyLocation(p)}
+                  disabled={locBusy}
+                  className={cn(
+                    'rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all',
+                    locOffset === p.offsetMin
+                      ? 'border-[#E07A5F]/40 bg-[#E07A5F]/15 text-[#E07A5F]'
+                      : 'border-border bg-card/80 text-cream hover:border-[#E07A5F]/30',
+                    locBusy && 'opacity-50',
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+              {locBusy && <span className="text-[10px] text-muted">সময় আনা হচ্ছে…</span>}
+            </div>
+            {locMsg && <p className="mt-1.5 text-[10px] text-muted">{locMsg}</p>}
+          </div>
+
           <p className="mb-4 text-[10px] text-muted">
-            আযান · জামাত · ওয়াক্ত শেষ — HH:MM (২৪ঘ) Dhaka। জুম্মায় যোহর আযান ১:০০ কোডে থাকে।
+            আযান · জামাত · ওয়াক্ত শেষ — HH:MM (২৪ঘ), বেছে নেওয়া লোকেশনের ঘড়িতে। জুম্মায় যোহর আযান ১:০০ কোডে থাকে।
           </p>
 
           {!cfg ? (

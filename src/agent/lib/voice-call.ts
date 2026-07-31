@@ -389,6 +389,20 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
   const effectiveCallType: 'owner' | 'staff' | 'contact' =
     isOwnerNumber(toNumber) ? 'owner' : (input.callType ?? 'contact')
 
+  // Owner-abroad switch (salah settings card): his BD number is unreachable, so
+  // owner-destined calls on every channel (PSTN/WhatsApp/SIP) are refused with a
+  // reason the head can relay. Staff/contact calls are unaffected.
+  if (effectiveCallType === 'owner') {
+    const { isOwnerAbroadCallsOff } = await import('@/lib/owner-abroad')
+    if (await isOwnerAbroadCallsOff()) {
+      return {
+        ok: false,
+        error:
+          'Boss এখন দেশের বাইরে — সেটিংসে "দেশের বাইরে" টগল চালু আছে, তাই BD নম্বরে কল দেওয়া হয়নি। Telegram/notification-এ বার্তা পাঠান।',
+      }
+    }
+  }
+
   // Pre-record the row so a webhook that races the response still has a target.
   const record = await db.agentVoiceCall.create({
     data: {

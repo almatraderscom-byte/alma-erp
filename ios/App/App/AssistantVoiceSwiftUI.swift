@@ -145,6 +145,44 @@ final class AlmaVoiceEngine {
     var speakerOn = true
     private(set) var callStartedAt: Date?
 
+    // ── Agent → owner in-app call (plan C2) ──
+    // Set by the CallKit answer hand-off BEFORE begin(). On live connect the brief
+    // is sent as the opening STATUS_NOTE so the agent SPEAKS FIRST with the reason
+    // it called; on end() the CallKit system call is closed alongside the session.
+    var activeAgentCallId: String?
+    var pendingAgentCallBrief: String?
+    private var agentBriefSent = false
+
+    /// Agent call: CallKit owns the audio session, so the live session must not
+    /// configure/activate it itself (build 89: audio never started).
+    var callKitManaged = false {
+        didSet { live.callKitOwnsAudioSession = callKitManaged }
+    }
+
+    /// CXProviderDelegate didActivate → hand the activated session to the live
+    /// engine (starts, or retries, capture/playback).
+    func callKitAudioActivated() {
+        live.callKitAudioActivated()
+    }
+
+    /// Brief may arrive AFTER the live socket connected (the CallKit answer never
+    /// waits on the network). Send it as the opening note either way, once.
+    func deliverAgentBrief(_ brief: String) {
+        guard activeAgentCallId != nil, !agentBriefSent, !brief.isEmpty else { return }
+        if liveActive {
+            agentBriefSent = true
+            sendAgentBriefNote(brief)
+        } else {
+            pendingAgentCallBrief = brief
+        }
+    }
+
+    private func sendAgentBriefNote(_ brief: String) {
+        live.sendTextTurn(
+            "STATUS_NOTE: তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
+            "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+    }
+
     struct Card: Identifiable, Equatable {
         enum Kind { case tool, approval, ask, modelSwitch }
         let id: String
@@ -319,7 +357,13 @@ final class AlmaVoiceEngine {
         // a second socket here would duplicate audio and lose the live context.
         guard callConnection == .idle else { return }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
+        agentBriefSent = false
         closed = false
+        // A hang-up left half-scheduled on the previous call must not reject
+        // the next one's end request (Codex P2 round 6 — the console reuses
+        // this engine instance across calls).
+        modelEndPending = false
+        lastHangupContextAt = .distantPast
         callConnection = .connecting
         connectionFailureText = ""
         liveConnectAttempt = 0
@@ -419,6 +463,15 @@ final class AlmaVoiceEngine {
             try? await Task.sleep(nanoseconds: 12_000_000_000)
             guard !Task.isCancelled, !self.closed, generation == self.connectionGeneration,
                   !self.liveActive else { return }
+            // Socket setup DONE but audio still waiting on a late CallKit
+            // didActivate: the ~10s audio-retry ladder can outlive this 12s
+            // watchdog (Codex P2) — grant it one more full window before
+            // declaring the call dead.
+            if self.live.isAwaitingCallKitAudio {
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                guard !Task.isCancelled, !self.closed, generation == self.connectionGeneration,
+                      !self.liveActive else { return }
+            }
             self.live.stop()
             self.liveConnectionFailed(
                 error: nil,
@@ -462,6 +515,13 @@ final class AlmaVoiceEngine {
         errorToast = connectionFailureText
         callConnection = .failed
         state = .error
+        // Agent call on a real device: send the reason to the server so it is
+        // diagnosable without a console (TestFlight builds log nowhere).
+        if activeAgentCallId != nil {
+            let detail = String((error.map { String(describing: $0) } ?? message ?? "unknown").prefix(200))
+            AgentCallController.shared.reportLiveFailure(
+                "live failed: \(detail) | vpUnavailable=\(live.voiceProcessingUnavailable)")
+        }
     }
 
     func retryLiveConnection() {
@@ -525,6 +585,15 @@ final class AlmaVoiceEngine {
             }
         }
         closed = true
+        // Agent call: closing the session must also close the CallKit system call
+        // (the CXEndCallAction it triggers posts 'completed' to the server).
+        if let agentCallId = activeAgentCallId {
+            activeAgentCallId = nil
+            pendingAgentCallBrief = nil
+            if #available(iOS 17.0, *), CallKitVoIP.shared.hasCall(callId: agentCallId) {
+                Task { _ = await CallKitVoIP.shared.requestEnd(callId: agentCallId, reason: "agent_call_done") }
+            }
+        }
         liveConnectTask?.cancel(); liveConnectTask = nil
         connectionGeneration += 1
         keepAliveStop()
@@ -1181,6 +1250,29 @@ final class AlmaVoiceEngine {
         wake.stop()
         state = .listening
         keepAliveStart()
+        // Agent call route diagnostics (owner device 2026-07-31): if the OS has
+        // parked the audio on the receiver 2s after connect, nudge it back AND
+        // record it on the call row so the next silent call is readable from
+        // the DB instead of guessed at.
+        if let callId = activeAgentCallId {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self, self.liveActive else { return }
+                let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+                    .map { $0.portType.rawValue }.joined(separator: "+")
+                if outputs.contains("Receiver") {
+                    self.live.nudgeSpeakerRoute()
+                    if #available(iOS 17.0, *) {
+                        Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil,
+                                                                     note: "route was \(outputs) 2s after connect — nudged to speaker") }
+                    }
+                }
+            }
+        }
+        if let brief = pendingAgentCallBrief, !agentBriefSent {
+            pendingAgentCallBrief = nil
+            agentBriefSent = true
+            sendAgentBriefNote(brief.isEmpty ? "Boss-এর সাথে জরুরি কথা আছে" : brief)
+        }
     }
 
     func liveWillReconnect() {
@@ -1221,7 +1313,62 @@ final class AlmaVoiceEngine {
             transcript = text
             feedUserLineId = feedUpsert(id: nil, kind: .user, text: text)
         }
+        // DETERMINISTIC hang-up (owner bug 2026-07-30, sim-reproduced even with
+        // the end_call tool present: Gemini says "আল্লাহ হাফেজ" but skips the
+        // tool). If Boss's own words ask to hang up, the call ends after the
+        // model's goodbye finishes — model cooperation not required.
+        if Self.hangupContext(in: transcript) { lastHangupContextAt = Date() }
+        if Self.hangupIntent(in: transcript) {
+            #if DEBUG
+            NSLog("ALMA-VOICE hang-up intent heard in input transcript")
+            #endif
+            scheduleModelRequestedEnd(hardFallback: 20)
+        }
         if state != .speaking { state = .listening }
+    }
+
+    /// BROAD corroboration signal (weaker than hangupIntent): any word family a
+    /// genuine hang-up sentence would contain. The model's end_call is honored
+    /// only when Boss said something like this within the last 25 s. Memory
+    /// instructions ("এই কথাটা মনে রেখে দাও") are explicitly excluded (Codex P1
+    /// round 7): a রাখ-family word preceded by মনে/নোট/সেভ is about REMEMBERING,
+    /// not hanging up.
+    static func hangupContext(in text: String) -> Bool {
+        let t = text.lowercased()
+        if t.contains("মনে রেখ") || t.contains("মনে রাখ") || t.contains("নোট") || t.contains("সেভ") || t.contains("মেমরি") {
+            return false
+        }
+        return t.contains("রাখ") || t.contains("রেখে") || t.contains("কাট") || t.contains("হাফেজ")
+            || t.contains("বিদায়") || t.contains("bye") || t.contains("hang up") || t.contains("শেষ কর")
+    }
+
+    private var lastHangupContextAt = Date.distantPast
+
+    /// end_call arrived from the model — approve only with recent corroboration
+    /// from Boss's own transcript, else refuse (spurious-trigger guard).
+    func approveModelRequestedEnd() -> Bool {
+        guard Date().timeIntervalSince(lastHangupContextAt) < 25 else { return false }
+        scheduleModelRequestedEnd()
+        return true
+    }
+
+    /// Boss's spoken request to end the call. Deliberately narrow (Codex P1
+    /// round 5: "এই কথাটা মনে রেখে দাও" is a MEMORY instruction, not a
+    /// hang-up): bare "রেখে দাও/রাখো" counts only as a short standalone closing
+    /// utterance; longer sentences need explicit call/phone context or a
+    /// salutation formula.
+    static func hangupIntent(in text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Closing salutations.
+        if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") || t.contains("খোদা হাফেজ") { return true }
+        // Explicit call/phone context.
+        if t.contains("ফোন রাখ") || t.contains("ফোন রেখে") || t.contains("ফোনটা রাখ") { return true }
+        if t.contains("কল রাখ") || t.contains("কল রেখে") || t.contains("কল কাট") || t.contains("ফোন কাট") || t.contains("কলটা কাট") { return true }
+        if t.contains("hang up") { return true }
+        // Standalone closings.
+        if t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") || t.contains("তাহলে রাখি") || t.contains("রাখি তাহলে") { return true }
+        if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
+        return false
     }
 
     func liveOutputTranscript(_ text: String) {
@@ -1237,6 +1384,14 @@ final class AlmaVoiceEngine {
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
+            // Model asked to hang up (end_call): the goodbye just finished
+            // playing — actually end the call now (owner bug 2026-07-30:
+            // "আল্লাহ হাফেজ বলার পরও রাখে না").
+            if modelEndPending {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    self?.performModelRequestedEnd()
+                }
+            }
             feedFinalizeAgent()         // agent turn ended — next reply is a new line
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
             // A tool result that arrived MID-SPEECH was held back (Gemini drops
@@ -1350,6 +1505,46 @@ final class AlmaVoiceEngine {
         // nudge silently erased the pending flag (sim finding 2026-07-23).
         feedFinalizeAgent()
         state = liveToolTurnPending ? .thinking : .listening
+    }
+
+    /// Model called end_call (Boss asked to hang up): end the call for real once
+    /// the goodbye finishes playing. Fallbacks cover a goodbye that never
+    /// arrives (2.5s if nothing is playing, 8s hard) so the call can never
+    /// hang half-alive.
+    private var modelEndPending = false
+
+    func scheduleModelRequestedEnd(hardFallback: TimeInterval = 8) {
+        guard !modelEndPending, !closed else { return }
+        modelEndPending = true
+        // The hard deadline is a GUARANTEE (Codex P2 round 6): it forces the
+        // end even mid-tool, so a stalled head turn can never hold the call
+        // open forever after Boss asked to hang up.
+        DispatchQueue.main.asyncAfter(deadline: .now() + hardFallback) { [weak self] in
+            self?.performModelRequestedEnd(force: true)
+        }
+        if state != .speaking, hardFallback <= 8 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, self.modelEndPending, self.state != .speaking else { return }
+                self.performModelRequestedEnd()
+            }
+        }
+    }
+
+    private func performModelRequestedEnd(force: Bool = false) {
+        guard modelEndPending, !closed else { return }
+        // Mid-tool (e.g. "পড়েছি, রাখো" → mark_salah still running): let the tool
+        // reply first; the next playback-finish ends it, and the hard-deadline
+        // path arrives with force to guarantee termination regardless.
+        if liveToolTurnPending, !force { return }
+        modelEndPending = false
+        // Agent call: go through the controller so its window tears down too
+        // (on-device the engine end also closes the CallKit call → 'completed').
+        if #available(iOS 17.0, *), AgentCallController.shared.isActive,
+           AgentCallController.shared.engine === self {
+            AgentCallController.shared.endFromUI()
+        } else {
+            end()
+        }
     }
 
     func liveDidFail(_ message: String) {
@@ -1861,12 +2056,51 @@ enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, au
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
 
-    private struct SessionResponse: Decodable {
+    struct SessionResponse: Decodable {
         let token: String
         let model: String
         let voice: String
         let expiresAt: String
         let websocketUrl: String
+    }
+
+    // MARK: Ring-time prewarm (plan C2 latency fix, 2026-07-30)
+    //
+    // On a weak abroad network the answer→greeting delay was dominated by the
+    // post-answer round trip to Vercel that mints the ephemeral Gemini token.
+    // The VoIP RING is the earliest signal a live session is about to be
+    // needed, so the incoming-push handler mints the token during the ~5–75 s
+    // the phone is ringing; answer then goes straight to the Google websocket.
+    // Tokens are single-use — a declined ring just lets the mint age out.
+    private static var prewarmed: (session: SessionResponse, at: Date)?
+    private static let prewarmLock = NSLock()
+
+    static func prewarm() {
+        Task.detached(priority: .userInitiated) {
+            await AlmaAPI.shared.syncCookies()
+            guard let raw = try? await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:]),
+                  let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
+                  !minted.token.isEmpty else { return }
+            prewarmLock.lock()
+            prewarmed = (minted, Date())
+            prewarmLock.unlock()
+            #if DEBUG
+            NSLog("ALMA-VOICE prewarmed live-session token at ring")
+            #endif
+        }
+    }
+
+    private static func takePrewarmed() -> (session: SessionResponse, at: Date)? {
+        prewarmLock.lock()
+        defer { prewarmLock.unlock() }
+        guard let candidate = prewarmed else { return nil }
+        prewarmed = nil
+        // Bounded by the token's SERVER-SIDE newSessionExpireTime (120 s, raised
+        // from 60 s alongside this feature — Codex P1): past that, Google will
+        // refuse to open a session no matter the 30-minute overall expiry. Keep
+        // a 30 s margin for the mint response + websocket setup.
+        guard Date().timeIntervalSince(candidate.at) < 90 else { return nil }
+        return candidate
     }
 
     private var session: URLSession?
@@ -1881,13 +2115,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var stopped = false
     private var socketReady = false
     private var reconnecting = false
+    private var pingTimer: DispatchSourceTimer?
+    private var awaitingPong = false
+    private var routeObserver: NSObjectProtocol?
+    /// One serial home for keepalive state + reconnect entry (Codex P2 round 4):
+    /// the timer, ping completions, and receive-failure recovery all funnel here
+    /// so two callbacks can never both pass recoverConnection's guards and
+    /// tear down / replace the socket concurrently.
+    private let netQueue = DispatchQueue(label: "alma.voice.net")
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
     private var reconnectAttempts = 0
-    /// Kimi-parity prosody: request Gemini's affective dialog; if the server
-    /// (older token constraints) rejects the setup, retry once without it.
-    private var allowAffective = true
+    /// Affective dialog is OFF by default: our ephemeral-token constraints reject
+    /// the field, so requesting it made EVERY call burn its first connect on a
+    /// guaranteed 1007 close + retry (sim-proven 2026-07-30 — +1.4s on fast wifi,
+    /// several seconds + one reconnect attempt on a weak abroad network). The
+    /// downgrade path below stays for the day the token starts allowing it.
+    private var allowAffective = false
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
@@ -1904,6 +2149,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var estimatedPlaybackEnd = Date.distantPast
     private var playbackGeneration = 0
     private var modelAudioTurnOpen = false
+    #if DEBUG
+    private var micDebugFrameCount = 0
+    #endif
     private var modelGenerationCompleteReceived = false
     private var modelTurnCompleteReceived = false
     private var playbackStarted = false
@@ -1918,6 +2166,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var echoCalibrationFrames = 0
     private var echoFloorRMS = 0.008
     private var micPreRoll: [Data] = []
+    // Listening-path noise gate (protected by audioLock, see capture()).
+    private var listenPreRoll: [Data] = []
+    private var listenGateOpen = false
+    private var listenSpeechFrames = 0
+    private var listenSilenceFrames = 0
+    private var listenNoiseFloorRMS = 0.004
+    private var listenCalibrationFrames = 0
+    private var listenCalibMinRMS = Double.greatestFiniteMagnitude
+    private var listenContinuousLoudFrames = 0
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
     private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
@@ -1931,11 +2188,43 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
+    /// NOT set the category or activate it — doing so threw on the owner's
+    /// device (build 89: "লাইভ অডিও চালু করা যায়নি", agent silent). CallKit has
+    /// already configured playAndRecord/voiceChat; if its activation has not
+    /// landed yet, audio setup is retried from callKitAudioActivated().
+    var callKitOwnsAudioSession = false
+    private var audioConfigPending = false
+    /// Engine watchdog peek: socket setup finished but audio is still waiting on
+    /// CallKit's didActivate (the retry ladder is running).
+    var isAwaitingCallKitAudio: Bool { audioConfigPending }
+    /// True when hardware echo cancellation could not be enabled (CallKit-owned
+    /// session). The barge-in gate compensates with a higher echo floor.
+    private(set) var voiceProcessingUnavailable = false
+    /// Bumped on every stop()/reconnect so a delayed audio retry belonging to a
+    /// dead attempt cannot touch the replacement session.
+    private var audioAttemptGeneration = 0
 
     func start() async throws {
         stopped = false
+        if let warm = Self.takePrewarmed() {
+            #if DEBUG
+            NSLog("ALMA-VOICE using prewarmed token (age %.1fs)", Date().timeIntervalSince(warm.at))
+            #endif
+            mintedSession = warm.session
+            mintedAt = warm.at
+            try connect(warm.session, resumptionHandle: nil)
+            return
+        }
         await AlmaAPI.shared.syncCookies()
+        #if DEBUG
+        let mintStart = Date()
+        NSLog("ALMA-VOICE mint begin")
+        #endif
         let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+        #if DEBUG
+        NSLog("ALMA-VOICE mint done in %.2fs", Date().timeIntervalSince(mintStart))
+        #endif
         guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
@@ -1966,6 +2255,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
         কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
+        Boss স্পষ্টভাবে কলটি শেষ করতে চাইলে ("ফোন রাখো", "কল কাটো", "এখন রাখি", বিদায়ী সালাম "আল্লাহ হাফেজ"): এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে — শুধু মুখে বিদায় বললে কল কাটে না। সাবধান: কিছু মনে রাখতে বা সেভ করতে বলা (যেমন "এই কথাটা মনে রেখে দাও") কল রাখার অনুরোধ নয় — তখন end_call একদম নয়।
         ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
         STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
@@ -2012,6 +2302,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     "required": ["tool"],
                 ],
             ], [
+                "name": "end_call",
+                "description": "কলটি সত্যিই কেটে দেয়। Boss 'রাখি/রেখে দাও/কল কাটো/আল্লাহ হাফেজ' বলে কল শেষ করতে চাইলে — ছোট্ট সালাম-বিদায় বলার সাথে সাথে এটা চালাবে। মুখে বিদায় বললে কল কাটে না; এই tool না চালালে Boss-কে নিজ হাতে কাটতে হয়।",
+                "parameters": ["type": "OBJECT", "properties": [:]],
+            ], [
                 "name": "run_agent_turn",
                 "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)। request-টি Boss-এর কথার হুবহু বাংলা/বাংলিশ রূপে দেবে — ইংরেজিতে অনুবাদ একদম নয়।",
                 "parameters": [
@@ -2029,24 +2323,152 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try audioQueue.sync { try configureAudioOnQueue() }
     }
 
+    /// Socket is live AND audio is running — announce the connection once.
+    private func finishSetup() {
+        #if DEBUG
+        NSLog("ALMA-VOICE setup finished — session LIVE (audio configured)")
+        #endif
+        audioConfigPending = false
+        socketReady = true
+        reconnecting = false
+        reconnectAttempts = 0
+        startKeepalive()
+        DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
+        if !hasConnectedOnce {
+            hasConnectedOnce = true
+            sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
+        }
+    }
+
+    /// CallKit activated the shared audio session (CXProviderDelegate didActivate).
+    /// Start (or retry) capture/playback now that the session is really ours.
+    func callKitAudioActivated() {
+        guard !stopped, callKitOwnsAudioSession else { return }
+        if configured {
+            // Activation landed AFTER audio setup. CallKit's activation resets
+            // the output route (first call ends up on the RECEIVER — near
+            // silent on a table) and a background-started engine may have died
+            // — previously this path did NOTHING and the only recovery was the
+            // app-foreground hook, which is exactly why the call only spoke
+            // once the calling screen appeared (owner device 2026-07-31).
+            nudgeSpeakerRoute()
+            // Mirror recoverAudio(): a mid-turn activation can stop the PLAYER
+            // even when the engine restarts — without play() the queued
+            // greeting stays silent until its watchdog expires (Codex P2).
+            audioLock.lock()
+            let shouldPlay = playbackStarted
+            audioLock.unlock()
+            audioQueue.async { [weak self] in
+                guard let self, !self.stopped else { return }
+                if !self.audioEngine.isRunning { try? self.audioEngine.start() }
+                if shouldPlay, !self.player.isPlaying { self.player.play() }
+            }
+            return
+        }
+        do {
+            try configureAudio()
+            // didActivate normally arrives BEFORE the socket's setupComplete.
+            // Only finish the session when setup was already waiting on audio —
+            // otherwise finishSetup() would announce a live call with ws == nil,
+            // cancel the in-flight connect task and lose the greeting/brief.
+            if audioConfigPending { finishSetup() }
+        } catch {
+            scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+        }
+    }
+
+    /// Put the call back on the speaker if the OS quietly re-routed it to the
+    /// receiver (VP init and CallKit activation both do this). Safe to call any
+    /// time; no-op when the owner deliberately turned the speaker off.
+    func nudgeSpeakerRoute() {
+        guard configured, !stopped else { return }
+        audioLock.lock()
+        let wantSpeaker = speakerEnabled
+        audioLock.unlock()
+        guard wantSpeaker else { return }
+        let av = AVAudioSession.sharedInstance()
+        if av.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
+            try? av.overrideOutputAudioPort(.speaker)
+            #if DEBUG
+            NSLog("ALMA-VOICE route nudged receiver → speaker")
+            #endif
+        }
+    }
+
+    /// CallKit still owns activation, so never self-activate (that is what broke
+    /// build 89). Re-attempt the category + engine start for ~10 s — a locked-
+    /// screen answer can deliver didActivate several seconds late, and giving up
+    /// at 3.6 s (3 tries) declared "audio failed" on calls that were about to
+    /// work. If audio truly cannot start, fail with the UNDERLYING error so the
+    /// device note finally says why (build 91's note was just the generic line).
+    private func scheduleCallKitAudioRetry(attempt: Int, lastError: Error? = nil) {
+        guard attempt <= 8 else {
+            let detail = lastError.map { String(String(describing: $0).prefix(140)) } ?? "no didActivate"
+            fail("লাইভ অডিও চালু করা যায়নি। [\(detail)]")
+            return
+        }
+        let generation = audioAttemptGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, !self.stopped, !self.configured,
+                  generation == self.audioAttemptGeneration else { return }
+            do {
+                try self.configureAudio()
+                if self.audioConfigPending { self.finishSetup() }
+            } catch {
+                self.scheduleCallKitAudioRetry(attempt: attempt + 1, lastError: error)
+            }
+        }
+    }
+
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
+        // A previous PARTIAL attempt (engine.start threw after the tap went in)
+        // must not leave its tap behind: AVAudioEngine allows one tap per bus,
+        // so retrying with a stale tap raises an Objective-C exception and
+        // kills the app (review-bot P1 #3 on PR #653).
+        if tapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
         let av = AVAudioSession.sharedInstance()
+        // Ownership split mirrors AgoraIntercom.configureAudioSession: the APP
+        // always owns the CATEGORY (a cold-launch answer leaves the session on
+        // its default category, which makes inputNode unavailable), and only
+        // ACTIVATION belongs to CallKit — calling setActive(true) there fought
+        // the framework and left the answered call silent (build 89).
         try av.setCategory(.playAndRecord, mode: .voiceChat,
                            options: [.allowBluetoothHFP, .defaultToSpeaker])
-        try av.setPreferredIOBufferDuration(0.02)
-        try av.setActive(true)
+        try? av.setPreferredIOBufferDuration(0.02)
+        if !callKitOwnsAudioSession {
+            try av.setActive(true)
+        }
         audioLock.lock()
         let useSpeaker = speakerEnabled
         audioLock.unlock()
-        try av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
+        try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
 
         let input = audioEngine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        guard input.isVoiceProcessingEnabled,
-              audioEngine.outputNode.isVoiceProcessingEnabled else {
-            throw AlmaLiveVoiceError.audioStart
+        // Voice processing (echo cancellation) is BEST-EFFORT under CallKit: the
+        // framework already owns/configured the session, and on the owner's
+        // device enabling VP there failed — which used to abort the whole call
+        // ("ring হয় but কথা বলে না", builds 89/90). A call without hardware AEC
+        // still works (the barge-in gate calibrates its own echo floor), so only
+        // the non-CallKit path treats VP as mandatory.
+        #if targetEnvironment(simulator)
+        // Simulator VPIO delivers ZERO input frames (Mac mic never reaches the
+        // tap), which silently breaks the whole real-audio harness. Skip VP on
+        // the sim only — the barge-in gate already has the no-AEC compensation.
+        voiceProcessingUnavailable = true
+        #else
+        do { try input.setVoiceProcessingEnabled(true) } catch {
+            if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
+            voiceProcessingUnavailable = true
         }
+        if !(input.isVoiceProcessingEnabled && audioEngine.outputNode.isVoiceProcessingEnabled) {
+            if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
+            voiceProcessingUnavailable = true
+        }
+        #endif
         let native = input.inputFormat(forBus: 0)
         guard native.sampleRate > 0, native.channelCount > 0 else { throw AlmaLiveVoiceError.noMic }
         guard let pcm16 = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000,
@@ -2072,7 +2494,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         tapInstalled = true
         audioEngine.prepare()
-        do { try audioEngine.start() } catch { throw AlmaLiveVoiceError.audioStart }
+        do { try audioEngine.start() } catch {
+            // Unwind the partial setup so the retry starts clean.
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+            throw AlmaLiveVoiceError.audioStart
+        }
         // setVoiceProcessingEnabled RESETS the output route to the receiver, so
         // the override above is dead by now — first-call greeting played near-
         // silent into the earpiece (owner device 2026-07-24; reopening worked
@@ -2080,6 +2507,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // VP + engine start so call one is as loud as call two.
         try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
+        // On a REAL device the VP route reset can land asynchronously AFTER the
+        // line above (owner 2026-07-31: first call silent until a manual
+        // speaker toggle, second call fine — sim can't reproduce: no receiver
+        // port and VP is skipped there). Two guards: a watchdog that re-asserts
+        // the speaker whenever the OS re-routes to the receiver, plus one
+        // delayed belt-and-braces nudge.
+        if routeObserver == nil {
+            routeObserver = NotificationCenter.default.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.nudgeSpeakerRoute()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.nudgeSpeakerRoute()
+        }
     }
 
     private func capture(_ buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat) {
@@ -2097,6 +2540,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             rms = (sum / Double(frames)).squareRoot()
         }
         DispatchQueue.main.async { [weak self] in self?.engine?.micLevel = min(1, rms * 7) }
+        #if DEBUG
+        micDebugFrameCount += 1
+        if micDebugFrameCount % 100 == 0 {
+            NSLog("ALMA-VOICE mic alive frames=%d rms=%.4f socketReady=%d", micDebugFrameCount, rms, socketReady ? 1 : 0)
+        }
+        #endif
 
         let capacity = AVAudioFrameCount(Double(frames) * outFormat.sampleRate / nativeFormat.sampleRate + 32)
         guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
@@ -2117,6 +2566,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var preRoll: [Data] = []
         audioLock.lock()
         if modelAudioTurnOpen && !bargeInPending {
+            // Re-arm the listening gate for the next turn.
+            listenGateOpen = false
+            listenSpeechFrames = 0
+            listenSilenceFrames = 0
+            listenPreRoll.removeAll(keepingCapacity: true)
             micPreRoll.append(bytes)
             if micPreRoll.count > bargeInPreRollChunks {
                 micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
@@ -2130,7 +2584,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 echoFloorRMS = max(echoFloorRMS, rms * 0.85)
                 bargeSpeechFrames = 0
             } else {
-                let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                // LOCKED tuning for the normal (hardware-AEC) path — kept
+                // literally, contract-tested. Without AEC (CallKit-owned
+                // session) the speaker bleeds into the mic, so that path alone
+                // uses a higher gate or the agent interrupts itself.
+                let threshold = voiceProcessingUnavailable
+                    ? max(bargeInMinimumRMS * 1.8, echoFloorRMS * 3.2 + 0.02)
+                    : max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
                 if rms >= threshold {
                     bargeSpeechFrames += 1
                 } else {
@@ -2148,9 +2608,90 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
         } else {
-            sendNormally = true
             micPreRoll.removeAll(keepingCapacity: true)
             bargeSpeechFrames = 0
+            // LISTENING noise gate (sim-proven 2026-07-30): streaming every idle
+            // frame let ambient noise trip the server VAD the instant a model
+            // turn opened — START_OF_ACTIVITY_INTERRUPTS then killed the turn
+            // ~90 ms in ("এজেন্ট একটু কথা বলেই থেমে যায়"). Only sustained
+            // above-floor signal opens the gate; a ~300 ms pre-roll preserves
+            // the speech onset, and the ~1.1 s hangover (55 frames) exceeds the
+            // server's 650 ms silenceDuration so endpointing still belongs to
+            // the server VAD, never to this gate. Bonus on weak abroad
+            // networks: idle uplink drops to zero.
+            listenPreRoll.append(bytes)
+            if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
+            // Floor learns upward WITHOUT ever eating live speech (Codex rounds
+            // 4+5): the calibration window uses the MINIMUM rms it saw — steady
+            // noise has no quiet frames so its level is learned, while a voice
+            // that starts immediately still dips between syllables and only
+            // those dips become the floor (P2 round 5). No always-on tracker:
+            // that EMA overtook a steady utterance in ~1.8s and truncated it
+            // (P1 round 5) — mid-speech gaps already adapt the floor via the
+            // below-threshold EMA, and the gapless-noise failsafe below covers
+            // sound with no dips at all.
+            if listenCalibrationFrames < 10 {
+                listenCalibrationFrames += 1
+                listenCalibMinRMS = min(listenCalibMinRMS, rms)
+                if listenCalibrationFrames == 10 {
+                    listenNoiseFloorRMS = max(listenNoiseFloorRMS, listenCalibMinRMS * 0.85)
+                    listenCalibMinRMS = .greatestFiniteMagnitude
+                }
+                listenSpeechFrames = 0
+                audioLock.unlock()
+                return
+            }
+            // Calibrated threshold, no hard 0.010 floor (Codex P2): a quiet or
+            // distant speaker can sit below a fixed bound, and a closed gate
+            // means their speech would never reach the server at all. The floor
+            // EMA tracks the room, so 3× floor adapts down in quiet rooms; the
+            // tiny epsilon only guards digital-silence jitter.
+            let gateThreshold = max(0.003, listenNoiseFloorRMS * 3)
+            if rms >= gateThreshold {
+                listenSpeechFrames += 1
+                listenSilenceFrames = 0
+                // Gapless-noise failsafe: human speech always dips between
+                // words; 30s of continuously above-threshold signal is a noise
+                // source that started mid-call (road, fan) — promote it to the
+                // floor and close the gate instead of streaming it forever.
+                listenContinuousLoudFrames += 1
+                if listenContinuousLoudFrames >= 1500 {
+                    listenNoiseFloorRMS = max(listenNoiseFloorRMS, rms * 0.85)
+                    listenGateOpen = false
+                    listenSpeechFrames = 0
+                    listenContinuousLoudFrames = 0
+                    #if DEBUG
+                    NSLog("ALMA-VOICE listen gate closed — gapless noise promoted to floor")
+                    #endif
+                }
+            } else {
+                listenSpeechFrames = max(0, listenSpeechFrames - 1)
+                listenSilenceFrames += 1
+                listenContinuousLoudFrames = 0
+                // Adapt the floor only on frames classified as background, so
+                // speech never raises its own threshold.
+                listenNoiseFloorRMS = listenNoiseFloorRMS * 0.97 + rms * 0.03
+            }
+            if !listenGateOpen, listenSpeechFrames >= 3 {
+                listenGateOpen = true
+                // Reset on BOTH transitions (Codex P2): a long utterance grows
+                // the counter far past the open threshold, and decrement-by-one
+                // silence would let the very next silent frame reopen the gate
+                // and flush overlapping pre-roll in an open/close flap.
+                listenSpeechFrames = 0
+                preRoll = listenPreRoll
+                listenPreRoll.removeAll(keepingCapacity: true)
+                #if DEBUG
+                NSLog("ALMA-VOICE listen gate OPEN rms=%.4f floor=%.4f", rms, listenNoiseFloorRMS)
+                #endif
+            } else if listenGateOpen, listenSilenceFrames >= 55 {
+                listenGateOpen = false
+                listenSpeechFrames = 0
+                #if DEBUG
+                NSLog("ALMA-VOICE listen gate closed")
+                #endif
+            }
+            sendNormally = listenGateOpen
         }
         audioLock.unlock()
 
@@ -2161,7 +2702,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             beginLocalBargeIn()
             for chunk in preRoll { sendRealtimeAudio(chunk) }
         } else if sendNormally {
-            sendRealtimeAudio(bytes)
+            if !preRoll.isEmpty {
+                // Listen gate just opened: the pre-roll already contains this
+                // frame — flush it instead of sending `bytes` twice.
+                for chunk in preRoll { sendRealtimeAudio(chunk) }
+            } else {
+                sendRealtimeAudio(bytes)
+            }
         }
     }
 
@@ -2223,16 +2770,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if root["setupComplete"] != nil {
             do {
                 try configureAudio()
-                socketReady = true
-                reconnecting = false
-                reconnectAttempts = 0
-                DispatchQueue.main.async { [weak self] in self?.engine?.liveDidConnect() }
-                if !hasConnectedOnce {
-                    hasConnectedOnce = true
-                    sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
-                }
+                finishSetup()
             } catch {
-                fail("লাইভ অডিও চালু করা যায়নি।")
+                // Under CallKit the session may not be activated yet — keep the
+                // socket and retry from callKitAudioActivated() instead of
+                // failing the whole call (owner device, build 89).
+                if callKitOwnsAudioSession {
+                    audioConfigPending = true
+                    scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+                } else {
+                    fail("লাইভ অডিও চালু করা যায়নি। [\(String(String(describing: error).prefix(140)))]")
+                }
             }
         }
         if let update = root["sessionResumptionUpdate"] as? [String: Any],
@@ -2253,6 +2801,27 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     self?.engine?.runQuickLookup(tool: toolName, callId: id)
                 }
             }
+            for call in calls where call["name"] as? String == "end_call" {
+                let id = call["id"] as? String ?? UUID().uuidString
+                // The model can fire this spuriously (sim 2026-07-30: a long
+                // overlapping utterance with no goodbye in it triggered
+                // end_call). Boss's OWN recent words must corroborate — the
+                // engine approves only when hang-up context was actually heard.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if self.engine?.approveModelRequestedEnd() == true {
+                        #if DEBUG
+                        NSLog("ALMA-VOICE toolCall end_call approved — hanging up after goodbye")
+                        #endif
+                        self.sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।", name: "end_call")
+                    } else {
+                        #if DEBUG
+                        NSLog("ALMA-VOICE toolCall end_call REFUSED — no hang-up context from Boss")
+                        #endif
+                        self.sendToolResponse(callId: id, result: "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।", name: "end_call")
+                    }
+                }
+            }
             for call in calls where call["name"] as? String == "run_agent_turn" {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let args = call["args"] as? [String: Any]
@@ -2270,6 +2839,58 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    // MARK: WebSocket keepalive / stall detection
+    //
+    // Owner symptom (Dubai, builds 89–91): mid-call the agent goes silent for
+    // 15–20 s, then suddenly resumes. Root cause: a mobile network path change
+    // (NAT rebind, wifi↔cellular) kills the TCP flow SILENTLY — receive() just
+    // hangs, and nothing notices until the 60 s request timeout. A ping every
+    // 5 s with a one-tick pong deadline turns that dead air into a fast
+    // recoverConnection(), so the resumed session is back in a few seconds.
+    private func startKeepalive() {
+        stopKeepalive()
+        let t = DispatchSource.makeTimerSource(queue: netQueue)
+        t.schedule(deadline: .now() + 5, repeating: 5)
+        t.setEventHandler { [weak self] in self?.keepaliveTick() }
+        t.resume()
+        pingTimer = t
+    }
+
+    private func stopKeepalive() {
+        pingTimer?.cancel()
+        pingTimer = nil
+        awaitingPong = false
+    }
+
+    private func keepaliveTick() {
+        guard !stopped, !reconnecting, socketReady, let socket = ws else { return }
+        if awaitingPong {
+            // Previous ping got no pong within a full tick — the socket is stalled.
+            #if DEBUG
+            NSLog("ALMA-VOICE keepalive: pong missing — socket stalled, reconnecting")
+            #endif
+            awaitingPong = false
+            recoverConnection()
+            return
+        }
+        awaitingPong = true
+        socket.sendPing { [weak self] error in
+            // Hop back to netQueue — URLSession delivers this on its own queue.
+            self?.netQueue.async {
+                guard let self, self.ws === socket, !self.stopped else { return }
+                if error == nil {
+                    self.awaitingPong = false
+                } else {
+                    #if DEBUG
+                    NSLog("ALMA-VOICE keepalive: ping failed — reconnecting (%@)", String(describing: error))
+                    #endif
+                    self.awaitingPong = false
+                    self.recoverConnection()
+                }
+            }
+        }
+    }
+
     /// Google rotates the physical websocket roughly every ten minutes. Resume with
     /// the latest handle, keeping the logical conversation and audio engine alive
     /// without replaying a greeting. The single-use ephemeral token stays valid for
@@ -2278,6 +2899,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// AI call survives every rotation. Attempts are capped so a hard outage still
     /// fails loud instead of looping.
     private func recoverConnection(forceFreshToken: Bool = false, allowInitial: Bool = false) {
+        // Serialize on netQueue: receive failures (URLSession queue), goAway
+        // (delegate queue) and keepalive stalls (timer) may race — only one may
+        // pass the !reconnecting guard and replace the socket.
+        netQueue.async { [weak self] in
+            self?.recoverConnectionOnNetQueue(forceFreshToken: forceFreshToken, allowInitial: allowInitial)
+        }
+    }
+
+    private func recoverConnectionOnNetQueue(forceFreshToken: Bool, allowInitial: Bool) {
         guard !stopped, !reconnecting else { return }
         // Rejected INITIAL setups may arrive as a socket close (no error JSON).
         // If we asked for affective dialog, retry the very first connect once
@@ -2300,6 +2930,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         reconnectAttempts += 1
         reconnecting = true
         socketReady = false
+        stopKeepalive()
+        #if DEBUG
+        NSLog("ALMA-VOICE reconnect attempt %d (forceFreshToken=%d)", reconnectAttempts, forceFreshToken ? 1 : 0)
+        #endif
         // CRITICAL (device finding, build 82): a socket can drop mid model-turn,
         // losing generationComplete/turnComplete forever. Without this reset the
         // turn stays open, the UI sticks on "বলছি", and — because the mic is
@@ -2337,6 +2971,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func handleServerContent(_ content: [String: Any]) {
         if content["interrupted"] as? Bool == true {
+            #if DEBUG
+            NSLog("ALMA-VOICE server INTERRUPTED model turn")
+            #endif
             stopModelPlayback(interrupted: true)
             DispatchQueue.main.async { [weak self] in self?.engine?.liveWasInterrupted() }
         }
@@ -2394,6 +3031,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         if !modelAudioTurnOpen {
+            #if DEBUG
+            NSLog("ALMA-VOICE model turn OPEN (first audio chunk)")
+            #endif
             modelAudioTurnOpen = true
             modelGenerationCompleteReceived = false
             modelTurnCompleteReceived = false
@@ -2631,10 +3271,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func sendToolResponse(callId: String, result: String) {
+    func sendToolResponse(callId: String, result: String, name: String = "run_agent_turn") {
         sendJSON(["toolResponse": ["functionResponses": [[
             "id": callId,
-            "name": "run_agent_turn",
+            // The response must carry the INVOKED function's name — answering
+            // end_call as run_agent_turn left the tool unresolved (Codex P2).
+            "name": name,
             "response": ["result": result],
         ]]]])
     }
@@ -2674,6 +3316,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeSpeechFrames = 0
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
+        // The listening gate must not carry audio or detector state across the
+        // mute boundary (Codex P2): retained pre-roll chunks would otherwise be
+        // flushed ahead of the first post-unmute utterance, and an open gate
+        // would resume as open.
+        listenPreRoll.removeAll(keepingCapacity: true)
+        listenGateOpen = false
+        listenSpeechFrames = 0
+        listenSilenceFrames = 0
+        listenNoiseFloorRMS = 0.004
+        listenCalibrationFrames = 0
+        listenCalibMinRMS = .greatestFiniteMagnitude
+        listenContinuousLoudFrames = 0
         audioLock.unlock()
     }
 
@@ -2711,6 +3365,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func stop() {
         stopped = true
+        stopKeepalive()
+        if let ob = routeObserver {
+            NotificationCenter.default.removeObserver(ob)
+            routeObserver = nil
+        }
         let hadTap = tapInstalled
         tapInstalled = false
         audioQueue.async { [weak self] in
@@ -2724,6 +3383,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
         configured = false
+        // Must reset with the socket: a pending flag surviving into the next
+        // connect attempt let a late didActivate finish THAT session before its
+        // setupComplete (review-bot P1 #2 on PR #653).
+        audioConfigPending = false
+        audioAttemptGeneration += 1
         inputConverter = nil
         inputFormat = nil
         playbackFormat = nil
@@ -2748,6 +3412,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         micPreRoll.removeAll(keepingCapacity: true)
+        // Listening-gate state must not leak into the next session (Codex P2):
+        // an open gate would stream background audio at call start, stale
+        // pre-roll would flush a previous call's PCM, and a noise floor learned
+        // in another room could suppress speech in the new one.
+        listenPreRoll.removeAll(keepingCapacity: true)
+        listenGateOpen = false
+        listenSpeechFrames = 0
+        listenSilenceFrames = 0
+        listenNoiseFloorRMS = 0.004
+        listenCalibrationFrames = 0
+        listenCalibMinRMS = .greatestFiniteMagnitude
+        listenContinuousLoudFrames = 0
         audioLock.unlock()
     }
 
@@ -4757,11 +5433,49 @@ struct AlmaStarfieldView: View {
 // Plus: breathing bloom, spinning conic accent ring, 5 orbiting energy motes,
 // 3 thinking satellites, and the v2 floor reflection.
 
+/// ChatGPT-voice-mode LIVING SCALE (owner video analysis 2026-07-31, frame
+/// measurements): the reference orb keeps a PERFECT circular silhouette — its
+/// life comes from the whole sphere breathing with the conversation. Baseline
+/// while idle; it RECEDES ~10% while Boss speaks (attentive, trembling gently
+/// with his real voice envelope) and SWELLS ~13% while the agent speaks
+/// (pulsing with the real speech envelope). Reference-type scratchpad mutated
+/// from the TimelineView tick — nothing here is observed state.
+@available(iOS 17.0, *)
+private final class AlmaOrbLife {
+    var lastT: Double = 0
+    var mic: Double = 0        // smoothed real mic envelope
+    var tts: Double = 0        // smoothed real speech envelope
+    var userP: Double = 0      // "Boss is talking" presence 0…1
+    var agentP: Double = 0     // "agent is talking" presence 0…1
+
+    func step(t: Double, state: AlmaVoiceState, micIn: Double, ttsIn: Double) {
+        if lastT == 0 { lastT = t }
+        let dt = min(0.1, max(0, t - lastT))
+        lastT = t
+        // Envelope followers — instant attack, musical release.
+        mic += (micIn - mic) * min(1, dt * (micIn > mic ? 14 : 3.2))
+        tts += (ttsIn - tts) * min(1, dt * (ttsIn > tts ? 16 : 2.8))
+        // Presences ease in fast, linger briefly (no flicker between words).
+        let userTarget: Double = (state == .listening && mic > 0.05) ? 1 : 0
+        userP += (userTarget - userP) * min(1, dt * (userTarget > userP ? 5.0 : 1.4))
+        let agentTarget: Double = state == .speaking ? 1 : 0
+        agentP += (agentTarget - agentP) * min(1, dt * (agentTarget > agentP ? 5.0 : 1.6))
+    }
+
+    /// The living scale for the sphere cluster.
+    var scale: Double {
+        1 - userP * (0.10 - min(0.045, mic * 0.09))     // recede, tremble with Boss
+        + agentP * (0.09 + min(0.07, tts * 0.11))       // swell, pulse with speech
+    }
+}
+
 @available(iOS 17.0, *)
 struct AlmaFluidOrbView: View {
     let state: AlmaVoiceState
     let micLevel: Double
     let ttsLevel: Double
+
+    @State private var life = AlmaOrbLife()
 
     private var breathe: Double {
         switch state {
@@ -4790,9 +5504,10 @@ struct AlmaFluidOrbView: View {
             let h = state.hue
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
+                let _ = life.step(t: t, state: state, micIn: micLevel, ttsIn: ttsLevel)
                 let level = state == .speaking ? ttsLevel : micLevel
                 let act = activity(t: t, level: level)
-                let scale = 1 + 0.028 * (1 - cos(2 * .pi * t / breathe))
+                let scale = (1 + 0.028 * (1 - cos(2 * .pi * t / breathe))) * life.scale
                 ZStack {
                     // breathing bloom (web .orb-bloom)
                     Circle()
@@ -4876,6 +5591,9 @@ struct AlmaFluidOrbView: View {
                     if AlmaOrbRenderer.shared != nil {
                         AlmaMetalOrbView(hue: h, stateKey: state.rawValue, level: level)
                             .frame(width: side * 1.24, height: side * 1.24)
+                            // The living conversation scale (video-matched):
+                            // recede while Boss talks, swell while ALMA talks.
+                            .scaleEffect(life.scale)
                             .allowsHitTesting(false)
                     } else {
                         fallbackSphere(side: side, h: h, t: t)

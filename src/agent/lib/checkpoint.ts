@@ -13,6 +13,7 @@
  * column and kind = checkpoint_failed | checkpoint_waiting.
  */
 import { prisma } from '@/lib/prisma'
+import { pushCurrentPulseLiveActivity } from '@/agent/lib/pulse-live-update'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -108,9 +109,11 @@ export async function writeCheckpoint(input: WriteCheckpointInput): Promise<stri
     })
     if (existing) {
       await db.agentOpenTask.update({ where: { id: existing.id }, data })
+      await pushCurrentPulseLiveActivity()
       return existing.id as string
     }
     const row = await db.agentOpenTask.create({ data })
+    await pushCurrentPulseLiveActivity()
 
     // P3 step 1 — the owner supervises from his PHONE: a brand-NEW checkpoint
     // (never a refresh — the dedupe above returns early) lights up the native
@@ -145,6 +148,7 @@ export async function resolveCheckpointByTaskRef(taskRef: string): Promise<void>
       },
       data: { status: 'done', completedAt: new Date() },
     })
+    await pushCurrentPulseLiveActivity()
   } catch { /* best-effort */ }
 }
 

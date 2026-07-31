@@ -193,6 +193,11 @@ describe('scenario hygiene', () => {
       'alma-website',
       'alma-marketing',
       'alma-invoice-to-erp',
+      'alma-agent-incident-diagnosis',
+      'alma-audience-builder',
+      'alma-customer-support',
+      'alma-meta-campaign-launch',
+      'alma-browser-operator',
     ]) {
       expect(ALL_SCENARIOS.filter((s) => s.expectSkill === skill).length).toBeGreaterThanOrEqual(3)
     }

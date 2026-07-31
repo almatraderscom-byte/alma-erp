@@ -94,6 +94,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── ERP reads ──────────────────────────────────────────────────────────────
   get_sales_summary: read('erp'),
   get_orders: read('erp'),
+  // B1 — the ERP's first write. Staged like its website siblings: order status
+  // moves stock, so it is never a silent change.
+  update_order: stage('erp'),
   get_inventory_status: read('erp'),
   get_product: read('erp'),
   get_customer_summary: read('erp'),
@@ -204,6 +207,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   place_agent_call: stage('calls', 'high'),
   // Boss-requested callback — dials the OWNER only; consent is the boss's own ask.
   call_boss_with_report: write('calls', 'medium'),
+  // In-app ring to the OWNER's own app — he asked for it, no third party, no
+  // telco spend; same consent shape as call_boss_with_report.
+  call_me_in_app: write('calls', 'medium'),
   // Order-aware customer call — same staging semantics as place_agent_call.
   place_business_call: stage('calls', 'high'),
 
@@ -245,6 +251,10 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   unpublish_product: stage('website'),
   set_product_featured: stage('website', 'low'),
   update_product_web: stage('website'),
+  // One card for a whole product edit — copy, price, category, alt-text, live,
+  // featured. Same risk as its single-field siblings; the difference is that the
+  // owner approves once instead of five times.
+  edit_storefront_product: stage('website'),
 
   // ── web research (Oxylabs credits) ─────────────────────────────────────────
   confirm_oxylabs_spend: stage('research', 'low'),

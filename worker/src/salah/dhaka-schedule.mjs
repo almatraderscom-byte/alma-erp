@@ -23,10 +23,18 @@ export function dhakaInstant(ymd, h, min) {
 /**
  * @param {string} ymd
  * @param {import('./time-config.mjs').DEFAULT_SALAH_TIMES|object} [cfgOverride]
+ * @param {number} [offsetMin] UTC offset in minutes for the owner's CURRENT
+ *   location (owner rule ৪ — Dubai +240, Dhaka +360). Default keeps Dhaka.
  * @returns {Promise<Record<string, { start: Date, end: Date, azan: Date, prayerStart: Date, label?: string, azanLabel?: string, prayerLabel?: string }>>}
  */
-export async function getDhakaSchedule(ymd, cfgOverride) {
+export async function getDhakaSchedule(ymd, cfgOverride, offsetMin = 360) {
   const cfg = cfgOverride ?? await getSalahTimeConfig()
   const friday = isFridayDhaka(ymd)
-  return buildDhakaSchedule(ymd, cfg, friday, dhakaInstant)
+  const instant = offsetMin === 360
+    ? dhakaInstant
+    : (d, h, m) => {
+        const [Y, M, D] = d.split('-').map(Number)
+        return new Date(Date.UTC(Y, M - 1, D, h, m) - offsetMin * 60_000)
+      }
+  return buildDhakaSchedule(ymd, cfg, friday, instant)
 }

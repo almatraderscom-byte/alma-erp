@@ -2336,6 +2336,7 @@ model AgentTurn {
   @@unique([conversationId, clientMessageId])
   @@index([clientMessageId])
   @@index([conversationId, startedAt(sort: Desc)])
+  @@index([status, continuationNeeded, finishedAt(sort: Desc)])
   @@map("agent_turns")
 }
 
@@ -5551,6 +5552,8 @@ model AgentCallEscalation {
   approvalActionId String?   @map("approval_action_id")
   waCallId         String?   @map("wa_call_id")
   pstnCallId       String?   @map("pstn_call_id")
+  /// Stage-0 in-app VoIP ring (agent_app_calls.id) — tried before WhatsApp/PSTN.
+  appCallId        String?   @map("app_call_id")
   /// First dial of the ladder — drives the Dhaka-day proactive-call cap.
   firstCallAt      DateTime? @map("first_call_at")
   /// When the cron should look at this row again (stage timeout / quiet-hours defer).
@@ -5564,6 +5567,30 @@ model AgentCallEscalation {
   @@index([refId, status])
   @@index([firstCallAt])
   @@map("agent_call_escalations")
+}
+
+/// Agent → owner IN-APP two-way call (WhatsApp-style VoIP ring into the ALMA app,
+/// answered into a Gemini Live session). Works abroad where the BD number and
+/// WhatsApp calls do not. Rung by the PA-2 ladder (stage 0) and the salah
+/// scheduler when the owner-abroad toggle is on.
+model AgentAppCall {
+  id         String    @id @default(uuid())
+  /// Why the agent is calling — Bangla; injected into the live session brief.
+  purpose    String    @db.Text
+  /// 'ladder' | 'salah' | 'manual'
+  source     String    @default("ladder")
+  /// ringing | answered | completed | declined | unanswered | failed
+  status     String    @default("ringing")
+  /// Push delivery snapshot ({voip, fcm, delivered}) for diagnostics.
+  pushResult Json?     @map("push_result")
+  answeredAt DateTime? @map("answered_at")
+  endedAt    DateTime? @map("ended_at")
+  summary    String?   @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@map("agent_app_calls")
 }
 
 /// ─── GROWTH AUTOPILOT: scheduled content calendar ────────────────────────────

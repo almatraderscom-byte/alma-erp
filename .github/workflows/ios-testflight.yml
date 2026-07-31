@@ -22,9 +22,9 @@ on:
   workflow_dispatch:
     inputs:
       expected_build:
-        description: 'Exact committed CFBundleVersion to upload (this release: 84).'
+        description: 'Exact committed CFBundleVersion to upload (this release: 88).'
         required: true
-        default: '84'
+        default: '88'
       marketing_version:
         description: 'App version shown to testers (e.g. 1.1). Leave empty to keep the current project version.'
         required: false
@@ -93,6 +93,10 @@ jobs:
         run: npx prisma generate
 
       - name: Calling release tests and typecheck
+        env:
+          # tsc over this repo aborts (SIGABRT, heap) on the smaller macOS
+          # runner with node's default old-space — build-89 run 30482784326.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           npx vitest run src/agent/lib/__tests__/office-call*.test.ts
           npm run type-check

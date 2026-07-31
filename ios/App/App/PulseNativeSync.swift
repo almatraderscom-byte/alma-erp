@@ -27,26 +27,38 @@ import Foundation
 import ActivityKit
 #endif
 
+@MainActor
 enum PulseNativeSync {
     /// Native sync cadence — matches the web layer's 5-minute throttle so the
     /// two writers together stay ~one update per few minutes.
     private static let throttleSeconds: TimeInterval = 240
     private static let lastSyncKey = "alma.pulse.lastNativeSyncAt"
+    private static var syncInFlight = false
 
     /// Fire-and-forget: fetch the canonical snapshot over the NATIVE session
     /// and drive the Live Activity exactly like a webview update would.
     @available(iOS 16.1, *)
     static func syncNow(reason: String) {
         #if canImport(ActivityKit)
+        guard !syncInFlight else {
+            LiveActivityBridgePlugin.breadcrumb("native_sync_skipped_in_flight(\(reason))")
+            return
+        }
         let now = Date().timeIntervalSince1970
         let last = UserDefaults.standard.double(forKey: lastSyncKey)
         guard now - last >= throttleSeconds else { return }
-        UserDefaults.standard.set(now, forKey: lastSyncKey)
+        syncInFlight = true
 
-        Task {
-            guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        Task { @MainActor in
+            defer { syncInFlight = false }
+            guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+                LiveActivityBridgePlugin.breadcrumb(
+                    "native_sync_skipped_activities_disabled(\(reason))")
+                return
+            }
             if #available(iOS 17.0, *),
                !Activity<AlmaVoiceActivityAttributes>.activities.isEmpty {
+                LiveActivityBridgePlugin.breadcrumb("native_sync_skipped_voice(\(reason))")
                 return   // voice owns the island — never fight it
             }
             do {
@@ -56,7 +68,19 @@ enum PulseNativeSync {
                     "native_sync(\(reason)) approvals=\(state.approvals) orders=\(state.runningOrders)")
                 LiveActivityBridgePlugin.cacheLastState(title: "ALMA ERP", state: state)
                 let alert = LiveActivityBridgePlugin.approvalNagAlert(for: state)
-                LiveActivityBridgePlugin.applyCore(state: state, title: "ALMA ERP", alert: alert)
+                let outcome = LiveActivityBridgePlugin.applyCore(
+                    state: state, title: "ALMA ERP", alert: alert)
+                switch outcome {
+                case .updated, .started:
+                    // Throttle only a successfully applied canonical snapshot.
+                    // A transient 401/offline state or an active Voice activity
+                    // must remain immediately retryable on the next activation.
+                    UserDefaults.standard.set(
+                        Date().timeIntervalSince1970, forKey: lastSyncKey)
+                case .failed:
+                    LiveActivityBridgePlugin.breadcrumb(
+                        "native_sync_apply_failed(\(reason))")
+                }
             } catch {
                 // 401/offline/decode — the panel keeps its honest stale state;
                 // breadcrumb only, never a crash, never a fake update.

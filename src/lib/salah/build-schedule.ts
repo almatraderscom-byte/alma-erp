@@ -29,31 +29,43 @@ export function buildDhakaSchedule(
   ymd: string,
   cfg: SalahTimeConfig,
   friday: boolean,
+  instant: (ymd: string, h: number, m: number) => Date = dhakaInstant,
 ): Record<WaqtKey, WaqtSchedule> {
-  const fajrAzan = hmToInstant(ymd, cfg.fajr.azan)
-  const fajrEnd = hmToInstant(ymd, cfg.fajr.end)
+  // Every instant goes through `instant` (location offset — PR #650 bot P1);
+  // an end wall-clock earlier than the azan is past-midnight → next day.
+  const hm = (t: string) => {
+    const [h, m] = String(t).split(':').map(Number)
+    return instant(ymd, h, m)
+  }
+  const endAfter = (azanDate: Date, endHm: string) => {
+    const e = hm(endHm)
+    return e <= azanDate ? new Date(e.getTime() + 86_400_000) : e
+  }
 
-  const dhuhrAzan = friday ? dhakaInstant(ymd, 13, 0) : hmToInstant(ymd, cfg.dhuhr.azan)
-  const dhuhrPrayer = hmToInstant(ymd, cfg.dhuhr.prayer)
-  const dhuhrEnd = hmToInstant(ymd, cfg.dhuhr.end)
+  const fajrAzan = hm(cfg.fajr.azan)
+  const fajrEnd = endAfter(fajrAzan, cfg.fajr.end)
 
-  const asrAzan = hmToInstant(ymd, cfg.asr.azan)
-  const asrPrayer = hmToInstant(ymd, cfg.asr.prayer)
-  const asrEnd = hmToInstant(ymd, cfg.asr.end)
+  const dhuhrAzan = friday ? instant(ymd, 13, 0) : hm(cfg.dhuhr.azan)
+  const dhuhrPrayer = hm(cfg.dhuhr.prayer)
+  const dhuhrEnd = endAfter(dhuhrAzan, cfg.dhuhr.end)
 
-  const maghribAzan = hmToInstant(ymd, cfg.maghrib.azan)
-  const maghribEnd = hmToInstant(ymd, cfg.maghrib.end)
+  const asrAzan = hm(cfg.asr.azan)
+  const asrPrayer = hm(cfg.asr.prayer)
+  const asrEnd = endAfter(asrAzan, cfg.asr.end)
 
-  const ishaAzan = hmToInstant(ymd, cfg.isha.azan)
-  const ishaPrayer = hmToInstant(ymd, cfg.isha.prayer)
-  const ishaEnd = hmToInstant(ymd, cfg.isha.end)
+  const maghribAzan = hm(cfg.maghrib.azan)
+  const maghribEnd = endAfter(maghribAzan, cfg.maghrib.end)
+
+  const ishaAzan = hm(cfg.isha.azan)
+  const ishaPrayer = hm(cfg.isha.prayer)
+  const ishaEnd = endAfter(ishaAzan, cfg.isha.end)
 
   return {
     fajr: {
       start: fajrAzan,
       end: fajrEnd,
       azan: fajrAzan,
-      prayerStart: hmToInstant(ymd, cfg.fajr.prayer),
+      prayerStart: hm(cfg.fajr.prayer),
       label: 'ফজর',
       azanLabel: hmToBanglaLabel(cfg.fajr.azan),
     },
@@ -79,7 +91,7 @@ export function buildDhakaSchedule(
       start: maghribAzan,
       end: maghribEnd,
       azan: maghribAzan,
-      prayerStart: hmToInstant(ymd, cfg.maghrib.prayer),
+      prayerStart: hm(cfg.maghrib.prayer),
       label: 'মাগরিব',
       azanLabel: hmToBanglaLabel(cfg.maghrib.azan),
     },

@@ -162,6 +162,26 @@ const PARCEL_CONTEXT = /(\border\b|অর্ডার|parcel|পার্সে�
 const LISTING_ASK =
   /((?:website|site|সাইট)\s*(?:e|ে|তে)?\s*(?:tolo|tulo|tul\b|upload|add\b|তোল|তুল|যোগ)|নতুন\s*পণ্য\s*(?:তোল|যোগ)|\blist\s*(?:the\s*)?product\b)/i
 
+/**
+ * "ei product tar dam 1200 koro", "oita homepage e dekhao", "oi panjabi ta site
+ * theke soriye dao" — changing a product that is ALREADY on the site. Keyword
+ * scoring cannot reach these either: the sentence names the product, and the
+ * only shared word is "product" or nothing at all.
+ *
+ * Deliberately narrow. Price, visibility and homepage placement are the asks
+ * that carry no SEO vocabulary, so no other rule claims them; copy edits framed
+ * as SEO ("meta description লিখে দাও") stay with the SEO skills, which is why
+ * this rule is ordered after them.
+ */
+const PRICE_EDIT =
+  /(?:দাম|দর|\bdam\b|\bprice\b|প্রাইস)[^\n]{0,24}?(?:\d|কর|বদল|বাড়|কমা|\bkoro\b|\bkore\b|\bbadla|\bbarao\b|\bbariye\b|\bkomao\b|\bkamiye\b|\bchange\b|\bupdate\b|\bset\b)/i
+const VISIBILITY_EDIT =
+  /(?:লাইভ\s*কর|live\s*kor|\bpublish\b|আনপাবলিশ|\bunpublish\b|সরিয়ে\s*(?:দাও|ফেল)|soriye\s*(?:dao|felo)|\bhide\b|লুকিয়ে|লুকাও)/i
+const FEATURED_EDIT =
+  /(?:হোমপেজে\s*(?:দেখাও|আনো|তোল)|homepage\s*e?\s*(?:dekhao|ano|tolo)|\bfeatured\b|ফিচার্?ড)/i
+const PRODUCT_EDIT_ASK = (t: string): boolean =>
+  PRICE_EDIT.test(t) || VISIBILITY_EDIT.test(t) || FEATURED_EDIT.test(t)
+
 export interface RouterRule {
   id: string
   skill: string
@@ -199,6 +219,14 @@ export const RULES: RouterRule[] = [
     // koro" is a fix on an existing listing, not a new one.
     test: (t) => LISTING_ASK.test(t) && !isSeoTopic(t),
     why: 'পণ্য সাইটে তোলার কথা — সাইটের কনটেন্ট এডিট নয়',
+  },
+  {
+    id: 'storefront-edit',
+    skill: 'storefront-editing',
+    // After product-listing on purpose: "notun panjabi ta site e tolo, dam 1200"
+    // is a new listing that happens to mention a price, not an edit.
+    test: (t) => PRODUCT_EDIT_ASK(t) && !LISTING_ASK.test(t) && !isSeoTopic(t),
+    why: 'সাইটে থাকা পণ্যের দাম/দৃশ্যমানতা বদলের কথা — নতুন লিস্টিং বা SEO কপি নয়',
   },
   {
     id: 'staff-attendance',

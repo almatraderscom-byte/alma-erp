@@ -142,12 +142,58 @@ export function isRepeatedOpener(preamble: string, next: string): boolean {
   return shared / union >= OPENER_SIMILARITY || shared / b.length >= 0.9
 }
 
+/**
+ * "এবার X দেখতে হবে" — the OBLIGATION shape, found live 2026-07-28 on the first
+ * run of the newly promoted alma-audience-builder.
+ *
+ * The turn read the existing audiences, then signed off with *"এবার কাস্টমার
+ * segment আর intelligence ডেটা দেখতে হবে"* and ended. Boss got step 1 of a
+ * four-step skill and no audience. `ADAPTER_INTENT_RE` did not fire because every
+ * shape in it is either present-continuous ("দেখছি") or first-person future
+ * ("দেখব") — and this is neither; it is the model stating its own next step as a
+ * requirement.
+ *
+ * Anchored on "এবার / এখন / তারপর" so it stays the AGENT's next step. A
+ * recommendation to Boss — "আপনাকে ব্যাংকে যেতে হবে" — carries no such marker and
+ * is left alone, which matters because that is a finished report, not a stop.
+ */
+const OBLIGATION_NEXT_STEP_RE =
+  /(এবার|এখন|তারপর|এরপর)[^।\n]{0,80}(দেখতে|করতে|চালাতে|আনতে|পড়তে|নিতে|বের\s*করতে|তৈরি\s*করতে)\s*হবে/i
+
+/**
+ * "ফল এলে আপডেট দেব" with nothing actually running — the PHANTOM CONTINUATION,
+ * found live 2026-07-28 on alma-customer-support.
+ *
+ * The turn ended with *"(টুল কল চলছে — ফল এলে আপডেট দেব।)"*. No tool call was in
+ * flight; the round had emitted its calls as TEXT, so there was nothing to come
+ * back from, and the update it promised could never arrive — the turn was over.
+ *
+ * This is NOT the same as a queued long job. When a crawl or a worker job really
+ * is pending, "ফল এলে জানাব" is honest and the hop system does resume it, so the
+ * caller passes `hasPendingAsyncJob` and this stays silent. The distinction is
+ * evidence, not phrasing.
+ */
+const PHANTOM_CONTINUATION_RE =
+  /((?:টুল\s*কল|tool\s*call)[^।\n]{0,20}(?:চলছে|চালাচ্ছি|running)|(?:ফল|রেজাল্ট|result)[^।\n]{0,20}(?:এলে|পেলে|আসলে)[^।\n]{0,40}(?:জানাব|দেব|আপডেট|update))/i
+
 export function shouldNudgeAdapterIntent(input: {
   text: string
   toolRecords: TurnLoopToolRecord[]
   hasAskCard?: boolean
   ownerRequestedAction: boolean
+  /** A real queued job (crawl, worker) — then a promised update is honest. */
+  hasPendingAsyncJob?: boolean
 }): boolean {
+  // A promise of an update THIS turn, with nothing queued to produce it, is a
+  // stop dressed as progress. It outranks every terminal test below, because
+  // those read the sentence and this one reads what is actually running.
+  if (
+    !input.hasPendingAsyncJob
+    && !input.hasAskCard
+    && PHANTOM_CONTINUATION_RE.test(input.text.trim().slice(-400))
+  ) {
+    return true
+  }
   // A turn that ran NO tool at all and signs off with "… চালাচ্ছি / দেখছি" is
   // unfinished by definition — whether or not the message asked for a mutation.
   // The old `ownerRequestedAction` requirement made read-only turns exempt, so a
@@ -177,7 +223,8 @@ export function shouldNudgeAdapterIntent(input: {
   // the correction, not the repetition, and stopping there strands the job one
   // step from done (owner, live 2026-07-27).
   if (lastFailed && !isArgumentFailure(latestTool) && !namesDifferentTool(input.text, latestTool?.toolName)) return false
-  return ADAPTER_INTENT_RE.test(input.text.trim().slice(-600))
+  const tail = input.text.trim().slice(-600)
+  return ADAPTER_INTENT_RE.test(tail) || OBLIGATION_NEXT_STEP_RE.test(tail)
 }
 
 export function shouldNudgeZeroToolIntent(input: {

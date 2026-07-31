@@ -45,7 +45,7 @@ import { GBP_TOOLS } from './gbp-tools'
 import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
-import { FAMILY_TOOLS, place_agent_call, call_boss_with_report } from './personal-tools'
+import { FAMILY_TOOLS, place_agent_call, call_boss_with_report, call_me_in_app } from './personal-tools'
 import { place_business_call } from './business-call-tools'
 import { PERSONAL_OS_TOOLS } from './personal-os-tools'
 import { BUSINESS_OS_TOOLS } from './business-os-tools'
@@ -563,6 +563,8 @@ export const TOOLS: AgentTool[] = [
   // tool-group, so it must also be executable from the ALMA_LIFESTYLE pool
   // (otherwise the head sees it but a call returns "Unknown tool").
   place_agent_call,
+  // In-app live call to Boss (plan C1/C2) — the default when Boss says "কল দাও".
+  call_me_in_app,
   // PA-5R human-PA callback — boss-requested completion call, no card.
   call_boss_with_report,
   // Human-PA point 2 — order-aware customer call (delegates dialing to place_agent_call).
@@ -769,6 +771,53 @@ export async function runRegisteredTool(
     }
   }
 
+  // PM-5 — the permission mode, ENFORCED here rather than only recorded.
+  //
+  // The head applies the mode before it calls a tool, so for a head turn this is
+  // a second look that changes nothing. A delegated specialist has no such step:
+  // forwarding the mode string would leave a worker free to write under Plan and
+  // to change things silently under Careful, which is the bypass PM-5 exists to
+  // close. Only the two verdicts the head would never reach are blocked, so this
+  // cannot narrow existing head behaviour:
+  //   • plan   → anything above a pure read is absent, not merely gated
+  //   • careful→ an ordinary R1/R2 write belongs on a card, and only the head
+  //              can stage one, so the worker must hand it back.
+  if (ctx.permissionMode) {
+    try {
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+      const mode = normalizePermissionMode(ctx.permissionMode)
+      const task = taskClassForTool(tool.name, cap)
+      const verdict = modeVerdict({ mode, tier: task.tier, taskClass: task.taskClass, now: Date.now() })
+      const blockedByMode =
+        verdict === 'blocked'
+        || (verdict === 'card' && mode === 'careful' && cap.mode === 'write')
+      if (blockedByMode) {
+        void logToolEvent({
+          ...baseEvent,
+          success: false,
+          errorClass: 'permission_mode',
+          errorCode: 'permission_mode_blocked',
+          latencyMs: Date.now() - started,
+          detail: { ...capDetail, tier: task.tier, taskClass: task.taskClass, verdict, execution: 'rejected' },
+        })
+        return {
+          success: false,
+          error:
+            mode === 'plan'
+              ? `প্ল্যান মোড চলছে — এই মোডে কিছুই বদলানো যাবে না, তাই ${tool.name} চালানো হয়নি। পড়ার কাজ করো, আর কী করতে চাও সেটা লিখে দাও।`
+              : `সতর্ক মোড চলছে — ${tool.name} নিজে চালানো যাবে না, Boss-এর approval কার্ডে যেতে হবে। কাজটা head-কে ফেরত দাও, ও কার্ড বানাবে।`,
+          errorCode: 'permission_mode_blocked',
+          retryable: false,
+        }
+      }
+    } catch (err) {
+      // A mode we cannot resolve must not break the call — the guard below and
+      // the head's own check still apply.
+      console.warn('[registry] permission-mode check failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Streamed tool args that failed JSON.parse arrive as the `{ _raw }` marker.
   // Short-circuit with a self-repair error that ECHOES the broken text back, so
   // the model fixes its own emission — instead of the misleading schema error
@@ -923,6 +972,18 @@ export async function runRegisteredTool(
   try {
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
+
+    // PM-5 — the turn's own rules, in one place a delegating tool can forward.
+    // `turnAuthorization` is stripped above so it never reaches a handler as a
+    // stray argument; a tool that spawns a sub-agent still has to pass it on, or
+    // the worker runs outside the read-only turn, the permission mode and the
+    // same-turn duplicate guard that bind the head.
+    handlerContext.delegatedToolContext = {
+      ...(ctx.turnId ? { turnId: ctx.turnId } : {}),
+      ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
+      ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
+      ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
+    }
 
     // Phase 53/65: route direct write effects through the exactly-once effect
     // engine (durable run + append-only ledger; ledger failure BLOCKS the write

@@ -202,6 +202,15 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
 #if canImport(ActivityKit)
 @available(iOS 16.1, *)
 extension LiveActivityBridgePlugin {
+    private static let pushObserverLock = NSLock()
+    private static var observedPushActivityIDs = Set<String>()
+
+    private static func finishObservingPushToken(activityID: String) {
+        pushObserverLock.lock()
+        observedPushActivityIDs.remove(activityID)
+        pushObserverLock.unlock()
+    }
+
 
     /// Decode the canonical v3 payload, falling back to the legacy scalar keys
     /// so an older web bundle (or a degraded server response) still works.
@@ -309,19 +318,26 @@ extension LiveActivityBridgePlugin {
         title: String,
         alert: AlertConfiguration?
     ) -> ApplyOutcome {
-        let staleDate = state.staleAfterDate
+        var renderedState = state
+        renderedState.robotAnimationEpoch = Date().timeIntervalSince1970
+        let staleDate = renderedState.staleAfterDate.flatMap {
+            $0 > Date() ? $0 : nil
+        }
 
         if let activity = Activity<PulseActivityAttributes>.activities.first {
             Task {
                 if #available(iOS 16.2, *) {
-                    let content = ActivityContent(state: state, staleDate: staleDate)
+                    let content = ActivityContent(
+                        state: renderedState,
+                        staleDate: staleDate
+                    )
                     if let alert {
                         await activity.update(content, alertConfiguration: alert)
                     } else {
                         await activity.update(content)
                     }
                 } else {
-                    await activity.update(using: state)
+                    await activity.update(using: renderedState)
                 }
             }
             Self.breadcrumb("updated")
@@ -329,6 +345,37 @@ extension LiveActivityBridgePlugin {
         }
 
         let attributes = PulseActivityAttributes(title: title)
+        do {
+            let request = try requestPulseActivity(
+                attributes: attributes,
+                state: renderedState,
+                staleDate: staleDate
+            )
+            if request.pushBacked {
+                observePushToken(of: request.activity)
+            }
+            Self.breadcrumb(request.pushBacked ? "started" : "started_local")
+            return .started
+        } catch {
+            Self.breadcrumb("request_failed: \(error.localizedDescription)")
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// Prefer a token-backed activity so the server can update the Island while
+    /// the app is suspended. ActivityKit can reject token creation before a
+    /// push token is available (observed as ActivityInput error 0 on Simulator
+    /// and some restored installs). A local activity is still valid and gives
+    /// the owner the current Pulse immediately; the next foreground sync can
+    /// retry the token-backed path after that activity ends.
+    static func requestPulseActivity(
+        attributes: PulseActivityAttributes,
+        state: PulseActivityAttributes.ContentState,
+        staleDate: Date?
+    ) throws -> (
+        activity: Activity<PulseActivityAttributes>,
+        pushBacked: Bool
+    ) {
         do {
             let activity: Activity<PulseActivityAttributes>
             if #available(iOS 16.2, *) {
@@ -344,12 +391,24 @@ extension LiveActivityBridgePlugin {
                     pushType: .token
                 )
             }
-            observePushToken(of: activity)
-            Self.breadcrumb("started")
-            return .started
+            return (activity, true)
         } catch {
-            Self.breadcrumb("request_failed: \(error.localizedDescription)")
-            return .failed(error.localizedDescription)
+            breadcrumb("token_request_failed_local_fallback: \(error.localizedDescription)")
+            let activity: Activity<PulseActivityAttributes>
+            if #available(iOS 16.2, *) {
+                activity = try Activity.request(
+                    attributes: attributes,
+                    content: ActivityContent(state: state, staleDate: staleDate),
+                    pushType: nil
+                )
+            } else {
+                activity = try Activity.request(
+                    attributes: attributes,
+                    contentState: state,
+                    pushType: nil
+                )
+            }
+            return (activity, false)
         }
     }
 
@@ -360,19 +419,59 @@ extension LiveActivityBridgePlugin {
     ///
     /// The raw token is NEVER logged (spec §15).
     static func observePushToken(of activity: Activity<PulseActivityAttributes>) {
+        pushObserverLock.lock()
+        let inserted = observedPushActivityIDs.insert(activity.id).inserted
+        pushObserverLock.unlock()
+        guard inserted else { return }
+
         Task {
+            defer {
+                // Keep lock operations in a synchronous helper; NSLock must
+                // never be held across an async suspension point.
+                finishObservingPushToken(activityID: activity.id)
+            }
+
+            // When the app process relaunches, an existing Activity can already
+            // have a token and `pushTokenUpdates` may not produce a new value
+            // immediately. Register the current token first, then keep watching
+            // for rotation. The server upsert is intentionally idempotent.
+            if let currentToken = activity.pushToken {
+                await registerPushToken(currentToken)
+            }
             for await tokenData in activity.pushTokenUpdates {
-                let token = tokenData.map { String(format: "%02x", $0) }.joined()
-                guard !token.isEmpty else { continue }
-                struct Body: Encodable { let platform = "ios"; let activityToken: String }
-                struct Resp: Decodable { let ok: Bool? }
-                _ = try? await AlmaAPI.shared.send(
+                await registerPushToken(tokenData)
+            }
+        }
+    }
+
+    /// Token registration can race the native session-cookie restore at cold
+    /// launch. Retry briefly in-process; never log the token or fail the app.
+    private static func registerPushToken(_ tokenData: Data) async {
+        let token = tokenData.map { String(format: "%02x", $0) }.joined()
+        guard !token.isEmpty else { return }
+        struct Body: Encodable { let platform = "ios"; let activityToken: String }
+        struct Resp: Decodable { let ok: Bool? }
+
+        let retryDelays: [UInt64] = [0, 1_000_000_000, 3_000_000_000]
+        for delay in retryDelays {
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+            }
+            do {
+                let response: Resp = try await AlmaAPI.shared.send(
                     "POST",
                     "/api/assistant/internal/live-activity/register",
                     body: Body(activityToken: token)
-                ) as Resp
+                )
+                if response.ok != false {
+                    breadcrumb("push_token_registered")
+                    return
+                }
+            } catch {
+                // Retry below. The final failure is recorded without token/PII.
             }
         }
+        breadcrumb("push_token_registration_failed")
     }
 }
 #endif

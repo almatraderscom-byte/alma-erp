@@ -28,6 +28,8 @@
  * the honest outcome, because that round contained no thinking he wanted.
  */
 
+import { createMarkupStreamFilter } from '@/agent/lib/model-output-sanitize'
+
 /**
  * Line shapes that are unmistakably about the harness rather than the work.
  * Every entry here comes from a line he actually saw on screen.
@@ -40,6 +42,13 @@ const PLUMBING_LINE: RegExp[] = [
   // injected style/first-line rules
   /mandatory first line/i,
   /first line rule/i,
+  // …and the model REPORTING that it obeyed the rule, which is the same leak
+  // wearing a different sentence. Seen live 2026-07-28 as the entire visible
+  // thought of a customer-support turn: "The first line has been outputted as
+  // required." Matching the rule's name was not enough — it also has to match
+  // the model ticking the rule off.
+  /\bfirst line\b[^.]{0,40}\b(?:output|outputted|emitted|already|done|complete)/i,
+  /\b(?:as|per) (?:required|instructed|the instruction)\b/i,
   /\bthe (?:system|instruction) (?:note|says|is)\b/i,
   // the server-side claim verifier
   /verification failed/i,
@@ -75,4 +84,47 @@ export function cleanVisibleThinking(text: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/**
+ * The live stream, not the stored copy — same lesson as the markup filter, and
+ * learned the same way: on the shipped fix, one turn later.
+ *
+ * `cleanVisibleThinking` runs once per round on the text being STORED. Thinking
+ * is yielded token by token, so on 2026-07-28 the fix above was live and his
+ * screen still read *"The response already started with the mandatory first line
+ * as required."* — the transcript was clean and the screen was not.
+ *
+ * A thought can only be judged as a LINE (that is what `isPlumbingThought` reads),
+ * so this holds the tail until a newline arrives. The visible effect is that
+ * reasoning appears line by line instead of character by character, which is the
+ * price of not showing him our control notes at all.
+ */
+export interface ThinkingStreamFilter {
+  push(delta: string): string
+  flush(): string
+}
+
+export function createThinkingStreamFilter(): ThinkingStreamFilter {
+  const markup = createMarkupStreamFilter()
+  let partial = ''
+
+  const takeLines = (chunk: string, final: boolean): string => {
+    partial += chunk
+    if (!final && !partial.includes('\n')) return ''
+    const pieces = partial.split('\n')
+    partial = final ? '' : (pieces.pop() ?? '')
+    const kept = pieces.filter((line) => !isPlumbingThought(line))
+    if (final && chunk === '' && kept.length === 0) return ''
+    return kept.length > 0 ? kept.join('\n') + (final ? '' : '\n') : ''
+  }
+
+  return {
+    push(delta: string): string {
+      return takeLines(markup.push(delta), false)
+    },
+    flush(): string {
+      return takeLines(markup.flush(), true)
+    },
+  }
 }

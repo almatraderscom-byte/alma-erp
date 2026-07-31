@@ -80,10 +80,35 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-27: alma-website, the sixth — scope narrowed away from page copy.
     //   2026-07-27: alma-marketing, the seventh — three keyword collisions freed.
     //   2026-07-27: alma-invoice-to-erp, the eighth.
+    //   2026-07-28: alma-agent-incident-diagnosis, the ninth — lowest blast
+    //   radius left in the set (`writePolicy: none`), and its bare `problem` /
+    //   `সমস্যা` keywords were dropped first: a website problem is alma-website's.
+    //   2026-07-28: alma-audience-builder, the tenth — promoted only after the
+    //   `audience` keyword was removed from alma-meta-campaign-launch, which is
+    //   the collision lint had been reporting. Audience is that skill's INPUT.
+    //   2026-07-28: alma-customer-support, the eleventh — the first skill whose
+    //   output is read by someone outside the company. Bare `customer` had to go
+    //   from its keywords first: it was taking "customer er order ta kokhon
+    //   asche", a message that must pin NOTHING.
+    //   2026-07-28: alma-meta-campaign-launch, the twelfth — kept `implicit:
+    //   true` (the gate is the card + PAUSED creation, not router shyness) and
+    //   given a REQUIRED pre-flight instead: no card without ads_campaign_plan.
+    //   2026-07-28: alma-browser-operator, the thirteenth and last — kept for
+    //   the end on purpose, it is the only one that reads pages nobody here
+    //   wrote. Nothing about the promotion widened it: the final-submit block and
+    //   the credential refusal were already in code.
+    //   2026-07-28: storefront-editing, the ninth — A1. Editing a product that is
+    //   already live had no skill at all, so "dam 1200 koro" fell through to the
+    //   head and, at best, one approval card per field.
     expect(selectable).toEqual([
+      'alma-agent-incident-diagnosis',
+      'alma-audience-builder',
+      'alma-browser-operator',
+      'alma-customer-support',
       'alma-finance-brief',
       'alma-invoice-to-erp',
       'alma-marketing',
+      'alma-meta-campaign-launch',
       'alma-owner-daily-briefing',
       'alma-product-listing',
       'alma-product-social-post',
@@ -93,10 +118,15 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
+      'storefront-editing',
     ])
 
+    // 5 → 4 → 3 → 2 → 1 → 0 on 2026-07-28. Every one of the 14 has been through
+    // evals. The two retired ones are dropped by discovery, not counted here. (alma-agent-incident-diagnosis promoted). This is the
+    // countdown, so it is asserted exactly: a draft that quietly turns active
+    // without going through evals fails here.
     const stillDraft = all.skills.length - live.skills.length
-    expect(stillDraft).toBeGreaterThanOrEqual(5)
+    expect(stillDraft).toBe(0)
   })
 
   it('records the baseline table and the headline numbers', async () => {
@@ -162,7 +192,9 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     // 27 → 28: the parcel-vs-person boundary added 2026-07-27 with
     // alma-staff-dispatch. "customer er order ta kokhon asche" carries the same
     // words as the staff question and must still pin nothing.
-    expect(rows).toHaveLength(30)
+    // 30 → 33: A1's three product-edit messages added 2026-07-28 — a price, a
+    // hide and a homepage placement, none of which any skill covered before.
+    expect(rows).toHaveLength(33)
     expect(accuracy).toBeLessThanOrEqual(100)
     expect(hits + count('wrong') + count('missed')).toBe(shouldPick.length)
     expect(falseTriggers + count('correctly-silent')).toBe(shouldNotPick.length)

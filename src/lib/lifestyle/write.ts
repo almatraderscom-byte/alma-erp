@@ -669,6 +669,35 @@ async function applyOrderUnitPriceChange(order: LifestyleOrder, newUnitPrice: nu
   return { ok: true }
 }
 
+/**
+ * Courier / tracking / note only — and nothing else moves.
+ *
+ * `updateOrderFieldInPostgres` recalculates `sellPrice` and `profit` on EVERY
+ * field it writes, because it is built for the edit form where money fields sit
+ * next to text ones. An order whose profit came from `estimatedProfit` (see
+ * createOrderInPostgres) would therefore have its financial result silently
+ * rewritten by someone adding a tracking id. Text edits get their own path.
+ */
+export async function updateOrderTextFieldsInPostgres(
+  id: string,
+  fields: { courier?: string; trackingId?: string; notes?: string },
+): Promise<{ ok: true } | { error: string }> {
+  const orderId = String(id ?? '')
+  if (!orderId) return { error: 'id required' }
+
+  const patch: Prisma.LifestyleOrderUpdateInput = {}
+  if (fields.courier != null) patch.courier = String(fields.courier)
+  if (fields.trackingId != null) patch.trackingId = String(fields.trackingId)
+  if (fields.notes != null) patch.notes = String(fields.notes)
+  if (!Object.keys(patch).length) return { error: 'no text fields to update' }
+
+  const order = await prisma.lifestyleOrder.findUnique({ where: { id: orderId } })
+  if (!order) return { error: `Order not found: ${orderId}` }
+
+  await prisma.lifestyleOrder.update({ where: { id: orderId }, data: patch })
+  return { ok: true }
+}
+
 export async function updateOrderTrackingInPostgres(body: Record<string, unknown>) {
   const id = String(body.id ?? '')
   const trackingId = String(body.tracking_id ?? '')

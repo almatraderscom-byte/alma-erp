@@ -4,6 +4,7 @@ import React, { useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
+import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
 import { impactLight } from '@/lib/haptics'
 
 interface AgentMarkdownProps {
@@ -108,6 +109,12 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
 }
 
 function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
+  // The server strips typed tool calls when the ROUND ends — which is too late
+  // for the person watching it stream. Live on 2026-07-28 the owner read
+  // `{"type": "tool_call", …}` as it arrived, and it vanished only afterwards.
+  // Same repair, applied where the text is drawn, so a delta never shows machine
+  // syntax even for the seconds before the round closes.
+  const safe = React.useMemo(() => stripToolCallMarkup(content), [content])
   return (
     <div className={cn('prose-agent select-text text-cream break-words [overflow-wrap:anywhere]', className)}>
       <ReactMarkdown
@@ -124,7 +131,12 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           li({ children }) { return <li className="leading-relaxed text-cream">{children}</li> },
           code({ className: cls, children, ...props }) {
             const isBlock = cls?.startsWith('language-')
-            const codeText = String(children).replace(/\n$/, '')
+            // `children` is undefined for an EMPTY fence, and `String(undefined)`
+            // is the literal word "undefined" — which is exactly what Boss saw on
+            // his screen 2026-07-28: three cards in a row reading `undefined`.
+            // An empty block has nothing to show, so it renders as nothing.
+            const codeText = (children == null ? '' : String(children)).replace(/\n$/, '')
+            if (isBlock && !codeText.trim()) return null
             if (isBlock) {
               const lang = cls?.replace('language-', '') ?? ''
               // Copyable DELIVERABLE block (caption / post / ready-to-send text).
@@ -202,7 +214,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           img({ src, alt }) { return <ImageWithDownload src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} /> },
         }}
       >
-        {content}
+        {safe}
       </ReactMarkdown>
     </div>
   )

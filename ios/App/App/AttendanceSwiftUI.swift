@@ -470,7 +470,6 @@ final class AttendanceVM {
             if approve { body["approved_reduction_amount"] = AnyEncodable(amount) }
             let _: AttendanceActionOk = try await AlmaAPI.shared.send(
                 "PATCH", "/api/attendance/waivers/\(waiver.id)", body: body)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
             notice = approve
                 ? "আপিল অনুমোদিত — ওয়ালেটে ক্রেডিট হয়েছে ✓"
                 : "আপিল প্রত্যাখ্যান করা হয়েছে"
@@ -478,7 +477,6 @@ final class AttendanceVM {
             await load()
             await loadAnalytics()
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = Self.actionMessage(error)
         }
     }
@@ -543,11 +541,9 @@ final class AttendanceVM {
             if let rec = log.attendanceRecordId { body["attendance_record_id"] = AnyEncodable(rec) }
             let _: AttendanceActionOk = try await AlmaAPI.shared.send(
                 "PATCH", "/api/attendance/selfies/\(log.id)", body: body)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
             notice = approve ? "ভেরিফিকেশন অনুমোদিত ✓" : "ভেরিফিকেশন প্রত্যাখ্যান করা হয়েছে"
             await load()
         } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = Self.actionMessage(error)
         }
     }

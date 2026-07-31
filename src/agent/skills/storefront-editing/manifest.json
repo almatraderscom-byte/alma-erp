@@ -1,0 +1,52 @@
+{
+  "name": "storefront-editing",
+  "description": "Changes an existing product on almatraders.com — name, description, price, category, image alt-text, live/hidden, homepage featured — as ONE owner approval, then reads the live site back to prove it landed. Use when Boss asks to change something about a product that is already on the site.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "New product going up for the first time → alma-product-listing. Pure SEO copy work in batches (alt/meta across many products) → seo-fixing-own-site. URL/slug rename → change_product_slug in seo-fixing-own-site. Stock or ERP price → the ERP tools, not this.",
+  "requiredCapabilities": [
+    "get_website_catalog",
+    "audit_product_seo",
+    "edit_storefront_product",
+    "fetch_website_page"
+  ],
+  "dependencies": {
+    "env": [
+      "WEBSITE_SUPABASE_URL",
+      "WEBSITE_SUPABASE_SERVICE_ROLE_KEY"
+    ]
+  },
+  "outputContract": {
+    "kind": "approval_card",
+    "mustInclude": [
+      "product_slug",
+      "before",
+      "after"
+    ]
+  },
+  "stopConditions": [
+    "একই কাজে একাধিক card বানাতে হলে — সব এক card-এ যাবে",
+    "একটা card approve হয়ে যাওয়ার পর — টার্ন শেষ, না চাইলে নতুন card নয়",
+    "কোন পণ্য, সেটা নিশ্চিত না হলে",
+    "ছবির exact URL না পেলে",
+    "দাম বদলাতে বলা হয়নি অথচ দাম বদলাচ্ছে",
+    "URL/slug বদলাতে হলে"
+  ],
+  "done": [
+    {
+      "tool": "edit_storefront_product"
+    }
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 16,
+  "status": "active"
+}

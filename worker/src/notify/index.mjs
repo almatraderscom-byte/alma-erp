@@ -147,8 +147,12 @@ export async function notify({
   const nativeResult = await sendNativePush(tier, title, message, category, actionUrl)
   statuses.native_push = nativeResult.ok ? 'sent' : `error: ${nativeResult.reason}`
 
-  const sendGeneral = ntfyMode === 'both' || ntfyMode === 'general'
-  const sendCritical = ntfyMode === 'both' || ntfyMode === 'critical'
+  // NTFY retired (owner rule 2026-07-29): the native app push + Telegram cover
+  // every surface, and triple-delivery of the same body was noise. The channel
+  // code stays behind NTFY_ENABLED='true' for emergencies only.
+  const ntfyEnabled = process.env.NTFY_ENABLED === 'true'
+  const sendGeneral = ntfyEnabled && (ntfyMode === 'both' || ntfyMode === 'general')
+  const sendCritical = ntfyEnabled && (ntfyMode === 'both' || ntfyMode === 'critical')
 
   if (sendGeneral) {
     channels.push('ntfy_general')

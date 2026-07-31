@@ -334,8 +334,8 @@ export const call_boss_with_report: AgentTool = {
   description:
     'Boss-কে ফোন কল করে কাজের রিপোর্ট শোনায় (human-PA callback)। ব্যবহার করো ঠিক তখনই ' +
     'যখন Boss নিজে বলেছিলেন কাজ শেষে জানাতে/কল করতে ("শেষ হলে জানাবে", "কল করে জানিও", ' +
-    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। WhatsApp লাইভ কল ' +
-    'যায় আগে, না ধরলে সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
+    '"confirm দিবে") — এবং কাজটা এইমাত্র সত্যিই শেষ হয়েছে (tool-verified)। আগে Boss-এর নিজের ' +
+    'app-এ রিং যায় (বিদেশেও কাজ করে), না ধরলে WhatsApp, তারপর সরাসরি নম্বরে, তাও না ধরলে report push হয়। কোনো card লাগে না — Boss-এর ' +
     'অনুরোধটাই অনুমতি। report হবে ২-৪ বাক্যের পরিষ্কার বাংলা — কী করা হলো, ফলাফল কী, পরের ধাপ কী।',
   input_schema: {
     type: 'object' as const,
@@ -397,8 +397,68 @@ export const call_boss_with_report: AgentTool = {
           status: 'callback_queued',
           escalationId: id,
           message: delayMinutes > 0
-            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।`
-            : 'Boss-কে কল যাচ্ছে (WhatsApp আগে, না ধরলে সরাসরি নম্বরে; তাও না ধরলে report push)।',
+            ? `${delayMinutes} মিনিট পরে Boss-কে কল যাবে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।`
+            : 'Boss-কে কল যাচ্ছে (আগে app-এ রিং, না ধরলে WhatsApp → সরাসরি নম্বর; তাও না ধরলে report push)।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+/**
+ * IN-APP call to Boss (plan C1/C2). The ONLY correct tool when Boss says
+ * "আমার app-এ কল দাও" — the head used to route that to place_agent_call with
+ * channel:'whatsapp' (live 2026-07-30: it kept saying "app (whatsapp)"), which
+ * is a different transport entirely and fails abroad.
+ */
+export const call_me_in_app: AgentTool = {
+  name: 'call_me_in_app',
+  description:
+    'Boss-কে ALMA app-এর ভেতরে সরাসরি লাইভ দুইমুখী কল দেয় (WhatsApp-এর মতো full-screen incoming call, ' +
+    'ইন্টারনেট দিয়ে — দেশের বাইরেও কাজ করে)। ব্যবহার করো যখন Boss বলেন "app-এ কল দাও", "app দিয়ে কল করো", ' +
+    '"নাম্বারে না, app-এ", অথবা শুধু "কল দাও/কল করে বলো" — অর্থাৎ ডিফল্ট কল মানেই এই tool। ' +
+    'গুরুত্বপূর্ণ: app কল ≠ WhatsApp কল; app মানে এই tool, place_agent_call channel:"whatsapp" নয়। ' +
+    'কোনো approval card লাগে না — Boss নিজেই কল চেয়েছেন। purpose-এ কেন কল করছ তা বাংলায় লেখো; ' +
+    'Boss ধরলে agent ওই কারণ দিয়েই কথা শুরু করবে।',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      purpose: {
+        type: 'string',
+        description: 'কেন কল করছ + কলে যা বলতে হবে (বাংলা, ২-৪ বাক্য)। Boss ধরলে agent এটাই বলে শুরু করবে।',
+      },
+    },
+    required: ['purpose'],
+  },
+  handler: async (input) => {
+    try {
+      const purpose = String(input.purpose ?? '').trim()
+      if (!purpose) return { success: false, error: 'purpose (কেন কল করছ) লাগবে' }
+
+      const { ringOwnerApp, agentAppCallEnabled } = await import('@/agent/lib/agent-app-call')
+      if (!agentAppCallEnabled()) {
+        return { success: false, error: 'app কল বন্ধ (AGENT_APP_CALL_ENABLED kill switch)।' }
+      }
+      const res = await ringOwnerApp({ purpose, source: 'manual' })
+      if (!res.ok) {
+        const why: Record<string, string> = {
+          disabled: 'app কল বন্ধ আছে (kill switch)।',
+          no_owner: 'owner অ্যাকাউন্ট পাওয়া যায়নি।',
+          no_devices: 'আপনার ফোনে app-টি এখনো কল-টোকেন রেজিস্টার করেনি — একবার app খুলে আবার বলুন।',
+          push_failed: 'রিং পাঠানো যায়নি (ফোনে push পৌঁছায়নি)।',
+          db_error: 'কল রেকর্ড তৈরি করা যায়নি।',
+          busy: 'একটা app-কল এই মুহূর্তেই চলছে/বাজছে — সেটা শেষ হলে আবার বলুন; নতুন করে কল দিলাম না।',
+        }
+        return { success: false, error: why[res.error] ?? res.error }
+      }
+      return {
+        success: true,
+        data: {
+          status: 'ringing',
+          callId: res.callId,
+          message: 'আপনার app-এ কল যাচ্ছে — ধরলেই কথা বলব।',
         },
       }
     } catch (err) {
@@ -596,6 +656,7 @@ export const get_call_history: AgentTool = {
 }
 
 export const FAMILY_TOOLS: AgentTool[] = [
+  call_me_in_app,
   add_family_contact,
   list_family_contacts,
   call_family_member,

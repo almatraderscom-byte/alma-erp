@@ -5,6 +5,7 @@
 import { createClient } from '@supabase/supabase-js'
 
 export const OWNER_CALL_LOCK_KEY = 'owner_call_lock_until'
+export const OWNER_ABROAD_KEY = 'owner_abroad_calls_off'
 
 function getSupabase() {
   return createClient(
@@ -37,6 +38,25 @@ export async function getActiveSalahDelayUntil(now = new Date()) {
     .limit(1)
 
   return parseIsoDate(data?.[0]?.delay_until)
+}
+
+/**
+ * "Owner abroad" switch (salah settings card). When true, owner-DESTINED calls
+ * must be skipped — his BD number is unreachable. Unlike the time-boxed lock
+ * above, this must NOT block staff/contact calls, so callers check the
+ * destination themselves before honouring it.
+ */
+export async function isOwnerAbroadCallsOff() {
+  try {
+    const { data } = await getSupabase()
+      .from('agent_kv_settings')
+      .select('value')
+      .eq('key', OWNER_ABROAD_KEY)
+      .maybeSingle()
+    return data?.value === 'true'
+  } catch {
+    return false
+  }
 }
 
 export async function isOwnerCallLocked(now = new Date()) {

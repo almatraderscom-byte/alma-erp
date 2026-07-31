@@ -709,10 +709,10 @@ struct AlmaLoaderArtwork: View {
     var animated = true
 
     @AppStorage(AlmaLoaderStyle.defaultsKey)
-    private var loaderStyleRaw = AlmaLoaderStyle.starburst.rawValue
+    private var loaderStyleRaw = AlmaLoaderStyle.robotPet.rawValue
 
     private var style: AlmaLoaderStyle {
-        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .starburst
+        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .robotPet
     }
 
     @ViewBuilder
@@ -867,7 +867,8 @@ struct AlmaSpinnerPreviewScreen: View {
     @State private var autoCycle = true
     @State private var flowTask: Task<Void, Never>?
     @AppStorage(AlmaLoaderStyle.defaultsKey)
-    private var loaderStyleRaw = AlmaLoaderStyle.starburst.rawValue
+    private var loaderStyleRaw = AlmaLoaderStyle.robotPet.rawValue
+    @State private var nativeScreensOn = AlmaSwiftUIFlag.isOn
     @Environment(\.colorScheme) private var scheme
 
     private var ink: Color {
@@ -876,7 +877,7 @@ struct AlmaSpinnerPreviewScreen: View {
     }
 
     private var loaderStyle: AlmaLoaderStyle {
-        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .starburst
+        AlmaLoaderStyle(rawValue: loaderStyleRaw) ?? .robotPet
     }
 
     var body: some View {
@@ -885,48 +886,39 @@ struct AlmaSpinnerPreviewScreen: View {
             ScrollView {
                 VStack(spacing: 24) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Agent loader")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(ink.opacity(0.72))
-                        HStack(spacing: 4) {
-                            ForEach(AlmaLoaderStyle.allCases) { style in
-                                Button {
-                                    loaderStyleRaw = style.rawValue
-                                } label: {
-                                    Text(style.label)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(
-                                            loaderStyleRaw == style.rawValue
-                                                ? ink
-                                                : ink.opacity(0.62)
-                                        )
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
-                                        .background {
-                                            if loaderStyleRaw == style.rawValue {
-                                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                                    .fill(.ultraThinMaterial)
-                                                    .shadow(color: .black.opacity(0.10),
-                                                            radius: 3, y: 1)
-                                            }
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(style.label)
-                                .accessibilityValue(
-                                    loaderStyleRaw == style.rawValue ? "Selected" : ""
-                                )
-                            }
+                        Text("Agent Loader")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(ink)
+                        Text("Agent উত্তর দেওয়ার সময় কোন animation দেখবেন তা বেছে নিন। একটি loader সবসময় চালু থাকবে।")
+                            .font(.footnote)
+                            .foregroundStyle(ink.opacity(0.66))
+                        ForEach(AlmaLoaderStyle.allCases) { style in
+                            loaderChoice(style)
                         }
-                        .padding(3)
-                        .background(
-                            ink.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        )
                     }
                     .padding(14)
                     .background(.ultraThinMaterial,
                                 in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                    if !nativeScreensOn {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Native Agent screen বন্ধ আছে", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.orange)
+                            Text("এই device-এ পুরোনো web screen চালু থাকায় Agent Loader দেখা যায়নি। Preview সবসময় দেখা যাবে; Agent chat-এ এই loader ব্যবহার করতে Native screens চালু করুন।")
+                                .font(.footnote)
+                                .foregroundStyle(ink.opacity(0.72))
+                            Button("Native Agent screen চালু করুন") {
+                                AlmaSwiftUIFlag.isOn = true
+                                nativeScreensOn = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(.ultraThinMaterial,
+                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
 
                     HStack(spacing: 12) {
                         AlmaLoaderArtwork(mode: mode, size: 118)
@@ -980,8 +972,84 @@ struct AlmaSpinnerPreviewScreen: View {
         .onChange(of: loaderStyleRaw) { _, _ in
             UISelectionFeedbackGenerator().selectionChanged()
         }
-        .onAppear { runFlow() }
+        .onAppear {
+            nativeScreensOn = AlmaSwiftUIFlag.isOn
+            runFlow()
+        }
         .onDisappear { flowTask?.cancel() }
+    }
+
+    private func loaderChoice(_ style: AlmaLoaderStyle) -> some View {
+        let selected = loaderStyleRaw == style.rawValue
+        let accent = AlmaRayBurst.colors.last ?? Color.purple
+        let tileFill = ink.opacity(selected ? 0.10 : 0.055)
+        let rowFill = selected ? ink.opacity(0.075) : Color.clear
+        let border = selected
+            ? accent.opacity(0.55)
+            : ink.opacity(0.08)
+        let subtitle = style == .robotPet
+            ? "Codex-style জীবন্ত Robot animation"
+            : "ALMA-এর আলো ও ray animation"
+        let selection = Binding<Bool>(
+            get: { loaderStyleRaw == style.rawValue },
+            set: { enabled in
+                // This is a one-of-two preference, not two independent
+                // features. One loader always remains active.
+                if enabled { loaderStyleRaw = style.rawValue }
+            }
+        )
+
+        return HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(tileFill)
+                loaderThumbnail(style)
+            }
+            .frame(width: 58, height: 58)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(style.label)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ink)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(ink.opacity(0.60))
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 4)
+
+            Toggle("", isOn: selection)
+                .labelsHidden()
+                .tint(accent)
+        }
+        .padding(10)
+        .background(
+            rowFill,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    border,
+                    lineWidth: 1
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { loaderStyleRaw = style.rawValue }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(style.label)
+        .accessibilityValue(selected ? "চালু" : "বন্ধ")
+    }
+
+    @ViewBuilder
+    private func loaderThumbnail(_ style: AlmaLoaderStyle) -> some View {
+        switch style {
+        case .starburst:
+            AlmaStarburstLoader(mode: mode, size: 35)
+        case .robotPet:
+            AlmaRobotPetLoader(mode: mode, size: 39, animated: true)
+        }
     }
 
     private func runFlow() {

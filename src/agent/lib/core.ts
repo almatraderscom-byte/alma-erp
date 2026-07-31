@@ -101,7 +101,19 @@ export type AgentEvent =
   | { type: 'thinking_delta'; delta: string }
   // Emitted once at turn start so the UI can show a per-model loading identity
   // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
-  | { type: 'model_info'; modelId: string; label: string; variant: 'claude' | 'qwen' | 'deepseek' | 'default'; tier: string }
+    | {
+      type: 'model_info'
+      modelId: string
+      label: string
+      /**
+       * The model's name as Boss reads it — "DeepSeek V4 Flash", "Grok 4.20".
+       * `variant` only ever knew three families, so every other head showed a
+       * bare "ALMA" and he could not tell who had answered (owner, 2026-07-28).
+       */
+      displayName?: string
+      variant: 'default' | 'claude' | 'qwen' | 'deepseek'
+      tier: string
+    }
   // Owner-gated model UPGRADE: the thread was on a cheap head but this turn needs a
   // premium model (Sonnet/Opus). The turn pauses here and the UI shows an approval
   // card; on "yes" the client resumes the same turn on the premium model.

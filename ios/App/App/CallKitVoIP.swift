@@ -27,6 +27,10 @@ import CallKit
 import AVFoundation
 import UIKit
 
+// Agent-call answer hand-off lives in AgentCallController (AgentCallUI.swift) —
+// a screen-independent controller with its own engine, per the owner's
+// WhatsApp-parity spec: talk starts on answer, no app section is opened.
+
 @available(iOS 17.0, *)
 final class CallKitVoIP: NSObject {
     static let shared = CallKitVoIP()
@@ -36,6 +40,9 @@ final class CallKitVoIP: NSObject {
     private let callController = CXCallController()
 
     private enum CallDirection { case incoming, outgoing }
+    /// 'office' = staff↔owner Agora call (OfficeCallCoordinator). 'agent' = the AI
+    /// agent ringing the owner — answered into the Gemini Live voice console.
+    private enum CallKind { case office, agent }
     /// CallKit is an OS adapter; OfficeCallCoordinator remains the sole source of
     /// call truth. This map only correlates CallKit action UUIDs to canonical IDs.
     private struct ActiveCall {
@@ -43,6 +50,8 @@ final class CallKitVoIP: NSObject {
         let channel: String
         let peer: String
         let direction: CallDirection
+        var kind: CallKind = .office
+        var answered = false
     }
     private var calls: [UUID: ActiveCall] = [:]
     private var requestedEndReasons: [UUID: String] = [:]
@@ -72,7 +81,10 @@ final class CallKitVoIP: NSObject {
         config.maximumCallsPerCallGroup = 1
         config.maximumCallGroups = 1
         config.supportedHandleTypes = [.generic]
-        // Ringtone: system default (a bundled .caf could be set here later).
+        // System DEFAULT ringtone (owner 2026-07-30: "iOS default ring tone
+        // rakho" — the custom alma_urgent.caf is out). Leaving ringtoneSound
+        // unset makes CallKit play the user's own iOS ringtone. The ringer
+        // switch / Focus still silences CallKit rings — that is iOS policy.
         provider = CXProvider(configuration: config)
         super.init()
         provider.setDelegate(self, queue: nil)
@@ -148,6 +160,7 @@ final class CallKitVoIP: NSObject {
     /// Turn a VoIP payload into a native ringing call. MUST be called synchronously from the
     /// push handler (iOS terminates the app if a VoIP push doesn't report a call).
     private func reportIncoming(broadcastId: String, channel: String, caller: String,
+                                kind: CallKind = .office,
                                 completion: @escaping () -> Void) {
         guard let uuid = UUID(uuidString: broadcastId) else {
             reportPlaceholderAndEnd(caller: caller, completion: completion)
@@ -159,9 +172,11 @@ final class CallKitVoIP: NSObject {
         }
         calls[uuid] = ActiveCall(
             broadcastId: broadcastId.lowercased(), channel: channel,
-            peer: caller, direction: .incoming)
+            peer: caller, direction: .incoming, kind: kind)
         // Tell the poll-based ring to skip this one — CallKit owns it now.
-        Task { @MainActor in AgoraIntercom.shared.markCallHandled(broadcastId) }
+        if kind == .office {
+            Task { @MainActor in AgoraIntercom.shared.markCallHandled(broadcastId) }
+        }
 
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: caller)
@@ -174,6 +189,9 @@ final class CallKitVoIP: NSObject {
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if error != nil {
                 self?.calls[uuid] = nil
+            } else if kind == .agent {
+                // No Agora reconcile for agent calls — the server row IS the truth
+                // and the ring window is enforced by expiresAt at parse time.
             } else {
                 Task { @MainActor in
                     let valid = await OfficeCallCoordinator.shared.reconcileIncoming(
@@ -306,9 +324,62 @@ extension CallKitVoIP: PKPushRegistryDelegate {
         guard type == .voIP else { completion(); return }
         let d = payload.dictionaryPayload
         let broadcastId = (d["broadcastId"] as? String) ?? ""
-        let channel = (d["channel"] as? String) ?? (broadcastId.isEmpty ? "" : "itc_\(broadcastId)")
-        let caller = (d["caller"] as? String) ?? "বস — মারুফ"
+        let caller0 = (d["caller"] as? String) ?? "বস — মারুফ"
         let event = (d["event"] as? String) ?? "ring"
+
+        // Agent → owner call (plan C2): the AI agent ringing this phone. Same
+        // envelope discipline as office calls (schema, UUID, live expiresAt) but
+        // its own channel namespace and no Agora/coordinator involvement.
+        if (d["type"] as? String) == "agent_call" {
+            let schema = (d["schemaVersion"] as? NSNumber)?.intValue ?? (d["schemaVersion"] as? Int) ?? 0
+            let expiresAt = (d["expiresAt"] as? String).flatMap {
+                Self.isoFractional.date(from: $0) ?? Self.isoPlain.date(from: $0)
+            }
+            if event == "cancel" {
+                // A cancel lands on EVERY device when one device answers
+                // (multi-device stop-ring). The device that answered keeps its
+                // live call — only un-answered rings are torn down.
+                if !broadcastId.isEmpty {
+                    let answeredHere = calls.contains {
+                        $0.value.broadcastId.caseInsensitiveCompare(broadcastId) == .orderedSame
+                        && $0.value.answered
+                    }
+                    if !answeredHere {
+                        finishReportedCall(callId: broadcastId, reason: .remoteEnded)
+                    }
+                }
+                reportPlaceholderAndEnd(caller: caller0, completion: completion)
+                return
+            }
+            guard schema == 1,
+                  let callId = UUID(uuidString: broadcastId)?.uuidString.lowercased(),
+                  let expiresAt, expiresAt > Date()
+            else {
+                reportPlaceholderAndEnd(caller: caller0, completion: completion)
+                return
+            }
+            reportIncoming(broadcastId: callId, channel: "agent_\(callId)",
+                           caller: "ALMA", kind: .agent, completion: completion)
+            // Mint the Gemini ephemeral token WHILE the phone rings — answering
+            // then skips the whole Vercel round trip (abroad latency fix).
+            AlmaGeminiLiveSession.prewarm()
+            // Missed-call UX: if the ring window passes unanswered, close the
+            // system call as UNANSWERED (shows as a missed call, WhatsApp-style)
+            // instead of waiting for the server's cancel push to race in.
+            let deadline = expiresAt.timeIntervalSinceNow + 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(5, deadline)) { [weak self] in
+                guard let self,
+                      let (_, call) = self.calls.first(where: {
+                          $0.value.broadcastId.caseInsensitiveCompare(callId) == .orderedSame
+                      }),
+                      call.kind == .agent, !call.answered else { return }
+                self.finishReportedCall(callId: callId, reason: .unanswered)
+            }
+            return
+        }
+
+        let channel = (d["channel"] as? String) ?? (broadcastId.isEmpty ? "" : "itc_\(broadcastId)")
+        let caller = caller0
 
         // Cancel push: the caller hung up / the call was answered elsewhere before we
         // picked up. End the real ring so this phone stops instantly (WhatsApp-style).
@@ -367,6 +438,26 @@ extension CallKitVoIP: CXProviderDelegate {
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         guard let call = calls[action.callUUID] else { action.fail(); return }
+        if call.kind == .agent {
+            calls[action.callUUID]?.answered = true
+            // Fulfill + start the engine IMMEDIATELY — CallKit must never wait on
+            // the network (review-bot P1: two sequential API calls on a weak
+            // abroad connection can exceed CallKit's answer timeout). The brief
+            // and the server 'answered' mark arrive in the background; the brief
+            // is injected even if the live socket connects first.
+            Task { @MainActor in
+                AgentCallController.shared.start(callId: call.broadcastId, purpose: "")
+                action.fulfill()
+            }
+            Task { @MainActor in
+                await Self.postAgentCallStatus(call.broadcastId, status: "answered")
+                let purpose = await Self.fetchAgentCallPurpose(call.broadcastId)
+                if !purpose.isEmpty {
+                    AgentCallController.shared.deliverBrief(callId: call.broadcastId, purpose: purpose)
+                }
+            }
+            return
+        }
         Task { @MainActor in
             // CallKit owns the audio session — Agora must not activate/deactivate it.
             OfficeCallCoordinator.shared.callKitManaged = true
@@ -385,6 +476,16 @@ extension CallKitVoIP: CXProviderDelegate {
         let call = calls[action.callUUID]
         let reason = requestedEndReasons.removeValue(forKey: action.callUUID)
         calls[action.callUUID] = nil
+        if let call, call.kind == .agent {
+            Task { @MainActor in
+                // Ring-stage end = decline; answered end = hang-up/complete.
+                await Self.postAgentCallStatus(
+                    call.broadcastId, status: call.answered ? "completed" : "declined")
+                AgentCallController.shared.callKitEnded(callId: call.broadcastId)
+                action.fulfill()
+            }
+            return
+        }
         Task { @MainActor in
             if let call {
                 await OfficeCallCoordinator.shared.callKitEnded(
@@ -395,14 +496,53 @@ extension CallKitVoIP: CXProviderDelegate {
         }
     }
 
+    // MARK: - Agent-call server leg
+
+    private struct AgentCallStatusBody: Encodable { let status: String?; let note: String? }
+    private struct AgentCallStatusResp: Decodable { let ok: Bool?; let status: String?; let purpose: String? }
+
+    /// `note` is an on-device diagnostic (TestFlight has no console): it lands in
+    /// the call row so a device-only failure is visible on the server instead of
+    /// being guessed at.
+    static func postAgentCallStatus(_ callId: String, status: String?, note: String? = nil) async {
+        let _: AgentCallStatusResp? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/agent-call/\(callId)/status",
+            body: AgentCallStatusBody(status: status, note: note))
+    }
+
+    private static func fetchAgentCallPurpose(_ callId: String) async -> String {
+        let r: AgentCallStatusResp? = try? await AlmaAPI.shared.send(
+            "GET", "/api/assistant/agent-call/\(callId)/status")
+        return r?.purpose ?? ""
+    }
+
+    #if DEBUG
+    /// Simulator harness: VoIP pushes can't reach the simulator, so the deep link
+    /// almaerp://agent-call-test?id=<uuid> drives the exact same incoming path.
+    func debugSimulateAgentRing(callId: String) {
+        reportIncoming(broadcastId: callId.lowercased(),
+                       channel: "agent_\(callId.lowercased())",
+                       caller: "ALMA", kind: .agent, completion: {})
+        AlmaGeminiLiveSession.prewarm()
+    }
+    #endif
+
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
         Task { @MainActor in OfficeCallCoordinator.shared.setMuted(action.isMuted) }
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        // CallKit activated the shared session — hand it to Agora (it won't re-activate).
-        Task { @MainActor in OfficeCallCoordinator.shared.audioSessionActivated() }
+        // CallKit activated the shared session — hand it to whoever owns the call
+        // (Agora for office calls, the live voice engine for agent calls). Neither
+        // may activate the session itself.
+        Task { @MainActor in
+            if AgentCallController.shared.isActive {
+                AgentCallController.shared.audioSessionActivated()
+            } else {
+                OfficeCallCoordinator.shared.audioSessionActivated()
+            }
+        }
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

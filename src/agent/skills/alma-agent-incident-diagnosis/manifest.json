@@ -1,10 +1,14 @@
 {
   "name": "alma-agent-incident-diagnosis",
-  "description": "কিছু ভাঙলে root-cause diagnosis: health scan, audit, order issue — fix আগে owner-কে জানানো।",
-  "version": "0.1.0",
+  "description": "Finds the root cause when one of OUR OWN systems misbehaves — the agent itself, the ERP, a job that stopped running, orders that stopped syncing. Use when Boss says something is not working and wants to know WHY. It holds no write tool at all: the cause and the proposed fix are reported to Boss, and fixing is a separate, approved job.",
+  "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "ALMA_TRADING",
+    "CDIT"
+  ],
   "riskTier": "low",
   "requiredCapabilities": [
     "diagnose_issue",
@@ -16,5 +20,27 @@
   "writePolicy": "none",
   "approvalPolicy": "inherit",
   "maxSteps": 5,
-  "status": "draft"
+  "status": "active",
+  "extends": "alma-base",
+  "whenNotToUse": "ওয়েবসাইটের কনটেন্ট/SEO সমস্যা → alma-website বা SEO skill। একটা নির্দিষ্ট অর্ডারের খোঁজ বা সাধারণ ERP রিপোর্ট → কোনো skill নয়, সরাসরি টুল। fix করা এই skill-এর কাজ নয় — এটা শুধু কারণ বের করে।",
+  "outputContract": {
+    "kind": "report",
+    "mustInclude": [
+      "what_is_broken",
+      "since_when",
+      "evidence",
+      "root_cause",
+      "proposed_fix"
+    ]
+  },
+  "stopConditions": [
+    "প্রমাণ ছাড়া কারণ বলা যাবে না — কোন টুল কী দেখাল সেটাই ভিত্তি; অনুমান হলে 'অনুমান' বলে দেবে",
+    "কোনো fix নিজে করবে না — এই skill-এর হাতে কোনো write টুলই নেই, প্রস্তাব দিয়ে থামবে",
+    "স্ক্যানে কিছু না মিললে 'সব ঠিক আছে' বলবে না — কী কী দেখা হয়েছে আর কী দেখা যায়নি, দুটোই বলবে"
+  ],
+  "done": [
+    {
+      "tool": "run_health_scan"
+    }
+  ]
 }

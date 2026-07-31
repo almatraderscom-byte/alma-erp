@@ -65,18 +65,88 @@ const FUNCTION_CALLS_BLOCK =
   /<function_(?:calls|results)>[\s\S]*?(?:<\/function_(?:calls|results)>|$)/gi
 const INVOKE_BLOCK = /<invoke\b[\s\S]*?(?:<\/invoke>|$)/gi
 
+/**
+ * The FIFTH shape, seen live 2026-07-28 while testing the newly promoted skills.
+ * Two different leaks in two consecutive turns, both from Qwen, both wrapped in
+ * a markdown fence the UI then labelled "TOOL":
+ *
+ *   ```tool
+ *   {"name": "marketing_report", "arguments": {"period": "last_7_days"}}
+ *   ```
+ *   ```tool
+ *   <parameter name="limit">20</parameter>
+ *   ```
+ *
+ * Two separate gaps, and the second one is the more embarrassing:
+ *
+ *  • `{"name": …, "arguments": …}` matched NO pattern here. `JSON_TOOL_USE` is
+ *    anchored on `"type": "tool_use"`, which this shape does not carry.
+ *  • `<parameter …>` was already in `STRAY_MARKERS` — but the cheap guard did
+ *    not list it, so the function returned before any pattern ran. A pattern
+ *    behind a guard that cannot reach it is not protection, it is decoration.
+ *    That is why the guard below is now derived from the patterns rather than
+ *    written out again by hand.
+ *
+ * The fence itself is removed with its contents, not just the call inside it:
+ * an emptied ``` block renders as a bare card, which looks like a bug of its own.
+ */
+const JSON_NAME_ARGS =
+  /\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\}/gi
+/**
+ * `<parameter name="x">value</parameter>` — removed as a PAIR, not as two tags.
+ * `STRAY_MARKERS` deletes the tags only, which left the bare values behind:
+ * stripping the live spill by tag alone produced `truetruetruetrue…`, which is
+ * no better on his screen than the markup was.
+ */
+const PARAMETER_BLOCK = /<parameter\b[^>]*>[\s\S]*?(?:<\/parameter>|$)/gi
+/** A fenced block the model labelled as a tool call — fence and contents both. */
+const FENCED_TOOL_BLOCK =
+  /```(?:tool|tool_call|tool_code|function_calls?)\b[\s\S]*?(?:```|$)/gi
+
+/**
+ * …and the GENERIC fence patterns, which arrived from the other session's fix
+ * (#642) while this branch was in review. Both are kept: `FENCED_TOOL_BLOCK`
+ * above is anchored on the fence LABEL, these two also catch a fence whose label
+ * says nothing but whose body is plainly a typed call. Each catches what the
+ * other misses, and a model inventing a new spelling is exactly the case where
+ * two overlapping nets beat one clever one.
+ */
+const FENCED_TOOL_CALL =
+  /```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?[a-z0-9_ \t-]*\r?\n[\s\S]*?(?:```|$)/gi
+
+const FENCED_TOOL_JSON =
+  /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?(?:```|$)/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
   /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
 
+/**
+ * Cheap guard: the overwhelming majority of rounds carry none of this, and
+ * running six regexes over every reply for nothing is waste.
+ *
+ * It is written as one list next to the patterns it guards, because the 2026-07-28
+ * leak was caused by exactly the drift a second hand-written copy invites: a
+ * `<parameter …>` pattern existed, the guard did not mention it, and the guard
+ * runs first. Any pattern added above must have its opening marker added here.
+ */
+const HAS_TOOL_MARKUP =
+  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
+
 export function stripToolCallMarkup(text: string): string {
   if (!text) return text
-  // Cheap guard: the overwhelming majority of rounds carry none of this.
-  if (!/<tool_call|<arg_key|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|"type"\s*:\s*"tool_(?:use|call)"/i.test(text)) return text
+  if (!HAS_TOOL_MARKUP.test(text)) return text
   const cleaned = text
+    // Fences first: the block is removed WITH its contents, so a stripped call
+    // cannot leave an empty ``` card behind.
+    .replace(FENCED_TOOL_BLOCK, '')
+    .replace(FENCED_TOOL_CALL, '')
+    .replace(FENCED_TOOL_JSON, '')
     .replace(JSON_TOOL_USE, '')
+    .replace(JSON_NAME_ARGS, '')
     .replace(FUNCTION_CALLS_BLOCK, '')
     .replace(INVOKE_BLOCK, '')
+    .replace(PARAMETER_BLOCK, '')
     .replace(TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
     .replace(STRAY_MARKERS, '')
@@ -146,4 +216,133 @@ export function dropRepeatedBlocks(text: string): string {
     keptWords.push(words)
   }
   return kept.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/**
+ * The STREAMING case, found the hard way 2026-07-28: the fixes above ran on the
+ * finished round, and Boss's screen filled with `<parameter name="fullScanAll…">`
+ * anyway — hundreds of lines of it, live, while the turn was still running.
+ *
+ * Reason: the round's PROSE is emitted as one block after cleaning, but the
+ * model's THINKING is yielded token by token as it arrives. Nothing cleaned that
+ * path, so a head that spills markup into its reasoning spills it onto his
+ * screen, and the cleanup only ever fixed what got stored.
+ *
+ * Per-delta stripping cannot work on its own — `<param` and `eter name=…` arrive
+ * as separate deltas. So this holds back the tail that could still turn into
+ * markup, releases everything before it, and strips whatever completes.
+ *
+ * The hold-back is capped: ordinary reasoning that happens to contain a `<` (a
+ * comparison, a size chart) must not stall the live thought forever, so once the
+ * held tail passes MAX_HOLD without becoming markup it is released as prose.
+ */
+const MAX_HOLD = 300
+
+/**
+ * Where the still-unresolved tail begins, or -1.
+ *
+ * Not a regex over the tail: the live spill proved why. `<parameter name="fullScan"`
+ * arrives as `<param` + `eter name="fullScan"` + `>true</parameter>`, and the
+ * middle state contains spaces and quotes, so any "letters only after <" pattern
+ * releases it one delta before it becomes markup. The honest question is simply
+ * "is there an opener here that has not closed yet".
+ */
+function holdFrom(s: string): number {
+  const lt = s.lastIndexOf('<')
+  if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
+  const fence = s.lastIndexOf('```')
+  if (fence !== -1 && s.indexOf('```', fence + 3) === -1 && s.length - fence <= MAX_HOLD) return fence
+  const brace = s.lastIndexOf('{')
+  if (
+    brace !== -1
+    && !s.includes('}', brace)
+    && s.length - brace <= MAX_HOLD
+    && /^\{\s*"?(?:t(?:ype)?|n(?:ame)?)?/i.test(s.slice(brace))
+  ) return brace
+  return -1
+}
+
+export interface MarkupStreamFilter {
+  /** Feed one delta; returns the text that is safe to show now (may be ''). */
+  push(delta: string): string
+  /** End of stream: returns whatever was held back, cleaned. */
+  flush(): string
+}
+
+export function createMarkupStreamFilter(): MarkupStreamFilter {
+  let held = ''
+  return {
+    push(delta: string): string {
+      held = stripToolCallMarkup(held + delta)
+      const cut = holdFrom(held)
+      // An opener that has not closed yet: keep it back until it resolves, or
+      // until it grows past MAX_HOLD without becoming markup — ordinary prose
+      // with a "<" in it must never stall the live thought.
+      if (cut !== -1) {
+        const out = held.slice(0, cut)
+        held = held.slice(cut)
+        return out
+      }
+      const out = held
+      held = ''
+      return out
+    },
+    flush(): string {
+      const out = stripToolCallMarkup(held)
+      held = ''
+      return out
+    },
+  }
+}
+
+/**
+ * Did the model TYPE its tool calls instead of making them?
+ *
+ * Stripping the markup fixes what Boss sees, and hides what actually went wrong:
+ * a round that narrates three calls and makes none did no work, so the
+ * think → tool → update → tool rhythm he watches for collapses into a wall of
+ * text. He noticed the missing rhythm before anyone noticed the cause; this is
+ * the detector that lets the turn notice it too.
+ *
+ * True only when the text carries tool syntax AND the round made no real call —
+ * a model that narrates while also calling properly is merely chatty.
+ */
+export function typedToolCallsInsteadOfCalling(input: {
+  rawText: string
+  realToolCallCount: number
+}): boolean {
+  if (input.realToolCallCount > 0) return false
+  if (!input.rawText?.trim()) return false
+  return stripToolCallMarkup(input.rawText) !== input.rawText
+}
+
+
+/**
+ * How many tool calls did the model TYPE?
+ *
+ * The round-level detector answers "did it type instead of calling", which is
+ * false the moment the model does both — and doing both is exactly what Qwen did
+ * live on 2026-07-28: one real call, three typed. So the turn needs the COUNT,
+ * not the boolean, to see that most of the work was narrated.
+ */
+export function countTypedToolCalls(text: string): number {
+  if (!text) return 0
+  const patterns = [
+    FENCED_TOOL_BLOCK,
+    FENCED_TOOL_CALL,
+    FENCED_TOOL_JSON,
+    JSON_NAME_ARGS,
+    PARAMETER_BLOCK,
+    JSON_TOOL_USE,
+    FUNCTION_CALLS_BLOCK,
+    INVOKE_BLOCK,
+    TOOL_CALL_BLOCK,
+    NAMED_TOOL_ARGS,
+  ]
+  let n = 0
+  for (const re of patterns) {
+    re.lastIndex = 0
+    n += (text.match(re) ?? []).length
+  }
+  return n
 }
