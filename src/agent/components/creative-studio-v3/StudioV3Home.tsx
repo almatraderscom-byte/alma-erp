@@ -208,6 +208,7 @@ export function StudioV3Home({
 
   const query = search.trim().toLocaleLowerCase('bn-BD')
   const matches = (value: string | null | undefined) => !query || String(value ?? '').toLocaleLowerCase('bn-BD').includes(query)
+  // The authenticated route snapshot is authoritative; unscoped legacy records are excluded.
   const accessScopedProjects = accessibleProjects.filter((project) =>
     project.brandProfileId === activeBrand?.brandProfileId)
   const compositionProjects = accessScopedProjects.filter((project) =>
