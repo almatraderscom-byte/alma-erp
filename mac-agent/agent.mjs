@@ -22,7 +22,7 @@
  *   node agent.mjs status          local health/config check
  */
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -336,6 +336,15 @@ async function handleCommand(cmd) {
     return await runShell(command, cwd, timeoutMs)
   }
 
+  // A fully unattended CLI session is a standing grant over the owner's files.
+  // The server promises an approval card for it; this is the daemon refusing to
+  // take that promise on trust — the same reason RED commands are re-judged here
+  // (found in review: only run_command had a backstop).
+  if (cmd.action === 'session_open' && String(params.permissionMode ?? '') === 'bypass' && !params.approved) {
+    log('REFUSED bypass session without approval')
+    return { ok: false, exitCode: null, error: 'refused_by_daemon:bypass_requires_approval' }
+  }
+
   const extra = extraHandlers.get(cmd.action)
   if (extra) return await extra(params, cmd)
 
@@ -353,19 +362,76 @@ async function pollOnce(token) {
   return res.json ?? {}
 }
 
+const PENDING_RESULT_FILE = join(CONFIG_DIR, 'pending-result.json')
+
+/**
+ * Deliver a result, and do not lose it if the network blinks.
+ *
+ * The row is already marked delivered by the time we run, so a dropped POST used
+ * to mean the owner never learned what happened — the command looked stuck
+ * forever (found in review). The result is written to disk first, retried until
+ * the server accepts it, and survives a daemon restart.
+ */
+function savePendingResult(payload) {
+  try {
+    ensureConfigDir()
+    writeFileSync(PENDING_RESULT_FILE, JSON.stringify(payload), { mode: 0o600 })
+  } catch {
+    /* disk full / read-only: the in-memory retry below still applies */
+  }
+}
+
+function clearPendingResult() {
+  try {
+    if (existsSync(PENDING_RESULT_FILE)) rmSync(PENDING_RESULT_FILE)
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+async function deliverResult(token, payload) {
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      const res = await api('/api/assistant/mac-agent/result', { method: 'POST', token, body: payload })
+      // A 404 means the row is gone (cancelled, or the owner unpaired) — the
+      // result has nowhere to land, so stop rather than retry forever.
+      if (res.ok || res.status === 404) {
+        clearPendingResult()
+        return true
+      }
+      log(`result POST rejected (${res.status}) — attempt ${attempt}`)
+    } catch (err) {
+      log(`result POST failed — attempt ${attempt}:`, String(err?.message ?? err))
+    }
+    await sleep(Math.min(2_000 * 2 ** (attempt - 1), 30_000))
+  }
+  log('result still undelivered after retries — kept on disk for next start')
+  return false
+}
+
 async function postResult(token, commandId, result) {
-  await api('/api/assistant/mac-agent/result', {
-    method: 'POST',
-    token,
-    body: {
-      commandId,
-      ok: Boolean(result.ok),
-      exitCode: result.exitCode ?? null,
-      stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
-      error: result.error ?? null,
-    },
-  })
+  const payload = {
+    commandId,
+    ok: Boolean(result.ok),
+    exitCode: result.exitCode ?? null,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: result.error ?? null,
+  }
+  savePendingResult(payload)
+  await deliverResult(token, payload)
+}
+
+/** On start, hand over anything a previous run finished but could not deliver. */
+async function flushPendingResult(token) {
+  if (!existsSync(PENDING_RESULT_FILE)) return
+  try {
+    const payload = JSON.parse(readFileSync(PENDING_RESULT_FILE, 'utf8'))
+    log('delivering a result left over from the previous run:', payload.commandId)
+    await deliverResult(token, payload)
+  } catch {
+    clearPendingResult()
+  }
 }
 
 async function loop() {
@@ -376,6 +442,7 @@ async function loop() {
   }
 
   log(`ALMA Mac Agent v${AGENT_VERSION} starting · host=${hostname()} · server=${baseUrl()}`)
+  await flushPendingResult(cfg.token)
   let backoff = 0
 
   for (;;) {

@@ -4,11 +4,14 @@
  */
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { authenticateDevice, resolveCommand } from '@/agent/lib/mac-agent/bus'
+import { authenticateDevice, getCommandAction, resolveCommand } from '@/agent/lib/mac-agent/bus'
 import { capOutput } from '@/agent/lib/mac-agent/policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+/** ~8 MB of base64 — a full Retina display screenshot fits comfortably. */
+const MAX_SCREENSHOT_CHARS = 8_000_000
 
 function bearer(req: NextRequest): string {
   const h = req.headers.get('authorization') ?? ''
@@ -41,12 +44,20 @@ export async function POST(req: NextRequest) {
   const commandId = String(body.commandId ?? '').trim()
   if (!commandId) return Response.json({ error: 'commandId_required' }, { status: 400 })
 
+  // A screenshot comes back as a base64 data URI, and a full Mac display is far
+  // bigger than the 100k text cap — truncating it produced a "successful"
+  // screenshot that could not be decoded (found in review). Images get their own
+  // ceiling; text keeps the small one.
+  const action = await getCommandAction(commandId)
+  const capFor = (text: string) =>
+    action === 'screenshot' ? text.slice(0, MAX_SCREENSHOT_CHARS) : capOutput(text)
+
   // The daemon already caps output, but a compromised or buggy daemon must not be
   // able to write an unbounded blob into the row.
   const res = await resolveCommand(device.id, commandId, {
     ok: Boolean(body.ok),
     exitCode: typeof body.exitCode === 'number' ? body.exitCode : null,
-    stdout: typeof body.stdout === 'string' ? capOutput(body.stdout) : null,
+    stdout: typeof body.stdout === 'string' ? capFor(body.stdout) : null,
     stderr: typeof body.stderr === 'string' ? capOutput(body.stderr) : null,
     error: typeof body.error === 'string' ? body.error.slice(0, 2_000) : null,
   })

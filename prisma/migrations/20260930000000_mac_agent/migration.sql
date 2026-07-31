@@ -46,3 +46,5 @@ CREATE INDEX "mac_agent_commands_sessionKey_idx" ON "mac_agent_commands"("sessio
 
 ALTER TABLE "mac_agent_commands" ADD CONSTRAINT "mac_agent_commands_deviceId_fkey"
     FOREIGN KEY ("deviceId") REFERENCES "mac_agent_devices"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "mac_agent_commands" ADD COLUMN "deliveryAttempts" INTEGER NOT NULL DEFAULT 0;

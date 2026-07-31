@@ -229,3 +229,65 @@ describe('mac-agent policy — interpreters are version-probe only', () => {
     expect(level('bun run x.ts')).toBe('amber')
   })
 })
+
+// ── Codex review round 1 (PR #665) — every finding gets a regression test ────
+
+describe('mac-agent policy — credential reads are never automatic (P1)', () => {
+  it('a green reader pointed at a credential file is RED', () => {
+    // The one that motivated this: hosts.yml holds a live GitHub OAuth token.
+    expect(classifyCommand('cat ~/.config/gh/hosts.yml', { cwd: '~/alma-erp' }).code).toBe('credentials')
+    expect(classifyCommand('cat ~/.netrc', { cwd: '~/alma-erp' }).code).toBe('credentials')
+    expect(classifyCommand('cat ~/.kube/config', { cwd: '~/alma-erp' }).code).toBe('credentials')
+    expect(classifyCommand('cat secrets.json', { cwd: '~/alma-erp' }).code).toBe('credentials')
+    expect(classifyCommand('cat server.pem', { cwd: '~/alma-erp' }).code).toBe('credentials')
+  })
+
+  it('ANY path outside the project folder stops a green command, secret or not', () => {
+    // The general fix: the cwd allowlist governs where a command RUNS; an
+    // absolute or tilde argument walks straight out of it.
+    expect(level('cat ~/Documents/notes.txt')).toBe('amber')
+    expect(level('ls /etc')).toBe('amber')
+    expect(level('grep -r token ~/somewhere')).toBe('amber')
+    expect(level('wc -l /var/log/system.log')).toBe('amber')
+  })
+
+  it('relative paths inside the project stay green', () => {
+    expect(level('cat package.json')).toBe('green')
+    expect(level('grep -rn foo src')).toBe('green')
+    expect(level('ls -la src')).toBe('green')
+  })
+})
+
+describe('mac-agent policy — mutating flags on read-only tools (P1)', () => {
+  it('eslint --fix rewrites the project, so it is not green', () => {
+    expect(level('eslint --fix src')).toBe('amber')
+    expect(level('npx eslint --fix .')).toBe('amber')
+  })
+
+  it('other write modes are caught too', () => {
+    expect(level('prettier --write src')).toBe('amber')
+    expect(level('vitest -u')).toBe('amber')
+    expect(level('vitest --update')).toBe('amber')
+    expect(level('tsc --build')).toBe('amber')
+  })
+
+  it('the same tools stay green in read mode', () => {
+    expect(level('eslint src')).toBe('green')
+    expect(level('vitest run')).toBe('green')
+  })
+})
+
+describe('mac-agent policy — quoted / braced home deletion (P1)', () => {
+  it.each([
+    'rm -rf "$HOME"',
+    "rm -rf '$HOME'",
+    'rm -rf ${HOME}',
+    "rm -rf '~'",
+    'rm -rf "~"',
+    'rm -rf "$HOME"/',
+  ])('RED: %s', (cmd) => {
+    // These all wipe the home folder and all of them read as amber before the
+    // fix — one approval tap away from a wiped disk.
+    expect(classifyCommand(cmd, { cwd: '~/alma-erp' }).level).toBe('red')
+  })
+})

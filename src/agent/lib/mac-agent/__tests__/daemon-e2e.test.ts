@@ -51,6 +51,13 @@ const QUEUE = [
     action: 'run_command',
     params: { command: 'sleep 30', cwd: '~/alma-erp', approved: true, timeoutMs: 1_500 },
   },
+  // Codex review: only run_command had a daemon-side backstop, so a bus bug could
+  // have opened a fully unattended CLI session with no card ever shown.
+  {
+    id: 'bypass_unapproved',
+    action: 'session_open',
+    params: { tool: 'claude', cwd: '~/alma-erp', permissionMode: 'bypass' },
+  },
 ]
 
 let server: Server | undefined
@@ -166,6 +173,11 @@ describe('mac daemon end-to-end (real process, stand-in bus)', () => {
       // A hung command is killed at its deadline instead of holding the queue.
       expect(results.get('timeout')?.ok).toBe(false)
       expect(results.get('timeout')?.error).toContain('timeout')
+
+      // An unattended session with no approval marker never starts, whatever the
+      // bus claims.
+      expect(results.get('bypass_unapproved')?.ok).toBe(false)
+      expect(results.get('bypass_unapproved')?.error).toContain('bypass_requires_approval')
     },
     40_000,
   )

@@ -43,7 +43,7 @@ const RED_RULES = [
   { re: /(^|[\s;&|(])(csrutil|spctl|tccutil)\b/, code: 'sip', bn: 'সিস্টেম সিকিউরিটি সেটিং বদলানো যাবে না।' },
   { re: /(^|[\s;&|(])security\s+(dump|find|unlock|add)-/, code: 'keychain', bn: 'Keychain পড়া/খোলা যাবে না।' },
   {
-    re: /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\.aws\/credentials|\.git-credentials|\.npmrc\b|\bAuthKey_\w+\.p8|\.codex\/auth\.json|\.claude\.json|\/auth\.json)/,
+    re: /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\bid_ecdsa\b|\bid_dsa\b|\.aws\/credentials|\.git-credentials|\.npmrc\b|\bAuthKey_\w+\.p8|\.codex\/auth\.json|\.claude\.json|\/auth\.json|\.config\/gh\/|\.netrc\b|\.pgpass\b|\.docker\/config\.json|\.kube\/config|\.gnupg|\.pypirc\b|\.terraformrc\b|credentials\.json|service[-_]account.*\.json|\.pem\b|\.p12\b|\.keystore\b|secrets?\.(json|ya?ml|env|txt))/i,
     code: 'credentials',
     bn: 'কী/পাসওয়ার্ড ফাইল ছোঁয়া যাবে না।',
   },
@@ -89,7 +89,22 @@ const WRITE_FLAGS = {
   rg: ['--files-with-matches-replace'],
   node: ['-e', '--eval', '-p', '--print'],
   python3: ['-c'],
+  eslint: ['--fix', '--fix-type', '--output-file'],
+  prettier: ['-w', '--write'],
+  vitest: ['-u', '--update'],
+  tsc: ['--build', '-b', '--outDir', '--declaration'],
 }
+
+const UNIVERSAL_WRITE_FLAGS = [
+  '--fix',
+  '--write',
+  '--in-place',
+  '--overwrite',
+  '--delete',
+  '--force',
+  '--save',
+  '--output-file',
+]
 
 const METACHARACTERS = /[;&|<>`$(){}\n\\]/
 
@@ -110,11 +125,24 @@ export function splitSegments(command) {
     .filter(Boolean)
 }
 
+function normalizeForDanger(text) {
+  return text.replace(/\$\{(\w+)\}/g, '$$$1').replace(/["']/g, '')
+}
+
 function firstRedRule(text) {
+  const normalized = normalizeForDanger(text)
   for (const rule of RED_RULES) {
-    if (rule.re.test(text)) return rule
+    if (rule.re.test(text) || rule.re.test(normalized)) return rule
   }
   return null
+}
+
+/** Any argument pointing outside the working directory (see policy.ts). */
+function hasEscapingPathArg(args) {
+  return args.some((raw) => {
+    const a = raw.replace(/^["']|["']$/g, '')
+    return a.startsWith('/') || a.startsWith('~') || a.includes('..')
+  })
 }
 
 function isGreenSegment(segment) {
@@ -128,6 +156,8 @@ function isGreenSegment(segment) {
 
   const banned = WRITE_FLAGS[tool]
   if (banned && args.some((a) => banned.includes(a))) return false
+  if (args.some((a) => UNIVERSAL_WRITE_FLAGS.includes(a))) return false
+  if (hasEscapingPathArg(args)) return false
 
   if (GREEN_VERSION_ONLY.has(tool)) {
     return args.length === 1 && VERSION_FLAGS.includes(args[0])

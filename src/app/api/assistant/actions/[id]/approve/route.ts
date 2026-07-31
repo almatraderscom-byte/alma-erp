@@ -1102,6 +1102,8 @@ async function runApprove(
         tool: p.tool ?? 'claude',
         model: p.model ?? undefined,
         permissionMode: 'bypass',
+        // The daemon refuses an unattended session without this marker.
+        approved: true,
       },
       policyLevel: 'amber',
       approvedBy: actionId,

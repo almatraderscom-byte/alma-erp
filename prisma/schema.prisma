@@ -3014,6 +3014,10 @@ model MacAgentCommand {
   error       String?     @db.Text
   /// Free-form session/task correlation (M2 groups many commands under one session).
   sessionKey  String?
+  /// How many times delivery was attempted. A poll response can be lost after the
+  /// row is already marked delivered; the bus requeues those, and gives up loudly
+  /// rather than redelivering forever.
+  deliveryAttempts Int @default(0)
   createdAt   DateTime    @default(now())
   deliveredAt DateTime?
   resolvedAt  DateTime?

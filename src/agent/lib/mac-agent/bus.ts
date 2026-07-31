@@ -24,7 +24,9 @@
  */
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { classifyCommand, type PolicyLevel } from '@/agent/lib/mac-agent/policy'
+import { classifyCommand, MAC_EXEC_LIMITS, type PolicyLevel } from '@/agent/lib/mac-agent/policy'
+
+const MAC_EXEC_LIMITS_MAX_TIMEOUT = MAC_EXEC_LIMITS.maxTimeoutMs
 
 /** KV kill-switch (owner-tunable, no redeploy). Default OFF — capability is opt-in. */
 export const MAC_AGENT_ENABLED_KEY = 'mac_agent_enabled'
@@ -312,10 +314,60 @@ export interface ClaimedCommand {
 }
 
 /**
+ * Longest a row may sit in `delivered` before we assume the daemon never got it.
+ * Sized above the maximum command timeout so a legitimately slow command is
+ * never yanked out from under a daemon that IS running it.
+ */
+const DELIVERY_LEASE_MS = MAC_EXEC_LIMITS_MAX_TIMEOUT + 120_000
+/** Give up (and tell the owner) rather than redeliver forever. */
+const MAX_DELIVERY_ATTEMPTS = 3
+
+/**
+ * Rescue commands whose delivery was lost.
+ *
+ * `claimNextCommand` marks a row `delivered` before the HTTP response reaches
+ * the Mac. If that response is lost — a deploy, a dropped connection — the row
+ * sits in `delivered` forever and the owner's command silently never happens
+ * (found in review). Anything past its lease goes back to `queued`; after a few
+ * attempts it fails loudly instead, because a command that keeps disappearing is
+ * information the owner needs, not something to retry in silence.
+ */
+export async function reclaimStaleDeliveries(deviceId: string): Promise<number> {
+  const cutoff = new Date(Date.now() - DELIVERY_LEASE_MS)
+  const stale = await prisma.macAgentCommand.findMany({
+    where: { deviceId, status: 'delivered', deliveredAt: { lt: cutoff } },
+    select: { id: true, deliveryAttempts: true },
+  })
+  if (stale.length === 0) return 0
+
+  for (const row of stale) {
+    if (row.deliveryAttempts >= MAX_DELIVERY_ATTEMPTS) {
+      await prisma.macAgentCommand.update({
+        where: { id: row.id },
+        data: {
+          status: 'failed',
+          error: 'delivery_lost: Mac থেকে কোনো উত্তর আসেনি (কয়েকবার চেষ্টার পরেও)।',
+          resolvedAt: new Date(),
+        },
+      })
+      continue
+    }
+    await prisma.macAgentCommand.update({
+      where: { id: row.id },
+      data: { status: 'queued', deliveredAt: null, deliveryAttempts: { increment: 1 } },
+    })
+  }
+  return stale.length
+}
+
+/**
  * Hand the daemon its next command. Uses a conditional update so two overlapping
  * polls (a retry, a restarted daemon) can never both claim the same row.
  */
 export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand | null> {
+  // Cheap and only touches rows that are already past their deadline.
+  await reclaimStaleDeliveries(deviceId).catch(() => {})
+
   const next = await prisma.macAgentCommand.findFirst({
     where: { deviceId, status: 'queued' },
     orderBy: { createdAt: 'asc' },
@@ -383,6 +435,15 @@ export interface CommandOutcome {
   stderr: string
   error: string | null
   timedOut: boolean
+}
+
+/** The verb a command carries — the result route needs it to size its output cap. */
+export async function getCommandAction(commandId: string): Promise<string | null> {
+  const row = await prisma.macAgentCommand.findUnique({
+    where: { id: commandId },
+    select: { action: true },
+  })
+  return row?.action ?? null
 }
 
 export async function getCommand(commandId: string): Promise<CommandOutcome | null> {

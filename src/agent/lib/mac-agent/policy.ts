@@ -104,8 +104,10 @@ const RED_RULES: DangerRule[] = [
   { re: /(^|[\s;&|(])security\s+(dump|find|unlock|add)-/, code: 'keychain', bn: 'Keychain পড়া/খোলা যাবে না।' },
 
   // Credential material. Reading OR writing — a leak is as bad as a wipe.
+  // Widened after review: the first list missed `~/.config/gh/hosts.yml`, which
+  // holds a live GitHub OAuth token, and several equally ordinary ones.
   {
-    re: /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\.aws\/credentials|\.git-credentials|\.npmrc\b|\bAuthKey_\w+\.p8|\.codex\/auth\.json|\.claude\.json|\/auth\.json)/,
+    re: /(\.ssh\/|\bid_rsa\b|\bid_ed25519\b|\bid_ecdsa\b|\bid_dsa\b|\.aws\/credentials|\.git-credentials|\.npmrc\b|\bAuthKey_\w+\.p8|\.codex\/auth\.json|\.claude\.json|\/auth\.json|\.config\/gh\/|\.netrc\b|\.pgpass\b|\.docker\/config\.json|\.kube\/config|\.gnupg|\.pypirc\b|\.terraformrc\b|credentials\.json|service[-_]account.*\.json|\.pem\b|\.p12\b|\.keystore\b|secrets?\.(json|ya?ml|env|txt))/i,
     code: 'credentials',
     bn: 'কী/পাসওয়ার্ড ফাইল ছোঁয়া যাবে না।',
   },
@@ -179,7 +181,31 @@ const WRITE_FLAGS: Record<string, readonly string[]> = {
   rg: ['--files-with-matches-replace'],
   node: ['-e', '--eval', '-p', '--print'],
   python3: ['-c'],
+  // `eslint --fix` rewrites the project. Caught in review: it was green purely
+  // because the executable name was on the list.
+  eslint: ['--fix', '--fix-type', '--output-file'],
+  prettier: ['-w', '--write'],
+  vitest: ['-u', '--update'],
+  tsc: ['--build', '-b', '--outDir', '--declaration'],
 }
+
+/**
+ * Flags that turn a reader into a writer on almost any tool. Applied to EVERY
+ * green candidate, not just the ones with a bespoke list above, so a tool added
+ * later cannot quietly inherit a write mode. Deliberately excludes ambiguous
+ * short flags like `-i` (grep's ignore-case) and `-o` (grep's only-matching) —
+ * a false amber costs a tap, a false green costs the owner his files.
+ */
+const UNIVERSAL_WRITE_FLAGS = [
+  '--fix',
+  '--write',
+  '--in-place',
+  '--overwrite',
+  '--delete',
+  '--force',
+  '--save',
+  '--output-file',
+]
 
 /** Shell syntax that hides the real command from this classifier. */
 const METACHARACTERS = /[;&|<>`$(){}\n\\]/
@@ -211,12 +237,44 @@ export function splitSegments(command: string): string[] {
     .filter(Boolean)
 }
 
-/** First RED rule the text trips, or null. */
+/**
+ * Shell forms that mean the same thing but do not look the same to a regex.
+ * `rm -rf "$HOME"`, `rm -rf ${HOME}` and `rm -rf '~'` all wipe the home folder,
+ * and all three slipped past the unquoted-only pattern (found in review).
+ *
+ * Quote characters are simply removed and `${VAR}` is folded to `$VAR`. Doing
+ * this can only ever make a command look MORE dangerous, never less — so a
+ * mistake here costs an unnecessary refusal, not a wiped disk.
+ */
+function normalizeForDanger(text: string): string {
+  return text
+    .replace(/\$\{(\w+)\}/g, '$$$1')
+    .replace(/["']/g, '')
+}
+
+/** First RED rule the text trips, or null. Checks the literal AND the unquoted form. */
 function firstRedRule(text: string): DangerRule | null {
+  const normalized = normalizeForDanger(text)
   for (const rule of RED_RULES) {
-    if (rule.re.test(text)) return rule
+    if (rule.re.test(text) || rule.re.test(normalized)) return rule
   }
   return null
+}
+
+/**
+ * Does any argument point OUTSIDE the working directory?
+ *
+ * This is what stops `cat ~/.config/gh/hosts.yml` — a green `cat` reading a live
+ * GitHub token — without needing to enumerate every secret file that exists. The
+ * cwd allowlist only ever constrained where a command RUNS; an absolute or
+ * tilde-prefixed argument walks straight out of it. A relative path cannot,
+ * because `..` is refused separately.
+ */
+function hasEscapingPathArg(args: readonly string[]): boolean {
+  return args.some((raw) => {
+    const a = raw.replace(/^["']|["']$/g, '')
+    return a.startsWith('/') || a.startsWith('~') || a.includes('..')
+  })
 }
 
 /** Is this ONE already-split segment a green read-only command? */
@@ -232,6 +290,11 @@ function isGreenSegment(segment: string): boolean {
   // A tool that reads but can be flipped into writing by a flag.
   const banned = WRITE_FLAGS[tool]
   if (banned && args.some((a) => banned.includes(a))) return false
+  if (args.some((a) => UNIVERSAL_WRITE_FLAGS.includes(a))) return false
+
+  // Reading (or listing, or grepping) somewhere other than the project folder is
+  // never automatic — that is where the owner's secrets live.
+  if (hasEscapingPathArg(args)) return false
 
   // Interpreters: only a version probe, never a script or an inline program.
   if (GREEN_VERSION_ONLY.has(tool)) {
