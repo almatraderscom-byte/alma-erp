@@ -10,8 +10,13 @@ import { capOutput } from '@/agent/lib/mac-agent/policy'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-/** ~8 MB of base64 — a full Retina display screenshot fits comfortably. */
-const MAX_SCREENSHOT_CHARS = 8_000_000
+/**
+ * Vercel Functions reject a request body over ~4.5 MB, so an 8 MB data URI never
+ * reached this handler at all — the POST failed and the command stayed unresolved
+ * (Codex review round 2). 3 MB of base64 (~2.2 MB of JPEG) stays comfortably
+ * under the transport limit; the daemon downscales to fit.
+ */
+const MAX_SCREENSHOT_CHARS = 3_000_000
 
 function bearer(req: NextRequest): string {
   const h = req.headers.get('authorization') ?? ''

@@ -129,11 +129,13 @@ function ingestLine(session, line) {
 }
 
 /** Build the CLI argv for a session. */
-function buildArgs(tool, { permissionMode, model, cliSessionId, resume }) {
+function buildArgs(tool, { permissionMode, model, cliSessionId, resume, codexPrompt }) {
   if (tool === 'codex') {
-    // Codex's headless entry. Kept deliberately minimal — the owner installs the
-    // CLI separately, and we do not want to guess at flags that may not exist.
-    return ['exec', '--json']
+    // `codex exec` is ONE-SHOT: the prompt is an argument, stdout is JSONL, and
+    // stdin is not an interactive channel. Writing Claude's stream-JSON records
+    // into it made a Codex session hang forever waiting for EOF (Codex review
+    // round 2). One task per session; session_send is rejected below.
+    return ['exec', '--json', String(codexPrompt ?? '')]
   }
 
   const args = [
@@ -189,10 +191,16 @@ export function openSession(params, allowedDirs) {
 
   let child
   try {
-    child = spawn(bin, buildArgs(tool, { permissionMode, model: params.model, cliSessionId }), {
+    child = spawn(bin, buildArgs(tool, {
+      permissionMode,
+      model: params.model,
+      cliSessionId,
+      codexPrompt: params.task,
+    }), {
       cwd,
       env: { ...process.env, ALMA_MAC_AGENT: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     })
   } catch (err) {
     return { ok: false, error: `spawn_failed: ${err?.message ?? err}` }
@@ -225,14 +233,19 @@ export function openSession(params, allowedDirs) {
 
   sessions.set(id, session)
 
-  if (params.task) sendToSession(id, String(params.task))
+  // Claude takes the first task over stdin; Codex already received it as an
+  // argument (one-shot), so sending it again would corrupt the run.
+  if (params.task && tool !== 'codex') sendToSession(id, String(params.task))
 
-  return { ok: true, sessionId: id, cliSessionId, tool, cwd, permissionMode }
+  return { ok: true, sessionId: id, cliSessionId, tool, cwd, permissionMode, oneShot: tool === 'codex' }
 }
 
 export function sendToSession(sessionId, text) {
   const session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'session_not_found' }
+  if (session.tool === 'codex') {
+    return { ok: false, error: 'codex_is_one_shot: Codex সেশনে পরে আর নির্দেশ পাঠানো যায় না — নতুন সেশন খুলুন।' }
+  }
   if (session.status === 'ended') return { ok: false, error: 'session_ended' }
   if (!session.child?.stdin?.writable) return { ok: false, error: 'session_not_writable' }
 
@@ -309,6 +322,38 @@ export function listSessions() {
   }
 }
 
+/**
+ * Take every child down with us.
+ *
+ * The session map is in memory, so a launchd restart used to leave orphaned
+ * `claude` children running while the restarted daemon answered
+ * `session_not_found` for every read and stop (Codex review round 2 — and the
+ * likely cause of a live send failure on 2026-08-01). We cannot recover the
+ * stream after a restart, so the honest thing is to leave nothing behind.
+ */
+export function installExitHandlers() {
+  const shutdown = () => {
+    for (const s of sessions.values()) {
+      try {
+        if (s.child?.pid) process.kill(-s.child.pid, 'SIGKILL')
+      } catch {
+        try {
+          s.child?.kill('SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+  }
+  process.once('exit', shutdown)
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    process.once(sig, () => {
+      shutdown()
+      process.exit(0)
+    })
+  }
+}
+
 /** Kill everything — used by the owner's STOP. */
 export function stopAll() {
   let n = 0
@@ -348,6 +393,7 @@ export function cliHealth() {
 
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
+  installExitHandlers()
   const wrap = (fn) => async (params) => {
     const out = fn(params)
     return out.ok

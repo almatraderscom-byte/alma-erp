@@ -22,7 +22,7 @@
  *   node agent.mjs status          local health/config check
  */
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -180,23 +180,35 @@ function runShell(command, cwd, timeoutMs) {
     env.GIT_TERMINAL_PROMPT = '0'
     env.CI = '1'
 
+    // `detached` puts the command in its OWN process group, so the deadline can
+    // take the whole tree. Without it a script that backgrounded work kept
+    // running after we reported a timeout (Codex review round 2).
     const child = spawn('/bin/zsh', ['-lc', command], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
     })
 
     let stdout = ''
     let stderr = ''
     let killed = false
 
+    const killTree = (signal) => {
+      try {
+        process.kill(-child.pid, signal) // negative pid = the whole group
+      } catch {
+        try {
+          child.kill(signal)
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+
     const timer = setTimeout(() => {
       killed = true
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        /* already gone */
-      }
+      killTree('SIGKILL')
     }, timeoutMs)
 
     child.stdout.on('data', (d) => {
@@ -222,6 +234,30 @@ function runShell(command, cwd, timeoutMs) {
       })
     })
   })
+}
+
+/**
+ * Does any argument RESOLVE to something outside the allowed folders?
+ *
+ * The textual check refuses `/`, `~` and `..`, but a tracked symlink inside the
+ * checkout — `secret-link -> ~/.config/gh/hosts.yml` — is none of those, and the
+ * shell follows it happily (Codex review round 2). Only the real path tells the
+ * truth, and only this side can ask for it.
+ */
+function argEscapesAllowlist(command, cwd) {
+  for (const raw of command.split(/\s+/).slice(1)) {
+    const token = raw.replace(/^["']|["']$/g, '')
+    if (!token || token.startsWith('-')) continue
+    const candidate = token.startsWith('/') ? token : join(cwd, token)
+    let real
+    try {
+      real = realpathSync(candidate)
+    } catch {
+      continue // does not exist — nothing to follow
+    }
+    if (!ALLOWED_DIRS_ABS.some((d) => real === d || real.startsWith(`${d}/`))) return real
+  }
+  return null
 }
 
 /**
@@ -260,14 +296,24 @@ function setKeepAwake(on) {
 function screenshot() {
   return new Promise((resolve) => {
     const out = join(CONFIG_DIR, `shot-${Date.now()}.jpg`)
+    // -R scales nothing, so a Retina display produced a >4.5 MB body that Vercel
+    // rejected before the route ever ran. Capture, then downscale to 1600px wide
+    // at moderate quality — readable, and safely under the transport limit.
     execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', out], (err) => {
       if (err) return resolve({ ok: false, error: String(err.message ?? err) })
-      try {
-        const b64 = readFileSync(out).toString('base64')
-        return resolve({ ok: true, stdout: `data:image/jpeg;base64,${b64}` })
-      } catch (e) {
-        return resolve({ ok: false, error: String(e?.message ?? e) })
-      }
+      // sips ships with macOS; if it fails we still return the original.
+      execFile('/usr/bin/sips', ['-Z', '1600', '-s', 'formatOptions', '60', out], () => {
+        try {
+          const b64 = readFileSync(out).toString('base64')
+          rmSync(out, { force: true })
+          if (b64.length > 2_900_000) {
+            return resolve({ ok: false, error: 'screenshot_too_large: স্ক্রিনশটটা পাঠানোর সীমার চেয়ে বড়।' })
+          }
+          return resolve({ ok: true, stdout: `data:image/jpeg;base64,${b64}` })
+        } catch (e) {
+          return resolve({ ok: false, error: String(e?.message ?? e) })
+        }
+      })
     })
   })
 }
@@ -341,6 +387,20 @@ async function handleCommand(cmd) {
     if (verdict.level === 'amber' && !params.approved) {
       log('REFUSED (amber without approval):', command)
       return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
+    }
+
+    // Green means "we read the literal text and it only reads project files".
+    // A symlink makes that literally untrue, so resolve before trusting it.
+    if (verdict.level === 'green') {
+      const escaped = argEscapesAllowlist(command, cwd)
+      if (escaped) {
+        log('REFUSED (symlink escapes allowlist):', escaped)
+        return {
+          ok: false,
+          exitCode: null,
+          error: `refused_by_daemon:path_escapes_allowlist — ${escaped} প্রজেক্ট ফোল্ডারের বাইরে।`,
+        }
+      }
     }
 
     const timeoutMs = resolveTimeoutMs(Number(params.timeoutMs))

@@ -63,13 +63,10 @@ const RED_RULES = [
 
 const GREEN_SUBCOMMANDS = {
   git: ['status', 'log', 'diff', 'show', 'branch', 'remote', 'stash', 'describe', 'blame', 'shortlog'],
-  npm: ['test', 'run', 'ls', 'view', 'outdated', '-v', '--version'],
-  pnpm: ['test', 'run', 'ls', '-v', '--version'],
-  yarn: ['test', 'run', '-v', '--version'],
+  npm: ['ls', 'view', 'outdated', '-v', '--version'],
+  pnpm: ['ls', '-v', '--version'],
+  yarn: ['-v', '--version'],
   gh: ['pr', 'run', 'issue', 'repo', 'api', 'auth'],
-  npx: ['tsc', 'vitest', 'eslint', 'prettier'],
-  cargo: ['check', 'test', 'build'],
-  go: ['test', 'build', 'vet'],
 }
 
 const GREEN_NPM_SCRIPTS = ['test', 'build', 'lint', 'typecheck', 'test:unit', 'check']
@@ -78,7 +75,7 @@ const GREEN_GH_VERBS = ['view', 'list', 'checks', 'status', 'diff']
 const GREEN_SIMPLE = new Set([
   'ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'file', 'stat', 'du', 'df',
   'grep', 'rg', 'echo', 'date', 'uname', 'whoami', 'sw_vers', 'which', 'type',
-  'tsc', 'vitest', 'eslint', 'basename', 'dirname', 'realpath',
+  'basename', 'dirname', 'realpath',
 ])
 
 const GREEN_VERSION_ONLY = new Set(['node', 'python3', 'python', 'ruby', 'deno', 'bun'])
@@ -106,7 +103,7 @@ const UNIVERSAL_WRITE_FLAGS = [
   '--output-file',
 ]
 
-const METACHARACTERS = /[;&|<>`$(){}\n\\]/
+const METACHARACTERS = /[;&|<>`$(){}\n\\*?\[\]]/
 
 function stripEnvPrefix(tokens) {
   let i = 0
@@ -171,6 +168,9 @@ function isGreenSegment(segment) {
   const sub = args[0]
   if (!sub || !subs.includes(sub)) return false
 
+  if (tool === 'git' && sub === 'branch') {
+    return args.slice(1).every((a) => ['-a', '--all', '-r', '-l', '--list', '-v', '-vv', '--verbose'].includes(a))
+  }
   if (tool === 'git' && sub === 'stash') return args[1] === 'list'
   if (tool === 'git' && sub === 'remote') return args[1] === '-v' || args.length === 1
   if ((tool === 'npm' || tool === 'pnpm' || tool === 'yarn') && sub === 'run') {
@@ -180,7 +180,6 @@ function isGreenSegment(segment) {
     if (sub === 'api' || sub === 'auth') return false
     return args[1] !== undefined && GREEN_GH_VERBS.includes(args[1])
   }
-  if (tool === 'npx' && sub === 'tsc') return args.includes('--noEmit')
 
   return true
 }

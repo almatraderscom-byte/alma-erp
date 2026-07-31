@@ -21,12 +21,8 @@ describe('mac-agent policy — GREEN (auto-run read-only)', () => {
     'cat package.json',
     'grep -rn foo src',
     'rg pattern',
-    'npm test',
-    'npm run build',
-    'npm run typecheck',
     'pwd',
     'wc -l file.ts',
-    'npx tsc --noEmit',
     'gh pr view 123',
     'gh pr checks 123',
     'git remote -v',
@@ -145,7 +141,8 @@ describe('mac-agent policy — obfuscation is never green', () => {
     // matches a bare `rm {}`, and -exec is a banned flag, so it lands on amber.
     // Amber is the correct verdict: the owner reads the literal line before it runs.
     expect(level('find . -exec rm {} ;')).toBe('amber')
-    expect(level('find . -name "*.ts"')).toBe('green')
+    // A glob is expanded by the shell after we classify, so it can never be green.
+    expect(level('find . -name "*.ts"')).toBe('amber')
   })
 })
 
@@ -271,9 +268,13 @@ describe('mac-agent policy — mutating flags on read-only tools (P1)', () => {
     expect(level('tsc --build')).toBe('amber')
   })
 
-  it('the same tools stay green in read mode', () => {
-    expect(level('eslint src')).toBe('green')
-    expect(level('vitest run')).toBe('green')
+  it('build/test runners are no longer green at all', () => {
+    // They execute repository-defined code (package scripts, config that can
+    // require() plugins), so they are state-changing by definition.
+    expect(level('eslint src')).toBe('amber')
+    expect(level('vitest run')).toBe('amber')
+    expect(level('npm test')).toBe('amber')
+    expect(level('npm run build')).toBe('amber')
   })
 })
 
@@ -289,5 +290,36 @@ describe('mac-agent policy — quoted / braced home deletion (P1)', () => {
     // These all wipe the home folder and all of them read as amber before the
     // fix — one approval tap away from a wiped disk.
     expect(classifyCommand(cmd, { cwd: '~/alma-erp' }).level).toBe('red')
+  })
+})
+
+// ── Codex review round 2 (PR #665) ──────────────────────────────────────────
+
+describe('mac-agent policy — round 2 findings', () => {
+  it('a glob can never be green: the shell expands it after we judge', () => {
+    // `cat .e*` expanded to .env and returned secrets with no approval.
+    expect(level('cat .e*')).toBe('amber')
+    expect(level('cat .en?')).toBe('amber')
+    expect(level('ls src/*.ts')).toBe('amber')
+  })
+
+  it('package scripts and runners need a tap — they run repo-defined code', () => {
+    for (const cmd of ['npm test', 'npm run build', 'yarn test', 'pnpm run lint', 'vitest run', 'eslint .']) {
+      expect(level(cmd), cmd).toBe('amber')
+    }
+  })
+
+  it('only the listing forms of git branch are green', () => {
+    expect(level('git branch')).toBe('green')
+    expect(level('git branch -a')).toBe('green')
+    expect(level('git branch --list')).toBe('green')
+    expect(level('git branch new-feature')).toBe('amber')
+    expect(level('git branch -D feature')).toBe('amber')
+    expect(level('git branch -m old new')).toBe('amber')
+  })
+
+  it('metadata reads on package managers stay green', () => {
+    expect(level('npm -v')).toBe('green')
+    expect(level('npm ls')).toBe('green')
   })
 })

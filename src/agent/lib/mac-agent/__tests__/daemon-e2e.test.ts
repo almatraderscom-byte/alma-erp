@@ -12,7 +12,7 @@
 import { describe, it, expect, afterAll } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -61,6 +61,13 @@ const QUEUE = [
     id: 'bypass_unapproved',
     action: 'session_open',
     params: { tool: 'claude', cwd: '~/alma-erp', permissionMode: 'bypass' },
+  },
+  // Codex review round 2: a tracked symlink inside the checkout pointed outside
+  // it, and a textual path check cannot see that. Only the real path can.
+  {
+    id: 'symlink_escape',
+    action: 'run_command',
+    params: { command: 'cat secret-link', cwd: '~/alma-erp' },
   },
 ]
 
@@ -122,6 +129,14 @@ describe('mac daemon end-to-end (real process, stand-in bus)', () => {
       // The daemon derives its allowlist from HOME, so the redirected home needs
       // the project folder to exist or every command lands on cwd_not_allowed.
       mkdirSync(join(TEST_HOME, 'alma-erp'), { recursive: true })
+      // A secret outside the project, and a tracked-looking symlink to it inside.
+      const secret = join(TEST_HOME, 'outside-secret.txt')
+      writeFileSync(secret, 'SUPER-SECRET')
+      try {
+        symlinkSync(secret, join(TEST_HOME, 'alma-erp', 'secret-link'))
+      } catch {
+        /* already there from a previous run */
+      }
       writeFileSync(
         CONFIG_FILE,
         JSON.stringify({ token: TOKEN, deviceId: 'e2e', baseUrl: `http://127.0.0.1:${port}` }),
@@ -179,6 +194,12 @@ describe('mac daemon end-to-end (real process, stand-in bus)', () => {
       // bus claims.
       expect(results.get('bypass_unapproved')?.ok).toBe(false)
       expect(results.get('bypass_unapproved')?.error).toContain('bypass_requires_approval')
+
+      // A symlink out of the project folder is refused, and the secret it points
+      // at never reaches the result.
+      expect(results.get('symlink_escape')?.ok).toBe(false)
+      expect(results.get('symlink_escape')?.error).toContain('path_escapes_allowlist')
+      expect(results.get('symlink_escape')?.stdout ?? '').not.toContain('SUPER-SECRET')
     },
     40_000,
   )

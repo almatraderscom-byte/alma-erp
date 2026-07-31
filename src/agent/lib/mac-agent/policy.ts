@@ -145,13 +145,14 @@ const RED_RULES: DangerRule[] = [
  */
 const GREEN_SUBCOMMANDS: Record<string, readonly string[]> = {
   git: ['status', 'log', 'diff', 'show', 'branch', 'remote', 'stash', 'describe', 'blame', 'shortlog'],
-  npm: ['test', 'run', 'ls', 'view', 'outdated', '-v', '--version'],
-  pnpm: ['test', 'run', 'ls', '-v', '--version'],
-  yarn: ['test', 'run', '-v', '--version'],
+  // Package managers: version/metadata reads only. `npm test` and `npm run build`
+  // execute whatever package.json says — in this repo `build` already deletes
+  // cache files — so they are state-changing by definition and now take a tap
+  // (Codex review round 2). Same reasoning retired cargo/go/npx build+test.
+  npm: ['ls', 'view', 'outdated', '-v', '--version'],
+  pnpm: ['ls', '-v', '--version'],
+  yarn: ['-v', '--version'],
   gh: ['pr', 'run', 'issue', 'repo', 'api', 'auth'],
-  npx: ['tsc', 'vitest', 'eslint', 'prettier'],
-  cargo: ['check', 'test', 'build'],
-  go: ['test', 'build', 'vet'],
 }
 
 /** `npm run <script>` — only these scripts auto-run; anything else needs a tap. */
@@ -164,7 +165,7 @@ const GREEN_GH_VERBS = ['view', 'list', 'checks', 'status', 'diff'] as const
 const GREEN_SIMPLE = new Set([
   'ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'file', 'stat', 'du', 'df',
   'grep', 'rg', 'echo', 'date', 'uname', 'whoami', 'sw_vers', 'which', 'type',
-  'tsc', 'vitest', 'eslint', 'basename', 'dirname', 'realpath',
+  'basename', 'dirname', 'realpath',
 ])
 
 /**
@@ -208,7 +209,10 @@ const UNIVERSAL_WRITE_FLAGS = [
 ]
 
 /** Shell syntax that hides the real command from this classifier. */
-const METACHARACTERS = /[;&|<>`$(){}\n\\]/
+// Includes glob characters: the shell expands `.e*` to `.env` AFTER we
+// classify, so a green `cat` was reading secrets (Codex review round 2). A
+// literal-only command is the only kind we can actually judge.
+const METACHARACTERS = /[;&|<>`$(){}\n\\*?\[\]]/
 
 // ---------------------------------------------------------------------------
 
@@ -312,6 +316,11 @@ function isGreenSegment(segment: string): boolean {
   if (!sub || !subs.includes(sub)) return false
 
   // Tool-specific second level.
+  // Only the LISTING forms of `git branch`. `git branch new-name` creates a ref
+  // and `git branch -D x` force-deletes one (Codex review round 2).
+  if (tool === 'git' && sub === 'branch') {
+    return args.slice(1).every((a) => ['-a', '--all', '-r', '-l', '--list', '-v', '-vv', '--verbose'].includes(a))
+  }
   if (tool === 'git' && sub === 'stash') return args[1] === 'list'
   if (tool === 'git' && sub === 'remote') return args[1] === '-v' || args.length === 1
   if ((tool === 'npm' || tool === 'pnpm' || tool === 'yarn') && sub === 'run') {
@@ -323,7 +332,6 @@ function isGreenSegment(segment: string): boolean {
     if (sub === 'api' || sub === 'auth') return false
     return args[1] !== undefined && (GREEN_GH_VERBS as readonly string[]).includes(args[1])
   }
-  if (tool === 'npx' && sub === 'tsc') return args.includes('--noEmit')
 
   return true
 }

@@ -1034,10 +1034,15 @@ async function runApprove(
       )
     }
 
-    await db.agentPendingAction.update({
-      where: { id: actionId },
+    // Claim the card first: two overlapping approvals both read it as pending and
+    // both enqueued, running the owner's command twice (Codex review round 2).
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
       data: { status: 'approved', resolvedAt: new Date() },
     })
+    if (claimed.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
 
     const { id: commandId } = await enqueueMacCommand({
       deviceId: device.id,
@@ -1088,10 +1093,14 @@ async function runApprove(
       )
     }
 
-    await db.agentPendingAction.update({
-      where: { id: actionId },
+    // Same race as the mac_command branch above.
+    const claimedSession = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
       data: { status: 'approved', resolvedAt: new Date() },
     })
+    if (claimedSession.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
 
     const { id: commandId } = await enqueueMacCommand({
       deviceId: device.id,
