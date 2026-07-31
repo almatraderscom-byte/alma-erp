@@ -149,6 +149,27 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'level',
   },
   {
+    // Owner pick 2026-07-31: OpenAI cut GPT-5.6 Luna's price 80% on 2026-07-30
+    // ($1/$6 → $0.20/$1.20, cached input $0.02 — verified against OpenRouter's
+    // live catalog + OpenAI pricing the same day). Cheaper than the Grok head on
+    // both sides, so it takes over as DEFAULT_HEAD_MODEL_ID (routing-config).
+    // Raw OpenAI caches prefixes automatically server-side — no cache_control
+    // breakpoint wanted (same pattern as xAI), hence supportsCaching: false with
+    // a published cachedInPerM. 'level': reasoning model — keeps the uniform
+    // sampler off (reasoning models reject a custom temperature).
+    id: 'gpt-5.6-luna',
+    label: 'GPT-5.6 Luna',
+    provider: 'openai',
+    apiModel: 'gpt-5.6-luna',
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 1_050_000,
+    inPerM: 0.2,
+    outPerM: 1.2,
+    cachedInPerM: 0.02,
+    thinking: 'level',
+  },
+  {
     id: 'gpt-5.5',
     label: 'GPT-5.5',
     provider: 'openai',

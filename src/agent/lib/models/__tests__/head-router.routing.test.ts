@@ -67,7 +67,7 @@ describe('resolveHeadModelId — routine fast-path', () => {
     // Owner command (2026-07-18): heavy head is Grok 4.20 (Gemini off). The real
     // invariant is the tier — money/sensitive must never fall to the cheap head.
     expect(decision.tier).toBe('heavy')
-    expect(decision.modelId).toBe('xai-grok-4.20')
+    expect(decision.modelId).toBe('gpt-5.6-luna')
   })
 })
 

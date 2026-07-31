@@ -114,6 +114,7 @@ import {
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { DEFAULT_HEAD_MODEL_ID } from '@/agent/lib/models/routing-config'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
@@ -3746,11 +3747,12 @@ async function* runAlternateProviderTurn(
     const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
     // When the CHEAP head is the one that died (owner-hit 2026-07-16: OpenRouter
     // credits ran out → DeepSeek 402 → raw English error on screen, because the
-    // only ladder went expensive→cheap), climb the other way instead: the native
-    // Gemini head rides a DIFFERENT billing account than every or-* model, so a
-    // provider-credit outage on OpenRouter still gets an answer.
+    // only ladder went expensive→cheap), climb the other way instead: the default
+    // head (GPT-5.6 Luna, direct OpenAI) rides a DIFFERENT billing account than
+    // every or-* model, so a provider-credit outage on OpenRouter still gets an
+    // answer.
     const rescueId = model.id === cheapId
-      ? (process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro')
+      ? (process.env.HEAVY_HEAD_MODEL_ID?.trim() || DEFAULT_HEAD_MODEL_ID)
       : cheapId
     if (canRestartHead && model.id !== rescueId && isKnownModelId(rescueId)) {
       const cheap = getModel(rescueId)
