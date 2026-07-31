@@ -469,6 +469,30 @@ async function readStateSignals(conversationId: string): Promise<{
     add(packsForCheckpointTaskType(String(cp.checkpoint?.taskType ?? '')), `checkpoint:${cp.checkpoint?.taskType ?? 'unknown'}`)
   }
   if ((plans as unknown[]).length > 0) add(['plan'], 'plan:active')
+
+  // What the PREVIOUS turn worked on. Without this, a bare follow-up — "abar try
+  // koro", "ok koro" — carries no keywords, matches no pack, and the head loses
+  // the very tools it was mid-task with. Live-hit 2026-07-31: "amar mac e git
+  // status dekho" routed correctly, then "akhon abar try koro" answered "tool
+  // callable নয়". Only used when the reply IS a continuation (the caller decides
+  // that); a fresh instruction still routes on its own words.
+  if (packs.length === 0) {
+    try {
+      const last = await db.agentMessage.findFirst({
+        where: { conversationId, role: 'assistant' },
+        orderBy: { createdAt: 'desc' },
+        select: { usage: true },
+      })
+      const prev = (last?.usage as { packs?: unknown } | null)?.packs
+      if (Array.isArray(prev)) {
+        const carried = prev.filter((p): p is PackKey => typeof p === 'string' && p in DOMAIN_PACKS)
+        if (carried.length > 0) add(carried, `carried:${carried.join('+')}`)
+      }
+    } catch {
+      /* no history is not an error — the caller falls back */
+    }
+  }
+
   return { packs, signals, workflowTools }
 }
 
