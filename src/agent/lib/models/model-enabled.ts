@@ -9,8 +9,10 @@ import { MODEL_REGISTRY } from '@/agent/lib/models/registry'
 
 export const MODEL_ENABLED_KV_KEY = 'model.enabled'
 
-/** Fallback preference when a chosen model is OFF. */
-const FALLBACK_ORDER = ['gemini-3.1-pro', 'or-deepseek-v4-flash', 'gemini-3.5-flash', 'or-qwen3-max']
+/** Fallback preference when a chosen model is OFF. Luna leads — owner rule
+ * 2026-07-31: GPT-5.6 Luna is the default head, so a disabled model falls back
+ * to it first. */
+const FALLBACK_ORDER = ['gpt-5.6-luna', 'gemini-3.1-pro', 'or-deepseek-v4-flash', 'gemini-3.5-flash', 'or-qwen3-max']
 
 export type ModelEnabledMap = Record<string, boolean>
 
