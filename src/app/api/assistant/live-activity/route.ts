@@ -23,6 +23,8 @@ export const dynamic = 'force-dynamic'
 /** Anything older than this is history, not "right now". */
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000
 const RECENT_STEPS = 12
+/** A step this fresh still reads as "now" even though it has already finished. */
+const JUST_FINISHED_MS = 25_000
 
 export type ActivitySurface = 'mac' | 'session' | 'browser'
 
@@ -174,12 +176,20 @@ export async function GET(req: NextRequest) {
   const trimmed = steps.slice(0, RECENT_STEPS)
   const running = trimmed.filter((s) => s.status === 'running' || s.status === 'queued')
 
+  // A read-only command finishes in about two seconds, and the dock polls every
+  // three — so on the owner's most common request it would have found nothing
+  // running and never shown itself at all. Anything that FINISHED in the last
+  // few seconds still counts as "happening now" for display purposes; that is
+  // what makes a fast command visible instead of silent.
+  const justFinishedCutoff = new Date(Date.now() - JUST_FINISHED_MS).toISOString()
+  const justFinished = trimmed.filter((s) => s.at > justFinishedCutoff)
+
   return Response.json(
     {
       // The dock shows itself only while something is genuinely in flight — the
       // owner should never have a player sitting on his chat doing nothing.
-      active: running.length > 0,
-      current: running[0] ?? trimmed[0] ?? null,
+      active: running.length > 0 || justFinished.length > 0,
+      current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
       screenshot,
       screenshotAt,
