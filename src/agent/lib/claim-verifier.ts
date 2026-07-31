@@ -321,6 +321,27 @@ export function detectClaimViolations(
 const TOOL_RAN_VERB =
   /(?:executed|ran|called|invoked|চালানো\s*হয়েছে|চালিয়েছি|কল\s*কর(?:েছি|লাম|া\s*হয়েছে)|রান\s*কর(?:েছি|া\s*হয়েছে))/i
 
+/**
+ * …or a sentence that does not say it RAN a tool, but reports the tool's RESULT.
+ *
+ * Live on 2026-07-31: the head could not see `update_orders` (it had been added
+ * to a list the head-tool diet skips), never called it, and wrote
+ * *"প্রমাণ: update_orders tool success:true, দুটো অর্ডারেই courier field updated,
+ * no error"*. Nothing had happened — the ERP row proved it. The old gate looked
+ * only for "ran / চালিয়েছি" verbs, so a fabricated RESULT sailed through, which
+ * is the more convincing lie of the two.
+ */
+const TOOL_RESULT_CLAIM =
+  /(?:success\s*[:=]\s*true|\bok\s*[:=]\s*true|\bno\s+error(?:s)?\b|প্রমাণ\s*[:：—-]|\breturned\s+success\b|হয়ে\s*গেছে|করা\s*হয়েছে)/i
+
+/**
+ * …but recommending a tool is not claiming to have run it. "update_orders দিয়ে
+ * করা যাবে" / "use update_orders to fix this" carries no assertion at all, and
+ * flagging it would train the head to stop naming its own tools.
+ */
+const TOOL_RECOMMENDATION =
+  /(?:দিয়ে\s*(?:কর|হবে|যাবে|দিন)|ব্যবহার\s*কর(?:ুন|তে|া\s*যাবে)|\b(?:should|can|could|please|try\s+to|need\s+to|let'?s)\s+(?:use|call|run)\b|^\s*use\s+[a-z0-9_]+|\bলাগবে\b)/i
+
 /** A tool-name-shaped token: snake_case with at least one underscore. */
 const TOOL_NAME_TOKEN = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,5})\b/g
 
@@ -336,8 +357,11 @@ export function detectToolExecutionClaims(
   for (const rawSentence of text.split(/[।.!?\n]+/)) {
     const sentence = rawSentence.trim()
     if (sentence.length < 8) continue
-    if (!TOOL_RAN_VERB.test(sentence)) continue
+    // Either "I ran it" or "here is what it returned" — both assert the call.
+    if (!TOOL_RAN_VERB.test(sentence) && !TOOL_RESULT_CLAIM.test(sentence)) continue
     if (FUTURE_INTENT.test(sentence)) continue // "চালাবো" / "I'll run it"
+    // …and a recommendation is not a claim.
+    if (!TOOL_RAN_VERB.test(sentence) && TOOL_RECOMMENDATION.test(sentence)) continue
 
     TOOL_NAME_TOKEN.lastIndex = 0
     let m: RegExpExecArray | null

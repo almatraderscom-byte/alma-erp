@@ -97,6 +97,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // B1 — the ERP's first write. Staged like its website siblings: order status
   // moves stock, so it is never a silent change.
   update_order: stage('erp'),
+  // B5 — the same change, many orders, ONE card. Same risk per item; the
+  // difference is how many times Boss has to say yes.
+  update_orders: stage('erp'),
   get_inventory_status: read('erp'),
   get_product: read('erp'),
   get_customer_summary: read('erp'),
