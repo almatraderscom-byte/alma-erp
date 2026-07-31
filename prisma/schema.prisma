@@ -2967,6 +2967,62 @@ model LiveBrowserCommand {
   @@map("live_browser_commands")
 }
 
+// M1 (Mac control) — the owner's own Mac running the ALMA Mac Agent daemon.
+// Same shape and same safety posture as LiveBrowserDevice above: pull-based, no
+// inbound port on the Mac, token stored hashed, one-time pairing code.
+model MacAgentDevice {
+  id          String    @id @default(uuid())
+  ownerUserId String
+  name        String    @default("My Mac")
+  /// sha256(token) — the raw token only ever lives on the Mac.
+  tokenHash   String?   @unique
+  pairingCode String?   @unique
+  pairingExp  DateTime?
+  pairedAt    DateTime?
+  lastSeenAt  DateTime?
+  revoked     Boolean   @default(false)
+  /// Daemon-reported facts (hostname, agent version, node version) for the status page.
+  meta        Json?
+  createdAt   DateTime  @default(now())
+
+  commands MacAgentCommand[]
+
+  @@index([ownerUserId])
+  @@map("mac_agent_devices")
+}
+
+// One unit of work for the Mac daemon: a shell command, or (M2) a CLI-session verb.
+// `policyLevel` records the classifier's verdict at enqueue time and `approvedBy`
+// records how an amber command earned its run — together they are the audit trail
+// for every single thing the agent did on the owner's machine.
+model MacAgentCommand {
+  id       String         @id @default(uuid())
+  deviceId String
+  device   MacAgentDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// run_command | session_open | session_send | session_read | session_stop | screenshot | ping
+  action   String
+  params   Json?
+  /// green | amber (red is never enqueued)
+  policyLevel String      @default("green")
+  /// null for green, else the AgentPendingAction id the owner approved.
+  approvedBy  String?
+  /// queued → delivered → done | failed | cancelled
+  status      String      @default("queued")
+  exitCode    Int?
+  stdout      String?     @db.Text
+  stderr      String?     @db.Text
+  error       String?     @db.Text
+  /// Free-form session/task correlation (M2 groups many commands under one session).
+  sessionKey  String?
+  createdAt   DateTime    @default(now())
+  deliveredAt DateTime?
+  resolvedAt  DateTime?
+
+  @@index([deviceId, status])
+  @@index([sessionKey])
+  @@map("mac_agent_commands")
+}
+
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category
 // continuously observed across snapshots). Closed when the condition clears or
 // goes stale. notifiedAt is set once the owner has been alerted for that episode.

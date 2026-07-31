@@ -56,6 +56,8 @@ const NON_TOOL_ALLOWLIST = new Set([
   'vps_live',
   // manage_browser_logins action values.
   'clear_cache', 'clear_site', 'clear_all',
+  // mac_agent_status action value (generates a one-time daemon pairing code).
+  'pair_code',
   // The three browser kill-switches the prompt must name apart, because "live
   // browser" in Bangla means two different machines and the head has to pick one.
   'live_browser_enabled', 'browser_live_view_enabled', 'browser_agent_enabled',

@@ -62,6 +62,15 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   run_browser_recipe: stage('browser'),
   save_learned_recipe: write('browser'),
 
+  // ── the owner's own Mac (M1) ───────────────────────────────────────────────
+  // `stage` is right even though a GREEN command runs immediately: the classifier
+  // (mac-agent/policy.ts) sends every state-CHANGING command to an approval card,
+  // and the only things that bypass the card are reads. High risk regardless —
+  // this is the one tool whose blast radius is the owner's actual laptop.
+  run_mac_command: stage('mac', 'high'),
+  check_mac_command: read('mac'),
+  mac_agent_status: read('mac'),
+
   // ── native push ────────────────────────────────────────────────────────────
   set_native_push: write('push'),
   test_native_push: { domain: 'push', mode: 'write', risk: 'low', proof: 'external' },

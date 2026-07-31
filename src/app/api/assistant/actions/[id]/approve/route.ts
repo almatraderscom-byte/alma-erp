@@ -13,6 +13,12 @@ import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
+import {
+  activeDevice as activeMacDevice,
+  awaitResult as awaitMacResult,
+  enqueueCommand as enqueueMacCommand,
+} from '@/agent/lib/mac-agent/bus'
+import { classifyCommand } from '@/agent/lib/mac-agent/policy'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -998,6 +1004,68 @@ async function runApprove(
       taskCount: refreshed.taskCount,
       taskIds: refreshed.taskIds,
       message: 'Tasks approved from current DB proposal. Worker will dispatch to staff via Telegram.',
+    })
+  }
+
+  // M1 — an amber Mac command the owner just approved. The command text he saw on
+  // the card is the ONLY thing that runs: we re-read it from the stored payload and
+  // re-classify it here, so an edited or replayed card can't smuggle in something
+  // else, and a rule that turned RED since the card was created still wins.
+  if (action.type === 'mac_command') {
+    const p = payload as { command?: string; cwd?: string | null; timeoutMs?: number | null; deviceId?: string }
+    const command = String(p.command ?? '')
+    const verdict = classifyCommand(command, { cwd: p.cwd ?? undefined })
+    if (verdict.level === 'red') {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+      return Response.json(
+        { success: false, error: `refused_by_policy:${verdict.code}`, message: verdict.reasonBn },
+        { status: 400 },
+      )
+    }
+
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'run_command',
+      params: { command, cwd: p.cwd ?? null, timeoutMs: p.timeoutMs ?? null, approved: true },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 100_000)
+    const tail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+    await appendConversationNote(
+      db,
+      action,
+      outcome.timedOut
+        ? `✅ অনুমোদিত — \`${command}\` চলছে এখনো (id: ${commandId})। শেষ হলে জানাবো।`
+        : outcome.status === 'done'
+          ? `✅ অনুমোদিত ও চালানো হয়েছে — \`${command}\`\n\n\`\`\`\n${tail}\n\`\`\``
+          : `⚠️ \`${command}\` চালাতে গিয়ে সমস্যা হয়েছে (exit ${outcome.exitCode ?? '?'}):\n\n\`\`\`\n${tail}\n\`\`\``,
+    )
+
+    return Response.json({
+      success: outcome.status === 'done',
+      commandId,
+      exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      stillRunning: outcome.timedOut,
     })
   }
 

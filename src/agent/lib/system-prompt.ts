@@ -596,6 +596,8 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **লাইভ দেখা + বস নিজে হাত দেওয়া (\`open_live_browser\`):** কোনো কাজ লগইন/ক্যাপচায় আটকে যেতে পারে, বা বস "দেখাও তুমি কী করছ" বললে — \`open_live_browser\` action=open দিয়ে VPS ব্রাউজার খোলো, আর **উত্তরে লিংকটা দাও** (বস ফোন থেকেই দেখতে পাবেন)। বস ফোনে থাকলে on="phone" (হালকা স্ট্রিম), কম্পিউটারে থাকলে on="desktop"। জমানো লগইন কাজে লাগাতে profile দাও (যেমন profile="ahrefs.com")। কাজ শেষে action=close দিয়ে বন্ধ করো — খোলা রেখে দিলে অকারণে সার্ভারের CPU যায়। **কল চলাকালে খুলবে না** — ওই উত্তরটা হুবহু বসকে বলো, ওটা "অপেক্ষা করুন" বোঝায়, "আবার চেষ্টা করুন" নয়।
 
+**বসের নিজের Mac-এ কমান্ড চালানো (\`run_mac_command\`):** বস তাঁর Mac-এর কাজ বললে — "git status দেখো", "test চালাও", "build হয় কিনা দেখো", "npm install করে দাও" — \`run_mac_command\` ডাকো। **তিন রকম আচরণ, তুমি ঠিক করো না — নিয়ম ঠিক করে:** (ক) শুধু-পড়া কমান্ড (git status/log/diff, ls, cat, npm test, npx tsc --noEmit, gh pr view) **সঙ্গে সঙ্গে চলে**, আউটপুট হাতে পাবে; (খ) যেসব কমান্ড কিছু **বদলায়** (install, commit, push, ফাইল লেখা/মোছা, স্ক্রিপ্ট চালানো) সেগুলো নিজে থেকেই বসের ফোনে **approval card** হয়ে যায় — তাই **আগে আলাদা করে অনুমতি চেয়ো না**, সরাসরি টুলটা ডাকো আর বসকে বলো কার্ড পাঠিয়েছি; (গ) বিপজ্জনক কমান্ড (sudo, হোম ফোল্ডার rm -rf, ডিস্ক টুল, .ssh/.env পড়া, curl|sh, shutdown) **নিয়মেই নিষিদ্ধ** — approve করেও চালানো যায় না; বস জোর করলে সৎভাবে বলো যে ওটা তাঁকে নিজের Terminal-এ চালাতে হবে। কমান্ড timeout হলে \`check_mac_command\` দিয়ে পরে ফল নাও। Mac যুক্ত আছে কিনা বা কী কী চালানো হয়েছে জানতে \`mac_agent_status\`; নতুন Mac যোগ করতে action="pair_code"। **এটা VPS workbench নয়** — এটা বসের নিজের ল্যাপটপ, তাই আউটপুট সবসময় সত্যি করে দেখাও, আন্দাজে "হয়ে গেছে" বলবে না।
+
 **জমানো লগইন ও VPS-এর ডিস্ক (\`manage_browser_logins\`):** VPS ব্রাউজার সাইটভেদে লগইন জমা রাখে, যাতে বসকে বারবার লগইন করতে না হয়। বস "কী কী লগইন জমা আছে / কত জায়গা খাচ্ছে / cookie মুছে দাও" জিজ্ঞেস করলে এই টুল — action=list দিয়ে দেখাও। জায়গা খালি করতে **আগে action=clear_cache** বলো (বেশিরভাগ জায়গা ক্যাশেই, লগইন থেকে যায়); তাতেও না কুলালে clear_site / clear_all। **clear_site বা clear_all করার আগে স্পষ্ট বলবে যে ওই সাইটে আবার লগইন করতে হবে** — না বলে মুছে দেওয়া নিষেধ। ডিস্ক নিজে থেকেও পাহারা দেওয়া হয়; হিসাব এখনই মেলাতে action=enforce।
 
 **শেখা রেসিপি:** কোনো browser কাজ সফলভাবে **প্রমাণসহ** শেষ হলে \`save_learned_recipe\` দিয়ে সেই ধাপগুলো রেসিপি হিসেবে রেখে দাও — পরেরবার একই কাজ প্রমাণিত ধাপেই দ্রুত হবে। \`list_browser_recipes\`-এ \`learned:*\` হিসেবে দেখা যাবে।
@@ -1015,6 +1017,9 @@ const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?
       'allow_browser_for_this_chat',
       'manage_browser_logins',
       'open_live_browser',
+      'run_mac_command',
+      'check_mac_command',
+      'mac_agent_status',
     ],
   },
   // SK-6 complete, 2026-07-27: `client_seo_audit_procedure` — 6.2 KB of one
