@@ -37,8 +37,10 @@ const LOG_FILE = join(CONFIG_DIR, 'agent.log')
 const PAUSE_FILE = join(CONFIG_DIR, 'PAUSED')
 
 const AGENT_VERSION = '1.0.0'
-const POLL_INTERVAL_MS = 3_000
-const POLL_INTERVAL_IDLE_MS = 5_000
+// Overridable so the integration test can drive the real daemon at speed instead
+// of testing a stubbed copy of it.
+const POLL_INTERVAL_MS = Number(process.env.ALMA_POLL_MS) || 3_000
+const POLL_INTERVAL_IDLE_MS = Number(process.env.ALMA_POLL_IDLE_MS) || 5_000
 const BACKOFF_MAX_MS = 60_000
 
 // ---------------------------------------------------------------------------
