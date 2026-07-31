@@ -2212,7 +2212,8 @@ async function runApprove(
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
 
-    const { executeOrderUpdate, outcomeNoteLines } = await import('@/lib/agent-approvals/order-update')
+    const { executeOrderUpdate, outcomeNoteLines, readBackOrderOutcome } =
+      await import('@/lib/agent-approvals/order-update')
 
     const outcomes = []
     for (const item of items) {
@@ -2229,14 +2230,15 @@ async function runApprove(
         // One order throwing (a notification provider, a courier SMS, anything
         // downstream) must not abandon the rest of an approved batch — nor leave
         // the card stuck in `approved` while earlier orders already changed.
-        outcomes.push({
-          ok: false,
+        // The text fields commit before the status workflow runs, so some of
+        // this order may well have landed: read the row back rather than
+        // reporting a blank "nothing applied", which would be its own false claim.
+        outcomes.push(await readBackOrderOutcome({
           orderId: String(item.orderId ?? ''),
-          label,
-          applied: [],
-          failures: [`threw: ${err instanceof Error ? err.message : String(err)}`],
-          verified: [],
-        })
+          invoiceNum: (item.invoiceNum as string | null | undefined) ?? label,
+          status: (item.status as string | null | undefined) ?? null,
+          fields: (item.fields as Record<string, string> | undefined) ?? {},
+        }, err))
       }
     }
 

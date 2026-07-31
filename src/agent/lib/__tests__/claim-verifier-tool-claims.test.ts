@@ -130,3 +130,19 @@ describe('recommending a tool is not claiming it ran (bot P2 on #664)', () => {
     ).toHaveLength(1)
   })
 })
+
+describe('a past-tense assertion is not a recommendation (bot P2, round 2)', () => {
+  const known = (name: string) => ['update_orders'].includes(name)
+
+  it('catches "I did use update_orders; success:true"', () => {
+    expect(
+      detectToolExecutionClaims('I did use update_orders; success:true', [], known),
+    ).toHaveLength(1)
+  })
+
+  it('still lets a genuine suggestion through', () => {
+    expect(
+      detectToolExecutionClaims('you should use update_orders instead', [], known),
+    ).toEqual([])
+  })
+})

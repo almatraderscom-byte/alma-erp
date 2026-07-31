@@ -101,6 +101,58 @@ export async function executeOrderUpdate(payload: OrderUpdatePayload): Promise<O
   }
 }
 
+/**
+ * When an item throws part-way, the truth is whatever the row says NOW.
+ *
+ * `executeOrderUpdate` commits the text fields before the status workflow, and
+ * that workflow can throw from a downstream notification AFTER the status
+ * landed. Reporting "nothing applied" there would be its own false claim, so the
+ * caller re-reads instead of guessing.
+ */
+export async function readBackOrderOutcome(
+  payload: OrderUpdatePayload,
+  error: unknown,
+): Promise<OrderUpdateOutcome> {
+  const orderId = String(payload.orderId ?? '')
+  const wanted: Record<string, unknown> = { ...(payload.fields ?? {}) }
+  if (payload.status) wanted.status = payload.status
+
+  let live: Record<string, unknown> | null = null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    live = await (prisma as any).lifestyleOrder.findUnique({ where: { id: orderId } })
+  } catch {
+    live = null
+  }
+
+  const liveValue = (field: string): unknown => {
+    switch (field) {
+      case 'status': return live?.status ?? null
+      case 'courier': return live?.courier ?? null
+      case 'trackingId': return live?.trackingId ?? null
+      case 'notes': return live?.notes ?? null
+      default: return null
+    }
+  }
+
+  const verified = Object.entries(wanted).map(([field, want]) => {
+    const got = liveValue(field)
+    const same = field === 'status'
+      ? normalizeOrderStatus(String(got ?? '')) === normalizeOrderStatus(String(want))
+      : String(got ?? '').trim() === String(want).trim()
+    return { field, expected: want, live: got, ok: same }
+  })
+
+  return {
+    ok: false,
+    orderId,
+    label: String((live?.invoiceNum as string | undefined) || payload.invoiceNum || orderId),
+    applied: verified.filter((v) => v.ok).map((v) => v.field),
+    failures: [`threw: ${error instanceof Error ? error.message : String(error)}`],
+    verified,
+  }
+}
+
 /** One order's line on the owner-facing note: what the ERP says now. */
 export function outcomeNoteLines(outcome: OrderUpdateOutcome): string {
   return outcome.verified

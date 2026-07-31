@@ -340,7 +340,7 @@ const TOOL_RESULT_CLAIM =
  * flagging it would train the head to stop naming its own tools.
  */
 const TOOL_RECOMMENDATION =
-  /(?:দিয়ে\s*(?:কর|হবে|যাবে|দিন)|ব্যবহার\s*কর|\buse\b|\bshould\s+(?:use|call|run)\b|\bcan\s+(?:use|call|run)\b|\bলাগবে\b)/i
+  /(?:দিয়ে\s*(?:কর|হবে|যাবে|দিন)|ব্যবহার\s*কর(?:ুন|তে|া\s*যাবে)|\b(?:should|can|could|please|try\s+to|need\s+to|let'?s)\s+(?:use|call|run)\b|^\s*use\s+[a-z0-9_]+|\bলাগবে\b)/i
 
 /** A tool-name-shaped token: snake_case with at least one underscore. */
 const TOOL_NAME_TOKEN = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+){1,5})\b/g
