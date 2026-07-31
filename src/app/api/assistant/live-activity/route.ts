@@ -103,14 +103,26 @@ export async function GET(req: NextRequest) {
         where: { createdAt: { gte: since } },
         orderBy: { createdAt: 'desc' },
         take: RECENT_STEPS,
-        select: { id: true, action: true, params: true, status: true, createdAt: true, result: true },
+        // `result` carries the screenshot data URI and is large; only the
+        // screenshot rows need it, so the rest of the poll stays small on a
+        // phone (Codex review).
+        select: { id: true, action: true, params: true, status: true, createdAt: true },
       })
       .catch(() => []),
   ])
 
   const steps: ActivityStep[] = []
+  /** Newest wins across BOTH surfaces — not whichever list we happened to read first. */
   let screenshot: string | null = null
   let screenshotAt: string | null = null
+  const considerShot = (dataUri: string | null | undefined, at: Date) => {
+    if (!dataUri?.startsWith('data:image')) return
+    const iso = at.toISOString()
+    if (!screenshotAt || iso > screenshotAt) {
+      screenshot = dataUri
+      screenshotAt = iso
+    }
+  }
 
   for (const r of macRows as Array<Record<string, unknown>>) {
     const params = (r.params as Record<string, unknown> | null) ?? {}
@@ -126,9 +138,8 @@ export async function GET(req: NextRequest) {
       at: (r.createdAt as Date).toISOString(),
     })
     // The Mac screenshot verb stores its data URI in stdout.
-    if (!screenshot && action === 'screenshot' && typeof r.stdout === 'string' && r.stdout.startsWith('data:image')) {
-      screenshot = r.stdout
-      screenshotAt = (r.createdAt as Date).toISOString()
+    if (action === 'screenshot' && typeof r.stdout === 'string') {
+      considerShot(r.stdout, r.createdAt as Date)
     }
   }
 
@@ -145,11 +156,17 @@ export async function GET(req: NextRequest) {
       policy: null,
       at: (r.createdAt as Date).toISOString(),
     })
-    const result = (r.result as Record<string, unknown> | null) ?? null
-    const shot = result && typeof result.screenshot === 'string' ? result.screenshot : null
-    if (!screenshot && shot?.startsWith('data:image')) {
-      screenshot = shot
-      screenshotAt = (r.createdAt as Date).toISOString()
+  }
+
+  // Fetch the screenshot payload ONLY for the browser rows that carry one.
+  const shotRow = (browserRows as Array<Record<string, unknown>>).find((r) => r.action === 'screenshot')
+  if (shotRow) {
+    const full = await db.liveBrowserCommand
+      .findUnique({ where: { id: shotRow.id as string }, select: { result: true, createdAt: true } })
+      .catch(() => null)
+    const result = (full?.result as Record<string, unknown> | null) ?? null
+    if (result && typeof result.screenshot === 'string') {
+      considerShot(result.screenshot, full!.createdAt as Date)
     }
   }
 

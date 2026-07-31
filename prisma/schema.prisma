@@ -2964,6 +2964,8 @@ model LiveBrowserCommand {
   resolvedAt  DateTime?
 
   @@index([deviceId, status])
+  /// Same live-dock poll (see mac_agent_commands).
+  @@index([createdAt])
   @@map("live_browser_commands")
 }
 
@@ -3024,6 +3026,9 @@ model MacAgentCommand {
 
   @@index([deviceId, status])
   @@index([sessionKey])
+  /// The live dock polls "what happened in the last 10 minutes" every 3s while
+  /// work runs; without this it degrades into a scan as history grows.
+  @@index([createdAt])
   @@map("mac_agent_commands")
 }
 

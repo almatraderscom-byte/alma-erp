@@ -63,8 +63,8 @@ const POLL_IDLE_MS = 15_000
 export default function AgentLiveDock() {
   const [feed, setFeed] = useState<ActivityFeed | null>(null)
   const [expanded, setExpanded] = useState(false)
-  /** He closed it by hand — respect that until new work starts. */
-  const [dismissedAt, setDismissedAt] = useState<number | null>(null)
+  /** He closed it by hand — respect that until genuinely NEW work starts. */
+  const [dismissedStepId, setDismissedStepId] = useState<string | null>(null)
   const lastActiveRef = useRef<number>(0)
 
   const load = useCallback(async () => {
@@ -72,11 +72,12 @@ export default function AgentLiveDock() {
       const res = await fetch('/api/assistant/live-activity', { cache: 'no-store' })
       if (!res.ok) return
       const data = (await res.json()) as ActivityFeed
-      if (data.active) {
-        lastActiveRef.current = Date.now()
-        setDismissedAt(null)
-      }
+      if (data.active) lastActiveRef.current = Date.now()
       setFeed(data)
+      // Only a DIFFERENT step brings the dock back. Clearing the dismiss on
+      // every active poll meant closing it during a running job re-opened it
+      // three seconds later (Codex review).
+      setDismissedStepId((prev) => (prev && data.current && data.current.id !== prev ? null : prev))
     } catch {
       /* a dropped poll is not worth telling him about */
     }
@@ -97,7 +98,7 @@ export default function AgentLiveDock() {
   }, [load])
 
   const recentlyActive = Date.now() - lastActiveRef.current < LINGER_MS
-  const dismissed = dismissedAt !== null
+  const dismissed = dismissedStepId !== null && dismissedStepId === (feed?.current?.id ?? null)
   const show = Boolean(feed && (feed.active || recentlyActive) && !dismissed)
 
   // Collapse the sheet when the work finishes, so it never traps his screen.
@@ -212,7 +213,7 @@ export default function AgentLiveDock() {
 
         <button
           type="button"
-          onClick={() => setDismissedAt(Date.now())}
+          onClick={() => setDismissedStepId(current?.id ?? 'none')}
           aria-label="বন্ধ করুন"
           className="shrink-0 rounded-full p-1.5 text-black/35"
         >
