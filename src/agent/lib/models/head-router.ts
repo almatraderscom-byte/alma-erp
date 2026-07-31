@@ -25,7 +25,7 @@ import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
 import { stripVoiceInstructionPrefix } from '@/agent/lib/voice-instruction'
 import { isModelEnabled } from '@/agent/lib/models/model-enabled'
-import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
+import { DEFAULT_HEAD_MODEL_ID, getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing' | 'personal'
@@ -46,11 +46,13 @@ const triageModelId = (): string => process.env.CHEAP_HEAD_TRIAGE_MODEL_ID?.trim
 // Owner-tunable via HEAVY_HEAD_MODEL_ID (no redeploy). Falls back to DEFAULT_MODEL_ID
 // only if the configured id is unknown — DEFAULT_MODEL_ID itself stays Claude because
 // it guards the finance/CRITICAL sub-agent path, which is separate from the head.
-// Owner rule 2026-07-18: Gemini head OFF, Grok 4.20 is the head. The heavy/sensitive
-// tier (auto-mode) + the ANTHROPIC_HEAD_DOWN redirect now land on Grok by default.
-// `fallback` lets resolveHeadModelId pass the owner's KV-tuned default head so a live
-// change (no redeploy) also moves the heavy tier; HEAVY_HEAD_MODEL_ID env still wins.
-export const heavyHeadModelId = (fallback = 'xai-grok-4.20'): string => {
+// Owner rule 2026-07-31: GPT-5.6 Luna is the head (replaced Grok 4.20 after
+// OpenAI's 2026-07-30 80% price cut). The heavy/sensitive tier (auto-mode) + the
+// ANTHROPIC_HEAD_DOWN redirect land on the routing-config default (Luna) unless
+// tuned. `fallback` lets resolveHeadModelId pass the owner's KV-tuned default
+// head so a live change (no redeploy) also moves the heavy tier;
+// HEAVY_HEAD_MODEL_ID env still wins.
+export const heavyHeadModelId = (fallback = DEFAULT_HEAD_MODEL_ID): string => {
   const id = process.env.HEAVY_HEAD_MODEL_ID?.trim() || fallback
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
