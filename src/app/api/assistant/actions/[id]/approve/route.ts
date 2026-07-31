@@ -2194,14 +2194,13 @@ async function runApprove(
     })
   }
 
-  if (action.type === 'erp_order_update') {
-    const { orderId, status, fields } = payload as {
-      orderId: string
-      status?: string | null
-      fields?: Record<string, string>
-      changes?: Record<string, { before: unknown; after: unknown }>
-    }
-    const reason = (payload as { reason?: string | null }).reason ?? null
+  if (action.type === 'erp_order_update' || action.type === 'erp_order_batch') {
+    // B5 — one card per JOB, not per item. A batch carries the same payload
+    // shape as a single card, N times, and runs the SAME executor for each:
+    // a batch of ten must not be able to behave differently from a batch of one.
+    const items = action.type === 'erp_order_batch'
+      ? ((payload as { items?: unknown[] }).items ?? []) as Array<Record<string, unknown>>
+      : [payload as Record<string, unknown>]
 
     // One approval, one execution. Without the claim a double tap (or a client
     // retry) runs every write twice and appends two completion notes.
@@ -2213,77 +2212,25 @@ async function runApprove(
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
 
-    const { updateOrderTextFieldsInPostgres } = await import('@/lib/lifestyle/write')
-    const { applyOrderStatusChange, normalizeOrderStatus: normalizeOrderStatusForCheck } =
-      await import('@/lib/lifestyle/order-status-workflow')
+    const { executeOrderUpdate, outcomeNoteLines } = await import('@/lib/agent-approvals/order-update')
 
-    const applied: string[] = []
-    const failures: string[] = []
-
-    // Courier, tracking and the note FIRST, status last. A parcel that is marked
-    // shipped before its tracking id exists is one a customer can be told about
-    // and then not found; the reverse order leaves a tracking id on an order that
-    // has not moved yet, which is harmless and self-correcting. (It also means
-    // the courier SMS the status change queues carries the tracking id.)
-    const textFields = Object.fromEntries(
-      Object.entries(fields ?? {}).filter(([k]) => ['courier', 'trackingId', 'notes'].includes(k)),
-    ) as { courier?: string; trackingId?: string; notes?: string }
-    if (Object.keys(textFields).length) {
-      // A text-only path on purpose: the edit-form helper recalculates sellPrice
-      // and profit on every write, so adding a tracking id would rewrite the
-      // order's financial result.
-      const res = await updateOrderTextFieldsInPostgres(String(orderId), textFields)
-      if ('error' in res) failures.push(`fields: ${res.error}`)
-      else applied.push(...Object.keys(textFields))
+    const outcomes = []
+    for (const item of items) {
+      outcomes.push(await executeOrderUpdate({
+        orderId: String(item.orderId ?? ''),
+        invoiceNum: (item.invoiceNum as string | null | undefined) ?? null,
+        status: (item.status as string | null | undefined) ?? null,
+        fields: (item.fields as Record<string, string> | undefined) ?? {},
+        reason: (item.reason as string | null | undefined) ?? null,
+      }))
     }
 
-    if (status) {
-      // Through the SHARED workflow, never the low-level helper: a status change
-      // also creates or reverses the handler's commission, queues the courier
-      // SMS on Shipped, notifies the role matrix and the handler, and logs.
-      const res = await applyOrderStatusChange({
-        id: String(orderId),
-        status,
-        reason: reason ?? '',
-        actorUserId: 'owner-approval',
-      })
-      if (!res.ok) failures.push(`status: ${res.error}`)
-      else applied.push('status')
-    }
-
-    // The write reporting success is not the evidence — read the row back.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const live = await (db as any).lifestyleOrder.findUnique({ where: { id: String(orderId) } })
-    const liveValue = (field: string): unknown => {
-      switch (field) {
-        case 'status': return live?.status ?? null
-        case 'courier': return live?.courier ?? null
-        case 'trackingId': return live?.trackingId ?? null
-        case 'notes': return live?.notes ?? null
-        default: return null
-      }
-    }
-    const wanted: Record<string, unknown> = { ...(fields ?? {}) }
-    if (status) wanted.status = status
-
-    const verified = Object.entries(wanted).map(([field, want]) => {
-      const got = liveValue(field)
-      const same = field === 'status'
-        // The ERP has one spelling per status; both sides go through the same
-        // normaliser so "processing" and "Packed" are not read as a mismatch.
-        ? normalizeOrderStatusForCheck(String(got ?? '')) === normalizeOrderStatusForCheck(String(want))
-        : String(got ?? '').trim() === String(want).trim()
-      return { field, expected: want, live: got, ok: same }
-    })
-
-    const allGood = failures.length === 0 && verified.every((v) => v.ok)
+    const allGood = outcomes.every((o) => o.ok)
     const result = {
       ok: allGood,
-      orderId: String(orderId),
-      invoiceNum: live?.invoiceNum ?? null,
-      applied,
-      failures,
-      verified,
+      count: outcomes.length,
+      done: outcomes.filter((o) => o.ok).length,
+      items: outcomes,
     }
 
     await db.agentPendingAction.update({
@@ -2291,17 +2238,20 @@ async function runApprove(
       data: { status: allGood ? 'executed' : 'failed', resolvedAt: new Date(), result },
     })
 
-    const lines = verified
-      .map((v) => `${v.ok ? '✅' : '❌'} ${v.field}: ${String(v.live ?? '(খালি)').slice(0, 60)}`)
+    // Per item, so a partial batch names WHICH order still needs a hand.
+    const body = outcomes
+      .map((o) => `— ${o.label}\n${outcomeNoteLines(o)}` + (o.failures.length ? `\nব্যর্থ: ${o.failures.join(' · ')}` : ''))
       .join('\n')
+    const header = outcomes.length === 1
+      ? (allGood ? `✅ অর্ডার আপডেট হয়েছে` : `⚠️ অর্ডার আপডেট আংশিক`)
+      : (allGood
+        ? `✅ ${outcomes.length}টি অর্ডার আপডেট হয়েছে`
+        : `⚠️ ${result.done}/${outcomes.length}টি অর্ডার হয়েছে`)
     await appendConversationNote(
       db,
       action,
-      allGood
-        ? `✅ অর্ডার আপডেট হয়েছে — ${live?.invoiceNum || orderId}\nERP থেকে পড়ে মিলিয়ে দেখা হলো:\n${lines}`
-        : `⚠️ অর্ডার আপডেট আংশিক — ${live?.invoiceNum || orderId}\n${lines}`
-          + (failures.length ? `\nব্যর্থ: ${failures.join(' · ')}` : '')
-          + `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`,
+      `${header} — ERP থেকে পড়ে মিলিয়ে দেখা হলো:\n${body}`
+        + (allGood ? '' : `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`),
     )
 
     return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {

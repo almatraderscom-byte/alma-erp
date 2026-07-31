@@ -271,6 +271,9 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // edit_storefront_product above; a delegation hop would buy nothing.
   // Appended last so the existing cached-prefix bytes never shift.
   'update_order',
+  // B5: "ei tin ta order shipped kore dao" is one sentence to the head and must
+  // be one card back. Appended last so the existing cached-prefix bytes never shift.
+  'update_orders',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

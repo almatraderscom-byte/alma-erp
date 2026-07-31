@@ -136,3 +136,52 @@ describe('the ERP status vocabulary is the ERP’s, not the model’s', () => {
     }
   })
 })
+
+/**
+ * B5 — one card per JOB, not per item.
+ *
+ * "ei tin ta order shipped kore dao" was three separate approvals, which is the
+ * friction the whole "I just approve" goal keeps meeting. A batch card carries
+ * the same per-order payload N times and runs the SAME executor for each, so a
+ * batch of ten cannot behave differently from a batch of one.
+ */
+describe('update_orders — many orders, one approval', () => {
+  const batch = ERP_TOOLS.find((t) => t.name === 'update_orders')!
+
+  it('exists and takes a list of orders', () => {
+    expect(batch).toBeTruthy()
+    expect(batch.input_schema.required).toEqual(['orders'])
+  })
+
+  it('each entry carries its own fields — a batch is not one change repeated', () => {
+    const items = (batch.input_schema.properties as Record<string, { items?: { properties?: Record<string, unknown>; required?: string[] } }>).orders?.items
+    expect(items?.required).toEqual(['orderNumber'])
+    for (const field of ['status', 'courier', 'trackingId', 'notes']) {
+      expect(Object.keys(items?.properties ?? {})).toContain(field)
+    }
+  })
+
+  it('promises a per-order read-back, so a partial batch names the order that failed', () => {
+    expect(batch.description).toMatch(/read back from the ERP/i)
+    expect(batch.description).toMatch(/WHICH order/i)
+  })
+
+  it('is classified and allowlisted like its single sibling', () => {
+    expect(TOOL_CLASSIFICATION.update_orders?.mode).toBe('stage')
+    expect(TOOL_CLASSIFICATION.update_orders?.domain).toBe('erp')
+    expect(DOMAIN_PACKS.erp).toContain('update_orders')
+  })
+
+  it('refuses an empty list rather than staging an empty card', async () => {
+    const res = await batch.handler({ orders: [] })
+    expect(res.success).toBe(false)
+  })
+
+  it('caps the batch at a size a person can actually read', async () => {
+    const res = await batch.handler({
+      orders: Array.from({ length: 40 }, (_, i) => ({ orderNumber: `AL-${i}`, status: 'shipped' })),
+    })
+    expect(res.success).toBe(false)
+    expect(String(res.error)).toMatch(/১৫|15/)
+  })
+})
