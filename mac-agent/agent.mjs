@@ -235,6 +235,15 @@ function screenshot() {
 /** Handlers registered by the M2 session driver, keyed by action name. */
 export const extraHandlers = new Map()
 
+// M2 session verbs (claude / codex). Loaded lazily and optionally: an install that
+// only wants terminal control still runs with sessions.mjs absent.
+try {
+  const mod = await import('./sessions.mjs')
+  mod.registerSessionHandlers(extraHandlers, ALLOWED_DIRS_ABS)
+} catch (err) {
+  log('session driver not loaded:', String(err?.message ?? err))
+}
+
 async function handleCommand(cmd) {
   const params = cmd.params ?? {}
 

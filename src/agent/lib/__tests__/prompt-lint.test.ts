@@ -58,6 +58,8 @@ const NON_TOOL_ALLOWLIST = new Set([
   'clear_cache', 'clear_site', 'clear_all',
   // mac_agent_status action value (generates a one-time daemon pairing code).
   'pair_code',
+  // read_cli_session error code the head must recognise and explain to the owner.
+  'not_logged_in',
   // The three browser kill-switches the prompt must name apart, because "live
   // browser" in Bangla means two different machines and the head has to pick one.
   'live_browser_enabled', 'browser_live_view_enabled', 'browser_agent_enabled',

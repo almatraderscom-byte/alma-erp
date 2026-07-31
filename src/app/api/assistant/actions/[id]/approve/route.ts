@@ -1069,6 +1069,63 @@ async function runApprove(
     })
   }
 
+  // M2 — the owner approved an UNATTENDED Claude/Codex session. This is a standing
+  // grant rather than one action, which is exactly why it needed a card: once the
+  // session is open, nothing checks it step by step.
+  if (action.type === 'cli_session_bypass') {
+    const p = payload as {
+      task?: string | null
+      cwd?: string | null
+      tool?: string
+      model?: string | null
+      deviceId?: string
+    }
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss।' },
+        { status: 409 },
+      )
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'session_open',
+      params: {
+        task: p.task ?? undefined,
+        cwd: p.cwd ?? undefined,
+        tool: p.tool ?? 'claude',
+        model: p.model ?? undefined,
+        permissionMode: 'bypass',
+      },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 60_000)
+    let sessionId: string | null = null
+    try {
+      sessionId = (JSON.parse(outcome.stdout || '{}') as { sessionId?: string }).sessionId ?? null
+    } catch {
+      sessionId = null
+    }
+
+    await appendConversationNote(
+      db,
+      action,
+      sessionId
+        ? `✅ অনুমোদিত — ${p.tool === 'codex' ? 'Codex' : 'Claude'} সেশন চালু হয়েছে (id: ${sessionId})। অগ্রগতি দেখে জানাবো।`
+        : `⚠️ সেশন চালু করতে পারিনি: ${outcome.error ?? outcome.stderr ?? 'unknown'}`,
+    )
+
+    return Response.json({ success: Boolean(sessionId), sessionId, commandId })
+  }
+
   if (action.type === 'oxylabs_spend') {
     await db.agentPendingAction.update({
       where: { id: actionId },

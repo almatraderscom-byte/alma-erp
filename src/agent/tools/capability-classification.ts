@@ -71,6 +71,16 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   check_mac_command: read('mac'),
   mac_agent_status: read('mac'),
 
+  // M2 — Claude/Codex sessions on that Mac. Opening one in 'bypass' mode is
+  // gated behind an approval card (a standing grant, not a single action), which
+  // is why start is 'stage'; the rest only steer or observe a session that the
+  // owner already allowed to exist.
+  start_cli_session: stage('mac', 'high'),
+  send_to_cli_session: write('mac', 'medium'),
+  read_cli_session: read('mac'),
+  stop_cli_session: write('mac'),
+  list_cli_sessions: read('mac'),
+
   // ── native push ────────────────────────────────────────────────────────────
   set_native_push: write('push'),
   test_native_push: { domain: 'push', mode: 'write', risk: 'low', proof: 'external' },

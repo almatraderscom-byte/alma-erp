@@ -29,6 +29,7 @@ import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { CS_AUTONOMY_TOOLS } from './cs-autonomy-tools'
 import { ORDER_AUTONOMY_TOOLS } from './order-autonomy-tools'
 import { MAC_TOOLS } from './mac-tools'
+import { CLI_SESSION_TOOLS } from './cli-session-tools'
 import { FINANCE_AUTONOMY_TOOLS } from './finance-autonomy-tools'
 import { COST_TOOLS } from './cost-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
@@ -508,6 +509,8 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   // M1 — the owner's own Mac. Sits with the other computer-use tools so any
   // chat can reach it ("Mac-e test chalao") without a keyword unlocking a group.
   ...MAC_TOOLS,
+  // M2 — Claude/Codex sessions driven on that same Mac.
+  ...CLI_SESSION_TOOLS,
   ...SKILL_PACK_TOOLS,
   ...SEO_AUDIT_TOOLS,
   ...ARTIFACT_TOOLS,
