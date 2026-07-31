@@ -100,6 +100,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // B5 — the same change, many orders, ONE card. Same risk per item; the
   // difference is how many times Boss has to say yes.
   update_orders: stage('erp'),
+  // B6 — asking for a time-boxed standing permission is itself an approval card;
+  // the grant is written by the approve route, never by the model.
+  request_standing_permission: stage('autonomy'),
   get_inventory_status: read('erp'),
   get_product: read('erp'),
   get_customer_summary: read('erp'),

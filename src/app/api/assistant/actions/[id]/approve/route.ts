@@ -2276,6 +2276,65 @@ async function runApprove(
     })
   }
 
+  if (action.type === 'permission_grant') {
+    // B6 — the standing "just do it", and the only place a grant is ever born.
+    // The agent can ASK; only this route (reached by Boss pressing Approve) can
+    // write one, and it always carries an expiry.
+    const { families, minutes } = payload as { families?: string[]; minutes?: number }
+    const conversationId = resolveConversationId(action)
+    if (!conversationId) {
+      return Response.json({ error: 'no_conversation' }, { status: 400 })
+    }
+
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { TASK_FAMILIES } = await import('@/agent/lib/autonomy-task-catalog')
+    const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
+    // Re-validate at approval time. The card was written minutes ago by a model;
+    // what actually grants power is checked here, against the catalog, again.
+    const safe = (families ?? []).filter((id) => {
+      const fam = known.get(id)
+      return Boolean(fam) && fam!.tier !== 'R4'
+    })
+    const mins = Math.min(Math.max(Math.round(Number(minutes ?? 0)), 1), 240)
+
+    if (!safe.length) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'no_grantable_family' } },
+      })
+      return Response.json({ error: 'no_grantable_family' }, { status: 400 })
+    }
+
+    const expiresAt = new Date(Date.now() + mins * 60_000).toISOString()
+    await db.agentConversation.update({
+      where: { id: conversationId },
+      data: { permissionMode: 'elevated', elevationGrant: { families: safe, expiresAt } },
+    })
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { families: safe, minutes: mins, expiresAt } },
+    })
+
+    const labels = safe.map((id) => known.get(id)!.label).join(', ')
+    await appendConversationNote(
+      db,
+      action,
+      `🔓 অনুমতি চালু — ${labels}, ${mins} মিনিটের জন্য।\n`
+      + `মেয়াদ শেষে নিজে থেকেই স্বাভাবিক মোডে ফিরবে। এখনই বন্ধ করতে চাইলে মোড বদলে দিন।\n`
+      + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,
+    )
+
+    return Response.json({ success: true, families: safe, minutes: mins, expiresAt })
+  }
+
   if (action.type === 'auto_fix') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

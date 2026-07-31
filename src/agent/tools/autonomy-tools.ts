@@ -284,4 +284,120 @@ const undo_action: AgentTool = {
   },
 }
 
-export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action]
+
+// ── B6 — a standing "just do it", time-boxed and asked for, never taken ──────
+
+/** Longest a single grant may run. A permission with no end is not a grant. */
+const MAX_GRANT_MINUTES = 240
+
+/**
+ * Families a grant may NEVER cover, whatever Boss types in a hurry.
+ * R4 is owner-only in every mode, forever (permission-mode rule 2).
+ */
+const UNGRANTABLE_FAMILIES = new Set(['money-movement', 'security-permissions'])
+
+const request_standing_permission: AgentTool = {
+  name: 'request_standing_permission',
+  description:
+    'Ask Boss for a TIME-BOXED standing permission so a family of work stops asking each time — '
+    + '"পরের ২ ঘণ্টা অর্ডারগুলো নিজেই আপডেট করো", "আজ বিকেল পর্যন্ত স্টাফ মেসেজ নিজে পাঠাও". '
+    + 'Stages an approval card naming the families, the minutes and the reason; the grant only exists '
+    + 'after Boss approves, and it expires on its own. NEVER call this to widen your own hands mid-task — '
+    + 'only when Boss says the asking itself is the problem. Money movement and permissions can never be granted.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      families: {
+        type: 'array',
+        description: 'Task families to cover, from the autonomy catalog (e.g. staff-messaging, customer-messaging, public-publish).',
+        items: { type: 'string' },
+      },
+      minutes: { type: 'number', description: `How long, in minutes (max ${MAX_GRANT_MINUTES}).` },
+      reason: { type: 'string', description: 'Why this helps, in one line — shown on the card.' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['families', 'minutes'],
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!conversationId) {
+        return { success: false, error: 'grant একটা নির্দিষ্ট কথোপকথনে বসে — conversation ছাড়া দেওয়া যায় না।' }
+      }
+
+      const { TASK_FAMILIES } = await import('@/agent/lib/autonomy-task-catalog')
+      const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
+
+      const raw = Array.isArray(input.families) ? input.families.map((f) => String(f).trim()) : []
+      if (!raw.length) return { success: false, error: 'কোন কাজের পরিবারের জন্য, সেটা বলুন (families খালি)।' }
+
+      const families: string[] = []
+      for (const id of raw) {
+        const fam = known.get(id)
+        if (!fam) {
+          return {
+            success: false,
+            error: `"${id}" চেনা task family নয় — check_autonomy দিয়ে নামগুলো দেখে নিন।`,
+          }
+        }
+        if (UNGRANTABLE_FAMILIES.has(id) || fam.tier === 'R4') {
+          return {
+            success: false,
+            error: `${fam.label} কখনোই আগাম অনুমতিতে চলে না — টাকা সরানো আর পারমিশন প্রতিবার Boss-এর হাতেই থাকে।`,
+          }
+        }
+        if (!families.includes(id)) families.push(id)
+      }
+
+      const minutes = Math.round(Number(input.minutes))
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        return { success: false, error: 'কত মিনিটের জন্য, সেটা ০-এর বেশি সংখ্যায় দিন।' }
+      }
+      if (minutes > MAX_GRANT_MINUTES) {
+        return {
+          success: false,
+          error: `একবারে সর্বোচ্চ ${MAX_GRANT_MINUTES} মিনিট — এর বেশি লাগলে মেয়াদ শেষে আবার চাইব।`,
+        }
+      }
+
+      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+      const labels = families.map((id) => known.get(id)!.label)
+      const expiresAt = new Date(Date.now() + minutes * 60_000)
+
+      const summary =
+        `🔓 সময়-বাঁধা অনুমতি চাইছি\n`
+        + `কাজ: ${labels.join(', ')}\n`
+        + `মেয়াদ: ${minutes} মিনিট (আনুমানিক ${expiresAt.toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit' })} পর্যন্ত)\n`
+        + (reason ? `কারণ: ${reason}\n` : '')
+        + `\n✅ approve করলে এই কাজগুলো ওই সময়টুকু আর কার্ড ছাড়াই হবে — মেয়াদ শেষে নিজে থেকেই বন্ধ।\n`
+        + `⛔ টাকা সরানো ও পারমিশন এর বাইরে — ওগুলো সবসময় আপনার হাতে।\n`
+        + `যেকোনো সময় মোড বদলালেই অনুমতি বাতিল।`
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const action = await (prisma as any).agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'permission_grant',
+          payload: { families, minutes, reason, conversationId },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          families,
+          minutes,
+          message: 'সময়-বাঁধা অনুমতির approval card পাঠানো হয়েছে — approve করলেই চালু, তার আগে নয়।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action, request_standing_permission]
