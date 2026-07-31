@@ -185,3 +185,25 @@ describe('update_orders — many orders, one approval', () => {
     expect(String(res.error)).toMatch(/১৫|15/)
   })
 })
+
+/**
+ * Live on 2026-07-31: the batch wrote `steadfast` (lowercase) onto two orders
+ * while 313 others sat on `Pathao`. A courier is a name the rest of the ERP
+ * matches on — a filter, a report and a dropdown all treat the two as different
+ * couriers.
+ */
+describe('a courier is spelled the ERP’s way', () => {
+  const batch = ERP_TOOLS.find((t) => t.name === 'update_orders')!
+
+  it('offers only the ERP’s own courier names', () => {
+    const single = (tool.input_schema.properties as Record<string, { enum?: string[] }>).courier?.enum ?? []
+    expect(single).toContain('Steadfast')
+    expect(single).toContain('Pathao')
+    expect(single).not.toContain('steadfast')
+  })
+
+  it('offers the same list on the batch tool', () => {
+    const items = (batch.input_schema.properties as Record<string, { items?: { properties?: Record<string, { enum?: string[] }> } }>).orders?.items
+    expect(items?.properties?.courier?.enum).toContain('Steadfast')
+  })
+})

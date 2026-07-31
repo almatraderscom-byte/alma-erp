@@ -1139,6 +1139,22 @@ function forOrderCard(value: unknown): string {
   return text.length > 70 ? `${text.slice(0, 70)}…` : text
 }
 
+/**
+ * The ERP's own courier spellings (`components/orders/new-order/constants.ts`).
+ *
+ * A model writes what Boss said — "steadfast" — and a lowercase value is a
+ * different courier to every filter, report and dropdown that matches on the
+ * name. Live on 2026-07-31: two orders ended up on `steadfast` while 313 sat on
+ * `Pathao`.
+ */
+const CANONICAL_COURIERS = ['Pathao', 'Redx', 'Steadfast', 'Paperfly', 'E-courier', 'Sundarban', 'SA Paribahan']
+
+function canonicalCourier(name: string): string {
+  const key = name.trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const hit = CANONICAL_COURIERS.find((c) => c.toLowerCase().replace(/[\s_-]+/g, '') === key)
+  return hit ?? name.trim()
+}
+
 async function findOrderByNumber(orderNumber: string) {
   const key = orderNumber.trim()
   if (!key) return null
@@ -1234,7 +1250,8 @@ async function planOrderChange(
     ] as const) {
       const raw = input[key]
       if (raw == null) continue
-      const next = String(raw).trim()
+      // A courier is a name the rest of the ERP matches on — spell it the ERP's way.
+      const next = key === 'courier' ? canonicalCourier(String(raw)) : String(raw).trim()
       if (next === String(current ?? '').trim()) unchanged.push(key)
       else {
         changes[key] = { before: current, after: next }
@@ -1319,7 +1336,7 @@ const update_order: AgentTool = {
     properties: {
       orderNumber: { type: 'string', description: 'Order/invoice number as Boss says it (e.g. "1234", "#ALM-1234"), or the order id.' },
       status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status.' },
-      courier: { type: 'string', description: 'Courier name (Steadfast, Pathao, RedX …).' },
+      courier: { type: 'string', enum: [...CANONICAL_COURIERS], description: "Courier name — the ERP's own spelling." },
       trackingId: { type: 'string', description: 'Courier tracking id.' },
       notes: {
         type: 'string',
@@ -1400,7 +1417,7 @@ const update_orders: AgentTool = {
           properties: {
             orderNumber: { type: 'string', description: 'Order/invoice number, or the order id.' },
             status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status for THIS order.' },
-            courier: { type: 'string', description: 'Courier name.' },
+            courier: { type: 'string', enum: [...CANONICAL_COURIERS], description: "Courier name — the ERP's own spelling." },
             trackingId: { type: 'string', description: 'Courier tracking id for THIS order.' },
             notes: { type: 'string', description: 'A note to ADD to this order (appended, never replaces).' },
           },
