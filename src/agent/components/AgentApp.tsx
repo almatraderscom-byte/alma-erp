@@ -6,6 +6,7 @@ import Link from 'next/link'
 import AgentSidebar, { type Conversation } from './AgentSidebar'
 import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread'
 import AgentComposer, { type PendingFile } from './AgentComposer'
+import AgentLiveDock from './AgentLiveDock'
 import { DEFAULT_CHAT_MODE, normalizeChatMode, type ChatMode } from '@/agent/lib/chat-mode'
 import { DEFAULT_PERMISSION_MODE, normalizePermissionMode, type PermissionMode } from '@/agent/lib/permission-mode'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
@@ -2123,6 +2124,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             focusNonce={artifactFocus?.n ?? 0}
           />
         </div>
+
+        {/* Live view of work happening on his machines — sits right above the
+            composer so it reads as part of the conversation, and hides itself
+            entirely when nothing is running. */}
+        <AgentLiveDock />
 
         {/* Composer */}
         <AgentComposer
