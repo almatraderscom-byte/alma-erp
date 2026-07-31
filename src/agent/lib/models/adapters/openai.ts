@@ -65,6 +65,32 @@ export function exactoSlug(apiModel: string, hasTools: boolean): string {
   return `${apiModel}:exacto`
 }
 
+/**
+ * Raw-OpenAI dialect compatibility (pure, unit-tested) — GPT-5.6 Luna head,
+ * 2026-07-31, both 400s observed live on the preview:
+ *   - "Unsupported parameter: 'max_tokens' is not supported with this model.
+ *      Use 'max_completion_tokens' instead."  → rename the field.
+ *   - "Function tools with reasoning_effort are not supported for gpt-5.6-luna
+ *      in /v1/chat/completions. ... set reasoning_effort to 'none'." → OpenAI's
+ *      DEFAULT effort is not 'none', so a tool-bearing request must say it
+ *      explicitly (this also means the bare retry needs it — the default, not
+ *      one of our optional params, is what 400s).
+ * Only the raw-OpenAI factory applies this; OpenRouter/xAI request bytes are
+ * unchanged.
+ */
+export function toRawOpenAiCompatParams(
+  genParams: Record<string, number>,
+  hasTools: boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...genParams }
+  if (out.max_tokens !== undefined) {
+    out.max_completion_tokens = out.max_tokens
+    delete out.max_tokens
+  }
+  if (hasTools) out.reasoning_effort = 'none'
+  return out
+}
+
 function toOpenAiMessages(
   system: string,
   messages: NeutralMsg[],
@@ -152,6 +178,7 @@ export class OpenAiAdapter implements ProviderAdapter {
   private exacto: boolean
   private requireParameters: boolean
   private stickyCacheHeader: boolean
+  private rawOpenAi: boolean
 
   constructor(
     apiKey: string,
@@ -190,6 +217,16 @@ export class OpenAiAdapter implements ProviderAdapter {
        */
       requireParameters?: boolean
       /**
+       * Raw-OpenAI dialect fixes (GPT-5.6 Luna head, 2026-07-31). OpenAI's
+       * reasoning models 400 on the legacy `max_tokens` param ("use
+       * 'max_completion_tokens' instead") and 400 on tool-bearing
+       * chat/completions requests unless `reasoning_effort: 'none'` is sent
+       * explicitly (their default effort is not 'none'). Both fixes are scoped
+       * to the raw-OpenAI factory only — OpenRouter and xAI keep the exact
+       * request bytes they had.
+       */
+      rawOpenAi?: boolean
+      /**
        * xAI sticky cache routing (cost audit Phase 8). xAI stores prompt-cache
        * entries PER SERVER, and its docs recommend the `x-grok-conv-id` header to
        * maximise the hit rate — without it, consecutive turns of the same
@@ -213,6 +250,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     this.exacto = (opts?.exacto ?? false) && process.env.ENABLE_OPENROUTER_EXACTO !== 'false'
     this.requireParameters = (opts?.requireParameters ?? false) && process.env.OPENROUTER_REQUIRE_PARAMETERS !== 'false'
     this.stickyCacheHeader = (opts?.stickyCacheHeader ?? false) && process.env.XAI_STICKY_CACHE !== 'false'
+    this.rawOpenAi = opts?.rawOpenAi ?? false
   }
 
   async *streamTurn(args: {
@@ -253,7 +291,12 @@ export class OpenAiAdapter implements ProviderAdapter {
       : {}
     // P9 — shared sampling/output contract (temperature/top_p/max_tokens). When
     // AGENT_UNIFORM_SAMPLING is off this is {} → exact pre-parity request.
-    const genParams = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
+    const rawGenParams = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
+    // Raw-OpenAI dialect: max_tokens → max_completion_tokens + explicit
+    // reasoning_effort 'none' on tool-bearing requests (see toRawOpenAiCompatParams).
+    const genParams = this.rawOpenAi
+      ? toRawOpenAiCompatParams(rawGenParams, args.tools.length > 0)
+      : rawGenParams
     const baseParams = {
       model: modelSlug,
       ...genParams,
@@ -334,6 +377,10 @@ export class OpenAiAdapter implements ProviderAdapter {
           messages: toOpenAiMessages(args.system, args.messages, false),
           tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
           stream: true as const,
+          // Raw OpenAI: the PROVIDER DEFAULT reasoning_effort is what 400s a
+          // tool-bearing request on gpt-5.6 — dropping our optional params
+          // doesn't fix it, so the bare retry must still say 'none'.
+          ...(this.rawOpenAi && args.tools.length > 0 ? { reasoning_effort: 'none' } : {}),
         }
         stream = await this.client.chat.completions.create(
           bareParams as ChatCompletionCreateParamsStreaming,
@@ -454,7 +501,7 @@ export class OpenAiAdapter implements ProviderAdapter {
 export function createOpenAiAdapter(): OpenAiAdapter {
   const key = process.env.OPENAI_API_KEY?.trim()
   if (!key) throw new Error('OPENAI_API_KEY not configured')
-  return new OpenAiAdapter(key)
+  return new OpenAiAdapter(key, { rawOpenAi: true })
 }
 
 /**

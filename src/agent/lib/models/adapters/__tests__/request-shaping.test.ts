@@ -73,3 +73,30 @@ describe('OpenRouter Exacto slug (quality routing for tool-call requests)', () =
     expect(exactoSlug('x-ai/grok-4.20:exacto', true)).toBe('x-ai/grok-4.20:exacto')
   })
 })
+
+// ── Raw-OpenAI dialect compat (GPT-5.6 Luna head, 2026-07-31) ────────────────
+// Both cases were live 400s: max_tokens is rejected by OpenAI reasoning models,
+// and a tool-bearing chat/completions request 400s unless reasoning_effort is
+// explicitly 'none' (the provider default effort is what errors — so the bare
+// retry needs it too).
+import { toRawOpenAiCompatParams } from '../openai'
+
+describe('raw-OpenAI dialect compat (gpt-5.6 head)', () => {
+  it('renames max_tokens → max_completion_tokens', () => {
+    expect(toRawOpenAiCompatParams({ max_tokens: 8192 }, false)).toEqual({ max_completion_tokens: 8192 })
+  })
+
+  it('adds reasoning_effort none only when tools are present', () => {
+    expect(toRawOpenAiCompatParams({}, true)).toEqual({ reasoning_effort: 'none' })
+    expect(toRawOpenAiCompatParams({}, false)).toEqual({})
+  })
+
+  it('keeps sampler params untouched', () => {
+    expect(toRawOpenAiCompatParams({ temperature: 0.7, top_p: 0.9, max_tokens: 100 }, true)).toEqual({
+      temperature: 0.7,
+      top_p: 0.9,
+      max_completion_tokens: 100,
+      reasoning_effort: 'none',
+    })
+  })
+})
