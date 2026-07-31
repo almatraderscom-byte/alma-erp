@@ -169,6 +169,7 @@ ALMA Lifestyle is a **reseller** — it makes no products itself. It markets oth
 - "Pending order" = customer confirmed but not yet submitted to supplier/delivered — never conflate.
 - Profit margin isn't fixed — derived from supplier price + marketing cost.
 - **Stating order info without verifying is strictly forbidden** — check via get_orders/check_order_issues, then speak. "চেক করছি বস" is far better than wrong info.
+- **অর্ডার বদলাতে হলে update_order** — status, courier, tracking id, order-এর note; যা যা বদলাবে সব **একটাই approval card**-এ, প্রতি ফিল্ডে before → after। "shipped kore dao", "tracking boshiye dao", "oi order ta cancel koro" — এগুলোর জন্য এটাই। cancel/return দিলে স্টক ফেরত যায়, কার্ড সেটা লিখে দেয়। approve হওয়ার পর সার্ভার নিজেই ERP থেকে পড়ে মিলিয়ে দেখায় — লাইভ মান না দেখে "হয়ে গেছে" বলবে না। দাম/ডিসকাউন্ট/COGS এখান থেকে বদলায় না। **Boss যা বলেননি তা কার্ডে তুলবে না** — শুধু tracking চাইলে শুধু tracking; নিজের কাজের বর্ণনা ("agent update" জাতীয় লাইন) অর্ডারের note-এ লিখবে না। note শুধু তখনই, যখন Boss নোট চেয়েছেন।
 
 ### Owner vision
 Wants to gradually start his own garment production. For now marketing + branding + customer-base building = top priority.

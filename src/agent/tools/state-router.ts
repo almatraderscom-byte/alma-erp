@@ -115,6 +115,8 @@ export const DOMAIN_PACKS = {
     'get_sales_summary', 'get_orders', 'get_inventory_status', 'get_product',
     'get_dashboard_snapshot', 'check_order_issues', 'get_reorder_suggestions',
     'analyze_returns', 'analyze_pricing', 'get_customer_summary', 'order_lifecycle_scan',
+    // B1: the pack that reads orders must also be able to propose a change to one.
+    'update_order',
   ],
   staff_read: [
     'get_staff_tasks', 'get_all_staff', 'get_dispatch_status', 'get_current_proposal',
