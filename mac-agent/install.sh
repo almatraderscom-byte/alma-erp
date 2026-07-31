@@ -39,7 +39,7 @@ cp "$SRC_DIR/agent.mjs" "$SRC_DIR/policy.mjs" "$DEST_DIR/"
 [ -f "$SRC_DIR/sessions.mjs" ] && cp "$SRC_DIR/sessions.mjs" "$DEST_DIR/"
 
 echo "▸ pairing"
-ALMA_BASE_URL="$BASE_URL" "$NODE_BIN" "$DEST_DIR/agent.mjs" pair "$CODE"
+ALMA_BASE_URL="$BASE_URL" ALMA_VERCEL_BYPASS="${ALMA_VERCEL_BYPASS:-}" "$NODE_BIN" "$DEST_DIR/agent.mjs" pair "$CODE"
 
 echo "▸ installing LaunchAgent"
 mkdir -p "$HOME/Library/LaunchAgents"

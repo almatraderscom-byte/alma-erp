@@ -89,15 +89,27 @@ function baseUrl() {
 // HTTP
 // ---------------------------------------------------------------------------
 
+/**
+ * Vercel SSO protection sits in front of preview deployments. A browser passes it
+ * with a session cookie; a daemon cannot, so testing against a branch preview
+ * needs the project's automation-bypass secret. Supplied by env or config —
+ * never committed. Production does not need it.
+ */
+function bypassToken() {
+  return process.env.ALMA_VERCEL_BYPASS?.trim() || readConfig().bypassToken || ''
+}
+
 async function api(path, { method = 'GET', body, token, timeoutMs = 30_000 } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const bypass = bypassToken()
   try {
     const res = await fetch(`${baseUrl()}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'false' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
@@ -501,7 +513,12 @@ async function pair(code) {
     console.error('pairing failed:', res.status, res.text?.slice(0, 300))
     process.exit(1)
   }
-  writeConfig({ token: res.json.token, deviceId: res.json.deviceId, baseUrl: baseUrl() })
+  writeConfig({
+    token: res.json.token,
+    deviceId: res.json.deviceId,
+    baseUrl: baseUrl(),
+    ...(bypassToken() ? { bypassToken: bypassToken() } : {}),
+  })
   log('paired ✓ device', res.json.deviceId)
 }
 
