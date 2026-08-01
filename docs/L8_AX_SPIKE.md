@@ -123,9 +123,19 @@ exactly that).
    dies at `AXIsProcessTrusted() == false`. Same "add the node binary
    manually" dance as Screen Recording.
 7. **Never type into whatever chat is open.** The owner had a live session in
-   the visible window. The probe presses `New` first and refuses to type
-   unless the composer holds only placeholder text — W3 must keep both
-   guards.
+   the visible window. The probe presses `New` first and hard-refuses to type
+   unless the composer holds only its known placeholder (exit 5 otherwise) —
+   this guard FIRED live during the spike: a re-run found real characters in
+   the fresh composer (the owner was at the keyboard) and aborted before
+   typing. W3 must keep both guards.
+8. **Scope every send to ONE window resolved by title.** Both apps keep
+   several windows (Codex, pet overlays, Computer Use); an app-wide search
+   can press a button in one window and type into a composer in another.
+   The probe resolves the window first and searches only inside it.
+9. **Do not drive the UI while the owner is using the Mac.** Synthetic
+   keystrokes and his real ones interleave. W3/W5 should gate `ui_*` verbs on
+   recent physical input (e.g. `CGEventSourceSecondsSinceLastEventType`) or
+   an explicit owner "away" state.
 
 ## 5. What this decides for W3/W4 (the shape the roadmap asked for)
 

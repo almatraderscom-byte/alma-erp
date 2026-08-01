@@ -160,23 +160,37 @@ func keyPress(_ vk: CGKeyCode, pid: pid_t) {
 
 /// send: open a NEW chat first (never type into whatever conversation the owner
 /// has open), focus the composer, keystroke the text in, then press the send
-/// button (Return as fallback).
-func cmdSend(_ app: AXUIElement, pid: pid_t, text: String, composerDesc: String, newChatButton: String?) {
+/// button (Return as fallback). Both the new-chat button and the composer are
+/// resolved inside ONE window (by title) — the apps keep several windows open
+/// (Codex, pet overlays), and an app-wide search can pair a button from one
+/// window with a composer from another.
+func cmdSend(_ app: AXUIElement, pid: pid_t, text: String, windowTitle: String,
+             composerDesc: String, newChatButton: String?, placeholders: [String]) {
+    let wins = (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
+    guard let win = wins.first(where: { str($0, kAXTitleAttribute) == windowTitle }) else {
+        err("FAIL: window titled '\(windowTitle)' not found (have: \(wins.compactMap { str($0, kAXTitleAttribute) }))")
+        exit(2)
+    }
     NSRunningApplication(processIdentifier: pid)?.activate(options: [])
     usleep(600_000)
     if let newBtn = newChatButton {
-        guard pressButton(app, titleOrDesc: newBtn) else { err("FAIL: new-chat button '\(newBtn)' not found/pressable"); exit(2) }
+        guard pressButton(win, titleOrDesc: newBtn) else { err("FAIL: new-chat button '\(newBtn)' not found/pressable in '\(windowTitle)'"); exit(2) }
         err("pressed new-chat: \(newBtn)")
         sleep(2)
     }
-    guard let composer = findFirst(app, 40, { el in
+    guard let composer = findFirst(win, 40, { el in
         role(el) == "AXTextArea" && (str(el, kAXDescriptionAttribute) ?? "").contains(composerDesc)
-    }) else { err("FAIL: composer AXTextArea desc~'\(composerDesc)' not found"); exit(2) }
+    }) else { err("FAIL: composer AXTextArea desc~'\(composerDesc)' not found in '\(windowTitle)'"); exit(2) }
 
-    // Belt and braces: verify the composer is empty (placeholder only) so we can
-    // never append to a draft the owner left behind.
+    // Hard guard: refuse to type unless the composer holds nothing but its known
+    // placeholder. A restored draft would otherwise be sent along with our text.
     let before = (attr(composer, kAXValueAttribute) as? String) ?? ""
     err("composer value before: \(before.debugDescription)")
+    let trimmed = before.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty && !placeholders.contains(trimmed) {
+        err("FAIL: composer not empty (draft present?) — refusing to type")
+        exit(5)
+    }
 
     AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     usleep(300_000)
@@ -208,11 +222,13 @@ switch a[1] {
 case "tree":  cmdTree(app, maxDepth: rest.first.flatMap { Int($0) } ?? 25)
 case "convo": cmdConvo(app)
 case "send":
-    // send <pid> [--manual] <composerDesc> <newChatButton|-> <text…>
-    guard rest.count >= 3 else { err("send needs composerDesc newChatBtn text"); exit(1) }
-    let newBtn = rest[rest.startIndex + 1] == "-" ? nil : rest[rest.startIndex + 1]
-    cmdSend(app, pid: pid, text: rest.dropFirst(2).joined(separator: " "),
-            composerDesc: rest[rest.startIndex], newChatButton: newBtn)
+    // send <pid> [--manual] <windowTitle> <composerDesc> <newChatButton|-> <placeholder|placeholder|…|-> <text…>
+    guard rest.count >= 5 else { err("send needs windowTitle composerDesc newChatBtn placeholders text"); exit(1) }
+    let r = Array(rest)
+    let newBtn = r[2] == "-" ? nil : r[2]
+    let placeholders = r[3] == "-" ? [] : r[3].components(separatedBy: "|")
+    cmdSend(app, pid: pid, text: r.dropFirst(4).joined(separator: " "), windowTitle: r[0],
+            composerDesc: r[1], newChatButton: newBtn, placeholders: placeholders)
 default: err("unknown verb \(a[1])"); exit(1)
 }
 `
@@ -225,15 +241,20 @@ const APPS = {
     match: 'Claude.app/Contents/MacOS/Claude',
     processName: 'Claude',
     manual: true, // Electron: tree is empty AXGroups until AXManualAccessibility=true
+    windowTitle: 'Claude', // send is scoped to this one window
     composerDesc: 'Prompt', // AXTextArea D="Prompt"
     newChatButton: 'New', // sidebar AXButton T="New"
+    // AXValue a composer shows when it holds no user text (placeholder only).
+    placeholders: ['Describe a task or ask a question', 'Type / for commands'],
   },
   chatgpt: {
     match: 'ChatGPT.app/Contents/MacOS/ChatGPT',
     processName: 'ChatGPT',
     manual: false, // full tree by default; the flag returns -25205 (unsupported)
-    composerDesc: 'Do anything', // Codex window composer; plain chat differs
+    windowTitle: 'ChatGPT', // NOT the Codex windows — send targets the main window only
+    composerDesc: 'Do anything', // Codex-style composer; plain-chat desc unverified (send untested, W1 out of scope)
     newChatButton: 'New chat',
+    placeholders: ['Do anything'],
   },
 }
 
@@ -281,7 +302,8 @@ async function main() {
   } else if (verb === 'send') {
     const text = rest.join(' ').trim()
     if (!text) throw new Error('send needs text')
-    process.stdout.write(await runHelper(['send', String(pid), ...manual, app.composerDesc, app.newChatButton ?? '-', text]))
+    process.stdout.write(await runHelper(['send', String(pid), ...manual, app.windowTitle, app.composerDesc,
+      app.newChatButton ?? '-', app.placeholders?.length ? app.placeholders.join('|') : '-', text]))
   } else {
     throw new Error(`unknown verb ${verb}`)
   }
