@@ -3032,6 +3032,38 @@ model MacAgentCommand {
   @@map("mac_agent_commands")
 }
 
+// L4 — what a CLI session on the owner's Mac is actually SAYING. The daemon's
+// session driver buffers per-session events (text / tool / turn_done…) with
+// sequence numbers; it pushes them here so the live dock can show the session's
+// own words, not just "a session exists". Text is capped at ingest; tool inputs
+// and outputs never leave the Mac (same rule as session_read).
+model MacAgentSessionEvent {
+  id        String   @id @default(uuid())
+  deviceId  String
+  /// The daemon's own session id (not the CLI's).
+  sessionId String
+  /// claude | codex
+  tool      String   @default("claude")
+  /// The daemon's per-session monotonic sequence number — dedupe key on retry.
+  seq       Int
+  /// started | text | tool | sent | turn_done | error | ended
+  kind      String
+  /// Assistant text, turn result, sent text, or tool name — whichever the kind carries.
+  text      String?  @db.Text
+  isError   Boolean  @default(false)
+  /// Per-turn cost, reported on turn_done.
+  costUsd   Float?
+  /// When the event happened on the Mac (daemon clock).
+  at        DateTime
+  createdAt DateTime @default(now())
+
+  /// A daemon retry after a dropped POST must not duplicate the feed.
+  @@unique([sessionId, seq])
+  /// The live dock polls "last 10 minutes" every 3s while work runs.
+  @@index([createdAt])
+  @@map("mac_agent_session_events")
+}
+
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category
 // continuously observed across snapshots). Closed when the condition clears or
 // goes stale. notifiedAt is set once the owner has been alerted for that episode.

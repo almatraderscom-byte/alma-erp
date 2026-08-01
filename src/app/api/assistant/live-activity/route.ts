@@ -39,6 +39,8 @@ export interface ActivityStep {
   /** green = ran by itself, amber = he approved it. Mac only. */
   policy: string | null
   at: string
+  /** L4: set on session-event steps so the dock can reply to that session. */
+  sessionId?: string | null
 }
 
 function macLabel(action: string, command: string | null): string {
@@ -76,6 +78,72 @@ function normalizeStatus(raw: string): ActivityStep['status'] {
   return raw
 }
 
+/**
+ * L4: a session EVENT (the session's own words) → one feed step. The dock
+ * renders these with the same row shape as command steps, so both docks gained
+ * the transcript without a render change.
+ */
+function sessionEventStep(r: {
+  id: string
+  sessionId: string
+  kind: string
+  text: string | null
+  isError: boolean
+  at: Date
+}): ActivityStep {
+  const snippet = (r.text ?? '').replace(/\s+/g, ' ').trim()
+  const short = snippet.length > 90 ? `${snippet.slice(0, 90)}…` : snippet
+  let labelBn: string
+  let status: ActivityStep['status']
+  switch (r.kind) {
+    case 'started':
+      labelBn = '🧠 সেশন শুরু হলো'
+      status = 'running'
+      break
+    case 'text':
+      labelBn = short ? `🧠 ${short}` : '🧠 ভাবছে'
+      status = 'running'
+      break
+    case 'tool':
+      labelBn = short ? `🔧 ${short}` : '🔧 টুল চালাচ্ছে'
+      status = 'running'
+      break
+    case 'sent':
+      labelBn = '📨 নির্দেশ পাঠানো হলো'
+      status = 'running'
+      break
+    case 'turn_done':
+      labelBn = r.isError ? '⚠️ টার্ন ব্যর্থ হলো' : short ? `✅ ${short}` : '✅ টার্ন শেষ'
+      status = r.isError ? 'failed' : 'done'
+      break
+    case 'error':
+      labelBn = '⚠️ সেশনে সমস্যা'
+      status = 'failed'
+      break
+    case 'ended':
+      labelBn = '⏹️ সেশন শেষ'
+      status = 'done'
+      break
+    default:
+      labelBn = `🧠 ${r.kind}`
+      status = 'done'
+  }
+  // A session's text/tool events are instants, not open-ended work: left as
+  // "running" they would keep the dock lit for the whole 10-minute window after
+  // the session went quiet. Only a FRESH one counts as happening now.
+  if (status === 'running' && Date.now() - r.at.getTime() > 60_000) status = 'done'
+  return {
+    id: `se:${r.id}`,
+    surface: 'session',
+    labelBn,
+    detail: snippet || null,
+    status,
+    policy: null,
+    at: r.at.toISOString(),
+    sessionId: r.sessionId,
+  }
+}
+
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -88,7 +156,7 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [macRows, browserRows] = await Promise.all([
+  const [macRows, browserRows, sessionEventRows] = await Promise.all([
     db.macAgentCommand
       .findMany({
         where: { createdAt: { gte: since } },
@@ -109,6 +177,14 @@ export async function GET(req: NextRequest) {
         // screenshot rows need it, so the rest of the poll stays small on a
         // phone (Codex review).
         select: { id: true, action: true, params: true, status: true, createdAt: true },
+      })
+      .catch(() => []),
+    db.macAgentSessionEvent
+      .findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { at: 'desc' },
+        take: RECENT_STEPS,
+        select: { id: true, sessionId: true, kind: true, text: true, isError: true, at: true },
       })
       .catch(() => []),
   ])
@@ -160,8 +236,19 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // Fetch the screenshot payload ONLY for the browser rows that carry one.
-  const shotRow = (browserRows as Array<Record<string, unknown>>).find((r) => r.action === 'screenshot')
+  // The client sends the `screenshotAt` it already holds; an unchanged frame is
+  // answered with metadata only. Without this, every 3-second active poll
+  // re-downloaded the same up-to-3MB base64 payload — ~60 MB a minute on a
+  // phone showing one static screenshot (Codex P1).
+  const screenshotAfter = req.nextUrl.searchParams.get('screenshotAfter')
+
+  // Fetch the screenshot payload ONLY for the browser rows that carry one, and
+  // only when it could be newer than what the client already has.
+  const shotRow = (browserRows as Array<Record<string, unknown>>).find(
+    (r) =>
+      r.action === 'screenshot' &&
+      (!screenshotAfter || (r.createdAt as Date).toISOString() > screenshotAfter),
+  )
   if (shotRow) {
     const full = await db.liveBrowserCommand
       .findUnique({ where: { id: shotRow.id as string }, select: { result: true, createdAt: true } })
@@ -170,6 +257,17 @@ export async function GET(req: NextRequest) {
     if (result && typeof result.screenshot === 'string') {
       considerShot(result.screenshot, full!.createdAt as Date)
     }
+  }
+
+  for (const r of sessionEventRows as Array<{
+    id: string
+    sessionId: string
+    kind: string
+    text: string | null
+    isError: boolean
+    at: Date
+  }>) {
+    steps.push(sessionEventStep(r))
   }
 
   steps.sort((a, b) => b.at.localeCompare(a.at))
@@ -183,6 +281,14 @@ export async function GET(req: NextRequest) {
   // what makes a fast command visible instead of silent.
   const justFinishedCutoff = new Date(Date.now() - JUST_FINISHED_MS).toISOString()
   const justFinished = trimmed.filter((s) => s.at > justFinishedCutoff)
+
+  // Unchanged frame → metadata only; the client keeps the copy it has.
+  // (cast: TS narrows screenshotAt to its `null` initializer here because the
+  // assignments happen inside the considerShot closure)
+  const heldAt = screenshotAt as string | null
+  if (screenshotAfter && heldAt && heldAt <= screenshotAfter) {
+    screenshot = null
+  }
 
   return Response.json(
     {

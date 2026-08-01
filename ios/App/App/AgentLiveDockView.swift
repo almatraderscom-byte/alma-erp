@@ -43,6 +43,8 @@ struct AgentLiveActivityStep: Decodable, Identifiable, Equatable {
     /// green = ran by itself, amber = he approved it. Mac only.
     let policy: String?
     let at: String
+    /// L4: present on session-event steps — the session a reply would go to.
+    let sessionId: String?
 
     var surfaceBn: String {
         switch surface {
@@ -91,11 +93,18 @@ final class AgentLiveDockStore {
         return feed.active || recentlyActive
     }
 
+    /// The screenshot we HOLD. The poll sends `screenshotAfter` so the server
+    /// answers an unchanged frame with metadata only — without this, an active
+    /// dock re-downloaded the same multi-MB base64 payload every 3 seconds
+    /// (Codex P1). `screenshotAt` is the cache key on both sides.
+    private var screenshotURI: String?
+    private var screenshotAt: String?
+
     /// The strip's thumbnail / sheet image, decoded from the data URI once per change.
     private var decodedFor: String?
     private var decoded: UIImage?
     var screenshotImage: UIImage? {
-        guard let uri = feed?.screenshot else { return nil }
+        guard let uri = screenshotURI else { return nil }
         let key = String(uri.suffix(64)) + String(uri.count)
         if decodedFor == key { return decoded }
         decodedFor = key
@@ -124,8 +133,19 @@ final class AgentLiveDockStore {
 
     private func poll() async {
         do {
-            let fresh: AgentLiveActivityFeed = try await AlmaAPI.shared.get("/api/assistant/live-activity")
+            let fresh: AgentLiveActivityFeed = try await AlmaAPI.shared.getQuietAuth(
+                "/api/assistant/live-activity",
+                query: ["screenshotAfter": screenshotAt])
             authFailures = 0
+            if let uri = fresh.screenshot {
+                screenshotURI = uri
+                screenshotAt = fresh.screenshotAt
+            } else if fresh.screenshotAt == nil {
+                // Nothing recent on any surface — drop the stale frame.
+                screenshotURI = nil
+                screenshotAt = nil
+            }
+            // else: unchanged frame, payload omitted by the server — keep ours.
             if fresh.active { lastActiveAt = Date() }
             // Only a DIFFERENT step brings the dock back after a dismiss.
             if let dismissed = dismissedStepId, let current = fresh.current, current.id != dismissed {
@@ -151,6 +171,37 @@ final class AgentLiveDockStore {
         expanded = false
     }
 
+    // MARK: L4 tap-to-reply
+
+    /// The session the newest session-event step belongs to — where a reply goes.
+    var replySessionId: String? {
+        feed?.steps.first { $0.surface == "session" && $0.sessionId != nil }?.sessionId
+    }
+
+    var replyState: ReplyState = .idle
+    enum ReplyState: Equatable { case idle, sending, sent, failed }
+
+    private struct ReplyBody: Encodable { let sessionId: String; let text: String }
+    private struct ReplyResponse: Decodable { let ok: Bool? }
+
+    func sendReply(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let sessionId = replySessionId, replyState != .sending else { return }
+        replyState = .sending
+        do {
+            let _: ReplyResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/session-reply",
+                body: ReplyBody(sessionId: sessionId, text: trimmed))
+            replyState = .sent
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if self?.replyState == .sent { self?.replyState = .idle }
+            }
+        } catch {
+            replyState = .failed
+        }
+    }
+
     // MARK: DEBUG fixture — deterministic three-state sim proof, never in prod.
 
     private func applyFixtureIfRequested() -> Bool {
@@ -166,17 +217,18 @@ final class AgentLiveDockStore {
         let steps = [
             AgentLiveActivityStep(id: "fx-1", surface: "mac",
                                   labelBn: "💻 git status", detail: "git status",
-                                  status: "running", policy: "green", at: now),
+                                  status: "running", policy: "green", at: now, sessionId: nil),
             AgentLiveActivityStep(id: "fx-2", surface: "mac",
                                   labelBn: "💻 echo hello > /tmp/alma-live-dock-proof",
                                   detail: "echo hello > /tmp/alma-live-dock-proof",
-                                  status: "done", policy: "amber", at: now),
+                                  status: "done", policy: "amber", at: now, sessionId: nil),
             AgentLiveActivityStep(id: "fx-3", surface: "session",
-                                  labelBn: "🧠 Claude সেশন খুলছে", detail: nil,
-                                  status: "done", policy: "green", at: now),
+                                  labelBn: "🧠 বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
+                                  detail: "বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
+                                  status: "running", policy: nil, at: now, sessionId: "fx-session"),
             AgentLiveActivityStep(id: "fx-4", surface: "browser",
                                   labelBn: "🌐 পেজ খুলছে", detail: "https://alma-erp-six.vercel.app",
-                                  status: "done", policy: nil, at: now),
+                                  status: "done", policy: nil, at: now, sessionId: nil),
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
                                      steps: steps, screenshot: nil, screenshotAt: nil)
@@ -325,6 +377,7 @@ struct AgentLiveDockSheet: View {
     let feed: AgentLiveActivityFeed
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
+    @State private var replyText = ""
 
     var body: some View {
         let pal = AgentPalette(scheme)
@@ -350,6 +403,10 @@ struct AgentLiveDockSheet: View {
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, 20)
                             }
+                    }
+
+                    if store.replySessionId != nil {
+                        replyRow(pal: pal)
                     }
 
                     VStack(spacing: 6) {
@@ -389,6 +446,61 @@ struct AgentLiveDockSheet: View {
                     .accessibilityLabel("ছোট করুন")
                 }
             }
+        }
+    }
+
+    /// L4 tap-to-reply: answer the session without leaving the chat.
+    @ViewBuilder
+    private func replyRow(pal: AgentPalette) -> some View {
+        HStack(spacing: 8) {
+            TextField("সেশনকে উত্তর দিন…", text: $replyText)
+                .font(.system(size: 13.5))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(pal.card, in: RoundedRectangle(cornerRadius: 11))
+                .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(pal.borderSubtle, lineWidth: 1))
+                .onSubmit { submitReply() }
+            Button {
+                AlmaAgentHaptics.commit()
+                submitReply()
+            } label: {
+                Group {
+                    if store.replyState == .sending {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 34)
+                .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 11))
+            }
+            .disabled(store.replyState == .sending
+                      || replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("সেশনে পাঠান")
+        }
+        .overlay(alignment: .bottomLeading) {
+            if store.replyState == .sent {
+                Text("সেশনে পৌঁছে গেছে ✓")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.green)
+                    .offset(y: 16)
+            } else if store.replyState == .failed {
+                Text("পাঠানো যায়নি — সেশনটা কি শেষ?")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.red)
+                    .offset(y: 16)
+            }
+        }
+        .padding(.bottom, store.replyState == .idle || store.replyState == .sending ? 0 : 10)
+    }
+
+    private func submitReply() {
+        let text = replyText
+        Task {
+            await store.sendReply(text)
+            if store.replyState == .sent { replyText = "" }
         }
     }
 
