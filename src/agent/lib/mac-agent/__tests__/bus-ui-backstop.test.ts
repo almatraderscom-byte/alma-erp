@@ -87,7 +87,7 @@ describe('claimNextCommand — the UI kill switch stops QUEUED work too', () => 
     expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'ui-1', status: 'queued' },
-        data: expect.objectContaining({ status: 'failed' }),
+        data: expect.objectContaining({ status: 'cancelled' }),
       }),
     )
     expect(claimed?.id).toBe('sh-1')

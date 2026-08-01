@@ -440,10 +440,12 @@ export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand
   // held — a held command executing minutes later against a changed app state
   // is the exact failure the approval card protects against.
   if (next.action.startsWith('ui_') && !(await isMacUiDrivingEnabled())) {
+    // `cancelled`, not `failed`: the audit trail must read as "the owner
+    // stopped this", not "the system broke" — matching cancelAllQueued.
     await prisma.macAgentCommand.updateMany({
       where: { id: next.id, status: 'queued' },
       data: {
-        status: 'failed',
+        status: 'cancelled',
         error: 'ui_driving_disabled: Mac-এর অ্যাপ চালানো বন্ধ করা হয়েছে — কাজটা বাতিল হলো।',
         resolvedAt: new Date(),
       },
