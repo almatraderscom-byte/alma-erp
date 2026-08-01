@@ -6,7 +6,14 @@
  * a hole someone could otherwise walk through.
  */
 import { describe, it, expect } from 'vitest'
-import { classifyUiAction, isAllowedApp, capTree, UI_LIMITS, OWNER_ACTIVE_WINDOW_SECONDS } from '../ui-policy'
+import {
+  classifyUiAction,
+  isAllowedApp,
+  capTree,
+  UI_LIMITS,
+  OWNER_ACTIVE_WINDOW_SECONDS,
+  ALLOWED_APPS,
+} from '../ui-policy'
 
 /** The owner has stepped away — the precondition for any driving action. */
 const AWAY = { ownerIdleSeconds: OWNER_ACTIVE_WINDOW_SECONDS + 5 }
@@ -272,6 +279,14 @@ describe('UI policy — RED (never approvable)', () => {
 })
 
 describe('UI policy — helpers', () => {
+  it('resolves the ChatGPT alias to the INSTALLED id — order in ALLOWED_APPS is load-bearing', () => {
+    // Callers turn a friendly name into an id by taking the first entry whose
+    // label matches; picking com.openai.chat would target an app that is not
+    // installed, so the driver would find no window.
+    const firstChatGpt = Object.entries(ALLOWED_APPS).find(([, name]) => name === 'ChatGPT')?.[0]
+    expect(firstChatGpt).toBe('com.openai.codex')
+  })
+
   it('allows the real ChatGPT bundle id — the shipping app is com.openai.codex', () => {
     expect(isAllowedApp('com.openai.codex')).toBe(true)
     const v = classifyUiAction({

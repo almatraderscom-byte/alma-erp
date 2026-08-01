@@ -29,12 +29,9 @@ const SYNTHESISES_INPUT = new Set(['ui_click', 'ui_type', 'ui_key', 'ui_scroll']
 
 export const ALLOWED_APPS = {
   'com.anthropic.claudefordesktop': 'Claude',
-  'com.openai.chat': 'ChatGPT',
-  // The shipping ChatGPT desktop app identifies itself as `com.openai.codex`
-  // (verified from /Applications/ChatGPT.app's Info.plist on the owner's Mac
-  // 2026-08-02, and hit live by W3). Both ids are the same product; keeping
-  // the older one costs nothing and covers other installs.
+  // ORDER IS LOAD-BEARING for alias resolution — see the TS twin.
   'com.openai.codex': 'ChatGPT',
+  'com.openai.chat': 'ChatGPT',
 }
 
 const FORBIDDEN_APPS = {
