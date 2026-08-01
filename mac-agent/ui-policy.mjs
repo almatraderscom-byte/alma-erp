@@ -74,7 +74,7 @@ const SECRET_FIELD_LABEL = /\b(password|passphrase|passcode|secret|api[\s-]?key|
 /** Keys that ACTIVATE whatever has focus — they inherit the label rules.
  * Matched by the FINAL key under ANY modifier set: Electron apps can activate
  * the focused control on Enter even with modifiers held (Codex round 5). */
-const ACTIVATION_KEYS = /^(?:(?:cmd|ctrl|opt|option|alt|shift|fn)\+)*(enter|return|space)$/i
+const ACTIVATION_KEYS = /(^|\+)(enter|return|space)$/i
 
 /** How recently the owner must have used the machine for driving to be unsafe. */
 export const OWNER_ACTIVE_WINDOW_SECONDS = 25
@@ -96,6 +96,30 @@ const RED_KEYS = [
   { re: /^(?=.*\bctrl\b)(?=.*\b(power|eject)\b)/i, code: 'power', bn: 'পাওয়ার/শাটডাউন শর্টকাট — এজেন্ট চাপবে না।' },
   { re: /^(?=.*\bcmd\b)(?=.*\bctrl\b)(?=.*\b(opt|option|alt)\b).*\+(power|eject)$/i, code: 'power', bn: 'পাওয়ার শর্টকাট — এজেন্ট চাপবে না।' },
 ]
+
+/** Modifier spellings folded to one canonical form — see the TS twin. */
+const KEY_ALIASES = {
+  command: 'cmd',
+  meta: 'cmd',
+  super: 'cmd',
+  control: 'ctrl',
+  option: 'opt',
+  alt: 'opt',
+  del: 'delete',
+  esc: 'escape',
+  spacebar: 'space',
+}
+
+export function normalizeKey(raw) {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => KEY_ALIASES[part] ?? part)
+    .join('+')
+}
 
 export const UI_LIMITS = {
   maxTypeChars: 4_000,
@@ -167,7 +191,7 @@ export function classifyUiAction(req = {}) {
   }
 
   if (action === 'ui_key') {
-    const key = String(req.key ?? '').trim()
+    const key = normalizeKey(req.key ?? '')
     if (!key) return { level: 'red', code: 'key_required', reasonBn: 'কোন কী চাপবে সেটা বলা হয়নি।' }
     for (const rule of RED_KEYS) {
       if (rule.re.test(key)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
@@ -253,6 +277,7 @@ export const POLICY_RULE_DIGEST = {
   redKeys: RED_KEYS.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
   secretFieldLabel: { source: SECRET_FIELD_LABEL.source, flags: SECRET_FIELD_LABEL.flags },
   activationKeys: { source: ACTIVATION_KEYS.source, flags: ACTIVATION_KEYS.flags },
+  keyAliases: KEY_ALIASES,
   limits: { ...UI_LIMITS },
   ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
 }
