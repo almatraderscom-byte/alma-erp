@@ -148,10 +148,9 @@ async function sweepUnpushedNotables(db: any, sessionId: string) {
         OR: [{ kind: 'error' }, { kind: 'ended' }, { kind: 'turn_done' }],
       },
       orderBy: { seq: 'desc' },
-      // Wide enough that a catch-up batch's quiet turn_dones cannot bury an
-      // older owed question below the sweep (Codex on the L7 PR): a batch
-      // caps at 80 events and only terminal kinds are candidates.
-      take: 50,
+      // Wider than the batch cap (80): even an all-turn_done maximum batch
+      // cannot bury an older owed question below the sweep (Codex, L7 round 3).
+      take: 100,
       select: { id: true, seq: true, kind: true, text: true, isError: true, pushAttempts: true },
     })
     if (candidates.length === 0) return

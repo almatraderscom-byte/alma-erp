@@ -12,7 +12,6 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { activeDevice, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
-import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,37 +34,36 @@ export async function POST(req: NextRequest) {
   if (!(await isMacAgentEnabled())) {
     return Response.json({ error: 'mac_agent_disabled', messageBn: 'Mac control বন্ধ আছে।' }, { status: 409 })
   }
-  // STOP must reach the Mac that is actually streaming — with two Macs
-  // online, "most recently seen" flaps (the frame POSTs themselves bump
-  // lastSeenAt) and a stop could land on the idle machine as a no-op while
-  // the other kept capturing (Codex on the L7 PR). The newest frame names
-  // the streamer.
-  let device = null
+  // STOP broadcasts to EVERY online Mac: guessing the streamer from frames
+  // fails when a start is still queued (no frame yet) or a stale frame points
+  // at the wrong machine, and "most recently seen" flaps under frame POSTs —
+  // Codex found each of those in turn. A stop where nothing streams is a
+  // harmless no-op, so the broadcast is simply correct.
   if (body.on === false) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = prisma as any
-    const streamer = await db.macAgentFrame
-      .findFirst({
-        where: { at: { gte: new Date(Date.now() - 5 * 60 * 1000) } },
-        orderBy: { at: 'desc' },
-        select: { deviceId: true },
-      })
-      .catch(() => null)
-    if (streamer) {
-      device = (await listDevices()).find((d) => d.id === streamer.deviceId && d.online) ?? null
+    const online = (await listDevices()).filter((d) => d.online && d.pairedAt)
+    if (online.length === 0) {
+      return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
     }
+    const ids: string[] = []
+    for (const d of online) {
+      const { id } = await enqueueCommand({
+        deviceId: d.id,
+        action: 'screen_stream',
+        params: { mode: 'stop' },
+      })
+      ids.push(id)
+    }
+    return Response.json({ ok: true, commandIds: ids, on: false })
   }
-  device = device ?? (await activeDevice())
+
+  const device = await activeDevice()
   if (!device) {
     return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
   }
-
   const { id } = await enqueueCommand({
     deviceId: device.id,
     action: 'screen_stream',
-    params: body.on === false
-      ? { mode: 'stop' }
-      : { mode: 'start', maxSeconds: Number(body.maxSeconds) || undefined },
+    params: { mode: 'start', maxSeconds: Number(body.maxSeconds) || undefined },
   })
-  return Response.json({ ok: true, commandId: id, on: body.on !== false, deviceId: device.id })
+  return Response.json({ ok: true, commandId: id, on: true, deviceId: device.id })
 }
