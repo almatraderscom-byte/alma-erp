@@ -273,3 +273,31 @@ describe('the banner names only families that are still live', () => {
     expect(permissionModeNote('standard', dead)).not.toContain('সময়-বাঁধা অনুমতি চালু')
   })
 })
+
+/** Review-bot P2 (#667 round 15): a half-written windows map must not widen. */
+describe('a family without its own window is not granted', () => {
+  it('drops the family whose window is missing or malformed', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 4 * 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': 'not-a-date',
+        'customer-messaging': new Date(now + 4 * 60 * 60_000).toISOString(),
+      },
+    })
+    expect(grant?.families).toEqual(['customer-messaging'])
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(false)
+  })
+
+  it('keeps the old shape working — no windows means the grant-wide cutoff', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging'],
+      expiresAt: new Date(now + 60_000).toISOString(),
+    })
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(true)
+  })
+})

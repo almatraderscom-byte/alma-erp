@@ -168,7 +168,18 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
       if (typeof at === 'string' && Number.isFinite(Date.parse(at))) windows[family] = at
     }
   }
-  return Object.keys(windows).length ? { families, expiresAt, windows } : { families, expiresAt }
+  // A grant that carries per-family windows must carry one for EVERY family it
+  // names. Dropping a malformed entry while keeping the family would silently
+  // hand it the grant-wide cutoff — the LATEST of all windows — so a corrupted
+  // 15-minute staff window would inherit a 4-hour customer one (review bot,
+  // #667). A family whose own window cannot be read is not granted.
+  const hasWindows = Object.keys(windows).length > 0
+  if (hasWindows) {
+    const covered = families.filter((f) => typeof windows[f] === 'string')
+    if (covered.length === 0) return null
+    return { families: covered, expiresAt, windows }
+  }
+  return { families, expiresAt }
 }
 
 export function isElevationGrantLive(grant: ElevationGrant | null | undefined, now: number): boolean {
