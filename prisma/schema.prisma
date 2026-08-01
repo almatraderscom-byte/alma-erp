@@ -3056,6 +3056,11 @@ model MacAgentSessionEvent {
   /// When the event happened on the Mac (daemon clock).
   at        DateTime
   createdAt DateTime @default(now())
+  /// Push ledger: set once this event's owner notification was delivered (or
+  /// deliberately skipped). Null + attempts<3 = still owed; later event POSTs
+  /// sweep and retry, so a transient OneSignal failure loses nothing.
+  pushedAt     DateTime?
+  pushAttempts Int       @default(0)
 
   /// A daemon retry after a dropped POST must not duplicate the feed.
   @@unique([sessionId, seq])
