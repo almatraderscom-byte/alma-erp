@@ -85,7 +85,13 @@ export async function isMacAgentEnabled(): Promise<boolean> {
  */
 export const MAC_UI_ENABLED_KEY = 'mac_ui_driving_enabled'
 
-export async function isMacUiDrivingEnabled(): Promise<boolean> {
+/**
+ * Tri-state read: `true`/`false` are the owner's actual switch, `null` means
+ * the KV row could not be READ (a DB blip). Callers must treat the two
+ * negatives differently — OFF is a decision, unreadable is not, and only a
+ * decision may destroy queued work.
+ */
+export async function readMacUiDrivingSwitch(): Promise<boolean | null> {
   try {
     const row = await prisma.agentKvSetting.findUnique({
       where: { key: MAC_UI_ENABLED_KEY },
@@ -93,8 +99,13 @@ export async function isMacUiDrivingEnabled(): Promise<boolean> {
     })
     return row?.value === 'true'
   } catch {
-    return false
+    return null
   }
+}
+
+/** Fail-closed boolean for intake paths (tool + approve): unreadable = refuse. */
+export async function isMacUiDrivingEnabled(): Promise<boolean> {
+  return (await readMacUiDrivingSwitch()) === true
 }
 
 export async function setMacAgentEnabled(enabled: boolean): Promise<boolean> {
@@ -439,18 +450,24 @@ export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand
   // turns it OFF (Codex round 3, ruled P1 by the head). Cancelled loudly, not
   // held — a held command executing minutes later against a changed app state
   // is the exact failure the approval card protects against.
-  if (next.action.startsWith('ui_') && !(await isMacUiDrivingEnabled())) {
-    // `cancelled`, not `failed`: the audit trail must read as "the owner
-    // stopped this", not "the system broke" — matching cancelAllQueued.
-    await prisma.macAgentCommand.updateMany({
-      where: { id: next.id, status: 'queued' },
-      data: {
-        status: 'cancelled',
-        error: 'ui_driving_disabled: Mac-এর অ্যাপ চালানো বন্ধ করা হয়েছে — কাজটা বাতিল হলো।',
-        resolvedAt: new Date(),
-      },
-    })
-    return claimNextCommand(deviceId)
+  if (next.action.startsWith('ui_')) {
+    const uiSwitch = await readMacUiDrivingSwitch()
+    // Unreadable is NOT off: a DB blip must not destroy a command the owner
+    // already approved. Deliver nothing this poll; the row stays queued.
+    if (uiSwitch === null) return null
+    if (uiSwitch === false) {
+      // `cancelled`, not `failed`: the audit trail must read as "the owner
+      // stopped this", not "the system broke" — matching cancelAllQueued.
+      await prisma.macAgentCommand.updateMany({
+        where: { id: next.id, status: 'queued' },
+        data: {
+          status: 'cancelled',
+          error: 'ui_driving_disabled: Mac-এর অ্যাপ চালানো বন্ধ করা হয়েছে — কাজটা বাতিল হলো।',
+          resolvedAt: new Date(),
+        },
+      })
+      return claimNextCommand(deviceId)
+    }
   }
 
   const claimed = await prisma.macAgentCommand.updateMany({

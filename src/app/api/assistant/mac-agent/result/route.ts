@@ -54,8 +54,12 @@ export async function POST(req: NextRequest) {
   // screenshot that could not be decoded (found in review). Images get their own
   // ceiling; text keeps the small one.
   const action = await getCommandAction(commandId)
+  // ui_screenshot carries the same data-URI payload as screenshot — the text
+  // cap would truncate it into an undecodable image (L8 W4; same L7 lesson).
   const capFor = (text: string) =>
-    action === 'screenshot' ? text.slice(0, MAX_SCREENSHOT_CHARS) : capOutput(text)
+    action === 'screenshot' || action === 'ui_screenshot'
+      ? text.slice(0, MAX_SCREENSHOT_CHARS)
+      : capOutput(text)
 
   // The daemon already caps output, but a compromised or buggy daemon must not be
   // able to write an unbounded blob into the row.

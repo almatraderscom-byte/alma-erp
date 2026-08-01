@@ -98,4 +98,18 @@ describe('claimNextCommand — the UI kill switch stops QUEUED work too', () => 
     const claimed = await claimNextCommand('dev-1')
     expect(claimed?.id).toBe('ui-2')
   })
+
+  it('an UNREADABLE switch delivers nothing but destroys nothing — a DB blip is not the owner saying stop', async () => {
+    kvFindUnique.mockRejectedValue(new Error('db down'))
+    findFirst.mockResolvedValueOnce({ id: 'ui-3', action: 'ui_click', params: {}, sessionKey: null })
+    const claimed = await claimNextCommand('dev-1')
+    expect(claimed).toBeNull()
+    // No cancel, no delivery — the row stays queued for the next poll.
+    expect(updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'cancelled' }) }),
+    )
+    expect(updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'delivered' }) }),
+    )
+  })
 })
