@@ -36,6 +36,8 @@ interface ActivityStep {
   sessionId?: string | null
   /** claude | codex — codex is one-shot, so no reply composer for it. */
   sessionTool?: string | null
+  /** Raw event kind — 'ended'/'error' means the session cannot take a reply. */
+  sessionKind?: string | null
 }
 
 interface ActivityFeed {
@@ -121,12 +123,19 @@ export default function AgentLiveDock() {
   const dismissed = dismissedStepId !== null && dismissedStepId === (feed?.current?.id ?? null)
   const show = Boolean(feed && (feed.active || recentlyActive) && !dismissed)
 
-  // L4 tap-to-reply: the newest CLAUDE session-event step tells us which
-  // session a reply would reach (Codex is one-shot — advertising a reply for it
-  // would deterministically fail). Shown only in the expanded view.
+  // L4 tap-to-reply: the composer belongs to the NEWEST session, and only when
+  // that session can actually take a reply. Searching for "any Claude event"
+  // paired the composer with session B's activity while sending to older
+  // session A (Codex round 5); a Codex or ended/errored newest session simply
+  // gets no composer.
+  const newestSessionStep = feed?.steps.find((s) => s.surface === 'session' && s.sessionId) ?? null
   const replySessionId =
-    feed?.steps.find((s) => s.surface === 'session' && s.sessionId && s.sessionTool !== 'codex')
-      ?.sessionId ?? null
+    newestSessionStep &&
+    newestSessionStep.sessionTool !== 'codex' &&
+    newestSessionStep.sessionKind !== 'ended' &&
+    newestSessionStep.sessionKind !== 'error'
+      ? newestSessionStep.sessionId ?? null
+      : null
   const [replyText, setReplyText] = useState('')
   const [replyState, setReplyState] = useState<'idle' | 'sending' | 'sent' | 'queued' | 'failed'>('idle')
   /**
@@ -163,7 +172,14 @@ export default function AgentLiveDock() {
         // delivered:false = accepted into the queue but the Mac has not
         // confirmed yet — saying "reached" would invite a duplicate send.
         setReplyState(data?.delivered === false ? 'queued' : 'sent')
-        setTimeout(() => setReplyState('idle'), 4_000)
+        // Only step DOWN from a terminal state. An unconditional reset could
+        // fire while a SECOND reply is mid-flight and re-enable the button
+        // with that text still present — one tap away from a duplicate
+        // instruction (Codex round 5).
+        setTimeout(
+          () => setReplyState((prev) => (prev === 'sent' || prev === 'queued' ? 'idle' : prev)),
+          4_000,
+        )
       } else {
         setReplyState('failed')
       }

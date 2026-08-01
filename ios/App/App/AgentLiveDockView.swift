@@ -47,6 +47,8 @@ struct AgentLiveActivityStep: Decodable, Identifiable, Equatable {
     let sessionId: String?
     /// claude | codex — codex is one-shot, so no reply composer for it.
     let sessionTool: String?
+    /// Raw event kind — "ended"/"error" means the session cannot take a reply.
+    let sessionKind: String?
 
     var surfaceBn: String {
         switch surface {
@@ -175,10 +177,16 @@ final class AgentLiveDockStore {
 
     // MARK: L4 tap-to-reply
 
-    /// The newest CLAUDE session in the feed — where a reply would go. Codex is
-    /// one-shot; offering a composer for it would deterministically fail.
+    /// The composer belongs to the NEWEST session, and only when it can take a
+    /// reply. Searching for "any Claude event" paired the composer with session
+    /// B's activity while sending to older session A (Codex round 5); a Codex
+    /// or ended/errored newest session simply gets no composer.
     var replySessionId: String? {
-        feed?.steps.first { $0.surface == "session" && $0.sessionId != nil && $0.sessionTool != "codex" }?.sessionId
+        guard let newest = feed?.steps.first(where: { $0.surface == "session" && $0.sessionId != nil })
+        else { return nil }
+        guard newest.sessionTool != "codex",
+              newest.sessionKind != "ended", newest.sessionKind != "error" else { return nil }
+        return newest.sessionId
     }
 
     /// Where this composition is going, locked at the FIRST keystroke — a poll
@@ -238,18 +246,18 @@ final class AgentLiveDockStore {
         let steps = [
             AgentLiveActivityStep(id: "fx-1", surface: "mac",
                                   labelBn: "💻 git status", detail: "git status",
-                                  status: "running", policy: "green", at: now, sessionId: nil, sessionTool: nil),
+                                  status: "running", policy: "green", at: now, sessionId: nil, sessionTool: nil, sessionKind: nil),
             AgentLiveActivityStep(id: "fx-2", surface: "mac",
                                   labelBn: "💻 echo hello > /tmp/alma-live-dock-proof",
                                   detail: "echo hello > /tmp/alma-live-dock-proof",
-                                  status: "done", policy: "amber", at: now, sessionId: nil, sessionTool: nil),
+                                  status: "done", policy: "amber", at: now, sessionId: nil, sessionTool: nil, sessionKind: nil),
             AgentLiveActivityStep(id: "fx-3", surface: "session",
                                   labelBn: "🧠 বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
                                   detail: "বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
-                                  status: "running", policy: nil, at: now, sessionId: "fx-session", sessionTool: "claude"),
+                                  status: "running", policy: nil, at: now, sessionId: "fx-session", sessionTool: "claude", sessionKind: "text"),
             AgentLiveActivityStep(id: "fx-4", surface: "browser",
                                   labelBn: "🌐 পেজ খুলছে", detail: "https://alma-erp-six.vercel.app",
-                                  status: "done", policy: nil, at: now, sessionId: nil, sessionTool: nil),
+                                  status: "done", policy: nil, at: now, sessionId: nil, sessionTool: nil, sessionKind: nil),
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
                                      steps: steps, screenshot: nil, screenshotAt: nil)

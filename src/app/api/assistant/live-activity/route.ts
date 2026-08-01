@@ -43,6 +43,9 @@ export interface ActivityStep {
   sessionId?: string | null
   /** claude | codex — the docks offer replies only for claude (codex is one-shot). */
   sessionTool?: string | null
+  /** The raw event kind (text/tool/turn_done/ended/…) — lets the docks tell a
+   *  finished-for-good session (ended/error) from an idle-but-replyable one. */
+  sessionKind?: string | null
 }
 
 function macLabel(action: string, command: string | null): string {
@@ -145,6 +148,7 @@ function sessionEventStep(r: {
     at: r.at.toISOString(),
     sessionId: r.sessionId,
     sessionTool: r.tool ?? 'claude',
+    sessionKind: r.kind,
   }
 }
 
