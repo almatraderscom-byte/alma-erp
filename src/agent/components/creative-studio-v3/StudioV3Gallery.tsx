@@ -4,6 +4,7 @@
 /* eslint-disable jsx-a11y/media-has-caption */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { StudioBrandProfile } from '@/agent/components/creative-studio/studio-api'
 import { downloadStudioAsset } from '@/agent/components/creative-studio/StudioUi'
 import {
@@ -113,11 +114,16 @@ export function StudioV3Gallery({
   const [hasMore, setHasMore] = useState(false)
   const [total, setTotal] = useState(0)
   const [issues, setIssues] = useState<string[]>([])
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
   const loadSequence = useRef(0)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const lightboxPanelRef = useRef<HTMLElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const reviewLocked = Boolean(reviewTarget)
+
+  useEffect(() => {
+    setPortalHost(document.querySelector<HTMLElement>('[aria-label="ALMA Creative Studio V4"]'))
+  }, [])
 
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current
@@ -427,7 +433,7 @@ export function StudioV3Gallery({
 
       </div>
 
-      {selected && (
+      {selected && portalHost && createPortal(
         <div
           aria-labelledby="gallery-lightbox-title"
           aria-modal="true"
@@ -511,7 +517,8 @@ export function StudioV3Gallery({
               </aside>
             </div>
           </section>
-        </div>
+        </div>,
+        portalHost,
       )}
     </div>
   )

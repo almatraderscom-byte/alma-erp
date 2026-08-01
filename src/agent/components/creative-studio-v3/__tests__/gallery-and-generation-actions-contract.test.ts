@@ -35,6 +35,8 @@ describe('Creative Studio V4 Gallery interaction contract', () => {
 
     expect(gallery).toContain('aria-modal="true"')
     expect(gallery).toContain('role="dialog"')
+    expect(gallery).toContain('createPortal')
+    expect(gallery).toContain('ALMA Creative Studio V4')
     expect(gallery).toContain('Close fullscreen preview')
     expect(gallery).toContain("event.key === 'Escape'")
     expect(gallery).toContain("event.key === 'ArrowLeft'")

@@ -4765,7 +4765,7 @@ label.secondaryButton[aria-disabled='true'] {
   gap: 7px;
   padding: 0 15px;
   border-radius: var(--radius-pill);
-  color: var(--studio-card);
+  color: #fff;
   background: linear-gradient(145deg, #2e2d32, #111216);
   font-size: 11px;
   font-weight: 780;
