@@ -8,14 +8,16 @@
  * daemon once) and a stand-in CLI binary, off-darwin skipped like the e2e.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs'
 import { tmpdir, platform } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const darwinOnly = platform() === 'darwin' ? describe : describe.skip
 
-const TEST_HOME = mkdtempSync(join(tmpdir(), 'alma-session-resume-'))
+// realpath: macOS tmpdir sits behind the /var → /private/var symlink, and the
+// restore path validates the RESOLVED cwd against the allowlist.
+const TEST_HOME = realpathSync(mkdtempSync(join(tmpdir(), 'alma-session-resume-')))
 const CONFIG_DIR = join(TEST_HOME, '.alma-mac-agent')
 const SESSIONS_FILE = join(CONFIG_DIR, 'sessions.json')
 const SESSIONS_MJS = resolve(__dirname, '../../../../../mac-agent/sessions.mjs')
@@ -28,8 +30,16 @@ darwinOnly('L5 session resume', () => {
     mkdirSync(CONFIG_DIR, { recursive: true })
     // The module reads homedir() at import — point it at the throwaway BEFORE.
     process.env.HOME = TEST_HOME
-    // A stand-in "claude" that exists and accepts stdin, so a resume can spawn.
-    process.env.ALMA_CLAUDE_BIN = '/bin/cat'
+    // A stand-in "claude" that speaks the protocol's first line: the resume
+    // path now WAITS for the CLI's init before trusting a write, so the fake
+    // must emit one (then swallow stdin like the real thing).
+    const fakeClaude = join(TEST_HOME, 'fake-claude.sh')
+    writeFileSync(
+      fakeClaude,
+      '#!/bin/sh\necho \'{"type":"system","subtype":"init","session_id":"cli-abc","model":"fake"}\'\nexec cat > /dev/null\n',
+      { mode: 0o755 },
+    )
+    process.env.ALMA_CLAUDE_BIN = fakeClaude
     mod = await import(pathToFileURL(SESSIONS_MJS).href)
   })
 

@@ -21,7 +21,7 @@
  * owner is never left wondering whether his task is still running.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -100,10 +100,19 @@ export function loadPersistedSessions(allowedDirs = []) {
       if (!r?.id || !r?.cliSessionId) continue
       if (Date.now() - (r.lastActivityAt ?? 0) > DETACHED_MAX_AGE_MS) continue
       if (sessions.has(r.id)) continue
-      const cwd = typeof r.cwd === 'string' ? r.cwd : ''
+      // The REAL path decides, not the text: a symlink dropped in place while
+      // the daemon was down would pass a textual prefix check and hand the
+      // session's (possibly bypass) permissions to a directory outside the
+      // allowlist (Codex, L5 round 5).
+      let cwd
+      try {
+        cwd = realpathSync(String(r.cwd ?? ''))
+      } catch {
+        continue // gone or unresolvable — nothing to restore into
+      }
       const inside =
-        cwd && !cwd.includes('..') && allowedDirs.some((d) => cwd === d || cwd.startsWith(`${d}/`))
-      if (!inside || !existsSync(cwd)) continue
+        !cwd.includes('..') && allowedDirs.some((d) => cwd === d || cwd.startsWith(`${d}/`))
+      if (!inside) continue
       const seq = Number.isFinite(Number(r.seq)) ? Number(r.seq) : 0
       sessions.set(r.id, {
         id: r.id,
@@ -208,6 +217,9 @@ function ingestLine(session, line) {
     session.cliSessionId = msg.session_id ?? null
     session.model = msg.model ?? null
     session.status = 'working'
+    // The resume path waits on this before trusting a write: a child that
+    // rejects startup never sends init.
+    session.cliReady = true
     pushEvent(session, { kind: 'started', model: msg.model ?? null, cliSessionId: msg.session_id ?? null })
     return
   }
@@ -352,10 +364,35 @@ function respawnDetached(session) {
   }
   session.status = 'working'
   session.error = null
+  session.cliReady = false
   attachChild(session, child)
   pushEvent(session, { kind: 'resumed', cliSessionId: session.cliSessionId })
   persistSessions()
   return { ok: true }
+}
+
+/**
+ * A resumed CLI proves itself with its init line; one that rejects the saved
+ * conversation (or auth) reads stdin and exits WITHOUT it — and a write
+ * callback alone can succeed against such a child (Codex, L5 round 5). Wait
+ * for init, an exit, or the deadline before trusting the pipe.
+ */
+function awaitCliReady(session, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now()
+    const timer = setInterval(() => {
+      if (session.cliReady) {
+        clearInterval(timer)
+        resolve(true)
+      } else if (session.status === 'ended' || session.status === 'error') {
+        clearInterval(timer)
+        resolve(false)
+      } else if (Date.now() - t0 > timeoutMs) {
+        clearInterval(timer)
+        resolve(false)
+      }
+    }, 100)
+  })
 }
 
 export function openSession(params, allowedDirs) {
@@ -429,10 +466,15 @@ export async function sendToSession(sessionId, text) {
   }
   if (session.status === 'ended') return { ok: false, error: 'session_ended' }
   // L5: a daemon restart detached this session — bring it back with --resume,
-  // then deliver the text into the revived conversation.
+  // wait for the CLI to prove it accepted the resume (its init line), THEN
+  // deliver the text into the revived conversation.
   if (session.status === 'detached') {
     const revived = respawnDetached(session)
     if (!revived.ok) return revived
+    const ready = await awaitCliReady(session)
+    if (!ready) {
+      return { ok: false, error: 'resume_failed: সেশনটা resume নেয়নি — নতুন সেশন খুলুন।' }
+    }
   }
   if (!session.child?.stdin?.writable) return { ok: false, error: 'session_not_writable' }
 
