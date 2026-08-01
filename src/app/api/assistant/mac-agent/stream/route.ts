@@ -44,6 +44,18 @@ export async function POST(req: NextRequest) {
     if (online.length === 0) {
       return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
     }
+    // A start still QUEUED behind a long command would outlive an appended
+    // stop (FIFO) and begin capturing after the owner cancelled it (Codex,
+    // L7 round 5) — cancel pending starts first, then broadcast the stop for
+    // any loop already running.
+    const { prisma } = await import('@/lib/prisma')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).macAgentCommand
+      .updateMany({
+        where: { action: 'screen_stream', status: 'queued' },
+        data: { status: 'cancelled', error: 'superseded_by_stop', resolvedAt: new Date() },
+      })
+      .catch(() => {})
     const ids: string[] = []
     for (const d of online) {
       const { id } = await enqueueCommand({

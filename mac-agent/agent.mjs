@@ -388,9 +388,11 @@ function startScreenStream(token, maxSeconds) {
         }).catch(() => null)
         // The frames response doubles as the STOP channel — the command queue
         // is serial and a long shell command must not keep the screen
-        // streaming after the owner pressed stop. A 409 means the kill-switch
-        // went off: same conclusion, stop now.
-        if (res?.json?.stop || res?.status === 409) stopScreenStream('owner (frame channel)')
+        // streaming after the owner pressed stop. 409 = kill-switch off,
+        // 401 = this device was unpaired mid-stream: same conclusion, stop.
+        if (res?.json?.stop || res?.status === 409 || res?.status === 401) {
+          stopScreenStream('owner (frame channel)')
+        }
       }
     } finally {
       streamBusy = false

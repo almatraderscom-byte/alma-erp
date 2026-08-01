@@ -172,6 +172,14 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
+
+  // Retry driver for owed session notifications: a session waiting on the
+  // owner's answer (or already ended) may never emit another event, so the
+  // events POST alone cannot retry its failed push — this regular owner poll
+  // can (throttled inside; fire-and-forget so the dock stays fast).
+  void import('@/agent/lib/mac-agent/session-push')
+    .then((m) => m.sweepOwedSessionPushes(db))
+    .catch(() => {})
   const [macRows, browserRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows, frameMeta] =
     await Promise.all([
     db.macAgentCommand
