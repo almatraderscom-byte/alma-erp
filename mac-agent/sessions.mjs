@@ -21,7 +21,7 @@
  * owner is never left wondering whether his task is still running.
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -30,6 +30,130 @@ const HOME = homedir()
 
 /** Live sessions, keyed by our own id (not the CLI's). */
 const sessions = new Map()
+
+/**
+ * L5 — surviving a daemon restart.
+ *
+ * The event stream cannot survive (the child dies with us — the honest exit
+ * handler below), but the SESSION can: the Claude CLI supports
+ * `--resume <cli-session-id>`, and we already hold that id. So we persist the
+ * little that matters, and a restarted daemon lists those sessions as
+ * `detached`. The next `session_send` respawns the CLI with `--resume` and the
+ * conversation continues where it left off; `session_read` says `detached`
+ * honestly instead of `session_not_found`.
+ *
+ * Codex is one-shot and cannot be resumed; its sessions are not persisted.
+ */
+const SESSIONS_FILE = join(HOME, '.alma-mac-agent', 'sessions.json')
+/** A detached session older than this is history, not something to offer resume for. */
+const DETACHED_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+function persistSessions() {
+  try {
+    const dir = join(HOME, '.alma-mac-agent')
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const rows = [...sessions.values()]
+      // Only what can actually come back: Claude sessions that haven't ended.
+      .filter((s) => s.tool === 'claude' && s.status !== 'ended' && s.status !== 'error')
+      .map((s) => ({
+        id: s.id,
+        cliSessionId: s.cliSessionId,
+        tool: s.tool,
+        cwd: s.cwd,
+        permissionMode: s.permissionMode,
+        model: s.model ?? null,
+        costUsd: s.costUsd ?? 0,
+        turns: s.turns ?? 0,
+        // The event counter must survive too: a restored session that restarts
+        // at seq 0 reuses (sessionId, seq) pairs the server has already seen,
+        // and its post-resume events would be dropped as retry duplicates
+        // (Codex on the L5 PR).
+        seq: s.seq ?? 0,
+        startedAt: s.startedAt,
+        lastActivityAt: s.lastActivityAt,
+      }))
+    // Atomic: a kill mid-write must never leave a truncated sessions.json —
+    // the next startup would parse-fail and silently restore NOTHING,
+    // defeating the whole feature (Codex, L5 round 4).
+    const tmp = `${SESSIONS_FILE}.tmp`
+    writeFileSync(tmp, JSON.stringify(rows), { mode: 0o600 })
+    renameSync(tmp, SESSIONS_FILE)
+  } catch {
+    /* persistence is best-effort; a failed write must never break a session */
+  }
+}
+
+/**
+ * Load what the previous daemon run left behind, as detached sessions.
+ *
+ * The saved cwd is re-validated against the CURRENT allowlist — a project
+ * removed from the allowlist while the daemon was down must not stay remotely
+ * drivable (with its persisted permission mode) just because it was saved
+ * before the change (Codex on the L5 PR).
+ */
+export function loadPersistedSessions(allowedDirs = []) {
+  try {
+    if (!existsSync(SESSIONS_FILE)) return 0
+    const rows = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'))
+    let n = 0
+    for (const r of Array.isArray(rows) ? rows : []) {
+      if (!r?.id || !r?.cliSessionId) continue
+      if (Date.now() - (r.lastActivityAt ?? 0) > DETACHED_MAX_AGE_MS) continue
+      if (sessions.has(r.id)) continue
+      // The REAL path decides, not the text: a symlink dropped in place while
+      // the daemon was down would pass a textual prefix check and hand the
+      // session's (possibly bypass) permissions to a directory outside the
+      // allowlist (Codex, L5 round 5).
+      let cwd
+      try {
+        cwd = realpathSync(String(r.cwd ?? ''))
+      } catch {
+        continue // gone or unresolvable — nothing to restore into
+      }
+      const inside =
+        !cwd.includes('..') && allowedDirs.some((d) => cwd === d || cwd.startsWith(`${d}/`))
+      if (!inside) continue
+      const seq = Number.isFinite(Number(r.seq)) ? Number(r.seq) : 0
+      sessions.set(r.id, {
+        id: r.id,
+        tool: 'claude',
+        cwd,
+        permissionMode: r.permissionMode ?? 'plan',
+        cliSessionId: r.cliSessionId,
+        model: r.model ?? null,
+        status: 'detached',
+        events: [],
+        // Continue the numbering: seq 0 would reuse server-side (sessionId,
+        // seq) pairs and post-resume events would vanish as "duplicates".
+        seq,
+        pushedSeq: seq,
+        startedAt: r.startedAt ?? Date.now(),
+        lastActivityAt: r.lastActivityAt ?? Date.now(),
+        costUsd: r.costUsd ?? 0,
+        turns: r.turns ?? 0,
+        error: null,
+        stderr: '',
+        child: null,
+      })
+      // Tell the feed the truth: without this, the session's last streamed
+      // event (text/tool) kept showing a live "working" pulse for the rest of
+      // the window although its child died with the old daemon (Codex, L5
+      // round 2). The event also rides the restored counter, proving the
+      // seq continuation end-to-end.
+      const restored = sessions.get(r.id)
+      pushEvent(restored, { kind: 'detached' })
+      // …but restoration is not ACTIVITY: pushEvent's touch would renew the
+      // 24h expiry on every restart, keeping an old approved bypass session
+      // alive forever (Codex, L5 round 4). Keep the original clock.
+      restored.lastActivityAt = r.lastActivityAt ?? Date.now()
+      persistSessions()
+      n += 1
+    }
+    return n
+  } catch {
+    return 0
+  }
+}
 
 /** How many events we keep per session before dropping the oldest. */
 const MAX_EVENTS = 400
@@ -67,6 +191,12 @@ function pushEvent(session, event) {
   session.events.push({ seq: session.seq, at: new Date().toISOString(), ...event })
   if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS)
   session.lastActivityAt = Date.now()
+  // EVERY advance hits disk: a restart mid-turn with a stale saved counter
+  // would reuse already-stored (sessionId, seq) numbers, and the resumed
+  // session's events would vanish as server-side "duplicates" until the
+  // counter caught up (Codex, L5 round 2). The file is tiny; the write is
+  // nothing next to the CLI turn that produced the event.
+  persistSessions()
 }
 
 /**
@@ -87,6 +217,9 @@ function ingestLine(session, line) {
     session.cliSessionId = msg.session_id ?? null
     session.model = msg.model ?? null
     session.status = 'working'
+    // The resume path waits on this before trusting a write: a child that
+    // rejects startup never sends init.
+    session.cliReady = true
     pushEvent(session, { kind: 'started', model: msg.model ?? null, cliSessionId: msg.session_id ?? null })
     return
   }
@@ -125,6 +258,7 @@ function ingestLine(session, line) {
       result: typeof msg.result === 'string' ? msg.result.slice(0, 4_000) : null,
       costUsd: msg.total_cost_usd ?? 0,
     })
+    persistSessions() // cost/turn totals survive a restart
   }
 }
 
@@ -154,6 +288,111 @@ function buildArgs(tool, { permissionMode, model, cliSessionId, resume, codexPro
 function binaryFor(tool) {
   if (tool === 'codex') return process.env.ALMA_CODEX_BIN || 'codex'
   return process.env.ALMA_CLAUDE_BIN || join(HOME, '.local/bin/claude')
+}
+
+/** Wire a spawned CLI child into a session — shared by open and resume. */
+function attachChild(session, child) {
+  session.child = child
+
+  // A rejected resume (missing saved conversation, auth failure) closes the
+  // child right after spawn; the next stdin write then raises EPIPE, and with
+  // no handler that TERMINATED THE DAEMON (Codex, L5 round 2). stdin errors
+  // mark the session, never the process.
+  child.stdin?.on?.('error', (err) => {
+    session.status = 'error'
+    session.error = `stdin: ${err?.message ?? err}`
+    pushEvent(session, { kind: 'error', error: session.error })
+  })
+
+  let buffer = ''
+  child.stdout.on('data', (d) => {
+    buffer += d.toString()
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.trim()) ingestLine(session, line)
+    }
+  })
+  child.stderr.on('data', (d) => {
+    if (session.stderr.length < 8_000) session.stderr += d.toString()
+  })
+  child.on('error', (err) => {
+    session.status = 'error'
+    session.error = String(err?.message ?? err)
+    pushEvent(session, { kind: 'error', error: session.error })
+  })
+  child.on('close', (code) => {
+    // A detached-and-resumed session's OLD child closing must not clobber the
+    // fresh one's status.
+    if (session.child !== child) return
+    session.status = session.status === 'error' ? 'error' : 'ended'
+    session.exitCode = code
+    pushEvent(session, { kind: 'ended', exitCode: code })
+    persistSessions()
+  })
+}
+
+/**
+ * L5 — bring a detached session back to life with `--resume`. The CLI reloads
+ * the full conversation from its own store; our event buffer starts fresh
+ * (the old events are gone with the old process, and we say so honestly).
+ */
+function respawnDetached(session) {
+  const bin = binaryFor('claude')
+  let child
+  try {
+    child = spawn(bin, buildArgs('claude', {
+      permissionMode: session.permissionMode,
+      model: session.model,
+      cliSessionId: session.cliSessionId,
+      resume: true,
+    }), {
+      cwd: session.cwd,
+      env: { ...process.env, ALMA_MAC_AGENT: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
+    })
+  } catch (err) {
+    return { ok: false, error: `resume_spawn_failed: ${err?.message ?? err}` }
+  }
+  // A missing/non-executable binary surfaces ASYNCHRONOUSLY (ENOENT via the
+  // 'error' event), with spawn() happily returning a pid-less child — and the
+  // owner's instruction would be "delivered" into nothing (Codex on the L5
+  // PR). No pid = it never started.
+  if (!child.pid) {
+    return { ok: false, error: 'resume_spawn_failed: claude binary missing or not executable' }
+  }
+  session.status = 'working'
+  session.error = null
+  session.cliReady = false
+  attachChild(session, child)
+  pushEvent(session, { kind: 'resumed', cliSessionId: session.cliSessionId })
+  persistSessions()
+  return { ok: true }
+}
+
+/**
+ * A resumed CLI proves itself with its init line; one that rejects the saved
+ * conversation (or auth) reads stdin and exits WITHOUT it — and a write
+ * callback alone can succeed against such a child (Codex, L5 round 5). Wait
+ * for init, an exit, or the deadline before trusting the pipe.
+ */
+function awaitCliReady(session, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now()
+    const timer = setInterval(() => {
+      if (session.cliReady) {
+        clearInterval(timer)
+        resolve(true)
+      } else if (session.status === 'ended' || session.status === 'error') {
+        clearInterval(timer)
+        resolve(false)
+      } else if (Date.now() - t0 > timeoutMs) {
+        clearInterval(timer)
+        resolve(false)
+      }
+    }, 100)
+  })
 }
 
 export function openSession(params, allowedDirs) {
@@ -206,56 +445,72 @@ export function openSession(params, allowedDirs) {
     return { ok: false, error: `spawn_failed: ${err?.message ?? err}` }
   }
 
-  session.child = child
-
-  let buffer = ''
-  child.stdout.on('data', (d) => {
-    buffer += d.toString()
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (line.trim()) ingestLine(session, line)
-    }
-  })
-  child.stderr.on('data', (d) => {
-    if (session.stderr.length < 8_000) session.stderr += d.toString()
-  })
-  child.on('error', (err) => {
-    session.status = 'error'
-    session.error = String(err?.message ?? err)
-    pushEvent(session, { kind: 'error', error: session.error })
-  })
-  child.on('close', (code) => {
-    session.status = session.status === 'error' ? 'error' : 'ended'
-    session.exitCode = code
-    pushEvent(session, { kind: 'ended', exitCode: code })
-  })
-
+  attachChild(session, child)
   sessions.set(id, session)
+  persistSessions()
 
   // Claude takes the first task over stdin; Codex already received it as an
   // argument (one-shot), so sending it again would corrupt the run.
-  if (params.task && tool !== 'codex') sendToSession(id, String(params.task))
+  // Fire-and-observe: a failed first write surfaces through the session's own
+  // error state/events, and openSession's contract stays synchronous.
+  if (params.task && tool !== 'codex') void sendToSession(id, String(params.task))
 
   return { ok: true, sessionId: id, cliSessionId, tool, cwd, permissionMode, oneShot: tool === 'codex' }
 }
 
-export function sendToSession(sessionId, text) {
+export async function sendToSession(sessionId, text) {
   const session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'session_not_found' }
   if (session.tool === 'codex') {
     return { ok: false, error: 'codex_is_one_shot: Codex সেশনে পরে আর নির্দেশ পাঠানো যায় না — নতুন সেশন খুলুন।' }
   }
   if (session.status === 'ended') return { ok: false, error: 'session_ended' }
+  // L5: a daemon restart detached this session — bring it back with --resume,
+  // wait for the CLI to prove it accepted the resume (its init line), THEN
+  // deliver the text into the revived conversation.
+  if (session.status === 'detached') {
+    const revived = respawnDetached(session)
+    if (!revived.ok) return revived
+    const ready = await awaitCliReady(session)
+    if (!ready) {
+      return { ok: false, error: 'resume_failed: সেশনটা resume নেয়নি — নতুন সেশন খুলুন।' }
+    }
+  }
   if (!session.child?.stdin?.writable) return { ok: false, error: 'session_not_writable' }
 
   const payload = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
   }
-  session.child.stdin.write(`${JSON.stringify(payload)}\n`)
+  // The write must be CONFIRMED before we claim delivery: a child that dies
+  // during resume startup fails the write asynchronously (EPIPE via the
+  // completion callback), and returning ok before that lost the owner's
+  // instruction silently (Codex, L5 round 3). A slow drain (backpressure) is
+  // not a failure — the short timer keeps a stalled pipe from hanging the
+  // command queue; genuine failures call back well within it.
+  const wrote = await new Promise((resolve) => {
+    let settled = false
+    const done = (ok, err) => {
+      if (!settled) {
+        settled = true
+        resolve({ ok, err })
+      }
+    }
+    try {
+      session.child.stdin.write(`${JSON.stringify(payload)}\n`, (err) => done(!err, err))
+    } catch (err) {
+      done(false, err)
+    }
+    setTimeout(() => done(true, null), 1_500)
+  })
+  if (!wrote.ok) {
+    session.status = 'error'
+    session.error = `stdin: ${wrote.err?.message ?? wrote.err}`
+    return { ok: false, error: 'session_write_failed: সেশনটা resume নেয়নি — নতুন সেশন খুলুন।' }
+  }
   session.status = 'working'
   pushEvent(session, { kind: 'sent', text: String(text).slice(0, 1_000) })
+  persistSessions()
   return { ok: true, sessionId }
 }
 
@@ -301,6 +556,7 @@ export function stopSession(sessionId) {
     /* nothing to stop */
   }
   session.status = 'ended'
+  persistSessions() // an ended session must not offer resume after restart
   return { ok: true, sessionId }
 }
 
@@ -333,6 +589,8 @@ export function listSessions() {
  */
 export function installExitHandlers() {
   const shutdown = () => {
+    // Last chance to save the true counters before the children die with us.
+    persistSessions()
     for (const s of sessions.values()) {
       try {
         if (s.child?.pid) process.kill(-s.child.pid, 'SIGKILL')
@@ -425,8 +683,11 @@ export function markEventsPushed(sessionId, lastSeq) {
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
   installExitHandlers()
+  loadPersistedSessions(allowedDirs)
   const wrap = (fn) => async (params) => {
-    const out = fn(params)
+    // session_send is async now (it awaits the stdin write's completion);
+    // await tolerates the still-synchronous verbs too.
+    const out = await fn(params)
     return out.ok
       ? { ok: true, exitCode: 0, stdout: JSON.stringify(out) }
       : { ok: false, exitCode: null, error: out.error }

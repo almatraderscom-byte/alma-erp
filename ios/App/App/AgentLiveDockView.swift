@@ -60,10 +60,23 @@ struct AgentLiveActivityStep: Decodable, Identifiable, Equatable {
     }
 }
 
+/// L5: one row per CLI session in the window — its own status and cost.
+struct AgentLiveSession: Decodable, Identifiable, Equatable {
+    let sessionId: String
+    let tool: String
+    let lastBn: String
+    let status: String
+    let costUsd: Double
+    let at: String
+    var id: String { sessionId }
+}
+
 struct AgentLiveActivityFeed: Decodable, Equatable {
     let active: Bool
     let current: AgentLiveActivityStep?
     let steps: [AgentLiveActivityStep]
+    /// L5 — optional so older servers still decode.
+    let sessions: [AgentLiveSession]?
     /// data:image/… URI, newest across every surface.
     let screenshot: String?
     let screenshotAt: String?
@@ -259,8 +272,14 @@ final class AgentLiveDockStore {
                                   labelBn: "🌐 পেজ খুলছে", detail: "https://alma-erp-six.vercel.app",
                                   status: "done", policy: nil, at: now, sessionId: nil, sessionTool: nil, sessionKind: nil),
         ]
+        let fixtureSessions = [
+            AgentLiveSession(sessionId: "fx-session", tool: "claude",
+                             lastBn: "🧠 বুঝেছি — orders পেজের bug টা দেখছি",
+                             status: "working", costUsd: 0.0421, at: now),
+        ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
-                                     steps: steps, screenshot: nil, screenshotAt: nil)
+                                     steps: steps, sessions: fixtureSessions,
+                                     screenshot: nil, screenshotAt: nil)
         lastActiveAt = Date()
         if mode == "sheet" { expanded = true }
         return true
@@ -434,6 +453,12 @@ struct AgentLiveDockSheet: View {
                             }
                     }
 
+                    if let sessions = feed.sessions, !sessions.isEmpty {
+                        VStack(spacing: 6) {
+                            ForEach(sessions) { s in sessionRow(s, pal: pal) }
+                        }
+                    }
+
                     if store.replySessionId != nil {
                         replyRow(pal: pal)
                     }
@@ -476,6 +501,39 @@ struct AgentLiveDockSheet: View {
                 }
             }
         }
+    }
+
+    /// L5: one card per session — its own pulse, last line and running cost.
+    private func sessionRow(_ s: AgentLiveSession, pal: AgentPalette) -> some View {
+        HStack(spacing: 9) {
+            Circle()
+                .fill(s.status == "working" ? Color.green : s.status == "failed" ? Color.red : Color.primary.opacity(0.25))
+                .frame(width: 8, height: 8)
+                .modifier(AgentLiveDockPulse(animate: s.status == "working"))
+            VStack(alignment: .leading, spacing: 1.5) {
+                Text("\(s.tool == "codex" ? "Codex" : "Claude") সেশন")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(1)
+                Text(s.lastBn)
+                    .font(.system(size: 11))
+                    .foregroundStyle(pal.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if s.costUsd > 0 {
+                Text(String(format: "$%.4f", s.costUsd))
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(pal.mutedHi)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(pal.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(pal.ink.opacity(0.04), in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(pal.borderSubtle, lineWidth: 1))
     }
 
     /// L4 tap-to-reply: answer the session without leaving the chat.

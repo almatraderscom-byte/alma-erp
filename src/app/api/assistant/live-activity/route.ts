@@ -130,6 +130,14 @@ function sessionEventStep(r: {
       labelBn = '⏹️ সেশন শেষ'
       status = 'done'
       break
+    case 'resumed':
+      labelBn = '🔄 সেশন আবার জোড়া লাগল'
+      status = 'running'
+      break
+    case 'detached':
+      labelBn = '⏸️ সেশন অপেক্ষায় (daemon restart)'
+      status = 'done'
+      break
     default:
       labelBn = `🧠 ${r.kind}`
       status = 'done'
@@ -164,7 +172,8 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [macRows, browserRows, sessionEventRows] = await Promise.all([
+  const [macRows, browserRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows] =
+    await Promise.all([
     db.macAgentCommand
       .findMany({
         where: { createdAt: { gte: since } },
@@ -192,7 +201,46 @@ export async function GET(req: NextRequest) {
         where: { createdAt: { gte: since } },
         orderBy: { at: 'desc' },
         take: RECENT_STEPS,
-        select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
+        select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
+      })
+      .catch(() => []),
+    // L5 session cards: the newest event PER SESSION (Prisma distinct picks
+    // the first row per group under the orderBy), regardless of how many
+    // events the window holds — no cap to fall off (Codex, L5 round 2).
+    db.macAgentSessionEvent
+      .findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { at: 'desc' },
+        distinct: ['sessionId'],
+        select: { sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
+      })
+      .catch(() => []),
+    // Whole-window cost per session — a database SUM, not a capped scan.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: { createdAt: { gte: since } },
+        _sum: { costUsd: true },
+      })
+      .catch(() => []),
+    // Newest failure per session (error, or an errored turn) — for the
+    // "ended after an unresolved error is still a failure" rule.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: {
+          createdAt: { gte: since },
+          OR: [{ kind: 'error' }, { kind: 'turn_done', isError: true }],
+        },
+        _max: { at: true },
+      })
+      .catch(() => []),
+    // Newest successful turn per session.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: { createdAt: { gte: since }, kind: 'turn_done', isError: false },
+        _max: { at: true },
       })
       .catch(() => []),
   ])
@@ -270,9 +318,11 @@ export async function GET(req: NextRequest) {
   interface SessionEventRow {
     id: string
     sessionId: string
+    tool: string
     kind: string
     text: string | null
     isError: boolean
+    costUsd: number | null
     at: Date
   }
   // A completion supersedes the instantaneous events before it: a session whose
@@ -285,12 +335,69 @@ export async function GET(req: NextRequest) {
       if ((terminalAtBySession.get(r.sessionId) ?? 0) < t) terminalAtBySession.set(r.sessionId, t)
     }
   }
-  for (const r of sessionEventRows as SessionEventRow[]) {
+  const supersededStep = (r: SessionEventRow): ActivityStep => {
     const step = sessionEventStep(r)
     const terminalAt = terminalAtBySession.get(r.sessionId) ?? 0
     if (step.status === 'running' && terminalAt >= r.at.getTime()) step.status = 'done'
-    steps.push(step)
+    return step
   }
+  for (const r of sessionEventRows as SessionEventRow[]) {
+    steps.push(supersededStep(r))
+  }
+
+  // L5 — one card per session: status from the raw lifecycle (a tool running
+  // silently past 60s is still WORKING; a restored-but-detached session is
+  // not), cost as a whole-window database SUM. An error no successful turn
+  // followed marks the session failed even if `ended` came after it.
+  const costBySession = new Map<string, number>(
+    (sessionCostRows as Array<{ sessionId: string; _sum: { costUsd: number | null } }>).map((r) => [
+      r.sessionId,
+      r._sum.costUsd ?? 0,
+    ]),
+  )
+  const errAtBySession = new Map<string, number>(
+    (sessionErrRows as Array<{ sessionId: string; _max: { at: Date | null } }>).map((r) => [
+      r.sessionId,
+      r._max.at?.getTime() ?? 0,
+    ]),
+  )
+  const okAtBySession = new Map<string, number>(
+    (sessionOkRows as Array<{ sessionId: string; _max: { at: Date | null } }>).map((r) => [
+      r.sessionId,
+      r._max.at?.getTime() ?? 0,
+    ]),
+  )
+  const sessions = (sessionNewestRows as SessionEventRow[]).map((r) => {
+    let status: string
+    switch (r.kind) {
+      case 'ended':
+        status =
+          (errAtBySession.get(r.sessionId) ?? 0) > (okAtBySession.get(r.sessionId) ?? 0)
+            ? 'failed'
+            : 'done'
+        break
+      case 'error':
+        status = 'failed'
+        break
+      case 'turn_done':
+        status = r.isError ? 'failed' : 'done'
+        break
+      case 'detached':
+        // Alive but waiting for a send to resume — a live pulse would lie.
+        status = 'done'
+        break
+      default:
+        status = 'working'
+    }
+    return {
+      sessionId: r.sessionId,
+      tool: r.tool,
+      lastBn: sessionEventStep({ ...r, id: 'agg' }).labelBn,
+      status,
+      costUsd: Number((costBySession.get(r.sessionId) ?? 0).toFixed(4)),
+      at: r.at.toISOString(),
+    }
+  })
 
   steps.sort((a, b) => b.at.localeCompare(a.at))
   const trimmed = steps.slice(0, RECENT_STEPS)
@@ -332,6 +439,8 @@ export async function GET(req: NextRequest) {
       active: running.length > 0 || justFinished.length > 0,
       current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
+      /** L5: per-session status + cost for the expanded view. */
+      sessions,
       screenshot,
       screenshotAt,
     },

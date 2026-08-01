@@ -40,10 +40,21 @@ interface ActivityStep {
   sessionKind?: string | null
 }
 
+/** L5: one row per CLI session in the window — its own status and cost. */
+interface ActivitySession {
+  sessionId: string
+  tool: string
+  lastBn: string
+  status: string
+  costUsd: number
+  at: string
+}
+
 interface ActivityFeed {
   active: boolean
   current: ActivityStep | null
   steps: ActivityStep[]
+  sessions?: ActivitySession[]
   screenshot: string | null
   screenshotAt: string | null
 }
@@ -237,6 +248,38 @@ export default function AgentLiveDock() {
             ) : (
               <div className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-black/45">
                 এখনো কোনো ছবি নেই — কাজের ধাপগুলো নিচে দেখুন।
+              </div>
+            )}
+
+            {(feed.sessions?.length ?? 0) > 0 && (
+              <div className="mt-4 space-y-1.5">
+                {feed.sessions!.map((s) => (
+                  <div
+                    key={s.sessionId}
+                    className="flex items-center gap-2 rounded-lg border border-black/10 bg-black/[0.02] px-3 py-2"
+                  >
+                    <span
+                      className={`h-2 w-2 shrink-0 rounded-full ${
+                        s.status === 'working'
+                          ? 'animate-pulse bg-emerald-500'
+                          : s.status === 'failed'
+                            ? 'bg-red-500'
+                            : 'bg-black/25'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {s.tool === 'codex' ? 'Codex' : 'Claude'} সেশন
+                      </p>
+                      <p className="truncate text-[11px] text-black/50">{s.lastBn}</p>
+                    </div>
+                    {s.costUsd > 0 && (
+                      <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-[10px] text-black/60">
+                        ${s.costUsd.toFixed(4)}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
