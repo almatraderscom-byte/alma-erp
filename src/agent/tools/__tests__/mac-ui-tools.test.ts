@@ -10,6 +10,7 @@ const createCard = vi.fn()
 const enqueueCommand = vi.fn()
 const awaitResult = vi.fn()
 const requireOnlineMac = vi.fn()
+const uiEnabled = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
   prisma: { agentPendingAction: { create: (...args: unknown[]) => createCard(...args) } },
@@ -20,6 +21,7 @@ vi.mock('@/agent/lib/mac-agent/bus', async (importOriginal) => {
     ...real,
     enqueueCommand: (...args: unknown[]) => enqueueCommand(...args),
     awaitResult: (...args: unknown[]) => awaitResult(...args),
+    isMacUiDrivingEnabled: (...args: unknown[]) => uiEnabled(...args),
   }
 })
 vi.mock('../mac-tools', () => ({
@@ -37,6 +39,24 @@ beforeEach(() => {
   createCard.mockResolvedValue({ id: 'card-1' })
   enqueueCommand.mockResolvedValue({ id: 'cmd-1' })
   awaitResult.mockResolvedValue({ status: 'done', stdout: 'TREE', stderr: '', timedOut: false })
+  uiEnabled.mockResolvedValue(true)
+})
+
+describe('drive_mac_app — capability gate', () => {
+  it('refuses honestly while the daemon has no ui driver (KV switch off)', async () => {
+    uiEnabled.mockResolvedValue(false)
+    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    expect(r.success).toBe(false)
+    expect((r.data as { code?: string })?.code).toBe('ui_driving_disabled')
+    expect(enqueueCommand).not.toHaveBeenCalled()
+    expect(createCard).not.toHaveBeenCalled()
+  })
+
+  it('policy RED still wins over the gate — the reason names the rule, not the switch', async () => {
+    uiEnabled.mockResolvedValue(false)
+    const r = await drive.handler({ action: 'click', app: 'com.apple.safari', elementLabel: 'Send' })
+    expect((r.data as { code?: string })?.code).toBe('app_not_allowlisted')
+  })
 })
 
 describe('drive_mac_app — RED', () => {

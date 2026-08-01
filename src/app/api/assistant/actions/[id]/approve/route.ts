@@ -17,6 +17,8 @@ import {
   activeDevice as activeMacDevice,
   awaitResult as awaitMacResult,
   enqueueCommand as enqueueMacCommand,
+  isMacUiDrivingEnabled,
+  listDevices as listMacDevices,
   UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
@@ -1112,7 +1114,20 @@ async function runApprove(
       )
     }
 
-    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!(await isMacUiDrivingEnabled())) {
+      return Response.json(
+        { success: false, error: 'ui_driving_disabled', message: 'Mac-এর অ্যাপ চালানোর ফিচারটা এখনো চালু হয়নি, Boss।' },
+        { status: 409 },
+      )
+    }
+
+    // Revalidate the DEVICE at approval time, not card-creation time: the Mac
+    // may have slept or been revoked since — a card must never fabricate a
+    // device object and queue work for a machine that is gone (Codex P2).
+    const macDevices = await listMacDevices()
+    const device = p.deviceId
+      ? macDevices.find((d) => d.id === p.deviceId && d.online && d.pairedAt)
+      : await activeMacDevice()
     if (!device) {
       return Response.json(
         { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
@@ -1129,21 +1144,38 @@ async function runApprove(
       return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
     }
 
-    const { id: commandId } = await enqueueMacCommand({
-      deviceId: device.id,
-      action: uiAction as Parameters<typeof enqueueMacCommand>[0]['action'],
-      params: {
-        bundleId: p.bundleId ?? null,
-        elementLabel: p.elementLabel ?? null,
-        text: p.text ?? null,
-        key: p.key ?? null,
-        focusedLabel: p.focusedLabel ?? null,
-        scrollAmount: p.scrollAmount ?? null,
-        approved: true,
-      },
-      policyLevel: 'amber',
-      approvedBy: actionId,
-    })
+    let commandId: string
+    try {
+      const enq = await enqueueMacCommand({
+        deviceId: device.id,
+        action: uiAction as Parameters<typeof enqueueMacCommand>[0]['action'],
+        params: {
+          bundleId: p.bundleId ?? null,
+          elementLabel: p.elementLabel ?? null,
+          text: p.text ?? null,
+          key: p.key ?? null,
+          focusedLabel: p.focusedLabel ?? null,
+          scrollAmount: p.scrollAmount ?? null,
+          approved: true,
+        },
+        policyLevel: 'amber',
+        approvedBy: actionId,
+      })
+      commandId = enq.id
+    } catch (err) {
+      // A transient failure after the claim would otherwise strand the card as
+      // `approved` with nothing queued — a retry then hits already_resolved and
+      // the owner's approval is silently lost (Codex P2). Hand the card back.
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending', resolvedAt: null },
+      })
+      const msg = err instanceof Error ? err.message : 'enqueue_failed'
+      return Response.json(
+        { success: false, error: 'enqueue_failed', message: `কাজটা পাঠাতে গিয়ে সমস্যা হয়েছে (${msg}) — কার্ডটা আবার approve করা যাবে।` },
+        { status: 500 },
+      )
+    }
 
     // The daemon may defer on owner_active and retry, so give it headroom.
     const outcome = await awaitMacResult(commandId, 100_000)

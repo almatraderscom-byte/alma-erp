@@ -76,6 +76,27 @@ export async function isMacAgentEnabled(): Promise<boolean> {
   }
 }
 
+/**
+ * Separate switch for UI driving (L8), default OFF: the shipped daemon answers
+ * every ui_* verb with `unknown_action` until W3's driver is deployed on the
+ * Mac, so exposing the verbs before then would fail every read and burn
+ * approved cards on nothing (Codex P1 on the W4 PR). The owner flips this in
+ * KV once the updated daemon is running — same plane as mac_agent_enabled.
+ */
+export const MAC_UI_ENABLED_KEY = 'mac_ui_driving_enabled'
+
+export async function isMacUiDrivingEnabled(): Promise<boolean> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({
+      where: { key: MAC_UI_ENABLED_KEY },
+      select: { value: true },
+    })
+    return row?.value === 'true'
+  } catch {
+    return false
+  }
+}
+
 export async function setMacAgentEnabled(enabled: boolean): Promise<boolean> {
   const value = enabled ? 'true' : 'false'
   await prisma.agentKvSetting.upsert({

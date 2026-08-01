@@ -17,7 +17,7 @@
  */
 import type { AgentTool } from './registry'
 import { prisma } from '@/lib/prisma'
-import { awaitResult, enqueueCommand, UI_SERVER_IDLE_SENTINEL } from '@/agent/lib/mac-agent/bus'
+import { awaitResult, enqueueCommand, isMacUiDrivingEnabled, UI_SERVER_IDLE_SENTINEL } from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 import { requireOnlineMac } from './mac-tools'
 
@@ -147,6 +147,18 @@ const drive_mac_app: AgentTool = {
         success: false,
         error: `নিরাপত্তার কারণে এটা করা যাবে না, Boss। ${verdict.reasonBn} (কোড: ${verdict.code})`,
         data: { refused: true, policy: verdict.level, code: verdict.code },
+      }
+    }
+
+    // The shipped daemon answers ui_* with unknown_action until W3's driver is
+    // deployed — gate the whole capability until the owner flips the KV switch,
+    // so no read fails confusingly and no approved card burns on nothing.
+    if (!(await isMacUiDrivingEnabled())) {
+      return {
+        success: false,
+        error:
+          'Mac-এর অ্যাপ চালানোর ফিচারটা এখনো চালু হয়নি, Boss — আপনার Mac-এর এজেন্টে UI-driver আপডেটটা বসার পর এটা অন করা হবে। ততক্ষণ টার্মিনাল কমান্ড আর Claude/Codex সেশন আগের মতোই চলবে।',
+        data: { refused: true, code: 'ui_driving_disabled' },
       }
     }
 
