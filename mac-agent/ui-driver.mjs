@@ -138,6 +138,12 @@ const SWIFT_HELPER = String.raw`
 import ApplicationServices
 import AppKit
 
+// Maps an AX window to its CGWindowID — the stable SPI every screen-reader
+// uses; there is no public bridge. The id feeds screencapture -l so a capture
+// is THE WINDOW's backing store, not whatever pixels sit in its rectangle.
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ el: AXUIElement, _ wid: inout CGWindowID) -> AXError
+
 // ---- AX conveniences --------------------------------------------------------
 func attr(_ el: AXUIElement, _ n: String) -> AnyObject? {
     var v: AnyObject?
@@ -396,9 +402,12 @@ case "info":
           "windows": wins.compactMap { str($0, kAXTitleAttribute) }])
 
 case "bounds":
-    // Global frame of the resolved window, in points — the daemon feeds this
-    // to screencapture -R so an app screenshot captures ONLY that window.
+    // CGWindowID (+ frame, for context) of the resolved window. The daemon
+    // captures by id (screencapture -l) — a rect capture would return
+    // whatever pixels COVER the rectangle, not the window itself.
     let win = resolveWindow()
+    var wid: CGWindowID = 0
+    if _AXUIElementGetWindow(win, &wid) != .success || wid == 0 { fail("no_window_id") }
     var pos = CGPoint.zero
     var size = CGSize.zero
     if let pv = attr(win, kAXPositionAttribute), CFGetTypeID(pv) == AXValueGetTypeID() {
@@ -407,8 +416,7 @@ case "bounds":
     if let sv = attr(win, kAXSizeAttribute), CFGetTypeID(sv) == AXValueGetTypeID() {
         AXValueGetValue(sv as! AXValue, .cgSize, &size)
     }
-    if size.width < 1 || size.height < 1 { fail("no_window_bounds") }
-    emit(["ok": true, "x": Int(pos.x), "y": Int(pos.y),
+    emit(["ok": true, "wid": Int(wid), "x": Int(pos.x), "y": Int(pos.y),
           "w": Int(size.width), "h": Int(size.height)])
 
 case "tree":
@@ -800,15 +808,17 @@ function ok(payload) {
 }
 
 /**
- * Capture ONE window's rect as a downscaled JPEG data URI — same downscale +
- * size-limit story as the daemon's full-screen `screenshot()` (agent.mjs),
- * only bounded to the frame the AX helper reported. `screencapture -R` takes
- * global points, which is exactly what AXPosition/AXSize give.
+ * Capture ONE window (by CGWindowID) as a downscaled JPEG data URI — same
+ * downscale + size-limit story as the daemon's full-screen `screenshot()`
+ * (agent.mjs). Capture is by id (`screencapture -l`), never by rect: a rect
+ * returns whatever pixels COVER the rectangle, so a covered or minimized
+ * window would leak unrelated, non-allowlisted content (Codex P1). A window
+ * that cannot be captured (minimized to the Dock) fails honestly instead.
  */
-function captureRect({ x, y, w, h }) {
+function captureWindow({ wid }) {
   return new Promise((resolve) => {
     const out = join(CONFIG_DIR, `ui-shot-${Date.now()}.jpg`)
-    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', '-R', `${x},${y},${w},${h}`, out], (err) => {
+    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', '-l', String(wid), out], (err) => {
       if (err) return resolve({ ok: false, exitCode: null, error: String(err.message ?? err) })
       // sips ships with macOS; if it fails we still send the original.
       execFile('/usr/bin/sips', ['-Z', '1600', '-s', 'formatOptions', '60', out], () => {
@@ -1332,7 +1342,7 @@ export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled, ca
       if (h.manual) bArgs.push('--manual')
       const b = await helper(bArgs)
       if (!b.ok) return helperError(b)
-      return await captureRect(b)
+      return await captureWindow(b)
     }
     if (typeof captureScreenFn !== 'function') {
       return { ok: false, exitCode: null, error: 'screenshot_unavailable: daemon did not provide a capture path.' }
