@@ -491,6 +491,11 @@ export async function executePersonalTool(
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+    // The personal toolbox is not exempt from the mode. Without this, Plan let a
+    // routine personal write (`add_bill`) execute on the native loop — the one
+    // promise Plan makes is that nothing changes (review bot, #667).
+    permissionMode: serverContext.permissionMode as string | undefined,
+    elevationGrant: serverContext.elevationGrant as ToolRunContext['elevationGrant'],
   })
 }
 

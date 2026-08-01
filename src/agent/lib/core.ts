@@ -1740,7 +1740,7 @@ export async function* runAgentTurn(
               klass: 'unknown',
             })
           : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant })
           : await executeTool(tb.name, tb.input, {
               conversationId, businessId, modelId: chatModel.id, turnAuthorization,
               ownerVoicePref, voiceCallInstruction, callbackRequested,
