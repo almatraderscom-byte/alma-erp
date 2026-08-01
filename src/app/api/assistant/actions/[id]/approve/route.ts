@@ -17,8 +17,10 @@ import {
   activeDevice as activeMacDevice,
   awaitResult as awaitMacResult,
   enqueueCommand as enqueueMacCommand,
+  UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
+import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -1068,6 +1070,97 @@ async function runApprove(
       success: outcome.status === 'done',
       commandId,
       exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      stillRunning: outcome.timedOut,
+    })
+  }
+
+  // L8 (W4) — the owner approved one UI action inside an allowlisted desktop
+  // app. Re-classified on approval (the card could be stale), enqueued with the
+  // approval id, and re-judged once more by the daemon with the REAL owner-idle
+  // measurement before any event is synthesised.
+  if (action.type === 'mac_ui_action') {
+    const p = payload as {
+      uiAction?: string
+      bundleId?: string
+      elementLabel?: string | null
+      text?: string | null
+      key?: string | null
+      focusedLabel?: string | null
+      scrollAmount?: number | null
+      deviceId?: string
+    }
+    const uiAction = String(p.uiAction ?? '')
+    const verdict = classifyUiAction({
+      action: uiAction,
+      bundleId: p.bundleId,
+      elementLabel: p.elementLabel ?? undefined,
+      text: p.text ?? undefined,
+      key: p.key ?? undefined,
+      focusedLabel: p.focusedLabel ?? undefined,
+      ownerIdleSeconds: UI_SERVER_IDLE_SENTINEL,
+    })
+    if (verdict.level === 'red') {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+      return Response.json(
+        { success: false, error: `refused_by_policy:${verdict.code}`, message: verdict.reasonBn },
+        { status: 400 },
+      )
+    }
+
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+
+    // Same claim-first race guard as the mac_command branch above.
+    const claimedUi = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimedUi.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: uiAction as Parameters<typeof enqueueMacCommand>[0]['action'],
+      params: {
+        bundleId: p.bundleId ?? null,
+        elementLabel: p.elementLabel ?? null,
+        text: p.text ?? null,
+        key: p.key ?? null,
+        focusedLabel: p.focusedLabel ?? null,
+        scrollAmount: p.scrollAmount ?? null,
+        approved: true,
+      },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    // The daemon may defer on owner_active and retry, so give it headroom.
+    const outcome = await awaitMacResult(commandId, 100_000)
+    const uiTail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+    await appendConversationNote(
+      db,
+      action,
+      outcome.timedOut
+        ? `✅ অনুমোদিত — কাজটা এখনো চলছে (id: ${commandId})। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
+        : outcome.status === 'done'
+          ? `✅ অনুমোদিত ও করা হয়েছে।\n\n\`\`\`\n${uiTail}\n\`\`\``
+          : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``,
+    )
+
+    return Response.json({
+      success: outcome.status === 'done',
+      commandId,
       stdout: outcome.stdout,
       stderr: outcome.stderr,
       stillRunning: outcome.timedOut,

@@ -200,7 +200,7 @@ export const DOMAIN_PACKS = {
   mac: [
     'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
     'start_cli_session', 'send_to_cli_session', 'read_cli_session', 'stop_cli_session',
-    'list_cli_sessions',
+    'list_cli_sessions', 'drive_mac_app', 'list_mac_apps',
   ],
 } as const
 

@@ -25,13 +25,15 @@
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { classifyCommand, MAC_EXEC_LIMITS, type PolicyLevel } from '@/agent/lib/mac-agent/policy'
+import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 
 const MAC_EXEC_LIMITS_MAX_TIMEOUT = MAC_EXEC_LIMITS.maxTimeoutMs
 
 /** KV kill-switch (owner-tunable, no redeploy). Default OFF — capability is opt-in. */
 export const MAC_AGENT_ENABLED_KEY = 'mac_agent_enabled'
 
-/** Verbs the daemon knows. M1 ships run_command/ping; the session_* verbs are M2. */
+/** Verbs the daemon knows. M1 ships run_command/ping; the session_* verbs are M2;
+ * the ui_* verbs are L8 (driving the allowlisted desktop apps through the AX tree). */
 export const MAC_AGENT_ACTIONS = [
   'ping',
   'run_command',
@@ -43,6 +45,12 @@ export const MAC_AGENT_ACTIONS = [
   'session_list',
   'power',
   'screen_stream',
+  'ui_tree',
+  'ui_screenshot',
+  'ui_scroll',
+  'ui_click',
+  'ui_type',
+  'ui_key',
 ] as const
 export type MacAgentAction = (typeof MAC_AGENT_ACTIONS)[number]
 
@@ -281,6 +289,16 @@ export interface EnqueueInput {
   sessionKey?: string | null
 }
 
+/**
+ * Idle-seconds sentinel for SERVER-side UI classification. The server cannot
+ * know how recently the owner touched his keyboard — only the daemon can — so
+ * the server judges the PERMANENT questions (which app, which element, what
+ * text) with idle treated as satisfied, and the daemon re-judges with the REAL
+ * measurement before synthesising anything. `owner_active` is a runtime defer,
+ * not an approval question, so this weakens nothing.
+ */
+export const UI_SERVER_IDLE_SENTINEL = Number.MAX_SAFE_INTEGER
+
 export async function enqueueCommand(input: EnqueueInput): Promise<{ id: string }> {
   // Belt and braces: a RED command must never reach the queue, no matter which
   // caller made the mistake. The tool layer checks first; this is the backstop.
@@ -290,6 +308,25 @@ export async function enqueueCommand(input: EnqueueInput): Promise<{ id: string 
     if (verdict.level === 'red') throw new Error(`red_command_rejected:${verdict.code}`)
     if (verdict.level === 'amber' && !input.approvedBy) {
       throw new Error('amber_command_requires_approval')
+    }
+  }
+  // Same backstop for UI driving (L8): no RED action reaches the queue, and no
+  // amber one without a card behind it. The daemon still re-judges with the
+  // real owner-idle measurement.
+  if (input.action.startsWith('ui_')) {
+    const p = input.params ?? {}
+    const verdict = classifyUiAction({
+      action: input.action,
+      bundleId: p.bundleId as string | undefined,
+      elementLabel: p.elementLabel as string | undefined,
+      text: p.text as string | undefined,
+      key: p.key as string | undefined,
+      focusedLabel: p.focusedLabel as string | undefined,
+      ownerIdleSeconds: UI_SERVER_IDLE_SENTINEL,
+    })
+    if (verdict.level === 'red') throw new Error(`red_ui_action_rejected:${verdict.code}`)
+    if (verdict.level === 'amber' && !input.approvedBy) {
+      throw new Error('amber_ui_action_requires_approval')
     }
   }
 

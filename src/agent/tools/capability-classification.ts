@@ -78,6 +78,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // gated behind an approval card (a standing grant, not a single action), which
   // is why start is 'stage'; the rest only steer or observe a session that the
   // owner already allowed to exist.
+  drive_mac_app: stage('mac', 'high'),
+  list_mac_apps: read('mac'),
   start_cli_session: stage('mac', 'high'),
   send_to_cli_session: write('mac', 'medium'),
   read_cli_session: read('mac'),

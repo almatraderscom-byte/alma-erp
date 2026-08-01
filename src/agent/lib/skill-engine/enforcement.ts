@@ -48,6 +48,8 @@ export const ALWAYS_ALLOWED = new Set([
   'read_cli_session',
   'stop_cli_session',
   'list_cli_sessions',
+  'drive_mac_app',
+  'list_mac_apps',
 ])
 
 /**
