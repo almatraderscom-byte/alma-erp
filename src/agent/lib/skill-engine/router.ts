@@ -197,7 +197,7 @@ const PRODUCT_EDIT_ASK = (t: string): boolean =>
  * request_standing_permission on its core list.
  */
 const PERMISSION_ASK =
-  /(?:(?:r|আর)\s*(?:amake\s*)?(?:জিজ্ঞেস|jiggesh|jigges|জিগ্গেস)\s*(?:কোরো|koro|করো)\s*না|(?:জিজ্ঞেস|jiggesh)\s*না\s*কর|approval\s*(?:লাগবে\s*না|chai\s*na|ছাড়া)|কার্ড\s*ছাড়া|card\s*chara|(?:নিজে|nije[i]?)\s*(?:কর|koro|করো|pathao|পাঠাও)[^\n]{0,24}(?:permission|অনুমতি)?|standing\s*permission|অনুমতি\s*দিলাম|permission\s*দিলাম)/i
+  /(?:(?:আর\s*)?(?:amake\s*|আমাকে\s*)?(?:জিজ্ঞেস|jiggesh|jigges|জিগ্গেস)\s*(?:কোরো|koro|করো)?\s*(?:না|\bna\b)|(?:জিজ্ঞেস|jiggesh)\s*(?:না|\bna\b)\s*(?:কর|kor)|(?:stop|don'?t|do\s*not)\s+ask(?:ing)?(?:\s+me)?|no\s+more\s+(?:approvals?|cards?|asking)|approval\s*(?:লাগবে\s*না|chai\s*na|ছাড়া)|কার্ড\s*ছাড়া|card\s*chara|without\s+(?:a\s+)?card|standing\s*permission|অনুমতি\s*দিলাম|permission\s*দিলাম)/i
 
 /** Words that mean the sentence is about a WINDOW of time, which a grant needs. */
 const TIME_WINDOW =

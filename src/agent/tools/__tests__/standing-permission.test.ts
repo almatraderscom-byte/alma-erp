@@ -158,3 +158,23 @@ describe('every turn carries the ability to ask', () => {
     expect(HEAD_CORE_TOOL_NAMES.has('request_standing_permission')).toBe(true)
   })
 })
+
+/** Review-bot P2s on #667 — the veto missed plain phrasings and caught one job. */
+describe('the veto reads the request, not the wording', () => {
+  it('catches the forms without the "r" prefix and the English ones', async () => {
+    const { isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    for (const text of [
+      'porer 15 minute jiggesh koro na, staff message pathao',
+      'stop asking me for the next 30 minutes, just send them',
+      'next 20 minutes no more approvals, do it yourself',
+    ]) {
+      expect(isStandingPermissionAsk(text)).toBe(true)
+    }
+  })
+
+  it('does NOT hijack an ordinary job that merely has a deadline', async () => {
+    const { isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    expect(isStandingPermissionAsk('এই স্টাফ মেসেজটা ১৫ মিনিটের মধ্যে নিজে পাঠাও')).toBe(false)
+    expect(isStandingPermissionAsk('30 minute er moddhe nije order ta update koro')).toBe(false)
+  })
+})
