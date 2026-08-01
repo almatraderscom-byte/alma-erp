@@ -399,10 +399,16 @@ export function permissionModeNote(mode: PermissionMode, grant?: ElevationGrant 
   ]
   // A grant is family-scoped and sits on top of ANY mode now, so it is reported
   // whenever it is live — not only in `elevated`.
-  if (grant && grant.families.length > 0) {
+  // Only families that are STILL live. The row outlives the permission, and a
+  // banner that keeps naming an expired family tells the head to work card-free
+  // while every execution check correctly refuses (review bot, #667).
+  const liveFamilies = grant
+    ? grant.families.filter((f) => isFamilyGrantLive(grant, f, Date.now()))
+    : []
+  if (grant && liveFamilies.length > 0) {
     // Per-family cutoffs, because they can differ — reporting the grant-wide one
     // would tell the head a 15-minute permission runs for four hours.
-    const spelled = grant.families.map((f) => `${f} (${familyExpiry(grant, f)} পর্যন্ত)`).join(', ')
+    const spelled = liveFamilies.map((f) => `${f} (${familyExpiry(grant, f)} পর্যন্ত)`).join(', ')
     lines.push(`সময়-বাঁধা অনুমতি চালু: ${spelled} — এগুলো ওই সময় পর্যন্ত কার্ড ছাড়াই করো।`)
   }
   // The one instruction that kept getting lost in the big prompt: three live

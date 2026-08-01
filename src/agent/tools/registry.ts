@@ -925,7 +925,22 @@ export async function runRegisteredTool(
   }
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
+    // Does the owner's standing grant name THIS call's family? Explicit mappings
+    // only — a fallback class is a risk floor, not a family.
+    let standingGrantCoversCall = false
+    if (ctx.elevationGrant) {
+      try {
+        const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+        const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+        const task = taskClassForTool(tool.name, cap)
+        standingGrantCoversCall =
+          task.explicit && isFamilyGrantLive(ctx.elevationGrant, task.taskClass, Date.now())
+      } catch {
+        standingGrantCoversCall = false
+      }
+    }
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
+      standingGrantCoversCall,
       surface: ctx.surface,
       conversationId: ctx.conversationId,
       businessId: ctx.businessId,

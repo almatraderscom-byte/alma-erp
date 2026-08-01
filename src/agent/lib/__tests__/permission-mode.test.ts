@@ -160,10 +160,14 @@ describe('the per-turn banner', () => {
     expect(note).toContain('মোড তুমি নিজে বদলাবে না')
   })
 
-  it('shows what an elevation covers and until when', () => {
-    const note = permissionModeNote('elevated', { families: ['public-publish'], expiresAt: '2026-07-27T12:30:00Z' })
+  it('shows what a LIVE grant covers and until when', () => {
+    // A fixed past timestamp used to pass here; the banner now filters expired
+    // families, which is the point — it must never advertise a permission the
+    // execution checks would refuse.
+    const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString()
+    const note = permissionModeNote('elevated', { families: ['public-publish'], expiresAt })
     expect(note).toContain('public-publish')
-    expect(note).toContain('2026-07-27T12:30:00Z')
+    expect(note).toContain(expiresAt)
   })
 })
 
@@ -244,5 +248,28 @@ describe('each family keeps the window it was given', () => {
     const old = { families: ['staff-messaging'], expiresAt: new Date(now + 60_000).toISOString() }
     expect(isFamilyGrantLive(old, 'staff-messaging', now)).toBe(true)
     expect(isFamilyGrantLive(old, 'staff-messaging', now + 120_000)).toBe(false)
+  })
+})
+
+/** Review-bot P2 (#667 round 5): the row outlives the permission. */
+describe('the banner names only families that are still live', () => {
+  const now = Date.now()
+  it('drops an expired family and keeps the live one', () => {
+    const grant = {
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': new Date(now - 60_000).toISOString(),
+        'customer-messaging': new Date(now + 60 * 60_000).toISOString(),
+      },
+    }
+    const note = permissionModeNote('standard', grant)
+    expect(note).toContain('customer-messaging')
+    expect(note).not.toContain('staff-messaging')
+  })
+
+  it('says nothing about a grant that has fully expired', () => {
+    const dead = { families: ['staff-messaging'], expiresAt: new Date(now - 1000).toISOString() }
+    expect(permissionModeNote('standard', dead)).not.toContain('সময়-বাঁধা অনুমতি চালু')
   })
 })

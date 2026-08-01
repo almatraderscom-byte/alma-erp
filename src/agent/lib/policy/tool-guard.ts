@@ -53,6 +53,13 @@ export interface GuardCallContext {
   capabilityRevoked?: boolean
   /** Set false when the caller knows the target account is out of scope. */
   accountScopeOk?: boolean
+  /**
+   * B6 — the owner's own standing yes for a NAMED task family, with an expiry.
+   * The mode layer already honours it; without it here the canonical guard would
+   * still demand a card for the very thing the grant card promised would run
+   * without one (review bot, #667).
+   */
+  standingGrantCoversCall?: boolean
 }
 
 export interface GuardOutcome {
@@ -414,6 +421,12 @@ export async function guardToolCall(
       }
       if (origin === 'owner_direct' && decision.reasonClass !== 'point_of_risk_approval') {
         // Defensive: no other stage class applies to owner_direct writes today.
+        return { action: 'proceed', decision, enforced: false, dataClass, envelope: signed }
+      }
+      // A live, family-scoped grant IS the point-of-risk approval for this
+      // family — Boss gave it in advance, with an expiry, on a card that named
+      // exactly this. Anything the grant does not name still stops here.
+      if (ctx.standingGrantCoversCall) {
         return { action: 'proceed', decision, enforced: false, dataClass, envelope: signed }
       }
       if (ctx.instructionOrigin === 'model_initiative' || pointOfRiskEnforced()) {
