@@ -182,6 +182,32 @@ streaming already gives the watching; L8 gives the hands.
 | **Electron apps expose a limited AX tree** by default — and BOTH targets (Claude desktop, ChatGPT desktop) are Electron ([OpenCLI](https://opencli.info/docs/adapters/desktop/chatgpt-app.html)) | **The single biggest risk in this phase.** Mitigation ladder: (1) set `AXManualAccessibility=true` on the app to force the full web tree, (2) fall back to the app's remote-debugging port for READS, (3) fall back to screenshot+coordinates last. Spike this FIRST — it decides the shape of everything else |
 | macOS requires **Accessibility permission** separately from Screen Recording ([Claude Computer Use setup](https://www.digitalapplied.com/blog/claude-computer-use-macos-remote-mac-control-iphone-guide)) | One more one-time owner grant, same place in Settings. Screen Recording is already granted |
 
+### What "watching" must feel like (owner, 2026-08-01, with a screenshot of the ChatGPT Mac app)
+
+*"visible live streaming amon hobe, ChatGPT app-e jemon ase — ami chat live
+dekhte pai."* He pointed at the ChatGPT desktop app's small floating session
+window, where the conversation itself streams as it happens.
+
+Read precisely: **he wants the CHAT, not a video of a screen.** L7 frames are
+a picture of a window — unreadable on a phone, expensive, and unsearchable.
+Once W1 proves we can read those Electron apps' AX trees, the same read gives
+us the actual message text, so:
+
+- **Mirror the driven app's conversation into the dock as TEXT** — one entry
+  per message (who said it, the text), streamed as it lands, exactly the way
+  the CLI-session transcript already flows through `mac_agent_session_events`.
+  Reuse that pipe; do not invent a second one.
+- **Frames stay the fallback and the proof** — a thumbnail/expand for "show me
+  the actual window", not the primary way he reads what is happening.
+- **The mini-player shape he pointed at already exists** on both docks (strip
+  above the composer → expandable sheet). The gap is the CONTENT, not the
+  chrome.
+- **Ownership:** W1 proves the read, **W3 emits the mirrored messages**, the
+  dock renders them with no change (they arrive as session events). W5's
+  all-day tasks then read as a live chat he can follow from the phone.
+- Same rules as everywhere: mirroring is READ-ONLY (green), and it stops with
+  the kill-switch and STOP like everything else.
+
 **Deliberate non-goal:** we are not rebuilding what the CLI already does well.
 Coding work should keep going through `claude -p` sessions (observable,
 resumable, cheap). L8 exists for what the CLI *cannot* do — the owner's actual
@@ -219,7 +245,9 @@ whether the AX tree is even usable on Electron); everything else is parallel.
 - **Reads:** this roadmap §L8, `mac-agent/agent.mjs`
 - **Done when:** the doc shows a real element tree from BOTH apps, or names the
   exact fallback with evidence — and a chat message was typed and sent into
-  one of them from a script.
+  one of them from a script. **Also required:** the spike must dump the
+  conversation TEXT (who said what) out of at least one app, because chat
+  mirroring (§"What watching must feel like") depends on that read.
 - **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W1 (Electron AX spike) koro"*
 
 ### W2 — the UI policy classifier (parallel with W1)
@@ -238,8 +266,14 @@ whether the AX tree is even usable on Electron); everything else is parallel.
   `ui_key`, `ui_scroll`, each returning the AX diff; re-judged locally.
 - **Writes:** `mac-agent/ui-driver.mjs`, wiring in `mac-agent/agent.mjs`
 - **Reads:** W1's spike doc, `mac-agent/sessions.mjs` (handler-registration pattern)
+- **Also W3: chat mirroring.** A watcher that re-reads the driven app's
+  conversation area and emits each NEW message as a session event (same
+  `mac_agent_session_events` pipe as CLI sessions), so both docks show the
+  app's live chat as text with zero render changes. Dedupe by message
+  index/hash; never re-emit what was already sent.
 - **Done when:** a scripted sequence opens Claude desktop, types a prompt,
-  submits it, and reads the reply back through the tree.
+  submits it, reads the reply back through the tree — AND that reply appears
+  as live text in the web dock.
 - **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W3 (daemon UI driver) koro"*
 
 ### W4 — server tools + approval cards (after W1, parallel with W3)
