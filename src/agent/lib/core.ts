@@ -1749,6 +1749,21 @@ export async function* runAgentTurn(
         }
       }
 
+      // B6 — a permission change in this response makes the WHOLE response
+      // ordered. Bucketing the revoke as a write is not enough: a covered tool
+      // that is not itself in MUTATING_TOOLS (send_whatsapp, say) would still sit
+      // in the parallel read bucket and run BEFORE the revoke that cancels it
+      // (review bot, #667). Source order is the only thing that keeps
+      // "revoke, then that" meaning what it says.
+      const permissionChangeInResponse = toolUseBlocks.some(
+        (tb) => tb.name === 'revoke_standing_permission' || tb.name === 'request_standing_permission',
+      )
+      if (permissionChangeInResponse) {
+        writes.length = 0
+        reads.length = 0
+        for (const tb of toolUseBlocks) writes.push(tb)
+      }
+
       // Execute reads in parallel, writes sequentially after
       const resultMap = new Map<string, ToolExecResult>()
 
