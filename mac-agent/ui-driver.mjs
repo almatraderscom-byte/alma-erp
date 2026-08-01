@@ -816,9 +816,14 @@ async function uiScroll(params, cmd) {
   const direction = params.direction === 'up' || params.direction === 'down'
     ? params.direction
     : Number.isFinite(signed) && signed < 0 ? 'up' : 'down'
+  // Default of 5 applies only when NO amount was given at all — an explicit 0
+  // (a computed boundary) means "don't move", not "scroll down 5" (Codex P2).
+  const hasExplicit = Number.isFinite(Number(params.amount)) || Number.isFinite(signed)
   const magnitude = Number(params.amount) || (Number.isFinite(signed) ? Math.abs(signed) : 0)
+  const amount = hasExplicit ? Math.min(magnitude, 40) : 5
+  if (amount === 0) return ok({ scrolled: 0, policy: verdict.level })
   const args = ['scroll', bundleId, '--dir', direction,
-    '--amount', String(Math.min(magnitude || 5, 40)),
+    '--amount', String(amount),
     '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
