@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { StudioBrandProfile } from '@/agent/components/creative-studio/studio-api'
+import { downloadStudioAsset } from '@/agent/components/creative-studio/StudioUi'
 import {
   libraryItemFromGallery,
   libraryItemFromModel,
@@ -32,6 +33,7 @@ import {
   STUDIO_V3_LIFECYCLES,
 } from '@/agent/components/creative-studio-v3/ui-contract'
 import styles from '@/agent/components/creative-studio-v3/creative-studio-v3.module.css'
+import { artifactFileExtension } from '@/lib/creative-studio/artifact-metadata'
 import type { StudioProjectSummary } from '@/lib/creative-studio/project-contract'
 
 function serverState(lifecycle: StudioV3Lifecycle) {
@@ -48,6 +50,28 @@ function MediaPreview({ item }: { item: StudioV3LibraryItem }) {
       <StudioV3Icon name={item.type === 'audio' ? 'audio' : item.type === 'voice' ? 'voice' : item.type === 'avatar' ? 'voice' : item.type === 'project' ? 'project' : 'image'} />
     </span>
   )
+}
+
+function fullMediaUrl(item: StudioV3LibraryItem): string | null {
+  return item.galleryItem?.previewUrl ?? item.previewUrl
+}
+
+function ExpandedMedia({ item }: { item: StudioV3LibraryItem }) {
+  const url = fullMediaUrl(item)
+  if (item.type === 'video' && url) return <video controls playsInline src={url} />
+  if (item.type === 'audio' && url) return <audio controls src={url} />
+  if (url) return <img alt={item.title} src={url} />
+  return <MediaPreview item={item} />
+}
+
+function downloadFilename(item: StudioV3LibraryItem): string {
+  const descriptor = item.galleryItem?.originalVariant
+  const extension = item.type === 'video'
+    ? 'mp4'
+    : item.type === 'audio'
+      ? 'mp3'
+      : artifactFileExtension(descriptor, descriptor?.storagePath ?? item.storagePath)
+  return `alma-${item.id}.${extension}`
 }
 
 function formatWhen(value: string | null): string {
@@ -90,6 +114,9 @@ export function StudioV3Gallery({
   const [total, setTotal] = useState(0)
   const [issues, setIssues] = useState<string[]>([])
   const loadSequence = useRef(0)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const lightboxPanelRef = useRef<HTMLElement>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
   const reviewLocked = Boolean(reviewTarget)
 
   const load = useCallback(async () => {
@@ -166,7 +193,7 @@ export function StudioV3Gallery({
         ? exactReviewItem?.id ?? null
         : current && next.some((item) => item.id === current)
           ? current
-          : next[0]?.id ?? null)
+          : null)
     setLoading(false)
   }, [
     activeBrand?.brandProfileId,
@@ -232,7 +259,62 @@ export function StudioV3Gallery({
     })
     return sortStudioV3Library(filtered, sort)
   }, [aspectFilter, category, items, lifecycle, providerFilter, reviewTarget, search, sort])
-  const selected = visible.find((item) => item.id === selectedId) ?? visible[0] ?? null
+  const selected = visible.find((item) => item.id === selectedId) ?? null
+  const selectedIndex = selected ? visible.findIndex((item) => item.id === selected.id) : -1
+  const lightboxOpen = selected !== null
+
+  const moveSelection = useCallback((direction: -1 | 1) => {
+    if (visible.length < 2) return
+    setSelectedId((current) => {
+      const currentIndex = visible.findIndex((item) => item.id === current)
+      if (currentIndex < 0) return current
+      const nextIndex = (currentIndex + direction + visible.length) % visible.length
+      return visible[nextIndex]?.id ?? current
+    })
+  }, [visible])
+
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const previousOverflow = document.body.style.overflow
+    returnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+    document.body.style.overflow = 'hidden'
+    closeButtonRef.current?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+      returnFocusRef.current?.focus()
+      returnFocusRef.current = null
+    }
+  }, [lightboxOpen])
+
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedId(null)
+      if (event.key === 'ArrowLeft') moveSelection(-1)
+      if (event.key === 'ArrowRight') moveSelection(1)
+      if (event.key === 'Tab') {
+        const focusable = Array.from(
+          lightboxPanelRef.current?.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+          ) ?? [],
+        )
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (!first || !last) return
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [lightboxOpen, moveSelection])
 
   const selectCategory = (value: CreativeStudioV3LibraryType) => {
     if (reviewLocked) return
@@ -307,7 +389,7 @@ export function StudioV3Gallery({
       </p>
       {issues.length > 0 && <div className={styles.inlineWarning}><StudioV3Icon name="warning" /><span>{issues.join(' · ')}</span></div>}
 
-      <div className={selected ? styles.galleryLayout : styles.galleryLayoutFull}>
+      <div className={styles.galleryLayoutFull}>
         <section aria-busy={loading} aria-label="Gallery results" className={styles.galleryResults}>
           {loading ? (
             <div className={styles.gallerySkeleton} data-density={density}>{Array.from({ length: 12 }).map((_, index) => <span key={index} />)}</div>
@@ -323,6 +405,7 @@ export function StudioV3Gallery({
                 {visible.map((item) => (
                   <button
                     aria-pressed={selected?.id === item.id}
+                    aria-haspopup="dialog"
                     className={styles.libraryCard}
                     key={`${item.source}:${item.id}`}
                     onClick={() => setSelectedId(item.id)}
@@ -342,49 +425,94 @@ export function StudioV3Gallery({
           )}
         </section>
 
-        {selected && (
-          <aside aria-label="Selected asset detail" className={styles.assetDetail}>
-            <header>
-              <div><span className={styles.eyebrow}>{selected.type}</span><h2>{selected.title}</h2></div>
-              <button aria-label="Close asset detail" onClick={() => setSelectedId(null)} type="button"><StudioV3Icon name="close" /></button>
-            </header>
-            <div className={styles.detailPreview}><MediaPreview item={selected} /></div>
-            <dl className={styles.detailFacts}>
-              <div><dt>Lifecycle</dt><dd>{selected.lifecycle} · {selected.status}</dd></div>
-              <div><dt>Provider/model</dt><dd>{selected.provider ?? 'Not applicable'}</dd></div>
-              <div><dt>Delivered dimensions</dt><dd>{selected.dimensions ?? 'No verified descriptor on this record'}</dd></div>
-              <div><dt>Requested aspect</dt><dd>{selected.aspect ?? 'Not recorded'}</dd></div>
-              <div><dt>Cost</dt><dd>{selected.costUsd === null ? 'Not recorded' : `$${selected.costUsd.toFixed(3)}`}</dd></div>
-              <div><dt>Publishable</dt><dd>{selected.publishable ? 'Server says yes' : 'No'}</dd></div>
-              <div><dt>Created/updated</dt><dd>{formatWhen(selected.createdAt)}</dd></div>
-              {reviewTarget && (
-                <>
-                  <div><dt>Review asset</dt><dd>{reviewTarget.projectAssetId}</dd></div>
-                  <div><dt>Pinned version</dt><dd>{reviewTarget.currentVersionId}</dd></div>
-                  <div><dt>Review sequence</dt><dd>{reviewTarget.expectedSequence}</dd></div>
-                </>
-              )}
-            </dl>
-            {selected.galleryItem?.referenceReceipt && (
-              <div className={styles.referenceReceipt}>
-                <StudioV3Icon name={selected.galleryItem.referenceReceipt.allRequiredSent ? 'check' : 'warning'} />
-                <div>
-                  <strong>Reference receipt</strong>
-                  <span>{selected.galleryItem.referenceReceipt.sentCount}/{selected.galleryItem.referenceReceipt.expectedCount} sent · {selected.galleryItem.referenceReceipt.roles.join(', ')}</span>
-                </div>
-              </div>
-            )}
-            <div className={styles.detailActions}>
-              <button className={styles.primaryButton} onClick={() => primaryAction(selected)} type="button">
-                {selected.type === 'image' ? 'Create from asset' : selected.type === 'video' ? 'Open Finishing' : selected.type === 'avatar' ? 'Use identity' : 'Open desk'} <StudioV3Icon name="arrow" />
-              </button>
-              {selected.type === 'image' && (
-                <button className={styles.secondaryButton} onClick={() => onNavigate({ id: 'finishing', assetId: selected.id })} type="button">Finish non-destructively</button>
-              )}
-            </div>
-          </aside>
-        )}
       </div>
+
+      {selected && (
+        <div
+          aria-labelledby="gallery-lightbox-title"
+          aria-modal="true"
+          className={styles.galleryLightbox}
+          onClick={() => setSelectedId(null)}
+          role="dialog"
+        >
+          <section className={styles.galleryLightboxPanel} onClick={(event) => event.stopPropagation()} ref={lightboxPanelRef}>
+            <header className={styles.galleryLightboxHeader}>
+              <div>
+                <span className={styles.eyebrow}>{selected.type} · {selected.lifecycle}</span>
+                <h2 id="gallery-lightbox-title">{selected.title}</h2>
+                <p>{selected.subtitle}</p>
+              </div>
+              <button
+                aria-label="Close fullscreen preview"
+                className={styles.galleryLightboxIconButton}
+                onClick={() => setSelectedId(null)}
+                ref={closeButtonRef}
+                type="button"
+              >
+                <StudioV3Icon name="close" />
+              </button>
+            </header>
+
+            <div className={styles.galleryLightboxBody}>
+              <div className={styles.galleryLightboxMedia}>
+                <ExpandedMedia item={selected} />
+                {visible.length > 1 && (
+                  <>
+                    <button aria-label="Previous asset" data-direction="previous" onClick={() => moveSelection(-1)} type="button"><StudioV3Icon name="chevronLeft" /></button>
+                    <button aria-label="Next asset" data-direction="next" onClick={() => moveSelection(1)} type="button"><StudioV3Icon name="chevronRight" /></button>
+                  </>
+                )}
+                <span className={styles.galleryLightboxCounter}>{selectedIndex + 1} / {visible.length}</span>
+              </div>
+
+              <aside aria-label="Asset details" className={styles.galleryLightboxDetails}>
+                <dl className={styles.detailFacts}>
+                  <div><dt>Lifecycle</dt><dd>{selected.lifecycle} · {selected.status}</dd></div>
+                  <div><dt>Provider/model</dt><dd>{selected.provider ?? 'Not applicable'}</dd></div>
+                  <div><dt>Verified original</dt><dd>{selected.dimensions ?? 'No verified descriptor on this record'}</dd></div>
+                  <div><dt>Requested aspect</dt><dd>{selected.aspect ?? 'Not recorded'}</dd></div>
+                  <div><dt>Cost</dt><dd>{selected.costUsd === null ? 'Not recorded' : `$${selected.costUsd.toFixed(3)}`}</dd></div>
+                  <div><dt>Publishable</dt><dd>{selected.publishable ? 'Server says yes' : 'No'}</dd></div>
+                  <div><dt>Created/updated</dt><dd>{formatWhen(selected.createdAt)}</dd></div>
+                  {reviewTarget && (
+                    <>
+                      <div><dt>Review asset</dt><dd>{reviewTarget.projectAssetId}</dd></div>
+                      <div><dt>Pinned version</dt><dd>{reviewTarget.currentVersionId}</dd></div>
+                      <div><dt>Review sequence</dt><dd>{reviewTarget.expectedSequence}</dd></div>
+                    </>
+                  )}
+                </dl>
+                {selected.galleryItem?.referenceReceipt && (
+                  <div className={styles.referenceReceipt}>
+                    <StudioV3Icon name={selected.galleryItem.referenceReceipt.allRequiredSent ? 'check' : 'warning'} />
+                    <div>
+                      <strong>Reference receipt</strong>
+                      <span>{selected.galleryItem.referenceReceipt.sentCount}/{selected.galleryItem.referenceReceipt.expectedCount} sent · {selected.galleryItem.referenceReceipt.roles.join(', ')}</span>
+                    </div>
+                  </div>
+                )}
+                <div className={styles.detailActions}>
+                  {fullMediaUrl(selected) && (
+                    <button
+                      className={styles.primaryButton}
+                      onClick={() => void downloadStudioAsset(fullMediaUrl(selected), downloadFilename(selected))}
+                      type="button"
+                    >
+                      <StudioV3Icon name="download" /> Download original
+                    </button>
+                  )}
+                  <button className={styles.secondaryButton} onClick={() => primaryAction(selected)} type="button">
+                    {selected.type === 'image' ? 'Create from asset' : selected.type === 'video' ? 'Open Finishing' : selected.type === 'avatar' ? 'Use identity' : 'Open desk'} <StudioV3Icon name="arrow" />
+                  </button>
+                  {selected.type === 'image' && (
+                    <button className={styles.secondaryButton} onClick={() => onNavigate({ id: 'finishing', assetId: selected.id })} type="button">Finish non-destructively</button>
+                  )}
+                </div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   )
 }

@@ -528,6 +528,36 @@ export function StudioV3ImageLab({
 
   const selectedEngineDefinition = STUDIO_ENGINES.find((item) => item.id === engine)
   const autoReady = Boolean(productPath && selectedModel && !uploadedModelPath)
+  const autoStatus = !creationAvailable
+    ? 'Choose an editable brand project. Reviewers cannot create paid runs.'
+    : !productPath
+      ? 'Next: choose or upload a product. Review & generate will open the product picker.'
+      : uploadedModelPath
+        ? 'Temporary model uploads run through Advanced controls. Review & generate will take you there with this upload preserved.'
+        : !selectedModel
+          ? 'Next: choose a saved identity. Review & generate will open the identity picker.'
+          : localStatus
+
+  const requestAutoReview = () => {
+    if (!creationAvailable) return
+    if (!productPath) {
+      setSourceTray('product')
+      setLocalStatus('Choose an approved project product or upload a scoped product reference.')
+      return
+    }
+    if (uploadedModelPath) {
+      setArchitecture('advanced')
+      setMode('product_to_model')
+      setLocalStatus('Advanced Product → Model is ready with your temporary model upload preserved.')
+      return
+    }
+    if (!selectedModel) {
+      setSourceTray('model')
+      setLocalStatus('Choose a saved scoped identity before requesting the signed estimate.')
+      return
+    }
+    void openReview()
+  }
   const liveEngineCount = data.config?.engines.filter((item) =>
     item.configured && item.enabled && item.runnable && !item.killed).length ?? 0
   const selectedProductPreview =
@@ -921,6 +951,19 @@ export function StudioV3ImageLab({
                   </button>
                 </header>
                 <div>
+                  {sourceTray === 'product' && data.products.length === 0 && (
+                    <div className={styles.v4SourceTrayEmpty} role="status">
+                      <StudioV3Icon name="warning" />
+                      <span><strong>No approved project product found</strong><small>Upload a product reference from the source card.</small></span>
+                    </div>
+                  )}
+                  {sourceTray === 'model' && data.models.length === 0 && (
+                    <div className={styles.v4SourceTrayEmpty} role="status">
+                      <StudioV3Icon name="warning" />
+                      <span><strong>No saved identity found</strong><small>Create one in Avatars &amp; Models, or use an upload in Advanced.</small></span>
+                      <button onClick={() => onNavigate({ id: 'desk', desk: 'systems' })} type="button">Manage identities</button>
+                    </div>
+                  )}
                   {sourceTray === 'product'
                     ? data.products.map((product) => (
                         <button
@@ -1003,22 +1046,19 @@ export function StudioV3ImageLab({
                     <small>signed review first</small>
                   </span>
                   <button
-                    aria-label="Review exact production estimate"
+                    aria-label="Review and generate image"
                     className={styles.v4ComposerSubmit}
-                    disabled={!creationAvailable || !autoReady || estimating}
-                    onClick={() => void openReview()}
+                    disabled={!creationAvailable || estimating}
+                    onClick={requestAutoReview}
                     type="button"
                   >
+                    <span>{estimating ? 'Getting estimate…' : 'Review & generate'}</span>
                     <StudioV3Icon name="arrow" />
                   </button>
                 </footer>
                 <p className={styles.v4ComposerStatus}>
                   <StudioV3Icon name={autoReady ? 'check' : 'warning'} />
-                  {autoReady
-                    ? localStatus
-                    : uploadedModelPath
-                      ? 'Auto stayed open. Save this upload as an identity from Avatar before requesting a paid run.'
-                      : 'Choose a product source and saved identity to request an exact estimate.'}
+                  <span>{autoStatus}</span>
                 </p>
               </>
             ) : (
@@ -1208,7 +1248,7 @@ export function StudioV3ImageLab({
                       onClick={() => void openReview()}
                       type="button"
                     >
-                      {estimating ? 'Getting exact estimate…' : 'Review exact estimate'} <StudioV3Icon name="arrow" />
+                      {estimating ? 'Getting exact estimate…' : 'Review & generate'} <StudioV3Icon name="arrow" />
                     </button>
                   )}
                 </footer>

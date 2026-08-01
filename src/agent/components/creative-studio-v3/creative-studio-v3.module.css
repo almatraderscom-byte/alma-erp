@@ -2435,6 +2435,190 @@ label.secondaryButton[aria-disabled='true'] {
   margin-top: 12px;
 }
 
+.galleryLightbox {
+  position: fixed;
+  z-index: 620;
+  inset: 0;
+  display: grid;
+  padding: 22px;
+  place-items: center;
+  background: rgb(10 10 12 / 0.86);
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+.galleryLightboxPanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1420px, 100%);
+  height: min(900px, calc(100dvh - 44px));
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.17);
+  border-radius: 24px;
+  color: #f7f5f2;
+  background: #121216;
+  box-shadow: 0 34px 110px rgb(0 0 0 / 0.56);
+}
+
+.galleryLightboxHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 18px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.galleryLightboxHeader > div {
+  min-width: 0;
+}
+
+.galleryLightboxHeader h2 {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: #fff;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.galleryLightboxHeader p {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: rgb(255 255 255 / 0.58);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.galleryLightboxHeader .eyebrow {
+  color: color-mix(in srgb, var(--studio-accent) 78%, #fff);
+}
+
+.galleryLightboxIconButton {
+  display: grid;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.galleryLightboxIconButton svg {
+  width: 17px;
+  height: 17px;
+}
+
+.galleryLightboxBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 352px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.galleryLightboxMedia {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 40%, rgb(255 255 255 / 0.07), transparent 48%),
+    #09090b;
+}
+
+.galleryLightboxMedia > img,
+.galleryLightboxMedia > video {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.galleryLightboxMedia > audio {
+  width: min(560px, calc(100% - 64px));
+}
+
+.galleryLightboxMedia > button {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(0 0 0 / 0.46);
+  transform: translateY(-50%);
+  backdrop-filter: blur(12px);
+}
+
+.galleryLightboxMedia > button[data-direction='previous'] {
+  left: 14px;
+}
+
+.galleryLightboxMedia > button[data-direction='next'] {
+  right: 14px;
+}
+
+.galleryLightboxMedia > button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.galleryLightboxCounter {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  padding: 5px 9px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: var(--radius-pill);
+  color: rgb(255 255 255 / 0.76);
+  background: rgb(0 0 0 / 0.48);
+  font-family: var(--font-mono-nums);
+  font-size: 11px;
+  backdrop-filter: blur(12px);
+}
+
+.galleryLightboxDetails {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+  border-left: 1px solid rgb(255 255 255 / 0.1);
+  background: #17171c;
+  scrollbar-width: thin;
+}
+
+.galleryLightboxDetails .detailFacts {
+  margin-top: 0;
+}
+
+.galleryLightboxDetails .detailFacts div {
+  border-color: rgb(255 255 255 / 0.08);
+}
+
+.galleryLightboxDetails .detailFacts dt,
+.galleryLightboxDetails .detailFacts dd {
+  color: rgb(255 255 255 / 0.7);
+}
+
+.galleryLightboxDetails .detailFacts dd {
+  color: #fff;
+}
+
+.galleryLightboxDetails .secondaryButton {
+  color: #fff;
+  border-color: rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.07);
+}
+
 .referenceReceipt {
   margin-top: 10px;
 }
@@ -4324,6 +4508,47 @@ label.secondaryButton[aria-disabled='true'] {
   font-size: 11px;
 }
 
+.v4SourceTray > div > .v4SourceTrayEmpty {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  color: var(--studio-muted);
+  background: var(--studio-soft);
+}
+
+.v4SourceTrayEmpty > svg {
+  flex: 0 0 18px;
+  width: 18px;
+  color: var(--studio-accent-strong);
+}
+
+.v4SourceTrayEmpty > span {
+  display: grid;
+  min-width: 0;
+}
+
+.v4SourceTrayEmpty strong,
+.v4SourceTrayEmpty small {
+  font-size: 11px;
+}
+
+.v4SourceTrayEmpty > button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: var(--studio-card);
+  background: var(--studio-ink);
+  font-size: 11px;
+  font-weight: 760;
+}
+
 .v3ProductSwatch,
 .v3AvatarPortrait {
   display: block;
@@ -4532,26 +4757,54 @@ label.secondaryButton[aria-disabled='true'] {
 
 .v4ComposerSubmit {
   display: inline-flex;
-  flex: 0 0 36px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  min-width: 164px;
+  min-height: 38px;
+  gap: 7px;
+  padding: 0 15px;
+  border-radius: var(--radius-pill);
   color: var(--studio-card);
   background: linear-gradient(145deg, #2e2d32, #111216);
+  font-size: 11px;
+  font-weight: 780;
   box-shadow:
     0 10px 20px -15px rgb(15 15 18 / 0.74),
     inset 0 1px 0 rgb(255 255 255 / 0.36);
 }
 
+.v4ComposerSubmit svg {
+  width: 15px;
+  height: 15px;
+}
+
+.v4ComposerSubmit:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .v4ComposerStatus {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 7px;
   margin: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 15%, var(--border));
+  border-radius: 11px;
+  color: var(--studio-muted);
+  background: color-mix(in srgb, var(--studio-accent-wash) 44%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.v4ComposerStatus svg {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  color: var(--studio-accent-strong);
 }
 
 .v8InlineProductionControls {
@@ -5725,6 +5978,91 @@ label.secondaryButton[aria-disabled='true'] {
   .v6ComposerExpanded .v4SourceArtwork {
     width: 112px;
     height: 112px;
+  }
+
+  .galleryLightbox {
+    padding: 10px;
+  }
+
+  .galleryLightboxPanel {
+    height: calc(100dvh - 20px);
+    border-radius: 18px;
+  }
+
+  .galleryLightboxBody {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 58dvh) auto;
+    overflow-y: auto;
+  }
+
+  .galleryLightboxDetails {
+    overflow: visible;
+    border-top: 1px solid rgb(255 255 255 / 0.1);
+    border-left: 0;
+  }
+
+  .v4ComposerFooter .v4ComposerEstimate {
+    margin-left: auto;
+  }
+
+  .v4ComposerSubmit {
+    min-width: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .galleryLightbox {
+    padding: 0;
+  }
+
+  .galleryLightboxPanel {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .galleryLightboxHeader {
+    padding: 11px 12px;
+  }
+
+  .galleryLightboxHeader p {
+    display: none;
+  }
+
+  .galleryLightboxBody {
+    grid-template-rows: minmax(280px, 52dvh) auto;
+  }
+
+  .galleryLightboxDetails {
+    padding: 13px;
+  }
+
+  .galleryLightboxMedia > button {
+    width: 38px;
+    height: 38px;
+  }
+
+  .v4ComposerFooter {
+    align-items: stretch;
+  }
+
+  .v4ComposerFooter .v4ComposerControls {
+    flex-basis: 100%;
+  }
+
+  .v4ComposerSubmit {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .v4SourceTrayEmpty {
+    flex-wrap: wrap;
+  }
+
+  .v4SourceTrayEmpty > button {
+    width: 100%;
+    margin-left: 0;
   }
 }
 

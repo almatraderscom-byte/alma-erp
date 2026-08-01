@@ -21,6 +21,9 @@ export type StudioV3IconName =
   | 'list'
   | 'filter'
   | 'refresh'
+  | 'download'
+  | 'chevronLeft'
+  | 'chevronRight'
   | 'close'
   | 'check'
   | 'warning'
@@ -49,6 +52,9 @@ const paths: Record<StudioV3IconName, ReactNode> = {
   list: <><path d="M9 6h12M9 12h12M9 18h12" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></>,
   filter: <path d="M3 5h18l-7 8v6l-4 2v-8Z" />,
   refresh: <><path d="M20 7v5h-5" /><path d="M19 12a7 7 0 1 0-2 5" /></>,
+  download: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 20h16" /></>,
+  chevronLeft: <path d="m15 18-6-6 6-6" />,
+  chevronRight: <path d="m9 18 6-6-6-6" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   check: <path d="m5 12 4 4L19 6" />,
   warning: <><path d="M12 3 2.5 20h19Z" /><path d="M12 9v4m0 3h.01" /></>,
