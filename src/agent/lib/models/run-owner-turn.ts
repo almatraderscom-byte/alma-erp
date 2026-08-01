@@ -2684,7 +2684,11 @@ async function* runAlternateProviderTurn(
           mode: permissionMode,
           tier: permissionTier.tier,
           taskClass: permissionTier.taskClass,
-          grant: elevationGrant,
+          // Only an EXPLICIT tool→family mapping may be lifted by a grant. A
+          // fallback class is a risk floor, so passing the grant here would let a
+          // reminders grant clear the Careful-mode card for an unmapped write
+          // like delete_memory (review bot, #667).
+          grant: permissionTier.explicit ? elevationGrant : null,
           now: Date.now(),
         })
         if (permissionVerdict === 'blocked') {

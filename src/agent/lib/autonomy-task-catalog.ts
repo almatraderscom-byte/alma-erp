@@ -384,7 +384,10 @@ const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
   // reminders are the alarm family. Mapping todo writes to reminders made a
   // reminders grant cover todos and a memory-notes grant miss them.
   'internal-reminders': ['cancel_all_reminders'],
-  'memory-notes': ['update_owner_todo', 'manage_work_todos', 'update_memory', 'resolve_open_task'],
+  'memory-notes': [
+    'update_owner_todo', 'manage_work_todos', 'update_memory', 'resolve_open_task',
+    'delete_memory', 'graph_remember', 'save_task_checkpoint', 'track_open_task',
+  ],
   'drafts-previews': ['draft_seo_fixes', 'draft_marketing_campaign', 'draft_gbp_post'],
   'personal-records': [
     'update_bill', 'delete_bill', 'mark_bill_paid', 'add_subscription', 'update_subscription',
