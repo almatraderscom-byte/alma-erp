@@ -382,6 +382,11 @@ const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
   'scheduled-content': ['schedule_post', 'reschedule_content'],
   'internal-reminders': ['update_owner_todo', 'manage_work_todos'],
   'drafts-previews': ['draft_seo_fixes', 'draft_marketing_campaign', 'draft_gbp_post'],
+  'personal-records': [
+    'update_bill', 'delete_bill', 'mark_bill_paid', 'add_subscription', 'update_subscription',
+    'update_important_date', 'delete_important_date', 'update_appointment', 'cancel_appointment',
+    'update_medication', 'delete_medication', 'log_health', 'delete_document',
+  ],
 }
 
 /** Explicit tool → task-class overrides, seeded from the families' own lists. */

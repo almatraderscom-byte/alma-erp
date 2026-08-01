@@ -804,12 +804,18 @@ export async function runRegisteredTool(
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
       const mode = normalizePermissionMode(ctx.permissionMode)
       const task = taskClassForTool(tool.name, cap)
+      // Only an EXPLICIT tool→family mapping may be lifted by a grant, and only
+      // one the ROW still confirms — a worker's snapshot can outlive a revoke.
+      let grantForVerdict = task.explicit ? ctx.elevationGrant ?? null : null
+      if (grantForVerdict) {
+        const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+        if (!(await confirmGrantStillCovers(ctx.conversationId, task.taskClass))) grantForVerdict = null
+      }
       const verdict = modeVerdict({
         mode,
         tier: task.tier,
         taskClass: task.taskClass,
-        // Only an EXPLICIT tool→family mapping may be lifted by a grant.
-        grant: task.explicit ? ctx.elevationGrant ?? null : null,
+        grant: grantForVerdict,
         now: Date.now(),
       })
       const blockedByMode =
@@ -939,6 +945,13 @@ export async function runRegisteredTool(
         const task = taskClassForTool(tool.name, cap)
         standingGrantCoversCall =
           task.explicit && isFamilyGrantLive(ctx.elevationGrant, task.taskClass, Date.now())
+        // A delegated worker holds the grant it was handed at the start and can
+        // run for a while; a revoke or mode change meanwhile must bite here, at
+        // the one door every tool call passes through.
+        if (standingGrantCoversCall) {
+          const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+          standingGrantCoversCall = await confirmGrantStillCovers(ctx.conversationId, task.taskClass)
+        }
       } catch {
         standingGrantCoversCall = false
       }

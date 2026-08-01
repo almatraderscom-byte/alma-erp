@@ -2493,7 +2493,11 @@ async function runApprove(
     // READ AND WRITE in ONE transaction. Two cards approved at the same moment
     // would otherwise both read the old grant and the loser's families would
     // vanish. Per-family windows: each family keeps the window Boss approved.
-    const merged = await db.$transaction(async (tx: typeof db) => {
+    // Serializable aborts the loser of a concurrent merge (Prisma P2034). That is
+    // the right outcome for the DATA and the wrong one for Boss: his card was
+    // already claimed, so a failure here would lose the approval he just gave.
+    // Retry the transaction a few times before giving up.
+    const runMerge = async () => db.$transaction(async (tx: typeof db) => {
       const conv = await tx.agentConversation.findUnique({
         where: { id: conversationId },
         select: { elevationGrant: true },
@@ -2530,6 +2534,19 @@ async function runApprove(
       // write disjoint snapshots, dropping whichever loses the race.
       isolationLevel: 'Serializable',
     })
+
+    let merged: Awaited<ReturnType<typeof runMerge>> | null = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        merged = await runMerge()
+        break
+      } catch (err) {
+        const code = (err as { code?: string }).code
+        if (code !== 'P2034' || attempt === 3) throw err
+        await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+      }
+    }
+    if (!merged) throw new Error('grant_merge_failed')
     const carried = merged.carried
     const families_ = merged.families
     const expiresAt = merged.expiresAt
