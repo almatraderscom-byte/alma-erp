@@ -2446,6 +2446,13 @@ async function runApprove(
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
 
+    // The card is claimed but the grant is not written yet. If anything between
+    // here and the commit throws — the serializable merge exhausting its retries,
+    // a database blip — the row would sit at `approved` with no grant behind it,
+    // and Boss's next tap would get `already_resolved`. His approval would be
+    // gone (review bot, #667). Put the card back so he can try again.
+    try {
+
     const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
     const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
     // Re-validate at approval time. The card was written minutes ago by a model;
@@ -2596,6 +2603,14 @@ async function runApprove(
     )
 
     return Response.json({ success: true, families: families_, minutes: mins, expiresAt })
+
+    } catch (err) {
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending' },
+      }).catch(() => {})
+      throw err
+    }
   }
 
   if (action.type === 'auto_fix') {
