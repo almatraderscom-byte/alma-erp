@@ -32,7 +32,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -394,6 +394,22 @@ case "info":
     let wins = (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
     emit(["ok": true, "pid": Int(pid),
           "windows": wins.compactMap { str($0, kAXTitleAttribute) }])
+
+case "bounds":
+    // Global frame of the resolved window, in points — the daemon feeds this
+    // to screencapture -R so an app screenshot captures ONLY that window.
+    let win = resolveWindow()
+    var pos = CGPoint.zero
+    var size = CGSize.zero
+    if let pv = attr(win, kAXPositionAttribute), CFGetTypeID(pv) == AXValueGetTypeID() {
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+    }
+    if let sv = attr(win, kAXSizeAttribute), CFGetTypeID(sv) == AXValueGetTypeID() {
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+    }
+    if size.width < 1 || size.height < 1 { fail("no_window_bounds") }
+    emit(["ok": true, "x": Int(pos.x), "y": Int(pos.y),
+          "w": Int(size.width), "h": Int(size.height)])
 
 case "tree":
     let win = resolveWindow()
@@ -783,6 +799,34 @@ function ok(payload) {
   return { ok: true, exitCode: 0, stdout: JSON.stringify(payload) }
 }
 
+/**
+ * Capture ONE window's rect as a downscaled JPEG data URI — same downscale +
+ * size-limit story as the daemon's full-screen `screenshot()` (agent.mjs),
+ * only bounded to the frame the AX helper reported. `screencapture -R` takes
+ * global points, which is exactly what AXPosition/AXSize give.
+ */
+function captureRect({ x, y, w, h }) {
+  return new Promise((resolve) => {
+    const out = join(CONFIG_DIR, `ui-shot-${Date.now()}.jpg`)
+    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', '-R', `${x},${y},${w},${h}`, out], (err) => {
+      if (err) return resolve({ ok: false, exitCode: null, error: String(err.message ?? err) })
+      // sips ships with macOS; if it fails we still send the original.
+      execFile('/usr/bin/sips', ['-Z', '1600', '-s', 'formatOptions', '60', out], () => {
+        try {
+          const b64 = readFileSync(out).toString('base64')
+          rmSync(out, { force: true })
+          if (b64.length > 2_900_000) {
+            return resolve({ ok: false, exitCode: null, error: 'screenshot_too_large: স্ক্রিনশটটা পাঠানোর সীমার চেয়ে বড়।' })
+          }
+          resolve({ ok: true, exitCode: 0, stdout: `data:image/jpeg;base64,${b64}` })
+        } catch (e) {
+          resolve({ ok: false, exitCode: null, error: String(e?.message ?? e) })
+        }
+      })
+    })
+  })
+}
+
 async function uiTree(params) {
   const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const verdict = classifyUiAction({ action: 'ui_tree', bundleId })
@@ -812,15 +856,19 @@ async function uiScroll(params, cmd) {
   // Contract: the server tool sends ONE signed `scrollAmount` (negative = up);
   // direction/amount stay for hand-run probes. Without this translation every
   // server scroll fell back to "down by 5" (Codex P2 on the W4 PR).
-  const signed = Number(params.scrollAmount)
+  // The server serialises an omitted scrollAmount as null, and Number(null)
+  // is 0 — so "absent" must be decided on the RAW value, before any numeric
+  // conversion, or a plain scroll silently becomes a no-op (Codex P2).
+  const given = (v) => v !== null && v !== undefined && Number.isFinite(Number(v))
+  const signed = given(params.scrollAmount) ? Number(params.scrollAmount) : NaN
   const direction = params.direction === 'up' || params.direction === 'down'
     ? params.direction
     : Number.isFinite(signed) && signed < 0 ? 'up' : 'down'
   // Default of 5 applies only when NO amount was given at all — an explicit 0
   // (a computed boundary) means "don't move", not "scroll down 5" (Codex P2).
-  const hasExplicit = Number.isFinite(Number(params.amount)) || Number.isFinite(signed)
-  const magnitude = Number(params.amount) || (Number.isFinite(signed) ? Math.abs(signed) : 0)
-  const amount = hasExplicit ? Math.min(magnitude, 40) : 5
+  const magnitude = given(params.amount) ? Math.abs(Number(params.amount))
+    : Number.isFinite(signed) ? Math.abs(signed) : null
+  const amount = magnitude === null ? 5 : Math.min(magnitude, 40)
   if (amount === 0) return ok({ scrolled: 0, policy: verdict.level })
   const args = ['scroll', bundleId, '--dir', direction,
     '--amount', String(amount),
@@ -1267,14 +1315,25 @@ export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled, ca
 
   extraHandlers.set('ui_tree', (p) => uiTree(p))
   // `look_mac_app` advertises a screenshot action, so the verb must exist here
-  // or the model's most natural "show me" request dies as unknown_action. The
-  // capture itself is the daemon's existing screencapture path (injected), so
-  // there is one downscale/limit story, not two — this wrapper only adds the
-  // policy judgement, which for a screenshot is GREEN and needs no app.
+  // or the model's most natural "show me" request dies as unknown_action.
+  // When an app is named, the promise is an APP capture — so only that
+  // window's AX frame is captured (Codex P1: a full-screen shot can include
+  // mail/banking/password-manager windows the allowlist never approved). Only
+  // an app-less request — the owner's own "show the screen" — falls back to
+  // the daemon's injected full-screen path.
   extraHandlers.set('ui_screenshot', async (p) => {
-    const bundleId = resolveBundleId(p.bundleId ?? p.app)
+    const raw = p.bundleId ?? p.app
+    const bundleId = resolveBundleId(raw)
     const verdict = classifyUiAction({ action: 'ui_screenshot', bundleId })
     if (verdict.level === 'red') return refusal(verdict)
+    if (raw) {
+      const h = hintsFor(bundleId)
+      const bArgs = ['bounds', bundleId, '--window', String(p.window ?? h.windowTitle ?? '-')]
+      if (h.manual) bArgs.push('--manual')
+      const b = await helper(bArgs)
+      if (!b.ok) return helperError(b)
+      return await captureRect(b)
+    }
     if (typeof captureScreenFn !== 'function') {
       return { ok: false, exitCode: null, error: 'screenshot_unavailable: daemon did not provide a capture path.' }
     }
