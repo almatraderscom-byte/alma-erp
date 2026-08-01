@@ -71,6 +71,11 @@ const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scrol
 export const ALLOWED_APPS: Readonly<Record<string, string>> = {
   'com.anthropic.claudefordesktop': 'Claude',
   'com.openai.chat': 'ChatGPT',
+  // The shipping ChatGPT desktop app identifies itself as `com.openai.codex`
+  // (verified from /Applications/ChatGPT.app's Info.plist on the owner's Mac
+  // 2026-08-02, and hit live by W3). Both ids are the same product; keeping
+  // the older one costs nothing and covers other installs.
+  'com.openai.codex': 'ChatGPT',
 }
 
 /**
