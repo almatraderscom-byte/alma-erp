@@ -417,6 +417,37 @@ try {
   log('session driver not loaded:', String(err?.message ?? err))
 }
 
+// W3 ui_* verbs + app chat mirroring. Also optional; registered AFTER the
+// session driver on purpose — the UI driver wraps session_send so a dock reply
+// aimed at a mirrored app chat fails honestly instead of `session_not_found`.
+try {
+  const ui = await import('./ui-driver.mjs')
+  ui.registerUiHandlers(extraHandlers, {
+    isPaused: () => pausedByServer || existsSync(PAUSE_FILE),
+    // The out-of-band STOP check for UI actions. The command queue is serial,
+    // so while a ui_* verb waits out the owner-at-keyboard gate the poll loop
+    // is blocked and `pausedByServer` goes stale — the owner's STOP (which
+    // marks the delivered row cancelled) and the kill-switch would otherwise
+    // be invisible until the action fired minutes later (Codex P1). One
+    // daemon-authenticated read against /status answers both.
+    checkCancelled: async (commandId) => {
+      const qs = commandId ? `?commandId=${encodeURIComponent(commandId)}` : ''
+      const res = await api(`/api/assistant/mac-agent/status${qs}`, {
+        token: activeToken,
+        timeoutMs: 8_000,
+      })
+      if (res.status === 401) return { cancelled: true, disabled: true } // unpaired mid-wait
+      if (!res.ok || !res.json) return null // network blip: not evidence of a STOP
+      return {
+        cancelled: res.json.commandStatus === 'cancelled' || res.json.commandStatus === 'missing',
+        disabled: res.json.enabled === false,
+      }
+    },
+  })
+} catch (err) {
+  log('ui driver not loaded:', String(err?.message ?? err))
+}
+
 async function handleCommand(cmd) {
   const params = cmd.params ?? {}
 
@@ -622,13 +653,24 @@ let activeToken = null
  */
 async function pushSessionEvents(token) {
   if (Date.now() - lastEventPushAt < EVENT_PUSH_MIN_INTERVAL_MS) return
-  let mod
+  let mod = null
+  let ui = null
   try {
     mod = await import('./sessions.mjs')
   } catch {
-    return // session driver absent — nothing to stream
+    /* session driver absent */
   }
-  const batches = mod.collectUnpushedEvents()
+  try {
+    ui = await import('./ui-driver.mjs')
+  } catch {
+    /* ui driver absent */
+  }
+  // W3: mirrored app-chat messages ride the SAME pipe as CLI transcripts —
+  // one endpoint, one dedupe key, zero render changes in the docks.
+  const batches = [
+    ...(mod ? mod.collectUnpushedEvents().map((b) => ({ ...b, mark: mod.markEventsPushed })) : []),
+    ...(ui ? ui.collectUnpushedUiEvents().map((b) => ({ ...b, mark: ui.markUiEventsPushed })) : []),
+  ]
   if (batches.length === 0) return
   lastEventPushAt = Date.now()
 
@@ -640,8 +682,14 @@ async function pushSessionEvents(token) {
         body: { sessionId: batch.sessionId, tool: batch.tool, events: batch.events },
         timeoutMs: 15_000,
       })
-      if (res.ok) mod.markEventsPushed(batch.sessionId, batch.lastSeq)
-      else log(`event push rejected (${res.status}) for session ${batch.sessionId}`)
+      if (res.ok) batch.mark(batch.sessionId, batch.lastSeq)
+      else {
+        log(`event push rejected (${res.status}) for session ${batch.sessionId}`)
+        // 409 = the owner's kill-switch — while a long command blocks the poll
+        // loop this response is the only place the daemon hears it, and app
+        // mirrors must fall silent like everything else (same rule as frames).
+        if (res.status === 409 && ui) ui.stopAllMirrors('kill_switch')
+      }
     } catch (err) {
       log('event push failed:', String(err?.message ?? err))
     }

@@ -37,6 +37,11 @@ chmod 700 "$DEST_DIR"
 cp "$SRC_DIR/agent.mjs" "$SRC_DIR/policy.mjs" "$DEST_DIR/"
 # M2 session driver ships alongside when present.
 [ -f "$SRC_DIR/sessions.mjs" ] && cp "$SRC_DIR/sessions.mjs" "$DEST_DIR/"
+# L8 UI driver + its policy twin: agent.mjs imports ui-driver.mjs which imports
+# ui-policy.mjs, so shipping one without the other leaves a fresh install
+# silently missing the whole UI-driving feature (Codex on the W3 PR).
+[ -f "$SRC_DIR/ui-driver.mjs" ] && cp "$SRC_DIR/ui-driver.mjs" "$DEST_DIR/"
+[ -f "$SRC_DIR/ui-policy.mjs" ] && cp "$SRC_DIR/ui-policy.mjs" "$DEST_DIR/"
 
 echo "▸ pairing"
 ALMA_BASE_URL="$BASE_URL" ALMA_VERCEL_BYPASS="${ALMA_VERCEL_BYPASS:-}" "$NODE_BIN" "$DEST_DIR/agent.mjs" pair "$CODE"
