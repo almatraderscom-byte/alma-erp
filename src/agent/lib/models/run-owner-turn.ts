@@ -2718,6 +2718,9 @@ async function* runAlternateProviderTurn(
         // writes that Standard lets through silently.
         const carefulNeedsCard =
           permissionVerdict === 'card'
+          // Cancelling a permission is never staged — that would trap Boss inside
+          // the grant he just asked to end (the registry exempts it too).
+          && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
           && (permissionTier.tier === 'R1' || permissionTier.tier === 'R2')
           && getCapability(call.name)?.mode === 'write'

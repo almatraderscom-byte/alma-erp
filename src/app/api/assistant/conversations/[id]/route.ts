@@ -83,9 +83,11 @@ export async function PATCH(
       return Response.json({ error: 'invalid_permission_mode' }, { status: 400 })
     }
     data.permissionMode = body.permissionMode
-    // Leaving 'elevated' drops the grant with it — a time-boxed permission must
-    // never survive the mode that justified it.
-    if (body.permissionMode !== 'elevated') data.elevationGrant = null
+    // ANY mode change drops the grant. The card tells Boss that changing the
+    // mode cancels it, and switching INTO elevated used to keep it — a promise
+    // the system did not keep (review bot, #667). A standing permission is
+    // asked for and granted deliberately; re-granting is one sentence.
+    data.elevationGrant = null
   }
 
   const updated = await prisma.agentConversation.update({

@@ -432,30 +432,42 @@ const revoke_standing_permission: AgentTool = {
       const { parseElevationGrant, familyExpiry } = await import('@/agent/lib/permission-mode')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const db = prisma as any
-      const conv = await db.agentConversation.findUnique({
-        where: { id: conversationId },
-        select: { elevationGrant: true },
-      })
-      const grant = parseElevationGrant(conv?.elevationGrant)
-      if (!grant) return { success: true, data: { cleared: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
-
-      const asked = Array.isArray(input.families)
-        ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
-        : []
-      const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
-      const kept = grant.families.filter((f) => !cleared.includes(f))
-
-      if (!kept.length) {
-        await db.agentConversation.update({ where: { id: conversationId }, data: { elevationGrant: null } })
-      } else {
-        const windows: Record<string, string> = {}
-        for (const fam of kept) windows[fam] = familyExpiry(grant, fam)
-        const expiresAt = new Date(Math.max(...kept.map((f) => Date.parse(windows[f])))).toISOString()
-        await db.agentConversation.update({
+      // Read AND write in ONE transaction: two overlapping revocations would
+      // otherwise both read {staff, customer} and write {customer} and {staff},
+      // leaving a family alive that Boss had explicitly cancelled.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const outcome = await db.$transaction(async (tx: any) => {
+        const conv = await tx.agentConversation.findUnique({
           where: { id: conversationId },
-          data: { elevationGrant: { families: kept, expiresAt, windows } },
+          select: { elevationGrant: true },
         })
+        const grant = parseElevationGrant(conv?.elevationGrant)
+        if (!grant) return null
+
+        const asked = Array.isArray(input.families)
+          ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
+          : []
+        const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
+        const kept = grant.families.filter((f) => !cleared.includes(f))
+
+        if (!kept.length) {
+          await tx.agentConversation.update({ where: { id: conversationId }, data: { elevationGrant: null } })
+        } else {
+          const windows: Record<string, string> = {}
+          for (const fam of kept) windows[fam] = familyExpiry(grant, fam)
+          const expiresAt = new Date(Math.max(...kept.map((f) => Date.parse(windows[f])))).toISOString()
+          await tx.agentConversation.update({
+            where: { id: conversationId },
+            data: { elevationGrant: { families: kept, expiresAt, windows } },
+          })
+        }
+        return { cleared, kept }
+      })
+
+      if (!outcome) {
+        return { success: true, data: { cleared: [], remaining: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
       }
+      const { cleared, kept } = outcome
 
       return {
         success: true,

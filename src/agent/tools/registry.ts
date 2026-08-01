@@ -447,6 +447,10 @@ export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
   ...APPOINTMENT_TOOLS,
   ...HEALTH_TOOLS,
   ...DOCUMENT_TOOLS,
+  // B6 — "আর জিজ্ঞেস কোরো না" happens in personal chats too, and the tools
+  // that answer it are an approval card and its cancel button; withholding
+  // them here left the personal head able only to describe the problem.
+  ...AUTONOMY_TOOLS.filter((t) => t.name === 'request_standing_permission' || t.name === 'revoke_standing_permission'),
 ]
 
 export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
