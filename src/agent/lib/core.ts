@@ -219,6 +219,11 @@ export type AgentEvent =
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
 export const MUTATING_TOOLS = new Set([
+  // B6 — the two permission tools run SEQUENTIALLY with everything else on
+  // purpose. A single response can contain a revoke followed by a covered
+  // write, and running those two concurrently would let the write ride the
+  // grant the revoke had already cancelled (review bot, #667).
+  'request_standing_permission', 'revoke_standing_permission',
   'add_family_contact', 'add_owner_todo', 'add_product_asset', 'add_staff_task_now',
   'add_subscription', 'approve_and_dispatch_tasks', 'approve_pending_dispatch',
   'approve_pending_staff_message', 'approve_playbook', 'cancel_reminder',

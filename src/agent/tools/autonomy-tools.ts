@@ -436,7 +436,7 @@ const revoke_standing_permission: AgentTool = {
       // otherwise both read {staff, customer} and write {customer} and {staff},
       // leaving a family alive that Boss had explicitly cancelled.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const outcome = await db.$transaction(async (tx: any) => {
+      const runRevoke = async () => db.$transaction(async (tx: any) => {
         const conv = await tx.agentConversation.findUnique({
           where: { id: conversationId },
           select: { elevationGrant: true },
@@ -463,6 +463,21 @@ const revoke_standing_permission: AgentTool = {
         }
         return { cleared, kept }
       }, { isolationLevel: 'Serializable' })
+
+      // Serializable aborts the loser of a concurrent update (P2034). Boss asked
+      // for this to STOP — returning an error and leaving the grant alive is the
+      // one outcome a revoke must never have.
+      let outcome: Awaited<ReturnType<typeof runRevoke>> = null
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          outcome = await runRevoke()
+          break
+        } catch (err) {
+          const code = (err as { code?: string }).code
+          if (code !== 'P2034' || attempt === 3) throw err
+          await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+        }
+      }
 
       if (!outcome) {
         return { success: true, data: { cleared: [], remaining: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
