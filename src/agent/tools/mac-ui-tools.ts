@@ -28,7 +28,6 @@ import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/m
 import {
   agentStorageDelete,
   agentStorageListFolder,
-  agentStorageSignedUrl,
   agentStorageUpload,
 } from '@/agent/lib/storage'
 import { requireOnlineMac } from './mac-tools'
@@ -240,7 +239,19 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
           // sweep below — there is no cron for this bucket on purpose.
           const objectPath = `mac-ui/shot-${Date.now()}-${id}.${ext}`
           await agentStorageUpload(objectPath, Buffer.from(m[2], 'base64'), `image/${m[1]}`)
-          const imageUrl = await agentStorageSignedUrl(objectPath)
+          // SHORT owner-authed link, not the 300-char signed JWT: the head
+          // wraps long URLs (proven live — the markdown image broke on a
+          // newline between ] and ( ), and /api/assistant/files exists for
+          // exactly this. The route 302s to a fresh signed URL per view.
+          // Absolute, because the same reply may land in Telegram where a
+          // root-relative path has no origin to resolve against (Codex P2).
+          const base = (
+            process.env.APP_URL ||
+            process.env.NEXTAUTH_URL ||
+            process.env.NEXT_PUBLIC_APP_URL ||
+            'https://alma-erp-six.vercel.app'
+          ).replace(/\/$/, '')
+          const imageUrl = `${base}/api/assistant/files?path=${encodeURIComponent(objectPath)}&redirect=1`
           try {
             const dayAgo = Date.now() - 24 * 3600 * 1000
             const stale = (await agentStorageListFolder('mac-ui/')).filter((f) => {
@@ -258,8 +269,8 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
               device: gate.deviceName,
               app: appLabel(bundleId),
               instruction:
-                'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও: ![' + appLabel(bundleId) + '](imageUrl)। ' +
-                'base64 বা লম্বা টেক্সট কখনো লিখবে না। URL ১ ঘণ্টা পরে expire হবে।',
+                'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও, এক লাইনে: ![' + appLabel(bundleId) + '](imageUrl)। ' +
+                'imageUrl হুবহু কপি করো — ছোট লিংক, ভাঙার কিছু নেই। base64 বা লম্বা টেক্সট কখনো লিখবে না।',
             },
           }
         } catch {
