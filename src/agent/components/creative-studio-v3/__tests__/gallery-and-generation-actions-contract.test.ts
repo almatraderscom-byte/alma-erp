@@ -23,6 +23,7 @@ describe('Creative Studio V4 primary action contract', () => {
     const styles = source('creative-studio-v3.module.css')
     const statusRule = styles.match(/\.v4ComposerStatus\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
 
+    expect(styles).toContain('.shell .v4ComposerSubmit {')
     expect(statusRule).toContain('display: flex')
     expect(statusRule).not.toContain('clip:')
     expect(statusRule).not.toContain('width: 1px')

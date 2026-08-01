@@ -4755,7 +4755,7 @@ label.secondaryButton[aria-disabled='true'] {
   font-size: 11px;
 }
 
-.v4ComposerSubmit {
+.shell .v4ComposerSubmit {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -4774,12 +4774,12 @@ label.secondaryButton[aria-disabled='true'] {
     inset 0 1px 0 rgb(255 255 255 / 0.36);
 }
 
-.v4ComposerSubmit svg {
+.shell .v4ComposerSubmit svg {
   width: 15px;
   height: 15px;
 }
 
-.v4ComposerSubmit:disabled {
+.shell .v4ComposerSubmit:disabled {
   cursor: not-allowed;
   opacity: 0.42;
 }
