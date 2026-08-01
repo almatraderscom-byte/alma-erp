@@ -31,7 +31,10 @@ const db = prisma as any
  */
 const APP_ALIASES: Readonly<Record<string, string>> = {
   claude: 'com.anthropic.claudefordesktop',
-  chatgpt: 'com.openai.chat',
+  // The SHIPPING ChatGPT desktop app identifies as com.openai.codex (verified
+  // from its Info.plist on the owner's Mac, W2 PR #681). `com.openai.chat`
+  // stays allowlisted in the policy and passes through as a raw id.
+  chatgpt: 'com.openai.codex',
 }
 
 function resolveBundleId(raw: string): string {

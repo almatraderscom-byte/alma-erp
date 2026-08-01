@@ -94,7 +94,8 @@ describe('drive_mac_app — AMBER', () => {
     expect(row.data.summary).toContain('Message')
     expect(row.data.summary).toContain('dam koto?')
     expect(row.data.payload.uiAction).toBe('ui_type')
-    expect(row.data.payload.bundleId).toBe('com.openai.chat')
+    // "chatgpt" resolves to the SHIPPING app's bundle id (PR #681).
+    expect(row.data.payload.bundleId).toBe('com.openai.codex')
   })
 
   it('requires focusedLabel before Enter becomes a card', async () => {
@@ -129,9 +130,10 @@ describe('drive_mac_app — GREEN', () => {
 })
 
 describe('list_mac_apps', () => {
-  it('names exactly the two allowlisted apps', async () => {
+  it('names exactly the two allowlisted apps (ids may vary per install)', async () => {
     const r = await listApps.handler({})
-    const apps = (r.data as { apps: Array<{ name: string }> }).apps
-    expect(apps.map((a) => a.name).sort()).toEqual(['ChatGPT', 'Claude'])
+    const apps = (r.data as { apps: Array<{ name: string; bundleId: string }> }).apps
+    expect(new Set(apps.map((a) => a.name))).toEqual(new Set(['ChatGPT', 'Claude']))
+    for (const a of apps) expect(a.bundleId).toMatch(/^com\./)
   })
 })
