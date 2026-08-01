@@ -450,8 +450,13 @@ export const POLICY_RULE_DIGEST = {
   ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
 } as const
 
-/** Truncate an AX tree dump, telling the reader that it happened. */
+/**
+ * Truncate an AX tree dump, telling the reader that it happened. Keeps the
+ * TAIL: in both target apps the composer and the newest conversation text sit
+ * at the BOTTOM of the tree, so a head-keeping cap cut exactly the content a
+ * full read exists to fetch (Codex P2 on the L8 demo round).
+ */
 export function capTree(text: string): string {
   if (text.length <= UI_LIMITS.maxTreeChars) return text
-  return `${text.slice(0, UI_LIMITS.maxTreeChars)}\n…(tree বড় হওয়ায় কেটে দেওয়া হয়েছে)`
+  return `…(tree বড় হওয়ায় শুরুটা কেটে দেওয়া হয়েছে)\n${text.slice(-UI_LIMITS.maxTreeChars)}`
 }

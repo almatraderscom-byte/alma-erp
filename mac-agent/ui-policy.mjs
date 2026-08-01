@@ -292,7 +292,10 @@ export const POLICY_RULE_DIGEST = {
   ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
 }
 
+// Keeps the TAIL — composer + newest conversation text sit at the BOTTOM of
+// both target apps' trees, so a head-keeping cap cut exactly what a full
+// read exists to fetch (Codex P2).
 export function capTree(text) {
   if (text.length <= UI_LIMITS.maxTreeChars) return text
-  return `${text.slice(0, UI_LIMITS.maxTreeChars)}\n…(tree বড় হওয়ায় কেটে দেওয়া হয়েছে)`
+  return `…(tree বড় হওয়ায় শুরুটা কেটে দেওয়া হয়েছে)\n${text.slice(-UI_LIMITS.maxTreeChars)}`
 }
