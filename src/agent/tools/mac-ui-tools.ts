@@ -263,12 +263,19 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
             },
           }
         } catch {
-          /* storage is best-effort — fall through to the raw payload below */
+          // A raw fallback would hand the head the megabyte base64 this whole
+          // branch exists to avoid — fail retryably instead (Codex P2).
+          return {
+            success: false,
+            error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
+            data: { commandId: id, retryable: true },
+          }
         }
       }
+      // No data URI at all (unexpected daemon payload) — pass the bounded text.
       return {
         success: true,
-        data: { screenshot: outcome.stdout, device: gate.deviceName, app: appLabel(bundleId) },
+        data: { screenshot: capTree(uri), device: gate.deviceName, app: appLabel(bundleId) },
       }
     }
     return {
