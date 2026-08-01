@@ -13,6 +13,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import {
+  authenticateDevice,
   cancelAllQueued,
   createPairingTicket,
   isMacAgentEnabled,
@@ -21,6 +22,7 @@ import {
   revokeDevice,
   setMacAgentEnabled,
 } from '@/agent/lib/mac-agent/bus'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,6 +37,31 @@ async function requireOwner(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
+
+  // W3 — the daemon's out-of-band STOP/kill-switch check. A ui_* verb waiting
+  // out the owner-at-keyboard gate blocks the serial command queue, so the
+  // poll's `paused` flag goes stale; this lightweight Bearer-authenticated
+  // read is how the wait learns the owner pressed STOP (the row it is
+  // executing went `cancelled`) or flipped the switch. Token-authenticated
+  // per-request exactly like /poll — it returns only the enabled flag and the
+  // status of the daemon's OWN command, never the owner-page payload below.
+  const auth = req.headers.get('authorization') ?? ''
+  if (auth.startsWith('Bearer ')) {
+    const device = await authenticateDevice(auth.slice(7).trim())
+    if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
+    const enabled = await isMacAgentEnabled()
+    const commandId = req.nextUrl.searchParams.get('commandId')
+    let commandStatus: string | null = null
+    if (commandId) {
+      const row = await prisma.macAgentCommand.findFirst({
+        where: { id: commandId, deviceId: device.id },
+        select: { status: true },
+      })
+      commandStatus = row?.status ?? 'missing'
+    }
+    return Response.json({ enabled, commandStatus })
+  }
+
   const gate = await requireOwner(req)
   if (gate.error) return gate.error
 
@@ -90,6 +117,17 @@ export async function POST(req: NextRequest) {
       const { listDevices, enqueueCommand } = await import('@/agent/lib/mac-agent/bus')
       for (const d of (await listDevices()).filter((x) => x.online && x.pairedAt)) {
         await enqueueCommand({ deviceId: d.id, action: 'screen_stream', params: { mode: 'stop' } })
+        // W3: app-chat mirrors are timers outside the queue too — same
+        // broadcast rule. (A deferring ui_* action learns of the STOP from
+        // the cancelled row it re-checks; this stops the watchers.) The cast
+        // is deliberate: MAC_AGENT_ACTIONS lives in bus.ts, which W4 (#679)
+        // is extending with the ui_* verbs on its own branch — W4 should fold
+        // 'app_mirror' into that list and this cast then disappears.
+        await enqueueCommand({
+          deviceId: d.id,
+          action: 'app_mirror' as unknown as Parameters<typeof enqueueCommand>[0]['action'],
+          params: { mode: 'stop_all' },
+        })
       }
     } catch {
       /* stream stop is additive to STOP; the deadline still bounds capture */

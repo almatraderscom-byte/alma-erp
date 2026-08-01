@@ -63,6 +63,16 @@ export type UiAction = (typeof UI_ACTIONS)[number]
 const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scroll'])
 
 /**
+ * Actions that SYNTHESISE input into whatever the owner is doing. Wider than
+ * "needs approval": `ui_scroll` needs no card (reading a long chat would be
+ * untappable otherwise) but it still moves his view, so it must wait for him
+ * to step away. GREEN was only ever meant to say "no approval needed" — never
+ * "safe to do while he is typing" (Codex on the W3 PR; my classification was
+ * the root cause, not the driver).
+ */
+const SYNTHESISES_INPUT = new Set<string>(['ui_click', 'ui_type', 'ui_key', 'ui_scroll'])
+
+/**
  * The ONLY apps the agent may touch, by bundle id. Two entries on purpose:
  * these are the apps the owner asked for. Matching is exact and
  * case-insensitive; a human-readable name is never enough to decide (two apps
@@ -300,21 +310,23 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
   }
 
   // 4. Inside an allowlisted app, reading is free.
-  if (isRead) {
-    return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+  // The owner is AT the keyboard. Anything that synthesises input — including
+  // a scroll, which needs no card but still moves his view — waits until he
+  // steps away. `owner_active` is a DEFER the daemon retries, RED only so
+  // nothing acts meanwhile. Unknown idle time fails closed.
+  if (SYNTHESISES_INPUT.has(action)) {
+    const idleNow = req.ownerIdleSeconds
+    if (!Number.isFinite(idleNow) || (idleNow as number) < OWNER_ACTIVE_WINDOW_SECONDS) {
+      return {
+        level: 'red',
+        code: 'owner_active',
+        reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট কিছু করবে না, একটু পরে করবে।',
+      }
+    }
   }
 
-  // 5. The owner is AT the keyboard. Synthetic keystrokes would land in
-  //    whatever he is typing into (W1 hit this live). `owner_active` is a
-  //    DEFER, not a refusal — the daemon retries when he steps away; it is
-  //    RED only so nothing can act meanwhile. Unknown idle time fails closed.
-  const idle = req.ownerIdleSeconds
-  if (!Number.isFinite(idle) || (idle as number) < OWNER_ACTIVE_WINDOW_SECONDS) {
-    return {
-      level: 'red',
-      code: 'owner_active',
-      reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট টাইপ করবে না, একটু পরে করবে।',
-    }
+  if (isRead) {
+    return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
   }
 
   // 6. Destructive / money / permission labels are refused even here.
@@ -422,6 +434,7 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
  */
 export const POLICY_RULE_DIGEST = {
   readOnlyActions: [...READ_ONLY_ACTIONS].sort(),
+  synthesisesInput: [...SYNTHESISES_INPUT].sort(),
   allowedApps: ALLOWED_APPS,
   forbiddenApps: FORBIDDEN_APPS,
   redLabelRules: RED_LABEL_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
