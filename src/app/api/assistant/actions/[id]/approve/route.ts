@@ -17,6 +17,7 @@ import {
   activeDevice as activeMacDevice,
   awaitResult as awaitMacResult,
   enqueueCommand as enqueueMacCommand,
+  isMacAgentEnabled,
   isMacUiDrivingEnabled,
   listDevices as listMacDevices,
   UI_SERVER_IDLE_SENTINEL,
@@ -1114,6 +1115,14 @@ async function runApprove(
       )
     }
 
+    // The owner's master STOP wins over an already-created card: a card
+    // approved after he flipped /agent/mac off must not enqueue (Codex round 2).
+    if (!(await isMacAgentEnabled())) {
+      return Response.json(
+        { success: false, error: 'mac_disabled', message: 'Mac control এখন বন্ধ আছে, Boss — /agent/mac থেকে চালু করে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
     if (!(await isMacUiDrivingEnabled())) {
       return Response.json(
         { success: false, error: 'ui_driving_disabled', message: 'Mac-এর অ্যাপ চালানোর ফিচারটা এখনো চালু হয়নি, Boss।' },
