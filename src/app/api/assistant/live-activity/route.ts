@@ -259,15 +259,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  for (const r of sessionEventRows as Array<{
+  interface SessionEventRow {
     id: string
     sessionId: string
     kind: string
     text: string | null
     isError: boolean
     at: Date
-  }>) {
-    steps.push(sessionEventStep(r))
+  }
+  // A completion supersedes the instantaneous events before it: a session whose
+  // newest event is turn_done/ended must not keep showing an older text event
+  // as "now running" for the rest of its 60s freshness (Codex round 3).
+  const terminalAtBySession = new Map<string, number>()
+  for (const r of sessionEventRows as SessionEventRow[]) {
+    if (r.kind === 'turn_done' || r.kind === 'ended' || r.kind === 'error') {
+      const t = r.at.getTime()
+      if ((terminalAtBySession.get(r.sessionId) ?? 0) < t) terminalAtBySession.set(r.sessionId, t)
+    }
+  }
+  for (const r of sessionEventRows as SessionEventRow[]) {
+    const step = sessionEventStep(r)
+    const terminalAt = terminalAtBySession.get(r.sessionId) ?? 0
+    if (step.status === 'running' && terminalAt >= r.at.getTime()) step.status = 'done'
+    steps.push(step)
   }
 
   steps.sort((a, b) => b.at.localeCompare(a.at))
@@ -281,6 +295,19 @@ export async function GET(req: NextRequest) {
   // what makes a fast command visible instead of silent.
   const justFinishedCutoff = new Date(Date.now() - JUST_FINISHED_MS).toISOString()
   const justFinished = trimmed.filter((s) => s.at > justFinishedCutoff)
+
+  // The timestamp must survive even when the payload is withheld: clearing it
+  // made the client think there was no screenshot at all, drop its cache, and
+  // re-download the full frame on the next poll — an every-other-poll oscillation
+  // (Codex round 3). Any browser screenshot row in the window contributes its
+  // timestamp, whether or not its payload was fetched above.
+  const newestBrowserShot = (browserRows as Array<Record<string, unknown>>).find(
+    (r) => r.action === 'screenshot',
+  )
+  if (newestBrowserShot) {
+    const iso = (newestBrowserShot.createdAt as Date).toISOString()
+    if (!screenshotAt || iso > (screenshotAt as string)) screenshotAt = iso
+  }
 
   // Unchanged frame → metadata only; the client keeps the copy it has.
   // (cast: TS narrows screenshotAt to its `null` initializer here because the

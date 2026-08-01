@@ -99,6 +99,20 @@ export async function POST(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
+
+  // Which of these are genuinely NEW? A retried batch can mix an already-stored
+  // notable event with one fresh non-notable row; `created.count > 0` alone
+  // would then re-push the old notable (Codex round 3). Ask first, so the push
+  // candidate set is exactly the rows this POST inserts.
+  const known: Set<number> = await db.macAgentSessionEvent
+    .findMany({
+      where: { sessionId, seq: { in: rows.map((r) => r.seq) } },
+      select: { seq: true },
+    })
+    .then((found: Array<{ seq: number }>) => new Set(found.map((f) => f.seq)))
+    .catch(() => new Set<number>())
+  const freshRows = rows.filter((r) => !known.has(r.seq))
+
   const created = await db.macAgentSessionEvent.createMany({
     data: rows,
     skipDuplicates: true, // (sessionId, seq) — a retried batch stores nothing twice
@@ -107,7 +121,7 @@ export async function POST(req: NextRequest) {
   // Push when it matters: error, end, or a turn that ends in a question. Only
   // for rows actually stored this POST — a retried duplicate must not re-push.
   if (created.count > 0) {
-    const notable = rows.find(
+    const notable = freshRows.find(
       (r) =>
         r.kind === 'error' ||
         r.kind === 'ended' ||

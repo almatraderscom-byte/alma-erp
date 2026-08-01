@@ -16,7 +16,8 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { activeDevice, awaitResult, enqueueCommand, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
+import { activeDevice, awaitResult, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -48,7 +49,35 @@ export async function POST(req: NextRequest) {
   if (!(await isMacAgentEnabled())) {
     return Response.json({ error: 'mac_agent_disabled', messageBn: 'Mac control বন্ধ আছে।' }, { status: 409 })
   }
-  const device = await activeDevice()
+
+  // The session lives in ONE daemon's memory — the one that emitted its events.
+  // With two Macs online, "most recently seen" could pick the other machine and
+  // the reply would deterministically die with session_not_found (Codex round
+  // 3). The event stream already records which device spoke; trust it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const originDeviceId: string | null = await db.macAgentSessionEvent
+    .findFirst({
+      where: { sessionId },
+      orderBy: { at: 'desc' },
+      select: { deviceId: true },
+    })
+    .then((r: { deviceId: string } | null) => r?.deviceId ?? null)
+    .catch(() => null)
+
+  let device = null
+  if (originDeviceId) {
+    device = (await listDevices()).find((d) => d.id === originDeviceId && d.online) ?? null
+    if (!device) {
+      return Response.json(
+        { error: 'origin_mac_offline', messageBn: 'সেশনটা যে Mac-এ চলছে সেটা এখন অফলাইন।' },
+        { status: 409 },
+      )
+    }
+  } else {
+    // No events recorded for this session (pre-L4 daemon) — best effort.
+    device = await activeDevice()
+  }
   if (!device) {
     return Response.json(
       { error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন — উত্তরটা পৌঁছানো যায়নি।' },
