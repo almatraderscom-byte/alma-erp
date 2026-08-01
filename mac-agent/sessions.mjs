@@ -21,7 +21,7 @@
  * owner is never left wondering whether his task is still running.
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -30,6 +30,85 @@ const HOME = homedir()
 
 /** Live sessions, keyed by our own id (not the CLI's). */
 const sessions = new Map()
+
+/**
+ * L5 — surviving a daemon restart.
+ *
+ * The event stream cannot survive (the child dies with us — the honest exit
+ * handler below), but the SESSION can: the Claude CLI supports
+ * `--resume <cli-session-id>`, and we already hold that id. So we persist the
+ * little that matters, and a restarted daemon lists those sessions as
+ * `detached`. The next `session_send` respawns the CLI with `--resume` and the
+ * conversation continues where it left off; `session_read` says `detached`
+ * honestly instead of `session_not_found`.
+ *
+ * Codex is one-shot and cannot be resumed; its sessions are not persisted.
+ */
+const SESSIONS_FILE = join(HOME, '.alma-mac-agent', 'sessions.json')
+/** A detached session older than this is history, not something to offer resume for. */
+const DETACHED_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+function persistSessions() {
+  try {
+    const dir = join(HOME, '.alma-mac-agent')
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const rows = [...sessions.values()]
+      // Only what can actually come back: Claude sessions that haven't ended.
+      .filter((s) => s.tool === 'claude' && s.status !== 'ended' && s.status !== 'error')
+      .map((s) => ({
+        id: s.id,
+        cliSessionId: s.cliSessionId,
+        tool: s.tool,
+        cwd: s.cwd,
+        permissionMode: s.permissionMode,
+        model: s.model ?? null,
+        costUsd: s.costUsd ?? 0,
+        turns: s.turns ?? 0,
+        startedAt: s.startedAt,
+        lastActivityAt: s.lastActivityAt,
+      }))
+    writeFileSync(SESSIONS_FILE, JSON.stringify(rows), { mode: 0o600 })
+  } catch {
+    /* persistence is best-effort; a failed write must never break a session */
+  }
+}
+
+/** Load what the previous daemon run left behind, as detached sessions. */
+export function loadPersistedSessions() {
+  try {
+    if (!existsSync(SESSIONS_FILE)) return 0
+    const rows = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'))
+    let n = 0
+    for (const r of Array.isArray(rows) ? rows : []) {
+      if (!r?.id || !r?.cliSessionId) continue
+      if (Date.now() - (r.lastActivityAt ?? 0) > DETACHED_MAX_AGE_MS) continue
+      if (sessions.has(r.id)) continue
+      sessions.set(r.id, {
+        id: r.id,
+        tool: 'claude',
+        cwd: r.cwd,
+        permissionMode: r.permissionMode ?? 'plan',
+        cliSessionId: r.cliSessionId,
+        model: r.model ?? null,
+        status: 'detached',
+        events: [],
+        seq: 0,
+        pushedSeq: 0,
+        startedAt: r.startedAt ?? Date.now(),
+        lastActivityAt: r.lastActivityAt ?? Date.now(),
+        costUsd: r.costUsd ?? 0,
+        turns: r.turns ?? 0,
+        error: null,
+        stderr: '',
+        child: null,
+      })
+      n += 1
+    }
+    return n
+  } catch {
+    return 0
+  }
+}
 
 /** How many events we keep per session before dropping the oldest. */
 const MAX_EVENTS = 400
@@ -125,6 +204,7 @@ function ingestLine(session, line) {
       result: typeof msg.result === 'string' ? msg.result.slice(0, 4_000) : null,
       costUsd: msg.total_cost_usd ?? 0,
     })
+    persistSessions() // cost/turn totals survive a restart
   }
 }
 
@@ -154,6 +234,69 @@ function buildArgs(tool, { permissionMode, model, cliSessionId, resume, codexPro
 function binaryFor(tool) {
   if (tool === 'codex') return process.env.ALMA_CODEX_BIN || 'codex'
   return process.env.ALMA_CLAUDE_BIN || join(HOME, '.local/bin/claude')
+}
+
+/** Wire a spawned CLI child into a session — shared by open and resume. */
+function attachChild(session, child) {
+  session.child = child
+
+  let buffer = ''
+  child.stdout.on('data', (d) => {
+    buffer += d.toString()
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (line.trim()) ingestLine(session, line)
+    }
+  })
+  child.stderr.on('data', (d) => {
+    if (session.stderr.length < 8_000) session.stderr += d.toString()
+  })
+  child.on('error', (err) => {
+    session.status = 'error'
+    session.error = String(err?.message ?? err)
+    pushEvent(session, { kind: 'error', error: session.error })
+  })
+  child.on('close', (code) => {
+    // A detached-and-resumed session's OLD child closing must not clobber the
+    // fresh one's status.
+    if (session.child !== child) return
+    session.status = session.status === 'error' ? 'error' : 'ended'
+    session.exitCode = code
+    pushEvent(session, { kind: 'ended', exitCode: code })
+    persistSessions()
+  })
+}
+
+/**
+ * L5 — bring a detached session back to life with `--resume`. The CLI reloads
+ * the full conversation from its own store; our event buffer starts fresh
+ * (the old events are gone with the old process, and we say so honestly).
+ */
+function respawnDetached(session) {
+  const bin = binaryFor('claude')
+  let child
+  try {
+    child = spawn(bin, buildArgs('claude', {
+      permissionMode: session.permissionMode,
+      model: session.model,
+      cliSessionId: session.cliSessionId,
+      resume: true,
+    }), {
+      cwd: session.cwd,
+      env: { ...process.env, ALMA_MAC_AGENT: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
+    })
+  } catch (err) {
+    return { ok: false, error: `resume_spawn_failed: ${err?.message ?? err}` }
+  }
+  session.status = 'working'
+  session.error = null
+  attachChild(session, child)
+  pushEvent(session, { kind: 'resumed', cliSessionId: session.cliSessionId })
+  persistSessions()
+  return { ok: true }
 }
 
 export function openSession(params, allowedDirs) {
@@ -206,32 +349,9 @@ export function openSession(params, allowedDirs) {
     return { ok: false, error: `spawn_failed: ${err?.message ?? err}` }
   }
 
-  session.child = child
-
-  let buffer = ''
-  child.stdout.on('data', (d) => {
-    buffer += d.toString()
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-    for (const line of lines) {
-      if (line.trim()) ingestLine(session, line)
-    }
-  })
-  child.stderr.on('data', (d) => {
-    if (session.stderr.length < 8_000) session.stderr += d.toString()
-  })
-  child.on('error', (err) => {
-    session.status = 'error'
-    session.error = String(err?.message ?? err)
-    pushEvent(session, { kind: 'error', error: session.error })
-  })
-  child.on('close', (code) => {
-    session.status = session.status === 'error' ? 'error' : 'ended'
-    session.exitCode = code
-    pushEvent(session, { kind: 'ended', exitCode: code })
-  })
-
+  attachChild(session, child)
   sessions.set(id, session)
+  persistSessions()
 
   // Claude takes the first task over stdin; Codex already received it as an
   // argument (one-shot), so sending it again would corrupt the run.
@@ -247,6 +367,12 @@ export function sendToSession(sessionId, text) {
     return { ok: false, error: 'codex_is_one_shot: Codex সেশনে পরে আর নির্দেশ পাঠানো যায় না — নতুন সেশন খুলুন।' }
   }
   if (session.status === 'ended') return { ok: false, error: 'session_ended' }
+  // L5: a daemon restart detached this session — bring it back with --resume,
+  // then deliver the text into the revived conversation.
+  if (session.status === 'detached') {
+    const revived = respawnDetached(session)
+    if (!revived.ok) return revived
+  }
   if (!session.child?.stdin?.writable) return { ok: false, error: 'session_not_writable' }
 
   const payload = {
@@ -256,6 +382,7 @@ export function sendToSession(sessionId, text) {
   session.child.stdin.write(`${JSON.stringify(payload)}\n`)
   session.status = 'working'
   pushEvent(session, { kind: 'sent', text: String(text).slice(0, 1_000) })
+  persistSessions()
   return { ok: true, sessionId }
 }
 
@@ -301,6 +428,7 @@ export function stopSession(sessionId) {
     /* nothing to stop */
   }
   session.status = 'ended'
+  persistSessions() // an ended session must not offer resume after restart
   return { ok: true, sessionId }
 }
 
@@ -425,6 +553,7 @@ export function markEventsPushed(sessionId, lastSeq) {
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
   installExitHandlers()
+  loadPersistedSessions()
   const wrap = (fn) => async (params) => {
     const out = fn(params)
     return out.ok

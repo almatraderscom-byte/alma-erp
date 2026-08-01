@@ -192,7 +192,7 @@ export async function GET(req: NextRequest) {
         where: { createdAt: { gte: since } },
         orderBy: { at: 'desc' },
         take: RECENT_STEPS,
-        select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
+        select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
       })
       .catch(() => []),
   ])
@@ -270,9 +270,11 @@ export async function GET(req: NextRequest) {
   interface SessionEventRow {
     id: string
     sessionId: string
+    tool: string
     kind: string
     text: string | null
     isError: boolean
+    costUsd: number | null
     at: Date
   }
   // A completion supersedes the instantaneous events before it: a session whose
@@ -285,12 +287,42 @@ export async function GET(req: NextRequest) {
       if ((terminalAtBySession.get(r.sessionId) ?? 0) < t) terminalAtBySession.set(r.sessionId, t)
     }
   }
-  for (const r of sessionEventRows as SessionEventRow[]) {
+  const supersededStep = (r: SessionEventRow): ActivityStep => {
     const step = sessionEventStep(r)
     const terminalAt = terminalAtBySession.get(r.sessionId) ?? 0
     if (step.status === 'running' && terminalAt >= r.at.getTime()) step.status = 'done'
-    steps.push(step)
+    return step
   }
+  for (const r of sessionEventRows as SessionEventRow[]) {
+    steps.push(supersededStep(r))
+  }
+
+  // L5 — one row per session in the window: its own status, last line, cost.
+  // Rows arrive newest-first, so the first row per session wins the status.
+  const sessionsById = new Map<
+    string,
+    { sessionId: string; tool: string; lastBn: string; status: string; costUsd: number; at: string }
+  >()
+  for (const r of sessionEventRows as SessionEventRow[]) {
+    const step = supersededStep(r)
+    const existing = sessionsById.get(r.sessionId)
+    if (!existing) {
+      sessionsById.set(r.sessionId, {
+        sessionId: r.sessionId,
+        tool: r.tool,
+        lastBn: step.labelBn,
+        status: step.status === 'running' ? 'working' : step.status,
+        costUsd: r.costUsd ?? 0,
+        at: r.at.toISOString(),
+      })
+    } else {
+      existing.costUsd += r.costUsd ?? 0
+    }
+  }
+  const sessions = [...sessionsById.values()].map((s) => ({
+    ...s,
+    costUsd: Number(s.costUsd.toFixed(4)),
+  }))
 
   steps.sort((a, b) => b.at.localeCompare(a.at))
   const trimmed = steps.slice(0, RECENT_STEPS)
@@ -332,6 +364,8 @@ export async function GET(req: NextRequest) {
       active: running.length > 0 || justFinished.length > 0,
       current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
+      /** L5: per-session status + cost for the expanded view. */
+      sessions,
       screenshot,
       screenshotAt,
     },
