@@ -14724,7 +14724,13 @@ struct AssistantScreen: View {
         .onChange(of: vm.restoreReadyTick) { _, _ in awakening.markReady(hasContent: !vm.messages.isEmpty) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            AgentComposerView(vm: vm, openWeb: openWeb)
+            // The live dock sits ABOVE the composer inside the same inset, so it
+            // rides the keyboard with the composer instead of fighting it, and
+            // the chat scroll region shrinks to make room (never an overlay).
+            VStack(spacing: 0) {
+                AgentLiveDockView()
+                AgentComposerView(vm: vm, openWeb: openWeb)
+            }
         }
         .task {
             AlmaTurnLog.event("assistant.open.begin")
