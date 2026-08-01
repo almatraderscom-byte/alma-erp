@@ -417,6 +417,18 @@ try {
   log('session driver not loaded:', String(err?.message ?? err))
 }
 
+// W3 ui_* verbs + app chat mirroring. Also optional; registered AFTER the
+// session driver on purpose — the UI driver wraps session_send so a dock reply
+// aimed at a mirrored app chat fails honestly instead of `session_not_found`.
+try {
+  const ui = await import('./ui-driver.mjs')
+  ui.registerUiHandlers(extraHandlers, {
+    isPaused: () => pausedByServer || existsSync(PAUSE_FILE),
+  })
+} catch (err) {
+  log('ui driver not loaded:', String(err?.message ?? err))
+}
+
 async function handleCommand(cmd) {
   const params = cmd.params ?? {}
 
@@ -622,13 +634,24 @@ let activeToken = null
  */
 async function pushSessionEvents(token) {
   if (Date.now() - lastEventPushAt < EVENT_PUSH_MIN_INTERVAL_MS) return
-  let mod
+  let mod = null
+  let ui = null
   try {
     mod = await import('./sessions.mjs')
   } catch {
-    return // session driver absent — nothing to stream
+    /* session driver absent */
   }
-  const batches = mod.collectUnpushedEvents()
+  try {
+    ui = await import('./ui-driver.mjs')
+  } catch {
+    /* ui driver absent */
+  }
+  // W3: mirrored app-chat messages ride the SAME pipe as CLI transcripts —
+  // one endpoint, one dedupe key, zero render changes in the docks.
+  const batches = [
+    ...(mod ? mod.collectUnpushedEvents().map((b) => ({ ...b, mark: mod.markEventsPushed })) : []),
+    ...(ui ? ui.collectUnpushedUiEvents().map((b) => ({ ...b, mark: ui.markUiEventsPushed })) : []),
+  ]
   if (batches.length === 0) return
   lastEventPushAt = Date.now()
 
@@ -640,7 +663,7 @@ async function pushSessionEvents(token) {
         body: { sessionId: batch.sessionId, tool: batch.tool, events: batch.events },
         timeoutMs: 15_000,
       })
-      if (res.ok) mod.markEventsPushed(batch.sessionId, batch.lastSeq)
+      if (res.ok) batch.mark(batch.sessionId, batch.lastSeq)
       else log(`event push rejected (${res.status}) for session ${batch.sessionId}`)
     } catch (err) {
       log('event push failed:', String(err?.message ?? err))
