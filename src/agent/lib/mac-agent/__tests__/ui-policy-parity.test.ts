@@ -104,6 +104,13 @@ const CORPUS: Array<Record<string, unknown>> = [
   { ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Message', text: 'github_pat_11ABCDEFG0abcdefghijklmnop' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'shift+cmd+delete' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+backspace' },
+  // round-5: modified Enter still activates a focused control — including
+  // modifier spellings no allowlist would have contained.
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'shift+enter' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+shift+enter', focusedLabel: 'Delete' },
+  { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'opt+return', focusedLabel: 'Do anything' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+enter' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'meta+space' },
   // case-insensitivity must agree on both sides
   { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]

@@ -141,7 +141,10 @@ const SECRET_FIELD_LABEL = /\b(password|passphrase|passcode|secret|api[\s-]?key|
 // Matched by the FINAL key under ANY modifier set: in Electron apps Enter can
 // still activate the focused control while modifiers are held, so an exact
 // allowlist let `shift+enter` skip the focused-label check (Codex round 5).
-const ACTIVATION_KEYS = /^(?:(?:cmd|ctrl|opt|option|alt|shift|fn)\+)*(enter|return|space)$/i
+// Decided by the FINAL key under ANY prefix, not by a list of known modifier
+// spellings: a caller writing `command+enter` or `meta+enter` would miss such
+// a list and fall through to the unchecked AMBER path.
+const ACTIVATION_KEYS = /(^|\+)(enter|return|space)$/i
 
 /**
  * How recently the owner must have touched the keyboard or mouse for driving

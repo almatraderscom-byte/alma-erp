@@ -163,7 +163,7 @@ describe('UI policy — RED (never approvable)', () => {
   })
 
   it('treats Enter as an activation under ANY modifier set — modifiers do not skip the focus rules', () => {
-    for (const key of ['shift+enter', 'cmd+shift+enter', 'opt+return', 'ctrl+shift+space', 'fn+enter']) {
+    for (const key of ['shift+enter', 'cmd+shift+enter', 'command+enter', 'meta+space', 'opt+return', 'ctrl+shift+space', 'fn+enter']) {
       expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key }).code).toBe('focus_required')
       expect(
         classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key, focusedLabel: 'Delete' }).code,
