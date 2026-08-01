@@ -130,6 +130,10 @@ function sessionEventStep(r: {
       labelBn = '⏹️ সেশন শেষ'
       status = 'done'
       break
+    case 'resumed':
+      labelBn = '🔄 সেশন আবার জোড়া লাগল'
+      status = 'running'
+      break
     default:
       labelBn = `🧠 ${r.kind}`
       status = 'done'
@@ -164,7 +168,7 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [macRows, browserRows, sessionEventRows] = await Promise.all([
+  const [macRows, browserRows, sessionEventRows, sessionAggRows] = await Promise.all([
     db.macAgentCommand
       .findMany({
         where: { createdAt: { gte: since } },
@@ -193,6 +197,19 @@ export async function GET(req: NextRequest) {
         orderBy: { at: 'desc' },
         take: RECENT_STEPS,
         select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
+      })
+      .catch(() => []),
+    // L5 session cards aggregate over the WHOLE window, not the 12-step slice:
+    // one tool-heavy turn overflows 12 events, and a session whose newest event
+    // fell off the slice would vanish from the cards with its cost undercounted
+    // (Codex on the L5 PR). Text is deliberately not selected — this query only
+    // feeds status + cost.
+    db.macAgentSessionEvent
+      .findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { at: 'desc' },
+        take: 500,
+        select: { sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
       })
       .catch(() => []),
   ])
@@ -297,32 +314,70 @@ export async function GET(req: NextRequest) {
     steps.push(supersededStep(r))
   }
 
-  // L5 — one row per session in the window: its own status, last line, cost.
-  // Rows arrive newest-first, so the first row per session wins the status.
-  const sessionsById = new Map<
-    string,
-    { sessionId: string; tool: string; lastBn: string; status: string; costUsd: number; at: string }
-  >()
-  for (const r of sessionEventRows as SessionEventRow[]) {
-    const step = supersededStep(r)
-    const existing = sessionsById.get(r.sessionId)
-    if (!existing) {
-      sessionsById.set(r.sessionId, {
+  // L5 — one card per session over the WHOLE window: status from the raw
+  // lifecycle (not the display-demoted step status — a tool that runs silently
+  // for a minute is still WORKING), cost summed across every event in range.
+  // An error that no successful turn followed marks the session failed even if
+  // an `ended` came after it.
+  interface SessionAgg {
+    sessionId: string
+    tool: string
+    lastBn: string
+    newestKind: string
+    newestIsError: boolean
+    errorAt: number
+    okTurnAt: number
+    costUsd: number
+    at: string
+  }
+  const sessionsById = new Map<string, SessionAgg>()
+  for (const r of sessionAggRows as SessionEventRow[]) {
+    let agg = sessionsById.get(r.sessionId)
+    if (!agg) {
+      agg = {
         sessionId: r.sessionId,
         tool: r.tool,
-        lastBn: step.labelBn,
-        status: step.status === 'running' ? 'working' : step.status,
-        costUsd: r.costUsd ?? 0,
+        lastBn: sessionEventStep({ ...r, id: 'agg' }).labelBn,
+        newestKind: r.kind,
+        newestIsError: r.isError,
+        errorAt: 0,
+        okTurnAt: 0,
+        costUsd: 0,
         at: r.at.toISOString(),
-      })
-    } else {
-      existing.costUsd += r.costUsd ?? 0
+      }
+      sessionsById.set(r.sessionId, agg)
     }
+    agg.costUsd += r.costUsd ?? 0
+    const t = r.at.getTime()
+    if (r.kind === 'error' || (r.kind === 'turn_done' && r.isError)) {
+      if (t > agg.errorAt) agg.errorAt = t
+    }
+    if (r.kind === 'turn_done' && !r.isError && t > agg.okTurnAt) agg.okTurnAt = t
   }
-  const sessions = [...sessionsById.values()].map((s) => ({
-    ...s,
-    costUsd: Number(s.costUsd.toFixed(4)),
-  }))
+  const sessions = [...sessionsById.values()].map((s) => {
+    let status: string
+    switch (s.newestKind) {
+      case 'ended':
+        status = s.errorAt > s.okTurnAt ? 'failed' : 'done'
+        break
+      case 'error':
+        status = 'failed'
+        break
+      case 'turn_done':
+        status = s.newestIsError ? 'failed' : 'done'
+        break
+      default:
+        status = 'working'
+    }
+    return {
+      sessionId: s.sessionId,
+      tool: s.tool,
+      lastBn: s.lastBn,
+      status,
+      costUsd: Number(s.costUsd.toFixed(4)),
+      at: s.at,
+    }
+  })
 
   steps.sort((a, b) => b.at.localeCompare(a.at))
   const trimmed = steps.slice(0, RECENT_STEPS)

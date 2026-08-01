@@ -55,18 +55,41 @@ darwinOnly('L5 session resume', () => {
           model: null,
           costUsd: 0.12,
           turns: 3,
+          seq: 41,
           startedAt: Date.now() - 60_000,
           lastActivityAt: Date.now() - 30_000,
         },
       ]),
     )
-    const n = mod.loadPersistedSessions()
+    const n = mod.loadPersistedSessions([TEST_HOME])
     expect(n).toBe(1)
 
     const listed = mod.listSessions().sessions.find((s: { sessionId: string }) => s.sessionId === 'restored-1')
     expect(listed).toBeTruthy()
     expect(listed.status).toBe('detached')
     expect(listed.costUsd).toBeCloseTo(0.12, 4)
+    // The event counter continues — restarting at 0 would reuse (sessionId,
+    // seq) pairs the server has already stored and post-resume events would
+    // be dropped as duplicates.
+    expect(listed.lastSeq).toBe(41)
+  })
+
+  it('a persisted cwd outside the CURRENT allowlist is not restored', () => {
+    writeFileSync(
+      SESSIONS_FILE,
+      JSON.stringify([
+        {
+          id: 'outside-1',
+          cliSessionId: 'cli-out',
+          tool: 'claude',
+          cwd: '/tmp',
+          permissionMode: 'bypass',
+          startedAt: Date.now() - 60_000,
+          lastActivityAt: Date.now() - 30_000,
+        },
+      ]),
+    )
+    expect(mod.loadPersistedSessions([TEST_HOME])).toBe(0)
   })
 
   it('read reports detached honestly, not session_not_found', () => {
@@ -101,7 +124,7 @@ darwinOnly('L5 session resume', () => {
         },
       ]),
     )
-    expect(mod.loadPersistedSessions()).toBe(0)
+    expect(mod.loadPersistedSessions([TEST_HOME])).toBe(0)
   })
 
   it('an ended session drops out of the persisted file', () => {

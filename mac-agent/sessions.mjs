@@ -64,6 +64,11 @@ function persistSessions() {
         model: s.model ?? null,
         costUsd: s.costUsd ?? 0,
         turns: s.turns ?? 0,
+        // The event counter must survive too: a restored session that restarts
+        // at seq 0 reuses (sessionId, seq) pairs the server has already seen,
+        // and its post-resume events would be dropped as retry duplicates
+        // (Codex on the L5 PR).
+        seq: s.seq ?? 0,
         startedAt: s.startedAt,
         lastActivityAt: s.lastActivityAt,
       }))
@@ -73,8 +78,15 @@ function persistSessions() {
   }
 }
 
-/** Load what the previous daemon run left behind, as detached sessions. */
-export function loadPersistedSessions() {
+/**
+ * Load what the previous daemon run left behind, as detached sessions.
+ *
+ * The saved cwd is re-validated against the CURRENT allowlist — a project
+ * removed from the allowlist while the daemon was down must not stay remotely
+ * drivable (with its persisted permission mode) just because it was saved
+ * before the change (Codex on the L5 PR).
+ */
+export function loadPersistedSessions(allowedDirs = []) {
   try {
     if (!existsSync(SESSIONS_FILE)) return 0
     const rows = JSON.parse(readFileSync(SESSIONS_FILE, 'utf8'))
@@ -83,17 +95,24 @@ export function loadPersistedSessions() {
       if (!r?.id || !r?.cliSessionId) continue
       if (Date.now() - (r.lastActivityAt ?? 0) > DETACHED_MAX_AGE_MS) continue
       if (sessions.has(r.id)) continue
+      const cwd = typeof r.cwd === 'string' ? r.cwd : ''
+      const inside =
+        cwd && !cwd.includes('..') && allowedDirs.some((d) => cwd === d || cwd.startsWith(`${d}/`))
+      if (!inside || !existsSync(cwd)) continue
+      const seq = Number.isFinite(Number(r.seq)) ? Number(r.seq) : 0
       sessions.set(r.id, {
         id: r.id,
         tool: 'claude',
-        cwd: r.cwd,
+        cwd,
         permissionMode: r.permissionMode ?? 'plan',
         cliSessionId: r.cliSessionId,
         model: r.model ?? null,
         status: 'detached',
         events: [],
-        seq: 0,
-        pushedSeq: 0,
+        // Continue the numbering: seq 0 would reuse server-side (sessionId,
+        // seq) pairs and post-resume events would vanish as "duplicates".
+        seq,
+        pushedSeq: seq,
         startedAt: r.startedAt ?? Date.now(),
         lastActivityAt: r.lastActivityAt ?? Date.now(),
         costUsd: r.costUsd ?? 0,
@@ -290,6 +309,13 @@ function respawnDetached(session) {
     })
   } catch (err) {
     return { ok: false, error: `resume_spawn_failed: ${err?.message ?? err}` }
+  }
+  // A missing/non-executable binary surfaces ASYNCHRONOUSLY (ENOENT via the
+  // 'error' event), with spawn() happily returning a pid-less child — and the
+  // owner's instruction would be "delivered" into nothing (Codex on the L5
+  // PR). No pid = it never started.
+  if (!child.pid) {
+    return { ok: false, error: 'resume_spawn_failed: claude binary missing or not executable' }
   }
   session.status = 'working'
   session.error = null
@@ -553,7 +579,7 @@ export function markEventsPushed(sessionId, lastSeq) {
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
   installExitHandlers()
-  loadPersistedSessions()
+  loadPersistedSessions(allowedDirs)
   const wrap = (fn) => async (params) => {
     const out = fn(params)
     return out.ok
