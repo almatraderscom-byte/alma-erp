@@ -299,7 +299,17 @@ func hardwareIdleSeconds() -> Double {
     return types.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? 0
 }
 
+/// The LAST gate before any synthesis reaches the app. classifyDeferring()
+/// sampled idle on the driver side, but opening the Electron tree, activating
+/// the app and fronting the window take seconds — the owner can touch the
+/// machine inside exactly that gap. Same doctrine as the mid-type abort, at
+/// the tightest possible window (Codex round 3, head-confirmed).
+func guardOwnerStill() {
+    if hardwareIdleSeconds() < 1.0 { fail("owner_interrupted", "input at synthesis time") }
+}
+
 func typeUnicode(_ text: String) {
+    guardOwnerStill()
     let src = CGEventSource(stateID: .combinedSessionState)
     var count = 0
     for scalar in text {
@@ -344,6 +354,7 @@ let MODIFIER_FLAGS: [String: CGEventFlags] = [
 ]
 /// Combos arrive already normalized by the policy (cmd/ctrl/opt/shift + base).
 func pressKey(_ combo: String) {
+    guardOwnerStill()
     let parts = combo.lowercased().split(separator: "+").map(String.init)
     guard let baseName = parts.last, let code = BASE_KEYS[baseName] else { fail("unknown_key", combo) }
     var mods: CGEventFlags = []
@@ -402,6 +413,7 @@ case "click":
     let resolved = labelOf(target)
     if resolved != label { fail("label_mismatch", resolved) }
     let before = snapshot(win)
+    guardOwnerStill()
     guard AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else {
         fail("press_failed", label)
     }
@@ -477,6 +489,7 @@ case "scroll":
     let wheel = dir == "up" ? amount : -amount
     activate()
     frontWindow(win) // scroll routes through the key window too — front the resolved one
+    guardOwnerStill()
     let ev = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .combinedSessionState),
                      units: .line, wheelCount: 1, wheel1: wheel, wheel2: 0, wheel3: 0)!
     ev.postToPid(pid)
@@ -875,6 +888,15 @@ const MIRROR_MAX_SECONDS = 3_600
 
 /** Active mirrors, keyed by bundleId — one watcher per app. */
 const mirrors = new Map()
+/**
+ * Stopped mirrors whose events have not all reached the server yet. A fast
+ * stop→restart used to REPLACE the map entry and drop the buffered `ended`
+ * with it — the dock then showed a session that never finished, i.e. it lied
+ * about state (Codex round 3, head-confirmed). Entries leave this list the
+ * moment their last event is acknowledged.
+ */
+const retiredMirrors = []
+const RETIRED_MAX = 10
 
 /**
  * Which of the freshly-read messages are NEW and SETTLED?
@@ -1037,6 +1059,13 @@ async function appMirror(params) {
     existing.deadline = Date.now() + seconds * 1_000
     return ok({ mirroring: true, extended: true, seconds, sessionId: existing.sessionId })
   }
+  // A stopped predecessor may still hold events the server has not
+  // acknowledged (typically its `ended`) — retire it so the push loop can
+  // finish delivering them instead of losing them with the map entry.
+  if (existing && existing.seq > existing.pushedSeq) {
+    retiredMirrors.push(existing)
+    if (retiredMirrors.length > RETIRED_MAX) retiredMirrors.shift()
+  }
 
   const m = {
     bundleId,
@@ -1080,7 +1109,7 @@ const PUSH_BATCH_MAX = 50
 
 export function collectUnpushedUiEvents() {
   const batches = []
-  for (const m of mirrors.values()) {
+  for (const m of [...mirrors.values(), ...retiredMirrors]) {
     const fresh = m.events.filter((e) => e.seq > m.pushedSeq).slice(0, PUSH_BATCH_MAX)
     if (fresh.length === 0) continue
     batches.push({ sessionId: m.sessionId, tool: m.tool, events: fresh, lastSeq: fresh[fresh.length - 1].seq })
@@ -1089,14 +1118,18 @@ export function collectUnpushedUiEvents() {
 }
 
 export function markUiEventsPushed(sessionId, lastSeq) {
-  for (const m of mirrors.values()) {
+  for (const m of [...mirrors.values(), ...retiredMirrors]) {
     if (m.sessionId === sessionId && Number(lastSeq) > m.pushedSeq) m.pushedSeq = Number(lastSeq)
+  }
+  // Fully-delivered retirees have nothing left to say — let them go.
+  for (let i = retiredMirrors.length - 1; i >= 0; i -= 1) {
+    if (retiredMirrors[i].pushedSeq >= retiredMirrors[i].seq) retiredMirrors.splice(i, 1)
   }
 }
 
 /** Is this sessionId one of ours? (for the dock-reply wrap below) */
 export function isMirrorSession(sessionId) {
-  for (const m of mirrors.values()) if (m.sessionId === sessionId) return true
+  for (const m of [...mirrors.values(), ...retiredMirrors]) if (m.sessionId === sessionId) return true
   return false
 }
 
