@@ -200,7 +200,7 @@ func cmdSend(_ app: AXUIElement, pid: pid_t, text: String, windowTitle: String,
     err("composer value after typing: \(after.debugDescription)")
     if !after.contains(text) { err("FAIL: typed text did not land in composer"); exit(3) }
 
-    if pressButton(app, titleOrDesc: "Send message") {
+    if pressButton(win, titleOrDesc: "Send message") {
         err("sent via AXPress on 'Send message'")
     } else {
         err("no 'Send message' button — pressing Return")
