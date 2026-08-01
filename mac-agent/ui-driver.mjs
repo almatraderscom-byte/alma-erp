@@ -37,9 +37,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
   classifyUiAction,
+  normalizeKey,
   ALLOWED_APPS,
+  OWNER_ACTIVE_WINDOW_SECONDS,
   POLICY_RULE_DIGEST,
-  UI_LIMITS,
   capTree,
 } from './ui-policy.mjs'
 
@@ -292,15 +293,37 @@ func typeUnicode(_ text: String) {
         usleep(12_000)
     }
 }
-let KEYMAP: [String: (CGKeyCode, CGEventFlags)] = [
-    "return": (36, []), "enter": (36, []), "tab": (48, []), "space": (49, []),
-    "esc": (53, []), "escape": (53, []), "backspace": (51, []), "delete": (51, []),
-    "up": (126, []), "down": (125, []), "left": (123, []), "right": (124, []),
-    "pageup": (116, []), "pagedown": (121, []), "home": (115, []), "end": (119, []),
-    "cmd+enter": (36, .maskCommand), "cmd+return": (36, .maskCommand),
+/// Every base key the driver's canSynthesizeKey() promises — the two tables
+/// MUST stay in step, or a combo classifies AMBER, gets approved, and then
+/// dies at synthesis ("he approved and nothing happened" — Codex P2).
+let BASE_KEYS: [String: CGKeyCode] = [
+    "return": 36, "enter": 36, "tab": 48, "space": 49, "escape": 53,
+    "delete": 51, "forwarddelete": 117,
+    "up": 126, "down": 125, "left": 123, "right": 124,
+    "pageup": 116, "pagedown": 121, "home": 115, "end": 119,
+    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
+    "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+    "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
+    "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35,
+    "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7,
+    "y": 16, "z": 6,
+    "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26,
+    "8": 28, "9": 25,
+    "-": 27, "=": 24, "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39,
+    ",": 43, ".": 47, "/": 44, "\u{60}": 50, // \u{60} = backtick (a literal one would end the JS template string)
 ]
-func pressKey(_ name: String) {
-    guard let (code, mods) = KEYMAP[name.lowercased()] else { fail("unknown_key", name) }
+let MODIFIER_FLAGS: [String: CGEventFlags] = [
+    "cmd": .maskCommand, "ctrl": .maskControl, "opt": .maskAlternate, "shift": .maskShift,
+]
+/// Combos arrive already normalized by the policy (cmd/ctrl/opt/shift + base).
+func pressKey(_ combo: String) {
+    let parts = combo.lowercased().split(separator: "+").map(String.init)
+    guard let baseName = parts.last, let code = BASE_KEYS[baseName] else { fail("unknown_key", combo) }
+    var mods: CGEventFlags = []
+    for m in parts.dropLast() {
+        guard let f = MODIFIER_FLAGS[m] else { fail("unknown_key", combo) }
+        mods.insert(f)
+    }
     let src = CGEventSource(stateID: .combinedSessionState)
     for down in [true, false] {
         let ev = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)!
@@ -342,26 +365,37 @@ case "click":
     let win = resolveWindow()
     let pressableRoles: Set<String> = ["AXButton", "AXMenuItem", "AXCheckBox", "AXRadioButton",
                                        "AXPopUpButton", "AXLink", "AXMenuButton", "AXDisclosureTriangle"]
+    // EXACT equality only — the policy judged this literal label, so the label
+    // of the element we press must BE that string. A substring/nearest match
+    // is how a judged "Send" lands on "Send feedback" (Codex P1).
     guard let target = findFirst(win, 40, { el in
         pressableRoles.contains(role(el)) &&
             (str(el, kAXTitleAttribute) == label || str(el, kAXDescriptionAttribute) == label)
     }) else { fail("element_not_found", label) }
+    let resolved = labelOf(target)
+    if resolved != label { fail("label_mismatch", resolved) }
     let before = snapshot(win)
     guard AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else {
         fail("press_failed", label)
     }
     usleep(900_000) // give the UI a beat to react before diffing
-    emit(["ok": true, "clicked": label, "diff": diffLines(before, snapshot(win))])
+    emit(["ok": true, "clicked": label, "resolvedLabel": resolved,
+          "diff": diffLines(before, snapshot(win))])
 
 case "type":
     guard let field = flags["field"], !field.isEmpty else { fail("field_required") }
     guard let text = flags["text"], !text.isEmpty else { fail("text_required") }
     let win = resolveWindow()
+    // EXACT equality only — same contract as click: the policy judged this
+    // literal field label (including its secret-field rules), so a substring
+    // match ("word" finding "Password") would act on an element the policy
+    // never saw (Codex P1).
     guard let composer = findFirst(win, 40, { el in
         (role(el) == "AXTextArea" || role(el) == "AXTextField") &&
-            ((str(el, kAXDescriptionAttribute) ?? "").contains(field) ||
-             (str(el, kAXTitleAttribute) ?? "").contains(field))
+            (str(el, kAXDescriptionAttribute) == field || str(el, kAXTitleAttribute) == field)
     }) else { fail("field_not_found", field) }
+    let resolvedField = labelOf(composer)
+    if resolvedField != field { fail("label_mismatch", resolvedField) }
 
     // Hard guard from W1 (it FIRED live): refuse to type unless the field
     // holds nothing but its known placeholder — a draft the owner left, or a
@@ -384,12 +418,22 @@ case "type":
     // whole program bans.
     let after = (attr(composer, kAXValueAttribute) as? String) ?? ""
     if !after.contains(text) { fail("typed_not_landed", String(after.prefix(120))) }
-    emit(["ok": true, "typed": text.count, "fieldValue": String(after.prefix(200)),
+    emit(["ok": true, "typed": text.count, "resolvedLabel": resolvedField,
+          "fieldValue": String(after.prefix(200)),
           "diff": diffLines(winBefore, snapshot(win))])
 
 case "key":
     guard let key = flags["key"], !key.isEmpty else { fail("key_required") }
     let win = resolveWindow()
+    // The policy judged an activation key against a FOCUSED label resolved
+    // moments ago in the driver — focus can move (the owner-idle wait can be
+    // minutes). Re-verify at the last instant, atomically with the press;
+    // mismatch is a refusal, never a guess (Codex P1 TOCTOU).
+    if let expect = flags["expect-focused"], !expect.isEmpty {
+        guard let f = attr(app, kAXFocusedUIElementAttribute) else { fail("focus_changed", "nothing focused") }
+        let now = labelOf(f as! AXUIElement)
+        if now != expect { fail("focus_changed", now) }
+    }
     let before = snapshot(win)
     activate()
     pressKey(key)
@@ -514,6 +558,8 @@ const HELPER_FAIL_BN = {
   press_failed: 'ক্লিকটা কাজ করেনি।',
   no_focus: 'কোনো এলিমেন্ট ফোকাসে নেই।',
   unknown_key: 'এই কী-টা চেনা নেই।',
+  label_mismatch: 'এলিমেন্টের আসল নাম যাচাই-করা নামের সাথে মেলে না — কিছু করা হয়নি।',
+  focus_changed: 'ফোকাস অন্য জায়গায় সরে গেছে — কী চাপা হয়নি, আবার চেষ্টা করুন।',
 }
 
 function helperError(res, fallback = 'ui_helper_failed') {
@@ -538,21 +584,73 @@ async function ownerIdleSeconds() {
 }
 
 let isPausedFn = () => false
+/** Injected by agent.mjs: asks the server whether this command was STOPped or
+ *  the kill-switch went off. Best-effort — a network blip must not fail the
+ *  wait, the deadline still bounds it. */
+let checkCancelledFn = async () => null
+
+const STOPPED_VERDICT = {
+  level: 'red',
+  code: 'stopped_by_owner',
+  reasonBn: 'আপনি STOP চেপেছেন — কাজটা বাতিল হলো, কিছু করা হয়নি।',
+}
+const KILL_SWITCH_VERDICT = {
+  level: 'red',
+  code: 'kill_switch',
+  reasonBn: 'Mac control বন্ধ — কিছু করা হয়নি।',
+}
+
+/** One server round-trip: is this command still wanted? */
+async function abortState(cmd) {
+  try {
+    return await checkCancelledFn(cmd?.id)
+  } catch {
+    return null
+  }
+}
 
 /**
  * Classify with a live idle measurement, deferring while the owner is at the
- * keyboard. Returns the final verdict, or an `owner_active` verdict when the
- * defer budget runs out (the server keeps the step visible and can retry).
+ * keyboard. `resolveExtra` (optional) re-resolves volatile inputs — the
+ * focused element's label — on EVERY attempt, because the wait can run for
+ * minutes and focus moves (Codex P1: classifying a stale focus is judging an
+ * element we will not press). Each defer tick also asks the server whether
+ * the owner pressed STOP — a red STOP must abort a waiting action, not let
+ * it fire minutes later (Codex P1).
  */
-async function classifyDeferring(req) {
+async function classifyDeferring(reqBase, cmd, resolveExtra) {
   const deadline = Date.now() + OWNER_DEFER_MAX_MS
   for (;;) {
-    const verdict = classifyUiAction({ ...req, ownerIdleSeconds: await ownerIdleSeconds() })
-    if (verdict.code !== 'owner_active') return verdict
-    if (isPausedFn()) return verdict // kill-switch: stop waiting, refuse now
-    if (Date.now() > deadline) return verdict
+    const idle = await ownerIdleSeconds()
+    let extraFields = {}
+    if (resolveExtra && Number.isFinite(idle) && idle >= OWNER_ACTIVE_WINDOW_SECONDS) {
+      const extra = await resolveExtra()
+      if (extra.error) return { error: extra.error }
+      extraFields = extra.fields ?? {}
+    }
+    const verdict = classifyUiAction({ ...reqBase, ...extraFields, ownerIdleSeconds: idle })
+    if (verdict.code !== 'owner_active') return { verdict, fields: extraFields }
+    if (isPausedFn()) return { verdict: KILL_SWITCH_VERDICT, fields: {} }
+    if (Date.now() > deadline) return { verdict, fields: {} }
+    const abort = await abortState(cmd)
+    if (abort?.cancelled) return { verdict: STOPPED_VERDICT, fields: {} }
+    if (abort?.disabled) return { verdict: KILL_SWITCH_VERDICT, fields: {} }
     await new Promise((r) => setTimeout(r, OWNER_DEFER_POLL_MS))
   }
+}
+
+/**
+ * Last gate before synthesising anything: even an action that never had to
+ * defer must not fire after the owner's STOP landed while it sat in the
+ * queue. One cheap read; fail open on network error (the daemon-side policy
+ * verdict and kill-switch checks still stand).
+ */
+async function stoppedBeforeActing(cmd) {
+  if (isPausedFn()) return KILL_SWITCH_VERDICT
+  const abort = await abortState(cmd)
+  if (abort?.cancelled) return STOPPED_VERDICT
+  if (abort?.disabled) return KILL_SWITCH_VERDICT
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -601,19 +699,52 @@ async function uiScroll(params) {
   return ok(res)
 }
 
+/**
+ * The base keys and modifiers the Swift helper can actually synthesise. MUST
+ * mirror the helper's BASE_KEYS/MODIFIER_FLAGS tables: a combo the policy
+ * would card as AMBER but the helper cannot press has to be refused BEFORE
+ * classification, or the owner approves a no-op (Codex P2).
+ */
+const SYNTH_MODIFIERS = new Set(['cmd', 'ctrl', 'opt', 'shift'])
+const SYNTH_BASE_KEYS = new Set([
+  'return', 'enter', 'tab', 'space', 'escape', 'delete', 'forwarddelete',
+  'up', 'down', 'left', 'right', 'pageup', 'pagedown', 'home', 'end',
+  'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+  ...'abcdefghijklmnopqrstuvwxyz', ...'0123456789',
+  '-', '=', '[', ']', '\\', ';', "'", ',', '.', '/', '`',
+])
+
+export function canSynthesizeKey(normalizedCombo) {
+  const parts = String(normalizedCombo ?? '').split('+')
+  if (parts.length === 0 || parts.some((p) => !p)) return false
+  if (!SYNTH_BASE_KEYS.has(parts[parts.length - 1])) return false
+  return parts.slice(0, -1).every((m) => SYNTH_MODIFIERS.has(m))
+}
+
+function needsApproval(verdict, params, cmd) {
+  return verdict.level === 'amber' && !params.approved && !cmd?.approved
+}
+
 async function uiClick(params, cmd) {
   const bundleId = resolveBundleId(params.app)
   const label = String(params.elementLabel ?? '').trim()
-  const verdict = await classifyDeferring({ action: 'ui_click', bundleId, elementLabel: label })
+  const { verdict } = await classifyDeferring({ action: 'ui_click', bundleId, elementLabel: label }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
-  if (verdict.level === 'amber' && !params.approved && !cmd?.approved) {
+  if (needsApproval(verdict, params, cmd)) {
     return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
   }
+  const stopped = await stoppedBeforeActing(cmd)
+  if (stopped) return refusal(stopped)
   const h = hintsFor(bundleId)
   const args = ['click', bundleId, '--label', label, '--window', String(params.window ?? h.windowTitle ?? '-')]
   if (h.manual) args.push('--manual')
   const res = await helper(args, { timeoutMs: 45_000 })
   if (!res.ok) return helperError(res)
+  // The helper resolves by exact equality, so the pressed element's own label
+  // IS the judged one; this assertion is the belt to that suspender.
+  if (res.resolvedLabel !== label) {
+    return refusal({ code: 'label_mismatch', reasonBn: `বোতামের আসল নাম "${res.resolvedLabel}" — যেটা যাচাই হয়েছিল তার সাথে মেলে না, তাই কিছু করা হয়নি।` })
+  }
   return ok({ clicked: res.clicked, diff: res.diff, policy: verdict.level })
 }
 
@@ -622,11 +753,13 @@ async function uiType(params, cmd) {
   const h = hintsFor(bundleId)
   const field = String(params.elementLabel ?? h.composerDesc ?? '').trim()
   const text = String(params.text ?? '')
-  const verdict = await classifyDeferring({ action: 'ui_type', bundleId, elementLabel: field, text })
+  const { verdict } = await classifyDeferring({ action: 'ui_type', bundleId, elementLabel: field, text }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
-  if (verdict.level === 'amber' && !params.approved && !cmd?.approved) {
+  if (needsApproval(verdict, params, cmd)) {
     return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
   }
+  const stopped = await stoppedBeforeActing(cmd)
+  if (stopped) return refusal(stopped)
   const args = ['type', bundleId, '--field', field, '--text', text,
     '--window', String(params.window ?? h.windowTitle ?? '-')]
   if (h.manual) args.push('--manual')
@@ -637,35 +770,59 @@ async function uiType(params, cmd) {
   }
   const res = await helper(args, { timeoutMs: 90_000 })
   if (!res.ok) return helperError(res)
+  if (res.resolvedLabel !== field) {
+    return refusal({ code: 'label_mismatch', reasonBn: `ঘরের আসল নাম "${res.resolvedLabel}" — যেটা যাচাই হয়েছিল তার সাথে মেলে না, তাই লেখা হয়নি।` })
+  }
   return ok({ typed: res.typed, fieldValue: res.fieldValue, diff: res.diff, policy: verdict.level })
 }
 
 async function uiKey(params, cmd) {
   const bundleId = resolveBundleId(params.app)
-  const key = String(params.key ?? '').trim()
+  const key = normalizeKey(params.key)
   const h = hintsFor(bundleId)
 
-  // An activation key presses whatever has focus — the classifier refuses to
-  // judge it blind, so resolve the focused element's label FIRST (W2 contract).
-  let focusedLabel = ''
-  if (ACTIVATION_KEYS.test(key)) {
+  // Refuse un-synthesisable combos BEFORE the policy ever cards them.
+  if (key && !canSynthesizeKey(key)) {
+    return {
+      ok: false,
+      exitCode: null,
+      error: `unknown_key — "${key}" চাপা সম্ভব নয় (সমর্থিত নয়)।`,
+    }
+  }
+
+  // An activation key presses whatever has focus. The focused label is
+  // resolved INSIDE the defer loop — freshly on every attempt, once the
+  // owner-idle gate passes — because focus moves during a minutes-long wait
+  // and the classified label must be the one that is focused NOW (Codex P1).
+  const isActivation = ACTIVATION_KEYS.test(key)
+  const resolveFocused = async () => {
     const fArgs = ['focused', bundleId]
     if (h.manual) fArgs.push('--manual')
     const f = await helper(fArgs)
-    if (!f.ok) return helperError(f)
-    focusedLabel = String(f.label ?? '')
+    if (!f.ok) return { error: helperError(f) }
+    return { fields: { focusedLabel: String(f.label ?? '') } }
   }
-
-  const verdict = await classifyDeferring({ action: 'ui_key', bundleId, key, focusedLabel })
+  const out = await classifyDeferring(
+    { action: 'ui_key', bundleId, key },
+    cmd,
+    isActivation ? resolveFocused : null,
+  )
+  if (out.error) return out.error
+  const { verdict, fields } = out
   if (verdict.level === 'red') return refusal(verdict)
-  if (verdict.level === 'amber' && !params.approved && !cmd?.approved) {
+  if (needsApproval(verdict, params, cmd)) {
     return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
   }
+  const stopped = await stoppedBeforeActing(cmd)
+  if (stopped) return refusal(stopped)
   const args = ['key', bundleId, '--key', key, '--window', String(params.window ?? h.windowTitle ?? '-')]
+  // The helper re-verifies the focused element at the last instant, atomically
+  // with the press — a changed focus is a refusal, not a guess.
+  if (isActivation && fields.focusedLabel) args.push('--expect-focused', fields.focusedLabel)
   if (h.manual) args.push('--manual')
   const res = await helper(args, { timeoutMs: 45_000 })
   if (!res.ok) return helperError(res)
-  return ok({ key: res.key, focused: focusedLabel || null, diff: res.diff, policy: verdict.level })
+  return ok({ key: res.key, focused: fields.focusedLabel || null, diff: res.diff, policy: verdict.level })
 }
 
 // ---------------------------------------------------------------------------
@@ -813,6 +970,10 @@ async function appMirror(params) {
   const bundleId = resolveBundleId(params.app)
   const mode = String(params.mode ?? 'start')
 
+  // The red STOP broadcast — no app named, everything watching stops.
+  if (mode === 'stop_all') {
+    return ok({ mirroring: false, stopped: stopAllMirrors('owner_stop') })
+  }
   if (mode === 'stop') {
     const had = stopMirror(bundleId, 'owner')
     return ok({ mirroring: false, stopped: had })
@@ -915,8 +1076,9 @@ export function stopAllMirrors(reason = 'stop') {
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerUiHandlers(extraHandlers, { isPaused } = {}) {
+export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled } = {}) {
   if (typeof isPaused === 'function') isPausedFn = isPaused
+  if (typeof checkCancelled === 'function') checkCancelledFn = checkCancelled
 
   extraHandlers.set('ui_tree', (p) => uiTree(p))
   extraHandlers.set('ui_scroll', (p) => uiScroll(p))

@@ -24,11 +24,20 @@ const DRIVER_MJS = resolve(__dirname, '../../../../../mac-agent/ui-driver.mjs')
 let settleNewMessages: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let resolveBundleId: any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let canSynthesizeKey: any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let normalizeKey: any
 
 beforeAll(async () => {
   const mod = await import(pathToFileURL(DRIVER_MJS).href)
   settleNewMessages = mod.settleNewMessages
   resolveBundleId = mod.resolveBundleId
+  canSynthesizeKey = mod.canSynthesizeKey
+  const policy = await import(
+    pathToFileURL(resolve(__dirname, '../../../../../mac-agent/ui-policy.mjs')).href
+  )
+  normalizeKey = policy.normalizeKey
 })
 
 const owner = (text: string) => ({ who: 'owner', text })
@@ -147,6 +156,29 @@ describe('settleNewMessages', () => {
 
   it('tolerates a malformed read', () => {
     expect(settleNewMessages(fresh(), null).emit).toEqual([])
+  })
+})
+
+describe('canSynthesizeKey', () => {
+  it('accepts every named key, letters, digits and modifier combos', () => {
+    for (const k of ['return', 'enter', 'tab', 'escape', 'space', 'down', 'pageup', 'f5', 'a', 'z', '0', '9', '/', '`']) {
+      expect(canSynthesizeKey(k), k).toBe(true)
+    }
+    for (const k of ['cmd+return', 'cmd+shift+p', 'ctrl+opt+left', 'cmd+a']) {
+      expect(canSynthesizeKey(k), k).toBe(true)
+    }
+  })
+  it('accepts what the policy normalizes from common spellings', () => {
+    // The driver feeds normalizeKey() output into canSynthesizeKey — aliases
+    // the policy folds (command→cmd, esc→escape, alt→opt) must synthesize.
+    for (const raw of ['Command+Return', 'esc', 'alt+Tab', 'Control+C', 'spacebar']) {
+      expect(canSynthesizeKey(normalizeKey(raw)), raw).toBe(true)
+    }
+  })
+  it('refuses what the helper cannot press', () => {
+    for (const k of ['', 'cmd+', '+a', 'hyper+a', 'fn+f1', 'cmd+unknownkey', 'a+b']) {
+      expect(canSynthesizeKey(k), k).toBe(false)
+    }
   })
 })
 
