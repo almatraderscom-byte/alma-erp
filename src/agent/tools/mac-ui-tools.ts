@@ -25,6 +25,7 @@ import {
   UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
+import { agentStorageSignedUrl, agentStorageUpload } from '@/agent/lib/storage'
 import { requireOnlineMac } from './mac-tools'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -215,6 +216,33 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     }
 
     if (action === 'ui_screenshot') {
+      // Never hand the head a base64 body: it pastes the megabyte into its
+      // reply as "markdown", the chat renders raw base64, and the tokens are
+      // billed. Upload once and return a short-lived URL with the exact
+      // camera-snapshot instruction the head already knows how to follow.
+      const uri = String(outcome.stdout ?? '')
+      const m = uri.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/)
+      if (m) {
+        try {
+          const ext = m[1] === 'png' ? 'png' : 'jpg'
+          const objectPath = `mac-ui/shot-${id}.${ext}`
+          await agentStorageUpload(objectPath, Buffer.from(m[2], 'base64'), `image/${m[1]}`)
+          const imageUrl = await agentStorageSignedUrl(objectPath)
+          return {
+            success: true,
+            data: {
+              imageUrl,
+              device: gate.deviceName,
+              app: appLabel(bundleId),
+              instruction:
+                'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও: ![' + appLabel(bundleId) + '](imageUrl)। ' +
+                'base64 বা লম্বা টেক্সট কখনো লিখবে না। URL ১ ঘণ্টা পরে expire হবে।',
+            },
+          }
+        } catch {
+          /* storage is best-effort — fall through to the raw payload below */
+        }
+      }
       return {
         success: true,
         data: { screenshot: outcome.stdout, device: gate.deviceName, app: appLabel(bundleId) },
