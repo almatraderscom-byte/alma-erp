@@ -30,7 +30,9 @@ Owner's ask, in his words: his agent should work on his Mac while he is away —
 | **M4 Screen + power** | ⚠️ PARTIAL | keep-awake works. Screenshot needs Screen Recording permission, never granted |
 | **`/agent/mac` page** | ✅ DONE | Switch, pairing, STOP, full audit trail |
 | **Live dock (web)** | ✅ SHIPPED, ❌ UNVERIFIED | API verified; idle-hiding verified. Never seen with work in flight — browser automation could not drive the composer |
-| **Live dock (iOS app)** | ❌ NOT DONE | **The real gap — see Phase L3** |
+| **Live dock (iOS app)** | ✅ DONE (PR #671, 2026-08-01) | `AgentLiveDockView.swift`, three states sim-screenshotted; real prod poll decoded from the sim |
+| **L4 transcript + reply + push** | ✅ BUILT (PR #671) | Session events stream daemon→server→both docks; tap-to-reply (pinned target, queued state, Claude-only); push on error/ended/question. Live round-trip needs the daemon files copied to `~/.alma-mac-agent` + restart after merge |
+| **L5 resume + multi-session + cost** | ✅ BUILT (PR #672, stacked) | Detached sessions resume via `--resume` on next send; per-session cards with cost in both docks; 5 new daemon tests |
 
 **Key files.** Server: `src/agent/lib/mac-agent/{policy,bus}.ts`, `src/app/api/assistant/mac-agent/{pair,poll,result,status}`, `src/app/api/assistant/live-activity`, `src/agent/tools/{mac-tools,cli-session-tools}.ts`, `src/agent/components/AgentLiveDock.tsx`, `src/app/agent/mac/page.tsx`. Daemon: `mac-agent/{agent,policy,sessions}.mjs`. Mac app: `mac-app/`.
 
@@ -46,7 +48,25 @@ So the web dock appears in his browser and PWA, and **cannot** appear in the nat
 
 ---
 
-## Phase L3 — the iOS live dock (DO THIS FIRST)
+## Phase L3 — the iOS live dock (✅ DONE 2026-08-01, PR #671 with L4; L5 in PR #672)
+
+Traps this build paid for (do not rediscover):
+- **`.task` on `Group { if … }` never fires while the condition is false** — the
+  poll that would make the dock visible never started. The dock body is a
+  VStack (a real installed view) for exactly this reason.
+- **AlmaAPI normalizes 401/403 to `.notAuthenticated`** and posts the login
+  banner; owner-only feeds polled from staff phones must use `getQuietAuth`.
+- **Screenshot negotiation:** the client sends `screenshotAfter`; the server
+  answers an unchanged frame with metadata only — and must STILL return
+  `screenshotAt`, or the client drops its cache and re-downloads every other
+  poll.
+- **Reply targeting:** pin the composer's target session at the first
+  keystroke; recomputing from the newest event mid-typing sends the owner's
+  answer to the wrong session. Codex sessions get no composer (one-shot).
+- The `ALMA_LIVE_DOCK_FIXTURE=strip|sheet` DEBUG launch flag drives all three
+  states deterministically in the sim (`SIMCTL_CHILD_` env).
+
+Original spec below, kept for reference.
 
 **Goal:** in the native app, while the agent works, a compact live strip sits above the composer; tapping expands it to a sheet; collapsing returns without losing scroll position.
 
