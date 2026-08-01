@@ -250,6 +250,35 @@ whether the AX tree is even usable on Electron); everything else is parallel.
   mirroring (§"What watching must feel like") depends on that read.
 - **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W1 (Electron AX spike) koro"*
 
+### ✅ W1 — DONE (merged 2026-08-01, PR #677). What it proved, and what it changes
+
+Full findings: `docs/L8_AX_SPIKE.md`. The headline: **the AX tree IS the
+control surface — no fallback needed.**
+
+| | Result |
+|---|---|
+| **Claude desktop** | Works, but ONLY after setting `AXManualAccessibility=true` (then wait 1-2s). Without it the tree is an empty AXGroup. 543 elements: sidebar, session list, composer, whole conversation |
+| **ChatGPT desktop** | Works with NO flag at all — 1381 elements, 9 windows. `AXManualAccessibility` returns `-25205` (unsupported) and is not needed. **The Electron risk simply is not there** |
+| **Reading elements** | Yes, with titles/descriptions. Composer is `AXTextArea` — Claude `D="Prompt"`, ChatGPT `D="Do anything"` |
+| **Reading the chat** | Yes — OWNER/ASSISTANT split works. Claude's own headings say who spoke ("You said:" / "Claude responded:"), so **mirroring is easier than assumed** |
+| **Type + send** | Proven end to end: script opened a new Claude chat, typed a prompt, pressed Return, and read Claude's reply back out of the tree |
+
+**Four things W1 learned that W3/W4 must build in — do not rediscover them:**
+1. **Set `AXManualAccessibility` for Claude, skip it for ChatGPT** (and tolerate
+   `-25205` rather than treating it as failure).
+2. **Scope every search to ONE window.** Both apps have several (Codex panel,
+   pet overlay); an app-wide search finds the wrong composer.
+3. **Never drive while the owner is at the keyboard.** W1's draft guard fired
+   for real. W2 now enforces this in policy (`ownerIdleSeconds` →
+   `owner_active`); **W3 must MEASURE idle time and pass it in**, and treat
+   `owner_active` as *defer and retry*, not as a failure.
+4. **Compile the Swift helper once with `swiftc`.** The interpreter takes
+   8-15s per call, which is unusable at a per-action cadence.
+
+Two P2s W1 deferred, now W3's to carry: **verify the ChatGPT plain-chat
+composer**, and **assert the composer actually changed after typing** before
+reporting success.
+
 ### W2 — the UI policy classifier (parallel with W1)
 - **Goal:** the GREEN/AMBER/RED rules for UI actions, plus its daemon-side twin
   and the parity test — same shape as the shell classifier.
@@ -261,11 +290,22 @@ whether the AX tree is even usable on Electron); everything else is parallel.
   (Keychain, System Settings, non-allowlisted app) are unit-tested.
 - **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W2 (UI policy classifier) koro"*
 
-### W3 — the daemon's UI driver (after W1)
+### W3 — the daemon's UI driver (READY TO START — W1 merged, W2's contract below)
 - **Goal:** `ui_*` verbs on the daemon — `ui_tree`, `ui_click`, `ui_type`,
   `ui_key`, `ui_scroll`, each returning the AX diff; re-judged locally.
 - **Writes:** `mac-agent/ui-driver.mjs`, wiring in `mac-agent/agent.mjs`
-- **Reads:** W1's spike doc, `mac-agent/sessions.mjs` (handler-registration pattern)
+- **Reads:** `docs/L8_AX_SPIKE.md` (W1), `mac-agent/ui-policy.mjs` (W2's twin —
+  **call it, do not reimplement it**), `mac-agent/sessions.mjs` (handler pattern)
+- **The W2 contract W3 must satisfy** (`classifyUiAction` refuses otherwise):
+  - measure and pass **`ownerIdleSeconds`**; `owner_active` means *wait and
+    retry*, not fail;
+  - resolve and pass **`elementLabel`** for BOTH `ui_click` and `ui_type` —
+    a missing label is a hard refusal, on purpose;
+  - resolve and pass **`focusedLabel`** before any Enter/Space/cmd+Enter;
+  - pass the **`bundleId`** for everything except a full-screen screenshot.
+- **Carry W1's four lessons:** `AXManualAccessibility` for Claude only ·
+  window-scoped searches · `swiftc`-compiled helper · assert the composer
+  changed after typing (and verify ChatGPT's plain-chat composer).
 - **Also W3: chat mirroring.** A watcher that re-reads the driven app's
   conversation area and emits each NEW message as a session event (same
   `mac_agent_session_events` pipe as CLI sessions), so both docks show the
@@ -276,8 +316,12 @@ whether the AX tree is even usable on Electron); everything else is parallel.
   as live text in the web dock.
 - **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W3 (daemon UI driver) koro"*
 
-### W4 — server tools + approval cards (after W1, parallel with W3)
+### W4 — server tools + approval cards (READY TO START, parallel with W3)
 - **Goal:** the agent-facing tools and the owner's AMBER card for a UI action.
+- **Uses W2:** import `classifyUiAction` from
+  `src/agent/lib/mac-agent/ui-policy.ts` and enqueue only green/amber; the card
+  must show the app, the element label and the literal text (the classifier's
+  `reasonBn` already reads that way).
 - **Writes:** `src/agent/tools/mac-ui-tools.ts`, its registry/prompt/pack wiring
 - **Reads:** `src/agent/tools/mac-tools.ts` (the pattern), §0.4's FIVE wiring places
 - **Done when:** the head can call `drive_mac_app` from plain Bangla and an
