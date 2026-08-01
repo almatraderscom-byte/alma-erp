@@ -99,6 +99,37 @@ Today the dock reports *command rows*. A Claude session's actual thinking is ric
 
 ---
 
+## Phase L7 — the full-Mac view (owner's ask, 2026-08-01, in his words)
+
+*"terminal charaw amar mac e ar app claude e jeno try kore … tar cokhe mac ta
+full dekha jabe ar ami live streaming e phone theke full mac view soho dekhte
+pari agent kothay ase ki kortese."*
+
+Two separable asks, in build order:
+
+1. **Live screen streaming to the dock (build FIRST — it also covers the
+   second ask visually).** A ~1 fps `screencapture` loop while work is live,
+   gated by his explicit start (cost + privacy), frames downscaled daemon-side
+   (the 4.5 MB Vercel body trap), shown in the dock's expanded sheet exactly
+   where the single screenshot goes today. Reuses the browser-live streaming
+   shape. **Blocked on the one-time Screen Recording grant (L6 item).** With
+   this, whatever happens on the Mac — including the Claude APP — is visible
+   live from the phone.
+2. **Driving the Claude desktop app (GUI) itself.** Honest note (why M2 chose
+   CLIs): clicking app windows breaks when a window moves and cannot be
+   observed reliably; the CLI IS the same Claude with a structured event
+   stream. If the owner still wants true GUI driving after seeing streaming,
+   the path is macOS Accessibility APIs (AXUIElement) + screen streaming as
+   the eyes — a real phase of its own, with the same GREEN/AMBER/RED policy
+   judging every synthetic click/keystroke.
+
+**Login note (asked 2026-08-01):** the Claude CLI login is in the keychain and
+SURVIVES reboots — proven live today (session ran `git status` with no fresh
+login). "PC off" only stops the daemon from polling; that is what
+`keep_awake` and the L6 wake-on-LAN item address, not a login problem.
+
+---
+
 ## Phase L6 — finish the loose ends
 
 - **Screen Recording permission** for the daemon, or screenshots stay broken. One-time owner grant.
