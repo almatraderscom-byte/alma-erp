@@ -151,6 +151,13 @@ describe('UI policy — RED (never approvable)', () => {
     }
   })
 
+  it('folds modifier aliases before judging — command/meta/option must not slip past', () => {
+    for (const key of ['command+q', 'meta+q', 'command+delete', 'command+option+shift+q', 'control+command+q']) {
+      const v = classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key })
+      expect(v.level).toBe('red')
+    }
+  })
+
   it('refuses destructive keystrokes', () => {
     expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+q' }).level).toBe('red')
     expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+shift+delete' }).level).toBe('red')
@@ -159,6 +166,15 @@ describe('UI policy — RED (never approvable)', () => {
   it('refuses Enter/Space when what has focus is unknown — a blind activation', () => {
     for (const key of ['enter', 'space', 'cmd+enter']) {
       expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key }).code).toBe('focus_required')
+    }
+  })
+
+  it('treats Enter as an activation under ANY modifier set — modifiers do not skip the focus rules', () => {
+    for (const key of ['shift+enter', 'cmd+shift+enter', 'command+enter', 'meta+space', 'opt+return', 'ctrl+shift+space', 'fn+enter']) {
+      expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key }).code).toBe('focus_required')
+      expect(
+        classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key, focusedLabel: 'Delete' }).code,
+      ).toBe('destructive_label')
     }
   })
 
