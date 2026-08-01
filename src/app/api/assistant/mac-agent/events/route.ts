@@ -20,7 +20,7 @@
  */
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { authenticateDevice } from '@/agent/lib/mac-agent/bus'
+import { authenticateDevice, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -64,6 +64,13 @@ function eventText(e: WireEvent): string | null {
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
+
+  // Server-side backstop for the owner's kill-switch: with Mac control OFF,
+  // nothing gets ingested even if a daemon keeps trying (Codex round 7). The
+  // daemon also stops on its own via the poll's `paused` flag.
+  if (!(await isMacAgentEnabled())) {
+    return Response.json({ error: 'mac_agent_disabled' }, { status: 409 })
+  }
 
   const device = await authenticateDevice(bearer(req))
   if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
