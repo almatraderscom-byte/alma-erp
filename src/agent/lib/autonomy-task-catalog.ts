@@ -372,8 +372,11 @@ const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
     'add_staff_task_now', 'prepare_staff_task_proposal', 'propose_staff_tasks',
     'merge_into_proposal', 'approve_pending_staff_message',
     'correct_and_redispatch_staff_tasks', 'send_dispatch_correction_notice',
-    'set_staff_task_due', 'update_staff_task_status', 'update_staff_task_profile',
-    'explain_staff_task_bangla',
+    'set_staff_task_due', 'update_staff_task_status', 'explain_staff_task_bangla',
+    // `update_staff_task_profile` is NOT here: it rewrites the persistent
+    // staff_task_profiles setting — skills and daily targets that outlive the
+    // grant and shape every future proposal. That is staff policy, not the
+    // dispatch/correction/announcement the card names (review bot, #667).
   ],
   // `call_staff` is deliberately absent from staff-messaging: a phone call is the
   // phone-calls family below, and a messaging grant must not start ringing people.

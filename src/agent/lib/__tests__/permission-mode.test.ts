@@ -301,6 +301,16 @@ describe('a family without its own window is not granted', () => {
     expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(true)
   })
 
+  it('rejects a present but malformed windows field', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const future = new Date(Date.now() + 4 * 60 * 60_000).toISOString()
+    for (const windows of ['bad', null, [], 7]) {
+      expect(
+        parseElevationGrant({ families: ['staff-messaging'], expiresAt: future, windows }),
+      ).toBeNull()
+    }
+  })
+
   it('rejects a windows object in which nothing parses', async () => {
     const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
     const grant = parseElevationGrant({

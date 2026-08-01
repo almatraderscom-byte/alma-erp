@@ -166,7 +166,12 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
   // windows object whose every entry is corrupt would otherwise look like a
   // legacy no-windows grant and authorise every family to the latest cutoff
   // (review bot, #667).
-  const hasWindows = !!rawWindows && typeof rawWindows === 'object'
+  const windowsPresent = 'windows' in (obj as object) && rawWindows !== undefined
+  const hasWindows = !!rawWindows && typeof rawWindows === 'object' && !Array.isArray(rawWindows)
+  // Present but not a map — `windows: "bad"`, `null`, an array. Absent means a
+  // legacy grant; present-and-unreadable means a grant we cannot trust, and
+  // trusting it would hand every family the grant-wide (latest) cutoff.
+  if (windowsPresent && !hasWindows) return null
   const windows: Record<string, string> = {}
   if (hasWindows) {
     for (const [family, at] of Object.entries(rawWindows as Record<string, unknown>)) {
