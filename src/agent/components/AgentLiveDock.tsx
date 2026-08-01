@@ -34,6 +34,8 @@ interface ActivityStep {
   at: string
   /** L4: present on session-event steps — the session a reply would go to. */
   sessionId?: string | null
+  /** claude | codex — codex is one-shot, so no reply composer for it. */
+  sessionTool?: string | null
 }
 
 interface ActivityFeed {
@@ -119,26 +121,49 @@ export default function AgentLiveDock() {
   const dismissed = dismissedStepId !== null && dismissedStepId === (feed?.current?.id ?? null)
   const show = Boolean(feed && (feed.active || recentlyActive) && !dismissed)
 
-  // L4 tap-to-reply: the newest session-event step tells us which session a
-  // reply would reach. Shown only in the expanded view.
-  const replySessionId = feed?.steps.find((s) => s.surface === 'session' && s.sessionId)?.sessionId ?? null
+  // L4 tap-to-reply: the newest CLAUDE session-event step tells us which
+  // session a reply would reach (Codex is one-shot — advertising a reply for it
+  // would deterministically fail). Shown only in the expanded view.
+  const replySessionId =
+    feed?.steps.find((s) => s.surface === 'session' && s.sessionId && s.sessionTool !== 'codex')
+      ?.sessionId ?? null
   const [replyText, setReplyText] = useState('')
-  const [replyState, setReplyState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle')
+  const [replyState, setReplyState] = useState<'idle' | 'sending' | 'sent' | 'queued' | 'failed'>('idle')
+  /**
+   * Where this composition is going, locked at the FIRST keystroke. Recomputing
+   * the target on every poll meant that if session B spoke while the owner was
+   * typing an answer for session A, the text silently went to B (Codex round 4).
+   */
+  const pinnedSessionRef = useRef<string | null>(null)
+
+  const onReplyTextChange = useCallback(
+    (next: string) => {
+      if (next.trim() && !pinnedSessionRef.current) pinnedSessionRef.current = replySessionId
+      if (!next.trim()) pinnedSessionRef.current = null
+      setReplyText(next)
+    },
+    [replySessionId],
+  )
 
   const sendReply = useCallback(async () => {
     const text = replyText.trim()
-    if (!text || !replySessionId || replyState === 'sending') return
+    const target = pinnedSessionRef.current ?? replySessionId
+    if (!text || !target || replyState === 'sending') return
     setReplyState('sending')
     try {
       const res = await fetch('/api/assistant/mac-agent/session-reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: replySessionId, text }),
+        body: JSON.stringify({ sessionId: target, text }),
       })
       if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { delivered?: boolean } | null
         setReplyText('')
-        setReplyState('sent')
-        setTimeout(() => setReplyState('idle'), 2_500)
+        pinnedSessionRef.current = null
+        // delivered:false = accepted into the queue but the Mac has not
+        // confirmed yet — saying "reached" would invite a duplicate send.
+        setReplyState(data?.delivered === false ? 'queued' : 'sent')
+        setTimeout(() => setReplyState('idle'), 4_000)
       } else {
         setReplyState('failed')
       }
@@ -204,7 +229,7 @@ export default function AgentLiveDock() {
                 <input
                   type="text"
                   value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
+                  onChange={(e) => onReplyTextChange(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') void sendReply()
                   }}
@@ -223,6 +248,9 @@ export default function AgentLiveDock() {
             )}
             {replyState === 'sent' && (
               <p className="mt-1.5 text-xs text-emerald-600">সেশনে পৌঁছে গেছে ✓</p>
+            )}
+            {replyState === 'queued' && (
+              <p className="mt-1.5 text-xs text-amber-600">কিউতে আছে — Mac নিশ্চিত করলেই পৌঁছাবে</p>
             )}
             {replyState === 'failed' && (
               <p className="mt-1.5 text-xs text-red-600">পাঠানো যায়নি — সেশনটা কি শেষ হয়ে গেছে?</p>

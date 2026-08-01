@@ -41,6 +41,8 @@ export interface ActivityStep {
   at: string
   /** L4: set on session-event steps so the dock can reply to that session. */
   sessionId?: string | null
+  /** claude | codex — the docks offer replies only for claude (codex is one-shot). */
+  sessionTool?: string | null
 }
 
 function macLabel(action: string, command: string | null): string {
@@ -86,6 +88,7 @@ function normalizeStatus(raw: string): ActivityStep['status'] {
 function sessionEventStep(r: {
   id: string
   sessionId: string
+  tool?: string
   kind: string
   text: string | null
   isError: boolean
@@ -141,6 +144,7 @@ function sessionEventStep(r: {
     policy: null,
     at: r.at.toISOString(),
     sessionId: r.sessionId,
+    sessionTool: r.tool ?? 'claude',
   }
 }
 
@@ -184,7 +188,7 @@ export async function GET(req: NextRequest) {
         where: { createdAt: { gte: since } },
         orderBy: { at: 'desc' },
         take: RECENT_STEPS,
-        select: { id: true, sessionId: true, kind: true, text: true, isError: true, at: true },
+        select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
       })
       .catch(() => []),
   ])

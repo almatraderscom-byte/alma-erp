@@ -45,6 +45,8 @@ struct AgentLiveActivityStep: Decodable, Identifiable, Equatable {
     let at: String
     /// L4: present on session-event steps — the session a reply would go to.
     let sessionId: String?
+    /// claude | codex — codex is one-shot, so no reply composer for it.
+    let sessionTool: String?
 
     var surfaceBn: String {
         switch surface {
@@ -173,29 +175,48 @@ final class AgentLiveDockStore {
 
     // MARK: L4 tap-to-reply
 
-    /// The session the newest session-event step belongs to — where a reply goes.
+    /// The newest CLAUDE session in the feed — where a reply would go. Codex is
+    /// one-shot; offering a composer for it would deterministically fail.
     var replySessionId: String? {
-        feed?.steps.first { $0.surface == "session" && $0.sessionId != nil }?.sessionId
+        feed?.steps.first { $0.surface == "session" && $0.sessionId != nil && $0.sessionTool != "codex" }?.sessionId
+    }
+
+    /// Where this composition is going, locked at the FIRST keystroke — a poll
+    /// landing mid-typing must not silently retarget the owner's answer to a
+    /// different session (Codex round 4).
+    var pinnedReplySessionId: String?
+
+    func pinReplyTargetIfNeeded(textNowEmpty: Bool) {
+        if textNowEmpty {
+            pinnedReplySessionId = nil
+        } else if pinnedReplySessionId == nil {
+            pinnedReplySessionId = replySessionId
+        }
     }
 
     var replyState: ReplyState = .idle
-    enum ReplyState: Equatable { case idle, sending, sent, failed }
+    enum ReplyState: Equatable { case idle, sending, sent, queued, failed }
 
     private struct ReplyBody: Encodable { let sessionId: String; let text: String }
-    private struct ReplyResponse: Decodable { let ok: Bool? }
+    private struct ReplyResponse: Decodable { let ok: Bool?; let delivered: Bool? }
 
     func sendReply(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let sessionId = replySessionId, replyState != .sending else { return }
+        guard !trimmed.isEmpty, replyState != .sending,
+              let sessionId = pinnedReplySessionId ?? replySessionId else { return }
         replyState = .sending
         do {
-            let _: ReplyResponse = try await AlmaAPI.shared.send(
+            let res: ReplyResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/mac-agent/session-reply",
                 body: ReplyBody(sessionId: sessionId, text: trimmed))
-            replyState = .sent
+            pinnedReplySessionId = nil
+            // delivered == false means queued, not confirmed by the Mac yet —
+            // claiming "reached" would invite a duplicate send.
+            let landed: ReplyState = res.delivered == false ? .queued : .sent
+            replyState = landed
             Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                if self?.replyState == .sent { self?.replyState = .idle }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if self?.replyState == landed { self?.replyState = .idle }
             }
         } catch {
             replyState = .failed
@@ -217,18 +238,18 @@ final class AgentLiveDockStore {
         let steps = [
             AgentLiveActivityStep(id: "fx-1", surface: "mac",
                                   labelBn: "💻 git status", detail: "git status",
-                                  status: "running", policy: "green", at: now, sessionId: nil),
+                                  status: "running", policy: "green", at: now, sessionId: nil, sessionTool: nil),
             AgentLiveActivityStep(id: "fx-2", surface: "mac",
                                   labelBn: "💻 echo hello > /tmp/alma-live-dock-proof",
                                   detail: "echo hello > /tmp/alma-live-dock-proof",
-                                  status: "done", policy: "amber", at: now, sessionId: nil),
+                                  status: "done", policy: "amber", at: now, sessionId: nil, sessionTool: nil),
             AgentLiveActivityStep(id: "fx-3", surface: "session",
                                   labelBn: "🧠 বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
                                   detail: "বুঝেছি — orders পেজের bug টা দেখছি, আগে টেস্ট চালাই",
-                                  status: "running", policy: nil, at: now, sessionId: "fx-session"),
+                                  status: "running", policy: nil, at: now, sessionId: "fx-session", sessionTool: "claude"),
             AgentLiveActivityStep(id: "fx-4", surface: "browser",
                                   labelBn: "🌐 পেজ খুলছে", detail: "https://alma-erp-six.vercel.app",
-                                  status: "done", policy: nil, at: now, sessionId: nil),
+                                  status: "done", policy: nil, at: now, sessionId: nil, sessionTool: nil),
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
                                      steps: steps, screenshot: nil, screenshotAt: nil)
@@ -460,6 +481,12 @@ struct AgentLiveDockSheet: View {
                 .background(pal.card, in: RoundedRectangle(cornerRadius: 11))
                 .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(pal.borderSubtle, lineWidth: 1))
                 .onSubmit { submitReply() }
+                // Lock the target at the first keystroke — a poll mid-typing
+                // must not retarget the answer to a newer session.
+                .onChange(of: replyText) { _, next in
+                    store.pinReplyTargetIfNeeded(
+                        textNowEmpty: next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             Button {
                 AlmaAgentHaptics.commit()
                 submitReply()
@@ -486,6 +513,11 @@ struct AgentLiveDockSheet: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.green)
                     .offset(y: 16)
+            } else if store.replyState == .queued {
+                Text("কিউতে আছে — Mac নিশ্চিত করলেই পৌঁছাবে")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.orange)
+                    .offset(y: 16)
             } else if store.replyState == .failed {
                 Text("পাঠানো যায়নি — সেশনটা কি শেষ?")
                     .font(.system(size: 10.5, weight: .medium))
@@ -500,7 +532,7 @@ struct AgentLiveDockSheet: View {
         let text = replyText
         Task {
             await store.sendReply(text)
-            if store.replyState == .sent { replyText = "" }
+            if store.replyState == .sent || store.replyState == .queued { replyText = "" }
         }
     }
 
