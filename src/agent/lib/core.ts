@@ -1682,7 +1682,10 @@ export async function* runAgentTurn(
           const cap = getCapability(tb.name)
           if (cap?.mode !== 'write') return false
           const task = taskClassForTool(tb.name, cap)
-          if (task.tier !== 'R1' && task.tier !== 'R2') return false
+          // Whatever the tier: if the verdict says card, it gets a card. Gating
+          // this on R1/R2 let an explicitly mapped R3 write — `set_staff_task_due`
+          // in `staff-messaging` — run straight through on this path (review bot,
+          // #667). The verdict already knows which tiers Careful lets pass.
           const verdict = modeVerdict({
             mode: 'careful',
             tier: task.tier,

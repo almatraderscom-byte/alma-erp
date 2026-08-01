@@ -2726,7 +2726,9 @@ async function* runAlternateProviderTurn(
           // the grant he just asked to end (the registry exempts it too).
           && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
-          && (permissionTier.tier === 'R1' || permissionTier.tier === 'R2')
+          // Any tier whose verdict is `card` gets one. Gating on R1/R2 sent an
+          // explicitly mapped R3 write (`set_staff_task_due`) to the registry's
+          // flat refusal instead of a card (review bot, #667).
           && getCapability(call.name)?.mode === 'write'
           && conversationId
         const ownerIntentViolation = personalMode
