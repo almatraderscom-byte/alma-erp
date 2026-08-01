@@ -80,12 +80,15 @@ const SYNTHESISES_INPUT = new Set<string>(['ui_click', 'ui_type', 'ui_key', 'ui_
  */
 export const ALLOWED_APPS: Readonly<Record<string, string>> = {
   'com.anthropic.claudefordesktop': 'Claude',
-  'com.openai.chat': 'ChatGPT',
-  // The shipping ChatGPT desktop app identifies itself as `com.openai.codex`
-  // (verified from /Applications/ChatGPT.app's Info.plist on the owner's Mac
-  // 2026-08-02, and hit live by W3). Both ids are the same product; keeping
-  // the older one costs nothing and covers other installs.
+  // ORDER IS LOAD-BEARING for the two ids that share a name: callers resolve a
+  // friendly alias ("chatgpt") by taking the FIRST entry whose name matches,
+  // so the id that is actually INSTALLED must come first. The shipping ChatGPT
+  // desktop app is `com.openai.codex` (verified from
+  // /Applications/ChatGPT.app's Info.plist on the owner's Mac 2026-08-02);
+  // `com.openai.chat` is kept after it, allowlisted for other installs but
+  // never the alias winner here.
   'com.openai.codex': 'ChatGPT',
+  'com.openai.chat': 'ChatGPT',
 }
 
 /**
