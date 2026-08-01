@@ -2474,13 +2474,17 @@ async function runApprove(
     // A second grant must not silently revoke a live one. Union the families,
     // keep the later end — and say so, because a quietly widened permission is
     // the thing this whole feature exists to avoid.
-    const conv = await db.agentConversation.findUnique({
-      where: { id: conversationId },
-      select: { elevationGrant: true },
-    })
     const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
-    const existing = parseElevationGrant(conv?.elevationGrant)
-    const carried = isElevationGrantLive(existing, Date.now()) ? existing! : null
+    // Two cards approved at once would both read the old grant and the second
+    // write would erase the first. Read-modify-write in one transaction.
+    const carried = await db.$transaction(async (tx: typeof db) => {
+      const conv = await tx.agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { elevationGrant: true },
+      })
+      const existing = parseElevationGrant(conv?.elevationGrant)
+      return isElevationGrantLive(existing, Date.now()) ? existing : null
+    })
     // PER-FAMILY windows. A 15-minute staff grant must not inherit a 4-hour
     // customer one just because they overlapped (review bot, #667) — each family
     // keeps the window Boss actually approved for it.

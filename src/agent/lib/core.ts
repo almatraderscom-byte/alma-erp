@@ -787,6 +787,9 @@ export async function* runAgentTurn(
   if (ownerCorrectionNudge) {
     messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
   }
+  // B6 — this turn's copy of the standing grant. Mutable because a revoke in
+  // the middle of a turn must stop covering the calls that follow it.
+  let liveGrant = options.elevationGrant ?? null
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
@@ -1637,8 +1640,13 @@ export async function* runAgentTurn(
         // the documented kill switch (AGENT_NATIVE_ANTHROPIC_LOOP=true) silently
         // loses the card-free behaviour the grant card promised.
         const grantCoversThisCall = await (async () => {
-          const grant = options.elevationGrant
+          const grant = liveGrant
           if (!grant) return false
+          // Plan mode is not liftable by a grant — in Plan nothing changes at
+          // all. The multi-model path refuses there; the kill-switch path must
+          // refuse for the same reason (review bot, #667).
+          const { normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+          if (normalizePermissionMode(options.permissionMode ?? undefined) === 'plan') return false
           const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
           const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
           const { getCapability } = await import('@/agent/tools/capability-manifest')
