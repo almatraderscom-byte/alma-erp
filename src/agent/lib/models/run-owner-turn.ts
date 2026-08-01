@@ -2720,8 +2720,26 @@ async function* runAlternateProviderTurn(
         // as a card instead. Stage-mode tools already make their own card, and
         // R3/R4 are handled by the ladder above — this only covers the everyday
         // writes that Standard lets through silently.
+        // The verdict above used the TURN's snapshot of the grant. If the row no
+        // longer confirms it — Boss revoked from another request mid-turn — the
+        // `auto` it produced is stale, and Careful must go back to staging a card
+        // instead of letting the registry refuse the call (review bot, #667).
+        const verdictAfterConfirmation = permissionVerdict === 'auto'
+          && permissionTier.explicit
+          && elevationGrant
+          && permissionMode !== 'plan'
+          && !(await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass))
+          ? modeVerdict({
+              mode: permissionMode,
+              tier: permissionTier.tier,
+              taskClass: permissionTier.taskClass,
+              grant: null,
+              now: Date.now(),
+            })
+          : permissionVerdict
         const carefulNeedsCard =
-          permissionVerdict === 'card'
+          verdictAfterConfirmation === 'card'
           // Cancelling a permission is never staged — that would trap Boss inside
           // the grant he just asked to end (the registry exempts it too).
           && call.name !== 'revoke_standing_permission'

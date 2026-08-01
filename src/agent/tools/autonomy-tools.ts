@@ -300,7 +300,9 @@ const request_standing_permission: AgentTool = {
   name: 'request_standing_permission',
   description:
     'Ask Boss for a TIME-BOXED standing permission so a family of work stops asking each time — '
-    + '"পরের ২ ঘণ্টা অর্ডারগুলো নিজেই আপডেট করো", "আজ বিকেল পর্যন্ত স্টাফ মেসেজ নিজে পাঠাও". '
+    + '"আজ বিকেল পর্যন্ত স্টাফের কাজগুলো নিজেই বসাও", "পরের ২ ঘণ্টা রিমাইন্ডার আর নোট নিজেই রাখো". '
+    + 'Order updates are NOT one of these: those tools build their own card by design, '
+    + 'so a grant cannot make them run card-free. '
     + 'Stages an approval card naming the families, the minutes and the reason; the grant only exists '
     + 'after Boss approves, and it expires on its own. NEVER call this to widen your own hands mid-task — '
     + 'only when Boss says the asking itself is the problem. Money movement and permissions can never be granted.',
