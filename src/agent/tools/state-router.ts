@@ -197,10 +197,15 @@ export const DOMAIN_PACKS = {
   // them in the request, and the head correctly reports it has no such tool.
   // Live-hit 2026-07-31: "amar mac e git status dekho" answered "tool available
   // নেই" with the daemon paired and online.
+  // Round-robin drains each pack from the FRONT, so order = priority under the
+  // 24 cap. The app-driving pair sits right behind run_mac_command on purpose:
+  // a mixed turn ("ম্যাকে ChatGPT app-এ research করো") must not let the router
+  // trim the exact tools the sentence names (§0.4's trap in a new costume).
   mac: [
-    'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
-    'start_cli_session', 'send_to_cli_session', 'read_cli_session', 'stop_cli_session',
-    'list_cli_sessions',
+    'run_mac_command', 'look_mac_app', 'drive_mac_app', 'start_cli_session',
+    'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+    'send_to_cli_session', 'read_cli_session', 'stop_cli_session',
+    'list_cli_sessions', 'list_mac_apps',
   ],
 } as const
 

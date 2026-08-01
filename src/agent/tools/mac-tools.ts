@@ -28,8 +28,9 @@ import { classifyCommand } from '@/agent/lib/mac-agent/policy'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-/** Shared preamble: capability on, a Mac paired, that Mac awake. */
-async function requireOnlineMac(): Promise<
+/** Shared preamble: capability on, a Mac paired, that Mac awake. Exported for
+ * the L8 UI-driving tools (mac-ui-tools.ts) — same gate, same Bangla answers. */
+export async function requireOnlineMac(): Promise<
   { ok: true; deviceId: string; deviceName: string } | { ok: false; error: string }
 > {
   if (!(await isMacAgentEnabled())) {
