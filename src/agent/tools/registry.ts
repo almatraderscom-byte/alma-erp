@@ -791,7 +791,10 @@ export async function runRegisteredTool(
   //   • plan   → anything above a pure read is absent, not merely gated
   //   • careful→ an ordinary R1/R2 write belongs on a card, and only the head
   //              can stage one, so the worker must hand it back.
-  if (ctx.permissionMode) {
+  // Taking a permission AWAY is safe in every mode — gating it would trap Boss
+  // inside a grant he just asked to end (review bot, #667).
+  const MODE_EXEMPT_TOOLS = new Set(['revoke_standing_permission'])
+  if (ctx.permissionMode && !MODE_EXEMPT_TOOLS.has(tool.name)) {
     try {
       const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')

@@ -411,7 +411,7 @@ async function* runAlternateProviderTurn(
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
   // event records it, but nothing is withheld or blocked until PM-2.
   const permissionMode = normalizePermissionMode(options.permissionMode)
-  const elevationGrant = options.elevationGrant ?? null
+  let elevationGrant = options.elevationGrant ?? null
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -2825,6 +2825,16 @@ async function* runAlternateProviderTurn(
             // ladder and the money cap apply to work Boss is not watching.
             ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
           })
+        // A revoked grant must stop covering calls immediately — the row is
+        // cleared, but this turn holds the grant in memory and would keep
+        // bypassing for every later call in the same turn.
+        if (call.name === 'revoke_standing_permission' && result.success) {
+          const cleared = (result.data as { cleared?: string[]; remaining?: string[] } | undefined)
+          const remaining = cleared?.remaining ?? []
+          elevationGrant = remaining.length && elevationGrant
+            ? { ...elevationGrant, families: remaining }
+            : null
+        }
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
