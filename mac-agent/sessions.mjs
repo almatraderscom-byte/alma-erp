@@ -391,6 +391,37 @@ export function cliHealth() {
   }
 }
 
+/**
+ * L4 — events not yet pushed to the server's live feed.
+ *
+ * Each session remembers the highest seq the server has ACCEPTED (`pushedSeq`).
+ * The collector returns everything newer; the caller advances the mark only
+ * after a 2xx, so a dropped POST simply re-sends the same batch and the
+ * server's (sessionId, seq) unique key keeps the feed duplicate-free.
+ */
+const PUSH_BATCH_MAX = 50
+
+export function collectUnpushedEvents() {
+  const batches = []
+  for (const s of sessions.values()) {
+    const pushed = s.pushedSeq ?? 0
+    const fresh = s.events.filter((e) => e.seq > pushed).slice(0, PUSH_BATCH_MAX)
+    if (fresh.length === 0) continue
+    batches.push({
+      sessionId: s.id,
+      tool: s.tool,
+      events: fresh,
+      lastSeq: fresh[fresh.length - 1].seq,
+    })
+  }
+  return batches
+}
+
+export function markEventsPushed(sessionId, lastSeq) {
+  const s = sessions.get(sessionId)
+  if (s && Number(lastSeq) > (s.pushedSeq ?? 0)) s.pushedSeq = Number(lastSeq)
+}
+
 /** Wire the session verbs into the daemon's command dispatch. */
 export function registerSessionHandlers(extraHandlers, allowedDirs) {
   installExitHandlers()

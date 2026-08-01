@@ -506,6 +506,54 @@ async function flushPendingResult(token) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// L4 — session event streaming (what a session is SAYING, into the live dock)
+// ---------------------------------------------------------------------------
+
+const EVENT_PUSH_MIN_INTERVAL_MS = Number(process.env.ALMA_EVENT_PUSH_MS) || 2_500
+let lastEventPushAt = 0
+/**
+ * The owner's kill-switch, as last reported by the poll endpoint. While true,
+ * NOTHING leaves this machine — including a running CLI child's transcript
+ * (Codex round 7: events used to keep uploading after the switch went off).
+ */
+let pausedByServer = false
+let pushingEvents = false
+
+/**
+ * Push any new session events to the server's feed. Outbound HTTPS only, like
+ * everything else here. Best-effort: a failed push leaves the mark where it
+ * was, so the next tick re-sends the same batch and the server's unique key
+ * drops duplicates. Never allowed to take the poll loop down.
+ */
+async function pushSessionEvents(token) {
+  if (Date.now() - lastEventPushAt < EVENT_PUSH_MIN_INTERVAL_MS) return
+  let mod
+  try {
+    mod = await import('./sessions.mjs')
+  } catch {
+    return // session driver absent — nothing to stream
+  }
+  const batches = mod.collectUnpushedEvents()
+  if (batches.length === 0) return
+  lastEventPushAt = Date.now()
+
+  for (const batch of batches) {
+    try {
+      const res = await api('/api/assistant/mac-agent/events', {
+        method: 'POST',
+        token,
+        body: { sessionId: batch.sessionId, tool: batch.tool, events: batch.events },
+        timeoutMs: 15_000,
+      })
+      if (res.ok) mod.markEventsPushed(batch.sessionId, batch.lastSeq)
+      else log(`event push rejected (${res.status}) for session ${batch.sessionId}`)
+    } catch (err) {
+      log('event push failed:', String(err?.message ?? err))
+    }
+  }
+}
+
 async function loop() {
   const cfg = readConfig()
   if (!cfg.token) {
@@ -517,6 +565,20 @@ async function loop() {
   await flushPendingResult(cfg.token)
   let backoff = 0
 
+  // Session events drain on their OWN timer, not the poll heartbeat: a shell
+  // command can hold handleCommand for up to ten minutes, and a session's
+  // question must not wait for it (Codex round 7). Still outbound-only, still
+  // silent while paused, never re-entrant.
+  setInterval(() => {
+    if (pausedByServer || pushingEvents || existsSync(PAUSE_FILE)) return
+    pushingEvents = true
+    pushSessionEvents(cfg.token)
+      .catch(() => {})
+      .finally(() => {
+        pushingEvents = false
+      })
+  }, EVENT_PUSH_MIN_INTERVAL_MS)
+
   for (;;) {
     try {
       if (existsSync(PAUSE_FILE)) {
@@ -526,6 +588,7 @@ async function loop() {
 
       const { command, paused } = await pollOnce(cfg.token)
       backoff = 0
+      pausedByServer = Boolean(paused)
 
       if (paused || !command) {
         await sleep(paused ? POLL_INTERVAL_IDLE_MS : POLL_INTERVAL_MS)

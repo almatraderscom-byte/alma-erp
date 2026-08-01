@@ -32,6 +32,12 @@ interface ActivityStep {
   status: string
   policy: string | null
   at: string
+  /** L4: present on session-event steps — the session a reply would go to. */
+  sessionId?: string | null
+  /** claude | codex — codex is one-shot, so no reply composer for it. */
+  sessionTool?: string | null
+  /** Raw event kind — 'ended'/'error' means the session cannot take a reply. */
+  sessionKind?: string | null
 }
 
 interface ActivityFeed {
@@ -66,13 +72,29 @@ export default function AgentLiveDock() {
   /** He closed it by hand — respect that until genuinely NEW work starts. */
   const [dismissedStepId, setDismissedStepId] = useState<string | null>(null)
   const lastActiveRef = useRef<number>(0)
+  /**
+   * The frame we already hold, keyed by `screenshotAt`. The poll tells the
+   * server, and an unchanged frame comes back as metadata only — without this
+   * every 3s poll re-downloaded the same multi-MB base64 payload (Codex P1).
+   */
+  const screenshotRef = useRef<{ uri: string; at: string } | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/assistant/live-activity', { cache: 'no-store' })
+      const held = screenshotRef.current
+      const qs = held ? `?screenshotAfter=${encodeURIComponent(held.at)}` : ''
+      const res = await fetch(`/api/assistant/live-activity${qs}`, { cache: 'no-store' })
       if (!res.ok) return
       const data = (await res.json()) as ActivityFeed
       if (data.active) lastActiveRef.current = Date.now()
+      if (data.screenshot && data.screenshotAt) {
+        screenshotRef.current = { uri: data.screenshot, at: data.screenshotAt }
+      } else if (!data.screenshotAt) {
+        screenshotRef.current = null
+      } else if (held && data.screenshotAt === held.at) {
+        // Unchanged — server omitted the payload; render the copy we hold.
+        data.screenshot = held.uri
+      }
       setFeed(data)
       // Only a DIFFERENT step brings the dock back. Clearing the dismiss on
       // every active poll meant closing it during a running job re-opened it
@@ -100,6 +122,71 @@ export default function AgentLiveDock() {
   const recentlyActive = Date.now() - lastActiveRef.current < LINGER_MS
   const dismissed = dismissedStepId !== null && dismissedStepId === (feed?.current?.id ?? null)
   const show = Boolean(feed && (feed.active || recentlyActive) && !dismissed)
+
+  // L4 tap-to-reply: the composer belongs to the NEWEST session, and only when
+  // that session can actually take a reply. Searching for "any Claude event"
+  // paired the composer with session B's activity while sending to older
+  // session A (Codex round 5); a Codex or ended/errored newest session simply
+  // gets no composer.
+  const newestSessionStep = feed?.steps.find((s) => s.surface === 'session' && s.sessionId) ?? null
+  const replySessionId =
+    newestSessionStep &&
+    newestSessionStep.sessionTool !== 'codex' &&
+    newestSessionStep.sessionKind !== 'ended' &&
+    newestSessionStep.sessionKind !== 'error'
+      ? newestSessionStep.sessionId ?? null
+      : null
+  const [replyText, setReplyText] = useState('')
+  const [replyState, setReplyState] = useState<'idle' | 'sending' | 'sent' | 'queued' | 'failed'>('idle')
+  /**
+   * Where this composition is going, locked at the FIRST keystroke. Recomputing
+   * the target on every poll meant that if session B spoke while the owner was
+   * typing an answer for session A, the text silently went to B (Codex round 4).
+   */
+  const pinnedSessionRef = useRef<string | null>(null)
+
+  const onReplyTextChange = useCallback(
+    (next: string) => {
+      if (next.trim() && !pinnedSessionRef.current) pinnedSessionRef.current = replySessionId
+      if (!next.trim()) pinnedSessionRef.current = null
+      setReplyText(next)
+    },
+    [replySessionId],
+  )
+
+  const sendReply = useCallback(async () => {
+    const text = replyText.trim()
+    const target = pinnedSessionRef.current ?? replySessionId
+    if (!text || !target || replyState === 'sending') return
+    setReplyState('sending')
+    try {
+      const res = await fetch('/api/assistant/mac-agent/session-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: target, text }),
+      })
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as { delivered?: boolean } | null
+        setReplyText('')
+        pinnedSessionRef.current = null
+        // delivered:false = accepted into the queue but the Mac has not
+        // confirmed yet — saying "reached" would invite a duplicate send.
+        setReplyState(data?.delivered === false ? 'queued' : 'sent')
+        // Only step DOWN from a terminal state. An unconditional reset could
+        // fire while a SECOND reply is mid-flight and re-enable the button
+        // with that text still present — one tap away from a duplicate
+        // instruction (Codex round 5).
+        setTimeout(
+          () => setReplyState((prev) => (prev === 'sent' || prev === 'queued' ? 'idle' : prev)),
+          4_000,
+        )
+      } else {
+        setReplyState('failed')
+      }
+    } catch {
+      setReplyState('failed')
+    }
+  }, [replyText, replySessionId, replyState])
 
   // Collapse the sheet when the work finishes, so it never traps his screen.
   useEffect(() => {
@@ -151,6 +238,38 @@ export default function AgentLiveDock() {
               <div className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-black/45">
                 এখনো কোনো ছবি নেই — কাজের ধাপগুলো নিচে দেখুন।
               </div>
+            )}
+
+            {replySessionId && (
+              <div className="mt-4 flex items-center gap-2">
+                <input
+                  type="text"
+                  value={replyText}
+                  onChange={(e) => onReplyTextChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void sendReply()
+                  }}
+                  placeholder="সেশনকে উত্তর দিন…"
+                  className="min-w-0 flex-1 rounded-xl border border-black/15 bg-white px-3 py-2 text-sm outline-none focus:border-black/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => void sendReply()}
+                  disabled={replyState === 'sending' || !replyText.trim()}
+                  className="shrink-0 rounded-xl bg-black px-3.5 py-2 text-sm font-medium text-white disabled:opacity-40"
+                >
+                  {replyState === 'sending' ? 'পাঠাচ্ছি…' : 'পাঠান'}
+                </button>
+              </div>
+            )}
+            {replyState === 'sent' && (
+              <p className="mt-1.5 text-xs text-emerald-600">সেশনে পৌঁছে গেছে ✓</p>
+            )}
+            {replyState === 'queued' && (
+              <p className="mt-1.5 text-xs text-amber-600">কিউতে আছে — Mac নিশ্চিত করলেই পৌঁছাবে</p>
+            )}
+            {replyState === 'failed' && (
+              <p className="mt-1.5 text-xs text-red-600">পাঠানো যায়নি — সেশনটা কি শেষ হয়ে গেছে?</p>
             )}
 
             <div className="mt-4 space-y-1.5">
