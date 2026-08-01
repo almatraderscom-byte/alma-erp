@@ -14,6 +14,7 @@ import {
   ALLOWED_APPS as ALLOWED_TS,
   UI_ACTIONS as ACTIONS_TS,
   UI_LIMITS as LIMITS_TS,
+  OWNER_ACTIVE_WINDOW_SECONDS as IDLE_TS,
 } from '../ui-policy'
 // Plain ESM sibling shipped with the daemon — no types by design.
 import {
@@ -21,12 +22,15 @@ import {
   ALLOWED_APPS as ALLOWED_MJS,
   UI_ACTIONS as ACTIONS_MJS,
   UI_LIMITS as LIMITS_MJS,
+  OWNER_ACTIVE_WINDOW_SECONDS as IDLE_MJS,
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore — untyped daemon twin
 } from '../../../../../mac-agent/ui-policy.mjs'
 
 const CLAUDE = 'com.anthropic.claudefordesktop'
 const CHATGPT = 'com.openai.chat'
+/** Driving actions only run while the owner is away — the default for the corpus. */
+const AWAY = { ownerIdleSeconds: 120 }
 
 /** Every case that matters, in one place, exercised against both copies. */
 const CORPUS: Array<Record<string, unknown>> = [
@@ -36,46 +40,59 @@ const CORPUS: Array<Record<string, unknown>> = [
   { action: 'ui_scroll', bundleId: CLAUDE },
   { action: 'ui_screenshot' },
   // amber
-  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' },
-  { action: 'ui_click', bundleId: CHATGPT, elementLabel: 'New chat' },
-  { action: 'ui_type', bundleId: CHATGPT, text: 'orders page er bug ta dekho' },
-  { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+enter' },
-  { action: 'ui_key', bundleId: CHATGPT, key: 'enter' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' },
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'New chat' },
+  { ...AWAY, action: 'ui_type', bundleId: CHATGPT, text: 'orders page er bug ta dekho' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+enter' },
+  { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'enter' },
   // red — apps
   { action: 'ui_tree', bundleId: 'com.apple.safari' },
-  { action: 'ui_type', bundleId: 'com.apple.terminal', text: 'sudo rm -rf ~' },
-  { action: 'ui_click', bundleId: 'com.googlecode.iterm2' },
+  { ...AWAY, action: 'ui_type', bundleId: 'com.apple.terminal', text: 'sudo rm -rf ~' },
+  { ...AWAY, action: 'ui_click', bundleId: 'com.googlecode.iterm2' },
   { action: 'ui_tree', bundleId: 'com.apple.keychainaccess' },
-  { action: 'ui_click', bundleId: 'com.apple.systempreferences' },
-  { action: 'ui_click', bundleId: 'com.apple.finder' },
-  { action: 'ui_click', bundleId: 'com.apple.mail' },
+  { ...AWAY, action: 'ui_click', bundleId: 'com.apple.systempreferences' },
+  { ...AWAY, action: 'ui_click', bundleId: 'com.apple.finder' },
+  { ...AWAY, action: 'ui_click', bundleId: 'com.apple.mail' },
   // red — labels
-  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Delete account' },
-  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Clear all history' },
-  { action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Upgrade plan' },
-  { action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Buy credits' },
-  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Log out' },
-  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Always allow access' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Delete account' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Clear all history' },
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Upgrade plan' },
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Buy credits' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Log out' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Always allow access' },
   // red — text and keys
-  { action: 'ui_type', bundleId: CLAUDE, text: 'sk-abcdefghijklmnopqrstuvwxyz123456' },
-  { action: 'ui_type', bundleId: CLAUDE, text: 'password: hunter2' },
-  { action: 'ui_type', bundleId: CLAUDE, text: '-----BEGIN RSA PRIVATE KEY-----' },
-  { action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(5_000) },
-  { action: 'ui_type', bundleId: CLAUDE, text: '  ' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'sk-abcdefghijklmnopqrstuvwxyz123456' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'password: hunter2' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: '-----BEGIN RSA PRIVATE KEY-----' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(5_000) },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: '  ' },
   // A click with no resolved label must fail closed on both sides.
-  { action: 'ui_click', bundleId: CLAUDE },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE },
   // Reads that omit the app: only a screenshot may.
   { action: 'ui_tree' },
   { action: 'ui_scroll' },
-  { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+q' },
-  { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+shift+delete' },
-  { action: 'ui_key', bundleId: CLAUDE, key: '' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+shift+delete' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: '' },
   // red — malformed
-  { action: 'ui_click' },
+  { ...AWAY, action: 'ui_click' },
   { action: 'ui_drag', bundleId: CLAUDE },
   { action: '' },
+  // owner-at-keyboard, unknown idle, and the round-2 label/focus/field rules
+  { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send', ownerIdleSeconds: 1 },
+  { action: 'ui_type', bundleId: CLAUDE, text: 'hi' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Delete' },
+  { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Allow' },
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Trust' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Password', text: 'hunter2' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'API key', text: 'abc123' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'enter' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'enter', focusedLabel: 'Delete' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+enter', focusedLabel: 'Prompt' },
+  { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'space', focusedLabel: 'Allow' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+a' },
   // case-insensitivity must agree on both sides
-  { action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
+  { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]
 
 describe('UI policy parity — server and daemon must agree exactly', () => {
@@ -98,10 +115,26 @@ describe('UI policy parity — server and daemon must agree exactly', () => {
     expect({ ...LIMITS_MJS }).toEqual({ ...LIMITS_TS })
   })
 
+  it('agrees on the owner-active window', () => {
+    expect(IDLE_MJS).toBe(IDLE_TS)
+  })
+
+  it('agrees at each copy’s own owner-active boundary', () => {
+    for (const threshold of [IDLE_TS, IDLE_MJS as number]) {
+      for (const idle of [threshold - 1, threshold]) {
+        const req = { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send', ownerIdleSeconds: idle }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ts = classifyTs(req as any)
+        const mjs = classifyMjs(req)
+        expect({ level: mjs.level, code: mjs.code }).toEqual({ level: ts.level, code: ts.code })
+      }
+    }
+  })
+
   it('agrees at each copy’s own maxTypeChars boundary', () => {
     for (const limit of [LIMITS_TS.maxTypeChars, LIMITS_MJS.maxTypeChars as number]) {
       for (const len of [limit, limit + 1]) {
-        const req = { action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(len) }
+        const req = { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(len) }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ts = classifyTs(req as any)
         const mjs = classifyMjs(req)

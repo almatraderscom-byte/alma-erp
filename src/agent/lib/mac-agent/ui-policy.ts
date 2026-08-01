@@ -95,8 +95,18 @@ const FORBIDDEN_APPS: Readonly<Record<string, { code: string; bn: string }>> = {
  * click, a false AMBER costs him data or money.
  */
 const RED_LABEL_RULES: Array<{ re: RegExp; code: string; bn: string }> = [
+  // A real confirmation button is usually labelled with the VERB ALONE —
+  // "Delete", "Delete chat", "Allow". The explanatory sentence lives in a
+  // separate AX element, so a rule that demanded a second noun from the same
+  // label matched almost nothing that mattered (Codex round 2 on the W2 PR).
+  // Anchored at the start so ordinary prose ("deleted 3 files") is unaffected.
   {
-    re: /\b(delete|remove|erase|wipe|destroy|clear all|reset)\b.*\b(account|workspace|organization|all|everything|history|data)\b/i,
+    re: /^(delete|remove|erase|wipe|destroy|discard|clear|reset|trash|revoke|unsubscribe)\b/i,
+    code: 'destructive_label',
+    bn: 'মুছে ফেলার মতো বোতামে এজেন্ট ক্লিক করবে না।',
+  },
+  {
+    re: /\b(delete|remove|erase|wipe|destroy|clear all|reset)\b.*\b(account|workspace|organization|all|everything|history|data|chat|conversation|project)\b/i,
     code: 'destructive_label',
     bn: 'মুছে ফেলার মতো বোতামে এজেন্ট ক্লিক করবে না।',
   },
@@ -107,8 +117,35 @@ const RED_LABEL_RULES: Array<{ re: RegExp; code: string; bn: string }> = [
     bn: 'টাকা খরচের বোতাম — এজেন্ট চাপবে না, আপনি নিজে করবেন।',
   },
   { re: /\b(sign out|log out|logout)\b/i, code: 'session_loss', bn: 'লগআউট করলে আপনার সেশন হারাবে — এজেন্ট করবে না।' },
+  // Native permission sheets say just "Allow" / "Don't Allow" / "OK".
+  {
+    re: /^(allow|always allow|don'?t allow|grant|trust|authorize|authorise)\b/i,
+    code: 'grants_permission',
+    bn: 'অনুমতি দেওয়ার ডায়ালগ এজেন্ট নিজে মানবে না।',
+  },
   { re: /\b(allow|grant|always allow)\b.*\b(access|permission)\b/i, code: 'grants_permission', bn: 'অনুমতি দেওয়ার ডায়ালগ এজেন্ট নিজে মানবে না।' },
 ]
+
+/**
+ * Fields whose CONTENT is a secret regardless of what the text looks like. A
+ * real password is just `hunter2` — it carries no marker — so the text rules
+ * alone let a login form through (Codex round 2 on the W2 PR).
+ */
+const SECRET_FIELD_LABEL = /\b(password|passphrase|passcode|secret|api[\s-]?key|token|otp|one[\s-]?time code|pin)\b/i
+
+/**
+ * Keys that ACTIVATE whatever currently has focus. They can press the same
+ * "Delete" button `ui_click` refuses, so they inherit the label rules and
+ * require the daemon to resolve what is focused first.
+ */
+const ACTIVATION_KEYS = /^(enter|return|space|cmd\+enter|cmd\+return|ctrl\+enter|ctrl\+return)$/i
+
+/**
+ * How recently the owner must have touched the keyboard or mouse for driving
+ * to be unsafe. W1 hit this live: synthetic keystrokes land in whatever the
+ * owner is typing into. Reads are unaffected — only actions that move things.
+ */
+export const OWNER_ACTIVE_WINDOW_SECONDS = 25
 
 /**
  * Text the agent may never type. A key or password typed into a window is
@@ -144,6 +181,16 @@ export interface UiActionRequest {
   text?: string
   /** Key combo for `ui_key`, e.g. "cmd+enter". */
   key?: string
+  /**
+   * Label of the element that currently HAS FOCUS, resolved by the daemon.
+   * Required for activation keys — without it, `enter` is a blind click.
+   */
+  focusedLabel?: string
+  /**
+   * Seconds since the owner last touched the keyboard or mouse, measured by
+   * the daemon. Omitted means "unknown", which fails closed for actions.
+   */
+  ownerIdleSeconds?: number
 }
 
 function normalizeBundleId(raw?: string): string {
@@ -206,7 +253,20 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
   }
 
-  // 5. Destructive / money / permission labels are refused even here.
+  // 5. The owner is AT the keyboard. Synthetic keystrokes would land in
+  //    whatever he is typing into (W1 hit this live). `owner_active` is a
+  //    DEFER, not a refusal — the daemon retries when he steps away; it is
+  //    RED only so nothing can act meanwhile. Unknown idle time fails closed.
+  const idle = req.ownerIdleSeconds
+  if (!Number.isFinite(idle) || (idle as number) < OWNER_ACTIVE_WINDOW_SECONDS) {
+    return {
+      level: 'red',
+      code: 'owner_active',
+      reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট টাইপ করবে না, একটু পরে করবে।',
+    }
+  }
+
+  // 6. Destructive / money / permission labels are refused even here.
   const label = (req.elementLabel ?? '').trim()
   if (label) {
     for (const rule of RED_LABEL_RULES) {
@@ -220,6 +280,29 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     for (const rule of RED_KEYS) {
       if (rule.re.test(key)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
     }
+
+    // An activation key presses whatever has focus — it can hit the very
+    // "Delete" button `ui_click` refuses. So it needs the same label check,
+    // against the FOCUSED element, and fails closed without one.
+    if (ACTIVATION_KEYS.test(key)) {
+      const focused = (req.focusedLabel ?? '').trim()
+      if (!focused) {
+        return {
+          level: 'red',
+          code: 'focus_required',
+          reasonBn: 'ফোকাসে কী আছে জানা যায়নি — Enter/Space অন্ধভাবে চাপা হবে না।',
+        }
+      }
+      for (const rule of RED_LABEL_RULES) {
+        if (rule.re.test(focused)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
+      }
+      return {
+        level: 'amber',
+        code: 'needs_approval',
+        reasonBn: `${appLabel(bundleId)}-এ "${focused}"-এ "${key}" চাপবো — আপনার অনুমতি লাগবে।`,
+      }
+    }
+
     return {
       level: 'amber',
       code: 'needs_approval',
@@ -232,6 +315,10 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     if (!text.trim()) return { level: 'red', code: 'text_required', reasonBn: 'কী লিখবে সেটা বলা হয়নি।' }
     if (text.length > UI_LIMITS.maxTypeChars) {
       return { level: 'red', code: 'text_too_long', reasonBn: 'লেখাটা অস্বাভাবিক লম্বা — টাইপ করা হবে না।' }
+    }
+    // A real password carries no marker — the FIELD is what gives it away.
+    if (label && SECRET_FIELD_LABEL.test(label)) {
+      return { level: 'red', code: 'secret_field', reasonBn: 'পাসওয়ার্ড/কী-এর ঘরে এজেন্ট কিছু লিখবে না।' }
     }
     for (const rule of SECRET_TEXT_RULES) {
       if (rule.re.test(text)) return { level: 'red', code: rule.code, reasonBn: rule.bn }

@@ -41,8 +41,15 @@ const FORBIDDEN_APPS = {
 }
 
 const RED_LABEL_RULES = [
+  // A confirmation button is usually labelled with the VERB ALONE — see the
+  // TS twin's comment for why a second noun was the wrong requirement.
   {
-    re: /\b(delete|remove|erase|wipe|destroy|clear all|reset)\b.*\b(account|workspace|organization|all|everything|history|data)\b/i,
+    re: /^(delete|remove|erase|wipe|destroy|discard|clear|reset|trash|revoke|unsubscribe)\b/i,
+    code: 'destructive_label',
+    bn: 'মুছে ফেলার মতো বোতামে এজেন্ট ক্লিক করবে না।',
+  },
+  {
+    re: /\b(delete|remove|erase|wipe|destroy|clear all|reset)\b.*\b(account|workspace|organization|all|everything|history|data|chat|conversation|project)\b/i,
     code: 'destructive_label',
     bn: 'মুছে ফেলার মতো বোতামে এজেন্ট ক্লিক করবে না।',
   },
@@ -53,8 +60,22 @@ const RED_LABEL_RULES = [
     bn: 'টাকা খরচের বোতাম — এজেন্ট চাপবে না, আপনি নিজে করবেন।',
   },
   { re: /\b(sign out|log out|logout)\b/i, code: 'session_loss', bn: 'লগআউট করলে আপনার সেশন হারাবে — এজেন্ট করবে না।' },
+  {
+    re: /^(allow|always allow|don'?t allow|grant|trust|authorize|authorise)\b/i,
+    code: 'grants_permission',
+    bn: 'অনুমতি দেওয়ার ডায়ালগ এজেন্ট নিজে মানবে না।',
+  },
   { re: /\b(allow|grant|always allow)\b.*\b(access|permission)\b/i, code: 'grants_permission', bn: 'অনুমতি দেওয়ার ডায়ালগ এজেন্ট নিজে মানবে না।' },
 ]
+
+/** Fields whose CONTENT is a secret whatever the text looks like. */
+const SECRET_FIELD_LABEL = /\b(password|passphrase|passcode|secret|api[\s-]?key|token|otp|one[\s-]?time code|pin)\b/i
+
+/** Keys that ACTIVATE whatever has focus — they inherit the label rules. */
+const ACTIVATION_KEYS = /^(enter|return|space|cmd\+enter|cmd\+return|ctrl\+enter|ctrl\+return)$/i
+
+/** How recently the owner must have used the machine for driving to be unsafe. */
+export const OWNER_ACTIVE_WINDOW_SECONDS = 25
 
 const SECRET_TEXT_RULES = [
   { re: /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})/, code: 'secret_text', bn: 'API key/টোকেন টাইপ করা যাবে না।' },
@@ -119,6 +140,17 @@ export function classifyUiAction(req = {}) {
     return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
   }
 
+  // The owner is AT the keyboard — see the TS twin. `owner_active` is a DEFER
+  // the daemon retries, RED only so nothing acts meanwhile.
+  const idle = req.ownerIdleSeconds
+  if (!Number.isFinite(idle) || idle < OWNER_ACTIVE_WINDOW_SECONDS) {
+    return {
+      level: 'red',
+      code: 'owner_active',
+      reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট টাইপ করবে না, একটু পরে করবে।',
+    }
+  }
+
   const label = String(req.elementLabel ?? '').trim()
   if (label) {
     for (const rule of RED_LABEL_RULES) {
@@ -132,6 +164,28 @@ export function classifyUiAction(req = {}) {
     for (const rule of RED_KEYS) {
       if (rule.re.test(key)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
     }
+
+    // An activation key presses whatever has focus — same label rules as a
+    // click, and it fails closed without a resolved focus.
+    if (ACTIVATION_KEYS.test(key)) {
+      const focused = String(req.focusedLabel ?? '').trim()
+      if (!focused) {
+        return {
+          level: 'red',
+          code: 'focus_required',
+          reasonBn: 'ফোকাসে কী আছে জানা যায়নি — Enter/Space অন্ধভাবে চাপা হবে না।',
+        }
+      }
+      for (const rule of RED_LABEL_RULES) {
+        if (rule.re.test(focused)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
+      }
+      return {
+        level: 'amber',
+        code: 'needs_approval',
+        reasonBn: `${appLabel(bundleId)}-এ "${focused}"-এ "${key}" চাপবো — আপনার অনুমতি লাগবে।`,
+      }
+    }
+
     return {
       level: 'amber',
       code: 'needs_approval',
@@ -144,6 +198,10 @@ export function classifyUiAction(req = {}) {
     if (!text.trim()) return { level: 'red', code: 'text_required', reasonBn: 'কী লিখবে সেটা বলা হয়নি।' }
     if (text.length > UI_LIMITS.maxTypeChars) {
       return { level: 'red', code: 'text_too_long', reasonBn: 'লেখাটা অস্বাভাবিক লম্বা — টাইপ করা হবে না।' }
+    }
+    // A real password carries no marker — the FIELD is what gives it away.
+    if (label && SECRET_FIELD_LABEL.test(label)) {
+      return { level: 'red', code: 'secret_field', reasonBn: 'পাসওয়ার্ড/কী-এর ঘরে এজেন্ট কিছু লিখবে না।' }
     }
     for (const rule of SECRET_TEXT_RULES) {
       if (rule.re.test(text)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
