@@ -422,12 +422,28 @@ case "bounds":
 case "tree":
     let win = resolveWindow()
     let maxDepth = Int(flags["depth"] ?? "") ?? 25
+    // --interactive 1: only actionable elements. A full ChatGPT conversation
+    // tree runs to ~1000 lines and the server caps the text — the composer at
+    // the BOTTOM was exactly what got cut, so the model could never find the
+    // one element it needed. The interactive view is two orders smaller and
+    // is precisely the set of labels click/type accept.
+    let interactiveOnly = flags["interactive"] == "1"
+    let actionableRoles: Set<String> = [
+        "AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox",
+        "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXLink", "AXMenuItem",
+    ]
     var lines: [String] = []
     var count = 0
     walk(win, 0, maxDepth) { el, depth in
         count += 1
         if count > 15000 { return false }
-        lines.append(String(repeating: " ", count: depth) + lineFor(el, values: true))
+        if interactiveOnly {
+            if actionableRoles.contains(role(el)) {
+                lines.append(lineFor(el, values: true))
+            }
+        } else {
+            lines.append(String(repeating: " ", count: depth) + lineFor(el, values: true))
+        }
         return true
     }
     emit(["ok": true, "elements": count, "tree": lines.joined(separator: "\n")])
@@ -848,6 +864,11 @@ async function uiTree(params) {
   // Default deep: at depth 25 the Electron webarea's composer and chat are
   // still out of reach (measured: 295 elements vs the real 669 at 40).
   args.push('--depth', String(Math.min(Number(params.depth) || 40, 45)))
+  // Interactive-only view: a full conversation tree blows the server's text
+  // cap and the composer at the bottom is what gets cut (live-demo finding).
+  if (params.interactive === true || params.interactive === 'true' || params.interactive === 1) {
+    args.push('--interactive', '1')
+  }
   const res = await helper(args, { timeoutMs: 45_000 })
   if (!res.ok) return helperError(res)
   return ok({ elements: res.elements, tree: capTree(String(res.tree ?? '')) })

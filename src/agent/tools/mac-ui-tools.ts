@@ -155,6 +155,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
       scrollAmount: Number.isFinite(Number(input.scrollAmount)) ? Number(input.scrollAmount) : null,
+      // Interactive-only by default: a full ChatGPT conversation tree blows
+      // the text cap and the composer at the BOTTOM is exactly what got cut,
+      // so the model looped on truncated trees without ever seeing the one
+      // element it needed (live-demo finding). fullTree=true opts back in.
+      interactive: action === 'ui_tree' ? input.fullTree !== true : undefined,
     }
 
     // AMBER — the owner reads the app, the element and the LITERAL text before
@@ -270,8 +275,9 @@ const look_mac_app: AgentTool = {
   name: 'look_mac_app',
   description:
     "LOOK inside the OWNER'S OWN Mac desktop apps — ONLY the Claude app and the ChatGPT app. Read-only, runs " +
-    'immediately, changes nothing: "tree" reads the window\'s accessibility tree (element labels + the visible ' +
-    'conversation text), "screenshot" captures the app window, "scroll" scrolls to see more. ' +
+    'immediately, changes nothing: "tree" lists the window\'s actionable elements (buttons, text boxes — the exact ' +
+    'labels drive_mac_app needs; pass fullTree=true only when you must READ the conversation text), ' +
+    '"screenshot" captures the app window, "scroll" scrolls to see more. ' +
     'Use this whenever he asks WHAT an app shows ("ChatGPT app-e ki ache dekho") — and ALWAYS before drive_mac_app, ' +
     'because clicking/typing needs the exact element labels this returns. ' +
     'Owner-facing: report in Bangla what you saw.',
@@ -281,6 +287,11 @@ const look_mac_app: AgentTool = {
       action: { type: 'string', enum: ['tree', 'screenshot', 'scroll'], description: 'How to look.' },
       app: APP_PARAM,
       scrollAmount: { type: 'number', description: 'For scroll: positive scrolls down, negative up. Default 3.' },
+      fullTree: {
+        type: 'boolean',
+        description:
+          'For tree: true returns the FULL tree with conversation text (big, may truncate). Default is the compact actionable-elements view.',
+      },
     },
     required: ['action', 'app'],
   },
