@@ -311,7 +311,12 @@ const request_standing_permission: AgentTool = {
     properties: {
       families: {
         type: 'array',
-        description: 'Task families to cover, from the autonomy catalog (e.g. staff-messaging, customer-messaging, public-publish).',
+        description:
+          'Task families to cover, from the autonomy catalog (e.g. staff-messaging, '
+          + 'customer-messaging, memory-notes, personal-records, internal-reminders). '
+          + 'Families whose every tool builds its own approval card — public-publish, '
+          + 'ads-budget, finance-entries, drafts-previews — are refused, because a grant '
+          + 'cannot make those run card-free.',
         items: { type: 'string' },
       },
       minutes: { type: 'number', description: `How long, in minutes (max ${MAX_GRANT_MINUTES}).` },

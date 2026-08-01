@@ -2450,7 +2450,9 @@ async function runApprove(
     // here and the commit throws — the serializable merge exhausting its retries,
     // a database blip — the row would sit at `approved` with no grant behind it,
     // and Boss's next tap would get `already_resolved`. His approval would be
-    // gone (review bot, #667). Put the card back so he can try again.
+    // gone (review bot, #667). Put the card back so he can try again. The grant
+    // and the card's `executed` state commit together inside `runMerge`, so this
+    // can only ever undo a card whose grant was never written.
     try {
 
     const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
@@ -2542,6 +2544,18 @@ async function runApprove(
         // top of whatever mode Boss chose, never instead of it.
         data: { elevationGrant: { families, expiresAt, windows } },
       })
+      // Settle the CARD in the same transaction. Committing the grant first and
+      // the card second left a window where the permission was live while the
+      // card looked pending — Boss could then "reject" a grant that was already
+      // running, and reject only marks the card (review bot, #667).
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: 'executed',
+          resolvedAt: new Date(),
+          result: { families, minutes: mins, expiresAt, windows, carriedOver: live?.families ?? [] },
+        },
+      })
       return { carried: live, families, expiresAt, windows }
     }, {
       // Read-committed lets two concurrent approvals read the same old grant and
@@ -2577,14 +2591,6 @@ async function runApprove(
     const families_ = merged.families
     const expiresAt = merged.expiresAt
     const windows = merged.windows
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data: {
-        status: 'executed',
-        resolvedAt: new Date(),
-        result: { families: families_, minutes: mins, expiresAt, windows, carriedOver: carried?.families ?? [] },
-      },
-    })
 
     const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', {
       timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
