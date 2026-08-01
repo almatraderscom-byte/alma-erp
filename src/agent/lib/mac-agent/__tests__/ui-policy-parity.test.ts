@@ -111,6 +111,13 @@ const CORPUS: Array<Record<string, unknown>> = [
   { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'opt+return', focusedLabel: 'Do anything' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+enter' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'meta+space' },
+  // round-6: alias spellings must fold before the key rules run
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'meta+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+delete' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+option+shift+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'control+command+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: '  CMD + Q  ' },
   // case-insensitivity must agree on both sides
   { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]

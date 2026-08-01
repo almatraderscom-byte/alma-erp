@@ -181,6 +181,35 @@ const RED_KEYS: Array<{ re: RegExp; code: string; bn: string }> = [
   { re: /^(?=.*\bcmd\b)(?=.*\bctrl\b)(?=.*\b(opt|option|alt)\b).*\+(power|eject)$/i, code: 'power', bn: 'পাওয়ার শর্টকাট — এজেন্ট চাপবে না।' },
 ]
 
+/**
+ * Modifier spellings callers actually use, folded to one canonical form
+ * BEFORE any key rule runs. Accepting `command+enter` as an activation while
+ * `command+q` slipped past the quit rule was exactly this gap (Codex round 6).
+ */
+const KEY_ALIASES: Readonly<Record<string, string>> = {
+  command: 'cmd',
+  meta: 'cmd',
+  super: 'cmd',
+  control: 'ctrl',
+  option: 'opt',
+  alt: 'opt',
+  del: 'delete',
+  esc: 'escape',
+  spacebar: 'space',
+}
+
+/** Canonical key string: lowercased, trimmed, aliases folded. */
+export function normalizeKey(raw: string): string {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => KEY_ALIASES[part] ?? part)
+    .join('+')
+}
+
 /** How much text may be typed in one action. Longer is refused, never truncated. */
 export const UI_LIMITS = {
   maxTypeChars: 4_000,
@@ -292,7 +321,7 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
   }
 
   if (action === 'ui_key') {
-    const key = (req.key ?? '').trim()
+    const key = normalizeKey(req.key ?? '')
     if (!key) return { level: 'red', code: 'key_required', reasonBn: 'কোন কী চাপবে সেটা বলা হয়নি।' }
     for (const rule of RED_KEYS) {
       if (rule.re.test(key)) return { level: 'red', code: rule.code, reasonBn: rule.bn }
@@ -395,6 +424,7 @@ export const POLICY_RULE_DIGEST = {
   redKeys: RED_KEYS.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
   secretFieldLabel: { source: SECRET_FIELD_LABEL.source, flags: SECRET_FIELD_LABEL.flags },
   activationKeys: { source: ACTIVATION_KEYS.source, flags: ACTIVATION_KEYS.flags },
+  keyAliases: KEY_ALIASES,
   limits: { ...UI_LIMITS },
   ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
 } as const
