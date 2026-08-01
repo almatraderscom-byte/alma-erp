@@ -403,12 +403,14 @@ export function openSession(params, allowedDirs) {
 
   // Claude takes the first task over stdin; Codex already received it as an
   // argument (one-shot), so sending it again would corrupt the run.
-  if (params.task && tool !== 'codex') sendToSession(id, String(params.task))
+  // Fire-and-observe: a failed first write surfaces through the session's own
+  // error state/events, and openSession's contract stays synchronous.
+  if (params.task && tool !== 'codex') void sendToSession(id, String(params.task))
 
   return { ok: true, sessionId: id, cliSessionId, tool, cwd, permissionMode, oneShot: tool === 'codex' }
 }
 
-export function sendToSession(sessionId, text) {
+export async function sendToSession(sessionId, text) {
   const session = sessions.get(sessionId)
   if (!session) return { ok: false, error: 'session_not_found' }
   if (session.tool === 'codex') {
@@ -427,11 +429,30 @@ export function sendToSession(sessionId, text) {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
   }
-  try {
-    session.child.stdin.write(`${JSON.stringify(payload)}\n`)
-  } catch (err) {
+  // The write must be CONFIRMED before we claim delivery: a child that dies
+  // during resume startup fails the write asynchronously (EPIPE via the
+  // completion callback), and returning ok before that lost the owner's
+  // instruction silently (Codex, L5 round 3). A slow drain (backpressure) is
+  // not a failure — the short timer keeps a stalled pipe from hanging the
+  // command queue; genuine failures call back well within it.
+  const wrote = await new Promise((resolve) => {
+    let settled = false
+    const done = (ok, err) => {
+      if (!settled) {
+        settled = true
+        resolve({ ok, err })
+      }
+    }
+    try {
+      session.child.stdin.write(`${JSON.stringify(payload)}\n`, (err) => done(!err, err))
+    } catch (err) {
+      done(false, err)
+    }
+    setTimeout(() => done(true, null), 1_500)
+  })
+  if (!wrote.ok) {
     session.status = 'error'
-    session.error = `stdin: ${err?.message ?? err}`
+    session.error = `stdin: ${wrote.err?.message ?? wrote.err}`
     return { ok: false, error: 'session_write_failed: সেশনটা resume নেয়নি — নতুন সেশন খুলুন।' }
   }
   session.status = 'working'
@@ -611,7 +632,9 @@ export function registerSessionHandlers(extraHandlers, allowedDirs) {
   installExitHandlers()
   loadPersistedSessions(allowedDirs)
   const wrap = (fn) => async (params) => {
-    const out = fn(params)
+    // session_send is async now (it awaits the stdin write's completion);
+    // await tolerates the still-synchronous verbs too.
+    const out = await fn(params)
     return out.ok
       ? { ok: true, exitCode: 0, stdout: JSON.stringify(out) }
       : { ok: false, exitCode: null, error: out.error }

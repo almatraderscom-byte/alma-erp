@@ -101,8 +101,8 @@ darwinOnly('L5 session resume', () => {
     expect(read.status).toBe('detached')
   })
 
-  it('send revives a detached session with --resume and delivers the text', () => {
-    const sent = mod.sendToSession('restored-1', 'continue please')
+  it('send revives a detached session with --resume and delivers the text', async () => {
+    const sent = await mod.sendToSession('restored-1', 'continue please')
     expect(sent.ok).toBe(true)
 
     const read = mod.readSession('restored-1', 0)
