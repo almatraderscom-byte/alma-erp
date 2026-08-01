@@ -75,6 +75,8 @@ struct AgentLiveActivityFeed: Decodable, Equatable {
     let active: Bool
     let current: AgentLiveActivityStep?
     let steps: [AgentLiveActivityStep]
+    /// L7 — server truth: frames are flowing right now (optional for old servers).
+    let streaming: Bool?
     /// L5 — optional so older servers still decode.
     let sessions: [AgentLiveSession]?
     /// data:image/… URI, newest across every surface.
@@ -169,6 +171,7 @@ final class AgentLiveDockStore {
                 dismissedStepId = nil
             }
             feed = fresh
+            reconcileStreamState()
             // Never trap his screen: the sheet closes itself when work is gone.
             if !show { expanded = false }
         } catch AlmaAPIError.notAuthenticated {
@@ -220,8 +223,18 @@ final class AgentLiveDockStore {
 
     // MARK: L7 live screen streaming (explicit owner start; daemon self-stops)
 
-    var streamOn = false
+    /// The SERVER is the truth (fresh frames = streaming) — a remounted app
+    /// mid-stream must show STOP, not a second start. The optimistic value
+    /// bridges the seconds until frames appear, then releases.
+    private var streamOptimistic: Bool?
     var streamBusy = false
+    var streamOn: Bool { streamOptimistic ?? (feed?.streaming ?? false) }
+
+    func reconcileStreamState() {
+        if let opt = streamOptimistic, (feed?.streaming ?? false) == opt {
+            streamOptimistic = nil
+        }
+    }
 
     private struct StreamBody: Encodable { let on: Bool }
     private struct StreamResponse: Decodable { let ok: Bool? }
@@ -231,9 +244,10 @@ final class AgentLiveDockStore {
         streamBusy = true
         defer { streamBusy = false }
         do {
+            let next = !streamOn
             let _: StreamResponse = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: !streamOn))
-            streamOn.toggle()
+                "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
+            streamOptimistic = next
         } catch {
             // The button simply stays where it was.
         }
@@ -299,7 +313,7 @@ final class AgentLiveDockStore {
                              status: "working", costUsd: 0.0421, at: now),
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
-                                     steps: steps, sessions: fixtureSessions,
+                                     steps: steps, streaming: false, sessions: fixtureSessions,
                                      screenshot: nil, screenshotAt: nil)
         lastActiveAt = Date()
         if mode == "sheet" { expanded = true }

@@ -11,7 +11,8 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { activeDevice, enqueueCommand, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
+import { activeDevice, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,7 +35,27 @@ export async function POST(req: NextRequest) {
   if (!(await isMacAgentEnabled())) {
     return Response.json({ error: 'mac_agent_disabled', messageBn: 'Mac control বন্ধ আছে।' }, { status: 409 })
   }
-  const device = await activeDevice()
+  // STOP must reach the Mac that is actually streaming — with two Macs
+  // online, "most recently seen" flaps (the frame POSTs themselves bump
+  // lastSeenAt) and a stop could land on the idle machine as a no-op while
+  // the other kept capturing (Codex on the L7 PR). The newest frame names
+  // the streamer.
+  let device = null
+  if (body.on === false) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const streamer = await db.macAgentFrame
+      .findFirst({
+        where: { at: { gte: new Date(Date.now() - 5 * 60 * 1000) } },
+        orderBy: { at: 'desc' },
+        select: { deviceId: true },
+      })
+      .catch(() => null)
+    if (streamer) {
+      device = (await listDevices()).find((d) => d.id === streamer.deviceId && d.online) ?? null
+    }
+  }
+  device = device ?? (await activeDevice())
   if (!device) {
     return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
   }
@@ -46,5 +67,5 @@ export async function POST(req: NextRequest) {
       ? { mode: 'stop' }
       : { mode: 'start', maxSeconds: Number(body.maxSeconds) || undefined },
   })
-  return Response.json({ ok: true, commandId: id, on: body.on !== false })
+  return Response.json({ ok: true, commandId: id, on: body.on !== false, deviceId: device.id })
 }

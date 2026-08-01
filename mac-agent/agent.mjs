@@ -380,12 +380,16 @@ function startScreenStream(token, maxSeconds) {
     try {
       const frame = await captureFrame()
       if (frame) {
-        await api('/api/assistant/mac-agent/frames', {
+        const res = await api('/api/assistant/mac-agent/frames', {
           method: 'POST',
           token,
           body: { dataUri: frame },
           timeoutMs: 10_000,
-        }).catch(() => {})
+        }).catch(() => null)
+        // The frames response doubles as the STOP channel — the command queue
+        // is serial and a long shell command must not keep the screen
+        // streaming after the owner pressed stop.
+        if (res?.json?.stop) stopScreenStream('owner (frame channel)')
       }
     } finally {
       streamBusy = false

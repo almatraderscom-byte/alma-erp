@@ -53,5 +53,32 @@ export async function POST(req: NextRequest) {
     create: { deviceId: device.id, dataUri, at },
     update: { dataUri, at },
   })
-  return Response.json({ ok: true })
+
+  // The stop side-channel: the daemon's command queue is SERIAL, so a queued
+  // stop would wait behind a long-running shell command while frames kept
+  // flowing (Codex on the L7 PR). This POST arrives every ~1.5s from the very
+  // loop we want to stop — answer it with the stop and settle the command.
+  let stop = false
+  const pendingStop = await db.macAgentCommand
+    .findFirst({
+      where: { deviceId: device.id, action: 'screen_stream', status: 'queued' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, params: true },
+    })
+    .catch(() => null)
+  if (pendingStop && (pendingStop.params as { mode?: string } | null)?.mode === 'stop') {
+    stop = true
+    await db.macAgentCommand
+      .update({
+        where: { id: pendingStop.id },
+        data: {
+          status: 'done',
+          stdout: JSON.stringify({ streaming: false, via: 'frame_channel' }),
+          resolvedAt: new Date(),
+        },
+      })
+      .catch(() => {})
+  }
+
+  return Response.json({ ok: true, stop })
 }

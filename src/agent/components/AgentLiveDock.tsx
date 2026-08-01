@@ -55,6 +55,8 @@ interface ActivityFeed {
   current: ActivityStep | null
   steps: ActivityStep[]
   sessions?: ActivitySession[]
+  /** L7 — server truth: frames are flowing right now. */
+  streaming?: boolean
   screenshot: string | null
   screenshotAt: string | null
 }
@@ -199,11 +201,19 @@ export default function AgentLiveDock() {
     }
   }, [replyText, replySessionId, replyState])
 
-  // L7 — live screen streaming: an explicit owner start (privacy + cost); the
-  // daemon's loop self-stops at its deadline, so the button is best-effort
-  // state, not the source of truth.
-  const [streamOn, setStreamOn] = useState(false)
+  // L7 — live screen streaming: an explicit owner start (privacy + cost). The
+  // SERVER is the source of truth (fresh frames = streaming) so a remounted
+  // page mid-stream shows STOP, not a second start (Codex on the L7 PR); a
+  // short optimistic override bridges the seconds until frames appear.
+  const [streamOptimistic, setStreamOptimistic] = useState<boolean | null>(null)
   const [streamBusy, setStreamBusy] = useState(false)
+  const streamOn = streamOptimistic ?? Boolean(feed?.streaming)
+  useEffect(() => {
+    // Server state has caught up with the optimistic value — release it.
+    if (streamOptimistic !== null && Boolean(feed?.streaming) === streamOptimistic) {
+      setStreamOptimistic(null)
+    }
+  }, [feed?.streaming, streamOptimistic])
   const toggleStream = useCallback(async () => {
     if (streamBusy) return
     setStreamBusy(true)
@@ -213,7 +223,7 @@ export default function AgentLiveDock() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ on: !streamOn }),
       })
-      if (res.ok) setStreamOn((v) => !v)
+      if (res.ok) setStreamOptimistic(!streamOn)
     } catch {
       /* the button simply stays where it was */
     } finally {

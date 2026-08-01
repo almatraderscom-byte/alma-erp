@@ -469,6 +469,9 @@ export async function GET(req: NextRequest) {
         running.length > 0 ||
         justFinished.length > 0 ||
         Boolean(frameMetaRow && Date.now() - frameMetaRow.at.getTime() < 10_000),
+      /** L7 — server truth for the docks' stream toggle: a client that
+       *  remounts mid-stream must show STOP, not a second start. */
+      streaming: Boolean(frameMetaRow && Date.now() - frameMetaRow.at.getTime() < 10_000),
       current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
       /** L5: per-session status + cost for the expanded view. */

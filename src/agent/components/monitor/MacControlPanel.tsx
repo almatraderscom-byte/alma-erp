@@ -183,6 +183,22 @@ export default function MacControlPanel() {
         </div>
       </section>
 
+      {/* L7 — live screen streaming. The dock's own button only exists while
+          the dock is visible (work in flight); THIS page is the always-reachable
+          way to start a live view of an idle Mac (Codex on the L7 PR). Once
+          frames flow, the dock lights up in the chat by itself. */}
+      <section className="rounded-2xl border border-black/10 bg-white/80 p-4 backdrop-blur">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold">লাইভ স্ক্রিন ভিউ</h2>
+            <p className="mt-1 text-sm text-black/60">
+              চালু করলে চ্যাটের live dock-এ Mac-এর স্ক্রিন ~২ সেকেন্ড পরপর আসবে; ৫ মিনিটে নিজে বন্ধ হয়।
+            </p>
+          </div>
+          <StreamToggle />
+        </div>
+      </section>
+
       {/* Stop */}
       <section className="rounded-2xl border border-red-500/25 bg-red-500/5 p-4 backdrop-blur">
         <div className="flex items-center justify-between gap-4">
@@ -240,5 +256,65 @@ export default function MacControlPanel() {
         <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700">{error}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * L7 — start/stop the live screen stream from the always-reachable control
+ * page. The server's live-activity `streaming` flag is the truth; a short
+ * optimistic bridge covers the seconds before the first frame lands.
+ */
+function StreamToggle() {
+  const [on, setOn] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    const check = async () => {
+      try {
+        const res = await fetch('/api/assistant/live-activity', { cache: 'no-store' })
+        if (!res.ok) return
+        const d = (await res.json()) as { streaming?: boolean }
+        if (alive) setOn(Boolean(d.streaming))
+      } catch {
+        /* keep last known state */
+      }
+    }
+    void check()
+    const t = setInterval(check, 5_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [])
+
+  const toggle = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/assistant/mac-agent/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: !on }),
+      })
+      if (res.ok) setOn((v) => !v)
+    } catch {
+      /* stays where it was */
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void toggle()}
+      className={`shrink-0 rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 ${
+        on ? 'bg-red-500/80 text-white' : 'bg-black/80 text-white'
+      }`}
+    >
+      {on ? '⏹ বন্ধ করুন' : '🎥 চালু করুন'}
+    </button>
   )
 }
