@@ -141,3 +141,20 @@ describe('a permission request reaches the head, not a skill', () => {
     expect(isStandingPermissionAsk('tumi nijei koro')).toBe(false)
   })
 })
+
+/**
+ * The fifth layer, and the one that actually kept it invisible: pack selection
+ * decides MEMBERSHIP, the head-tool diet only FILTERS. A tool that no selected
+ * pack contains is absent no matter how many allowlists name it.
+ */
+describe('every turn carries the ability to ask', () => {
+  it('is in the core pack, not just the diet list', async () => {
+    const { CORE_PACK } = await import('@/agent/tools/state-router')
+    expect(CORE_PACK).toContain('request_standing_permission')
+  })
+
+  it('is in the head core list too, so the diet keeps it', async () => {
+    const { HEAD_CORE_TOOL_NAMES } = await import('@/agent/tools/select-tools')
+    expect(HEAD_CORE_TOOL_NAMES.has('request_standing_permission')).toBe(true)
+  })
+})
