@@ -243,7 +243,15 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
           // wraps long URLs (proven live — the markdown image broke on a
           // newline between ] and ( ), and /api/assistant/files exists for
           // exactly this. The route 302s to a fresh signed URL per view.
-          const imageUrl = `/api/assistant/files?path=${encodeURIComponent(objectPath)}&redirect=1`
+          // Absolute, because the same reply may land in Telegram where a
+          // root-relative path has no origin to resolve against (Codex P2).
+          const base = (
+            process.env.APP_URL ||
+            process.env.NEXTAUTH_URL ||
+            process.env.NEXT_PUBLIC_APP_URL ||
+            'https://alma-erp-six.vercel.app'
+          ).replace(/\/$/, '')
+          const imageUrl = `${base}/api/assistant/files?path=${encodeURIComponent(objectPath)}&redirect=1`
           try {
             const dayAgo = Date.now() - 24 * 3600 * 1000
             const stale = (await agentStorageListFolder('mac-ui/')).filter((f) => {
