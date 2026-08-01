@@ -179,10 +179,15 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
   const forbidden = FORBIDDEN_APPS[bundleId]
   if (forbidden) return { level: 'red', code: forbidden.code, reasonBn: forbidden.bn }
 
-  // 2. A full-screen read needs no app. Anything else must name one.
+  // 2. ONLY a full-screen screenshot may omit the app. `ui_tree` and
+  //    `ui_scroll` without one would fall through to whatever is frontmost —
+  //    which is how an unnamed read becomes a read of the Keychain window
+  //    (Codex on the W2 PR). Everything else must name its app.
   const isRead = READ_ONLY_ACTIONS.has(action)
   if (!bundleId) {
-    if (isRead) return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+    if (action === 'ui_screenshot') {
+      return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+    }
     return { level: 'red', code: 'app_required', reasonBn: 'কোন অ্যাপে কাজটা হবে সেটা বলা হয়নি।' }
   }
 
@@ -238,13 +243,21 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     }
   }
 
-  // ui_click
+  // ui_click — the label IS the safety check, so a missing one fails CLOSED.
+  // Without this, dropping `elementLabel` turned a RED "Delete account" into a
+  // vague approvable click, defeating both the rule and the owner's ability to
+  // see what he is approving (Codex on the W2 PR).
+  if (!label) {
+    return {
+      level: 'red',
+      code: 'label_required',
+      reasonBn: 'কোন বোতামে ক্লিক হবে সেটা জানা যায়নি — নাম ছাড়া ক্লিক করা হবে না।',
+    }
+  }
   return {
     level: 'amber',
     code: 'needs_approval',
-    reasonBn: label
-      ? `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`
-      : `${appLabel(bundleId)}-এ ক্লিক করবো — আপনার অনুমতি লাগবে।`,
+    reasonBn: `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`,
   }
 }
 

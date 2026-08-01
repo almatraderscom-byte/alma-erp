@@ -98,9 +98,12 @@ export function classifyUiAction(req = {}) {
   const forbidden = FORBIDDEN_APPS[bundleId]
   if (forbidden) return { level: 'red', code: forbidden.code, reasonBn: forbidden.bn }
 
+  // ONLY a full-screen screenshot may omit the app — see the TS twin.
   const isRead = READ_ONLY_ACTIONS.has(action)
   if (!bundleId) {
-    if (isRead) return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+    if (action === 'ui_screenshot') {
+      return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+    }
     return { level: 'red', code: 'app_required', reasonBn: 'কোন অ্যাপে কাজটা হবে সেটা বলা হয়নি।' }
   }
 
@@ -152,12 +155,18 @@ export function classifyUiAction(req = {}) {
     }
   }
 
+  // ui_click — a missing label fails CLOSED; see the TS twin.
+  if (!label) {
+    return {
+      level: 'red',
+      code: 'label_required',
+      reasonBn: 'কোন বোতামে ক্লিক হবে সেটা জানা যায়নি — নাম ছাড়া ক্লিক করা হবে না।',
+    }
+  }
   return {
     level: 'amber',
     code: 'needs_approval',
-    reasonBn: label
-      ? `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`
-      : `${appLabel(bundleId)}-এ ক্লিক করবো — আপনার অনুমতি লাগবে।`,
+    reasonBn: `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`,
   }
 }
 

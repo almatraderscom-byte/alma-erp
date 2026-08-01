@@ -9,12 +9,18 @@
  * one side and forgot the other" a red build instead of a silent hole.
  */
 import { describe, it, expect } from 'vitest'
-import { classifyUiAction as classifyTs, ALLOWED_APPS as ALLOWED_TS, UI_ACTIONS as ACTIONS_TS } from '../ui-policy'
+import {
+  classifyUiAction as classifyTs,
+  ALLOWED_APPS as ALLOWED_TS,
+  UI_ACTIONS as ACTIONS_TS,
+  UI_LIMITS as LIMITS_TS,
+} from '../ui-policy'
 // Plain ESM sibling shipped with the daemon — no types by design.
 import {
   classifyUiAction as classifyMjs,
   ALLOWED_APPS as ALLOWED_MJS,
   UI_ACTIONS as ACTIONS_MJS,
+  UI_LIMITS as LIMITS_MJS,
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore — untyped daemon twin
 } from '../../../../../mac-agent/ui-policy.mjs'
@@ -31,7 +37,7 @@ const CORPUS: Array<Record<string, unknown>> = [
   { action: 'ui_screenshot' },
   // amber
   { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' },
-  { action: 'ui_click', bundleId: CHATGPT },
+  { action: 'ui_click', bundleId: CHATGPT, elementLabel: 'New chat' },
   { action: 'ui_type', bundleId: CHATGPT, text: 'orders page er bug ta dekho' },
   { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+enter' },
   { action: 'ui_key', bundleId: CHATGPT, key: 'enter' },
@@ -56,6 +62,11 @@ const CORPUS: Array<Record<string, unknown>> = [
   { action: 'ui_type', bundleId: CLAUDE, text: '-----BEGIN RSA PRIVATE KEY-----' },
   { action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(5_000) },
   { action: 'ui_type', bundleId: CLAUDE, text: '  ' },
+  // A click with no resolved label must fail closed on both sides.
+  { action: 'ui_click', bundleId: CLAUDE },
+  // Reads that omit the app: only a screenshot may.
+  { action: 'ui_tree' },
+  { action: 'ui_scroll' },
   { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+q' },
   { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+shift+delete' },
   { action: 'ui_key', bundleId: CLAUDE, key: '' },
@@ -74,6 +85,29 @@ describe('UI policy parity — server and daemon must agree exactly', () => {
 
   it('agrees on the known action list', () => {
     expect([...ACTIONS_MJS]).toEqual([...ACTIONS_TS])
+  })
+
+  /**
+   * The corpus alone cannot catch a widened LIMIT: a fixed 5,000-char case
+   * stays RED on both sides even if one twin quietly moved maxTypeChars from
+   * 4,000 to 4,500, while a 4,250-char request would get contradictory
+   * verdicts (Codex on the W2 PR). Compare the numbers, and probe the exact
+   * boundary derived from each copy's OWN value.
+   */
+  it('agrees on the policy limits themselves', () => {
+    expect({ ...LIMITS_MJS }).toEqual({ ...LIMITS_TS })
+  })
+
+  it('agrees at each copy’s own maxTypeChars boundary', () => {
+    for (const limit of [LIMITS_TS.maxTypeChars, LIMITS_MJS.maxTypeChars as number]) {
+      for (const len of [limit, limit + 1]) {
+        const req = { action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(len) }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ts = classifyTs(req as any)
+        const mjs = classifyMjs(req)
+        expect({ level: mjs.level, code: mjs.code }).toEqual({ level: ts.level, code: ts.code })
+      }
+    }
   })
 
   for (const req of CORPUS) {

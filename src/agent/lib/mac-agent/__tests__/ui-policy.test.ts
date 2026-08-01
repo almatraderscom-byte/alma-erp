@@ -24,13 +24,25 @@ describe('UI policy — GREEN (reading changes nothing)', () => {
   it('allows a full-screen read with no app named', () => {
     expect(classifyUiAction({ action: 'ui_screenshot' }).level).toBe('green')
   })
+
+  it('but ONLY a screenshot may omit the app — tree/scroll would read the frontmost window', () => {
+    expect(classifyUiAction({ action: 'ui_tree' }).code).toBe('app_required')
+    expect(classifyUiAction({ action: 'ui_scroll' }).code).toBe('app_required')
+  })
 })
 
 describe('UI policy — AMBER (acting inside an allowed app)', () => {
-  it('asks before clicking', () => {
+  it('asks before clicking, and names the element', () => {
     const v = classifyUiAction({ action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' })
     expect(v.level).toBe('amber')
     expect(v.reasonBn).toContain('Claude')
+    expect(v.reasonBn).toContain('Send')
+  })
+
+  it('refuses a click with no resolved label — dropping it must not launder a RED target', () => {
+    const v = classifyUiAction({ action: 'ui_click', bundleId: CLAUDE })
+    expect(v.level).toBe('red')
+    expect(v.code).toBe('label_required')
   })
 
   it('asks before typing, and names the app', () => {
