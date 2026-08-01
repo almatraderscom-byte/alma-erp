@@ -39,7 +39,9 @@ const CORPUS: Array<Record<string, unknown>> = [
   // green
   { action: 'ui_tree', bundleId: CLAUDE },
   { action: 'ui_screenshot', bundleId: CHATGPT },
-  { action: 'ui_scroll', bundleId: CLAUDE },
+  { ...AWAY, action: 'ui_scroll', bundleId: CLAUDE },
+  { action: 'ui_scroll', bundleId: CLAUDE, ownerIdleSeconds: 2 },
+  { action: 'ui_scroll', bundleId: CHATGPT },
   { action: 'ui_screenshot' },
   // amber
   { ...AWAY, action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' },
