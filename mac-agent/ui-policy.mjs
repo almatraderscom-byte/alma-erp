@@ -87,6 +87,12 @@ const RED_KEYS = [
   { re: /^cmd\+q$/i, code: 'quits_app', bn: 'অ্যাপ বন্ধ করার শর্টকাট এজেন্ট চাপবে না।' },
   { re: /^cmd\+(shift\+)?delete$/i, code: 'destructive_key', bn: 'ডিলিট শর্টকাট এজেন্ট চাপবে না।' },
   { re: /^ctrl\+c$/i, code: 'destructive_key', bn: 'চলমান কাজ থামানোর শর্টকাট এজেন্ট চাপবে না।' },
+  // OS-GLOBAL combos ignore the frontmost app — see the TS twin.
+  { re: /^(?=.*\bcmd\b)(?=.*\b(opt|option|alt)\b)(?=.*\bshift\b).*\+q$/i, code: 'session_loss', bn: 'লগআউট শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bctrl\b)(?=.*\bcmd\b).*\+q$/i, code: 'session_loss', bn: 'স্ক্রিন লক/লগআউট শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bcmd\b)(?=.*\b(opt|option|alt)\b).*\+(esc|escape)$/i, code: 'destructive_key', bn: 'Force Quit শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bctrl\b)(?=.*\b(power|eject)\b)/i, code: 'power', bn: 'পাওয়ার/শাটডাউন শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bcmd\b)(?=.*\bctrl\b)(?=.*\b(opt|option|alt)\b).*\+(power|eject)$/i, code: 'power', bn: 'পাওয়ার শর্টকাট — এজেন্ট চাপবে না।' },
 ]
 
 export const UI_LIMITS = {
@@ -199,8 +205,15 @@ export function classifyUiAction(req = {}) {
     if (text.length > UI_LIMITS.maxTypeChars) {
       return { level: 'red', code: 'text_too_long', reasonBn: 'লেখাটা অস্বাভাবিক লম্বা — টাইপ করা হবে না।' }
     }
-    // A real password carries no marker — the FIELD is what gives it away.
-    if (label && SECRET_FIELD_LABEL.test(label)) {
+    // Typing without a resolved field label fails CLOSED — see the TS twin.
+    if (!label) {
+      return {
+        level: 'red',
+        code: 'label_required',
+        reasonBn: 'কোন ঘরে লেখা হবে সেটা জানা যায়নি — নাম ছাড়া টাইপ করা হবে না।',
+      }
+    }
+    if (SECRET_FIELD_LABEL.test(label)) {
       return { level: 'red', code: 'secret_field', reasonBn: 'পাসওয়ার্ড/কী-এর ঘরে এজেন্ট কিছু লিখবে না।' }
     }
     for (const rule of SECRET_TEXT_RULES) {
@@ -226,6 +239,20 @@ export function classifyUiAction(req = {}) {
     code: 'needs_approval',
     reasonBn: `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`,
   }
+}
+
+/** Structural fingerprint of every rule — see the TS twin for why. */
+export const POLICY_RULE_DIGEST = {
+  readOnlyActions: [...READ_ONLY_ACTIONS].sort(),
+  allowedApps: ALLOWED_APPS,
+  forbiddenApps: FORBIDDEN_APPS,
+  redLabelRules: RED_LABEL_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  secretTextRules: SECRET_TEXT_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  redKeys: RED_KEYS.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  secretFieldLabel: { source: SECRET_FIELD_LABEL.source, flags: SECRET_FIELD_LABEL.flags },
+  activationKeys: { source: ACTIVATION_KEYS.source, flags: ACTIVATION_KEYS.flags },
+  limits: { ...UI_LIMITS },
+  ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
 }
 
 export function capTree(text) {

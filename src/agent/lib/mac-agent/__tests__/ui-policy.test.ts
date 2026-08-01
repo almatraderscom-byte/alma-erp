@@ -49,7 +49,7 @@ describe('UI policy — AMBER (acting inside an allowed app)', () => {
   })
 
   it('asks before typing, and names the app', () => {
-    const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CHATGPT, text: 'hello' })
+    const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CHATGPT, elementLabel: 'Message', text: 'hello' })
     expect(v.level).toBe('amber')
     expect(v.reasonBn).toContain('ChatGPT')
   })
@@ -75,7 +75,7 @@ describe('UI policy — the owner is at the keyboard', () => {
   it('defers every driving action while he is active', () => {
     for (const req of [
       { action: 'ui_click', bundleId: CLAUDE, elementLabel: 'Send' },
-      { action: 'ui_type', bundleId: CLAUDE, text: 'hello' },
+      { action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text: 'hello' },
       { action: 'ui_key', bundleId: CLAUDE, key: 'cmd+a' },
     ]) {
       const v = classifyUiAction({ ...req, ownerIdleSeconds: 2 })
@@ -85,7 +85,7 @@ describe('UI policy — the owner is at the keyboard', () => {
   })
 
   it('fails closed when idle time is unknown', () => {
-    expect(classifyUiAction({ action: 'ui_type', bundleId: CLAUDE, text: 'hi' }).code).toBe('owner_active')
+    expect(classifyUiAction({ action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text: 'hi' }).code).toBe('owner_active')
   })
 
   it('still allows reading while he works — watching never interrupts', () => {
@@ -102,7 +102,7 @@ describe('UI policy — RED (never approvable)', () => {
 
   it('refuses terminals — the GUI must not become a shell bypass', () => {
     for (const id of ['com.apple.terminal', 'com.googlecode.iterm2', 'com.apple.scripteditor2']) {
-      const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: id, text: 'sudo rm -rf ~' })
+      const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: id, elementLabel: 'Terminal', text: 'sudo rm -rf ~' })
       expect(v.level).toBe('red')
       expect(v.code).toBe('shell_bypass')
     }
@@ -145,7 +145,7 @@ describe('UI policy — RED (never approvable)', () => {
       'password: hunter2',
     ]
     for (const text of cases) {
-      const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, text })
+      const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text })
       expect(v.level).toBe('red')
       expect(v.code).toBe('secret_text')
     }
@@ -184,6 +184,19 @@ describe('UI policy — RED (never approvable)', () => {
     }
   })
 
+  it('refuses OS-global shortcuts that ignore which app is frontmost', () => {
+    for (const key of ['cmd+opt+shift+q', 'ctrl+cmd+q', 'cmd+option+esc']) {
+      const v = classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key })
+      expect(v.level).toBe('red')
+    }
+  })
+
+  it('refuses typing with no resolved field label — the same laundering path as clicks', () => {
+    const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'hunter2' })
+    expect(v.level).toBe('red')
+    expect(v.code).toBe('label_required')
+  })
+
   it('never types into a secret FIELD, however ordinary the text looks', () => {
     for (const field of ['Password', 'Passphrase', 'API key', 'One-time code']) {
       const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: field, text: 'hunter2' })
@@ -202,12 +215,12 @@ describe('UI policy — RED (never approvable)', () => {
   })
 
   it('refuses absurdly long typing instead of truncating it', () => {
-    const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'x'.repeat(UI_LIMITS.maxTypeChars + 1) })
+    const v = classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text: 'x'.repeat(UI_LIMITS.maxTypeChars + 1) })
     expect(v.code).toBe('text_too_long')
   })
 
   it('refuses empty text / missing key', () => {
-    expect(classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: '   ' }).code).toBe('text_required')
+    expect(classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text: '   ' }).code).toBe('text_required')
     expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: '' }).code).toBe('key_required')
   })
 })

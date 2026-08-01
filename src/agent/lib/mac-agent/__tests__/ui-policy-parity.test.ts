@@ -15,6 +15,7 @@ import {
   UI_ACTIONS as ACTIONS_TS,
   UI_LIMITS as LIMITS_TS,
   OWNER_ACTIVE_WINDOW_SECONDS as IDLE_TS,
+  POLICY_RULE_DIGEST as DIGEST_TS,
 } from '../ui-policy'
 // Plain ESM sibling shipped with the daemon — no types by design.
 import {
@@ -23,6 +24,7 @@ import {
   UI_ACTIONS as ACTIONS_MJS,
   UI_LIMITS as LIMITS_MJS,
   OWNER_ACTIVE_WINDOW_SECONDS as IDLE_MJS,
+  POLICY_RULE_DIGEST as DIGEST_MJS,
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore — untyped daemon twin
 } from '../../../../../mac-agent/ui-policy.mjs'
@@ -91,6 +93,11 @@ const CORPUS: Array<Record<string, unknown>> = [
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+enter', focusedLabel: 'Prompt' },
   { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'space', focusedLabel: 'Allow' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+a' },
+  // round-3: OS-global shortcuts and unlabelled typing
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+opt+shift+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'ctrl+cmd+q' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+option+esc' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'hunter2' },
   // case-insensitivity must agree on both sides
   { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]
@@ -117,6 +124,16 @@ describe('UI policy parity — server and daemon must agree exactly', () => {
 
   it('agrees on the owner-active window', () => {
     expect(IDLE_MJS).toBe(IDLE_TS)
+  })
+
+  /**
+   * The strongest gate: the corpus can only prove cases somebody wrote down,
+   * so a rule added to ONE twin stayed green when no entry happened to hit it
+   * (Codex round 3). Comparing the rule SETS structurally makes any
+   * divergence a red build — including rules nobody has written a case for.
+   */
+  it('agrees on every rule set, not just the cases in the corpus', () => {
+    expect(JSON.parse(JSON.stringify(DIGEST_MJS))).toEqual(JSON.parse(JSON.stringify(DIGEST_TS)))
   })
 
   it('agrees at each copy’s own owner-active boundary', () => {

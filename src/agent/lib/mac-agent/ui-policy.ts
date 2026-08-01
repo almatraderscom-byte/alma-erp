@@ -162,6 +162,17 @@ const RED_KEYS: Array<{ re: RegExp; code: string; bn: string }> = [
   { re: /^cmd\+q$/i, code: 'quits_app', bn: 'অ্যাপ বন্ধ করার শর্টকাট এজেন্ট চাপবে না।' },
   { re: /^cmd\+(shift\+)?delete$/i, code: 'destructive_key', bn: 'ডিলিট শর্টকাট এজেন্ট চাপবে না।' },
   { re: /^ctrl\+c$/i, code: 'destructive_key', bn: 'চলমান কাজ থামানোর শর্টকাট এজেন্ট চাপবে না।' },
+  /**
+   * OS-GLOBAL combinations. These ignore which app is frontmost, so naming an
+   * allowlisted app buys nothing — `cmd+opt+shift+q` logs the owner straight
+   * out (Codex round 3 on the W2 PR). Modifier order is not fixed by the
+   * caller, so each is matched as a SET of modifiers plus the final key.
+   */
+  { re: /^(?=.*\bcmd\b)(?=.*\b(opt|option|alt)\b)(?=.*\bshift\b).*\+q$/i, code: 'session_loss', bn: 'লগআউট শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bctrl\b)(?=.*\bcmd\b).*\+q$/i, code: 'session_loss', bn: 'স্ক্রিন লক/লগআউট শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bcmd\b)(?=.*\b(opt|option|alt)\b).*\+(esc|escape)$/i, code: 'destructive_key', bn: 'Force Quit শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bctrl\b)(?=.*\b(power|eject)\b)/i, code: 'power', bn: 'পাওয়ার/শাটডাউন শর্টকাট — এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bcmd\b)(?=.*\bctrl\b)(?=.*\b(opt|option|alt)\b).*\+(power|eject)$/i, code: 'power', bn: 'পাওয়ার শর্টকাট — এজেন্ট চাপবে না।' },
 ]
 
 /** How much text may be typed in one action. Longer is refused, never truncated. */
@@ -316,8 +327,17 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     if (text.length > UI_LIMITS.maxTypeChars) {
       return { level: 'red', code: 'text_too_long', reasonBn: 'লেখাটা অস্বাভাবিক লম্বা — টাইপ করা হবে না।' }
     }
-    // A real password carries no marker — the FIELD is what gives it away.
-    if (label && SECRET_FIELD_LABEL.test(label)) {
+    // The FIELD is what gives a secret away — a real password is just
+    // `hunter2`. So typing without a resolved field label fails CLOSED, the
+    // same laundering path already shut for clicks (Codex round 3).
+    if (!label) {
+      return {
+        level: 'red',
+        code: 'label_required',
+        reasonBn: 'কোন ঘরে লেখা হবে সেটা জানা যায়নি — নাম ছাড়া টাইপ করা হবে না।',
+      }
+    }
+    if (SECRET_FIELD_LABEL.test(label)) {
       return { level: 'red', code: 'secret_field', reasonBn: 'পাসওয়ার্ড/কী-এর ঘরে এজেন্ট কিছু লিখবে না।' }
     }
     for (const rule of SECRET_TEXT_RULES) {
@@ -347,6 +367,31 @@ export function classifyUiAction(req: UiActionRequest): UiPolicyVerdict {
     reasonBn: `${appLabel(bundleId)}-এ "${label}" চাপবো — আপনার অনুমতি লাগবে।`,
   }
 }
+
+/**
+ * A structural fingerprint of every rule this module enforces.
+ *
+ * The parity corpus can only prove the cases someone thought to write down —
+ * adding a rule to ONE twin and forgetting the other stayed green because no
+ * corpus entry happened to hit it (Codex round 3 on the W2 PR). Comparing the
+ * digests makes any divergence in the rule SETS themselves a red build, which
+ * is the property the twin arrangement actually depends on.
+ *
+ * Regexes are compared by source + flags: identical behaviour, textually
+ * verifiable, and stable to serialise.
+ */
+export const POLICY_RULE_DIGEST = {
+  readOnlyActions: [...READ_ONLY_ACTIONS].sort(),
+  allowedApps: ALLOWED_APPS,
+  forbiddenApps: FORBIDDEN_APPS,
+  redLabelRules: RED_LABEL_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  secretTextRules: SECRET_TEXT_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  redKeys: RED_KEYS.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
+  secretFieldLabel: { source: SECRET_FIELD_LABEL.source, flags: SECRET_FIELD_LABEL.flags },
+  activationKeys: { source: ACTIVATION_KEYS.source, flags: ACTIVATION_KEYS.flags },
+  limits: { ...UI_LIMITS },
+  ownerActiveWindowSeconds: OWNER_ACTIVE_WINDOW_SECONDS,
+} as const
 
 /** Truncate an AX tree dump, telling the reader that it happened. */
 export function capTree(text: string): string {
