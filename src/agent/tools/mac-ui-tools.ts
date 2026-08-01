@@ -25,6 +25,12 @@ import {
   UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
+import {
+  agentStorageDelete,
+  agentStorageListFolder,
+  agentStorageSignedUrl,
+  agentStorageUpload,
+} from '@/agent/lib/storage'
 import { requireOnlineMac } from './mac-tools'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -154,6 +160,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
       scrollAmount: Number.isFinite(Number(input.scrollAmount)) ? Number(input.scrollAmount) : null,
+      // Interactive-only by default: a full ChatGPT conversation tree blows
+      // the text cap and the composer at the BOTTOM is exactly what got cut,
+      // so the model looped on truncated trees without ever seeing the one
+      // element it needed (live-demo finding). fullTree=true opts back in.
+      interactive: action === 'ui_tree' ? input.fullTree !== true : undefined,
     }
 
     // AMBER — the owner reads the app, the element and the LITERAL text before
@@ -215,9 +226,56 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     }
 
     if (action === 'ui_screenshot') {
+      // Never hand the head a base64 body: it pastes the megabyte into its
+      // reply as "markdown", the chat renders raw base64, and the tokens are
+      // billed. Upload once and return a short-lived URL with the exact
+      // camera-snapshot instruction the head already knows how to follow.
+      const uri = String(outcome.stdout ?? '')
+      const m = uri.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/)
+      if (m) {
+        try {
+          const ext = m[1] === 'png' ? 'png' : 'jpg'
+          // Timestamp in the name is the retention key: the signed URL dies in
+          // an hour, and the object follows within a day via the opportunistic
+          // sweep below — there is no cron for this bucket on purpose.
+          const objectPath = `mac-ui/shot-${Date.now()}-${id}.${ext}`
+          await agentStorageUpload(objectPath, Buffer.from(m[2], 'base64'), `image/${m[1]}`)
+          const imageUrl = await agentStorageSignedUrl(objectPath)
+          try {
+            const dayAgo = Date.now() - 24 * 3600 * 1000
+            const stale = (await agentStorageListFolder('mac-ui/')).filter((f) => {
+              const ts = Number(/^shot-(\d+)-/.exec(f.name)?.[1])
+              return Number.isFinite(ts) && ts < dayAgo
+            })
+            if (stale.length) await agentStorageDelete(stale.map((f) => `mac-ui/${f.name}`))
+          } catch {
+            /* retention is best-effort; next capture retries */
+          }
+          return {
+            success: true,
+            data: {
+              imageUrl,
+              device: gate.deviceName,
+              app: appLabel(bundleId),
+              instruction:
+                'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও: ![' + appLabel(bundleId) + '](imageUrl)। ' +
+                'base64 বা লম্বা টেক্সট কখনো লিখবে না। URL ১ ঘণ্টা পরে expire হবে।',
+            },
+          }
+        } catch {
+          // A raw fallback would hand the head the megabyte base64 this whole
+          // branch exists to avoid — fail retryably instead (Codex P2).
+          return {
+            success: false,
+            error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
+            data: { commandId: id, retryable: true },
+          }
+        }
+      }
+      // No data URI at all (unexpected daemon payload) — pass the bounded text.
       return {
         success: true,
-        data: { screenshot: outcome.stdout, device: gate.deviceName, app: appLabel(bundleId) },
+        data: { screenshot: capTree(uri), device: gate.deviceName, app: appLabel(bundleId) },
       }
     }
     return {
@@ -242,8 +300,9 @@ const look_mac_app: AgentTool = {
   name: 'look_mac_app',
   description:
     "LOOK inside the OWNER'S OWN Mac desktop apps — ONLY the Claude app and the ChatGPT app. Read-only, runs " +
-    'immediately, changes nothing: "tree" reads the window\'s accessibility tree (element labels + the visible ' +
-    'conversation text), "screenshot" captures the app window, "scroll" scrolls to see more. ' +
+    'immediately, changes nothing: "tree" lists the window\'s actionable elements (buttons, text boxes — the exact ' +
+    'labels drive_mac_app needs; pass fullTree=true only when you must READ the conversation text), ' +
+    '"screenshot" captures the app window, "scroll" scrolls to see more. ' +
     'Use this whenever he asks WHAT an app shows ("ChatGPT app-e ki ache dekho") — and ALWAYS before drive_mac_app, ' +
     'because clicking/typing needs the exact element labels this returns. ' +
     'Owner-facing: report in Bangla what you saw.',
@@ -253,6 +312,11 @@ const look_mac_app: AgentTool = {
       action: { type: 'string', enum: ['tree', 'screenshot', 'scroll'], description: 'How to look.' },
       app: APP_PARAM,
       scrollAmount: { type: 'number', description: 'For scroll: positive scrolls down, negative up. Default 3.' },
+      fullTree: {
+        type: 'boolean',
+        description:
+          'For tree: true returns the FULL tree with conversation text (big, may truncate). Default is the compact actionable-elements view.',
+      },
     },
     required: ['action', 'app'],
   },
@@ -271,7 +335,7 @@ const drive_mac_app: AgentTool = {
     'Refused by policy, not approvable: any other app, destructive/payment/permission buttons, typing secrets, ' +
     'typing while he is at the keyboard (comes back as owner_active — wait and retry). ' +
     'After an approval, fetch the outcome with check_mac_command using the returned id. ' +
-    'Workflow for "ChatGPT-e eta jigges koro": look tree → type into the composer → key enter → look tree again to read the reply. ' +
+    'Workflow for "ChatGPT-e eta jigges koro": look tree → type into the composer → key enter → look tree with fullTree=true to read the reply text. ' +
     'Owner-facing: report in Bangla what you did.',
   input_schema: {
     type: 'object' as const,
