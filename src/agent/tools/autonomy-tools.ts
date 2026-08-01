@@ -458,10 +458,12 @@ const revoke_standing_permission: AgentTool = {
           ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
           : []
         const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
-        // A named family that matches nothing means the model spelled it wrong or
-        // translated it. Rewriting the same grant and saying "done" would leave
-        // the permission running after Boss asked it to stop (review bot, #667).
-        if (asked.length && !cleared.length) return { unmatched: asked, live: grant.families }
+        // ANY named family that matches nothing means the model spelled it wrong
+        // or translated it. Revoking the half it got right and reporting success
+        // would leave the other permission running after Boss asked it to stop
+        // (review bot, #667) — so the whole request fails and nothing is written.
+        const unmatched = asked.filter((f) => !grant.families.includes(f))
+        if (unmatched.length) return { unmatched, live: grant.families }
         // An already-expired family is not "still active" — keeping it would
         // persist a grant whose only cutoff is in the past and tell Boss it runs.
         const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')

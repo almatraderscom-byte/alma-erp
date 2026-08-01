@@ -1746,10 +1746,11 @@ export async function* runAgentTurn(
               ownerVoicePref, voiceCallInstruction, callbackRequested,
               // The registry runs the canonical guard itself; without these it
               // would refuse the very call the outer bypass just allowed.
-              // Careful mode STAGES an ordinary write on the multi-model path; the
-              // native loop has no staging step, so forwarding the mode here would
-              // turn "put it on a card" into a flat refusal. The grant still
-              // travels, because that is what lifts a card rather than denying one.
+              // The mode travels now that this path stages Careful writes itself:
+              // anything reaching here in Plan must be refused, and Plan is what
+              // was leaking — `request_standing_permission` was still building a
+              // card in a mode that promises no changes at all (review bot, #667).
+              permissionMode: options.permissionMode ?? undefined,
               elevationGrant: liveGrant,
             })
         // A revoke must stop covering the REST of this turn here too — the row is
