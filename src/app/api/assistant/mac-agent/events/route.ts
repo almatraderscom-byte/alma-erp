@@ -120,8 +120,12 @@ export async function POST(req: NextRequest) {
 
   // Push when it matters: error, end, or a turn that ends in a question. Only
   // for rows actually stored this POST — a retried duplicate must not re-push.
+  // A catch-up batch after a connectivity gap can carry SEVERAL notable events;
+  // the NEWEST one is the session's current state, and picking the first
+  // (oldest) would notify a stale question while skipping the live one forever
+  // (Codex round 6). Rows arrive in ascending seq order from the daemon buffer.
   if (created.count > 0) {
-    const notable = freshRows.find(
+    const notable = freshRows.findLast(
       (r) =>
         r.kind === 'error' ||
         r.kind === 'ended' ||
