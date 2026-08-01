@@ -62,6 +62,8 @@ const delegate_to_specialist: AgentTool = {
     if (!task) return { success: false, error: 'task is required' }
 
     const businessId = (input.businessId as AgentBusinessId | undefined) ?? 'ALMA_LIFESTYLE'
+    const { delegatedToolContextFrom } = await import('@/agent/lib/models/subagent')
+    const delegatedContext = delegatedToolContextFrom(input)
     const conversationId = typeof input.conversationId === 'string' ? input.conversationId : undefined
     const modelId = typeof input.modelId === 'string' ? input.modelId : undefined
 
@@ -98,7 +100,15 @@ const delegate_to_specialist: AgentTool = {
             businessId,
             conversationId,
             modelId,
-            parentToolContext: (await import('@/agent/lib/models/subagent')).delegatedToolContextFrom(input),
+            // The GRANT is deliberately not persisted here. This card may be
+            // approved minutes later, and Boss may have revoked in between — a
+            // stored snapshot would hand the worker a permission that no longer
+            // exists. The approve route re-reads the live grant instead.
+            parentToolContext: (() => {
+              const ctx = { ...(delegatedContext) } as Record<string, unknown>
+              delete ctx.elevationGrant
+              return ctx
+            })(),
           },
           summary: `${roleLabel} (${modelLabel}) কে এই কাজ দিয়ে করাব?\n\n${task}`,
         },
@@ -114,7 +124,7 @@ const delegate_to_specialist: AgentTool = {
       }
     }
 
-    const { runSubAgent, delegatedToolContextFrom } = await import('@/agent/lib/models/subagent')
+    const { runSubAgent } = await import('@/agent/lib/models/subagent')
     // PM-5: hand the specialist the turn it is running inside. Without this the
     // worker escaped the same-turn duplicate guard, the conversation's
     // permission mode and a read-only turn authorization — delegation became a
@@ -125,7 +135,7 @@ const delegate_to_specialist: AgentTool = {
       businessId,
       conversationId,
       modelId,
-      toolContext: delegatedToolContextFrom(input),
+      toolContext: delegatedContext,
     })
 
     if (!result.success) {

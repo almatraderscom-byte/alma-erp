@@ -351,11 +351,48 @@ export function deriveTier(cap: Pick<Capability, 'mode' | 'risk' | 'domain'>): R
 // representativeTools resolve back to that family, and that an unknown WRITE
 // tool falls back to a conservative class (never a lax one).
 
+/**
+ * Tools a family covers BEYOND its three or four representative examples.
+ *
+ * `representativeTools` was written to illustrate a family, not to enumerate it,
+ * and B6 turned that list into a permission boundary: a standing grant is honoured
+ * only for an EXPLICITLY mapped tool (a fallback class is a risk floor, not a
+ * family). A `customer-messaging` grant that covered `send_whatsapp` but not
+ * `send_customer_email` would be a grant Boss thinks he gave and did not
+ * (review bot, #667).
+ *
+ * Only families that can actually be granted need this — R4 is never grantable.
+ */
+const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
+  'staff-messaging': [
+    'add_staff_task_now', 'prepare_staff_task_proposal', 'merge_into_proposal',
+    'dispatch_staff_tasks', 'send_staff_message', 'notify_staff',
+  ],
+  'customer-messaging': [
+    'send_customer_email', 'send_cs_reply', 'reply_to_message', 'send_wa_message',
+  ],
+  'public-publish': [
+    'publish_page', 'unpublish_product', 'set_product_featured',
+    'edit_storefront_product', 'change_product_slug', 'submit_to_indexnow',
+    'draft_gbp_reply',
+  ],
+  'ads-budget': [
+    'duplicate_campaign', 'create_retargeting_audience', 'create_lookalike_audience',
+  ],
+  'scheduled-content': ['schedule_post', 'reschedule_content'],
+  'internal-reminders': ['update_owner_todo', 'manage_work_todos'],
+  'drafts-previews': ['draft_seo_fixes', 'draft_marketing_campaign', 'draft_gbp_post'],
+}
+
 /** Explicit tool → task-class overrides, seeded from the families' own lists. */
 const TOOL_TASK_CLASS: Record<string, string> = (() => {
   const m: Record<string, string> = {}
   for (const f of TASK_FAMILIES) {
     for (const t of f.representativeTools) m[t] = f.id
+  }
+  // Extras never override a representative mapping — they only fill the gaps.
+  for (const [family, tools] of Object.entries(FAMILY_EXTRA_TOOLS)) {
+    for (const t of tools) if (!m[t]) m[t] = family
   }
   return m
 })()

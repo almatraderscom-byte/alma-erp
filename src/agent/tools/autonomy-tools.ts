@@ -462,7 +462,7 @@ const revoke_standing_permission: AgentTool = {
           })
         }
         return { cleared, kept }
-      })
+      }, { isolationLevel: 'Serializable' })
 
       if (!outcome) {
         return { success: true, data: { cleared: [], remaining: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }

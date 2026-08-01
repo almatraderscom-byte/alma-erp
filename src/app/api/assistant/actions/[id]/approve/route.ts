@@ -284,6 +284,18 @@ async function runApprove(
         toolContext: {
           ...((payload.parentToolContext as Record<string, unknown> | undefined) ?? {}),
           instructionOrigin: 'owner_direct',
+          // The grant is read NOW, not from the snapshot taken when the card was
+          // staged: Boss may have revoked it while this card waited.
+          elevationGrant: await (async () => {
+            if (!conversationId) return null
+            const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+            const conv = await db.agentConversation.findUnique({
+              where: { id: conversationId },
+              select: { elevationGrant: true },
+            })
+            const g = parseElevationGrant(conv?.elevationGrant)
+            return isElevationGrantLive(g, Date.now()) ? g : null
+          })(),
         },
       })
       const note = result.success
@@ -2506,6 +2518,10 @@ async function runApprove(
         data: { elevationGrant: { families, expiresAt, windows } },
       })
       return { carried: live, families, expiresAt, windows }
+    }, {
+      // Read-committed lets two concurrent approvals read the same old grant and
+      // write disjoint snapshots, dropping whichever loses the race.
+      isolationLevel: 'Serializable',
     })
     const carried = merged.carried
     const families_ = merged.families
