@@ -134,6 +134,11 @@ final class AgentLiveDockStore {
             feed = fresh
             // Never trap his screen: the sheet closes itself when work is gone.
             if !show { expanded = false }
+        } catch AlmaAPIError.notAuthenticated {
+            // AlmaAPI normalizes 401/403 to .notAuthenticated (and posts the
+            // login banner) — this is the case the two-failure shutdown exists
+            // for, so staff phones stop hitting the owner-only feed (Codex P2).
+            authFailures += 1
         } catch let AlmaAPIError.http(status, _) where status == 401 || status == 403 {
             authFailures += 1
         } catch {
