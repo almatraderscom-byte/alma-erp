@@ -97,3 +97,47 @@ describe('any skill may ask for a grant', () => {
     expect(allowed?.has('request_standing_permission')).toBe(true)
   })
 })
+
+/**
+ * The routing half of the same failure. Twice on 2026-08-01 the sentence
+ * "porer 15 minute staff message gulo r amake jiggesh koro na, tumi nijei
+ * pathao" pinned `alma-staff-dispatch` — an `isolation: subagent` skill — so the
+ * turn became a worker holding staff READ tools and the permission the sentence
+ * was actually asking for never got asked for.
+ *
+ * A request to be asked LESS is not a job any skill performs.
+ */
+describe('a permission request reaches the head, not a skill', () => {
+  it('vetoes the live sentence', async () => {
+    const { routeSkill, isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    const { discoverSkills } = await import('@/agent/lib/skill-engine/loader')
+    const path = await import('path')
+    const text = 'porer 15 minute staff message gulo r amake jiggesh koro na, tumi nijei pathao'
+    expect(isStandingPermissionAsk(text)).toBe(true)
+
+    const index = await discoverSkills(path.join(process.cwd(), 'src', 'agent', 'skills'))
+    expect(routeSkill(index, text).skill).toBeNull()
+  })
+
+  it('vetoes the Bangla form too', async () => {
+    const { isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    expect(isStandingPermissionAsk('পরের ৩০ মিনিট আর জিজ্ঞেস কোরো না, নিজে করো')).toBe(true)
+  })
+
+  it('leaves ordinary work alone — a job is still a job', async () => {
+    const { isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    for (const text of [
+      'Mustahid ajke kokhon asche?',
+      'ei tin ta order shipped kore dao',
+      'almatraders.com এর ছবির alt ঠিক করো',
+      'staff der ekta message pathao',
+    ]) {
+      expect(isStandingPermissionAsk(text)).toBe(false)
+    }
+  })
+
+  it('needs a time window — "nije koro" alone is not a standing grant', async () => {
+    const { isStandingPermissionAsk } = await import('@/agent/lib/skill-engine/router')
+    expect(isStandingPermissionAsk('tumi nijei koro')).toBe(false)
+  })
+})
