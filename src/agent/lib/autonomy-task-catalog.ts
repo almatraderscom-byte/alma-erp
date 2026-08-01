@@ -375,8 +375,12 @@ const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
     'set_staff_task_due', 'update_staff_task_status', 'update_staff_task_profile',
     'explain_staff_task_bangla',
   ],
-  // `call_staff` is deliberately absent: a phone call is the phone-calls family,
-  // and a messaging grant must not start ringing people.
+  // `call_staff` is deliberately absent from staff-messaging: a phone call is the
+  // phone-calls family below, and a messaging grant must not start ringing people.
+  'phone-calls': [
+    'call_staff', 'place_business_call', 'schedule_call', 'cancel_scheduled_call',
+    'call_boss_with_report', 'call_me_in_app',
+  ],
   // customer-messaging: `send_product_image` only reads a catalog URL, so the
   // three representative send tools are the whole family.
   'customer-messaging': [],

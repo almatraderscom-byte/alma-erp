@@ -1664,7 +1664,36 @@ export async function* runAgentTurn(
           const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
           return confirmGrantStillCovers(conversationId, task.taskClass)
         })()
-        const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && enforcementEnabled()
+        // Careful mode: an everyday R1/R2 write that AIOS calls routine still
+        // belongs on a card. The multi-model path stages it (`carefulNeedsCard`);
+        // this path used to run it, so flipping the kill switch quietly downgraded
+        // Careful to Standard (review bot, #667). Plan mode is already refused by
+        // the registry — this is only the staging half.
+        const carefulNeedsCard = await (async () => {
+          if (grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
+          if (!conversationId) return false
+          // Cancelling a permission is never staged — that would trap Boss inside
+          // the grant he just asked to end.
+          if (tb.name === 'revoke_standing_permission') return false
+          const { normalizePermissionMode, modeVerdict } = await import('@/agent/lib/permission-mode')
+          if (normalizePermissionMode(options.permissionMode ?? undefined) !== 'careful') return false
+          const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+          const { getCapability } = await import('@/agent/tools/capability-manifest')
+          const cap = getCapability(tb.name)
+          if (cap?.mode !== 'write') return false
+          const task = taskClassForTool(tb.name, cap)
+          if (task.tier !== 'R1' && task.tier !== 'R2') return false
+          const verdict = modeVerdict({
+            mode: 'careful',
+            tier: task.tier,
+            taskClass: task.taskClass,
+            // Only an explicit mapping may be lifted by a grant.
+            grant: task.explicit ? liveGrant : null,
+            now: Date.now(),
+          })
+          return verdict === 'card'
+        })()
+        const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && !carefulNeedsCard && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1696,6 +1725,17 @@ export async function* runAgentTurn(
                 klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
               })
             : { success: false as const, error: aiosGuard.message }
+          : carefulNeedsCard
+          ? await stageEnforcedToolApproval({
+              conversationId: conversationId!,
+              businessId: String(businessId ?? 'ALMA_LIFESTYLE'),
+              turnId,
+              toolCallId: tb.id,
+              toolName: tb.name,
+              toolInput: tb.input as Record<string, unknown>,
+              model: chatModel.id,
+              klass: 'unknown',
+            })
           : personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
           : await executeTool(tb.name, tb.input, {
