@@ -364,6 +364,15 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'log_expense', 'log_expenses_batch', 'log_ledger_entry', 'log_ledger_entries_batch',
   'get_expense_summary', 'get_ledger_balances', 'list_recent_transactions',
   'get_financial_health', 'edit_finance_entry', 'delete_finance_entry',
+  // his own Mac (M1/M2) — daily-frequency by the owner's own request. These were
+  // registered, grouped, prompted and pack-routed, and STILL unreachable: the
+  // diet is an allowlist, so everything off it is find_tool-only, and the head
+  // does not reach for find_tool on its own. Live-hit 2026-07-31: "amar mac e
+  // git status cholao" answered "tool callable নয়" with the daemon online and
+  // the tool sitting in the registry.
+  'run_mac_command', 'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+  'start_cli_session', 'send_to_cli_session', 'read_cli_session',
+  'stop_cli_session', 'list_cli_sessions',
 ])
 
 /** Diet filter — identity when the kill switch is off. */
