@@ -168,6 +168,21 @@ export function modeVerdict(input: ModeVerdictInput): ModeVerdict {
   // Rule 2 — no mode, grant or rule may touch this.
   if (tier === 'R4') return 'owner_only'
 
+  // A LIVE, FAMILY-SCOPED grant lifts the card for the families it names —
+  // whatever mode sits underneath — and touches nothing else.
+  //
+  // It used to be reachable only by switching the whole conversation to
+  // `elevated`, which is a different and much larger promise: from Careful,
+  // that one switch also stopped asking about every unrelated R1/R2 write (the
+  // review bot's P1 on #667). A grant for staff-messaging must mean
+  // staff-messaging, so it is read here instead of replacing the mode.
+  //
+  // Plan is the exception: in Plan nothing changes at all, by design. A grant
+  // does not un-plan a plan.
+  if (mode !== 'plan' && input.taskClass && isElevationGrantLive(input.grant, input.now ?? 0)) {
+    if (input.grant!.families.includes(input.taskClass)) return 'auto'
+  }
+
   switch (mode) {
     case 'plan':
       // Reading is how a plan gets written. Everything else is not merely
@@ -187,10 +202,9 @@ export function modeVerdict(input: ModeVerdictInput): ModeVerdict {
       return tier === 'R3' ? 'card' : 'auto'
 
     case 'elevated': {
-      if (tier !== 'R3') return 'auto'
-      const live = isElevationGrantLive(input.grant, input.now ?? 0)
-      const named = Boolean(input.taskClass && input.grant?.families.includes(input.taskClass))
-      return live && named ? 'auto' : 'card'
+      // The named families were already handled above. Everything else in this
+      // mode behaves like standard — an R3 action still gets a card.
+      return tier === 'R3' ? 'card' : 'auto'
     }
   }
 }

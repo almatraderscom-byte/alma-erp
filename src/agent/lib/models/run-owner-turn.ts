@@ -76,7 +76,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { adviseForAction, filterToolsForPermissionMode, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { adviseForAction, filterToolsForPermissionMode, isElevationGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
@@ -2732,7 +2732,18 @@ async function* runAlternateProviderTurn(
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.
-        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
+        // B6 — a LIVE, family-scoped grant is the owner's own standing yes for
+        // this exact family, so the enforcement layer must not stage a card he
+        // has already signed. Without this the grant changed the verdict and
+        // nothing else: the card still appeared, and the promise on the grant
+        // card ("this runs without a card for 15 minutes") was false.
+        // Everything the grant does NOT name still goes through the guard, and
+        // R4 is never granted in the first place.
+        const grantCoversThisCall =
+          permissionVerdict === 'auto'
+          && isElevationGrantLive(elevationGrant, Date.now())
+          && Boolean(elevationGrant?.families.includes(permissionTier.taskClass))
+        const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),

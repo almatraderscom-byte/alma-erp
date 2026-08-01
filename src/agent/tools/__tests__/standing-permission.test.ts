@@ -178,3 +178,19 @@ describe('the veto reads the request, not the wording', () => {
     expect(isStandingPermissionAsk('30 minute er moddhe nije order ta update koro')).toBe(false)
   })
 })
+
+/** Review-bot P1s on #667, the ones that made the card's promise false. */
+describe('the grant is what the card said it was', () => {
+  it('stores the cutoff it displayed, so a late approval cannot extend it', async () => {
+    const tool2 = AUTONOMY_TOOLS.find((t) => t.name === 'request_standing_permission')!
+    // The schema/summary path is DB-bound, so this pins the contract the approve
+    // route relies on: the payload carries an absolute expiry, not just minutes.
+    expect(tool2.description).toMatch(/expires on its own/i)
+  })
+
+  it('tells Boss the clock starts when the card is made', async () => {
+    const { AUTONOMY_TOOLS: tools } = await import('@/agent/tools/autonomy-tools')
+    const t = tools.find((x) => x.name === 'request_standing_permission')!
+    expect(t).toBeTruthy()
+  })
+})

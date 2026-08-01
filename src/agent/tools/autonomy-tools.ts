@@ -370,7 +370,9 @@ const request_standing_permission: AgentTool = {
         + `মেয়াদ: ${minutes} মিনিট (আনুমানিক ${expiresAt.toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit' })} পর্যন্ত)\n`
         + (reason ? `কারণ: ${reason}\n` : '')
         + `\n✅ approve করলে এই কাজগুলো ওই সময়টুকু আর কার্ড ছাড়াই হবে — মেয়াদ শেষে নিজে থেকেই বন্ধ।\n`
+        + `⏳ সময় গোনা শুরু কার্ড বানানোর মুহূর্ত থেকে, তাই দেরিতে approve করলে বাকি সময়টুকুই পাওয়া যাবে।\n`
         + `⛔ টাকা সরানো ও পারমিশন এর বাইরে — ওগুলো সবসময় আপনার হাতে।\n`
+        + `ℹ️ যেসব টুল নিজেই প্রস্তাবের কার্ড বানায় (যেমন স্টাফ টাস্ক প্রস্তাব), সেগুলো তখনও কার্ডেই আসবে — অনুমতিটা ওই ধরনের কাজ থামায় না, শুধু বাড়তি approval ধাপটা সরায়।\n`
         + `যেকোনো সময় মোড বদলালেই অনুমতি বাতিল।`
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -378,7 +380,10 @@ const request_standing_permission: AgentTool = {
         data: {
           conversationId,
           type: 'permission_grant',
-          payload: { families, minutes, reason, conversationId },
+          // The cutoff the CARD shows is the cutoff the grant gets. Computing it
+          // again at approval time would hand Boss a longer window than the one
+          // he read, every time he took a minute to decide (review bot, #667).
+          payload: { families, minutes, reason, expiresAt: expiresAt.toISOString(), conversationId },
           summary,
           costEstimate: 0,
           status: 'pending',

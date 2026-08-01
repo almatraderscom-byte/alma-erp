@@ -174,3 +174,43 @@ describe('housekeeping', () => {
     expect(normalizePermissionMode('elevated')).toBe('elevated')
   })
 })
+
+/**
+ * B6 review-bot P1 (#667): reaching a grant by switching the whole conversation
+ * to `elevated` was a much larger promise than the card made. From Careful, that
+ * one switch also stopped asking about every unrelated R1/R2 write. A grant for
+ * one family must mean one family.
+ */
+describe('a family-scoped grant sits ON TOP of the mode, not instead of it', () => {
+  const live = { families: ['staff-messaging'], expiresAt: new Date(Date.now() + 60_000).toISOString() }
+  const now = Date.now()
+
+  it('lifts the card for the family it names, even under Careful', () => {
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'staff-messaging', grant: live, now }))
+      .toBe('auto')
+  })
+
+  it('leaves every other family exactly as Careful had it', () => {
+    expect(modeVerdict({ mode: 'careful', tier: 'R1', taskClass: 'internal-reminders', grant: live, now }))
+      .toBe('card')
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'public-publish', grant: live, now }))
+      .toBe('card')
+  })
+
+  it('never touches R4, grant or no grant', () => {
+    const withMoney = { families: ['money-movement'], expiresAt: live.expiresAt }
+    expect(modeVerdict({ mode: 'standard', tier: 'R4', taskClass: 'money-movement', grant: withMoney, now }))
+      .toBe('owner_only')
+  })
+
+  it('does not un-plan Plan mode', () => {
+    expect(modeVerdict({ mode: 'plan', tier: 'R3', taskClass: 'staff-messaging', grant: live, now }))
+      .toBe('blocked')
+  })
+
+  it('is over the moment it expires', () => {
+    const dead = { families: ['staff-messaging'], expiresAt: new Date(now - 1000).toISOString() }
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'staff-messaging', grant: dead, now }))
+      .toBe('card')
+  })
+})

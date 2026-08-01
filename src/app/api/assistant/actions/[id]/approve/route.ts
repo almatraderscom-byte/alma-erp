@@ -2416,7 +2416,11 @@ async function runApprove(
     // B6 — the standing "just do it", and the only place a grant is ever born.
     // The agent can ASK; only this route (reached by Boss pressing Approve) can
     // write one, and it always carries an expiry.
-    const { families, minutes } = payload as { families?: string[]; minutes?: number }
+    const { families, minutes, expiresAt: cardExpiresAt } = payload as {
+      families?: string[]
+      minutes?: number
+      expiresAt?: string
+    }
     const conversationId = resolveConversationId(action)
     if (!conversationId) {
       return Response.json({ error: 'no_conversation' }, { status: 400 })
@@ -2448,27 +2452,73 @@ async function runApprove(
       return Response.json({ error: 'no_grantable_family' }, { status: 400 })
     }
 
-    const expiresAt = new Date(Date.now() + mins * 60_000).toISOString()
+    // The cutoff the card SHOWED is the cutoff that binds. Recomputing from
+    // approval time would quietly hand out a longer window than Boss read.
+    const cardCutoff = cardExpiresAt ? Date.parse(cardExpiresAt) : NaN
+    const expiresMs = Number.isFinite(cardCutoff)
+      ? cardCutoff
+      : Date.now() + mins * 60_000
+    if (expiresMs <= Date.now()) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_window_passed' } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        '⌛ অনুমতির সময়টা পেরিয়ে গেছে — কিছু চালু করিনি। দরকার হলে আবার চাইব।',
+      )
+      return Response.json({ error: 'grant_window_passed' }, { status: 409 })
+    }
+
+    // A second grant must not silently revoke a live one. Union the families,
+    // keep the later end — and say so, because a quietly widened permission is
+    // the thing this whole feature exists to avoid.
+    const conv = await db.agentConversation.findUnique({
+      where: { id: conversationId },
+      select: { elevationGrant: true },
+    })
+    const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+    const existing = parseElevationGrant(conv?.elevationGrant)
+    const carried = isElevationGrantLive(existing, Date.now()) ? existing! : null
+    const families_ = carried
+      ? Array.from(new Set([...carried.families, ...safe]))
+      : safe
+    const expiresAt = new Date(
+      carried ? Math.max(expiresMs, Date.parse(carried.expiresAt)) : expiresMs,
+    ).toISOString()
+
+    // The MODE is deliberately left alone. A family-scoped grant is read on top
+    // of whatever mode Boss chose (modeVerdict), so a staff-messaging grant can
+    // never quietly relax the Careful mode he selected for everything else.
     await db.agentConversation.update({
       where: { id: conversationId },
-      data: { permissionMode: 'elevated', elevationGrant: { families: safe, expiresAt } },
+      data: { elevationGrant: { families: families_, expiresAt } },
     })
 
     await db.agentPendingAction.update({
       where: { id: actionId },
-      data: { status: 'executed', resolvedAt: new Date(), result: { families: safe, minutes: mins, expiresAt } },
+      data: {
+        status: 'executed',
+        resolvedAt: new Date(),
+        result: { families: families_, minutes: mins, expiresAt, carriedOver: carried?.families ?? [] },
+      },
     })
 
-    const labels = safe.map((id) => known.get(id)!.label).join(', ')
+    const labels = families_.map((id) => known.get(id)?.label ?? id).join(', ')
+    const until = new Date(expiresAt).toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
+    })
     await appendConversationNote(
       db,
       action,
-      `🔓 অনুমতি চালু — ${labels}, ${mins} মিনিটের জন্য।\n`
-      + `মেয়াদ শেষে নিজে থেকেই স্বাভাবিক মোডে ফিরবে। এখনই বন্ধ করতে চাইলে মোড বদলে দিন।\n`
+      `🔓 অনুমতি চালু — ${labels}, ${until} পর্যন্ত।\n`
+      + (carried ? `(আগের চালু অনুমতিটাও রাখা হয়েছে — দুটো একসাথে চলবে।)\n` : '')
+      + `মেয়াদ শেষে নিজে থেকেই বন্ধ, মোড যা ছিল তাই আছে। এখনই বন্ধ করতে চাইলে বলুন।\n`
       + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,
     )
 
-    return Response.json({ success: true, families: safe, minutes: mins, expiresAt })
+    return Response.json({ success: true, families: families_, minutes: mins, expiresAt })
   }
 
   if (action.type === 'auto_fix') {
