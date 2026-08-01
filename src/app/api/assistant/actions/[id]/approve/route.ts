@@ -2477,41 +2477,40 @@ async function runApprove(
     const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
     // Two cards approved at once would both read the old grant and the second
     // write would erase the first. Read-modify-write in one transaction.
-    const carried = await db.$transaction(async (tx: typeof db) => {
+    const { familyExpiry } = await import('@/agent/lib/permission-mode')
+    // READ AND WRITE in ONE transaction. Two cards approved at the same moment
+    // would otherwise both read the old grant and the loser's families would
+    // vanish. Per-family windows: each family keeps the window Boss approved.
+    const merged = await db.$transaction(async (tx: typeof db) => {
       const conv = await tx.agentConversation.findUnique({
         where: { id: conversationId },
         select: { elevationGrant: true },
       })
       const existing = parseElevationGrant(conv?.elevationGrant)
-      return isElevationGrantLive(existing, Date.now()) ? existing : null
-    })
-    // PER-FAMILY windows. A 15-minute staff grant must not inherit a 4-hour
-    // customer one just because they overlapped (review bot, #667) — each family
-    // keeps the window Boss actually approved for it.
-    const { familyExpiry } = await import('@/agent/lib/permission-mode')
-    const windows: Record<string, string> = {}
-    if (carried) {
-      for (const fam of carried.families) windows[fam] = familyExpiry(carried, fam)
-    }
-    const thisCutoff = new Date(expiresMs).toISOString()
-    for (const fam of safe) {
-      // Re-granting a family extends it only if the new window ends later.
-      const prev = windows[fam] ? Date.parse(windows[fam]) : 0
-      if (expiresMs > prev) windows[fam] = thisCutoff
-    }
-    const families_ = Object.keys(windows)
-    const expiresAt = new Date(
-      Math.max(...families_.map((f) => Date.parse(windows[f]))),
-    ).toISOString()
+      const live = isElevationGrantLive(existing, Date.now()) ? existing : null
 
-    // The MODE is deliberately left alone. A family-scoped grant is read on top
-    // of whatever mode Boss chose (modeVerdict), so a staff-messaging grant can
-    // never quietly relax the Careful mode he selected for everything else.
-    await db.agentConversation.update({
-      where: { id: conversationId },
-      data: { elevationGrant: { families: families_, expiresAt, windows } },
-    })
+      const windows: Record<string, string> = {}
+      if (live) for (const fam of live.families) windows[fam] = familyExpiry(live, fam)
+      const thisCutoff = new Date(expiresMs).toISOString()
+      for (const fam of safe) {
+        const prev = windows[fam] ? Date.parse(windows[fam]) : 0
+        if (expiresMs > prev) windows[fam] = thisCutoff
+      }
+      const families = Object.keys(windows)
+      const expiresAt = new Date(Math.max(...families.map((f) => Date.parse(windows[f])))).toISOString()
 
+      await tx.agentConversation.update({
+        where: { id: conversationId },
+        // The MODE is deliberately left alone: a family-scoped grant is read on
+        // top of whatever mode Boss chose, never instead of it.
+        data: { elevationGrant: { families, expiresAt, windows } },
+      })
+      return { carried: live, families, expiresAt, windows }
+    })
+    const carried = merged.carried
+    const families_ = merged.families
+    const expiresAt = merged.expiresAt
+    const windows = merged.windows
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: {
@@ -2524,8 +2523,8 @@ async function runApprove(
     const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', {
       timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
     })
-    const labels = families_
-      .map((id) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
+    const labels = (families_ as string[])
+      .map((id: string) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
       .join(', ')
     const until = fmt(expiresAt)
     await appendConversationNote(

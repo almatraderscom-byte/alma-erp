@@ -1689,7 +1689,23 @@ export async function* runAgentTurn(
             : { success: false as const, error: aiosGuard.message }
           : personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          : await executeTool(tb.name, tb.input, {
+              conversationId, businessId, modelId: chatModel.id, turnAuthorization,
+              ownerVoicePref, voiceCallInstruction, callbackRequested,
+              // The registry runs the canonical guard itself; without these it
+              // would refuse the very call the outer bypass just allowed.
+              permissionMode: options.permissionMode ?? undefined,
+              elevationGrant: liveGrant,
+            })
+        // A revoke must stop covering the REST of this turn here too — the row is
+        // cleared, but this loop holds its own copy of the grant.
+        if (tb.name === 'revoke_standing_permission' && result.success) {
+          const revoked = (result as { data?: { remaining?: string[] } }).data
+          const remaining = revoked?.remaining ?? []
+          liveGrant = remaining.length && liveGrant
+            ? { ...liveGrant, families: remaining }
+            : null
+        }
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
           toolName: tb.name,

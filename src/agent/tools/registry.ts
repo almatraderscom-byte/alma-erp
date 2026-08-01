@@ -1017,6 +1017,7 @@ export async function runRegisteredTool(
       ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
       ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
       ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
+      ...(ctx.elevationGrant ? { elevationGrant: ctx.elevationGrant } : {}),
     }
 
     // Phase 53/65: route direct write effects through the exactly-once effect
