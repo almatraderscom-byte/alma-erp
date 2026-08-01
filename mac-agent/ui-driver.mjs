@@ -281,9 +281,36 @@ func activate() {
     runningApp.activate(options: [])
     usleep(600_000)
 }
+
+/// Key events posted to a pid land in the app's KEY window — which, with the
+/// Codex pet overlays and helper windows around, is not reliably the window
+/// we resolved by title (W1 lesson #2, resurfaced by Codex on the W3 PR).
+/// Make the resolved window the focused/frontmost one before synthesising.
+func frontWindow(_ win: AXUIElement) {
+    AXUIElementSetAttributeValue(app, kAXFocusedWindowAttribute as CFString, win)
+    AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+    usleep(250_000)
+}
+/// REAL input only — .hidSystemState sees the hardware, not our postToPid
+/// synthesis, so this can run DURING typing without seeing our own keystrokes.
+func hardwareIdleSeconds() -> Double {
+    let types: [CGEventType] = [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown,
+                                .otherMouseDown, .mouseMoved, .leftMouseDragged, .scrollWheel]
+    return types.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? 0
+}
+
 func typeUnicode(_ text: String) {
     let src = CGEventSource(stateID: .combinedSessionState)
+    var count = 0
     for scalar in text {
+        // A 4,000-char message is ~48s of synthesis after ONE idle check — the
+        // owner can come back mid-type and his keystrokes would interleave
+        // with ours (the exact failure W1's draft guard caught live). Watch
+        // the hardware while typing and abort the moment he touches anything.
+        if count > 0 && count % 20 == 0 && hardwareIdleSeconds() < 1.0 {
+            fail("owner_interrupted", "typed \(count) of \(text.count) chars")
+        }
+        count += 1
         var units = Array(String(scalar).utf16)
         for down in [true, false] {
             let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)!
@@ -409,6 +436,7 @@ case "type":
 
     let winBefore = snapshot(win)
     activate()
+    frontWindow(win) // keystrokes land in the KEY window — make it the resolved one
     AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     usleep(300_000)
     typeUnicode(text)
@@ -425,17 +453,19 @@ case "type":
 case "key":
     guard let key = flags["key"], !key.isEmpty else { fail("key_required") }
     let win = resolveWindow()
+    let before = snapshot(win)
+    activate()
+    frontWindow(win) // the key event goes to the KEY window — make it the resolved one
     // The policy judged an activation key against a FOCUSED label resolved
     // moments ago in the driver — focus can move (the owner-idle wait can be
-    // minutes). Re-verify at the last instant, atomically with the press;
-    // mismatch is a refusal, never a guess (Codex P1 TOCTOU).
+    // minutes). Re-verify at the last instant, AFTER fronting the window and
+    // atomically with the press; mismatch is a refusal, never a guess
+    // (Codex P1 TOCTOU).
     if let expect = flags["expect-focused"], !expect.isEmpty {
         guard let f = attr(app, kAXFocusedUIElementAttribute) else { fail("focus_changed", "nothing focused") }
         let now = labelOf(f as! AXUIElement)
         if now != expect { fail("focus_changed", now) }
     }
-    let before = snapshot(win)
-    activate()
     pressKey(key)
     usleep(900_000)
     emit(["ok": true, "key": key, "diff": diffLines(before, snapshot(win))])
@@ -445,8 +475,8 @@ case "scroll":
     let dir = flags["dir"] ?? "down"
     let amount = Int32(flags["amount"] ?? "") ?? 5
     let wheel = dir == "up" ? amount : -amount
-    _ = win // scroll is app-directed; the window resolve validates the target exists
     activate()
+    frontWindow(win) // scroll routes through the key window too — front the resolved one
     let ev = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .combinedSessionState),
                      units: .line, wheelCount: 1, wheel1: wheel, wheel2: 0, wheel3: 0)!
     ev.postToPid(pid)
@@ -560,6 +590,8 @@ const HELPER_FAIL_BN = {
   unknown_key: 'এই কী-টা চেনা নেই।',
   label_mismatch: 'এলিমেন্টের আসল নাম যাচাই-করা নামের সাথে মেলে না — কিছু করা হয়নি।',
   focus_changed: 'ফোকাস অন্য জায়গায় সরে গেছে — কী চাপা হয়নি, আবার চেষ্টা করুন।',
+  owner_interrupted:
+    'আপনি কীবোর্ড/মাউসে হাত দিয়েছেন — টাইপ মাঝপথে থামিয়ে দেওয়া হয়েছে, ঘরে আংশিক লেখা থাকতে পারে।',
 }
 
 function helperError(res, fallback = 'ui_helper_failed') {
@@ -685,9 +717,14 @@ async function uiTree(params) {
   return ok({ elements: res.elements, tree: capTree(String(res.tree ?? '')) })
 }
 
-async function uiScroll(params) {
+async function uiScroll(params, cmd) {
   const bundleId = resolveBundleId(params.app)
-  const verdict = classifyUiAction({ action: 'ui_scroll', bundleId })
+  // Through the defer loop although scroll is green today: it synthesises
+  // real input, and W2 is extending the owner-idle gate to it — when that
+  // lands, a scroll while the owner types must WAIT like every other
+  // synthesis, not refuse. (For a plain green verdict the loop returns on
+  // its first pass.)
+  const { verdict } = await classifyDeferring({ action: 'ui_scroll', bundleId }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
   const h = hintsFor(bundleId)
   const args = ['scroll', bundleId, '--dir', params.direction === 'up' ? 'up' : 'down',
@@ -1081,7 +1118,7 @@ export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled } =
   if (typeof checkCancelled === 'function') checkCancelledFn = checkCancelled
 
   extraHandlers.set('ui_tree', (p) => uiTree(p))
-  extraHandlers.set('ui_scroll', (p) => uiScroll(p))
+  extraHandlers.set('ui_scroll', (p, cmd) => uiScroll(p, cmd))
   extraHandlers.set('ui_click', (p, cmd) => uiClick(p, cmd))
   extraHandlers.set('ui_type', (p, cmd) => uiType(p, cmd))
   extraHandlers.set('ui_key', (p, cmd) => uiKey(p, cmd))
