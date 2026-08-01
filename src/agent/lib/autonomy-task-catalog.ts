@@ -453,15 +453,18 @@ export interface ToolTaskClass {
  * Does a standing grant for this family actually change anything?
  *
  * A `stage`-mode tool builds its OWN approval card inside its handler; the guard
- * lets it through only so that can happen. A grant therefore cannot make it run
- * card-free — so a family whose every mapped tool is `stage` (ads-budget today)
- * would issue a permission that behaves exactly like no permission, which is a
- * worse lie than refusing (review bot, #667).
+ * lets it through only so that can happen. A grant cannot make it run card-free.
+ *
+ * The test runs over the family's REPRESENTATIVE tools — the work the card names
+ * when Boss reads it. `public-publish` passed on the strength of one mapped
+ * extra (`submit_to_indexnow`) while every publish tool it advertises still
+ * asked, which is a permission that reads like a promise and behaves like
+ * nothing (review bot, #667).
  */
 export function familyGrantHasEffect(family: string): boolean {
-  return Object.entries(TOOL_TASK_CLASS).some(
-    ([tool, fam]) => fam === family && getCapability(tool)?.mode === 'write',
-  )
+  const fam = TASK_FAMILIES.find((f) => f.id === family)
+  if (!fam) return false
+  return fam.representativeTools.some((tool) => getCapability(tool)?.mode === 'write')
 }
 
 /** Tier of a known task class (defaults to R3 — conservative — if unknown). */

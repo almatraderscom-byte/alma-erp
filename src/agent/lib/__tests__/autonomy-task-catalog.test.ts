@@ -41,9 +41,11 @@ describe('every mapped family names only registered tools', () => {
 
 /** Review-bot P2 (#667 round 21): a grant that changes nothing must be refused. */
 describe('a family is grantable only if a grant would change something', () => {
-  it('refuses ads-budget, whose tools all stage their own card', async () => {
+  it('refuses the families whose advertised work all stages its own card', async () => {
     const { familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
-    expect(familyGrantHasEffect('ads-budget')).toBe(false)
+    for (const family of ['ads-budget', 'public-publish', 'drafts-previews', 'finance-entries']) {
+      expect(familyGrantHasEffect(family)).toBe(false)
+    }
   })
 
   it('accepts the families that do have card-free writes', async () => {
