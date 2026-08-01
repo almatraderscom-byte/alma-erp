@@ -3056,12 +3056,32 @@ model MacAgentSessionEvent {
   /// When the event happened on the Mac (daemon clock).
   at        DateTime
   createdAt DateTime @default(now())
+  /// Push ledger: set once this event's owner notification was delivered (or
+  /// deliberately skipped). Null + attempts<3 = still owed; later event POSTs
+  /// sweep and retry, so a transient OneSignal failure loses nothing.
+  pushedAt     DateTime?
+  pushAttempts Int       @default(0)
 
   /// A daemon retry after a dropped POST must not duplicate the feed.
   @@unique([sessionId, seq])
   /// The live dock polls "last 10 minutes" every 3s while work runs.
   @@index([createdAt])
   @@map("mac_agent_session_events")
+}
+
+// L7 — live screen streaming: the daemon's ~1.5s capture loop upserts the
+// newest frame here (ONE row per device, never a history — the dock only ever
+// wants "now", and history would grow at a frame every second or two). The
+// live-activity feed serves it through the same screenshot channel the docks
+// already render, so streaming needed zero dock render changes.
+model MacAgentFrame {
+  deviceId  String   @id
+  /// data:image/jpeg;base64,… downscaled daemon-side (Vercel body limit).
+  dataUri   String   @db.Text
+  /// Capture time on the Mac.
+  at        DateTime
+  updatedAt DateTime @updatedAt
+  @@map("mac_agent_frames")
 }
 
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category

@@ -22,6 +22,7 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { authenticateDevice, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { prisma } from '@/lib/prisma'
+import { sweepUnpushedNotables } from '@/agent/lib/mac-agent/session-push'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -109,62 +110,19 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
-  // Which of these are genuinely NEW? A retried batch can mix an already-stored
-  // notable event with one fresh non-notable row; `created.count > 0` alone
-  // would then re-push the old notable (Codex round 3). Ask first, so the push
-  // candidate set is exactly the rows this POST inserts.
-  const known: Set<number> = await db.macAgentSessionEvent
-    .findMany({
-      where: { sessionId, seq: { in: rows.map((r) => r.seq) } },
-      select: { seq: true },
-    })
-    .then((found: Array<{ seq: number }>) => new Set(found.map((f) => f.seq)))
-    .catch(() => new Set<number>())
-  const freshRows = rows.filter((r) => !known.has(r.seq))
-
   const created = await db.macAgentSessionEvent.createMany({
     data: rows,
     skipDuplicates: true, // (sessionId, seq) — a retried batch stores nothing twice
   })
 
-  // Push when it matters: error, end, or a turn that ends in a question. Only
-  // for rows actually stored this POST — a retried duplicate must not re-push.
-  // A catch-up batch after a connectivity gap can carry SEVERAL notable events;
-  // the NEWEST one is the session's current state, and picking the first
-  // (oldest) would notify a stale question while skipping the live one forever
-  // (Codex round 6). Rows arrive in ascending seq order from the daemon buffer.
-  if (created.count > 0) {
-    const notable = freshRows.findLast(
-      (r) =>
-        r.kind === 'error' ||
-        r.kind === 'ended' ||
-        (r.kind === 'turn_done' && (r.isError || /\?\s*$/.test(r.text ?? ''))),
-    )
-    if (notable) {
-      try {
-        const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
-        const title =
-          notable.kind === 'error'
-            ? 'সেশনে সমস্যা হয়েছে'
-            : notable.kind === 'ended'
-              ? 'সেশন শেষ হয়েছে'
-              : notable.isError
-                ? 'সেশনের টার্ন ব্যর্থ'
-                : 'সেশন আপনার উত্তর চাইছে'
-        await pushNativeToOwner({
-          tier: 2,
-          title,
-          message: (notable.text ?? '').slice(0, 160) || 'বিস্তারিত দেখতে ট্যাপ করুন।',
-          notificationKind: 'alert',
-          actionUrl: '/agent',
-          // One push per (session, seq) forever — the dedupe id, not a timer.
-          deliveryId: `mac-session:${sessionId}:${notable.seq}`,
-        })
-      } catch {
-        /* push is best-effort; the feed row is already stored */
-      }
-    }
-  }
+  // Push when it matters — through a DURABLE ledger on the rows themselves.
+  // The sweep below picks up every stored-but-unpushed notable event (this
+  // batch's or an earlier one whose OneSignal call failed transiently), so a
+  // dropped push retries on the next event POST instead of being lost forever
+  // (the P2 deferred from the L4 review). pushedAt set = settled (delivered
+  // or deliberately skipped); attempts cap at 3 so a permanently broken
+  // notification can't retry into eternity.
+  await sweepUnpushedNotables(db, sessionId)
 
   return Response.json({ ok: true, stored: created.count })
 }

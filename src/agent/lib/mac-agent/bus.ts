@@ -42,6 +42,7 @@ export const MAC_AGENT_ACTIONS = [
   'session_stop',
   'session_list',
   'power',
+  'screen_stream',
 ] as const
 export type MacAgentAction = (typeof MAC_AGENT_ACTIONS)[number]
 

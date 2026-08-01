@@ -80,6 +80,20 @@ export async function POST(req: NextRequest) {
 
   if (action === 'stop') {
     const cancelled = await cancelAllQueued(body.deviceId)
+    // The red STOP must also kill a RUNNING screen stream, not only queued
+    // commands — the capture timer lives outside the queue. Broadcast to
+    // EVERY online Mac: picking one guesses wrong with two paired machines
+    // (Codex, L7 round 3), and a stop where nothing streams is a no-op.
+    // Enqueued AFTER the cancel so it survives it; the frame loop settles it
+    // off the side-channel within ~1.5s.
+    try {
+      const { listDevices, enqueueCommand } = await import('@/agent/lib/mac-agent/bus')
+      for (const d of (await listDevices()).filter((x) => x.online && x.pairedAt)) {
+        await enqueueCommand({ deviceId: d.id, action: 'screen_stream', params: { mode: 'stop' } })
+      }
+    } catch {
+      /* stream stop is additive to STOP; the deadline still bounds capture */
+    }
     return Response.json({ ok: true, cancelled })
   }
 

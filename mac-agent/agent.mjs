@@ -319,6 +319,89 @@ function screenshot() {
 }
 
 // ---------------------------------------------------------------------------
+// L7 — live screen streaming
+//
+// A ~1.5s capture loop the OWNER starts explicitly from the dock (cost +
+// privacy — it never starts itself). Each frame is downscaled hard (the
+// transport rejects big bodies and a phone is on the other end) and upserted
+// server-side as the device's single newest frame; the dock's existing
+// screenshot channel renders it. Auto-stops at the deadline, on the
+// kill-switch, or on the local PAUSE file — silence is the default state.
+// ---------------------------------------------------------------------------
+
+const STREAM_FRAME_INTERVAL_MS = Number(process.env.ALMA_STREAM_FRAME_MS) || 1_500
+const STREAM_DEFAULT_SECONDS = 180
+const STREAM_MAX_SECONDS = 300
+
+let streamTimer = null
+let streamDeadline = 0
+let streamBusy = false
+
+function stopScreenStream(reason) {
+  if (streamTimer) {
+    clearInterval(streamTimer)
+    streamTimer = null
+    log('screen stream stopped', reason ? `(${reason})` : '')
+  }
+}
+
+async function captureFrame() {
+  const out = join(CONFIG_DIR, 'stream-frame.jpg')
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', out], (err) => {
+      if (err) return resolve(null)
+      // Harder downscale than the one-off screenshot: this runs every ~1.5s.
+      execFile('/usr/bin/sips', ['-Z', '900', '-s', 'formatOptions', '50', out], () => {
+        try {
+          const b64 = readFileSync(out).toString('base64')
+          rmSync(out, { force: true })
+          if (b64.length > 1_400_000) return resolve(null) // give up, not overflow
+          resolve(`data:image/jpeg;base64,${b64}`)
+        } catch {
+          resolve(null)
+        }
+      })
+    })
+  })
+}
+
+function startScreenStream(token, maxSeconds) {
+  const seconds = Math.min(Math.max(Number(maxSeconds) || STREAM_DEFAULT_SECONDS, 10), STREAM_MAX_SECONDS)
+  streamDeadline = Date.now() + seconds * 1_000
+  if (streamTimer) return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: true, extended: true, seconds }) }
+
+  log(`screen stream started (${seconds}s cap)`)
+  streamTimer = setInterval(async () => {
+    if (Date.now() > streamDeadline || pausedByServer || existsSync(PAUSE_FILE)) {
+      return stopScreenStream(Date.now() > streamDeadline ? 'deadline' : 'paused')
+    }
+    if (streamBusy) return
+    streamBusy = true
+    try {
+      const frame = await captureFrame()
+      if (frame) {
+        const res = await api('/api/assistant/mac-agent/frames', {
+          method: 'POST',
+          token,
+          body: { dataUri: frame },
+          timeoutMs: 10_000,
+        }).catch(() => null)
+        // The frames response doubles as the STOP channel — the command queue
+        // is serial and a long shell command must not keep the screen
+        // streaming after the owner pressed stop. 409 = kill-switch off,
+        // 401 = this device was unpaired mid-stream: same conclusion, stop.
+        if (res?.json?.stop || res?.status === 409 || res?.status === 401) {
+          stopScreenStream('owner (frame channel)')
+        }
+      }
+    } finally {
+      streamBusy = false
+    }
+  }, STREAM_FRAME_INTERVAL_MS)
+  return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: true, seconds }) }
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -357,6 +440,15 @@ async function handleCommand(cmd) {
 
   if (cmd.action === 'screenshot') {
     return await screenshot()
+  }
+
+  if (cmd.action === 'screen_stream') {
+    const mode = String(params.mode ?? 'start')
+    if (mode === 'stop') {
+      stopScreenStream('owner')
+      return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: false }) }
+    }
+    return startScreenStream(activeToken, params.maxSeconds)
   }
 
   if (cmd.action === 'power') {
@@ -519,6 +611,8 @@ let lastEventPushAt = 0
  */
 let pausedByServer = false
 let pushingEvents = false
+/** The paired token, for handlers that post outside the result path (frames). */
+let activeToken = null
 
 /**
  * Push any new session events to the server's feed. Outbound HTTPS only, like
@@ -562,6 +656,7 @@ async function loop() {
   }
 
   log(`ALMA Mac Agent v${AGENT_VERSION} starting · host=${hostname()} · server=${baseUrl()}`)
+  activeToken = cfg.token
   await flushPendingResult(cfg.token)
   let backoff = 0
 
