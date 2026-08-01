@@ -434,6 +434,23 @@ export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand
   })
   if (!next) return null
 
+  // The UI kill switch must stop QUEUED work too, not just intake: a ui_*
+  // command enqueued while driving was ON must not execute after the owner
+  // turns it OFF (Codex round 3, ruled P1 by the head). Cancelled loudly, not
+  // held — a held command executing minutes later against a changed app state
+  // is the exact failure the approval card protects against.
+  if (next.action.startsWith('ui_') && !(await isMacUiDrivingEnabled())) {
+    await prisma.macAgentCommand.updateMany({
+      where: { id: next.id, status: 'queued' },
+      data: {
+        status: 'failed',
+        error: 'ui_driving_disabled: Mac-এর অ্যাপ চালানো বন্ধ করা হয়েছে — কাজটা বাতিল হলো।',
+        resolvedAt: new Date(),
+      },
+    })
+    return claimNextCommand(deviceId)
+  }
+
   const claimed = await prisma.macAgentCommand.updateMany({
     where: { id: next.id, status: 'queued' },
     data: { status: 'delivered', deliveredAt: new Date() },

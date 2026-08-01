@@ -6,15 +6,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const create = vi.fn()
+const findFirst = vi.fn()
+const updateMany = vi.fn()
+const findMany = vi.fn()
+const kvFindUnique = vi.fn()
 vi.mock('@/lib/prisma', () => ({
-  prisma: { macAgentCommand: { create: (...args: unknown[]) => create(...args) } },
+  prisma: {
+    macAgentCommand: {
+      create: (...args: unknown[]) => create(...args),
+      findFirst: (...args: unknown[]) => findFirst(...args),
+      updateMany: (...args: unknown[]) => updateMany(...args),
+      findMany: (...args: unknown[]) => findMany(...args),
+    },
+    agentKvSetting: { findUnique: (...args: unknown[]) => kvFindUnique(...args) },
+  },
 }))
 
-import { enqueueCommand } from '../bus'
+import { claimNextCommand, enqueueCommand } from '../bus'
 
 beforeEach(() => {
   vi.clearAllMocks()
   create.mockResolvedValue({ id: 'row-1' })
+  findMany.mockResolvedValue([])
+  updateMany.mockResolvedValue({ count: 1 })
+  kvFindUnique.mockResolvedValue({ value: 'true' })
 })
 
 describe('enqueueCommand — ui_* backstop', () => {
@@ -58,5 +73,29 @@ describe('enqueueCommand — ui_* backstop', () => {
       params: { bundleId: 'com.openai.chat' },
     })
     expect(create).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('claimNextCommand — the UI kill switch stops QUEUED work too', () => {
+  it('cancels a queued ui_* command loudly when the switch is off, and moves on', async () => {
+    kvFindUnique.mockResolvedValue({ value: 'false' })
+    findFirst
+      .mockResolvedValueOnce({ id: 'ui-1', action: 'ui_click', params: {}, sessionKey: null })
+      .mockResolvedValueOnce({ id: 'sh-1', action: 'run_command', params: {}, sessionKey: null })
+    const claimed = await claimNextCommand('dev-1')
+    // The ui row was failed, not delivered; the shell row was delivered normally.
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ui-1', status: 'queued' },
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
+    )
+    expect(claimed?.id).toBe('sh-1')
+  })
+
+  it('delivers ui_* normally while the switch is on', async () => {
+    findFirst.mockResolvedValueOnce({ id: 'ui-2', action: 'ui_tree', params: {}, sessionKey: null })
+    const claimed = await claimNextCommand('dev-1')
+    expect(claimed?.id).toBe('ui-2')
   })
 })
