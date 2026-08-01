@@ -1653,7 +1653,11 @@ export async function* runAgentTurn(
           const cap = getCapability(tb.name)
           const task = taskClassForTool(tb.name, cap)
           // EXPLICIT mapping only — a fallback class is a risk floor, not a family.
-          return task.explicit && isFamilyGrantLive(grant, task.taskClass, Date.now())
+          if (!task.explicit || !isFamilyGrantLive(grant, task.taskClass, Date.now())) return false
+          // …and confirmed against the row: a revoke from another request while
+          // this turn runs must take effect on the very next call.
+          const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+          return confirmGrantStillCovers(conversationId, task.taskClass)
         })()
         const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({

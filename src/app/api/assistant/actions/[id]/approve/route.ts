@@ -2489,7 +2489,7 @@ async function runApprove(
     const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
     // Two cards approved at once would both read the old grant and the second
     // write would erase the first. Read-modify-write in one transaction.
-    const { familyExpiry } = await import('@/agent/lib/permission-mode')
+    const { familyExpiry, isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
     // READ AND WRITE in ONE transaction. Two cards approved at the same moment
     // would otherwise both read the old grant and the loser's families would
     // vanish. Per-family windows: each family keeps the window Boss approved.
@@ -2502,7 +2502,14 @@ async function runApprove(
       const live = isElevationGrantLive(existing, Date.now()) ? existing : null
 
       const windows: Record<string, string> = {}
-      if (live) for (const fam of live.families) windows[fam] = familyExpiry(live, fam)
+      // Carry forward only families that are STILL live. A grant-wide cutoff can
+      // be the latest of several windows, so copying every family would give an
+      // already-expired one a fresh lease (review bot, #667).
+      if (live) {
+        for (const fam of live.families) {
+          if (isFamilyGrantLive(live, fam, Date.now())) windows[fam] = familyExpiry(live, fam)
+        }
+      }
       const thisCutoff = new Date(expiresMs).toISOString()
       for (const fam of safe) {
         const prev = windows[fam] ? Date.parse(windows[fam]) : 0

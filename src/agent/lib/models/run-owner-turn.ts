@@ -2750,6 +2750,11 @@ async function* runAlternateProviderTurn(
           permissionVerdict === 'auto'
           && permissionTier.explicit
           && isFamilyGrantLive(elevationGrant, permissionTier.taskClass, Date.now())
+          // …and still true in the DATABASE. A turn runs for a while; Boss can
+          // revoke from the app or another chat meanwhile, and the in-memory
+          // snapshot would keep authorising work he already cancelled.
+          && await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass)
         const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
