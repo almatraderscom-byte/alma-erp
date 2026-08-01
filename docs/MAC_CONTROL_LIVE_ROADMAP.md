@@ -20,19 +20,20 @@ Owner's ask, in his words: his agent should work on his Mac while he is away —
 
 ---
 
-## 1. Where it stands (verified 2026-08-01, all merged to main and live in production)
+## 1. Where it stands (updated 2026-08-01 END OF DAY — L3-L5 + L7-streaming merged, deployed, daemon updated, LIVE-proven)
 
 | | State | Proof |
 |---|---|---|
-| **M1 Terminal** | ✅ DONE | GREEN `git status` ran by itself · AMBER `echo hello > /tmp/…` produced a card and only ran after Approve (file confirmed absent before, present after) · RED `sudo rm -rf ~/Documents` refused with no card and never reached the daemon |
-| **M2 Claude/Codex sessions** | ✅ DONE | Session opened in `~/alma-erp`, task delivered, Claude's own reply `ALMA-OK` came back |
-| **M3 Mac app** | ⚠️ BUILDS | Compiles, launches, holds a window + menu bar. Not distributed — owner runs `mac-app/build.sh` locally |
-| **M4 Screen + power** | ⚠️ PARTIAL | keep-awake works. Screenshot needs Screen Recording permission, never granted |
-| **`/agent/mac` page** | ✅ DONE | Switch, pairing, STOP, full audit trail |
-| **Live dock (web)** | ✅ SHIPPED, ❌ UNVERIFIED | API verified; idle-hiding verified. Never seen with work in flight — browser automation could not drive the composer |
-| **Live dock (iOS app)** | ✅ DONE (PR #671, 2026-08-01) | `AgentLiveDockView.swift`, three states sim-screenshotted; real prod poll decoded from the sim |
-| **L4 transcript + reply + push** | ✅ BUILT (PR #671) | Session events stream daemon→server→both docks; tap-to-reply (pinned target, queued state, Claude-only); push on error/ended/question. Live round-trip needs the daemon files copied to `~/.alma-mac-agent` + restart after merge |
-| **L5 resume + multi-session + cost** | ✅ BUILT (PR #672, stacked) | Detached sessions resume via `--resume` on next send; per-session cards with cost in both docks; 5 new daemon tests |
+| **M1 Terminal** | ✅ DONE | GREEN `git status` ran by itself · AMBER `echo hello > /tmp/…` produced a card and only ran after Approve · RED `sudo rm -rf ~/Documents` refused with no card |
+| **M2 Claude/Codex sessions** | ✅ DONE + LIVE | Real prod session ran `git status`, read `package.json` and `CLAUDE.md` from plain Bangla asks. CLI login survives reboots (proven — the old "not logged in" note was stale). Codex CLI installed (0.146.0) |
+| **M3 Mac app** | ⚠️ BUILDS | Compiles + runs locally; NOT notarized/distributed |
+| **M4 Screen + power** | ✅ DONE | keep-awake works; **Screen Recording GRANTED to the daemon's node** (owner, 2026-08-01) — real screenshots and streaming both proven |
+| **`/agent/mac` page** | ✅ DONE | Switch, pairing, STOP, audit trail, **+ live-stream start/stop section** |
+| **Live dock (web)** | ✅ LIVE-PROVEN | Seen with real work in flight: strip appeared during a live session, expanded sheet showed the transcript, a dock reply reached the session's stdin (`sent` event came back) |
+| **Live dock (iOS app)** | ✅ DONE (PR #671) | `AgentLiveDockView.swift`, three states + reply row + session cards sim-screenshotted. **Not yet on TestFlight** (owner check-first rule) |
+| **L4 transcript + reply + push** | ✅ LIVE (PR #671) | Events stream daemon→server→both docks; tap-to-reply; push on error/ended/question through a durable delivery ledger |
+| **L5 resume + multi-session + cost** | ✅ MERGED (PR #672) | Sessions persist to `sessions.json`, restore as detached, `--resume` on next send; per-session cards + cost; daemon updated on the MacBook Air |
+| **L7 live screen streaming** | ✅ LIVE-PROVEN (PR #673) | Start from `/agent/mac` or the dock → frames every ~1.5-3s → full-Mac live view in the expanded dock (frame timestamps advancing, verified) → stop broadcast froze frames in seconds |
 
 **Key files.** Server: `src/agent/lib/mac-agent/{policy,bus}.ts`, `src/app/api/assistant/mac-agent/{pair,poll,result,status}`, `src/app/api/assistant/live-activity`, `src/agent/tools/{mac-tools,cli-session-tools}.ts`, `src/agent/components/AgentLiveDock.tsx`, `src/app/agent/mac/page.tsx`. Daemon: `mac-agent/{agent,policy,sessions}.mjs`. Mac app: `mac-app/`.
 
@@ -40,11 +41,12 @@ Owner's ask, in his words: his agent should work on his Mac while he is away —
 
 ---
 
-## 2. Why the iOS app shows nothing (the finding that drives the next phase)
+## 2. ~~Why the iOS app shows nothing~~ (HISTORICAL — solved by L3)
 
-`AgentLiveDock` is a React component. **The iOS chat is not React** — it is 15,670 lines of native SwiftUI (`ios/App/App/AssistantSwiftUI.swift`) that talks to the API directly and renders its own messages, composer and tool pills.
-
-So the web dock appears in his browser and PWA, and **cannot** appear in the native app. The API it needs already exists and is deployed; what is missing is the SwiftUI half.
+The iOS chat is native SwiftUI, not React, so the web `AgentLiveDock` could
+never appear there. **Solved:** `AgentLiveDockView.swift` (PR #671) is the
+SwiftUI half, mounted in the chat composer's `safeAreaInset`. Kept only as
+the explanation of why two dock implementations exist.
 
 ---
 
@@ -80,7 +82,14 @@ Original spec below, kept for reference.
 
 ---
 
-## Phase L4 — make the watching real-time and useful
+## ~~Phase L4~~ / ~~L5~~ — DONE (specs below are HISTORICAL, kept for context)
+
+Both shipped 2026-08-01 (PRs #671, #672) and are live in production: the dock
+shows the session transcript, tap-to-reply works, pushes fire through a
+durable ledger, sessions survive daemon restarts via `--resume`, and per-session
+cards carry cost. **Do not read the two spec blocks below as work to do.**
+
+## Phase L4 — make the watching real-time and useful ✅ DONE
 
 Today the dock reports *command rows*. A Claude session's actual thinking is richer than that and the owner cannot see it.
 
@@ -140,12 +149,125 @@ login). "PC off" only stops the daemon from polling; that is what
 
 ---
 
-## Phase L6 — finish the loose ends
+## Phase L6 — finish the loose ends (2 of 4 done)
 
-- **Screen Recording permission** for the daemon, or screenshots stay broken. One-time owner grant.
-- **Codex CLI** — `npm i -g @openai/codex`. The driver treats it as one-shot (`codex exec`), which is what it is; `session_send` refuses honestly rather than hanging.
-- **Ship the Mac app** — notarize and put it somewhere he can install without a terminal.
-- **Wake a sleeping Mac** — the daemon cannot poll while asleep. Wake-on-LAN is possible on the same network; document the limits honestly rather than pretending.
+- ~~**Screen Recording permission**~~ ✅ GRANTED 2026-08-01 (to the daemon's
+  `node` binary — apps only appear in that Settings list after attempting
+  capture or being added manually with `+` → `Cmd-Shift-G`).
+- ~~**Codex CLI**~~ ✅ INSTALLED (0.146.0). Still one-shot (`codex exec`) by
+  design; `session_send` refuses honestly rather than hanging.
+- **Ship the Mac app** — notarize and put it somewhere he can install without a terminal. STILL OPEN.
+- **Wake a sleeping Mac** — the daemon cannot poll while asleep. Wake-on-LAN is possible on the same network; document the limits honestly rather than pretending. STILL OPEN.
+
+---
+
+## Phase L8 — the agent uses the Mac apps like a human (owner's ask, 2026-08-01)
+
+**His words:** *"sudhu Claude app na, ChatGPT app-o Mac-e … ekdom human-er moto
+chalano ta beshi dorkar, jate ami na thaklw phone thekei amar shob kaj ba
+develop ja kortesi segulo shara din cole, ar ami jate phone thekei shob dekhte
+pai."*
+
+So: **both desktop apps (Claude AND ChatGPT), driven like a person, running
+his work all day while he is away, fully watchable from the phone.** L7's
+streaming already gives the watching; L8 gives the hands.
+
+### What the research says (2026), and what we take from it
+
+| Finding | What we do |
+|---|---|
+| Two approaches exist: screenshot+coordinates, or the **Accessibility tree (AXUIElement)**. The AX tree wins — structured roles/labels/coords, survives theme, resolution and DPI changes, and costs far fewer tokens than pixels ([Fazm](https://fazm.ai/blog/macos-ai-agent-accessibility-screencapturekit), [macos-use](https://macos-use.dev/)) | **AX tree is the primary channel.** Screenshots (L7, already built) are the *verification* eye, never the control surface |
+| Mature reference implementations are **Swift MCP servers over AXUIElement + CGEvent** — `macos-use`, `mac-computer-use`, Rust `computer-use-mcp` ([mcp.so](https://mcp.so/servers/mcp-server-macos-use), [zavora-ai](https://github.com/zavora-ai/computer-use-mcp)) | Same architecture, but as a **daemon verb**, not a new server — our daemon already owns pairing, policy re-judging, the audit trail and the kill-switch. Do not bolt on a second control plane |
+| Every action should **return a diff** (elements added/removed/changed) so the agent knows what its click produced ([macos-use](https://macos-use.dev/)) | Adopt it. A diff is what makes "did my click work?" answerable without a screenshot round-trip |
+| **Electron apps expose a limited AX tree** by default — and BOTH targets (Claude desktop, ChatGPT desktop) are Electron ([OpenCLI](https://opencli.info/docs/adapters/desktop/chatgpt-app.html)) | **The single biggest risk in this phase.** Mitigation ladder: (1) set `AXManualAccessibility=true` on the app to force the full web tree, (2) fall back to the app's remote-debugging port for READS, (3) fall back to screenshot+coordinates last. Spike this FIRST — it decides the shape of everything else |
+| macOS requires **Accessibility permission** separately from Screen Recording ([Claude Computer Use setup](https://www.digitalapplied.com/blog/claude-computer-use-macos-remote-mac-control-iphone-guide)) | One more one-time owner grant, same place in Settings. Screen Recording is already granted |
+
+**Deliberate non-goal:** we are not rebuilding what the CLI already does well.
+Coding work should keep going through `claude -p` sessions (observable,
+resumable, cheap). L8 exists for what the CLI *cannot* do — the owner's actual
+apps, his logged-in accounts, his windows.
+
+### Non-negotiables for L8 (extend §0, do not replace)
+
+1. **Every synthetic click and keystroke is a policy decision.** A new
+   `ui_policy` classifier: GREEN = read the tree, scroll, screenshot ·
+   AMBER = click / type / submit inside an ALLOWLISTED app · RED = anything
+   in a non-allowlisted app, and always: Keychain, System Settings, Mail
+   send, banking/payment surfaces, anything that spends money or deletes.
+2. **App allowlist, not app denylist.** L8 ships with exactly two entries:
+   Claude desktop, ChatGPT desktop. Widening it is a code change + review.
+3. **The daemon re-judges every action**, exactly like shell commands — a
+   compromised server must not be able to type into his apps.
+4. **Kill-switch and STOP kill UI driving instantly**, mid-sequence.
+5. **Every action is auditable**: what was clicked, in which app, which
+   element, with the AX diff it produced.
+
+---
+
+## §5 — HOW WE BUILD L8 IN PARALLEL (the owner asked to run several sessions)
+
+**One session per work package.** Each package below names its OWN files, so
+two sessions never edit the same file. Start each session with exactly the
+line under "Session prompt". **W1 must finish before W3/W4 start** (it decides
+whether the AX tree is even usable on Electron); everything else is parallel.
+
+### W1 — Electron AX spike (BLOCKING, do this first, alone)
+- **Goal:** answer one question with evidence — can we read and act on the
+  Claude/ChatGPT desktop UI through AXUIElement, with `AXManualAccessibility`,
+  and if not, which fallback works?
+- **Writes:** `mac-agent/ax-probe.mjs` (throwaway probe), `docs/L8_AX_SPIKE.md` (the findings)
+- **Reads:** this roadmap §L8, `mac-agent/agent.mjs`
+- **Done when:** the doc shows a real element tree from BOTH apps, or names the
+  exact fallback with evidence — and a chat message was typed and sent into
+  one of them from a script.
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W1 (Electron AX spike) koro"*
+
+### W2 — the UI policy classifier (parallel with W1)
+- **Goal:** the GREEN/AMBER/RED rules for UI actions, plus its daemon-side twin
+  and the parity test — same shape as the shell classifier.
+- **Writes:** `src/agent/lib/mac-agent/ui-policy.ts`, `mac-agent/ui-policy.mjs`,
+  `src/agent/lib/mac-agent/__tests__/ui-policy{,-parity}.test.ts`
+- **Reads:** `src/agent/lib/mac-agent/policy.ts` + `mac-agent/policy.mjs` (the
+  pattern to copy), `__tests__/policy-parity.test.ts`
+- **Done when:** parity test fails the build if the copies drift; RED cases
+  (Keychain, System Settings, non-allowlisted app) are unit-tested.
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W2 (UI policy classifier) koro"*
+
+### W3 — the daemon's UI driver (after W1)
+- **Goal:** `ui_*` verbs on the daemon — `ui_tree`, `ui_click`, `ui_type`,
+  `ui_key`, `ui_scroll`, each returning the AX diff; re-judged locally.
+- **Writes:** `mac-agent/ui-driver.mjs`, wiring in `mac-agent/agent.mjs`
+- **Reads:** W1's spike doc, `mac-agent/sessions.mjs` (handler-registration pattern)
+- **Done when:** a scripted sequence opens Claude desktop, types a prompt,
+  submits it, and reads the reply back through the tree.
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W3 (daemon UI driver) koro"*
+
+### W4 — server tools + approval cards (after W1, parallel with W3)
+- **Goal:** the agent-facing tools and the owner's AMBER card for a UI action.
+- **Writes:** `src/agent/tools/mac-ui-tools.ts`, its registry/prompt/pack wiring
+- **Reads:** `src/agent/tools/mac-tools.ts` (the pattern), §0.4's FIVE wiring places
+- **Done when:** the head can call `drive_mac_app` from plain Bangla and an
+  AMBER action produces a card showing the app, the element and the text.
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W4 (mac UI tools) koro"*
+
+### W5 — all-day autonomy (after W3+W4)
+- **Goal:** the owner's real ask — work continues all day. A durable "app task"
+  queue with progress into the same live dock, so a long app-driven job
+  survives restarts and is watchable from the phone.
+- **Writes:** `src/agent/lib/mac-agent/app-tasks.ts`, migration, dock wiring
+- **Reads:** `session-push.ts`, `live-activity/route.ts` (the feed contract)
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W5 (all-day app tasks) koro"*
+
+### W6 — iOS parity + TestFlight (last)
+- **Goal:** the native dock shows UI-driving steps and approval cards; ONE
+  batched TestFlight build after sim proof, with the owner's explicit go.
+- **Writes:** `ios/App/App/AgentLiveDockView.swift` and friends
+- **Session prompt:** *"docs/MAC_CONTROL_LIVE_ROADMAP.md pore W6 (iOS parity for UI driving) koro"*
+
+**Rules for every parallel session:** own branch `claude/l8-w<N>-*`, own PR,
+Codex P0/P1 fixed before merge, `git pull` at start / `git push` at end, and
+**never edit a file another package owns** — if you need something from it,
+say so in the PR and let that session change it.
 
 ---
 
@@ -163,8 +285,23 @@ login). "PC off" only stops the daemon from polling; that is what
 
 ---
 
-## 4. Owner-pending (only he can do these)
+## 4. What remains (updated 2026-08-01 end of day)
 
-1. Look at the web dock once and say whether it feels right — it has never been seen with work in flight.
-2. Grant Screen Recording to the Mac agent if he wants screenshots.
-3. `npm i -g @openai/codex` if he wants Codex sessions.
+Done and crossed off: ~~Screen Recording grant~~ (owner granted), ~~Codex CLI
+install~~ (0.146.0), ~~web dock never seen live~~ (proven with a real session).
+
+**Owner-pending:**
+1. Look at the docks and the live stream and say whether the FEEL is right —
+   everything is proven working; taste is his call.
+2. **iOS app: the native dock is NOT on his phone yet** — a TestFlight build
+   awaits his check-first approval (sim proof exists).
+
+**Future build work (next phases, in rough order):**
+1. **Claude-app GUI driving** (L7's second half) — Accessibility-API based,
+   same GREEN/AMBER/RED policy per synthetic click; spec'd in Phase L7 below.
+2. **Mac app notarization + distribution** (M3/L6) — installable without a
+   terminal.
+3. **Wake a sleeping Mac** (L6) — wake-on-LAN on the same network; document
+   the honest limits.
+4. Two-Mac polish: pairing exists for many Macs; only the MacBook Air is
+   paired today. Pair the Mac mini when he wants both drivable.
