@@ -199,6 +199,28 @@ export default function AgentLiveDock() {
     }
   }, [replyText, replySessionId, replyState])
 
+  // L7 — live screen streaming: an explicit owner start (privacy + cost); the
+  // daemon's loop self-stops at its deadline, so the button is best-effort
+  // state, not the source of truth.
+  const [streamOn, setStreamOn] = useState(false)
+  const [streamBusy, setStreamBusy] = useState(false)
+  const toggleStream = useCallback(async () => {
+    if (streamBusy) return
+    setStreamBusy(true)
+    try {
+      const res = await fetch('/api/assistant/mac-agent/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: !streamOn }),
+      })
+      if (res.ok) setStreamOn((v) => !v)
+    } catch {
+      /* the button simply stays where it was */
+    } finally {
+      setStreamBusy(false)
+    }
+  }, [streamOn, streamBusy])
+
   // Collapse the sheet when the work finishes, so it never traps his screen.
   useEffect(() => {
     if (!show) setExpanded(false)
@@ -250,6 +272,19 @@ export default function AgentLiveDock() {
                 এখনো কোনো ছবি নেই — কাজের ধাপগুলো নিচে দেখুন।
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => void toggleStream()}
+              disabled={streamBusy}
+              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium ${
+                streamOn
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-black/15 bg-black/[0.03] text-black/70'
+              } disabled:opacity-50`}
+            >
+              {streamOn ? '⏹️ লাইভ ভিউ বন্ধ করুন' : '🎥 Mac-এর লাইভ ভিউ দেখুন'}
+            </button>
 
             {(feed.sessions?.length ?? 0) > 0 && (
               <div className="mt-4 space-y-1.5">

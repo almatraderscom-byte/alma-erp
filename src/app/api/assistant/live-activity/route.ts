@@ -172,7 +172,7 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [macRows, browserRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows] =
+  const [macRows, browserRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows, frameMeta] =
     await Promise.all([
     db.macAgentCommand
       .findMany({
@@ -243,6 +243,15 @@ export async function GET(req: NextRequest) {
         _max: { at: true },
       })
       .catch(() => []),
+    // L7 — the newest live-stream frame's TIMESTAMP only; the payload is
+    // fetched below only when it beats what the client already holds.
+    db.macAgentFrame
+      .findFirst({
+        where: { at: { gte: since } },
+        orderBy: { at: 'desc' },
+        select: { deviceId: true, at: true },
+      })
+      .catch(() => null),
   ])
 
   const steps: ActivityStep[] = []
@@ -411,6 +420,24 @@ export async function GET(req: NextRequest) {
   const justFinishedCutoff = new Date(Date.now() - JUST_FINISHED_MS).toISOString()
   const justFinished = trimmed.filter((s) => s.at > justFinishedCutoff)
 
+  // L7 — a live-stream frame rides the same screenshot channel; the payload
+  // is fetched only when it is genuinely newer than what the client holds.
+  const frameMetaRow = frameMeta as { deviceId: string; at: Date } | null
+  if (frameMetaRow) {
+    const iso = frameMetaRow.at.toISOString()
+    const clientHasIt = Boolean(screenshotAfter && iso <= screenshotAfter)
+    const beatsCurrent = !screenshotAt || iso > (screenshotAt as string)
+    if (beatsCurrent && !clientHasIt) {
+      const full = await db.macAgentFrame
+        .findUnique({ where: { deviceId: frameMetaRow.deviceId }, select: { dataUri: true, at: true } })
+        .catch(() => null)
+      if (full?.dataUri) considerShot(full.dataUri, full.at as Date)
+    } else if (beatsCurrent) {
+      // Client already holds this frame — advance the timestamp only.
+      screenshotAt = iso
+    }
+  }
+
   // The timestamp must survive even when the payload is withheld: clearing it
   // made the client think there was no screenshot at all, drop its cache, and
   // re-download the full frame on the next poll — an every-other-poll oscillation
@@ -435,8 +462,13 @@ export async function GET(req: NextRequest) {
   return Response.json(
     {
       // The dock shows itself only while something is genuinely in flight — the
-      // owner should never have a player sitting on his chat doing nothing.
-      active: running.length > 0 || justFinished.length > 0,
+      // owner should never have a player sitting on his chat doing nothing. A
+      // live stream IS work in flight: a frame fresher than ~10s keeps the
+      // dock up and the poll fast even when no command row moved.
+      active:
+        running.length > 0 ||
+        justFinished.length > 0 ||
+        Boolean(frameMetaRow && Date.now() - frameMetaRow.at.getTime() < 10_000),
       current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
       /** L5: per-session status + cost for the expanded view. */

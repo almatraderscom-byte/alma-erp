@@ -71,6 +71,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/mac-agent/poll') return true
   if (pathname === '/api/assistant/mac-agent/result') return true
   if (pathname === '/api/assistant/mac-agent/events') return true
+  if (pathname === '/api/assistant/mac-agent/frames') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

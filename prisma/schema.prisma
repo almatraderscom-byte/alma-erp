@@ -3064,6 +3064,21 @@ model MacAgentSessionEvent {
   @@map("mac_agent_session_events")
 }
 
+// L7 — live screen streaming: the daemon's ~1.5s capture loop upserts the
+// newest frame here (ONE row per device, never a history — the dock only ever
+// wants "now", and history would grow at a frame every second or two). The
+// live-activity feed serves it through the same screenshot channel the docks
+// already render, so streaming needed zero dock render changes.
+model MacAgentFrame {
+  deviceId  String   @id
+  /// data:image/jpeg;base64,… downscaled daemon-side (Vercel body limit).
+  dataUri   String   @db.Text
+  /// Capture time on the Mac.
+  at        DateTime
+  updatedAt DateTime @updatedAt
+  @@map("mac_agent_frames")
+}
+
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category
 // continuously observed across snapshots). Closed when the condition clears or
 // goes stale. notifiedAt is set once the owner has been alerted for that episode.

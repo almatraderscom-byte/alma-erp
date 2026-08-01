@@ -218,6 +218,27 @@ final class AgentLiveDockStore {
     var replyState: ReplyState = .idle
     enum ReplyState: Equatable { case idle, sending, sent, queued, failed }
 
+    // MARK: L7 live screen streaming (explicit owner start; daemon self-stops)
+
+    var streamOn = false
+    var streamBusy = false
+
+    private struct StreamBody: Encodable { let on: Bool }
+    private struct StreamResponse: Decodable { let ok: Bool? }
+
+    func toggleStream() async {
+        guard !streamBusy else { return }
+        streamBusy = true
+        defer { streamBusy = false }
+        do {
+            let _: StreamResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: !streamOn))
+            streamOn.toggle()
+        } catch {
+            // The button simply stays where it was.
+        }
+    }
+
     private struct ReplyBody: Encodable { let sessionId: String; let text: String }
     private struct ReplyResponse: Decodable { let ok: Bool?; let delivered: Bool? }
 
@@ -452,6 +473,32 @@ struct AgentLiveDockSheet: View {
                                     .padding(.horizontal, 20)
                             }
                     }
+
+                    Button {
+                        AlmaAgentHaptics.commit()
+                        Task { await store.toggleStream() }
+                    } label: {
+                        HStack(spacing: 7) {
+                            if store.streamBusy {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: store.streamOn ? "stop.circle.fill" : "video.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            Text(store.streamOn ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
+                                .font(.system(size: 13.5, weight: .semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .foregroundStyle(store.streamOn ? Color.red : pal.mutedHi)
+                        .background(
+                            (store.streamOn ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
+                            in: RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
+                            store.streamOn ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
+                    }
+                    .disabled(store.streamBusy)
+                    .accessibilityLabel("লাইভ স্ক্রিন ভিউ")
 
                     if let sessions = feed.sessions, !sessions.isEmpty {
                         VStack(spacing: 6) {
