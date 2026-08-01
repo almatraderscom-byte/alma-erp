@@ -20,19 +20,20 @@ Owner's ask, in his words: his agent should work on his Mac while he is away —
 
 ---
 
-## 1. Where it stands (verified 2026-08-01, all merged to main and live in production)
+## 1. Where it stands (updated 2026-08-01 END OF DAY — L3-L5 + L7-streaming merged, deployed, daemon updated, LIVE-proven)
 
 | | State | Proof |
 |---|---|---|
-| **M1 Terminal** | ✅ DONE | GREEN `git status` ran by itself · AMBER `echo hello > /tmp/…` produced a card and only ran after Approve (file confirmed absent before, present after) · RED `sudo rm -rf ~/Documents` refused with no card and never reached the daemon |
-| **M2 Claude/Codex sessions** | ✅ DONE | Session opened in `~/alma-erp`, task delivered, Claude's own reply `ALMA-OK` came back |
-| **M3 Mac app** | ⚠️ BUILDS | Compiles, launches, holds a window + menu bar. Not distributed — owner runs `mac-app/build.sh` locally |
-| **M4 Screen + power** | ⚠️ PARTIAL | keep-awake works. Screenshot needs Screen Recording permission, never granted |
-| **`/agent/mac` page** | ✅ DONE | Switch, pairing, STOP, full audit trail |
-| **Live dock (web)** | ✅ SHIPPED, ❌ UNVERIFIED | API verified; idle-hiding verified. Never seen with work in flight — browser automation could not drive the composer |
-| **Live dock (iOS app)** | ✅ DONE (PR #671, 2026-08-01) | `AgentLiveDockView.swift`, three states sim-screenshotted; real prod poll decoded from the sim |
-| **L4 transcript + reply + push** | ✅ BUILT (PR #671) | Session events stream daemon→server→both docks; tap-to-reply (pinned target, queued state, Claude-only); push on error/ended/question. Live round-trip needs the daemon files copied to `~/.alma-mac-agent` + restart after merge |
-| **L5 resume + multi-session + cost** | ✅ BUILT (PR #672, stacked) | Detached sessions resume via `--resume` on next send; per-session cards with cost in both docks; 5 new daemon tests |
+| **M1 Terminal** | ✅ DONE | GREEN `git status` ran by itself · AMBER `echo hello > /tmp/…` produced a card and only ran after Approve · RED `sudo rm -rf ~/Documents` refused with no card |
+| **M2 Claude/Codex sessions** | ✅ DONE + LIVE | Real prod session ran `git status`, read `package.json` and `CLAUDE.md` from plain Bangla asks. CLI login survives reboots (proven — the old "not logged in" note was stale). Codex CLI installed (0.146.0) |
+| **M3 Mac app** | ⚠️ BUILDS | Compiles + runs locally; NOT notarized/distributed |
+| **M4 Screen + power** | ✅ DONE | keep-awake works; **Screen Recording GRANTED to the daemon's node** (owner, 2026-08-01) — real screenshots and streaming both proven |
+| **`/agent/mac` page** | ✅ DONE | Switch, pairing, STOP, audit trail, **+ live-stream start/stop section** |
+| **Live dock (web)** | ✅ LIVE-PROVEN | Seen with real work in flight: strip appeared during a live session, expanded sheet showed the transcript, a dock reply reached the session's stdin (`sent` event came back) |
+| **Live dock (iOS app)** | ✅ DONE (PR #671) | `AgentLiveDockView.swift`, three states + reply row + session cards sim-screenshotted. **Not yet on TestFlight** (owner check-first rule) |
+| **L4 transcript + reply + push** | ✅ LIVE (PR #671) | Events stream daemon→server→both docks; tap-to-reply; push on error/ended/question through a durable delivery ledger |
+| **L5 resume + multi-session + cost** | ✅ MERGED (PR #672) | Sessions persist to `sessions.json`, restore as detached, `--resume` on next send; per-session cards + cost; daemon updated on the MacBook Air |
+| **L7 live screen streaming** | ✅ LIVE-PROVEN (PR #673) | Start from `/agent/mac` or the dock → frames every ~1.5-3s → full-Mac live view in the expanded dock (frame timestamps advancing, verified) → stop broadcast froze frames in seconds |
 
 **Key files.** Server: `src/agent/lib/mac-agent/{policy,bus}.ts`, `src/app/api/assistant/mac-agent/{pair,poll,result,status}`, `src/app/api/assistant/live-activity`, `src/agent/tools/{mac-tools,cli-session-tools}.ts`, `src/agent/components/AgentLiveDock.tsx`, `src/app/agent/mac/page.tsx`. Daemon: `mac-agent/{agent,policy,sessions}.mjs`. Mac app: `mac-app/`.
 
@@ -163,8 +164,23 @@ login). "PC off" only stops the daemon from polling; that is what
 
 ---
 
-## 4. Owner-pending (only he can do these)
+## 4. What remains (updated 2026-08-01 end of day)
 
-1. Look at the web dock once and say whether it feels right — it has never been seen with work in flight.
-2. Grant Screen Recording to the Mac agent if he wants screenshots.
-3. `npm i -g @openai/codex` if he wants Codex sessions.
+Done and crossed off: ~~Screen Recording grant~~ (owner granted), ~~Codex CLI
+install~~ (0.146.0), ~~web dock never seen live~~ (proven with a real session).
+
+**Owner-pending:**
+1. Look at the docks and the live stream and say whether the FEEL is right —
+   everything is proven working; taste is his call.
+2. **iOS app: the native dock is NOT on his phone yet** — a TestFlight build
+   awaits his check-first approval (sim proof exists).
+
+**Future build work (next phases, in rough order):**
+1. **Claude-app GUI driving** (L7's second half) — Accessibility-API based,
+   same GREEN/AMBER/RED policy per synthetic click; spec'd in Phase L7 below.
+2. **Mac app notarization + distribution** (M3/L6) — installable without a
+   terminal.
+3. **Wake a sleeping Mac** (L6) — wake-on-LAN on the same network; document
+   the honest limits.
+4. Two-Mac polish: pairing exists for many Macs; only the MacBook Air is
+   paired today. Pair the Mac mini when he wants both drivable.
