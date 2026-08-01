@@ -26,12 +26,19 @@ vi.mock('@/agent/lib/mac-agent/bus', async (importOriginal) => {
     listDevices: (...args: unknown[]) => listDevices(...args),
   }
 })
-vi.mock('../mac-tools', () => ({
-  requireOnlineMac: (...args: unknown[]) => requireOnlineMac(...args),
-}))
+vi.mock('../mac-tools', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../mac-tools')>()
+  return {
+    ...real,
+    requireOnlineMac: (...args: unknown[]) => requireOnlineMac(...args),
+  }
+})
 
 import { MAC_UI_TOOLS } from '../mac-ui-tools'
+import { isToolAllowedForOwnerTurn } from '@/agent/lib/turn-authorization'
+import { assemblePack } from '../state-router'
 
+const look = MAC_UI_TOOLS.find((t) => t.name === 'look_mac_app')!
 const drive = MAC_UI_TOOLS.find((t) => t.name === 'drive_mac_app')!
 const listApps = MAC_UI_TOOLS.find((t) => t.name === 'list_mac_apps')!
 
@@ -51,7 +58,7 @@ describe('drive_mac_app — multi-Mac ambiguity', () => {
       { id: 'dev-1', name: 'MacBook Air', online: true, pairedAt: new Date() },
       { id: 'dev-2', name: 'Mac mini', online: true, pairedAt: new Date() },
     ])
-    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    const r = await look.handler({ action: 'tree', app: 'claude' })
     expect(r.success).toBe(false)
     expect((r.data as { code?: string })?.code).toBe('multiple_macs_online')
     expect(enqueueCommand).not.toHaveBeenCalled()
@@ -62,7 +69,7 @@ describe('drive_mac_app — multi-Mac ambiguity', () => {
 describe('drive_mac_app — capability gate', () => {
   it('refuses honestly while the daemon has no ui driver (KV switch off)', async () => {
     uiEnabled.mockResolvedValue(false)
-    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    const r = await look.handler({ action: 'tree', app: 'claude' })
     expect(r.success).toBe(false)
     expect((r.data as { code?: string })?.code).toBe('ui_driving_disabled')
     expect(enqueueCommand).not.toHaveBeenCalled()
@@ -128,7 +135,7 @@ describe('drive_mac_app — AMBER', () => {
 
 describe('drive_mac_app — GREEN', () => {
   it('runs a tree read immediately and returns the output', async () => {
-    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    const r = await look.handler({ action: 'tree', app: 'claude' })
     expect(r.success).toBe(true)
     expect((r.data as { output?: string })?.output).toBe('TREE')
     const q = enqueueCommand.mock.calls[0][0] as { action: string; policyLevel: string; params: Record<string, unknown> }
@@ -140,9 +147,30 @@ describe('drive_mac_app — GREEN', () => {
 
   it('still refuses when the Mac is offline', async () => {
     requireOnlineMac.mockResolvedValue({ ok: false, error: 'offline' })
-    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    const r = await look.handler({ action: 'tree', app: 'claude' })
     expect(r.success).toBe(false)
     expect(enqueueCommand).not.toHaveBeenCalled()
+  })
+})
+
+describe('the read/act split — the reason the two tools exist', () => {
+  it('look_mac_app survives an explicit "কিছু কোরো না" turn; drive_mac_app does not', () => {
+    const noAction = { allowMutations: false, reason: 'explicit_no_action' as const }
+    expect(isToolAllowedForOwnerTurn('look_mac_app', noAction)).toBe(true)
+    expect(isToolAllowedForOwnerTurn('list_mac_apps', noAction)).toBe(true)
+    expect(isToolAllowedForOwnerTurn('drive_mac_app', noAction)).toBe(false)
+  })
+
+  it('drive_mac_app refuses read verbs — the read tool owns them', async () => {
+    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    expect(r.success).toBe(false)
+    expect((r.data as { code?: string })?.code).toBe('wrong_tool')
+  })
+
+  it('the app tools survive the 24-tool router cap on a mixed mac turn', () => {
+    const { names } = assemblePack(['mac', 'research', 'erp'])
+    expect(names).toContain('look_mac_app')
+    expect(names).toContain('drive_mac_app')
   })
 })
 

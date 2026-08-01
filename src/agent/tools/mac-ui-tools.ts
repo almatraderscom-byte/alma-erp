@@ -72,62 +72,21 @@ function describeActionBn(input: {
   }
 }
 
-const drive_mac_app: AgentTool = {
-  name: 'drive_mac_app',
-  description:
-    "Drive the OWNER'S OWN Mac desktop apps like a person — ONLY the Claude app and the ChatGPT app, nothing else. " +
-    'Actions: "tree" reads the window\'s accessibility tree (do this FIRST — it gives you the real element labels), ' +
-    '"screenshot" captures the app window, "scroll" scrolls it — these are read-only and run immediately. ' +
-    '"click" (needs elementLabel from the tree), "type" (needs elementLabel + the literal text), and "key" ' +
-    '(a combo like "enter"; Enter/Space also need focusedLabel — the label of the element that has focus, from the tree) ' +
-    'CHANGE things, so they automatically become an approval card on his phone showing the app, the element and the ' +
-    'exact text — call the tool directly and tell him a card is waiting, do not ask separately first. ' +
-    'Refused by policy, not approvable: any other app, destructive/payment/permission buttons, typing secrets, ' +
-    'typing while he is at the keyboard (comes back as owner_active — wait and retry). ' +
-    'After an approval, fetch the outcome with check_mac_command using the returned id. ' +
-    'Workflow for "ChatGPT-e eta jigges koro": tree → type into the composer → key enter → tree again to read the reply. ' +
-    'Owner-facing: report in Bangla what you saw and did.',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      action: {
-        type: 'string',
-        enum: ['tree', 'screenshot', 'scroll', 'click', 'type', 'key'],
-        description: 'What to do in the app.',
-      },
-      app: {
-        type: 'string',
-        description: 'Which app: "claude" or "chatgpt" (or an exact bundle id). Required.',
-      },
-      elementLabel: {
-        type: 'string',
-        description:
-          'For click/type: the label of the target element EXACTLY as the tree reported it. Required — actions without a named element are refused.',
-      },
-      text: { type: 'string', description: 'For type: the literal text to type, verbatim.' },
-      key: { type: 'string', description: 'For key: the combo, e.g. "enter" or "cmd+a".' },
-      focusedLabel: {
-        type: 'string',
-        description: 'For key with Enter/Space: the label of the element that currently has focus, from the tree.',
-      },
-      scrollAmount: {
-        type: 'number',
-        description: 'For scroll: positive scrolls down, negative up. Default 3.',
-      },
-      reason: {
-        type: 'string',
-        description: 'One short Bangla line on WHY — shown to him on the approval card.',
-      },
-      conversationId: {
-        type: 'string',
-        description: 'Server-managed conversation id — omit; the server fills it automatically.',
-      },
-    },
-    required: ['action', 'app'],
-  },
-  handler: async (input) => {
+/**
+ * Shared engine for both tools. The tool split exists for the OWNER-TURN gate:
+ * `look_mac_app` is classified `read` so "শুধু দেখো, কিছু কোরো না" turns keep
+ * their eyes, while `drive_mac_app` is `stage` and is stripped there — the one
+ * phrasing that must always work is the safest one. `allowed` is defence in
+ * depth on top of each schema's enum.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<string>) {
+  {
     const short = String(input.action ?? '').trim()
     const action = short.startsWith('ui_') ? short : `ui_${short}`
+    if (!allowed.has(action)) {
+      return { success: false, error: `এই টুল দিয়ে ${short} হয় না।`, data: { refused: true, code: 'wrong_tool' } }
+    }
     const appRaw = String(input.app ?? '').trim()
     if (!appRaw) return { success: false, error: 'app is required' }
     const bundleId = resolveBundleId(appRaw)
@@ -270,7 +229,78 @@ const drive_mac_app: AgentTool = {
         output: capTree(outcome.stdout ?? ''),
       },
     }
+  }
+}
+
+/** Shared schema fragments. */
+const APP_PARAM = {
+  type: 'string',
+  description: 'Which app: "claude" or "chatgpt" (or an exact bundle id). Required.',
+} as const
+
+const look_mac_app: AgentTool = {
+  name: 'look_mac_app',
+  description:
+    "LOOK inside the OWNER'S OWN Mac desktop apps — ONLY the Claude app and the ChatGPT app. Read-only, runs " +
+    'immediately, changes nothing: "tree" reads the window\'s accessibility tree (element labels + the visible ' +
+    'conversation text), "screenshot" captures the app window, "scroll" scrolls to see more. ' +
+    'Use this whenever he asks WHAT an app shows ("ChatGPT app-e ki ache dekho") — and ALWAYS before drive_mac_app, ' +
+    'because clicking/typing needs the exact element labels this returns. ' +
+    'Owner-facing: report in Bangla what you saw.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', enum: ['tree', 'screenshot', 'scroll'], description: 'How to look.' },
+      app: APP_PARAM,
+      scrollAmount: { type: 'number', description: 'For scroll: positive scrolls down, negative up. Default 3.' },
+    },
+    required: ['action', 'app'],
   },
+  handler: (input) => handleUiAction(input, new Set(['ui_tree', 'ui_screenshot', 'ui_scroll'])),
+}
+
+const drive_mac_app: AgentTool = {
+  name: 'drive_mac_app',
+  description:
+    "ACT inside the OWNER'S OWN Mac desktop apps — ONLY the Claude app and the ChatGPT app, nothing else. " +
+    'FIRST look with look_mac_app (action="tree") — it gives the real element labels this tool requires. ' +
+    'Actions: "click" (needs elementLabel from the tree), "type" (needs elementLabel + the literal text), "key" ' +
+    '(a combo like "enter"; Enter/Space also need focusedLabel — the label of the element that has focus, from the tree). ' +
+    'Every action automatically becomes an approval card on his phone showing the app, the element and the exact ' +
+    'text — call the tool directly and tell him a card is waiting, do not ask separately first. ' +
+    'Refused by policy, not approvable: any other app, destructive/payment/permission buttons, typing secrets, ' +
+    'typing while he is at the keyboard (comes back as owner_active — wait and retry). ' +
+    'After an approval, fetch the outcome with check_mac_command using the returned id. ' +
+    'Workflow for "ChatGPT-e eta jigges koro": look tree → type into the composer → key enter → look tree again to read the reply. ' +
+    'Owner-facing: report in Bangla what you did.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', enum: ['click', 'type', 'key'], description: 'What to do in the app.' },
+      app: APP_PARAM,
+      elementLabel: {
+        type: 'string',
+        description:
+          'For click/type: the label of the target element EXACTLY as the tree reported it. Required — actions without a named element are refused.',
+      },
+      text: { type: 'string', description: 'For type: the literal text to type, verbatim.' },
+      key: { type: 'string', description: 'For key: the combo, e.g. "enter" or "cmd+a".' },
+      focusedLabel: {
+        type: 'string',
+        description: 'For key with Enter/Space: the label of the element that currently has focus, from the tree.',
+      },
+      reason: {
+        type: 'string',
+        description: 'One short Bangla line on WHY — shown to him on the approval card.',
+      },
+      conversationId: {
+        type: 'string',
+        description: 'Server-managed conversation id — omit; the server fills it automatically.',
+      },
+    },
+    required: ['action', 'app'],
+  },
+  handler: (input) => handleUiAction(input, new Set(['ui_click', 'ui_type', 'ui_key'])),
 }
 
 const list_mac_apps: AgentTool = {
@@ -290,4 +320,4 @@ const list_mac_apps: AgentTool = {
   },
 }
 
-export const MAC_UI_TOOLS: AgentTool[] = [drive_mac_app, list_mac_apps]
+export const MAC_UI_TOOLS: AgentTool[] = [look_mac_app, drive_mac_app, list_mac_apps]

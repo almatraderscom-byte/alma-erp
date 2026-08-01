@@ -371,7 +371,7 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'start_cli_session', 'send_to_cli_session', 'read_cli_session',
   'stop_cli_session', 'list_cli_sessions',
   // L8 — driving his desktop apps (Claude/ChatGPT) through the AX tree.
-  'drive_mac_app', 'list_mac_apps',
+  'look_mac_app', 'drive_mac_app', 'list_mac_apps',
 ])
 
 /** Diet filter — identity when the kill switch is off. */
