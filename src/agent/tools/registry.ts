@@ -29,6 +29,7 @@ import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { CS_AUTONOMY_TOOLS } from './cs-autonomy-tools'
 import { ORDER_AUTONOMY_TOOLS } from './order-autonomy-tools'
 import { MAC_TOOLS } from './mac-tools'
+import { MAC_UI_TOOLS } from './mac-ui-tools'
 import { CLI_SESSION_TOOLS } from './cli-session-tools'
 import { FINANCE_AUTONOMY_TOOLS } from './finance-autonomy-tools'
 import { COST_TOOLS } from './cost-tools'
@@ -511,6 +512,8 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...MAC_TOOLS,
   // M2 — Claude/Codex sessions driven on that same Mac.
   ...CLI_SESSION_TOOLS,
+  // L8 (W4) — driving the allowlisted desktop apps (Claude, ChatGPT) on that Mac.
+  ...MAC_UI_TOOLS,
   ...SKILL_PACK_TOOLS,
   ...SEO_AUDIT_TOOLS,
   ...ARTIFACT_TOOLS,

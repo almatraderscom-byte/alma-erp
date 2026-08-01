@@ -62,6 +62,9 @@ const NON_TOOL_ALLOWLIST = new Set([
   'not_logged_in',
   // mac_desk_control action values.
   'keep_awake', 'allow_sleep', 'power_status',
+  // drive_mac_app policy code the head must recognise as "defer and retry",
+  // not a failure (L8 W4).
+  'owner_active',
   // The three browser kill-switches the prompt must name apart, because "live
   // browser" in Bangla means two different machines and the head has to pick one.
   'live_browser_enabled', 'browser_live_view_enabled', 'browser_agent_enabled',
