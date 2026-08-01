@@ -162,6 +162,15 @@ describe('UI policy — RED (never approvable)', () => {
     }
   })
 
+  it('treats Enter as an activation under ANY modifier set — modifiers do not skip the focus rules', () => {
+    for (const key of ['shift+enter', 'cmd+shift+enter', 'opt+return', 'ctrl+shift+space', 'fn+enter']) {
+      expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key }).code).toBe('focus_required')
+      expect(
+        classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key, focusedLabel: 'Delete' }).code,
+      ).toBe('destructive_label')
+    }
+  })
+
   it('refuses Enter on a focused destructive/payment control — the ui_click rules apply to keys too', () => {
     expect(
       classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'enter', focusedLabel: 'Delete' }).code,

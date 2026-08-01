@@ -71,8 +71,10 @@ const RED_LABEL_RULES = [
 /** Fields whose CONTENT is a secret whatever the text looks like. */
 const SECRET_FIELD_LABEL = /\b(password|passphrase|passcode|secret|api[\s-]?key|token|otp|one[\s-]?time code|pin)\b/i
 
-/** Keys that ACTIVATE whatever has focus — they inherit the label rules. */
-const ACTIVATION_KEYS = /^(enter|return|space|cmd\+enter|cmd\+return|ctrl\+enter|ctrl\+return)$/i
+/** Keys that ACTIVATE whatever has focus — they inherit the label rules.
+ * Matched by the FINAL key under ANY modifier set: Electron apps can activate
+ * the focused control on Enter even with modifiers held (Codex round 5). */
+const ACTIVATION_KEYS = /^(?:(?:cmd|ctrl|opt|option|alt|shift|fn)\+)*(enter|return|space)$/i
 
 /** How recently the owner must have used the machine for driving to be unsafe. */
 export const OWNER_ACTIVE_WINDOW_SECONDS = 25
