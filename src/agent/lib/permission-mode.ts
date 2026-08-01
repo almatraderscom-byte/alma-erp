@@ -121,8 +121,31 @@ export type ModeVerdict = 'auto' | 'card' | 'blocked' | 'owner_only'
 export interface ElevationGrant {
   /** Task-family ids from autonomy-task-catalog, e.g. 'public-publish'. */
   families: readonly string[]
-  /** ISO timestamp. A grant without an expiry is not a grant. */
+  /** ISO timestamp — the LATEST cutoff across families (back-compat + display). */
   expiresAt: string
+  /**
+   * Per-family cutoff. Two grants approved at different times must keep their
+   * own windows: a 15-minute staff grant must not inherit a 4-hour customer one
+   * because they overlapped (review bot, #667). Absent → `expiresAt` applies to
+   * every family, which is what older rows look like.
+   */
+  windows?: Readonly<Record<string, string>>
+}
+
+/** When does THIS family's permission end? Falls back to the grant-wide cutoff. */
+export function familyExpiry(grant: ElevationGrant, family: string): string {
+  return grant.windows?.[family] ?? grant.expiresAt
+}
+
+/** Is the grant live FOR THIS FAMILY specifically? */
+export function isFamilyGrantLive(
+  grant: ElevationGrant | null | undefined,
+  family: string,
+  now: number,
+): boolean {
+  if (!grant || !grant.families.includes(family)) return false
+  const t = Date.parse(familyExpiry(grant, family))
+  return Number.isFinite(t) && t > now
 }
 
 /**
@@ -138,6 +161,38 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
     ? obj.families.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
     : []
   if (families.length === 0) return null
+  const rawWindows = (obj as { windows?: unknown }).windows
+  // Presence is read from the RAW field, never from what survived parsing — a
+  // windows object whose every entry is corrupt would otherwise look like a
+  // legacy no-windows grant and authorise every family to the latest cutoff
+  // (review bot, #667).
+  const windowsPresent = 'windows' in (obj as object) && rawWindows !== undefined
+  const hasWindows = !!rawWindows && typeof rawWindows === 'object' && !Array.isArray(rawWindows)
+  // Present but not a map — `windows: "bad"`, `null`, an array. Absent means a
+  // legacy grant; present-and-unreadable means a grant we cannot trust, and
+  // trusting it would hand every family the grant-wide (latest) cutoff.
+  if (windowsPresent && !hasWindows) return null
+  const windows: Record<string, string> = {}
+  if (hasWindows) {
+    for (const [family, at] of Object.entries(rawWindows as Record<string, unknown>)) {
+      // A window may never outlast the grant-wide cutoff: `expiresAt` is
+      // documented as the LATEST of them, so a corrupt row must not use a
+      // per-family entry to reach past it (review bot, #667).
+      if (typeof at === 'string' && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(expiresAt)) {
+        windows[family] = at
+      }
+    }
+  }
+  // A grant that carries per-family windows must carry one for EVERY family it
+  // names. Dropping a malformed entry while keeping the family would silently
+  // hand it the grant-wide cutoff — the LATEST of all windows — so a corrupted
+  // 15-minute staff window would inherit a 4-hour customer one (review bot,
+  // #667). A family whose own window cannot be read is not granted.
+  if (hasWindows) {
+    const covered = families.filter((f) => typeof windows[f] === 'string')
+    if (covered.length === 0) return null
+    return { families: covered, expiresAt, windows }
+  }
   return { families, expiresAt }
 }
 
@@ -168,6 +223,22 @@ export function modeVerdict(input: ModeVerdictInput): ModeVerdict {
   // Rule 2 — no mode, grant or rule may touch this.
   if (tier === 'R4') return 'owner_only'
 
+  // A LIVE, FAMILY-SCOPED grant lifts the card for the families it names —
+  // whatever mode sits underneath — and touches nothing else.
+  //
+  // It used to be reachable only by switching the whole conversation to
+  // `elevated`, which is a different and much larger promise: from Careful,
+  // that one switch also stopped asking about every unrelated R1/R2 write (the
+  // review bot's P1 on #667). A grant for staff-messaging must mean
+  // staff-messaging, so it is read here instead of replacing the mode.
+  //
+  // Plan is the exception: in Plan nothing changes at all, by design. A grant
+  // does not un-plan a plan.
+  if (mode !== 'plan' && input.taskClass
+    && isFamilyGrantLive(input.grant, input.taskClass, input.now ?? 0)) {
+    return 'auto'
+  }
+
   switch (mode) {
     case 'plan':
       // Reading is how a plan gets written. Everything else is not merely
@@ -187,10 +258,9 @@ export function modeVerdict(input: ModeVerdictInput): ModeVerdict {
       return tier === 'R3' ? 'card' : 'auto'
 
     case 'elevated': {
-      if (tier !== 'R3') return 'auto'
-      const live = isElevationGrantLive(input.grant, input.now ?? 0)
-      const named = Boolean(input.taskClass && input.grant?.families.includes(input.taskClass))
-      return live && named ? 'auto' : 'card'
+      // The named families were already handled above. Everything else in this
+      // mode behaves like standard — an R3 action still gets a card.
+      return tier === 'R3' ? 'card' : 'auto'
     }
   }
 }
@@ -352,9 +422,28 @@ export function permissionModeNote(mode: PermissionMode, grant?: ElevationGrant 
     INTERNAL_MARKER,
     `[অনুমতি মোড — সার্ভার থেকে পড়া] এখন **${meta.label}** মোড। ${MODE_RULE_LINE[mode]}`,
   ]
-  if (mode === 'elevated' && grant) {
-    lines.push(`চালু আছে: ${grant.families.join(', ')} — মেয়াদ ${grant.expiresAt} পর্যন্ত।`)
+  // A grant is family-scoped and sits on top of ANY mode now, so it is reported
+  // whenever it is live — not only in `elevated`.
+  // Only families that are STILL live. The row outlives the permission, and a
+  // banner that keeps naming an expired family tells the head to work card-free
+  // while every execution check correctly refuses (review bot, #667).
+  const liveFamilies = grant
+    ? grant.families.filter((f) => isFamilyGrantLive(grant, f, Date.now()))
+    : []
+  if (grant && liveFamilies.length > 0) {
+    // Per-family cutoffs, because they can differ — reporting the grant-wide one
+    // would tell the head a 15-minute permission runs for four hours.
+    const spelled = liveFamilies.map((f) => `${f} (${familyExpiry(grant, f)} পর্যন্ত)`).join(', ')
+    lines.push(`সময়-বাঁধা অনুমতি চালু: ${spelled} — এগুলো ওই সময় পর্যন্ত কার্ড ছাড়াই করো।`)
   }
+  // The one instruction that kept getting lost in the big prompt: three live
+  // runs ended with the head NAMING the permission it needed and stopping there.
+  // The banner is in context every single turn, so it says it here.
+  lines.push(
+    'Boss যদি সময় বেঁধে বলেন "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" (১৫ মিনিট, আজ বিকেল পর্যন্ত…) — '
+    + 'তখনই **request_standing_permission চালাও**। "অনুমতি দরকার" লিখে থেমে যাওয়া = কাজটাই না করা; কার্ডটাই তোমার কাজ। '
+    + 'আর Boss থামতে বললে ("বাতিল করো", "আবার জিজ্ঞেস কোরো") — সাথে সাথে **revoke_standing_permission**, কার্ড ছাড়াই।',
+  )
   lines.push(
     'Boss এমন কিছু চাইলে যা এই মোডে করা যায় না — গোলমেলে উত্তর দিও না। '
     + 'সোজা বলো কোন মোডে আছো, কেন করা যাচ্ছে না, আর কোন মোডে দিলে করে দেবে। '

@@ -146,6 +146,11 @@ const OWNER_SERVICE_TOOLS = new Set([
   'resolve_open_task',
   'live_browser_pair',
   'set_live_browser',
+  // Taking a permission AWAY is always safe, and the phrases Boss uses to do it
+  // ("আর নিজে কোরো না", "আবার জিজ্ঞেস কোরো") read as information_only to the
+  // gate — so without this the stop request was refused and the grant kept
+  // running (review bot, #667).
+  'revoke_standing_permission',
 ])
 
 /**

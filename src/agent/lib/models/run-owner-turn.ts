@@ -76,7 +76,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { adviseForAction, filterToolsForPermissionMode, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
@@ -411,7 +411,7 @@ async function* runAlternateProviderTurn(
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
   // event records it, but nothing is withheld or blocked until PM-2.
   const permissionMode = normalizePermissionMode(options.permissionMode)
-  const elevationGrant = options.elevationGrant ?? null
+  let elevationGrant = options.elevationGrant ?? null
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -2684,7 +2684,11 @@ async function* runAlternateProviderTurn(
           mode: permissionMode,
           tier: permissionTier.tier,
           taskClass: permissionTier.taskClass,
-          grant: elevationGrant,
+          // Only an EXPLICIT tool→family mapping may be lifted by a grant. A
+          // fallback class is a risk floor, so passing the grant here would let a
+          // reminders grant clear the Careful-mode card for an unmapped write
+          // like delete_memory (review bot, #667).
+          grant: permissionTier.explicit ? elevationGrant : null,
           now: Date.now(),
         })
         if (permissionVerdict === 'blocked') {
@@ -2716,10 +2720,33 @@ async function* runAlternateProviderTurn(
         // as a card instead. Stage-mode tools already make their own card, and
         // R3/R4 are handled by the ladder above — this only covers the everyday
         // writes that Standard lets through silently.
+        // The verdict above used the TURN's snapshot of the grant. If the row no
+        // longer confirms it — Boss revoked from another request mid-turn — the
+        // `auto` it produced is stale, and Careful must go back to staging a card
+        // instead of letting the registry refuse the call (review bot, #667).
+        const verdictAfterConfirmation = permissionVerdict === 'auto'
+          && permissionTier.explicit
+          && elevationGrant
+          && permissionMode !== 'plan'
+          && !(await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass))
+          ? modeVerdict({
+              mode: permissionMode,
+              tier: permissionTier.tier,
+              taskClass: permissionTier.taskClass,
+              grant: null,
+              now: Date.now(),
+            })
+          : permissionVerdict
         const carefulNeedsCard =
-          permissionVerdict === 'card'
+          verdictAfterConfirmation === 'card'
+          // Cancelling a permission is never staged — that would trap Boss inside
+          // the grant he just asked to end (the registry exempts it too).
+          && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
-          && (permissionTier.tier === 'R1' || permissionTier.tier === 'R2')
+          // Any tier whose verdict is `card` gets one. Gating on R1/R2 sent an
+          // explicitly mapped R3 write (`set_staff_task_due`) to the registry's
+          // flat refusal instead of a card (review bot, #667).
           && getCapability(call.name)?.mode === 'write'
           && conversationId
         const ownerIntentViolation = personalMode
@@ -2732,7 +2759,27 @@ async function* runAlternateProviderTurn(
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.
-        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
+        // B6 — a LIVE, family-scoped grant is the owner's own standing yes for
+        // this exact family, so the enforcement layer must not stage a card he
+        // has already signed. Without this the grant changed the verdict and
+        // nothing else: the card still appeared, and the promise on the grant
+        // card ("this runs without a card for 15 minutes") was false.
+        // Everything the grant does NOT name still goes through the guard, and
+        // R4 is never granted in the first place.
+        // EXPLICIT mapping only. A fallback task class is a risk floor, not a
+        // statement of what the tool does: `camera_speak` falls back to
+        // `internal-reminders`, so a reminders grant would otherwise have let it
+        // speak over the office camera with no card (review bot, #667).
+        const grantCoversThisCall =
+          permissionVerdict === 'auto'
+          && permissionTier.explicit
+          && isFamilyGrantLive(elevationGrant, permissionTier.taskClass, Date.now())
+          // …and still true in the DATABASE. A turn runs for a while; Boss can
+          // revoke from the app or another chat meanwhile, and the in-memory
+          // snapshot would keep authorising work he already cancelled.
+          && await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass)
+        const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -2789,7 +2836,7 @@ async function* runAlternateProviderTurn(
               klass: 'unknown',
             })
           : personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,
@@ -2798,6 +2845,9 @@ async function* runAlternateProviderTurn(
             // PM-1: recorded on every tool event so "why did this run / why did
             // this ask" has an answer later. Not enforced until PM-2.
             permissionMode,
+            // The registry recomputes the verdict; without the grant it would
+            // block a Careful-mode call the grant had just authorised.
+            elevationGrant,
             turnAuthorization,
             driveClientSeoBatch,
             ownerVoicePref,
@@ -2807,6 +2857,16 @@ async function* runAlternateProviderTurn(
             // ladder and the money cap apply to work Boss is not watching.
             ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
           })
+        // A revoked grant must stop covering calls immediately — the row is
+        // cleared, but this turn holds the grant in memory and would keep
+        // bypassing for every later call in the same turn.
+        if (call.name === 'revoke_standing_permission' && result.success) {
+          const cleared = (result.data as { cleared?: string[]; remaining?: string[] } | undefined)
+          const remaining = cleared?.remaining ?? []
+          elevationGrant = remaining.length && elevationGrant
+            ? { ...elevationGrant, families: remaining }
+            : null
+        }
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
@@ -3955,6 +4015,32 @@ export async function* runOwnerTurn(
 
   if (disabledSwitchNote) {
     yield { type: 'text_delta', delta: disabledSwitchNote }
+  }
+
+  // The chat route reads the mode and the grant off the conversation row and
+  // passes them in. Every OTHER entry point — the plan driver, the approval
+  // continuation — calls this with a conversation id and nothing else, so a turn
+  // Boss had already granted arrived with `elevationGrant: null` and was staged
+  // or blocked anyway (review bot, #667). The row is the source of truth, so
+  // read it here when the caller did not supply it.
+  if (options.elevationGrant === undefined || options.permissionMode === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const conv = await (prisma as any).agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { permissionMode: true, elevationGrant: true },
+      })
+      const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+      options = {
+        ...options,
+        permissionMode: options.permissionMode ?? conv?.permissionMode ?? undefined,
+        elevationGrant: options.elevationGrant ?? parseElevationGrant(conv?.elevationGrant),
+      }
+    } catch (err) {
+      // A read failure must not widen anything: no grant is the safe answer, and
+      // the mode falls back to the caller's default exactly as before.
+      console.warn('[run-owner-turn] permission row read failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Phase 6 — ONE turn engine: Anthropic heads run through the SAME neutral

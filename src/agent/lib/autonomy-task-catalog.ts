@@ -19,7 +19,7 @@
  *
  * Read-only inventory: this file performs no actions and holds no secrets.
  */
-import { CAPABILITIES, type Capability } from '@/agent/tools/capability-manifest'
+import { CAPABILITIES, getCapability, type Capability } from '@/agent/tools/capability-manifest'
 
 // ── Risk ladder (roadmap 3 table, enforced later by the Phase 52 guard) ──────
 
@@ -351,11 +351,78 @@ export function deriveTier(cap: Pick<Capability, 'mode' | 'risk' | 'domain'>): R
 // representativeTools resolve back to that family, and that an unknown WRITE
 // tool falls back to a conservative class (never a lax one).
 
+/**
+ * Tools a family covers BEYOND its three or four representative examples.
+ *
+ * `representativeTools` was written to illustrate a family, not to enumerate it,
+ * and B6 turned that list into a permission boundary: a standing grant is honoured
+ * only for an EXPLICITLY mapped tool (a fallback class is a risk floor, not a
+ * family). A `customer-messaging` grant that covered `send_whatsapp` but not
+ * `send_customer_email` would be a grant Boss thinks he gave and did not
+ * (review bot, #667).
+ *
+ * Only families that can actually be granted need this — R4 is never grantable.
+ */
+const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
+  // Every name below is a REGISTERED tool — the test in
+  // __tests__/autonomy-task-catalog.test.ts fails the build on any that is not.
+  // An invented name is worse than a missing one: it reads like coverage and
+  // grants nothing (review bot, #667).
+  'staff-messaging': [
+    'add_staff_task_now', 'prepare_staff_task_proposal', 'propose_staff_tasks',
+    'merge_into_proposal', 'approve_pending_staff_message',
+    'correct_and_redispatch_staff_tasks', 'send_dispatch_correction_notice',
+    'set_staff_task_due', 'update_staff_task_status', 'explain_staff_task_bangla',
+    // `update_staff_task_profile` is NOT here: it rewrites the persistent
+    // staff_task_profiles setting — skills and daily targets that outlive the
+    // grant and shape every future proposal. That is staff policy, not the
+    // dispatch/correction/announcement the card names (review bot, #667).
+  ],
+  // `call_staff` is deliberately absent from staff-messaging: a phone call is the
+  // phone-calls family below, and a messaging grant must not start ringing people.
+  'phone-calls': [
+    'call_staff', 'place_business_call', 'schedule_call', 'cancel_scheduled_call',
+    'call_boss_with_report', 'call_me_in_app',
+  ],
+  // customer-messaging: `send_product_image` only reads a catalog URL, so the
+  // three representative send tools are the whole family.
+  'customer-messaging': [],
+  'public-publish': [
+    'unpublish_product', 'set_product_featured', 'edit_storefront_product',
+    'change_product_slug', 'update_product_web', 'submit_to_indexnow',
+    'draft_gbp_reply',
+  ],
+  'ads-budget': [
+    'duplicate_campaign', 'create_retargeting_audience', 'create_lookalike_audience',
+  ],
+  // scheduled-content and internal-reminders: the registry has no write beyond
+  // the three representative tools each already names, so there is nothing to add.
+  'scheduled-content': [],
+  // Todos live in `memory-notes` (its representative tool is add_owner_todo);
+  // reminders are the alarm family. Mapping todo writes to reminders made a
+  // reminders grant cover todos and a memory-notes grant miss them.
+  'internal-reminders': [],
+  'memory-notes': [
+    'update_owner_todo', 'manage_work_todos', 'update_memory', 'resolve_open_task',
+    'delete_memory', 'graph_remember',
+  ],
+  'drafts-previews': ['draft_seo_fixes', 'draft_marketing_campaign', 'draft_gbp_post'],
+  'personal-records': [
+    'update_bill', 'delete_bill', 'mark_bill_paid', 'add_subscription',
+    'delete_important_date', 'update_appointment', 'update_medication',
+    'log_health', 'delete_document',
+  ],
+}
+
 /** Explicit tool → task-class overrides, seeded from the families' own lists. */
-const TOOL_TASK_CLASS: Record<string, string> = (() => {
+export const TOOL_TASK_CLASS: Record<string, string> = (() => {
   const m: Record<string, string> = {}
   for (const f of TASK_FAMILIES) {
     for (const t of f.representativeTools) m[t] = f.id
+  }
+  // Extras never override a representative mapping — they only fill the gaps.
+  for (const [family, tools] of Object.entries(FAMILY_EXTRA_TOOLS)) {
+    for (const t of tools) if (!m[t]) m[t] = family
   }
   return m
 })()
@@ -372,6 +439,32 @@ const TIER_DEFAULT_CLASS: Record<RiskTier, string> = {
 export interface ToolTaskClass {
   taskClass: string
   tier: RiskTier
+  /**
+   * True only when this tool is NAMED in the tool→family map. A fallback class
+   * is a risk floor, not a statement about what the tool does — and a standing
+   * grant must never be widened by one (review bot, #667: `camera_speak` falls
+   * back to `internal-reminders`, so a reminders grant would have let the agent
+   * speak over the office camera without a card).
+   */
+  explicit: boolean
+}
+
+/**
+ * Does a standing grant for this family actually change anything?
+ *
+ * A `stage`-mode tool builds its OWN approval card inside its handler; the guard
+ * lets it through only so that can happen. A grant cannot make it run card-free.
+ *
+ * The test runs over the family's REPRESENTATIVE tools — the work the card names
+ * when Boss reads it. `public-publish` passed on the strength of one mapped
+ * extra (`submit_to_indexnow`) while every publish tool it advertises still
+ * asked, which is a permission that reads like a promise and behaves like
+ * nothing (review bot, #667).
+ */
+export function familyGrantHasEffect(family: string): boolean {
+  const fam = TASK_FAMILIES.find((f) => f.id === family)
+  if (!fam) return false
+  return fam.representativeTools.some((tool) => getCapability(tool)?.mode === 'write')
 }
 
 /** Tier of a known task class (defaults to R3 — conservative — if unknown). */
@@ -390,14 +483,14 @@ export function taskClassForTool(
   cap?: Pick<Capability, 'mode' | 'risk' | 'domain'>,
 ): ToolTaskClass {
   const explicit = TOOL_TASK_CLASS[toolName]
-  if (explicit) return { taskClass: explicit, tier: tierForTaskClass(explicit) }
-  if (!cap) return { taskClass: 'public-publish', tier: 'R3' } // unknown + no cap = cautious
+  if (explicit) return { taskClass: explicit, tier: tierForTaskClass(explicit), explicit: true }
+  if (!cap) return { taskClass: 'public-publish', tier: 'R3', explicit: false } // unknown + no cap = cautious
   if (cap.mode === 'read') {
     const taskClass = cap.domain === 'research' ? 'research-public' : 'erp-reporting'
-    return { taskClass, tier: 'R0' }
+    return { taskClass, tier: 'R0', explicit: false }
   }
   const tier = deriveTier(cap)
-  return { taskClass: TIER_DEFAULT_CLASS[tier], tier }
+  return { taskClass: TIER_DEFAULT_CLASS[tier], tier, explicit: false }
 }
 
 /** Domains whose autonomy policy category is actually consulted at baseline. */

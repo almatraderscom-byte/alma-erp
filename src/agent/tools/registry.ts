@@ -448,6 +448,10 @@ export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
   ...APPOINTMENT_TOOLS,
   ...HEALTH_TOOLS,
   ...DOCUMENT_TOOLS,
+  // B6 — "আর জিজ্ঞেস কোরো না" happens in personal chats too, and the tools
+  // that answer it are an approval card and its cancel button; withholding
+  // them here left the personal head able only to describe the problem.
+  ...AUTONOMY_TOOLS.filter((t) => t.name === 'request_standing_permission' || t.name === 'revoke_standing_permission'),
 ]
 
 export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
@@ -488,6 +492,11 @@ export async function executePersonalTool(
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+    // The personal toolbox is not exempt from the mode. Without this, Plan let a
+    // routine personal write (`add_bill`) execute on the native loop — the one
+    // promise Plan makes is that nothing changes (review bot, #667).
+    permissionMode: serverContext.permissionMode as string | undefined,
+    elevationGrant: serverContext.elevationGrant as ToolRunContext['elevationGrant'],
   })
 }
 
@@ -685,6 +694,8 @@ interface ToolRunContext {
   turnId?: string
   /** PM-1 — the permission mode this call ran under. Recorded, not yet enforced. */
   permissionMode?: string
+  /** B6 — a live, family-scoped grant. Read alongside the mode, never instead. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
   driveClientSeoBatch?: boolean
@@ -792,13 +803,29 @@ export async function runRegisteredTool(
   //   • plan   → anything above a pure read is absent, not merely gated
   //   • careful→ an ordinary R1/R2 write belongs on a card, and only the head
   //              can stage one, so the worker must hand it back.
-  if (ctx.permissionMode) {
+  // Taking a permission AWAY is safe in every mode — gating it would trap Boss
+  // inside a grant he just asked to end (review bot, #667).
+  const MODE_EXEMPT_TOOLS = new Set(['revoke_standing_permission'])
+  if (ctx.permissionMode && !MODE_EXEMPT_TOOLS.has(tool.name)) {
     try {
       const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
       const mode = normalizePermissionMode(ctx.permissionMode)
       const task = taskClassForTool(tool.name, cap)
-      const verdict = modeVerdict({ mode, tier: task.tier, taskClass: task.taskClass, now: Date.now() })
+      // Only an EXPLICIT tool→family mapping may be lifted by a grant, and only
+      // one the ROW still confirms — a worker's snapshot can outlive a revoke.
+      let grantForVerdict = task.explicit ? ctx.elevationGrant ?? null : null
+      if (grantForVerdict) {
+        const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+        if (!(await confirmGrantStillCovers(ctx.conversationId, task.taskClass))) grantForVerdict = null
+      }
+      const verdict = modeVerdict({
+        mode,
+        tier: task.tier,
+        taskClass: task.taskClass,
+        grant: grantForVerdict,
+        now: Date.now(),
+      })
       const blockedByMode =
         verdict === 'blocked'
         || (verdict === 'card' && mode === 'careful' && cap.mode === 'write')
@@ -916,7 +943,29 @@ export async function runRegisteredTool(
   }
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
+    // Does the owner's standing grant name THIS call's family? Explicit mappings
+    // only — a fallback class is a risk floor, not a family.
+    let standingGrantCoversCall = false
+    if (ctx.elevationGrant) {
+      try {
+        const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+        const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+        const task = taskClassForTool(tool.name, cap)
+        standingGrantCoversCall =
+          task.explicit && isFamilyGrantLive(ctx.elevationGrant, task.taskClass, Date.now())
+        // A delegated worker holds the grant it was handed at the start and can
+        // run for a while; a revoke or mode change meanwhile must bite here, at
+        // the one door every tool call passes through.
+        if (standingGrantCoversCall) {
+          const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+          standingGrantCoversCall = await confirmGrantStillCovers(ctx.conversationId, task.taskClass)
+        }
+      } catch {
+        standingGrantCoversCall = false
+      }
+    }
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
+      standingGrantCoversCall,
       surface: ctx.surface,
       conversationId: ctx.conversationId,
       businessId: ctx.businessId,
@@ -993,6 +1042,7 @@ export async function runRegisteredTool(
       ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
       ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
       ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
+      ...(ctx.elevationGrant ? { elevationGrant: ctx.elevationGrant } : {}),
     }
 
     // Phase 53/65: route direct write effects through the exactly-once effect
@@ -1145,6 +1195,7 @@ export async function executeTool(
     businessId,
     turnId,
     permissionMode: typeof serverContext.permissionMode === 'string' ? serverContext.permissionMode : undefined,
+    elevationGrant: (serverContext.elevationGrant as ToolRunContext['elevationGrant']) ?? null,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
     instructionOrigin: serverContext.instructionOrigin as ToolRunContext['instructionOrigin'],

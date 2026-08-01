@@ -182,6 +182,32 @@ const FEATURED_EDIT =
 const PRODUCT_EDIT_ASK = (t: string): boolean =>
   PRICE_EDIT.test(t) || VISIBILITY_EDIT.test(t) || FEATURED_EDIT.test(t)
 
+/**
+ * "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" is not a job — it is a request about how
+ * jobs get approved, and only the HEAD can act on it (it stages the grant card;
+ * a delegated worker has neither the tool nor the standing).
+ *
+ * Live on 2026-08-01: *"porer 15 minute staff message gulo r amake jiggesh koro
+ * na, tumi nijei pathao"* pinned `alma-staff-dispatch`, which is
+ * `isolation: subagent` — so the turn became a worker holding staff READ tools,
+ * and the permission the sentence was actually asking for never got asked for.
+ * Twice, with an honest "I can't" both times.
+ *
+ * A veto rather than a skill: no procedure applies, and the head already has
+ * request_standing_permission on its core list.
+ */
+const PERMISSION_ASK =
+  /(?:(?:আর\s*)?(?:amake\s*|আমাকে\s*)?(?:জিজ্ঞেস|jiggesh|jigges|জিগ্গেস)\s*(?:কোরো|koro|করো)?\s*(?:না|\bna\b)|(?:জিজ্ঞেস|jiggesh)\s*(?:না|\bna\b)\s*(?:কর|kor)|(?:stop|don'?t|do\s*not)\s+ask(?:ing)?(?:\s+me)?|no\s+more\s+(?:approvals?|cards?|asking)|approval\s*(?:লাগবে\s*না|chai\s*na|ছাড়া)|কার্ড\s*ছাড়া|card\s*chara|without\s+(?:a\s+)?card|standing\s*permission|অনুমতি\s*দিলাম|permission\s*দিলাম)/i
+
+/** Words that mean the sentence is about a WINDOW of time, which a grant needs. */
+const TIME_WINDOW =
+  /(?:[\d০-৯]+\s*(?:মিনিট|minute|min|ঘণ্টা|ghonta|hour)|আজ(?:কের)?\s*(?:দিন|বিকেল|রাত)|পরের\s*[\d০-৯]+|next\s+\d+)/i
+
+/** True when the message is asking to be asked LESS, not asking for work. */
+export function isStandingPermissionAsk(text: string): boolean {
+  return PERMISSION_ASK.test(text) && TIME_WINDOW.test(text)
+}
+
 export interface RouterRule {
   id: string
   skill: string
@@ -237,6 +263,8 @@ export const RULES: RouterRule[] = [
 ]
 
 export function applyRules(text: string): RouterRule | null {
+  // The veto comes first: a permission request must reach the head, not a skill.
+  if (isStandingPermissionAsk(text)) return null
   return RULES.find((r) => r.test(text)) ?? null
 }
 
@@ -250,6 +278,19 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
 
   const eligible = eligibleSkills(index, ctx)
   const known = new Set(eligible.map((s) => s.name))
+
+  // Layer 1.5 — the veto. A request to be asked LESS is not a job for any skill;
+  // the head stages the grant card itself. Checked before the keyword layer too,
+  // or "staff message" in the sentence would still pull the staff skill in.
+  if (isStandingPermissionAsk(t)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'অনুমতির অনুরোধ — কোনো skill নয়, head নিজেই কার্ড বানাবে',
+      candidates: [],
+      needsModel: false,
+    }
+  }
 
   // Layer 2 — a rule wins outright, even over a strong keyword score.
   const rule = applyRules(t)

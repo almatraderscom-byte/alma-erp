@@ -89,11 +89,20 @@ export async function POST(
     return Response.json({ error: 'expired', message: 'অনুমোদনের সময় শেষ — ৩০ মিনিটের মধ্যে সিদ্ধান্ত নিতে হবে।' }, { status: 410 })
   }
 
-  await db.agentPendingAction.update({
-    where: { id: actionId },
+  // Claim CONDITIONALLY on the row still being pending. The status read above
+  // happened before this write, so an approve landing in between would already
+  // have executed — an unconditional update would then stamp `rejected` over it
+  // and report success while, for a permission card, the grant kept running
+  // (review bot, #667).
+  const rejected = await db.agentPendingAction.updateMany({
+    where: { id: actionId, status: 'pending' },
     // ownerDecided: rejection is always his — nothing in this system auto-rejects.
     data: { status: 'rejected', resolvedAt: new Date(), ownerDecided: true },
   })
+  if (rejected.count === 0) {
+    const now = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
+    return Response.json({ error: 'already_resolved', status: now?.status }, { status: 409 })
+  }
   const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
   await pushCurrentPulseLiveActivity()
 

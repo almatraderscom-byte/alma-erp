@@ -99,6 +99,17 @@ export const CORE_PACK = [
   // FULL registry and loads matched schemas for the rest of the turn, so the
   // whole registry stays ONE hop away from every routed turn. ~60 tokens.
   'find_tool',
+  // B6 — "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" arrives in the middle of ANY job,
+  // so the tool that answers it belongs in the pack every turn carries. Live on
+  // 2026-08-01 it was registered, allowed, on the head's diet list and named in
+  // the prompt — and still absent, because pack selection decides membership and
+  // the diet only filters. Three honest "I can't" replies before the mechanism
+  // was found. ~40 tokens.
+  'request_standing_permission',
+  // The way back (`revoke_standing_permission`) is NOT here: the core pack sits
+  // against the 24-tool ceiling, and revoking is rarer than asking. It stays on
+  // the head's core list, in ALWAYS_ALLOWED, and one find_tool hop from any
+  // routed turn.
 ] as const
 
 export const DOMAIN_PACKS = {
@@ -155,7 +166,11 @@ export const DOMAIN_PACKS = {
   // should reach for on its own.
   seo: [
     'audit_product_seo', 'draft_seo_fixes', 'run_website_seo_audit', 'check_website_seo_audit',
-    'track_keyword', 'list_tracked_keywords', 'untrack_keyword', 'submit_to_indexnow',
+    // `untrack_keyword` left the pack when the core gained
+    // request_standing_permission (2026-08-01): seo was at the 24-tool ceiling
+    // and something had to give. Removing a keyword from tracking is the
+    // rarest ask here and is one find_tool hop away.
+    'track_keyword', 'list_tracked_keywords', 'submit_to_indexnow',
     'get_search_console_performance', 'get_indexing_status', 'get_ga4_report',
     // The client_seo batch contract ENDS on complete_skill_pack_run; without it
     // in the pack the contract could never be satisfied, and the owner's final

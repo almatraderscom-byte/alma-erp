@@ -289,6 +289,18 @@ async function runApprove(
         toolContext: {
           ...((payload.parentToolContext as Record<string, unknown> | undefined) ?? {}),
           instructionOrigin: 'owner_direct',
+          // The grant is read NOW, not from the snapshot taken when the card was
+          // staged: Boss may have revoked it while this card waited.
+          elevationGrant: await (async () => {
+            if (!conversationId) return null
+            const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+            const conv = await db.agentConversation.findUnique({
+              where: { id: conversationId },
+              select: { elevationGrant: true },
+            })
+            const g = parseElevationGrant(conv?.elevationGrant)
+            return isElevationGrantLive(g, Date.now()) ? g : null
+          })(),
         },
       })
       const note = result.success
@@ -2544,6 +2556,230 @@ async function runApprove(
     return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {
       status: allGood ? 200 : 502,
     })
+  }
+
+  if (action.type === 'permission_grant') {
+    // B6 — the standing "just do it", and the only place a grant is ever born.
+    // The agent can ASK; only this route (reached by Boss pressing Approve) can
+    // write one, and it always carries an expiry.
+    const { families, minutes, expiresAt: cardExpiresAt } = payload as {
+      families?: string[]
+      minutes?: number
+      expiresAt?: string
+    }
+    const conversationId = resolveConversationId(action)
+    if (!conversationId) {
+      return Response.json({ error: 'no_conversation' }, { status: 400 })
+    }
+
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    // The card is claimed but the grant is not written yet. If anything between
+    // here and the commit throws — the serializable merge exhausting its retries,
+    // a database blip — the row would sit at `approved` with no grant behind it,
+    // and Boss's next tap would get `already_resolved`. His approval would be
+    // gone (review bot, #667). Put the card back so he can try again. The grant
+    // and the card's `executed` state commit together inside `runMerge`, so this
+    // can only ever undo a card whose grant was never written.
+    try {
+
+    const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+    const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
+    // Re-validate at approval time. The card was written minutes ago by a model;
+    // what actually grants power is checked here, against the catalog, again.
+    // A family whose every tool stages its own card is dropped too: granting it
+    // would promise card-free work and deliver the same cards (review bot, #667).
+    const safe = (families ?? []).filter((id) => {
+      const fam = known.get(id)
+      return Boolean(fam) && fam!.tier !== 'R4' && familyGrantHasEffect(id)
+    })
+    const mins = Math.min(Math.max(Math.round(Number(minutes ?? 0)), 1), 240)
+
+    if (!safe.length) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'no_grantable_family' } },
+      })
+      return Response.json({ error: 'no_grantable_family' }, { status: 400 })
+    }
+
+    // The cutoff the card SHOWED is the cutoff that binds. Recomputing from
+    // approval time would quietly hand out a longer window than Boss read.
+    const cardCutoff = cardExpiresAt ? Date.parse(cardExpiresAt) : NaN
+    const expiresMs = Number.isFinite(cardCutoff)
+      ? cardCutoff
+      : Date.now() + mins * 60_000
+    if (expiresMs <= Date.now()) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_window_passed' } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        '⌛ অনুমতির সময়টা পেরিয়ে গেছে — কিছু চালু করিনি। দরকার হলে আবার চাইব।',
+      )
+      return Response.json({ error: 'grant_window_passed' }, { status: 409 })
+    }
+
+    // A second grant must not silently revoke a live one. Union the families,
+    // keep the later end — and say so, because a quietly widened permission is
+    // the thing this whole feature exists to avoid.
+    const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+    // Two cards approved at once would both read the old grant and the second
+    // write would erase the first. Read-modify-write in one transaction.
+    const { familyExpiry, isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+    // READ AND WRITE in ONE transaction. Two cards approved at the same moment
+    // would otherwise both read the old grant and the loser's families would
+    // vanish. Per-family windows: each family keeps the window Boss approved.
+    // Serializable aborts the loser of a concurrent merge (Prisma P2034). That is
+    // the right outcome for the DATA and the wrong one for Boss: his card was
+    // already claimed, so a failure here would lose the approval he just gave.
+    // Retry the transaction a few times before giving up.
+    const runMerge = async () => db.$transaction(async (tx: typeof db) => {
+      const conv = await tx.agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { elevationGrant: true, permissionMode: true },
+      })
+      // Plan mode refuses every grant at use time (`modeVerdict`). Writing one
+      // here would leave a row that reports itself active and authorises nothing
+      // — a confirmation Boss cannot trust (review bot, #667). The mode is read
+      // inside the transaction so a switch to Plan mid-approval still catches it.
+      if (conv?.permissionMode === 'plan') throw new Error('grant_mode_plan')
+      // A family that already runs card-free in the CURRENT mode gains nothing
+      // from a grant, and the mode may have changed since the card was written.
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const modeNow = normalizePermissionMode(conv?.permissionMode ?? undefined)
+      const effective = safe.filter((id) => modeVerdict({
+        mode: modeNow,
+        tier: known.get(id)!.tier,
+        taskClass: id,
+        grant: null,
+        now: Date.now(),
+      }) === 'card')
+      if (!effective.length) throw new Error('grant_no_op_in_mode')
+      const existing = parseElevationGrant(conv?.elevationGrant)
+      const live = isElevationGrantLive(existing, Date.now()) ? existing : null
+
+      const windows: Record<string, string> = {}
+      // Carry forward only families that are STILL live. A grant-wide cutoff can
+      // be the latest of several windows, so copying every family would give an
+      // already-expired one a fresh lease (review bot, #667).
+      if (live) {
+        for (const fam of live.families) {
+          if (isFamilyGrantLive(live, fam, Date.now())) windows[fam] = familyExpiry(live, fam)
+        }
+      }
+      const thisCutoff = new Date(expiresMs).toISOString()
+      for (const fam of effective) {
+        const prev = windows[fam] ? Date.parse(windows[fam]) : 0
+        if (expiresMs > prev) windows[fam] = thisCutoff
+      }
+      const families = Object.keys(windows)
+      const expiresAt = new Date(Math.max(...families.map((f) => Date.parse(windows[f])))).toISOString()
+
+      await tx.agentConversation.update({
+        where: { id: conversationId },
+        // The MODE is deliberately left alone: a family-scoped grant is read on
+        // top of whatever mode Boss chose, never instead of it.
+        data: { elevationGrant: { families, expiresAt, windows } },
+      })
+      // Settle the CARD in the same transaction. Committing the grant first and
+      // the card second left a window where the permission was live while the
+      // card looked pending — Boss could then "reject" a grant that was already
+      // running, and reject only marks the card (review bot, #667).
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: 'executed',
+          resolvedAt: new Date(),
+          result: { families, minutes: mins, expiresAt, windows, carriedOver: live?.families ?? [] },
+        },
+      })
+      return { carried: live, families, expiresAt, windows }
+    }, {
+      // Read-committed lets two concurrent approvals read the same old grant and
+      // write disjoint snapshots, dropping whichever loses the race.
+      isolationLevel: 'Serializable',
+    })
+
+    let merged: Awaited<ReturnType<typeof runMerge>> | null = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        merged = await runMerge()
+        break
+      } catch (err) {
+        if ((err as Error)?.message === 'grant_no_op_in_mode') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_no_op_in_mode' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '✅ এখনকার মোডে এই কাজগুলো এমনিতেই কার্ড ছাড়া চলে — আলাদা অনুমতির দরকার নেই, তাই কিছু চালু করিনি।',
+          ).catch(() => {})
+          return Response.json({ error: 'grant_no_op_in_mode' }, { status: 409 })
+        }
+        if ((err as Error)?.message === 'grant_mode_plan') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_mode_plan' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '🧭 চ্যাটটা এখন Plan মোডে — Plan মোডে কোনো অনুমতি কাজ করে না, তাই কিছু চালু করিনি। মোড বদলে আবার বললে চাইব।',
+          )
+          return Response.json({ error: 'grant_mode_plan' }, { status: 409 })
+        }
+        const code = (err as { code?: string }).code
+        if (code !== 'P2034' || attempt === 3) throw err
+        await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+      }
+    }
+    if (!merged) throw new Error('grant_merge_failed')
+    const carried = merged.carried
+    const families_ = merged.families
+    const expiresAt = merged.expiresAt
+    const windows = merged.windows
+
+    const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
+    })
+    const labels = (families_ as string[])
+      .map((id: string) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
+      .join(', ')
+    const until = fmt(expiresAt)
+    // The grant is COMMITTED by now, so a failed chat note must not turn into a
+    // failed approval: the card cannot be handed back, and Boss would be told it
+    // failed while the permission runs (review bot, #667). Log and carry on.
+    await appendConversationNote(
+      db,
+      action,
+      `🔓 অনুমতি চালু — ${labels}।\n`
+      + (carried ? `(আগের চালু অনুমতিটাও রাখা হয়েছে — দুটো একসাথে চলবে।)\n` : '')
+      + `মেয়াদ শেষে নিজে থেকেই বন্ধ, মোড যা ছিল তাই আছে। এখনই বন্ধ করতে চাইলে বলুন।\n`
+      + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,
+    ).catch((err: unknown) => {
+      console.warn('[approve] grant note failed:', err instanceof Error ? err.message : err)
+    })
+
+    return Response.json({ success: true, families: families_, minutes: mins, expiresAt })
+
+    } catch (err) {
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending' },
+      }).catch(() => {})
+      throw err
+    }
   }
 
   if (action.type === 'auto_fix') {

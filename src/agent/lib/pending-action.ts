@@ -32,6 +32,12 @@ const LIFECYCLE_BOUND_ACTION_TYPES = new Set<string>([
   // the exact image URLs, approving it writes those, and a newer batch supersedes
   // it. A clock has no business in it, and expiring it is what created the loop.
   'seo_fix_batch',
+  // A permission card carries its OWN absolute cutoff in the payload, and its
+  // text tells Boss that approving late simply leaves less time on the clock.
+  // The generic 30-minute TTL contradicted that for any grant longer than half
+  // an hour — a four-hour card refused at minute 31 (review bot, #667). The
+  // approve route checks `expiresAt` itself and fails with `grant_window_passed`.
+  'permission_grant',
 ])
 
 export function isLifecycleBoundAction(type?: string | null): boolean {

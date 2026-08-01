@@ -31,6 +31,8 @@ describe('delegatedToolContextFrom', () => {
       permissionMode: 'plan',
       turnAuthorization: READ_ONLY,
       instructionOrigin: 'owner_direct',
+      // B6 — a standing grant travels with the delegation too (null when none).
+      elevationGrant: null,
     })
   })
 
@@ -58,6 +60,7 @@ describe('delegatedToolContextFrom', () => {
       permissionMode: undefined,
       turnAuthorization: undefined,
       instructionOrigin: undefined,
+      elevationGrant: null,
     })
   })
 })
