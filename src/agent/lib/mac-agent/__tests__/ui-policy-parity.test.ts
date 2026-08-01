@@ -118,6 +118,10 @@ const CORPUS: Array<Record<string, unknown>> = [
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'command+option+shift+q' },
   { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'control+command+q' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: '  CMD + Q  ' },
+  // the shipping ChatGPT app's real bundle id
+  { action: 'ui_tree', bundleId: 'com.openai.codex' },
+  { ...AWAY, action: 'ui_click', bundleId: 'com.openai.codex', elementLabel: 'New chat' },
+  { ...AWAY, action: 'ui_type', bundleId: 'com.openai.codex', elementLabel: 'Do anything', text: 'hi' },
   // case-insensitivity must agree on both sides
   { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]

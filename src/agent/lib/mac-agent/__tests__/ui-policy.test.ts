@@ -264,6 +264,18 @@ describe('UI policy — RED (never approvable)', () => {
 })
 
 describe('UI policy — helpers', () => {
+  it('allows the real ChatGPT bundle id — the shipping app is com.openai.codex', () => {
+    expect(isAllowedApp('com.openai.codex')).toBe(true)
+    const v = classifyUiAction({
+      ...AWAY,
+      action: 'ui_click',
+      bundleId: 'com.openai.codex',
+      elementLabel: 'New chat',
+    })
+    expect(v.level).toBe('amber')
+    expect(v.reasonBn).toContain('ChatGPT')
+  })
+
   it('matches bundle ids case-insensitively but exactly', () => {
     expect(isAllowedApp('COM.OPENAI.CHAT')).toBe(true)
     expect(isAllowedApp('com.openai.chat.evil')).toBe(false)
