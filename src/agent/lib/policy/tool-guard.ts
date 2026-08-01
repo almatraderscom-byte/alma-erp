@@ -373,6 +373,12 @@ export async function guardToolCall(
       if (verdict === 'stage') {
         // A valid payload-bound approval satisfies the draft-stage demand.
         if (ctx.approvalEnvelope && !approvalPayloadChanged) return annotated
+        // So does a live, family-scoped standing grant: Boss approved this exact
+        // family in advance, with an expiry, on a card that named it — the same
+        // consent the ladder's draft stage is asking for. Without this the ladder
+        // would reject every granted call the moment it is enforced (review bot,
+        // #667), which would make the grant useless exactly where it matters.
+        if (ctx.standingGrantCoversCall) return annotated
         return { ...annotated, action: 'block', enforced: true, ladderEnforced: true, errorCode: 'guard_ladder_draft', error: BLOCK_MESSAGE.point_of_risk_approval }
       }
       return annotated

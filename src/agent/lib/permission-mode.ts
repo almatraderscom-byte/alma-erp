@@ -162,8 +162,13 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
     : []
   if (families.length === 0) return null
   const rawWindows = (obj as { windows?: unknown }).windows
+  // Presence is read from the RAW field, never from what survived parsing — a
+  // windows object whose every entry is corrupt would otherwise look like a
+  // legacy no-windows grant and authorise every family to the latest cutoff
+  // (review bot, #667).
+  const hasWindows = !!rawWindows && typeof rawWindows === 'object'
   const windows: Record<string, string> = {}
-  if (rawWindows && typeof rawWindows === 'object') {
+  if (hasWindows) {
     for (const [family, at] of Object.entries(rawWindows as Record<string, unknown>)) {
       if (typeof at === 'string' && Number.isFinite(Date.parse(at))) windows[family] = at
     }
@@ -173,7 +178,6 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
   // hand it the grant-wide cutoff — the LATEST of all windows — so a corrupted
   // 15-minute staff window would inherit a 4-hour customer one (review bot,
   // #667). A family whose own window cannot be read is not granted.
-  const hasWindows = Object.keys(windows).length > 0
   if (hasWindows) {
     const covered = families.filter((f) => typeof windows[f] === 'string')
     if (covered.length === 0) return null
