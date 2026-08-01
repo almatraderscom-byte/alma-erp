@@ -55,7 +55,7 @@ const RED_LABEL_RULES = [
   },
   { re: /\bdelete account\b|\bclose account\b|\bdeactivate\b/i, code: 'destructive_label', bn: 'অ্যাকাউন্ট মোছা/বন্ধ করার বোতাম — এজেন্ট চাপবে না।' },
   {
-    re: /\b(buy|purchase|pay|payment|checkout|subscribe|upgrade plan|add card|billing)\b/i,
+    re: /\b(buy|purchase|pay|payment|checkout|subscribe|upgrade|renew|add card|billing|invoice)\b/i,
     code: 'spends_money',
     bn: 'টাকা খরচের বোতাম — এজেন্ট চাপবে না, আপনি নিজে করবেন।',
   },
@@ -78,14 +78,14 @@ const ACTIVATION_KEYS = /^(enter|return|space|cmd\+enter|cmd\+return|ctrl\+enter
 export const OWNER_ACTIVE_WINDOW_SECONDS = 25
 
 const SECRET_TEXT_RULES = [
-  { re: /\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})/, code: 'secret_text', bn: 'API key/টোকেন টাইপ করা যাবে না।' },
+  { re: /\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})/, code: 'secret_text', bn: 'API key/টোকেন টাইপ করা যাবে না।' },
   { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, code: 'secret_text', bn: 'প্রাইভেট কী টাইপ করা যাবে না।' },
   { re: /\b(password|passwd|passphrase)\s*[:=]\s*\S+/i, code: 'secret_text', bn: 'পাসওয়ার্ড টাইপ করা যাবে না।' },
 ]
 
 const RED_KEYS = [
   { re: /^cmd\+q$/i, code: 'quits_app', bn: 'অ্যাপ বন্ধ করার শর্টকাট এজেন্ট চাপবে না।' },
-  { re: /^cmd\+(shift\+)?delete$/i, code: 'destructive_key', bn: 'ডিলিট শর্টকাট এজেন্ট চাপবে না।' },
+  { re: /^(?=.*\bcmd\b).*\+(delete|backspace)$/i, code: 'destructive_key', bn: 'ডিলিট শর্টকাট এজেন্ট চাপবে না।' },
   { re: /^ctrl\+c$/i, code: 'destructive_key', bn: 'চলমান কাজ থামানোর শর্টকাট এজেন্ট চাপবে না।' },
   // OS-GLOBAL combos ignore the frontmost app — see the TS twin.
   { re: /^(?=.*\bcmd\b)(?=.*\b(opt|option|alt)\b)(?=.*\bshift\b).*\+q$/i, code: 'session_loss', bn: 'লগআউট শর্টকাট — এজেন্ট চাপবে না।' },

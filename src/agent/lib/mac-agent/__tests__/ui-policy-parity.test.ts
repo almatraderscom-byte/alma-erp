@@ -98,6 +98,12 @@ const CORPUS: Array<Record<string, unknown>> = [
   { ...AWAY, action: 'ui_key', bundleId: CHATGPT, key: 'ctrl+cmd+q' },
   { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+option+esc' },
   { ...AWAY, action: 'ui_type', bundleId: CLAUDE, text: 'hunter2' },
+  // round-4: upgrade CTAs, fine-grained tokens, modifier order
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Upgrade' },
+  { ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: 'Upgrade to Pro' },
+  { ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Message', text: 'github_pat_11ABCDEFG0abcdefghijklmnop' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'shift+cmd+delete' },
+  { ...AWAY, action: 'ui_key', bundleId: CLAUDE, key: 'cmd+backspace' },
   // case-insensitivity must agree on both sides
   { ...AWAY, action: 'ui_click', bundleId: 'COM.OPENAI.CHAT', elementLabel: 'Send' },
 ]

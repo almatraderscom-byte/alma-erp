@@ -184,6 +184,28 @@ describe('UI policy — RED (never approvable)', () => {
     }
   })
 
+  it('refuses upgrade CTAs whatever the product suffix', () => {
+    for (const label of ['Upgrade', 'Upgrade to Pro', 'Upgrade plan', 'Renew subscription']) {
+      expect(classifyUiAction({ ...AWAY, action: 'ui_click', bundleId: CHATGPT, elementLabel: label }).code).toBe(
+        'spends_money',
+      )
+    }
+  })
+
+  it('refuses fine-grained GitHub tokens, not just the legacy format', () => {
+    for (const text of ['github_pat_11ABCDEFG0abcdefghijklmnop', 'gho_abcdefghijklmnopqrstuvwxyz01']) {
+      expect(
+        classifyUiAction({ ...AWAY, action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Message', text }).code,
+      ).toBe('secret_text')
+    }
+  })
+
+  it('refuses destructive shortcuts in ANY modifier order', () => {
+    for (const key of ['cmd+shift+delete', 'shift+cmd+delete', 'cmd+delete', 'cmd+backspace']) {
+      expect(classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key }).level).toBe('red')
+    }
+  })
+
   it('refuses OS-global shortcuts that ignore which app is frontmost', () => {
     for (const key of ['cmd+opt+shift+q', 'ctrl+cmd+q', 'cmd+option+esc']) {
       const v = classifyUiAction({ ...AWAY, action: 'ui_key', bundleId: CLAUDE, key })
