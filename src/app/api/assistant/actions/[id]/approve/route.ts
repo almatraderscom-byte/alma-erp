@@ -2500,8 +2500,13 @@ async function runApprove(
     const runMerge = async () => db.$transaction(async (tx: typeof db) => {
       const conv = await tx.agentConversation.findUnique({
         where: { id: conversationId },
-        select: { elevationGrant: true },
+        select: { elevationGrant: true, permissionMode: true },
       })
+      // Plan mode refuses every grant at use time (`modeVerdict`). Writing one
+      // here would leave a row that reports itself active and authorises nothing
+      // — a confirmation Boss cannot trust (review bot, #667). The mode is read
+      // inside the transaction so a switch to Plan mid-approval still catches it.
+      if (conv?.permissionMode === 'plan') throw new Error('grant_mode_plan')
       const existing = parseElevationGrant(conv?.elevationGrant)
       const live = isElevationGrantLive(existing, Date.now()) ? existing : null
 
@@ -2541,6 +2546,18 @@ async function runApprove(
         merged = await runMerge()
         break
       } catch (err) {
+        if ((err as Error)?.message === 'grant_mode_plan') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_mode_plan' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '🧭 চ্যাটটা এখন Plan মোডে — Plan মোডে কোনো অনুমতি কাজ করে না, তাই কিছু চালু করিনি। মোড বদলে আবার বললে চাইব।',
+          )
+          return Response.json({ error: 'grant_mode_plan' }, { status: 409 })
+        }
         const code = (err as { code?: string }).code
         if (code !== 'P2034' || attempt === 3) throw err
         await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))

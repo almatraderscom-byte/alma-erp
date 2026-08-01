@@ -364,40 +364,51 @@ export function deriveTier(cap: Pick<Capability, 'mode' | 'risk' | 'domain'>): R
  * Only families that can actually be granted need this — R4 is never grantable.
  */
 const FAMILY_EXTRA_TOOLS: Record<string, string[]> = {
+  // Every name below is a REGISTERED tool — the test in
+  // __tests__/autonomy-task-catalog.test.ts fails the build on any that is not.
+  // An invented name is worse than a missing one: it reads like coverage and
+  // grants nothing (review bot, #667).
   'staff-messaging': [
-    'add_staff_task_now', 'prepare_staff_task_proposal', 'merge_into_proposal',
-    'dispatch_staff_tasks', 'send_staff_message', 'notify_staff',
+    'add_staff_task_now', 'prepare_staff_task_proposal', 'propose_staff_tasks',
+    'merge_into_proposal', 'approve_pending_staff_message',
+    'correct_and_redispatch_staff_tasks', 'send_dispatch_correction_notice',
+    'set_staff_task_due', 'update_staff_task_status', 'update_staff_task_profile',
+    'explain_staff_task_bangla',
   ],
-  'customer-messaging': [
-    'send_customer_email', 'send_cs_reply', 'reply_to_message', 'send_wa_message',
-  ],
+  // `call_staff` is deliberately absent: a phone call is the phone-calls family,
+  // and a messaging grant must not start ringing people.
+  // customer-messaging: `send_product_image` only reads a catalog URL, so the
+  // three representative send tools are the whole family.
+  'customer-messaging': [],
   'public-publish': [
-    'publish_page', 'unpublish_product', 'set_product_featured',
-    'edit_storefront_product', 'change_product_slug', 'submit_to_indexnow',
+    'unpublish_product', 'set_product_featured', 'edit_storefront_product',
+    'change_product_slug', 'update_product_web', 'submit_to_indexnow',
     'draft_gbp_reply',
   ],
   'ads-budget': [
     'duplicate_campaign', 'create_retargeting_audience', 'create_lookalike_audience',
   ],
-  'scheduled-content': ['schedule_post', 'reschedule_content'],
+  // scheduled-content and internal-reminders: the registry has no write beyond
+  // the three representative tools each already names, so there is nothing to add.
+  'scheduled-content': [],
   // Todos live in `memory-notes` (its representative tool is add_owner_todo);
   // reminders are the alarm family. Mapping todo writes to reminders made a
   // reminders grant cover todos and a memory-notes grant miss them.
-  'internal-reminders': ['cancel_all_reminders'],
+  'internal-reminders': [],
   'memory-notes': [
     'update_owner_todo', 'manage_work_todos', 'update_memory', 'resolve_open_task',
-    'delete_memory', 'graph_remember', 'save_task_checkpoint', 'track_open_task',
+    'delete_memory', 'graph_remember',
   ],
   'drafts-previews': ['draft_seo_fixes', 'draft_marketing_campaign', 'draft_gbp_post'],
   'personal-records': [
-    'update_bill', 'delete_bill', 'mark_bill_paid', 'add_subscription', 'update_subscription',
-    'update_important_date', 'delete_important_date', 'update_appointment', 'cancel_appointment',
-    'update_medication', 'delete_medication', 'log_health', 'delete_document',
+    'update_bill', 'delete_bill', 'mark_bill_paid', 'add_subscription',
+    'delete_important_date', 'update_appointment', 'update_medication',
+    'log_health', 'delete_document',
   ],
 }
 
 /** Explicit tool → task-class overrides, seeded from the families' own lists. */
-const TOOL_TASK_CLASS: Record<string, string> = (() => {
+export const TOOL_TASK_CLASS: Record<string, string> = (() => {
   const m: Record<string, string> = {}
   for (const f of TASK_FAMILIES) {
     for (const t of f.representativeTools) m[t] = f.id
