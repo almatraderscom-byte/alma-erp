@@ -96,7 +96,15 @@ const APP_HINTS = {
  * Short names resolve ONLY through the policy's own allowlist, so a name the
  * policy does not know cannot smuggle in a bundle id the policy never sees.
  */
-export function resolveBundleId(app) {
+export /**
+ * The wire contract, settled after W3 and W4 met on main: the SERVER sends the
+ * already-resolved `bundleId` (it resolved it once, when the approval card was
+ * written, so the card and the action name the same app). `app` stays accepted
+ * as a friendly alias for hand-run probes and older callers. The daemon still
+ * re-judges whatever id it ends up with against its own policy twin, so
+ * accepting a resolved id concedes nothing.
+ */
+function resolveBundleId(app) {
   const raw = String(app ?? '').trim().toLowerCase()
   if (!raw) return null
   if (raw.includes('.')) return raw // already a bundle id — policy judges it
@@ -679,6 +687,7 @@ async function ownerIdleSeconds() {
   return res.ok ? Number(res.idleSeconds) : NaN // NaN classifies as owner_active — fail closed
 }
 
+let captureScreenFn = null
 let isPausedFn = () => false
 /** Injected by agent.mjs: asks the server whether this command was STOPped or
  *  the kill-switch went off. Best-effort — a network blip must not fail the
@@ -775,7 +784,7 @@ function ok(payload) {
 }
 
 async function uiTree(params) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const verdict = classifyUiAction({ action: 'ui_tree', bundleId })
   if (verdict.level === 'red') return refusal(verdict)
   const h = hintsFor(bundleId)
@@ -791,7 +800,7 @@ async function uiTree(params) {
 }
 
 async function uiScroll(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   // Through the defer loop although scroll is green today: it synthesises
   // real input, and W2 is extending the owner-idle gate to it — when that
   // lands, a scroll while the owner types must WAIT like every other
@@ -838,7 +847,7 @@ function needsApproval(verdict, params, cmd) {
 }
 
 async function uiClick(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const label = String(params.elementLabel ?? '').trim()
   const { verdict } = await classifyDeferring({ action: 'ui_click', bundleId, elementLabel: label }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
@@ -863,7 +872,7 @@ async function uiClick(params, cmd) {
 }
 
 async function uiType(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const h = hintsFor(bundleId)
   const field = String(params.elementLabel ?? h.composerDesc ?? '').trim()
   const text = String(params.text ?? '')
@@ -893,7 +902,7 @@ async function uiType(params, cmd) {
 }
 
 async function uiKey(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const key = normalizeKey(params.key)
   const h = hintsFor(bundleId)
 
@@ -1099,7 +1108,7 @@ async function mirrorTick(m) {
 }
 
 async function appMirror(params) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const mode = String(params.mode ?? 'start')
 
   // The red STOP broadcast — no app named, everything watching stops.
@@ -1219,11 +1228,26 @@ export function stopAllMirrors(reason = 'stop') {
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled } = {}) {
+export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled, captureScreen } = {}) {
   if (typeof isPaused === 'function') isPausedFn = isPaused
   if (typeof checkCancelled === 'function') checkCancelledFn = checkCancelled
+  if (typeof captureScreen === 'function') captureScreenFn = captureScreen
 
   extraHandlers.set('ui_tree', (p) => uiTree(p))
+  // `look_mac_app` advertises a screenshot action, so the verb must exist here
+  // or the model's most natural "show me" request dies as unknown_action. The
+  // capture itself is the daemon's existing screencapture path (injected), so
+  // there is one downscale/limit story, not two — this wrapper only adds the
+  // policy judgement, which for a screenshot is GREEN and needs no app.
+  extraHandlers.set('ui_screenshot', async (p) => {
+    const bundleId = resolveBundleId(p.bundleId ?? p.app)
+    const verdict = classifyUiAction({ action: 'ui_screenshot', bundleId })
+    if (verdict.level === 'red') return refusal(verdict)
+    if (typeof captureScreenFn !== 'function') {
+      return { ok: false, exitCode: null, error: 'screenshot_unavailable: daemon did not provide a capture path.' }
+    }
+    return await captureScreenFn()
+  })
   extraHandlers.set('ui_scroll', (p, cmd) => uiScroll(p, cmd))
   extraHandlers.set('ui_click', (p, cmd) => uiClick(p, cmd))
   extraHandlers.set('ui_type', (p, cmd) => uiType(p, cmd))

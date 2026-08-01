@@ -424,6 +424,9 @@ try {
   const ui = await import('./ui-driver.mjs')
   ui.registerUiHandlers(extraHandlers, {
     isPaused: () => pausedByServer || existsSync(PAUSE_FILE),
+    // One capture path for the whole daemon: `ui_screenshot` reuses the same
+    // downscale + size-limit story as the L7 stream and the `screenshot` verb.
+    captureScreen: () => screenshot(),
     // The out-of-band STOP check for UI actions. The command queue is serial,
     // so while a ui_* verb waits out the owner-at-keyboard gate the poll loop
     // is blocked and `pausedByServer` goes stale — the owner's STOP (which
