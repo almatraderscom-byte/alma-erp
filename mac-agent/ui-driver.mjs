@@ -144,6 +144,15 @@ import AppKit
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ el: AXUIElement, _ wid: inout CGWindowID) -> AXError
 
+// Single source of truth for what the driver can act on. click accepts
+// pressableRoles, type accepts typableRoles, and the compact (interactive)
+// tree is EXACTLY their union — every control the tools can drive, only the
+// controls the tools can drive (Codex P2).
+let pressableRoles: Set<String> = ["AXButton", "AXMenuItem", "AXCheckBox", "AXRadioButton",
+                                   "AXPopUpButton", "AXLink", "AXMenuButton", "AXDisclosureTriangle"]
+let typableRoles: Set<String> = ["AXTextArea", "AXTextField"]
+let actionableRoles: Set<String> = pressableRoles.union(typableRoles)
+
 // ---- AX conveniences --------------------------------------------------------
 func attr(_ el: AXUIElement, _ n: String) -> AnyObject? {
     var v: AnyObject?
@@ -428,10 +437,6 @@ case "tree":
     // one element it needed. The interactive view is two orders smaller and
     // is precisely the set of labels click/type accept.
     let interactiveOnly = flags["interactive"] == "1"
-    let actionableRoles: Set<String> = [
-        "AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox",
-        "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXLink", "AXMenuItem",
-    ]
     var lines: [String] = []
     var count = 0
     walk(win, 0, maxDepth) { el, depth in
@@ -458,8 +463,6 @@ case "focused":
 case "click":
     guard let label = flags["label"], !label.isEmpty else { fail("label_required") }
     let win = resolveWindow()
-    let pressableRoles: Set<String> = ["AXButton", "AXMenuItem", "AXCheckBox", "AXRadioButton",
-                                       "AXPopUpButton", "AXLink", "AXMenuButton", "AXDisclosureTriangle"]
     // EXACT equality only — the policy judged this literal label, so the label
     // of the element we press must BE that string. A substring/nearest match
     // is how a judged "Send" lands on "Send feedback" (Codex P1).
@@ -487,7 +490,7 @@ case "type":
     // match ("word" finding "Password") would act on an element the policy
     // never saw (Codex P1).
     guard let composer = findFirst(win, 40, { el in
-        (role(el) == "AXTextArea" || role(el) == "AXTextField") &&
+        typableRoles.contains(role(el)) &&
             (str(el, kAXDescriptionAttribute) == field || str(el, kAXTitleAttribute) == field)
     }) else { fail("field_not_found", field) }
     let resolvedField = labelOf(composer)
