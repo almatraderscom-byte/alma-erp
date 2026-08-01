@@ -70,8 +70,11 @@ darwinOnly('L5 session resume', () => {
     expect(listed.costUsd).toBeCloseTo(0.12, 4)
     // The event counter continues — restarting at 0 would reuse (sessionId,
     // seq) pairs the server has already stored and post-resume events would
-    // be dropped as duplicates.
-    expect(listed.lastSeq).toBe(41)
+    // be dropped as duplicates. Restore itself publishes one 'detached'
+    // event, so the counter sits one past the persisted value.
+    expect(listed.lastSeq).toBe(42)
+    const read = mod.readSession('restored-1', 0)
+    expect(read.events.map((e: { kind: string }) => e.kind)).toContain('detached')
   })
 
   it('a persisted cwd outside the CURRENT allowlist is not restored', () => {

@@ -28,7 +28,9 @@ export const dynamic = 'force-dynamic'
 
 const MAX_EVENTS_PER_POST = 80
 const MAX_TEXT_CHARS = 4_000
-const KINDS = new Set(['started', 'text', 'tool', 'sent', 'turn_done', 'error', 'ended', 'resumed'])
+const KINDS = new Set([
+  'started', 'text', 'tool', 'sent', 'turn_done', 'error', 'ended', 'resumed', 'detached',
+])
 
 function bearer(req: NextRequest): string {
   const h = req.headers.get('authorization') ?? ''

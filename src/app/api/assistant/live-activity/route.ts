@@ -134,6 +134,10 @@ function sessionEventStep(r: {
       labelBn = '🔄 সেশন আবার জোড়া লাগল'
       status = 'running'
       break
+    case 'detached':
+      labelBn = '⏸️ সেশন অপেক্ষায় (daemon restart)'
+      status = 'done'
+      break
     default:
       labelBn = `🧠 ${r.kind}`
       status = 'done'
@@ -168,7 +172,8 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [macRows, browserRows, sessionEventRows, sessionAggRows] = await Promise.all([
+  const [macRows, browserRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows] =
+    await Promise.all([
     db.macAgentCommand
       .findMany({
         where: { createdAt: { gte: since } },
@@ -199,17 +204,43 @@ export async function GET(req: NextRequest) {
         select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
       })
       .catch(() => []),
-    // L5 session cards aggregate over the WHOLE window, not the 12-step slice:
-    // one tool-heavy turn overflows 12 events, and a session whose newest event
-    // fell off the slice would vanish from the cards with its cost undercounted
-    // (Codex on the L5 PR). Text is deliberately not selected — this query only
-    // feeds status + cost.
+    // L5 session cards: the newest event PER SESSION (Prisma distinct picks
+    // the first row per group under the orderBy), regardless of how many
+    // events the window holds — no cap to fall off (Codex, L5 round 2).
     db.macAgentSessionEvent
       .findMany({
         where: { createdAt: { gte: since } },
         orderBy: { at: 'desc' },
-        take: 500,
-        select: { sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
+        distinct: ['sessionId'],
+        select: { sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
+      })
+      .catch(() => []),
+    // Whole-window cost per session — a database SUM, not a capped scan.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: { createdAt: { gte: since } },
+        _sum: { costUsd: true },
+      })
+      .catch(() => []),
+    // Newest failure per session (error, or an errored turn) — for the
+    // "ended after an unresolved error is still a failure" rule.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: {
+          createdAt: { gte: since },
+          OR: [{ kind: 'error' }, { kind: 'turn_done', isError: true }],
+        },
+        _max: { at: true },
+      })
+      .catch(() => []),
+    // Newest successful turn per session.
+    db.macAgentSessionEvent
+      .groupBy({
+        by: ['sessionId'],
+        where: { createdAt: { gte: since }, kind: 'turn_done', isError: false },
+        _max: { at: true },
       })
       .catch(() => []),
   ])
@@ -314,68 +345,57 @@ export async function GET(req: NextRequest) {
     steps.push(supersededStep(r))
   }
 
-  // L5 — one card per session over the WHOLE window: status from the raw
-  // lifecycle (not the display-demoted step status — a tool that runs silently
-  // for a minute is still WORKING), cost summed across every event in range.
-  // An error that no successful turn followed marks the session failed even if
-  // an `ended` came after it.
-  interface SessionAgg {
-    sessionId: string
-    tool: string
-    lastBn: string
-    newestKind: string
-    newestIsError: boolean
-    errorAt: number
-    okTurnAt: number
-    costUsd: number
-    at: string
-  }
-  const sessionsById = new Map<string, SessionAgg>()
-  for (const r of sessionAggRows as SessionEventRow[]) {
-    let agg = sessionsById.get(r.sessionId)
-    if (!agg) {
-      agg = {
-        sessionId: r.sessionId,
-        tool: r.tool,
-        lastBn: sessionEventStep({ ...r, id: 'agg' }).labelBn,
-        newestKind: r.kind,
-        newestIsError: r.isError,
-        errorAt: 0,
-        okTurnAt: 0,
-        costUsd: 0,
-        at: r.at.toISOString(),
-      }
-      sessionsById.set(r.sessionId, agg)
-    }
-    agg.costUsd += r.costUsd ?? 0
-    const t = r.at.getTime()
-    if (r.kind === 'error' || (r.kind === 'turn_done' && r.isError)) {
-      if (t > agg.errorAt) agg.errorAt = t
-    }
-    if (r.kind === 'turn_done' && !r.isError && t > agg.okTurnAt) agg.okTurnAt = t
-  }
-  const sessions = [...sessionsById.values()].map((s) => {
+  // L5 — one card per session: status from the raw lifecycle (a tool running
+  // silently past 60s is still WORKING; a restored-but-detached session is
+  // not), cost as a whole-window database SUM. An error no successful turn
+  // followed marks the session failed even if `ended` came after it.
+  const costBySession = new Map<string, number>(
+    (sessionCostRows as Array<{ sessionId: string; _sum: { costUsd: number | null } }>).map((r) => [
+      r.sessionId,
+      r._sum.costUsd ?? 0,
+    ]),
+  )
+  const errAtBySession = new Map<string, number>(
+    (sessionErrRows as Array<{ sessionId: string; _max: { at: Date | null } }>).map((r) => [
+      r.sessionId,
+      r._max.at?.getTime() ?? 0,
+    ]),
+  )
+  const okAtBySession = new Map<string, number>(
+    (sessionOkRows as Array<{ sessionId: string; _max: { at: Date | null } }>).map((r) => [
+      r.sessionId,
+      r._max.at?.getTime() ?? 0,
+    ]),
+  )
+  const sessions = (sessionNewestRows as SessionEventRow[]).map((r) => {
     let status: string
-    switch (s.newestKind) {
+    switch (r.kind) {
       case 'ended':
-        status = s.errorAt > s.okTurnAt ? 'failed' : 'done'
+        status =
+          (errAtBySession.get(r.sessionId) ?? 0) > (okAtBySession.get(r.sessionId) ?? 0)
+            ? 'failed'
+            : 'done'
         break
       case 'error':
         status = 'failed'
         break
       case 'turn_done':
-        status = s.newestIsError ? 'failed' : 'done'
+        status = r.isError ? 'failed' : 'done'
+        break
+      case 'detached':
+        // Alive but waiting for a send to resume — a live pulse would lie.
+        status = 'done'
         break
       default:
         status = 'working'
     }
     return {
-      sessionId: s.sessionId,
-      tool: s.tool,
-      lastBn: s.lastBn,
+      sessionId: r.sessionId,
+      tool: r.tool,
+      lastBn: sessionEventStep({ ...r, id: 'agg' }).labelBn,
       status,
-      costUsd: Number(s.costUsd.toFixed(4)),
-      at: s.at,
+      costUsd: Number((costBySession.get(r.sessionId) ?? 0).toFixed(4)),
+      at: r.at.toISOString(),
     }
   })
 

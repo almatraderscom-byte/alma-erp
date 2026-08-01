@@ -121,6 +121,12 @@ export function loadPersistedSessions(allowedDirs = []) {
         stderr: '',
         child: null,
       })
+      // Tell the feed the truth: without this, the session's last streamed
+      // event (text/tool) kept showing a live "working" pulse for the rest of
+      // the window although its child died with the old daemon (Codex, L5
+      // round 2). The event also rides the restored counter, proving the
+      // seq continuation end-to-end.
+      pushEvent(sessions.get(r.id), { kind: 'detached' })
       n += 1
     }
     return n
@@ -165,6 +171,12 @@ function pushEvent(session, event) {
   session.events.push({ seq: session.seq, at: new Date().toISOString(), ...event })
   if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS)
   session.lastActivityAt = Date.now()
+  // EVERY advance hits disk: a restart mid-turn with a stale saved counter
+  // would reuse already-stored (sessionId, seq) numbers, and the resumed
+  // session's events would vanish as server-side "duplicates" until the
+  // counter caught up (Codex, L5 round 2). The file is tiny; the write is
+  // nothing next to the CLI turn that produced the event.
+  persistSessions()
 }
 
 /**
@@ -258,6 +270,16 @@ function binaryFor(tool) {
 /** Wire a spawned CLI child into a session — shared by open and resume. */
 function attachChild(session, child) {
   session.child = child
+
+  // A rejected resume (missing saved conversation, auth failure) closes the
+  // child right after spawn; the next stdin write then raises EPIPE, and with
+  // no handler that TERMINATED THE DAEMON (Codex, L5 round 2). stdin errors
+  // mark the session, never the process.
+  child.stdin?.on?.('error', (err) => {
+    session.status = 'error'
+    session.error = `stdin: ${err?.message ?? err}`
+    pushEvent(session, { kind: 'error', error: session.error })
+  })
 
   let buffer = ''
   child.stdout.on('data', (d) => {
@@ -405,7 +427,13 @@ export function sendToSession(sessionId, text) {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text: String(text) }] },
   }
-  session.child.stdin.write(`${JSON.stringify(payload)}\n`)
+  try {
+    session.child.stdin.write(`${JSON.stringify(payload)}\n`)
+  } catch (err) {
+    session.status = 'error'
+    session.error = `stdin: ${err?.message ?? err}`
+    return { ok: false, error: 'session_write_failed: সেশনটা resume নেয়নি — নতুন সেশন খুলুন।' }
+  }
   session.status = 'working'
   pushEvent(session, { kind: 'sent', text: String(text).slice(0, 1_000) })
   persistSessions()
@@ -487,6 +515,8 @@ export function listSessions() {
  */
 export function installExitHandlers() {
   const shutdown = () => {
+    // Last chance to save the true counters before the children die with us.
+    persistSessions()
     for (const s of sessions.values()) {
       try {
         if (s.child?.pid) process.kill(-s.child.pid, 'SIGKILL')
