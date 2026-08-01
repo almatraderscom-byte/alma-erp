@@ -99,7 +99,17 @@ Today the dock reports *command rows*. A Claude session's actual thinking is ric
 
 ---
 
-## Phase L7 — the full-Mac view (owner's ask, 2026-08-01, in his words)
+## Phase L7 — the full-Mac view (owner's ask, 2026-08-01; streaming half BUILT same day, PR #673)
+
+Built: daemon `screen_stream` verb (owner-started ~1.5s capture loop, hard
+downscale, 300s cap, kill-switch aware) → `mac_agent_frames` (one newest-frame
+row per device) → served through the EXISTING screenshot channel, so both
+docks render it unchanged; 🎥 start/⏹ stop button in the expanded sheets. A
+fresh frame keeps the dock `active` → 3s poll ⇒ ~1.5-3s latency on the phone.
+**Waiting only on the owner's one-time Screen Recording grant** (ungranted
+capture fails `could not create image from display`; the loop degrades to
+posting nothing). The Codex CLI is now installed (0.146.0) — L6's npm item is
+done. GUI-driving remains future work; spec below.
 
 *"terminal charaw amar mac e ar app claude e jeno try kore … tar cokhe mac ta
 full dekha jabe ar ami live streaming e phone theke full mac view soho dekhte
