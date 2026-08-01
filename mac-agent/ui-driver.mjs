@@ -809,8 +809,16 @@ async function uiScroll(params, cmd) {
   const { verdict } = await classifyDeferring({ action: 'ui_scroll', bundleId }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
   const h = hintsFor(bundleId)
-  const args = ['scroll', bundleId, '--dir', params.direction === 'up' ? 'up' : 'down',
-    '--amount', String(Math.min(Math.abs(Number(params.amount) || 5), 40)),
+  // Contract: the server tool sends ONE signed `scrollAmount` (negative = up);
+  // direction/amount stay for hand-run probes. Without this translation every
+  // server scroll fell back to "down by 5" (Codex P2 on the W4 PR).
+  const signed = Number(params.scrollAmount)
+  const direction = params.direction === 'up' || params.direction === 'down'
+    ? params.direction
+    : Number.isFinite(signed) && signed < 0 ? 'up' : 'down'
+  const magnitude = Number(params.amount) || (Number.isFinite(signed) ? Math.abs(signed) : 0)
+  const args = ['scroll', bundleId, '--dir', direction,
+    '--amount', String(Math.min(magnitude || 5, 40)),
     '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
@@ -935,6 +943,22 @@ async function uiKey(params, cmd) {
   if (out.error) return out.error
   const { verdict, fields } = out
   if (verdict.level === 'red') return refusal(verdict)
+  // An approval names an element. The card the owner read said "Enter on
+  // <focusedLabel>", so the press is bound to THAT label: if focus moved to a
+  // different (even AMBER) control between approval and execution, the
+  // approval does not transfer — refuse and make the server card it again
+  // (Codex P1 on the W4 PR). Without this, `approved: true` rode along to
+  // whatever grabbed focus during the owner-idle wait.
+  const approvedFocused = typeof params.focusedLabel === 'string' && params.focusedLabel.trim()
+    ? params.focusedLabel.trim()
+    : null
+  if (isActivation && approvedFocused && fields.focusedLabel !== approvedFocused) {
+    return {
+      ok: false,
+      exitCode: null,
+      error: `refused_by_daemon:focus_changed — অনুমতি ছিল "${approvedFocused}"-এ, এখন ফোকাসে "${fields.focusedLabel || '(কিছু না)'}" — নতুন অনুমতি লাগবে।`,
+    }
+  }
   if (needsApproval(verdict, params, cmd)) {
     return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
   }
@@ -943,8 +967,11 @@ async function uiKey(params, cmd) {
   const args = ['key', bundleId, '--key', key, '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   // The helper re-verifies the focused element at the last instant, atomically
-  // with the press — a changed focus is a refusal, not a guess.
-  if (isActivation && fields.focusedLabel) args.push('--expect-focused', fields.focusedLabel)
+  // with the press — a changed focus is a refusal, not a guess. When the press
+  // was card-approved the expectation is the APPROVED label, not whatever is
+  // focused now, so the helper enforces the same binding at press time.
+  const expectFocused = approvedFocused ?? fields.focusedLabel
+  if (isActivation && expectFocused) args.push('--expect-focused', expectFocused)
   if (h.manual) args.push('--manual')
   const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
   if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
