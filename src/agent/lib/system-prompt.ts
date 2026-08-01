@@ -960,7 +960,7 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'task_completion', cls: 'workflow_policy', version: '2026.07.14', text: TASK_COMPLETION_RULE, core: true },
   { id: 'check_sources', cls: 'workflow_policy', version: '2026.07.14', text: CHECK_SOURCES_RULE },
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
-  { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
+  { id: 'computer_capabilities', cls: 'domain_role', version: '2026.08.02', text: COMPUTER_CAPABILITIES_RULE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
   { id: 'working_discipline', cls: 'workflow_policy', version: '2026.07.27', text: WORKING_DISCIPLINE_RULE, core: true },
   { id: 'privacy_authorship', cls: 'global_safety', version: '2026.07.27', text: PRIVACY_AUTHORSHIP_RULE },

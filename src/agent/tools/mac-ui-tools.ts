@@ -25,7 +25,12 @@ import {
   UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
-import { agentStorageSignedUrl, agentStorageUpload } from '@/agent/lib/storage'
+import {
+  agentStorageDelete,
+  agentStorageListFolder,
+  agentStorageSignedUrl,
+  agentStorageUpload,
+} from '@/agent/lib/storage'
 import { requireOnlineMac } from './mac-tools'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -230,9 +235,22 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       if (m) {
         try {
           const ext = m[1] === 'png' ? 'png' : 'jpg'
-          const objectPath = `mac-ui/shot-${id}.${ext}`
+          // Timestamp in the name is the retention key: the signed URL dies in
+          // an hour, and the object follows within a day via the opportunistic
+          // sweep below — there is no cron for this bucket on purpose.
+          const objectPath = `mac-ui/shot-${Date.now()}-${id}.${ext}`
           await agentStorageUpload(objectPath, Buffer.from(m[2], 'base64'), `image/${m[1]}`)
           const imageUrl = await agentStorageSignedUrl(objectPath)
+          try {
+            const dayAgo = Date.now() - 24 * 3600 * 1000
+            const stale = (await agentStorageListFolder('mac-ui/')).filter((f) => {
+              const ts = Number(/^shot-(\d+)-/.exec(f.name)?.[1])
+              return Number.isFinite(ts) && ts < dayAgo
+            })
+            if (stale.length) await agentStorageDelete(stale.map((f) => `mac-ui/${f.name}`))
+          } catch {
+            /* retention is best-effort; next capture retries */
+          }
           return {
             success: true,
             data: {
