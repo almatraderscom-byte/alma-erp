@@ -1703,7 +1703,10 @@ export async function* runAgentTurn(
               ownerVoicePref, voiceCallInstruction, callbackRequested,
               // The registry runs the canonical guard itself; without these it
               // would refuse the very call the outer bypass just allowed.
-              permissionMode: options.permissionMode ?? undefined,
+              // Careful mode STAGES an ordinary write on the multi-model path; the
+              // native loop has no staging step, so forwarding the mode here would
+              // turn "put it on a card" into a flat refusal. The grant still
+              // travels, because that is what lifts a card rather than denying one.
               elevationGrant: liveGrant,
             })
         // A revoke must stop covering the REST of this turn here too — the row is

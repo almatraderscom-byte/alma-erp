@@ -448,7 +448,12 @@ const revoke_standing_permission: AgentTool = {
           ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
           : []
         const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
-        const kept = grant.families.filter((f) => !cleared.includes(f))
+        // An already-expired family is not "still active" — keeping it would
+        // persist a grant whose only cutoff is in the past and tell Boss it runs.
+        const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+        const kept = grant.families.filter(
+          (f) => !cleared.includes(f) && isFamilyGrantLive(grant, f, Date.now()),
+        )
 
         if (!kept.length) {
           await tx.agentConversation.update({ where: { id: conversationId }, data: { elevationGrant: null } })
