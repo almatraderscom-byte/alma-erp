@@ -2446,13 +2446,15 @@ async function runApprove(
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
 
-    const { TASK_FAMILIES } = await import('@/agent/lib/autonomy-task-catalog')
+    const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
     const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
     // Re-validate at approval time. The card was written minutes ago by a model;
     // what actually grants power is checked here, against the catalog, again.
+    // A family whose every tool stages its own card is dropped too: granting it
+    // would promise card-free work and deliver the same cards (review bot, #667).
     const safe = (families ?? []).filter((id) => {
       const fam = known.get(id)
-      return Boolean(fam) && fam!.tier !== 'R4'
+      return Boolean(fam) && fam!.tier !== 'R4' && familyGrantHasEffect(id)
     })
     const mins = Math.min(Math.max(Math.round(Number(minutes ?? 0)), 1), 240)
 

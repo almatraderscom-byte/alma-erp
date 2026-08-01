@@ -325,7 +325,7 @@ const request_standing_permission: AgentTool = {
         return { success: false, error: 'grant একটা নির্দিষ্ট কথোপকথনে বসে — conversation ছাড়া দেওয়া যায় না।' }
       }
 
-      const { TASK_FAMILIES } = await import('@/agent/lib/autonomy-task-catalog')
+      const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
       const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
 
       const raw = Array.isArray(input.families) ? input.families.map((f) => String(f).trim()) : []
@@ -344,6 +344,16 @@ const request_standing_permission: AgentTool = {
           return {
             success: false,
             error: `${fam.label} কখনোই আগাম অনুমতিতে চলে না — টাকা সরানো আর পারমিশন প্রতিবার Boss-এর হাতেই থাকে।`,
+          }
+        }
+        // Every tool in the family stages its own card, so a grant here would be
+        // a permission Boss can see and never feel (review bot, #667).
+        if (!familyGrantHasEffect(id)) {
+          return {
+            success: false,
+            error:
+              `${fam.label}-এর কাজগুলো নিজেরাই আলাদা কার্ড বানায়, তাই আগাম অনুমতি দিলেও কার্ড আসতেই থাকবে — `
+              + 'ভুয়া অনুমতি না দিয়ে সোজা কাজটার কার্ডই পাঠাই।',
           }
         }
         if (!families.includes(id)) families.push(id)

@@ -19,7 +19,7 @@
  *
  * Read-only inventory: this file performs no actions and holds no secrets.
  */
-import { CAPABILITIES, type Capability } from '@/agent/tools/capability-manifest'
+import { CAPABILITIES, getCapability, type Capability } from '@/agent/tools/capability-manifest'
 
 // ── Risk ladder (roadmap 3 table, enforced later by the Phase 52 guard) ──────
 
@@ -447,6 +447,21 @@ export interface ToolTaskClass {
    * speak over the office camera without a card).
    */
   explicit: boolean
+}
+
+/**
+ * Does a standing grant for this family actually change anything?
+ *
+ * A `stage`-mode tool builds its OWN approval card inside its handler; the guard
+ * lets it through only so that can happen. A grant therefore cannot make it run
+ * card-free — so a family whose every mapped tool is `stage` (ads-budget today)
+ * would issue a permission that behaves exactly like no permission, which is a
+ * worse lie than refusing (review bot, #667).
+ */
+export function familyGrantHasEffect(family: string): boolean {
+  return Object.entries(TOOL_TASK_CLASS).some(
+    ([tool, fam]) => fam === family && getCapability(tool)?.mode === 'write',
+  )
 }
 
 /** Tier of a known task class (defaults to R3 — conservative — if unknown). */

@@ -38,3 +38,18 @@ describe('every mapped family names only registered tools', () => {
     }
   })
 })
+
+/** Review-bot P2 (#667 round 21): a grant that changes nothing must be refused. */
+describe('a family is grantable only if a grant would change something', () => {
+  it('refuses ads-budget, whose tools all stage their own card', async () => {
+    const { familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+    expect(familyGrantHasEffect('ads-budget')).toBe(false)
+  })
+
+  it('accepts the families that do have card-free writes', async () => {
+    const { familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+    for (const family of ['staff-messaging', 'customer-messaging', 'memory-notes', 'personal-records']) {
+      expect(familyGrantHasEffect(family)).toBe(true)
+    }
+  })
+})
