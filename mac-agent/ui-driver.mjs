@@ -299,13 +299,20 @@ func hardwareIdleSeconds() -> Double {
     return types.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? 0
 }
 
+/// The policy's owner-active window, passed in by the driver so there is ONE
+/// threshold with ONE meaning (W2's OWNER_ACTIVE_WINDOW_SECONDS = 25). A
+/// second, looser literal here let a request the policy would defer — he
+/// typed 3s ago and paused — slip through the last-instant guard (Codex P2,
+/// head-confirmed).
+let idleWindow = Double(flags["idle-window"] ?? "") ?? 25.0
+
 /// The LAST gate before any synthesis reaches the app. classifyDeferring()
 /// sampled idle on the driver side, but opening the Electron tree, activating
 /// the app and fronting the window take seconds — the owner can touch the
 /// machine inside exactly that gap. Same doctrine as the mid-type abort, at
 /// the tightest possible window (Codex round 3, head-confirmed).
 func guardOwnerStill() {
-    if hardwareIdleSeconds() < 1.0 { fail("owner_interrupted", "input at synthesis time") }
+    if hardwareIdleSeconds() < idleWindow { fail("owner_interrupted", "input at synthesis time") }
 }
 
 func typeUnicode(_ text: String) {
@@ -317,7 +324,9 @@ func typeUnicode(_ text: String) {
         // owner can come back mid-type and his keystrokes would interleave
         // with ours (the exact failure W1's draft guard caught live). Watch
         // the hardware while typing and abort the moment he touches anything.
-        if count > 0 && count % 20 == 0 && hardwareIdleSeconds() < 1.0 {
+        // (hid idle is >= idleWindow at start thanks to the gate, and only a
+        // real touch can pull it back under it.)
+        if count > 0 && count % 20 == 0 && hardwareIdleSeconds() < idleWindow {
             fail("owner_interrupted", "typed \(count) of \(text.count) chars")
         }
         count += 1
@@ -567,11 +576,26 @@ function helperBinary() {
   return compileInFlight
 }
 
-/** Run one helper verb; the helper always answers with one JSON line. */
-async function helper(args, { timeoutMs = 30_000 } = {}) {
+/**
+ * Run one helper verb; the helper always answers with one JSON line.
+ *
+ * `abortCheck` (optional, async → truthy = abort) is polled every 2s while
+ * the child runs. STOP must mean *stopped now*: flipping state while a helper
+ * keeps typing to completion breaks the one promise §0 makes about the red
+ * button (Codex round 4). Kill shape borrowed from sessions.mjs — SIGTERM,
+ * then SIGKILL on a short timer for a child mid-syscall.
+ */
+async function helper(args, { timeoutMs = 30_000, abortCheck = null } = {}) {
   const bin = await helperBinary()
+  if (abortCheck && (await Promise.resolve(abortCheck()).catch(() => false))) {
+    return { ok: false, code: 'stopped_by_owner', detail: 'aborted before start' }
+  }
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    let aborted = false
+    let watcher = null
+    const child = execFile(bin, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (watcher) clearInterval(watcher)
+      if (aborted) return resolve({ ok: false, code: 'stopped_by_owner', detail: 'killed mid-action' })
       const line = String(stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? ''
       let json = null
       try {
@@ -586,6 +610,33 @@ async function helper(args, { timeoutMs = 30_000 } = {}) {
         detail: String(stderr ?? '').slice(0, 300) || String(error?.message ?? ''),
       })
     })
+    if (abortCheck) {
+      watcher = setInterval(async () => {
+        if (aborted) return
+        let stop = false
+        try {
+          stop = Boolean(await abortCheck())
+        } catch {
+          stop = false // a failed check is not evidence of a STOP
+        }
+        if (!stop) return
+        aborted = true
+        clearInterval(watcher)
+        watcher = null
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          /* already gone */
+        }
+        setTimeout(() => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            /* already gone */
+          }
+        }, 3_000)
+      }, 2_000)
+    }
   })
 }
 
@@ -698,6 +749,15 @@ async function stoppedBeforeActing(cmd) {
   return null
 }
 
+/** The live abort line for a RUNNING helper: kill it the moment STOP lands. */
+function actAbortCheck(cmd) {
+  return async () => {
+    if (isPausedFn()) return true
+    const abort = await abortState(cmd)
+    return Boolean(abort?.cancelled || abort?.disabled)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The ui_* verbs
 // ---------------------------------------------------------------------------
@@ -742,9 +802,11 @@ async function uiScroll(params, cmd) {
   const h = hintsFor(bundleId)
   const args = ['scroll', bundleId, '--dir', params.direction === 'up' ? 'up' : 'down',
     '--amount', String(Math.min(Math.abs(Number(params.amount) || 5), 40)),
-    '--window', String(params.window ?? h.windowTitle ?? '-')]
+    '--window', String(params.window ?? h.windowTitle ?? '-'),
+    '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
-  const res = await helper(args)
+  const res = await helper(args, { abortCheck: actAbortCheck(cmd) })
+  if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
   if (!res.ok) return helperError(res)
   return ok(res)
 }
@@ -786,9 +848,11 @@ async function uiClick(params, cmd) {
   const stopped = await stoppedBeforeActing(cmd)
   if (stopped) return refusal(stopped)
   const h = hintsFor(bundleId)
-  const args = ['click', bundleId, '--label', label, '--window', String(params.window ?? h.windowTitle ?? '-')]
+  const args = ['click', bundleId, '--label', label, '--window', String(params.window ?? h.windowTitle ?? '-'),
+    '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
-  const res = await helper(args, { timeoutMs: 45_000 })
+  const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
+  if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
   if (!res.ok) return helperError(res)
   // The helper resolves by exact equality, so the pressed element's own label
   // IS the judged one; this assertion is the belt to that suspender.
@@ -811,14 +875,16 @@ async function uiType(params, cmd) {
   const stopped = await stoppedBeforeActing(cmd)
   if (stopped) return refusal(stopped)
   const args = ['type', bundleId, '--field', field, '--text', text,
-    '--window', String(params.window ?? h.windowTitle ?? '-')]
+    '--window', String(params.window ?? h.windowTitle ?? '-'),
+    '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
   // The empty-field guard is ON unless the caller explicitly says it expects
   // existing content (e.g. appending to its own earlier draft).
   if (!params.allowNonEmpty && h.placeholders?.length) {
     args.push('--require-empty', h.placeholders.join('|'))
   }
-  const res = await helper(args, { timeoutMs: 90_000 })
+  const res = await helper(args, { timeoutMs: 90_000, abortCheck: actAbortCheck(cmd) })
+  if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
   if (!res.ok) return helperError(res)
   if (res.resolvedLabel !== field) {
     return refusal({ code: 'label_mismatch', reasonBn: `ঘরের আসল নাম "${res.resolvedLabel}" — যেটা যাচাই হয়েছিল তার সাথে মেলে না, তাই লেখা হয়নি।` })
@@ -865,12 +931,14 @@ async function uiKey(params, cmd) {
   }
   const stopped = await stoppedBeforeActing(cmd)
   if (stopped) return refusal(stopped)
-  const args = ['key', bundleId, '--key', key, '--window', String(params.window ?? h.windowTitle ?? '-')]
+  const args = ['key', bundleId, '--key', key, '--window', String(params.window ?? h.windowTitle ?? '-'),
+    '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   // The helper re-verifies the focused element at the last instant, atomically
   // with the press — a changed focus is a refusal, not a guess.
   if (isActivation && fields.focusedLabel) args.push('--expect-focused', fields.focusedLabel)
   if (h.manual) args.push('--manual')
-  const res = await helper(args, { timeoutMs: 45_000 })
+  const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
+  if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
   if (!res.ok) return helperError(res)
   return ok({ key: res.key, focused: fields.focusedLabel || null, diff: res.diff, policy: verdict.level })
 }
@@ -998,8 +1066,13 @@ async function mirrorTick(m) {
     const h = hintsFor(m.bundleId)
     const args = ['convo', m.bundleId, '--window', h.windowTitle ?? '-']
     if (h.manual) args.push('--manual')
-    const res = await helper(args, { timeoutMs: 30_000 })
+    // The read is killable by the stop, and its RESULT is void after one: a
+    // 30s tree walk that resumes after stopMirror() must not emit into a
+    // session the owner already ended (Codex round 4).
+    const res = await helper(args, { timeoutMs: 30_000, abortCheck: () => m.stopped || isPausedFn() })
+    if (m.stopped) return
     if (!res.ok) {
+      if (res.code === 'stopped_by_owner') return
       m.failures += 1
       if (m.failures >= 5) stopMirror(m.bundleId, `read_failed:${res.code}`)
       return
