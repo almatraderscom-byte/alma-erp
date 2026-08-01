@@ -333,6 +333,7 @@ const request_standing_permission: AgentTool = {
       }
 
       const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
       const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
 
       const raw = Array.isArray(input.families) ? input.families.map((f) => String(f).trim()) : []
@@ -364,6 +365,37 @@ const request_standing_permission: AgentTool = {
           }
         }
         if (!families.includes(id)) families.push(id)
+      }
+
+      // In the CURRENT mode a family may already run card-free, in which case the
+      // grant removes no prompt now, and a mode change clears it anyway — a card
+      // that promises nothing (review bot, #667). The mode is read from the row;
+      // if that read fails the ask proceeds, because refusing on a database blip
+      // would be worse than one redundant card.
+      let currentMode: ReturnType<typeof normalizePermissionMode> | null = null
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const convRow = await (prisma as any).agentConversation.findUnique({
+          where: { id: conversationId },
+          select: { permissionMode: true },
+        })
+        currentMode = normalizePermissionMode(convRow?.permissionMode ?? undefined)
+      } catch { currentMode = null }
+      if (currentMode) {
+        for (const id of families) {
+          const fam = known.get(id)!
+          const verdict = modeVerdict({ mode: currentMode, tier: fam.tier, taskClass: id, grant: null, now: Date.now() })
+          if (verdict !== 'card') {
+            return {
+              success: false,
+              error:
+                currentMode === 'plan'
+                  ? 'এখন Plan মোড — এই মোডে কিছুই বদলায় না, তাই আগাম অনুমতিরও কাজ নেই। মোড বদলে নিলে চাইতে পারি।'
+                  : `${fam.label}-এর কাজ এই মোডে (${currentMode}) এমনিতেই কার্ড ছাড়া চলে — `
+                    + 'বাড়তি অনুমতির দরকার নেই, কাজটা সরাসরি করে দিচ্ছি।',
+            }
+          }
+        }
       }
 
       const minutes = Math.round(Number(input.minutes))

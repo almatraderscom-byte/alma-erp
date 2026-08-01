@@ -2518,6 +2518,18 @@ async function runApprove(
       // — a confirmation Boss cannot trust (review bot, #667). The mode is read
       // inside the transaction so a switch to Plan mid-approval still catches it.
       if (conv?.permissionMode === 'plan') throw new Error('grant_mode_plan')
+      // A family that already runs card-free in the CURRENT mode gains nothing
+      // from a grant, and the mode may have changed since the card was written.
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const modeNow = normalizePermissionMode(conv?.permissionMode ?? undefined)
+      const effective = safe.filter((id) => modeVerdict({
+        mode: modeNow,
+        tier: known.get(id)!.tier,
+        taskClass: id,
+        grant: null,
+        now: Date.now(),
+      }) === 'card')
+      if (!effective.length) throw new Error('grant_no_op_in_mode')
       const existing = parseElevationGrant(conv?.elevationGrant)
       const live = isElevationGrantLive(existing, Date.now()) ? existing : null
 
@@ -2531,7 +2543,7 @@ async function runApprove(
         }
       }
       const thisCutoff = new Date(expiresMs).toISOString()
-      for (const fam of safe) {
+      for (const fam of effective) {
         const prev = windows[fam] ? Date.parse(windows[fam]) : 0
         if (expiresMs > prev) windows[fam] = thisCutoff
       }
@@ -2569,6 +2581,18 @@ async function runApprove(
         merged = await runMerge()
         break
       } catch (err) {
+        if ((err as Error)?.message === 'grant_no_op_in_mode') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_no_op_in_mode' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '✅ এখনকার মোডে এই কাজগুলো এমনিতেই কার্ড ছাড়া চলে — আলাদা অনুমতির দরকার নেই, তাই কিছু চালু করিনি।',
+          ).catch(() => {})
+          return Response.json({ error: 'grant_no_op_in_mode' }, { status: 409 })
+        }
         if ((err as Error)?.message === 'grant_mode_plan') {
           await db.agentPendingAction.update({
             where: { id: actionId },
