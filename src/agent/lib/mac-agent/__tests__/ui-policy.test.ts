@@ -19,9 +19,16 @@ describe('UI policy — GREEN (reading changes nothing)', () => {
     expect(classifyUiAction({ action: 'ui_tree', bundleId: CLAUDE }).level).toBe('green')
   })
 
-  it('screenshots and scrolls without asking', () => {
+  it('screenshots without asking', () => {
     expect(classifyUiAction({ action: 'ui_screenshot', bundleId: CHATGPT }).level).toBe('green')
-    expect(classifyUiAction({ action: 'ui_scroll', bundleId: CHATGPT }).level).toBe('green')
+  })
+
+  it('scrolls without a card — but only once the owner has stepped away', () => {
+    // Scrolling needs no approval (reading a long chat would be untappable),
+    // yet it synthesises input into his view, so it waits like the rest.
+    expect(classifyUiAction({ ...AWAY, action: 'ui_scroll', bundleId: CHATGPT }).level).toBe('green')
+    expect(classifyUiAction({ action: 'ui_scroll', bundleId: CHATGPT, ownerIdleSeconds: 2 }).code).toBe('owner_active')
+    expect(classifyUiAction({ action: 'ui_scroll', bundleId: CHATGPT }).code).toBe('owner_active')
   })
 
   it('allows a full-screen read with no app named', () => {
@@ -88,8 +95,9 @@ describe('UI policy — the owner is at the keyboard', () => {
     expect(classifyUiAction({ action: 'ui_type', bundleId: CLAUDE, elementLabel: 'Prompt', text: 'hi' }).code).toBe('owner_active')
   })
 
-  it('still allows reading while he works — watching never interrupts', () => {
+  it('still allows PURE reading while he works — watching never interrupts', () => {
     expect(classifyUiAction({ action: 'ui_tree', bundleId: CLAUDE, ownerIdleSeconds: 0 }).level).toBe('green')
+    expect(classifyUiAction({ action: 'ui_screenshot', bundleId: CLAUDE, ownerIdleSeconds: 0 }).level).toBe('green')
   })
 })
 
@@ -264,6 +272,18 @@ describe('UI policy — RED (never approvable)', () => {
 })
 
 describe('UI policy — helpers', () => {
+  it('allows the real ChatGPT bundle id — the shipping app is com.openai.codex', () => {
+    expect(isAllowedApp('com.openai.codex')).toBe(true)
+    const v = classifyUiAction({
+      ...AWAY,
+      action: 'ui_click',
+      bundleId: 'com.openai.codex',
+      elementLabel: 'New chat',
+    })
+    expect(v.level).toBe('amber')
+    expect(v.reasonBn).toContain('ChatGPT')
+  })
+
   it('matches bundle ids case-insensitively but exactly', () => {
     expect(isAllowedApp('COM.OPENAI.CHAT')).toBe(true)
     expect(isAllowedApp('com.openai.chat.evil')).toBe(false)

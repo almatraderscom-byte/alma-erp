@@ -24,9 +24,17 @@ export const UI_ACTIONS = [
 
 const READ_ONLY_ACTIONS = new Set(['ui_tree', 'ui_screenshot', 'ui_scroll'])
 
+/** Actions that synthesise input into the owner's session — see the TS twin. */
+const SYNTHESISES_INPUT = new Set(['ui_click', 'ui_type', 'ui_key', 'ui_scroll'])
+
 export const ALLOWED_APPS = {
   'com.anthropic.claudefordesktop': 'Claude',
   'com.openai.chat': 'ChatGPT',
+  // The shipping ChatGPT desktop app identifies itself as `com.openai.codex`
+  // (verified from /Applications/ChatGPT.app's Info.plist on the owner's Mac
+  // 2026-08-02, and hit live by W3). Both ids are the same product; keeping
+  // the older one costs nothing and covers other installs.
+  'com.openai.codex': 'ChatGPT',
 }
 
 const FORBIDDEN_APPS = {
@@ -168,19 +176,23 @@ export function classifyUiAction(req = {}) {
     }
   }
 
-  if (isRead) {
-    return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
+  // The owner is AT the keyboard. Anything that synthesises input — including
+  // a scroll, which needs no card but still moves his view — waits until he
+  // steps away. `owner_active` is a DEFER the daemon retries, RED only so
+  // nothing acts meanwhile. Unknown idle time fails closed.
+  if (SYNTHESISES_INPUT.has(action)) {
+    const idleNow = req.ownerIdleSeconds
+    if (!Number.isFinite(idleNow) || idleNow < OWNER_ACTIVE_WINDOW_SECONDS) {
+      return {
+        level: 'red',
+        code: 'owner_active',
+        reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট কিছু করবে না, একটু পরে করবে।',
+      }
+    }
   }
 
-  // The owner is AT the keyboard — see the TS twin. `owner_active` is a DEFER
-  // the daemon retries, RED only so nothing acts meanwhile.
-  const idle = req.ownerIdleSeconds
-  if (!Number.isFinite(idle) || idle < OWNER_ACTIVE_WINDOW_SECONDS) {
-    return {
-      level: 'red',
-      code: 'owner_active',
-      reasonBn: 'আপনি এখন কীবোর্ড/মাউসে আছেন — আপনার কাজের মাঝে এজেন্ট টাইপ করবে না, একটু পরে করবে।',
-    }
+  if (isRead) {
+    return { level: 'green', code: 'read_only', reasonBn: 'শুধু দেখা — নিজে থেকেই হলো।' }
   }
 
   const label = String(req.elementLabel ?? '').trim()
@@ -270,6 +282,7 @@ export function classifyUiAction(req = {}) {
 /** Structural fingerprint of every rule — see the TS twin for why. */
 export const POLICY_RULE_DIGEST = {
   readOnlyActions: [...READ_ONLY_ACTIONS].sort(),
+  synthesisesInput: [...SYNTHESISES_INPUT].sort(),
   allowedApps: ALLOWED_APPS,
   forbiddenApps: FORBIDDEN_APPS,
   redLabelRules: RED_LABEL_RULES.map((r) => ({ code: r.code, bn: r.bn, source: r.re.source, flags: r.re.flags })),
