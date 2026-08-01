@@ -32,7 +32,7 @@
  */
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -96,7 +96,15 @@ const APP_HINTS = {
  * Short names resolve ONLY through the policy's own allowlist, so a name the
  * policy does not know cannot smuggle in a bundle id the policy never sees.
  */
-export function resolveBundleId(app) {
+export /**
+ * The wire contract, settled after W3 and W4 met on main: the SERVER sends the
+ * already-resolved `bundleId` (it resolved it once, when the approval card was
+ * written, so the card and the action name the same app). `app` stays accepted
+ * as a friendly alias for hand-run probes and older callers. The daemon still
+ * re-judges whatever id it ends up with against its own policy twin, so
+ * accepting a resolved id concedes nothing.
+ */
+function resolveBundleId(app) {
   const raw = String(app ?? '').trim().toLowerCase()
   if (!raw) return null
   if (raw.includes('.')) return raw // already a bundle id — policy judges it
@@ -129,6 +137,12 @@ function hintsFor(bundleId) {
 const SWIFT_HELPER = String.raw`
 import ApplicationServices
 import AppKit
+
+// Maps an AX window to its CGWindowID — the stable SPI every screen-reader
+// uses; there is no public bridge. The id feeds screencapture -l so a capture
+// is THE WINDOW's backing store, not whatever pixels sit in its rectangle.
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ el: AXUIElement, _ wid: inout CGWindowID) -> AXError
 
 // ---- AX conveniences --------------------------------------------------------
 func attr(_ el: AXUIElement, _ n: String) -> AnyObject? {
@@ -386,6 +400,24 @@ case "info":
     let wins = (attr(app, kAXWindowsAttribute) as? [AXUIElement]) ?? []
     emit(["ok": true, "pid": Int(pid),
           "windows": wins.compactMap { str($0, kAXTitleAttribute) }])
+
+case "bounds":
+    // CGWindowID (+ frame, for context) of the resolved window. The daemon
+    // captures by id (screencapture -l) — a rect capture would return
+    // whatever pixels COVER the rectangle, not the window itself.
+    let win = resolveWindow()
+    var wid: CGWindowID = 0
+    if _AXUIElementGetWindow(win, &wid) != .success || wid == 0 { fail("no_window_id") }
+    var pos = CGPoint.zero
+    var size = CGSize.zero
+    if let pv = attr(win, kAXPositionAttribute), CFGetTypeID(pv) == AXValueGetTypeID() {
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+    }
+    if let sv = attr(win, kAXSizeAttribute), CFGetTypeID(sv) == AXValueGetTypeID() {
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+    }
+    emit(["ok": true, "wid": Int(wid), "x": Int(pos.x), "y": Int(pos.y),
+          "w": Int(size.width), "h": Int(size.height)])
 
 case "tree":
     let win = resolveWindow()
@@ -679,6 +711,7 @@ async function ownerIdleSeconds() {
   return res.ok ? Number(res.idleSeconds) : NaN // NaN classifies as owner_active — fail closed
 }
 
+let captureScreenFn = null
 let isPausedFn = () => false
 /** Injected by agent.mjs: asks the server whether this command was STOPped or
  *  the kill-switch went off. Best-effort — a network blip must not fail the
@@ -774,8 +807,38 @@ function ok(payload) {
   return { ok: true, exitCode: 0, stdout: JSON.stringify(payload) }
 }
 
+/**
+ * Capture ONE window (by CGWindowID) as a downscaled JPEG data URI — same
+ * downscale + size-limit story as the daemon's full-screen `screenshot()`
+ * (agent.mjs). Capture is by id (`screencapture -l`), never by rect: a rect
+ * returns whatever pixels COVER the rectangle, so a covered or minimized
+ * window would leak unrelated, non-allowlisted content (Codex P1). A window
+ * that cannot be captured (minimized to the Dock) fails honestly instead.
+ */
+function captureWindow({ wid }) {
+  return new Promise((resolve) => {
+    const out = join(CONFIG_DIR, `ui-shot-${Date.now()}.jpg`)
+    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', '-l', String(wid), out], (err) => {
+      if (err) return resolve({ ok: false, exitCode: null, error: String(err.message ?? err) })
+      // sips ships with macOS; if it fails we still send the original.
+      execFile('/usr/bin/sips', ['-Z', '1600', '-s', 'formatOptions', '60', out], () => {
+        try {
+          const b64 = readFileSync(out).toString('base64')
+          rmSync(out, { force: true })
+          if (b64.length > 2_900_000) {
+            return resolve({ ok: false, exitCode: null, error: 'screenshot_too_large: স্ক্রিনশটটা পাঠানোর সীমার চেয়ে বড়।' })
+          }
+          resolve({ ok: true, exitCode: 0, stdout: `data:image/jpeg;base64,${b64}` })
+        } catch (e) {
+          resolve({ ok: false, exitCode: null, error: String(e?.message ?? e) })
+        }
+      })
+    })
+  })
+}
+
 async function uiTree(params) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const verdict = classifyUiAction({ action: 'ui_tree', bundleId })
   if (verdict.level === 'red') return refusal(verdict)
   const h = hintsFor(bundleId)
@@ -791,7 +854,7 @@ async function uiTree(params) {
 }
 
 async function uiScroll(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   // Through the defer loop although scroll is green today: it synthesises
   // real input, and W2 is extending the owner-idle gate to it — when that
   // lands, a scroll while the owner types must WAIT like every other
@@ -800,8 +863,25 @@ async function uiScroll(params, cmd) {
   const { verdict } = await classifyDeferring({ action: 'ui_scroll', bundleId }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
   const h = hintsFor(bundleId)
-  const args = ['scroll', bundleId, '--dir', params.direction === 'up' ? 'up' : 'down',
-    '--amount', String(Math.min(Math.abs(Number(params.amount) || 5), 40)),
+  // Contract: the server tool sends ONE signed `scrollAmount` (negative = up);
+  // direction/amount stay for hand-run probes. Without this translation every
+  // server scroll fell back to "down by 5" (Codex P2 on the W4 PR).
+  // The server serialises an omitted scrollAmount as null, and Number(null)
+  // is 0 — so "absent" must be decided on the RAW value, before any numeric
+  // conversion, or a plain scroll silently becomes a no-op (Codex P2).
+  const given = (v) => v !== null && v !== undefined && Number.isFinite(Number(v))
+  const signed = given(params.scrollAmount) ? Number(params.scrollAmount) : NaN
+  const direction = params.direction === 'up' || params.direction === 'down'
+    ? params.direction
+    : Number.isFinite(signed) && signed < 0 ? 'up' : 'down'
+  // Default of 5 applies only when NO amount was given at all — an explicit 0
+  // (a computed boundary) means "don't move", not "scroll down 5" (Codex P2).
+  const magnitude = given(params.amount) ? Math.abs(Number(params.amount))
+    : Number.isFinite(signed) ? Math.abs(signed) : null
+  const amount = magnitude === null ? 5 : Math.min(magnitude, 40)
+  if (amount === 0) return ok({ scrolled: 0, policy: verdict.level })
+  const args = ['scroll', bundleId, '--dir', direction,
+    '--amount', String(amount),
     '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
@@ -838,7 +918,7 @@ function needsApproval(verdict, params, cmd) {
 }
 
 async function uiClick(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const label = String(params.elementLabel ?? '').trim()
   const { verdict } = await classifyDeferring({ action: 'ui_click', bundleId, elementLabel: label }, cmd)
   if (verdict.level === 'red') return refusal(verdict)
@@ -863,7 +943,7 @@ async function uiClick(params, cmd) {
 }
 
 async function uiType(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const h = hintsFor(bundleId)
   const field = String(params.elementLabel ?? h.composerDesc ?? '').trim()
   const text = String(params.text ?? '')
@@ -893,7 +973,7 @@ async function uiType(params, cmd) {
 }
 
 async function uiKey(params, cmd) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const key = normalizeKey(params.key)
   const h = hintsFor(bundleId)
 
@@ -926,6 +1006,22 @@ async function uiKey(params, cmd) {
   if (out.error) return out.error
   const { verdict, fields } = out
   if (verdict.level === 'red') return refusal(verdict)
+  // An approval names an element. The card the owner read said "Enter on
+  // <focusedLabel>", so the press is bound to THAT label: if focus moved to a
+  // different (even AMBER) control between approval and execution, the
+  // approval does not transfer — refuse and make the server card it again
+  // (Codex P1 on the W4 PR). Without this, `approved: true` rode along to
+  // whatever grabbed focus during the owner-idle wait.
+  const approvedFocused = typeof params.focusedLabel === 'string' && params.focusedLabel.trim()
+    ? params.focusedLabel.trim()
+    : null
+  if (isActivation && approvedFocused && fields.focusedLabel !== approvedFocused) {
+    return {
+      ok: false,
+      exitCode: null,
+      error: `refused_by_daemon:focus_changed — অনুমতি ছিল "${approvedFocused}"-এ, এখন ফোকাসে "${fields.focusedLabel || '(কিছু না)'}" — নতুন অনুমতি লাগবে।`,
+    }
+  }
   if (needsApproval(verdict, params, cmd)) {
     return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
   }
@@ -934,8 +1030,11 @@ async function uiKey(params, cmd) {
   const args = ['key', bundleId, '--key', key, '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   // The helper re-verifies the focused element at the last instant, atomically
-  // with the press — a changed focus is a refusal, not a guess.
-  if (isActivation && fields.focusedLabel) args.push('--expect-focused', fields.focusedLabel)
+  // with the press — a changed focus is a refusal, not a guess. When the press
+  // was card-approved the expectation is the APPROVED label, not whatever is
+  // focused now, so the helper enforces the same binding at press time.
+  const expectFocused = approvedFocused ?? fields.focusedLabel
+  if (isActivation && expectFocused) args.push('--expect-focused', expectFocused)
   if (h.manual) args.push('--manual')
   const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
   if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
@@ -1099,7 +1198,7 @@ async function mirrorTick(m) {
 }
 
 async function appMirror(params) {
-  const bundleId = resolveBundleId(params.app)
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const mode = String(params.mode ?? 'start')
 
   // The red STOP broadcast — no app named, everything watching stops.
@@ -1219,11 +1318,37 @@ export function stopAllMirrors(reason = 'stop') {
 // Wiring
 // ---------------------------------------------------------------------------
 
-export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled } = {}) {
+export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled, captureScreen } = {}) {
   if (typeof isPaused === 'function') isPausedFn = isPaused
   if (typeof checkCancelled === 'function') checkCancelledFn = checkCancelled
+  if (typeof captureScreen === 'function') captureScreenFn = captureScreen
 
   extraHandlers.set('ui_tree', (p) => uiTree(p))
+  // `look_mac_app` advertises a screenshot action, so the verb must exist here
+  // or the model's most natural "show me" request dies as unknown_action.
+  // When an app is named, the promise is an APP capture — so only that
+  // window's AX frame is captured (Codex P1: a full-screen shot can include
+  // mail/banking/password-manager windows the allowlist never approved). Only
+  // an app-less request — the owner's own "show the screen" — falls back to
+  // the daemon's injected full-screen path.
+  extraHandlers.set('ui_screenshot', async (p) => {
+    const raw = p.bundleId ?? p.app
+    const bundleId = resolveBundleId(raw)
+    const verdict = classifyUiAction({ action: 'ui_screenshot', bundleId })
+    if (verdict.level === 'red') return refusal(verdict)
+    if (raw) {
+      const h = hintsFor(bundleId)
+      const bArgs = ['bounds', bundleId, '--window', String(p.window ?? h.windowTitle ?? '-')]
+      if (h.manual) bArgs.push('--manual')
+      const b = await helper(bArgs)
+      if (!b.ok) return helperError(b)
+      return await captureWindow(b)
+    }
+    if (typeof captureScreenFn !== 'function') {
+      return { ok: false, exitCode: null, error: 'screenshot_unavailable: daemon did not provide a capture path.' }
+    }
+    return await captureScreenFn()
+  })
   extraHandlers.set('ui_scroll', (p, cmd) => uiScroll(p, cmd))
   extraHandlers.set('ui_click', (p, cmd) => uiClick(p, cmd))
   extraHandlers.set('ui_type', (p, cmd) => uiType(p, cmd))
