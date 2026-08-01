@@ -11,6 +11,7 @@ const enqueueCommand = vi.fn()
 const awaitResult = vi.fn()
 const requireOnlineMac = vi.fn()
 const uiEnabled = vi.fn()
+const listDevices = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
   prisma: { agentPendingAction: { create: (...args: unknown[]) => createCard(...args) } },
@@ -22,6 +23,7 @@ vi.mock('@/agent/lib/mac-agent/bus', async (importOriginal) => {
     enqueueCommand: (...args: unknown[]) => enqueueCommand(...args),
     awaitResult: (...args: unknown[]) => awaitResult(...args),
     isMacUiDrivingEnabled: (...args: unknown[]) => uiEnabled(...args),
+    listDevices: (...args: unknown[]) => listDevices(...args),
   }
 })
 vi.mock('../mac-tools', () => ({
@@ -40,6 +42,21 @@ beforeEach(() => {
   enqueueCommand.mockResolvedValue({ id: 'cmd-1' })
   awaitResult.mockResolvedValue({ status: 'done', stdout: 'TREE', stderr: '', timedOut: false })
   uiEnabled.mockResolvedValue(true)
+  listDevices.mockResolvedValue([{ id: 'dev-1', name: 'MacBook Air', online: true, pairedAt: new Date() }])
+})
+
+describe('drive_mac_app — multi-Mac ambiguity', () => {
+  it('refuses honestly when more than one Mac is online instead of guessing', async () => {
+    listDevices.mockResolvedValue([
+      { id: 'dev-1', name: 'MacBook Air', online: true, pairedAt: new Date() },
+      { id: 'dev-2', name: 'Mac mini', online: true, pairedAt: new Date() },
+    ])
+    const r = await drive.handler({ action: 'tree', app: 'claude' })
+    expect(r.success).toBe(false)
+    expect((r.data as { code?: string })?.code).toBe('multiple_macs_online')
+    expect(enqueueCommand).not.toHaveBeenCalled()
+    expect(createCard).not.toHaveBeenCalled()
+  })
 })
 
 describe('drive_mac_app — capability gate', () => {

@@ -17,7 +17,13 @@
  */
 import type { AgentTool } from './registry'
 import { prisma } from '@/lib/prisma'
-import { awaitResult, enqueueCommand, isMacUiDrivingEnabled, UI_SERVER_IDLE_SENTINEL } from '@/agent/lib/mac-agent/bus'
+import {
+  awaitResult,
+  enqueueCommand,
+  isMacUiDrivingEnabled,
+  listDevices,
+  UI_SERVER_IDLE_SENTINEL,
+} from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 import { requireOnlineMac } from './mac-tools'
 
@@ -167,6 +173,20 @@ const drive_mac_app: AgentTool = {
 
     const gate = await requireOnlineMac()
     if (!gate.ok) return { success: false, error: gate.error }
+
+    // With several Macs online, "most recently seen" is a guess — and only some
+    // may carry the W3 ui-driver. An honest refusal beats a silent wrong-Mac
+    // action (head ruling on the W4 PR); per-device capability gating replaces
+    // this once the daemon reports capabilities at poll time.
+    const online = (await listDevices()).filter((d) => d.online && d.pairedAt)
+    if (online.length > 1) {
+      return {
+        success: false,
+        error:
+          'একাধিক Mac এখন অনলাইনে — কোনটার অ্যাপ চালাবো অনুমান করে করবো না, Boss। একটা Mac রেখে (বা অন্যটা ঘুম পাড়িয়ে) আবার বলুন।',
+        data: { refused: true, code: 'multiple_macs_online', online: online.map((d) => d.name) },
+      }
+    }
 
     const params = {
       bundleId,
