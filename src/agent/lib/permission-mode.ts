@@ -366,9 +366,18 @@ export function permissionModeNote(mode: PermissionMode, grant?: ElevationGrant 
     INTERNAL_MARKER,
     `[অনুমতি মোড — সার্ভার থেকে পড়া] এখন **${meta.label}** মোড। ${MODE_RULE_LINE[mode]}`,
   ]
-  if (mode === 'elevated' && grant) {
-    lines.push(`চালু আছে: ${grant.families.join(', ')} — মেয়াদ ${grant.expiresAt} পর্যন্ত।`)
+  // A grant is family-scoped and sits on top of ANY mode now, so it is reported
+  // whenever it is live — not only in `elevated`.
+  if (grant && grant.families.length > 0) {
+    lines.push(`সময়-বাঁধা অনুমতি চালু: ${grant.families.join(', ')} — ${grant.expiresAt} পর্যন্ত এগুলো কার্ড ছাড়াই করো।`)
   }
+  // The one instruction that kept getting lost in the big prompt: three live
+  // runs ended with the head NAMING the permission it needed and stopping there.
+  // The banner is in context every single turn, so it says it here.
+  lines.push(
+    'Boss যদি সময় বেঁধে বলেন "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" (১৫ মিনিট, আজ বিকেল পর্যন্ত…) — '
+    + 'তখনই **request_standing_permission চালাও**। "অনুমতি দরকার" লিখে থেমে যাওয়া = কাজটাই না করা; কার্ডটাই তোমার কাজ।',
+  )
   lines.push(
     'Boss এমন কিছু চাইলে যা এই মোডে করা যায় না — গোলমেলে উত্তর দিও না। '
     + 'সোজা বলো কোন মোডে আছো, কেন করা যাচ্ছে না, আর কোন মোডে দিলে করে দেবে। '
