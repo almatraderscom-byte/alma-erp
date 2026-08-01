@@ -4017,6 +4017,32 @@ export async function* runOwnerTurn(
     yield { type: 'text_delta', delta: disabledSwitchNote }
   }
 
+  // The chat route reads the mode and the grant off the conversation row and
+  // passes them in. Every OTHER entry point — the plan driver, the approval
+  // continuation — calls this with a conversation id and nothing else, so a turn
+  // Boss had already granted arrived with `elevationGrant: null` and was staged
+  // or blocked anyway (review bot, #667). The row is the source of truth, so
+  // read it here when the caller did not supply it.
+  if (options.elevationGrant === undefined || options.permissionMode === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const conv = await (prisma as any).agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { permissionMode: true, elevationGrant: true },
+      })
+      const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+      options = {
+        ...options,
+        permissionMode: options.permissionMode ?? conv?.permissionMode ?? undefined,
+        elevationGrant: options.elevationGrant ?? parseElevationGrant(conv?.elevationGrant),
+      }
+    } catch (err) {
+      // A read failure must not widen anything: no grant is the safe answer, and
+      // the mode falls back to the caller's default exactly as before.
+      console.warn('[run-owner-turn] permission row read failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Phase 6 — ONE turn engine: Anthropic heads run through the SAME neutral
   // orchestrator as every other provider (adapters/anthropic.ts owns the
   // request shaping). The old parallel native loop (core.ts) had to be patched
