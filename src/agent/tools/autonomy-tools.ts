@@ -448,6 +448,10 @@ const revoke_standing_permission: AgentTool = {
           ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
           : []
         const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
+        // A named family that matches nothing means the model spelled it wrong or
+        // translated it. Rewriting the same grant and saying "done" would leave
+        // the permission running after Boss asked it to stop (review bot, #667).
+        if (asked.length && !cleared.length) return { unmatched: asked, live: grant.families }
         // An already-expired family is not "still active" — keeping it would
         // persist a grant whose only cutoff is in the past and tell Boss it runs.
         const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
@@ -486,6 +490,16 @@ const revoke_standing_permission: AgentTool = {
 
       if (!outcome) {
         return { success: true, data: { cleared: [], remaining: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
+      }
+      if ('unmatched' in outcome) {
+        return {
+          success: false,
+          error:
+            `এই নামগুলো চালু অনুমতির মধ্যে নেই: ${outcome.unmatched.join(', ')}। `
+            + `এখন চালু আছে: ${outcome.live.join(', ')}। সঠিক নাম দিয়ে আবার বলো, `
+            + 'নাহলে families বাদ দিলে পুরোটাই বাতিল হবে।',
+          retryable: false,
+        }
       }
       const { cleared, kept } = outcome
 

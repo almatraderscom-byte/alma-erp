@@ -301,6 +301,21 @@ describe('a family without its own window is not granted', () => {
     expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(true)
   })
 
+  it('never lets a family window reach past the grant-wide cutoff', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': new Date(now + 9 * 60 * 60_000).toISOString(), // past the cutoff
+        'customer-messaging': new Date(now + 30 * 60_000).toISOString(),
+      },
+    })
+    expect(grant?.families).toEqual(['customer-messaging'])
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(false)
+  })
+
   it('rejects a present but malformed windows field', async () => {
     const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
     const future = new Date(Date.now() + 4 * 60 * 60_000).toISOString()

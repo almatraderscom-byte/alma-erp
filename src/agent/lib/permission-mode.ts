@@ -175,7 +175,12 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
   const windows: Record<string, string> = {}
   if (hasWindows) {
     for (const [family, at] of Object.entries(rawWindows as Record<string, unknown>)) {
-      if (typeof at === 'string' && Number.isFinite(Date.parse(at))) windows[family] = at
+      // A window may never outlast the grant-wide cutoff: `expiresAt` is
+      // documented as the LATEST of them, so a corrupt row must not use a
+      // per-family entry to reach past it (review bot, #667).
+      if (typeof at === 'string' && Number.isFinite(Date.parse(at)) && Date.parse(at) <= Date.parse(expiresAt)) {
+        windows[family] = at
+      }
     }
   }
   // A grant that carries per-family windows must carry one for EVERY family it
