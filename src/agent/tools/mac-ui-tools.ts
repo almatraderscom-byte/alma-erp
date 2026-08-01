@@ -335,7 +335,7 @@ const drive_mac_app: AgentTool = {
     'Refused by policy, not approvable: any other app, destructive/payment/permission buttons, typing secrets, ' +
     'typing while he is at the keyboard (comes back as owner_active — wait and retry). ' +
     'After an approval, fetch the outcome with check_mac_command using the returned id. ' +
-    'Workflow for "ChatGPT-e eta jigges koro": look tree → type into the composer → key enter → look tree again to read the reply. ' +
+    'Workflow for "ChatGPT-e eta jigges koro": look tree → type into the composer → key enter → look tree with fullTree=true to read the reply text. ' +
     'Owner-facing: report in Bangla what you did.',
   input_schema: {
     type: 'object' as const,
