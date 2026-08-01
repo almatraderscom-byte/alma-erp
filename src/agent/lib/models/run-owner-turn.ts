@@ -76,7 +76,7 @@ import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/tur
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { adviseForAction, filterToolsForPermissionMode, isElevationGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
@@ -2739,10 +2739,14 @@ async function* runAlternateProviderTurn(
         // card ("this runs without a card for 15 minutes") was false.
         // Everything the grant does NOT name still goes through the guard, and
         // R4 is never granted in the first place.
+        // EXPLICIT mapping only. A fallback task class is a risk floor, not a
+        // statement of what the tool does: `camera_speak` falls back to
+        // `internal-reminders`, so a reminders grant would otherwise have let it
+        // speak over the office camera with no card (review bot, #667).
         const grantCoversThisCall =
           permissionVerdict === 'auto'
-          && isElevationGrantLive(elevationGrant, Date.now())
-          && Boolean(elevationGrant?.families.includes(permissionTier.taskClass))
+          && permissionTier.explicit
+          && isFamilyGrantLive(elevationGrant, permissionTier.taskClass, Date.now())
         const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
@@ -2809,6 +2813,9 @@ async function* runAlternateProviderTurn(
             // PM-1: recorded on every tool event so "why did this run / why did
             // this ask" has an answer later. Not enforced until PM-2.
             permissionMode,
+            // The registry recomputes the verdict; without the grant it would
+            // block a Careful-mode call the grant had just authorised.
+            elevationGrant,
             turnAuthorization,
             driveClientSeoBatch,
             ownerVoicePref,

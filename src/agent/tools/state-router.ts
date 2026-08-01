@@ -106,6 +106,10 @@ export const CORE_PACK = [
   // the diet only filters. Three honest "I can't" replies before the mechanism
   // was found. ~40 tokens.
   'request_standing_permission',
+  // The way back (`revoke_standing_permission`) is NOT here: the core pack sits
+  // against the 24-tool ceiling, and revoking is rarer than asking. It stays on
+  // the head's core list, in ALWAYS_ALLOWED, and one find_tool hop from any
+  // routed turn.
 ] as const
 
 export const DOMAIN_PACKS = {

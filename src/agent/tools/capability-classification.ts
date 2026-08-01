@@ -125,6 +125,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // B6 — asking for a time-boxed standing permission is itself an approval card;
   // the grant is written by the approve route, never by the model.
   request_standing_permission: stage('autonomy'),
+  // Taking a permission AWAY is always safe — no card, immediate.
+  revoke_standing_permission: write('autonomy', 'low'),
   get_inventory_status: read('erp'),
   get_product: read('erp'),
   get_customer_summary: read('erp'),

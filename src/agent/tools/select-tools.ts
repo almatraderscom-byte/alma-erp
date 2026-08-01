@@ -341,7 +341,7 @@ export const HEAD_CORE_TOOL_NAMES = new Set<string>([
   'edit_storefront_product', 'update_order', 'update_orders',
   // B6: "ei kaj gulo r jiggesh koro na, tumi koro" — the honest version is a
   // time-boxed grant Boss approves, so the head must be able to ask for one.
-  'request_standing_permission',
+  'request_standing_permission', 'revoke_standing_permission',
   // comms the owner uses daily (WhatsApp + phone-agent program + camera)
   'send_whatsapp', 'get_wa_inbox', 'outbound_phone_call', 'place_agent_call',
   'call_boss_with_report', 'call_me_in_app', 'place_business_call', 'get_outbound_call_status',

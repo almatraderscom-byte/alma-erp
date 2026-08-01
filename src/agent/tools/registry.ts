@@ -682,6 +682,8 @@ interface ToolRunContext {
   turnId?: string
   /** PM-1 — the permission mode this call ran under. Recorded, not yet enforced. */
   permissionMode?: string
+  /** B6 — a live, family-scoped grant. Read alongside the mode, never instead. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
   driveClientSeoBatch?: boolean
@@ -795,7 +797,14 @@ export async function runRegisteredTool(
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
       const mode = normalizePermissionMode(ctx.permissionMode)
       const task = taskClassForTool(tool.name, cap)
-      const verdict = modeVerdict({ mode, tier: task.tier, taskClass: task.taskClass, now: Date.now() })
+      const verdict = modeVerdict({
+        mode,
+        tier: task.tier,
+        taskClass: task.taskClass,
+        // Only an EXPLICIT tool→family mapping may be lifted by a grant.
+        grant: task.explicit ? ctx.elevationGrant ?? null : null,
+        now: Date.now(),
+      })
       const blockedByMode =
         verdict === 'blocked'
         || (verdict === 'card' && mode === 'careful' && cap.mode === 'write')
@@ -1142,6 +1151,7 @@ export async function executeTool(
     businessId,
     turnId,
     permissionMode: typeof serverContext.permissionMode === 'string' ? serverContext.permissionMode : undefined,
+    elevationGrant: (serverContext.elevationGrant as ToolRunContext['elevationGrant']) ?? null,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
     instructionOrigin: serverContext.instructionOrigin as ToolRunContext['instructionOrigin'],

@@ -2481,11 +2481,23 @@ async function runApprove(
     const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
     const existing = parseElevationGrant(conv?.elevationGrant)
     const carried = isElevationGrantLive(existing, Date.now()) ? existing! : null
-    const families_ = carried
-      ? Array.from(new Set([...carried.families, ...safe]))
-      : safe
+    // PER-FAMILY windows. A 15-minute staff grant must not inherit a 4-hour
+    // customer one just because they overlapped (review bot, #667) — each family
+    // keeps the window Boss actually approved for it.
+    const { familyExpiry } = await import('@/agent/lib/permission-mode')
+    const windows: Record<string, string> = {}
+    if (carried) {
+      for (const fam of carried.families) windows[fam] = familyExpiry(carried, fam)
+    }
+    const thisCutoff = new Date(expiresMs).toISOString()
+    for (const fam of safe) {
+      // Re-granting a family extends it only if the new window ends later.
+      const prev = windows[fam] ? Date.parse(windows[fam]) : 0
+      if (expiresMs > prev) windows[fam] = thisCutoff
+    }
+    const families_ = Object.keys(windows)
     const expiresAt = new Date(
-      carried ? Math.max(expiresMs, Date.parse(carried.expiresAt)) : expiresMs,
+      Math.max(...families_.map((f) => Date.parse(windows[f]))),
     ).toISOString()
 
     // The MODE is deliberately left alone. A family-scoped grant is read on top
@@ -2493,7 +2505,7 @@ async function runApprove(
     // never quietly relax the Careful mode he selected for everything else.
     await db.agentConversation.update({
       where: { id: conversationId },
-      data: { elevationGrant: { families: families_, expiresAt } },
+      data: { elevationGrant: { families: families_, expiresAt, windows } },
     })
 
     await db.agentPendingAction.update({
@@ -2501,18 +2513,21 @@ async function runApprove(
       data: {
         status: 'executed',
         resolvedAt: new Date(),
-        result: { families: families_, minutes: mins, expiresAt, carriedOver: carried?.families ?? [] },
+        result: { families: families_, minutes: mins, expiresAt, windows, carriedOver: carried?.families ?? [] },
       },
     })
 
-    const labels = families_.map((id) => known.get(id)?.label ?? id).join(', ')
-    const until = new Date(expiresAt).toLocaleTimeString('en-GB', {
+    const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', {
       timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
     })
+    const labels = families_
+      .map((id) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
+      .join(', ')
+    const until = fmt(expiresAt)
     await appendConversationNote(
       db,
       action,
-      `🔓 অনুমতি চালু — ${labels}, ${until} পর্যন্ত।\n`
+      `🔓 অনুমতি চালু — ${labels}।\n`
       + (carried ? `(আগের চালু অনুমতিটাও রাখা হয়েছে — দুটো একসাথে চলবে।)\n` : '')
       + `মেয়াদ শেষে নিজে থেকেই বন্ধ, মোড যা ছিল তাই আছে। এখনই বন্ধ করতে চাইলে বলুন।\n`
       + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,

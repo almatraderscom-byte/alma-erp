@@ -121,8 +121,31 @@ export type ModeVerdict = 'auto' | 'card' | 'blocked' | 'owner_only'
 export interface ElevationGrant {
   /** Task-family ids from autonomy-task-catalog, e.g. 'public-publish'. */
   families: readonly string[]
-  /** ISO timestamp. A grant without an expiry is not a grant. */
+  /** ISO timestamp — the LATEST cutoff across families (back-compat + display). */
   expiresAt: string
+  /**
+   * Per-family cutoff. Two grants approved at different times must keep their
+   * own windows: a 15-minute staff grant must not inherit a 4-hour customer one
+   * because they overlapped (review bot, #667). Absent → `expiresAt` applies to
+   * every family, which is what older rows look like.
+   */
+  windows?: Readonly<Record<string, string>>
+}
+
+/** When does THIS family's permission end? Falls back to the grant-wide cutoff. */
+export function familyExpiry(grant: ElevationGrant, family: string): string {
+  return grant.windows?.[family] ?? grant.expiresAt
+}
+
+/** Is the grant live FOR THIS FAMILY specifically? */
+export function isFamilyGrantLive(
+  grant: ElevationGrant | null | undefined,
+  family: string,
+  now: number,
+): boolean {
+  if (!grant || !grant.families.includes(family)) return false
+  const t = Date.parse(familyExpiry(grant, family))
+  return Number.isFinite(t) && t > now
 }
 
 /**
@@ -138,7 +161,14 @@ export function parseElevationGrant(raw: unknown): ElevationGrant | null {
     ? obj.families.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
     : []
   if (families.length === 0) return null
-  return { families, expiresAt }
+  const rawWindows = (obj as { windows?: unknown }).windows
+  const windows: Record<string, string> = {}
+  if (rawWindows && typeof rawWindows === 'object') {
+    for (const [family, at] of Object.entries(rawWindows as Record<string, unknown>)) {
+      if (typeof at === 'string' && Number.isFinite(Date.parse(at))) windows[family] = at
+    }
+  }
+  return Object.keys(windows).length ? { families, expiresAt, windows } : { families, expiresAt }
 }
 
 export function isElevationGrantLive(grant: ElevationGrant | null | undefined, now: number): boolean {
@@ -179,8 +209,9 @@ export function modeVerdict(input: ModeVerdictInput): ModeVerdict {
   //
   // Plan is the exception: in Plan nothing changes at all, by design. A grant
   // does not un-plan a plan.
-  if (mode !== 'plan' && input.taskClass && isElevationGrantLive(input.grant, input.now ?? 0)) {
-    if (input.grant!.families.includes(input.taskClass)) return 'auto'
+  if (mode !== 'plan' && input.taskClass
+    && isFamilyGrantLive(input.grant, input.taskClass, input.now ?? 0)) {
+    return 'auto'
   }
 
   switch (mode) {
@@ -376,7 +407,8 @@ export function permissionModeNote(mode: PermissionMode, grant?: ElevationGrant 
   // The banner is in context every single turn, so it says it here.
   lines.push(
     'Boss যদি সময় বেঁধে বলেন "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" (১৫ মিনিট, আজ বিকেল পর্যন্ত…) — '
-    + 'তখনই **request_standing_permission চালাও**। "অনুমতি দরকার" লিখে থেমে যাওয়া = কাজটাই না করা; কার্ডটাই তোমার কাজ।',
+    + 'তখনই **request_standing_permission চালাও**। "অনুমতি দরকার" লিখে থেমে যাওয়া = কাজটাই না করা; কার্ডটাই তোমার কাজ। '
+    + 'আর Boss থামতে বললে ("বাতিল করো", "আবার জিজ্ঞেস কোরো") — সাথে সাথে **revoke_standing_permission**, কার্ড ছাড়াই।',
   )
   lines.push(
     'Boss এমন কিছু চাইলে যা এই মোডে করা যায় না — গোলমেলে উত্তর দিও না। '

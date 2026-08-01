@@ -372,6 +372,14 @@ const TIER_DEFAULT_CLASS: Record<RiskTier, string> = {
 export interface ToolTaskClass {
   taskClass: string
   tier: RiskTier
+  /**
+   * True only when this tool is NAMED in the tool→family map. A fallback class
+   * is a risk floor, not a statement about what the tool does — and a standing
+   * grant must never be widened by one (review bot, #667: `camera_speak` falls
+   * back to `internal-reminders`, so a reminders grant would have let the agent
+   * speak over the office camera without a card).
+   */
+  explicit: boolean
 }
 
 /** Tier of a known task class (defaults to R3 — conservative — if unknown). */
@@ -390,14 +398,14 @@ export function taskClassForTool(
   cap?: Pick<Capability, 'mode' | 'risk' | 'domain'>,
 ): ToolTaskClass {
   const explicit = TOOL_TASK_CLASS[toolName]
-  if (explicit) return { taskClass: explicit, tier: tierForTaskClass(explicit) }
-  if (!cap) return { taskClass: 'public-publish', tier: 'R3' } // unknown + no cap = cautious
+  if (explicit) return { taskClass: explicit, tier: tierForTaskClass(explicit), explicit: true }
+  if (!cap) return { taskClass: 'public-publish', tier: 'R3', explicit: false } // unknown + no cap = cautious
   if (cap.mode === 'read') {
     const taskClass = cap.domain === 'research' ? 'research-public' : 'erp-reporting'
-    return { taskClass, tier: 'R0' }
+    return { taskClass, tier: 'R0', explicit: false }
   }
   const tier = deriveTier(cap)
-  return { taskClass: TIER_DEFAULT_CLASS[tier], tier }
+  return { taskClass: TIER_DEFAULT_CLASS[tier], tier, explicit: false }
 }
 
 /** Domains whose autonomy policy category is actually consulted at baseline. */

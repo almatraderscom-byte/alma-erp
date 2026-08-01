@@ -405,4 +405,72 @@ const request_standing_permission: AgentTool = {
   },
 }
 
-export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action, request_standing_permission]
+
+const revoke_standing_permission: AgentTool = {
+  name: 'revoke_standing_permission',
+  description:
+    'Cancel a live time-boxed permission IMMEDIATELY. Run this the moment Boss says to stop — '
+    + '"আর নিজে কোরো না", "অনুমতিটা বাতিল করো", "stop, ask me again". Takes effect at once; no card, '
+    + 'because taking a permission away is always safe. Say what was cancelled and what is left.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      families: {
+        type: 'array',
+        description: 'Only these families — omit to cancel the whole standing permission.',
+        items: { type: 'string' },
+      },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!conversationId) return { success: false, error: 'কোন কথোপকথনের অনুমতি, সেটা ছাড়া বাতিল করা যায় না।' }
+
+      const { parseElevationGrant, familyExpiry } = await import('@/agent/lib/permission-mode')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const conv = await db.agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { elevationGrant: true },
+      })
+      const grant = parseElevationGrant(conv?.elevationGrant)
+      if (!grant) return { success: true, data: { cleared: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
+
+      const asked = Array.isArray(input.families)
+        ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
+        : []
+      const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
+      const kept = grant.families.filter((f) => !cleared.includes(f))
+
+      if (!kept.length) {
+        await db.agentConversation.update({ where: { id: conversationId }, data: { elevationGrant: null } })
+      } else {
+        const windows: Record<string, string> = {}
+        for (const fam of kept) windows[fam] = familyExpiry(grant, fam)
+        const expiresAt = new Date(Math.max(...kept.map((f) => Date.parse(windows[f])))).toISOString()
+        await db.agentConversation.update({
+          where: { id: conversationId },
+          data: { elevationGrant: { families: kept, expiresAt, windows } },
+        })
+      }
+
+      return {
+        success: true,
+        data: {
+          cleared,
+          remaining: kept,
+          message: kept.length
+            ? `বাতিল: ${cleared.join(', ')}। এখনো চালু: ${kept.join(', ')}।`
+            : 'সময়-বাঁধা অনুমতি পুরোপুরি বাতিল — সব কাজ আবার আগের মতো কার্ডে আসবে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action, request_standing_permission, revoke_standing_permission]

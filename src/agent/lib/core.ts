@@ -1633,7 +1633,21 @@ export async function* runAgentTurn(
         // AIOS mandatory enforcement (ON by default; AIOS_ENFORCE=off opts out) — native Claude path.
         // Same door as the multi-model path: every tool call is forced through
         // policy + autonomy/approval before it can run.
-        const aiosGuard = !ownerIntentViolation && !hookBlocked && enforcementEnabled()
+        // B6 — the same family-scoped bypass as the multi-model path. Without it
+        // the documented kill switch (AGENT_NATIVE_ANTHROPIC_LOOP=true) silently
+        // loses the card-free behaviour the grant card promised.
+        const grantCoversThisCall = await (async () => {
+          const grant = options.elevationGrant
+          if (!grant) return false
+          const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+          const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+          const { getCapability } = await import('@/agent/tools/capability-manifest')
+          const cap = getCapability(tb.name)
+          const task = taskClassForTool(tb.name, cap)
+          // EXPLICIT mapping only — a fallback class is a risk floor, not a family.
+          return task.explicit && isFamilyGrantLive(grant, task.taskClass, Date.now())
+        })()
+        const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),

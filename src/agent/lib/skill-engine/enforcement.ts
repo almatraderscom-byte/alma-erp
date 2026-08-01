@@ -38,6 +38,7 @@ export const ALWAYS_ALLOWED = new Set([
   // the head searched for a tool it was holding. Asking is never the thing a
   // skill needs protecting from; it stages a card like any other request.
   'request_standing_permission',
+  'revoke_standing_permission',
   // The owner's own Mac. These are owner-service capabilities, like ask_user:
   // when he says "open a Claude session on my Mac", that must work regardless of
   // which skill the router happened to pin. Live-hit 2026-08-01: an unrelated

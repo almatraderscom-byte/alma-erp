@@ -18,6 +18,7 @@ import {
   permissionModeNote,
   isElevationGrantLive,
   type PermissionMode,
+  isFamilyGrantLive,
 } from '@/agent/lib/permission-mode'
 import type { RiskTier } from '@/agent/lib/autonomy-task-catalog'
 
@@ -212,5 +213,36 @@ describe('a family-scoped grant sits ON TOP of the mode, not instead of it', () 
     const dead = { families: ['staff-messaging'], expiresAt: new Date(now - 1000).toISOString() }
     expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'staff-messaging', grant: dead, now }))
       .toBe('card')
+  })
+})
+
+/** Review-bot round 2 on #667 — two grants, two clocks. */
+describe('each family keeps the window it was given', () => {
+  const now = Date.now()
+  const grant = {
+    families: ['staff-messaging', 'customer-messaging'],
+    expiresAt: new Date(now + 4 * 60 * 60_000).toISOString(),
+    windows: {
+      'staff-messaging': new Date(now + 15 * 60_000).toISOString(),
+      'customer-messaging': new Date(now + 4 * 60 * 60_000).toISOString(),
+    },
+  }
+
+  it('does not extend the short grant to the long one’s cutoff', () => {
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now + 20 * 60_000)).toBe(false)
+    expect(isFamilyGrantLive(grant, 'customer-messaging', now + 20 * 60_000)).toBe(true)
+  })
+
+  it('reads the per-family window in the verdict', () => {
+    expect(modeVerdict({ mode: 'standard', tier: 'R3', taskClass: 'staff-messaging', grant, now: now + 20 * 60_000 }))
+      .toBe('card')
+    expect(modeVerdict({ mode: 'standard', tier: 'R3', taskClass: 'customer-messaging', grant, now: now + 20 * 60_000 }))
+      .toBe('auto')
+  })
+
+  it('falls back to the grant-wide cutoff for older rows without windows', () => {
+    const old = { families: ['staff-messaging'], expiresAt: new Date(now + 60_000).toISOString() }
+    expect(isFamilyGrantLive(old, 'staff-messaging', now)).toBe(true)
+    expect(isFamilyGrantLive(old, 'staff-messaging', now + 120_000)).toBe(false)
   })
 })
