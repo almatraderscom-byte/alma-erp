@@ -155,20 +155,22 @@ async function sweepUnpushedNotables(db: any, sessionId: string) {
     })
     if (candidates.length === 0) return
 
-    // Only the NEWEST notable is worth the owner's attention — a stale
-    // question would mislead (Codex round 6). Everything older, and any
-    // turn_done that is neither an error nor a question, settles silently.
-    const notable = candidates.find(
-      (c) => c.kind === 'error' || c.kind === 'ended' || c.isError || isQuestion(c.text),
-    )
-    const settleSilently = candidates.filter((c) => c.id !== notable?.id)
+    // Push ONLY when the newest terminal row is itself notable. An owed
+    // question that a newer quiet turn_done has superseded settles silently —
+    // the session moved past it, and pushing it late would mislead (Codex,
+    // L7 round 4).
+    const newest = candidates[0]
+    const newestIsNotable =
+      newest.kind === 'error' || newest.kind === 'ended' || newest.isError || isQuestion(newest.text)
+    const settleSilently = candidates.filter((c) => !(newestIsNotable && c.id === newest.id))
     if (settleSilently.length > 0) {
       await db.macAgentSessionEvent.updateMany({
         where: { id: { in: settleSilently.map((c) => c.id) } },
         data: { pushedAt: new Date() },
       })
     }
-    if (!notable) return
+    if (!newestIsNotable) return
+    const notable = newest
 
     const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
     const title =

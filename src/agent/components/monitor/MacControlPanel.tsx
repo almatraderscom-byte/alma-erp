@@ -268,13 +268,14 @@ function StreamToggle() {
   const [on, setOn] = useState(false)
   const [busy, setBusy] = useState(false)
   /**
-   * A queued start can wait behind a long command with no frames yet — the
-   * poll must not overwrite the accepted optimistic ON with "no frames = off"
-   * during that window, or the owner sees "start" again and repeat taps
-   * enqueue extra starts (Codex on the L7 PR). Server truth wins after the
-   * grace, and immediately when it says streaming.
+   * An accepted toggle holds its DESIRED state through a grace window, and
+   * during it the poll only accepts the server value once it AGREES. Both
+   * directions need this: a queued start has no frames yet ("off" would
+   * invite duplicate starts), and a fresh stop still reads streaming:true for
+   * up to 10s of frame linger (accepting that true would then re-arm the old
+   * one-way grace against the real false — Codex, L7 rounds 2+4).
    */
-  const optimisticUntilRef = useRef(0)
+  const pendingRef = useRef<{ v: boolean; until: number } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -284,9 +285,11 @@ function StreamToggle() {
         if (!res.ok) return
         const d = (await res.json()) as { streaming?: boolean }
         if (!alive) return
-        if (d.streaming || Date.now() > optimisticUntilRef.current) {
-          setOn(Boolean(d.streaming))
-        }
+        const server = Boolean(d.streaming)
+        const pending = pendingRef.current
+        if (pending && Date.now() < pending.until && server !== pending.v) return // not caught up yet
+        pendingRef.current = null
+        setOn(server)
       } catch {
         /* keep last known state */
       }
@@ -309,7 +312,7 @@ function StreamToggle() {
         body: JSON.stringify({ on: !on }),
       })
       if (res.ok) {
-        optimisticUntilRef.current = Date.now() + 45_000
+        pendingRef.current = { v: !on, until: Date.now() + 45_000 }
         setOn((v) => !v)
       }
     } catch {
