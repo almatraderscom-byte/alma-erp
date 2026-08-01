@@ -21,7 +21,7 @@
  * owner is never left wondering whether his task is still running.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -72,7 +72,12 @@ function persistSessions() {
         startedAt: s.startedAt,
         lastActivityAt: s.lastActivityAt,
       }))
-    writeFileSync(SESSIONS_FILE, JSON.stringify(rows), { mode: 0o600 })
+    // Atomic: a kill mid-write must never leave a truncated sessions.json —
+    // the next startup would parse-fail and silently restore NOTHING,
+    // defeating the whole feature (Codex, L5 round 4).
+    const tmp = `${SESSIONS_FILE}.tmp`
+    writeFileSync(tmp, JSON.stringify(rows), { mode: 0o600 })
+    renameSync(tmp, SESSIONS_FILE)
   } catch {
     /* persistence is best-effort; a failed write must never break a session */
   }
@@ -126,7 +131,13 @@ export function loadPersistedSessions(allowedDirs = []) {
       // the window although its child died with the old daemon (Codex, L5
       // round 2). The event also rides the restored counter, proving the
       // seq continuation end-to-end.
-      pushEvent(sessions.get(r.id), { kind: 'detached' })
+      const restored = sessions.get(r.id)
+      pushEvent(restored, { kind: 'detached' })
+      // …but restoration is not ACTIVITY: pushEvent's touch would renew the
+      // 24h expiry on every restart, keeping an old approved bypass session
+      // alive forever (Codex, L5 round 4). Keep the original clock.
+      restored.lastActivityAt = r.lastActivityAt ?? Date.now()
+      persistSessions()
       n += 1
     }
     return n
