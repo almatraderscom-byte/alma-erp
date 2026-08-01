@@ -75,3 +75,25 @@ describe('request_standing_permission asks, never grants', () => {
     expect(res.success).toBe(false)
   })
 })
+
+/**
+ * Live on 2026-08-01: Boss said "stop asking me for the next 15 minutes" in the
+ * middle of a staff-dispatch turn. The pinned skill's allowlist withheld
+ * `request_standing_permission`, so the head searched for a tool it was already
+ * holding and no card was ever staged.
+ *
+ * Asking is not the thing a skill needs protecting from — it stages a card like
+ * any other request, and Boss is the only one who can turn it into a permission.
+ */
+describe('any skill may ask for a grant', () => {
+  it('is in the set every skill keeps', async () => {
+    const { ALWAYS_ALLOWED } = await import('@/agent/lib/skill-engine/enforcement')
+    expect(ALWAYS_ALLOWED.has('request_standing_permission')).toBe(true)
+  })
+
+  it('survives a narrow skill allowlist', async () => {
+    const { skillAllowlist } = await import('@/agent/lib/skill-engine/enforcement')
+    const allowed = skillAllowlist({ requiredCapabilities: ['get_all_staff'] })
+    expect(allowed?.has('request_standing_permission')).toBe(true)
+  })
+})

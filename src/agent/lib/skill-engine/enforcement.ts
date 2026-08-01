@@ -32,6 +32,12 @@ export const ALWAYS_ALLOWED = new Set([
   'ask_user',
   'save_memory',
   'request_agent_action',
+  // B6: asking for a time-boxed permission is the honest answer to "stop asking
+  // me every time", and Boss says that DURING some other job — a staff dispatch,
+  // an order run. Live on 2026-08-01 the pinned skill's allowlist withheld it and
+  // the head searched for a tool it was holding. Asking is never the thing a
+  // skill needs protecting from; it stages a card like any other request.
+  'request_standing_permission',
 ])
 
 /**
