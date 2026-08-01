@@ -2599,6 +2599,9 @@ async function runApprove(
       .map((id: string) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
       .join(', ')
     const until = fmt(expiresAt)
+    // The grant is COMMITTED by now, so a failed chat note must not turn into a
+    // failed approval: the card cannot be handed back, and Boss would be told it
+    // failed while the permission runs (review bot, #667). Log and carry on.
     await appendConversationNote(
       db,
       action,
@@ -2606,7 +2609,9 @@ async function runApprove(
       + (carried ? `(আগের চালু অনুমতিটাও রাখা হয়েছে — দুটো একসাথে চলবে।)\n` : '')
       + `মেয়াদ শেষে নিজে থেকেই বন্ধ, মোড যা ছিল তাই আছে। এখনই বন্ধ করতে চাইলে বলুন।\n`
       + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,
-    )
+    ).catch((err: unknown) => {
+      console.warn('[approve] grant note failed:', err instanceof Error ? err.message : err)
+    })
 
     return Response.json({ success: true, families: families_, minutes: mins, expiresAt })
 
