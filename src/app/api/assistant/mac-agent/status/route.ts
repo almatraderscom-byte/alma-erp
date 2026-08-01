@@ -80,6 +80,19 @@ export async function POST(req: NextRequest) {
 
   if (action === 'stop') {
     const cancelled = await cancelAllQueued(body.deviceId)
+    // The red STOP must also kill a RUNNING screen stream, not only queued
+    // commands — the capture timer lives outside the queue (Codex on the L7
+    // PR). Enqueued AFTER the cancel so it survives it; the daemon's frame
+    // loop picks it up off the frames side-channel within ~1.5s.
+    try {
+      const { activeDevice, enqueueCommand } = await import('@/agent/lib/mac-agent/bus')
+      const device = await activeDevice()
+      if (device) {
+        await enqueueCommand({ deviceId: device.id, action: 'screen_stream', params: { mode: 'stop' } })
+      }
+    } catch {
+      /* stream stop is additive to STOP; the deadline still bounds capture */
+    }
     return Response.json({ ok: true, cancelled })
   }
 

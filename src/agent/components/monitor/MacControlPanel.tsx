@@ -7,7 +7,7 @@
  * is a deliberate act he can see the consequences of: which Mac is connected,
  * exactly what has run on it, and one red button that stops everything.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 interface MacDevice {
   id: string
@@ -267,6 +267,14 @@ export default function MacControlPanel() {
 function StreamToggle() {
   const [on, setOn] = useState(false)
   const [busy, setBusy] = useState(false)
+  /**
+   * A queued start can wait behind a long command with no frames yet — the
+   * poll must not overwrite the accepted optimistic ON with "no frames = off"
+   * during that window, or the owner sees "start" again and repeat taps
+   * enqueue extra starts (Codex on the L7 PR). Server truth wins after the
+   * grace, and immediately when it says streaming.
+   */
+  const optimisticUntilRef = useRef(0)
 
   useEffect(() => {
     let alive = true
@@ -275,7 +283,10 @@ function StreamToggle() {
         const res = await fetch('/api/assistant/live-activity', { cache: 'no-store' })
         if (!res.ok) return
         const d = (await res.json()) as { streaming?: boolean }
-        if (alive) setOn(Boolean(d.streaming))
+        if (!alive) return
+        if (d.streaming || Date.now() > optimisticUntilRef.current) {
+          setOn(Boolean(d.streaming))
+        }
       } catch {
         /* keep last known state */
       }
@@ -297,7 +308,10 @@ function StreamToggle() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ on: !on }),
       })
-      if (res.ok) setOn((v) => !v)
+      if (res.ok) {
+        optimisticUntilRef.current = Date.now() + 45_000
+        setOn((v) => !v)
+      }
     } catch {
       /* stays where it was */
     } finally {
