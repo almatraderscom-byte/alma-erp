@@ -1690,8 +1690,12 @@ export async function* runAgentTurn(
             mode: 'careful',
             tier: task.tier,
             taskClass: task.taskClass,
-            // Only an explicit mapping may be lifted by a grant.
-            grant: task.explicit ? liveGrant : null,
+            // Only an explicit mapping may be lifted by a grant — and only one
+            // the ROW still confirms. `grantCoversThisCall` above already ran
+            // that check; reaching here with a grant means it came back false,
+            // so the snapshot is stale and must not clear the card (review bot,
+            // #667). The multi-model path does the same.
+            grant: null,
             now: Date.now(),
           })
           return verdict === 'card'
