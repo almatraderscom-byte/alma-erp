@@ -28,9 +28,9 @@ result route হয়ে ফেরত।
 **Approval flow:** card (`agent_pending_actions`) → owner tap →
 `actions/[id]/approve/route.ts` → (১) তাৎক্ষণিক progress note ("⏳ অনুমোদন
 পেলাম…", `beginApprovalProgress`, line ~3226) + command enqueue → (২)
-`enqueueApprovalContinuation` (line ~3270) → **BullMQ `agent-turn` queue → VPS
-worker** (`worker/src/index.mjs:1553`) → continuation টার্ন **পুরো chat route
-দিয়ে আবার চলে** (full context + model + tool loop)।
+`enqueueApprovalContinuation` → `enqueueTurnJob` → **BullMQ `long-agent-task`
+queue → VPS `longTaskWorker`** (`worker/src/index.mjs:1307`) → continuation
+টার্ন **পুরো chat route দিয়ে আবার চলে** (full context + model + tool loop)।
 
 **App driving (L8):** allowlist ২টা app; server-side classifier
 (`ui-policy.ts`) + daemon twin (`ui-policy.mjs`); element-স্তরে verify আছে
@@ -92,9 +92,12 @@ messages পড়ে (`settleNewMessages` proven live), tree-তে conversatio
 পথটা মেপে দেখা root cause তিনটা:
 
 1. **Resume মানে checkpoint-resume নয় — সম্পূর্ণ নতুন agent turn।**
-   `enqueueApprovalContinuation` → BullMQ → VPS worker → **পুরো chat route
-   আবার**: সম্পূর্ণ history দিয়ে prompt rebuild + model inference + tool loop।
-   এইটাই সময়ের সিংহভাগ (Luna-তে লম্বা history মানে ৩০–৬০+ সেকেন্ড শুধু টার্নেই)।
+   `enqueueApprovalContinuation` → `enqueueTurnJob` → BullMQ **`long-agent-task`**
+   queue → VPS `longTaskWorker` (`worker/src/index.mjs:1307`) → **পুরো chat
+   route আবার**: সম্পূর্ণ history দিয়ে prompt rebuild + model inference + tool
+   loop। এইটাই সময়ের সিংহভাগ (Luna-তে লম্বা history মানে ৩০–৬০+ সেকেন্ড শুধু
+   টার্নেই)। (`agent-turn` queue-টা Telegram-এর নিজস্ব পথ — approval এ পথে যায়
+   না; আগের খসড়ায় ভুল ছিল, সংশোধিত।)
 2. **Queue hop:** Vercel → Redis (Upstash) → VPS worker pickup। worker
    `agent-turn` অন্য queue-র (image/video/cs) সাথে একই process-এ
    (`worker/src/index.mjs`) — busy থাকলে অপেক্ষা। (ঠিক কত দেরি হচ্ছে — trace
@@ -141,9 +144,14 @@ delivered ৩ সেকেন্ড, আজকের test 6)।
 
 ## D. Architecture Gaps (bug নয় — foundation)
 
-1. **AgentTask object নেই।** Goal, plan-step, target app+session, action log,
-   corrections, pending approvals — সব transcript-এ implicit। এক জায়গার durable
-   source of truth নেই বলে model বদল/resume/correction সবখানে ভাঙে।
+1. **Task state-এর durable ভিত আছে, কিন্তু অসম্পূর্ণ ও এই পথে অব্যবহৃত।**
+   `WorkflowRun` (prisma/schema.prisma:2110—"the ONE canonical record of an
+   in-flight job": goal, status, stateVersion, facts; plans/checkpoints এখানে
+   LINK করে) already ship করা — কিন্তু (ক) `AGENT_STATE_ROUTER=shadow`, প্রধান
+   turn-পথ এটা পড়ে না; (খ) session identity, per-action log, corrections,
+   pinned model field নেই; (গ) approval continuation ও head-router এর সাথে
+   সংযুক্ত নয়। তাই E-র সুপারিশ **নতুন কিছু বানানো নয় — WorkflowRun-কে সেই
+   অনুপস্থিত field দিয়ে বাড়িয়ে মূল turn-পথে wire করা।**
 2. **Checkpoint নেই** — resume = re-run।
 3. **Session identity নেই** (উপরে)।
 4. **Vision loop নেই** (উপরে)।
@@ -157,11 +165,12 @@ delivered ৩ সেকেন্ড, আজকের test 6)।
 
 ### E. মূল কাঠামো — "Durable Task Runtime"
 
-নতুন Prisma মডেল `AgentTask`:
+**নতুন model নয় — বিদ্যমান `WorkflowRun` সম্প্রসারণ** (Codex-verified: এটাই
+declared canonical job record)। যোগ হবে যে field-গুলো নেই:
 
 ```
-AgentTask {
-  id, conversationId, goal (owner-ভাষায়), status,
+WorkflowRun {  // বিদ্যমান: id, conversationId, kind, goal, status, state,
+               // stateVersion, inputs, facts …  — যোগ হবে:
   pinnedHeadModelId,            // F দেখুন
   plan: Json (steps + done/pending),
   target: Json { app, windowTitle, sessionTitle, sessionFirstText, sessionType },
