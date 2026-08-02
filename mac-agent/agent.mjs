@@ -344,14 +344,21 @@ let streamBusy = false
 // frame pipe above stays the only channel, nothing breaks.
 let videoChild = null
 let videoActive = false
+// Stop can arrive while the token request is still in flight — the resumed
+// continuation must NOT spawn a capturer nobody will ever kill (Codex P1,
+// same race class as the iOS join). Generation counter: stop bumps it, the
+// continuation compares.
+let videoGeneration = 0
 
 async function startScreenVideo(token) {
   const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
   if (!existsSync(bin)) return // not built/deployed on this Mac — JPEG only
+  const gen = videoGeneration
   try {
     const res = await api('/api/assistant/mac-agent/screen-video-token', {
       method: 'POST', token, timeoutMs: 10_000,
     })
+    if (gen !== videoGeneration) return // stopped while we awaited — do not spawn
     if (!res.ok || !res.json?.token) {
       log('screen video: no token', String(res.status))
       return
@@ -380,6 +387,7 @@ async function startScreenVideo(token) {
 }
 
 function stopScreenVideo() {
+  videoGeneration += 1
   if (videoChild) {
     try { videoChild.kill('SIGTERM') } catch { /* already gone */ }
     videoChild = null

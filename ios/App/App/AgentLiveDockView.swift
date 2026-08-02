@@ -739,6 +739,10 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
 
     final class Coordinator: NSObject, AgoraRtcEngineDelegate {
         var engine: AgoraRtcEngineKit?
+        /// Our OWN Agora connection (joinChannelEx) — never the app's main
+        /// channel, so watching the screen during an intercom call neither
+        /// collides with it nor tears it down on dismantle (Codex P1).
+        var connection: AgoraRtcConnection?
         weak var canvasView: UIView?
         var joined = false
         /// Sheet closed while the token request was in flight: the resumed
@@ -756,31 +760,40 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                     "POST", "/api/assistant/mac-agent/screen-video-token",
                     body: ["deviceId": deviceId]) else { return }
                 if self.cancelled { return }
-                let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: self)
+                let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
                 self.engine = engine
                 engine.enableVideo()
-                engine.setChannelProfile(.liveBroadcasting)
-                engine.setClientRole(.audience)
-                engine.joinChannel(byToken: resp.token, channelId: resp.channel,
-                                   info: nil, uid: UInt(resp.uid))
+                let conn = AgoraRtcConnection(channelId: resp.channel, localUid: resp.uid)
+                self.connection = conn
+                let options = AgoraRtcChannelMediaOptions()
+                options.clientRoleType = .audience
+                options.autoSubscribeVideo = true
+                options.autoSubscribeAudio = false
+                options.publishCameraTrack = false
+                options.publishMicrophoneTrack = false
+                engine.joinChannelEx(byToken: resp.token, connection: conn,
+                                     delegate: self, mediaOptions: options)
                 // The view can have been dismantled between the await points —
                 // never linger in the channel behind a closed sheet.
-                if self.cancelled { engine.leaveChannel(nil) }
+                if self.cancelled { self.leave() }
             }
         }
 
         func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
-            guard uid == 1, let view = canvasView else { return } // 1 = the Mac broadcaster
+            guard uid == 1, let view = canvasView, let conn = connection else { return } // 1 = the Mac
             let canvas = AgoraRtcVideoCanvas()
             canvas.uid = uid
             canvas.view = view
             canvas.renderMode = .fit
-            engine.setupRemoteVideo(canvas)
+            engine.setupRemoteVideoEx(canvas, connection: conn)
         }
 
         func leave() {
             cancelled = true
-            engine?.leaveChannel(nil)
+            if let conn = connection {
+                engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
+                connection = nil
+            }
             joined = false
         }
     }
