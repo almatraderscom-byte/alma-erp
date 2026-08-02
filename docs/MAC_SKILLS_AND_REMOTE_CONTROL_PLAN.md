@@ -111,14 +111,40 @@ WebSocket — বাড়তি অবকাঠামো, লাভ নেই; 
 4. Kill-switch/রেড STOP → inject তাৎক্ষণিক বন্ধ (বিদ্যমান পথ)।
 5. Audit: control-session start/stop + event-count log (প্রতিটি tap নয়)।
 
+## নির্ভুল-স্পর্শ নকশা (মালিকের requirement 2026-08-03: বড় Mac-স্ক্রিন, ছোট ফোন —
+## ভুল click চলবে না, কাজ হবে smooth)
+
+এটা RC-1-এরই অংশ, polish নয় — ভুল-click ঠেকানো প্রথম দিনের নকশা।
+
+1. **Trackpad mode = DEFAULT (relative control)** — আঙুল সরালে Mac-এর cursor
+   সরে (trackpad-এর মতো), tap মানে **cursor যেখানে সেখানে click — আঙুলের নিচে
+   নয়**। বড়-স্ক্রিন→ছোট-ফোনে এটাই শিল্পের প্রমাণিত সমাধান (Screens, Jump,
+   Chrome Remote Desktop সবার default)। আঙুল কখনোই লক্ষ্য ঢেকে রাখে না।
+   - দুই-আঙুল swipe = scroll; দুই-আঙুল tap = right-click; long-press = drag শুরু।
+2. **Direct mode (ঐচ্ছিক toggle)** — pinch-zoom + pan; zoom ≥2x হলে সরাসরি tap
+   অনুমোদিত, zoom-out অবস্থায় সরাসরি tap নিষিদ্ধ (বড় টার্গেট ছাড়া)।
+3. **AX-snap assist — আমাদের নিজস্ব সুবিধা, generic remote-desktop-এর নেই:**
+   daemon-এর AX গাছ আছেই; click-এর আগে cursor-এর N px-এর মধ্যে নিকটতম
+   clickable element-এ snap + Mac-স্ক্রিনে সেটার চারপাশে highlight-ring ভিডিওতে
+   দেখা যাবে → মালিক যা দেখছেন সেটাতেই click পড়বে, pixel-নিখুঁত না হলেও।
+4. **ছোট টার্গেটে two-step confirm (ঐচ্ছিক):** প্রথম tap = cursor বসা + টার্গেট
+   highlight; দ্বিতীয় tap = click। Settings-এ on/off।
+5. **Loupe/ম্যাগনিফায়ার:** drag চলাকালে cursor-এর চারপাশ বড় করে ভাসবে।
+6. **Feedback:** প্রতিটি সফল click-এ haptic + ভিডিওতে ক্ষণিক ring; ব্যর্থ/বাউন্ডের
+   বাইরে হলে ভিন্ন haptic — নীরব ব্যর্থতা নয়।
+7. **Fitts-বান্ধব chrome:** control-bar বোতামগুলো বড় (≥44pt), ভিডিওর কোণ থেকে
+   দূরে, যাতে UI-বোতাম আর Mac-click গুলিয়ে না যায়।
+
 ## Phase ভাগ (নতুন session-এর roadmap)
-- **RC-1 (core):** tap, double-tap, drag, scroll → CGEvent; iOS gesture layer;
-  control-toggle + token; coordinate mapping। প্রমাণ: sim থেকে Mac-এ Finder
-  চালানো ভিডিওতে দেখা।
+- **RC-1 (core):** **trackpad-mode** cursor+click+drag+scroll → CGEvent; iOS
+  gesture layer; control-toggle + token; coordinate mapping; click-feedback
+  ring। প্রমাণ: sim থেকে Mac-এ Finder চালানো ভিডিওতে দেখা।
 - **RC-2 (keyboard):** on-screen text bar → typeUnicode-শ্রেণির inject; ⌘C/⌘V/
   Enter/Esc শortcut-বার; long-press = right-click।
-- **RC-3 (polish):** canvas pinch-zoom/pan (বড় স্ক্রিনে নিখুঁত tap-এর জন্য
-  অপরিহার্য), haptics, multi-display বাছাই, connection-drop auto-heal।
+- **RC-2.5 (precision):** direct-mode + pinch-zoom/pan, AX-snap assist,
+  two-step confirm, loupe।
+- **RC-3 (polish):** multi-display বাছাই, connection-drop auto-heal, haptic
+  সূক্ষ্মতা।
 - সব শেষে: sim-এ মালিকের নিজের verify → তবেই TestFlight (নিয়ম বহাল)।
 
 জানা ফাঁদ (L9 থেকে): frameworks binary-র পাশে; extend≠respawn; NV12 format;
