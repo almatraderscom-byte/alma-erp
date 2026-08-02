@@ -109,6 +109,7 @@ describe('wrong-tool interceptor pattern', () => {
       'echo ok # ; screencapture out.png', // comment (Codex round 3)
       'echo hi | grep screencapture',
       'grep "screencapture" docs/notes.md',
+      'screencapture\u00a0-x /tmp/a.jpg', // NBSP — zsh would not split here (Codex round 10)
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('refuse')
     }

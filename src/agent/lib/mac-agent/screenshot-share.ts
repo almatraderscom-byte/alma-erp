@@ -40,9 +40,13 @@ const RETENTION_MS = 24 * 3600 * 1000
 export function classifyScreencaptureIntent(command: string): 'intercept' | 'refuse' | 'run' {
   const c = String(command)
   if (!/screencapture/i.test(c)) return 'run'
-  const simple = !/[;&|'"`#\n$(){}<>\\]/.test(c)
+  // Only printable ASCII qualifies as "simple": JS \s treats characters as
+  // whitespace that zsh does NOT split on (NBSP et al.), so a command
+  // containing any exotic character refuses rather than being tokenized
+  // differently from the shell that would run it (Codex P1).
+  const simple = !/[;&|'"`#\n$(){}<>\\]/.test(c) && !/[^\x20-\x7e]/.test(c)
   if (simple) {
-    const words = c.trim().split(/\s+/).filter(Boolean)
+    const words = c.trim().split(/[ \t]+/).filter(Boolean)
     let i = 0
     while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i += 1
     const baseOf = (w: string) => (w.split('/').pop() ?? '').toLowerCase()
