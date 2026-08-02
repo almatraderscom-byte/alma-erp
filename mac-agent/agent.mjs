@@ -330,7 +330,9 @@ function screenshot() {
 // kill-switch, or on the local PAUSE file — silence is the default state.
 // ---------------------------------------------------------------------------
 
-const STREAM_FRAME_INTERVAL_MS = Number(process.env.ALMA_STREAM_FRAME_MS) || 1_500
+// L9 phase A: 600ms cadence (was 1500) — still a frame pipe, not video, but
+// motion reads as motion. True video (ScreenCaptureKit + Agora) is phase B.
+const STREAM_FRAME_INTERVAL_MS = Number(process.env.ALMA_STREAM_FRAME_MS) || 600
 const STREAM_DEFAULT_SECONDS = 180
 const STREAM_MAX_SECONDS = 300
 
@@ -349,7 +351,9 @@ function stopScreenStream(reason) {
 async function captureFrame() {
   const out = join(CONFIG_DIR, 'stream-frame.jpg')
   return new Promise((resolve) => {
-    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', out], (err) => {
+    // -C: include the cursor — the owner watches to see WHERE the agent is
+    // pointing; a cursorless frame hides exactly that (L9 owner ask).
+    execFile('/usr/sbin/screencapture', ['-xC', '-t', 'jpg', out], (err) => {
       if (err) return resolve(null)
       // Harder downscale than the one-off screenshot: this runs every ~1.5s.
       execFile('/usr/bin/sips', ['-Z', '900', '-s', 'formatOptions', '50', out], () => {

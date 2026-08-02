@@ -103,6 +103,10 @@ final class AgentLiveDockStore {
     static let lingerSeconds: TimeInterval = 20
     static let pollActiveSeconds: TimeInterval = 3
     static let pollIdleSeconds: TimeInterval = 15
+    /// L9-A: while the Mac screen is actually STREAMING, frames land every
+    /// ~600ms — a 3s poll wasted most of them. 1s keeps motion feeling live
+    /// without hammering the server outside streaming windows.
+    static let pollStreamingSeconds: TimeInterval = 1
 
     var recentlyActive: Bool { Date().timeIntervalSince(lastActiveAt) < Self.lingerSeconds }
 
@@ -144,8 +148,11 @@ final class AgentLiveDockStore {
         while !Task.isCancelled {
             await poll()
             if authFailures >= 2 { return }
-            let delay = (feed?.active == true || recentlyActive)
-                ? Self.pollActiveSeconds : Self.pollIdleSeconds
+            let streamingNow = feed?.streaming == true
+            let delay = streamingNow
+                ? Self.pollStreamingSeconds
+                : (feed?.active == true || recentlyActive)
+                    ? Self.pollActiveSeconds : Self.pollIdleSeconds
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
     }
