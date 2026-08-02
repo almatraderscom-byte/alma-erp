@@ -64,6 +64,11 @@ if joinResult != 0 {
 
 // ---- capture ----------------------------------------------------------------
 var pushed = 0
+// Retained for the PROCESS lifetime — locals in the setup Task would be
+// released by ARC once it finishes, silently ending capture while heartbeats
+// kept printing (Codex P1).
+var gStream: SCStream?
+var gOutput: Output?
 
 final class Output: NSObject, SCStreamOutput {
     let engine: AgoraRtcEngineKit
@@ -98,11 +103,16 @@ Task {
         cfg.height = scale < 1 ? Int(Double(h) * scale) : h
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))
         cfg.showsCursor = true // the whole point — the owner watches the pointer
-        cfg.pixelFormat = kCVPixelFormatType_32BGRA
+        // Agora external-frame format 12 expects an NV12 CVPixelBuffer — capture
+        // in NV12 so the plane layout matches (Codex P1: BGRA in an NV12-declared
+        // frame renders as garbage).
+        cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         cfg.queueDepth = 5
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
         let output = Output(engine: engine)
+        gStream = stream
+        gOutput = output
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "cap"))
         try await stream.startCapture()
         print("capturing \(cfg.width)x\(cfg.height)@\(fps)")

@@ -773,6 +773,17 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                 options.publishMicrophoneTrack = false
                 engine.joinChannelEx(byToken: resp.token, connection: conn,
                                      delegate: self, mediaOptions: options)
+                // The broadcaster uid is FIXED (1) — bind the canvas right
+                // away instead of waiting on a delegate callback whose
+                // connection-routing varies by SDK minor (Codex P1); Agora
+                // renders as soon as the remote stream arrives.
+                if let view = self.canvasView {
+                    let canvas = AgoraRtcVideoCanvas()
+                    canvas.uid = 1
+                    canvas.view = view
+                    canvas.renderMode = .fit
+                    engine.setupRemoteVideoEx(canvas, connection: conn)
+                }
                 // The view can have been dismantled between the await points —
                 // never linger in the channel behind a closed sheet.
                 if self.cancelled { self.leave() }

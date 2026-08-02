@@ -370,7 +370,10 @@ async function startScreenVideo(token) {
     videoChild.stdout.on('data', (d) => {
       const line = String(d).trim()
       if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
-      if (line.startsWith('beat')) videoActive = true
+      // Only REAL delivered frames advertise video — an alive child whose
+      // Agora join failed still beats with frames=0 (Codex P2).
+      const m = /^beat frames=(\d+)/.exec(line)
+      if (m) videoActive = Number(m[1]) > 0
     })
     videoChild.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
     videoChild.on('exit', (code) => {
