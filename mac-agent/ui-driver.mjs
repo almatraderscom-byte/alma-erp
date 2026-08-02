@@ -1240,9 +1240,14 @@ async function uiType(params, cmd) {
 async function uiNewChat(params, cmd) {
   const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const h = hintsFor(bundleId)
-  const candidates = (Array.isArray(params.elementLabel) ? params.elementLabel
-    : params.elementLabel ? [String(params.elementLabel)]
-      : h.newChatLabels ?? [])
+  // A caller-supplied label is a HINT, not the whole list: it goes first, then
+  // the app's own alternatives. Treating it as the complete list defeated the
+  // fallbacks on exactly the renamed builds they exist for (review bot, #690),
+  // while dropping it entirely broke the approval re-validation (#692).
+  const given = Array.isArray(params.elementLabel)
+    ? params.elementLabel.map(String)
+    : params.elementLabel ? [String(params.elementLabel)] : []
+  const candidates = [...new Set([...given, ...(h.newChatLabels ?? [])])]
   if (candidates.length === 0 && !h.newChatShortcut) {
     return {
       ok: false,
@@ -1278,8 +1283,13 @@ async function uiNewChat(params, cmd) {
    * reported failure for work it had actually done (caught live, 2026-08-02).
    * What Boss asked for is a fresh empty chat to write in — so that is what is
    * checked.
+   *
+   * The composer is checked SEPARATELY below, because the two failures need
+   * different words: ChatGPT carries a draft across ⌘N, so "the chat did not
+   * open" and "it opened but your old draft is still in the box" are different
+   * situations and only the second one is safe to fix by retyping.
    */
-  const opened = (after) => after.messages === 0 && after.composerEmpty
+  const opened = (after) => after.messages === 0
 
   let how = null
   let after = before
@@ -1332,6 +1342,14 @@ async function uiNewChat(params, cmd) {
     }
   }
 
+  if (!after.composerEmpty) {
+    return refusal({
+      code: 'new_chat_draft_present',
+      reasonBn:
+        `নতুন চ্যাট খুলেছে, কিন্তু লেখার ঘরে আগের একটা খসড়া রয়ে গেছে ("${String(after.composerValue).slice(0, 40)}") — ` +
+        'ওটার উপরে লিখলে আপনার লেখা মিশে যেত, তাই থেমেছি, Boss।',
+    })
+  }
   return ok({ clicked: how, session: after, previousSession: before, policy: verdict.level })
 
 }

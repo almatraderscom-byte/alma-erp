@@ -1187,15 +1187,19 @@ export async function runRegisteredTool(
   } catch (err) {
     await releaseClaimOnFailure()
     const errorCode = classifyErrorCode(String(err))
+    const thrownRetryable = isRetryableErrorCode(errorCode)
     void logToolEvent({
       ...baseEvent,
       success: false,
       errorClass: 'uncaught_exception',
       errorCode,
       latencyMs: Date.now() - started,
-      detail: { ...capDetail, argsValidation: 'passed' },
+      // Same marker the returned-failure path writes: without it a thrown
+      // timeout counted toward the repeat guard and the third honest retry was
+      // refused (review bot, #692).
+      detail: { ...capDetail, argsValidation: 'passed', repeatable: thrownRetryable, lastError: String(err).slice(0, 300) },
     })
-    return { success: false, error: String(err), errorCode, retryable: isRetryableErrorCode(errorCode) }
+    return { success: false, error: String(err), errorCode, retryable: thrownRetryable }
   }
 }
 

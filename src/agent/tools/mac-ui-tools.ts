@@ -195,12 +195,13 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
 
     const params = {
       bundleId,
-      // For a label-free new_chat the server names the button for the POLICY and
-      // the card only. Forwarding that name would freeze the daemon's candidate
-      // list to it, and the fallbacks exist precisely for builds that renamed
-      // the button (review bot, #690) — so the daemon gets nothing and tries
-      // them all.
-      elementLabel: action === 'ui_new_chat' && !input.elementLabel ? null : (elementLabel ?? null),
+      // The label rides through to the card and to the approval re-validation,
+      // because a click policy without a label fails CLOSED — dropping it here
+      // rejected every label-free new-chat card AFTER Boss approved it (review
+      // bot, #692). It does not freeze the daemon's candidate list: `ui_new_chat`
+      // treats a given label as the FIRST candidate and still falls through to
+      // the app's own alternatives.
+      elementLabel: elementLabel ?? null,
       text: text ?? null,
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
