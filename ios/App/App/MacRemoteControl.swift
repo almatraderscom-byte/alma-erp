@@ -400,17 +400,26 @@ final class MacRemoteControlStore {
         guard !busy, let session, let deviceId, session.connection != nil else { return }
         busy = true
         defer { busy = false }
-        guard let resp: ControlTokenResponse = try? await AlmaAPI.shared.send(
-            "POST", "/api/assistant/mac-agent/screen-control-token",
-            body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: true)
-        ) else {
+        let resp: ControlTokenResponse
+        do {
+            resp = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/screen-control-token",
+                body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: true))
+        } catch let AlmaAPIError.http(_, body) {
+            // The route refuses for specific, actionable reasons — another
+            // device holds control, the kill-switch is off, the live view is
+            // not running. Show ITS sentence, not a generic failure.
+            statusBn = Self.messageBn(from: body) ?? "কন্ট্রোল চালু করা গেল না।"
+            RemoteHaptics.refused()
+            return
+        } catch {
             statusBn = "কন্ট্রোল চালু করা গেল না।"
-            AlmaAgentHaptics.error()
+            RemoteHaptics.refused()
             return
         }
         guard let token = resp.token, await session.armControl(token: token) else {
-            statusBn = "কন্ট্রোল চালু করা গেল না।"
-            AlmaAgentHaptics.error()
+            statusBn = resp.messageBn ?? "কন্ট্রোল চালু করা গেল না।"
+            RemoteHaptics.refused()
             return
         }
         armed = true
