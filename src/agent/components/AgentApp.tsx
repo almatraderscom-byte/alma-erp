@@ -27,6 +27,7 @@ import {
   entriesToResend,
   loadOutbox,
   markAttempt as outboxMarkAttempt,
+  rehydrate as outboxRehydrate,
   removeEntries as outboxRemove,
   saveOutbox,
   type SteeringOutboxEntry,
@@ -1730,10 +1731,29 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         body: JSON.stringify({ clientMessageId, message: item.text, files: item.files }),
       })
       if (res.ok) {
-        setDeliveryState([clientMessageId], 'queued')
+        // If `steering_delivered` already arrived (the turn claimed the row
+        // before this response came back), the entry is gone and the bubble is
+        // already delivered — writing `queued` here would strand it as "not
+        // reached yet" forever, with no outbox entry and no retry (Codex P2).
+        const stillQueued = steeringOutboxRef.current.some((e) => e.clientMessageId === clientMessageId)
+        if (stillQueued) {
+          writeOutbox(steeringOutboxRef.current.map((e) =>
+            e.clientMessageId === clientMessageId ? { ...e, accepted: true } : e))
+          setDeliveryState([clientMessageId], 'queued')
+        }
         return
       }
       if (res.status === 409) {
+        // The target turn is over. If ANOTHER turn is running now, aim at that
+        // one instead of re-POSTing to a finished id — that is what made the
+        // retry button on an attachment message a guaranteed 409 forever.
+        const liveTurnId = activeTurnIdRef.current
+        if (liveTurnId && liveTurnId !== item.turnId) {
+          writeOutbox(steeringOutboxRef.current.map((e) =>
+            e.clientMessageId === clientMessageId ? { ...e, turnId: liveTurnId } : e))
+          await deliverSteeringRef.current?.(clientMessageId)
+          return
+        }
         // The turn finished between his keystroke and this request. Attachments
         // cannot be replayed (the File objects are gone after a reload), so a
         // message that carried one keeps its retry chip instead of being sent
@@ -1741,7 +1761,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         if (item.files.length > 0) {
           writeOutbox(outboxMarkAttempt(steeringOutboxRef.current, clientMessageId, 'turn_not_running'))
           setDeliveryState([clientMessageId], 'failed')
-          toast('চলতি কাজটা এর মধ্যেই শেষ হয়ে গেছে — ছবিসহ বার্তাটা আবার পাঠাতে চাপুন')
+          toast('চলতি কাজটা শেষ হয়ে গেছে — নতুন কাজ শুরু হলে এটা তখন পাঠানো যাবে, নয়তো ছবিটা আবার যোগ করুন')
           return
         }
         writeOutbox(outboxRemove(steeringOutboxRef.current, [clientMessageId]))
@@ -1780,8 +1800,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // Rehydrate the outbox once, so a reload mid-delivery does not lose anything.
   useEffect(() => {
-    const restored = loadOutbox(outboxStorageRef.current)
-    if (restored.length > 0) steeringOutboxRef.current = restored
+    // Accepted entries are dropped here on purpose: the server already has
+    // them, so replaying could run the same instruction twice (Codex round 3).
+    const restored = outboxRehydrate(loadOutbox(outboxStorageRef.current))
+    steeringOutboxRef.current = restored
+    saveOutbox(outboxStorageRef.current, restored)
   }, [])
 
   const handleVoiceMessage = useCallback(async (

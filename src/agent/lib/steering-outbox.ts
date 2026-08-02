@@ -31,6 +31,14 @@ export interface SteeringOutboxEntry {
   files: Array<{ bucket: string; path: string; mediaType: string }>
   queuedAt: string
   attempts: number
+  /**
+   * The server has this row (the POST returned 2xx). It matters on RELOAD: a
+   * client-side turn id only exists for a live stream, so after a refresh every
+   * entry looks "stranded" and would be re-sent as a new turn — running an
+   * instruction the running turn may already have consumed (Codex round 3).
+   * An accepted entry is durable server-side and is never replayed.
+   */
+  accepted?: boolean
   /** Last failure, kept for the retry chip's title — never shown as the reason to drop it. */
   lastError?: string
 }
@@ -130,7 +138,20 @@ export function entriesToResend(
   conversationId: string | null,
 ): SteeringOutboxEntry[] {
   if (!conversationId) return []
-  return entries.filter((e) => e.conversationId === conversationId && e.turnId !== activeTurnId)
+  return entries.filter((e) =>
+    e.conversationId === conversationId
+    && e.turnId !== activeTurnId
+    // Already on the server: replaying it could run the same instruction twice.
+    && !e.accepted)
+}
+
+/**
+ * What survives a reload. An accepted entry is dropped: the server has it, the
+ * thread will show it from the server copy, and keeping it could only lead to a
+ * replay. Everything unsent is kept — that is the whole point of the outbox.
+ */
+export function rehydrate(entries: SteeringOutboxEntry[]): SteeringOutboxEntry[] {
+  return entries.filter((e) => !e.accepted)
 }
 
 /** Exponential-ish backoff, capped — a retry loop must not become a hot loop. */

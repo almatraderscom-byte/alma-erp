@@ -191,7 +191,12 @@ function isGreenSegment(segment) {
  * RED and repairable: add `-n` and it becomes an ordinary approval card.
  */
 function clobberingMove(segment) {
-  const tokens = stripEnvPrefix(segment.split(/\s+/).filter(Boolean))
+  // Quotes are stripped before tokenizing: a perfectly ordinary wrapper —
+  // `sh -c 'mv "$src" "$dst"'` — yields the token `'mv`, which an exact
+  // comparison walks straight past (Codex round 3). Removing quote characters
+  // can only ever make more things LOOK like a move, never fewer.
+  const unquoted = segment.replace(/["'`]/g, ' ')
+  const tokens = stripEnvPrefix(unquoted.split(/\s+/).filter(Boolean))
   // Not just the FIRST token: `find ~/Downloads -iname '*.pdf' -exec mv {} DIR/ \;`
   // moves every match and the mv is buried mid-line (the head proposed exactly
   // that once the first-token-only version shipped). Any bare `mv`/`cp` word in

@@ -114,6 +114,18 @@ describe('looking at the screen', () => {
     expect(applyRules('uporer screenshot theke number gulo nao')).toBeNull()
   })
 
+  // Codex round 3: the rule refused it, then the KEYWORD layer pinned the same
+  // skill anyway ("screenshot" scores 2, the skill-name token 1). The veto had
+  // to move into eligibility, and the test had to use production routeSkill —
+  // the old one only exercised applyRules, which is why it passed.
+  it('the existing-image veto holds at the keyword layer too', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const text of ['ei screenshot ta dekho', 'ei screenshot ta dekhe invoice enter koro']) {
+      const decision = routeSkill(index, text)
+      expect(decision.skill, text).not.toBe('screenshot-annotate-share')
+    }
+  })
+
   it('wins over the app rule — a picture of an app is looking, not driving', () => {
     expect(applyRules('chatgpt app er screenshot dao')?.skill).toBe('screenshot-annotate-share')
     // …but reading an app WITHOUT the screen word is still the driver's job.

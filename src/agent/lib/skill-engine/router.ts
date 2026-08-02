@@ -64,10 +64,18 @@ export interface RouteContext {
   namedByOwner?: string[]
 }
 
-export function eligibleSkills(index: SkillIndex, ctx: RouteContext = {}): SkillMetadata[] {
+export function eligibleSkills(
+  index: SkillIndex,
+  ctx: RouteContext = {},
+  text?: string,
+): SkillMetadata[] {
   const named = new Set(ctx.namedByOwner ?? [])
+  // An image he ALREADY HAS is never a reason to photograph his desktop — at
+  // any layer. Without this the keyword layer re-pinned what the rule refused.
+  const vetoScreenSkill = Boolean(text && EXISTING_IMAGE_REF.test(text))
   return index.skills.filter((s) => {
     if (s.implicit === false && !named.has(s.name)) return false
+    if (vetoScreenSkill && s.name === SCREEN_SKILL) return false
     return true
   })
 }
@@ -280,6 +288,15 @@ const EXISTING_IMAGE_REF =
 const SCREEN_LOOK_ASK = (t: string): boolean =>
   SCREEN_CAPTURE_ASK.test(t) && !EXISTING_IMAGE_REF.test(t)
 /**
+ * The skill the veto has to keep out, by name — because vetoing it in the RULE
+ * layer is only half the job. "ei screenshot ta dekho" falls through to keyword
+ * scoring, where the literal word `screenshot` is worth 2 and the skill-name
+ * token another 1: enough to pin the Mac-only skill anyway, and capture his
+ * desktop for a question about an image he already has (Codex round 3, on a
+ * test of mine that only ever exercised `applyRules`).
+ */
+const SCREEN_SKILL = 'screenshot-annotate-share'
+/**
  * Tidying a cluttered folder. Both halves are required — "downloads" alone is
  * a folder he might just be reading from, and "porishkar koro" alone could be
  * about anything from the office to the website.
@@ -415,7 +432,7 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     return { skill: null, layer: 'none', reason: 'খালি মেসেজ', candidates: [], needsModel: false }
   }
 
-  const eligible = eligibleSkills(index, ctx)
+  const eligible = eligibleSkills(index, ctx, t)
   const known = new Set(eligible.map((s) => s.name))
 
   // Layer 1.5 — the veto. A request to be asked LESS is not a job for any skill;

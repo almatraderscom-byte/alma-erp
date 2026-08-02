@@ -1307,6 +1307,15 @@ export async function* runAgentTurn(
             content: [{ type: 'text' as const, text: item.prompt }],
           })),
         ]
+        // Parity with the router loop: the client must be told the message
+        // ARRIVED, or it keeps the outbox entry and replays it later.
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       // Serverless deadline close → no more tools; force a Bangla progress
@@ -1452,6 +1461,13 @@ export async function* runAgentTurn(
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           // Native Claude streams its draft before we know this final round has
           // no tool call. Retire that now-stale prose so the replacement is the
           // ONE visible answer, not text appended as a conflicting second reply.

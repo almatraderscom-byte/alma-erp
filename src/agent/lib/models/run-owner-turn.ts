@@ -2365,6 +2365,17 @@ async function* runAlternateProviderTurn(
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
             ...lateSteering.map((item) => ({ role: 'user' as const, content: item.prompt })),
           ]
+          // Same acknowledgement as the top-of-round claim. Without it the
+          // client keeps the outbox entry for a message this turn has already
+          // taken up, and replays it as a new turn when the stream ends —
+          // running the instruction twice (Codex round 3).
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the

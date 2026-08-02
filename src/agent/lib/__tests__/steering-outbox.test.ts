@@ -11,6 +11,7 @@ import {
   entriesToResend,
   loadOutbox,
   markAttempt,
+  rehydrate,
   removeEntries,
   retryDelayMs,
   saveOutbox,
@@ -60,6 +61,17 @@ describe('it survives a reload', () => {
     saveOutbox(store, [entry()])
     const later = 1_700_000_000_000 + OUTBOX_MAX_AGE_MS + 1
     expect(loadOutbox(store, later)).toEqual([])
+  })
+})
+
+describe('a reload must not run the same instruction twice', () => {
+  // Codex round 3: a client-side turn id only exists for a LIVE stream, so
+  // after a refresh every entry looked stranded and got re-sent as a new turn —
+  // even one the running turn had already consumed.
+  it('an accepted entry is dropped on rehydrate and never resent', () => {
+    const list = [entry({ accepted: true }), entry({ clientMessageId: 'c2' })]
+    expect(rehydrate(list).map((e) => e.clientMessageId)).toEqual(['c2'])
+    expect(entriesToResend(list, null, 'conv1').map((e) => e.clientMessageId)).toEqual(['c2'])
   })
 })
 
