@@ -105,6 +105,15 @@ describe('looking at the screen', () => {
     expect(applyRules('screen e ki ache dekho')?.skill).toBe('screenshot-annotate-share')
   })
 
+  // Codex review, PR #700: the rule fired on the WORD, so "ei screenshot ta
+  // dekhe invoice enter koro" — an image he already has — pinned a Mac-only
+  // skill whose allowlist holds no invoice tool.
+  it('does not fire on an image he already has', () => {
+    expect(applyRules('ei screenshot ta dekhe invoice enter koro')).toBeNull()
+    expect(applyRules('এই স্ক্রিনশট টা দেখে অর্ডার তোলো')).toBeNull()
+    expect(applyRules('uporer screenshot theke number gulo nao')).toBeNull()
+  })
+
   it('wins over the app rule — a picture of an app is looking, not driving', () => {
     expect(applyRules('chatgpt app er screenshot dao')?.skill).toBe('screenshot-annotate-share')
     // …but reading an app WITHOUT the screen word is still the driver's job.
@@ -119,6 +128,14 @@ describe('tidying a folder', () => {
     expect(applyRules('downloads e joma hoye thaka file gulo sajao')?.skill).toBe(
       'mac-file-organizer',
     )
+  })
+
+  // Codex review, PR #700: a code checkout matched both halves, and the pin
+  // then handed the turn organizer tools plus the skill's own refusal — so the
+  // request could reach neither this skill nor the git flow.
+  it('does not fire on a code checkout', () => {
+    expect(applyRules('alma-erp folder clean up koro')).toBeNull()
+    expect(applyRules('repo folder ta porishkar koro')).toBeNull()
   })
 
   it('does not fire on half a match', () => {

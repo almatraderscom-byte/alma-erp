@@ -24,6 +24,12 @@ import type { SkillManifest } from '@/agent/lib/skill-engine/types'
 export interface SkillToolRecord {
   toolName: string
   status: 'success' | 'error'
+  /**
+   * The arguments the tool was called with. Optional so every existing caller
+   * keeps working; a `done` condition carrying `argMatch` simply cannot be
+   * satisfied by a record that does not report its input.
+   */
+  input?: Record<string, unknown>
 }
 
 /** Tools every skill keeps — discovery and honest escalation are never removed. */
@@ -142,10 +148,28 @@ export interface DoneMiss {
   name: string
 }
 
+/** Does this record's input match the condition's regex? */
+function inputMatches(record: SkillToolRecord, pattern: string): boolean {
+  if (!record.input) return false
+  let re: RegExp
+  try {
+    re = new RegExp(pattern, 'i')
+  } catch {
+    // A bad regex in a manifest must not make the gate unsatisfiable — that is
+    // the `check:` failure mode (a warning on every honest claim). Fall back to
+    // a literal substring test.
+    return JSON.stringify(record.input).toLowerCase().includes(pattern.toLowerCase())
+  }
+  return re.test(JSON.stringify(record.input))
+}
+
 /**
  * Which of the skill's `done:` conditions are NOT met. Tool conditions are
- * checked against real successful calls; named `check:` conditions are returned
- * for the caller's own verifier (the grind engine owns those).
+ * checked against real successful calls — and, when the condition carries
+ * `argMatch`, against a call whose INPUT matches it, so a skill can name the
+ * step that finishes the job instead of the tool that runs every step. Named
+ * `check:` conditions are returned for the caller's own verifier (the grind
+ * engine owns those).
  */
 export function skillDoneMisses(
   manifest: Pick<SkillManifest, 'done'>,
@@ -155,8 +179,13 @@ export function skillDoneMisses(
   const misses: DoneMiss[] = []
   for (const cond of manifest.done ?? []) {
     if (cond.tool) {
-      const ok = records.some((r) => r.toolName === cond.tool && r.status === 'success')
-      if (!ok) misses.push({ kind: 'tool', name: cond.tool })
+      const ok = records.some(
+        (r) =>
+          r.toolName === cond.tool
+          && r.status === 'success'
+          && (!cond.argMatch || inputMatches(r, cond.argMatch)),
+      )
+      if (!ok) misses.push({ kind: 'tool', name: cond.argMatch ? `${cond.tool} (${cond.argMatch})` : cond.tool })
     }
     if (cond.check && !passedChecks.includes(cond.check)) {
       misses.push({ kind: 'check', name: cond.check })

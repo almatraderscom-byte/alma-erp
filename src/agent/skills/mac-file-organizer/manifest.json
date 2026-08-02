@@ -40,7 +40,8 @@
   ],
   "done": [
     {
-      "tool": "run_mac_command"
+      "tool": "run_mac_command",
+      "argMatch": "\\bmv\\b|Finder to delete"
     },
     {
       "tool": "check_mac_command"

@@ -3448,7 +3448,11 @@ async function* runAlternateProviderTurn(
     if (activeSkills.manifest?.done?.length && claimsCompletion(finalText)) {
       const misses = skillDoneMisses(
         activeSkills.manifest,
-        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status })),
+        // `input` rides along so a `done` condition can name the STEP that
+        // finishes the job (`run_mac_command` with `gh workflow run`) and not
+        // merely the tool that runs every step — including the read-only one
+        // these skills open with.
+        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status, input: r.input })),
       )
       if (misses.length > 0) {
         const gate = `\n\n${doneGateMessage(activeSkills.pinned?.skill ?? activeSkills.manifest.name, misses)}`
