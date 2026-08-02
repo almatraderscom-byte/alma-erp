@@ -57,13 +57,16 @@ function describeActionBn(input: {
   text?: string
   key?: string
   focusedLabel?: string
+  replace?: boolean
 }): string {
   const app = appLabel(input.bundleId)
   switch (input.action) {
     case 'ui_click':
       return `${app} অ্যাপে "${input.elementLabel}" বোতামে ক্লিক`
     case 'ui_type':
-      return `${app} অ্যাপে "${input.elementLabel}" ঘরে লেখা`
+      return input.replace
+        ? `${app} অ্যাপে "${input.elementLabel}" ঘরের আগের লেখা মুছে নতুন লেখা`
+        : `${app} অ্যাপে "${input.elementLabel}" ঘরে লেখা`
     case 'ui_key':
       return input.focusedLabel
         ? `${app} অ্যাপে "${input.focusedLabel}"-এ ${input.key} চাপা`
@@ -176,6 +179,9 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       text: text ?? null,
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
+      // Owner-approved overwrite: the card says the old text goes; the daemon
+      // clears (and verifies the clear) before typing.
+      replace: input.replace === true ? true : null,
       scrollAmount: Number.isFinite(Number(input.scrollAmount)) ? Number(input.scrollAmount) : null,
       // Interactive-only by default: a full ChatGPT conversation tree blows
       // the text cap and the composer at the BOTTOM is exactly what got cut,
@@ -188,10 +194,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     // anything happens. Never paraphrase what he is approving.
     if (verdict.level === 'amber') {
       const reason = String(input.reason ?? '').trim()
-      const what = describeActionBn({ action, bundleId, elementLabel, text, key, focusedLabel })
+      const what = describeActionBn({ action, bundleId, elementLabel, text, key, focusedLabel, replace: input.replace === true })
       const summary =
         `${what} — অনুমতি দেবেন?\n\n` +
         (text !== undefined ? `লেখাটা হুবহু এই:\n\`\`\`\n${text}\n\`\`\`\n` : '') +
+        (input.replace === true ? `⚠️ ঘরে আগের যা লেখা আছে সেটা মুছে যাবে।\n` : '') +
         (reason ? `কারণ: ${reason}\n` : '') +
         `\nApprove করলে তবেই হবে।`
 
@@ -340,6 +347,11 @@ const drive_mac_app: AgentTool = {
           'For click/type: the label of the target element EXACTLY as the tree reported it. Required — actions without a named element are refused.',
       },
       text: { type: 'string', description: 'For type: the literal text to type, verbatim.' },
+      replace: {
+        type: 'boolean',
+        description:
+          'For type: true ERASES what is already in the field before typing (the card warns the owner). Use ONLY after a field_not_empty refusal, and tell the owner his old draft will go.',
+      },
       key: { type: 'string', description: 'For key: the combo, e.g. "enter" or "cmd+a".' },
       focusedLabel: {
         type: 'string',
