@@ -499,18 +499,34 @@ case "type":
     // Hard guard from W1 (it FIRED live): refuse to type unless the field
     // holds nothing but its known placeholder — a draft the owner left, or a
     // character he just typed, must never be swept into our message.
+    // --replace 1 is the OWNER-APPROVED override: the card said the old text
+    // will be erased, so the field is cleared first (and the clear verified)
+    // before typing.
+    let replaceMode = flags["replace"] == "1"
     let placeholders = (flags["require-empty"] ?? "").split(separator: "|").map(String.init)
     let before = (attr(composer, kAXValueAttribute) as? String) ?? ""
     let trimmed = before.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty && !placeholders.isEmpty && !placeholders.contains(trimmed) {
+    if !replaceMode && !trimmed.isEmpty && !placeholders.isEmpty && !placeholders.contains(trimmed) {
         fail("field_not_empty", String(trimmed.prefix(120)))
     }
-
     let winBefore = snapshot(win)
     activate()
     frontWindow(win) // keystrokes land in the KEY window — make it the resolved one
     AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     usleep(300_000)
+    if replaceMode && !trimmed.isEmpty {
+        // The erase is INPUT like any other: it must pass the same last-
+        // instant owner-idle gate as the keystrokes, or a draft the owner is
+        // typing RIGHT NOW could vanish under his fingers (Codex P1).
+        guardOwnerStill()
+        AXUIElementSetAttributeValue(composer, kAXValueAttribute as CFString, "" as CFString)
+        usleep(200_000)
+        let cleared = ((attr(composer, kAXValueAttribute) as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleared.isEmpty && !placeholders.contains(cleared) {
+            fail("clear_failed", String(cleared.prefix(120)))
+        }
+    }
     typeUnicode(text)
     usleep(500_000)
     // W1's deferred P2, now mandatory: assert the field actually changed —
@@ -982,8 +998,11 @@ async function uiType(params, cmd) {
     '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
   if (h.manual) args.push('--manual')
-  // The empty-field guard is ON unless the caller explicitly says it expects
-  // existing content (e.g. appending to its own earlier draft).
+  // replace: true is the OWNER-APPROVED overwrite — his card named the field
+  // and said the old text goes; the helper clears (and verifies the clear)
+  // before typing. Without it, the empty-field guard is ON unless the caller
+  // explicitly says it expects existing content.
+  if (params.replace === true || params.replace === 'true') args.push('--replace', '1')
   if (!params.allowNonEmpty && h.placeholders?.length) {
     args.push('--require-empty', h.placeholders.join('|'))
   }

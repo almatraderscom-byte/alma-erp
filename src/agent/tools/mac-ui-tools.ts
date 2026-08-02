@@ -25,11 +25,7 @@ import {
   UI_SERVER_IDLE_SENTINEL,
 } from '@/agent/lib/mac-agent/bus'
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
-import {
-  agentStorageDelete,
-  agentStorageListFolder,
-  agentStorageUpload,
-} from '@/agent/lib/storage'
+import { shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 import { requireOnlineMac } from './mac-tools'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,13 +57,16 @@ function describeActionBn(input: {
   text?: string
   key?: string
   focusedLabel?: string
+  replace?: boolean
 }): string {
   const app = appLabel(input.bundleId)
   switch (input.action) {
     case 'ui_click':
       return `${app} অ্যাপে "${input.elementLabel}" বোতামে ক্লিক`
     case 'ui_type':
-      return `${app} অ্যাপে "${input.elementLabel}" ঘরে লেখা`
+      return input.replace
+        ? `${app} অ্যাপে "${input.elementLabel}" ঘরের আগের লেখা মুছে নতুন লেখা`
+        : `${app} অ্যাপে "${input.elementLabel}" ঘরে লেখা`
     case 'ui_key':
       return input.focusedLabel
         ? `${app} অ্যাপে "${input.focusedLabel}"-এ ${input.key} চাপা`
@@ -180,6 +179,9 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       text: text ?? null,
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
+      // Owner-approved overwrite: the card says the old text goes; the daemon
+      // clears (and verifies the clear) before typing.
+      replace: input.replace === true ? true : null,
       scrollAmount: Number.isFinite(Number(input.scrollAmount)) ? Number(input.scrollAmount) : null,
       // Interactive-only by default: a full ChatGPT conversation tree blows
       // the text cap and the composer at the BOTTOM is exactly what got cut,
@@ -192,10 +194,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     // anything happens. Never paraphrase what he is approving.
     if (verdict.level === 'amber') {
       const reason = String(input.reason ?? '').trim()
-      const what = describeActionBn({ action, bundleId, elementLabel, text, key, focusedLabel })
+      const what = describeActionBn({ action, bundleId, elementLabel, text, key, focusedLabel, replace: input.replace === true })
       const summary =
         `${what} — অনুমতি দেবেন?\n\n` +
         (text !== undefined ? `লেখাটা হুবহু এই:\n\`\`\`\n${text}\n\`\`\`\n` : '') +
+        (input.replace === true ? `⚠️ ঘরে আগের যা লেখা আছে সেটা মুছে যাবে।\n` : '') +
         (reason ? `কারণ: ${reason}\n` : '') +
         `\nApprove করলে তবেই হবে।`
 
@@ -247,68 +250,31 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     }
 
     if (action === 'ui_screenshot') {
-      // Never hand the head a base64 body: it pastes the megabyte into its
-      // reply as "markdown", the chat renders raw base64, and the tokens are
-      // billed. Upload once and return a short-lived URL with the exact
-      // camera-snapshot instruction the head already knows how to follow.
-      const uri = String(outcome.stdout ?? '')
-      const m = uri.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/)
-      if (m) {
-        try {
-          const ext = m[1] === 'png' ? 'png' : 'jpg'
-          // Timestamp in the name is the retention key: the signed URL dies in
-          // an hour, and the object follows within a day via the opportunistic
-          // sweep below — there is no cron for this bucket on purpose.
-          const objectPath = `mac-ui/shot-${Date.now()}-${id}.${ext}`
-          await agentStorageUpload(objectPath, Buffer.from(m[2], 'base64'), `image/${m[1]}`)
-          // SHORT owner-authed link, not the 300-char signed JWT: the head
-          // wraps long URLs (proven live — the markdown image broke on a
-          // newline between ] and ( ), and /api/assistant/files exists for
-          // exactly this. The route 302s to a fresh signed URL per view.
-          // Absolute, because the same reply may land in Telegram where a
-          // root-relative path has no origin to resolve against (Codex P2).
-          const base = (
-            process.env.APP_URL ||
-            process.env.NEXTAUTH_URL ||
-            process.env.NEXT_PUBLIC_APP_URL ||
-            'https://alma-erp-six.vercel.app'
-          ).replace(/\/$/, '')
-          const imageUrl = `${base}/api/assistant/files?path=${encodeURIComponent(objectPath)}&redirect=1`
-          try {
-            const dayAgo = Date.now() - 24 * 3600 * 1000
-            const stale = (await agentStorageListFolder('mac-ui/')).filter((f) => {
-              const ts = Number(/^shot-(\d+)-/.exec(f.name)?.[1])
-              return Number.isFinite(ts) && ts < dayAgo
-            })
-            if (stale.length) await agentStorageDelete(stale.map((f) => `mac-ui/${f.name}`))
-          } catch {
-            /* retention is best-effort; next capture retries */
-          }
-          return {
-            success: true,
-            data: {
-              imageUrl,
-              device: targetDeviceName,
-              app: appLabel(bundleId),
-              instruction:
-                'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও, এক লাইনে: ![' + appLabel(bundleId) + '](imageUrl)। ' +
-                'imageUrl হুবহু কপি করো — ছোট লিংক, ভাঙার কিছু নেই। base64 বা লম্বা টেক্সট কখনো লিখবে না।',
-            },
-          }
-        } catch {
-          // A raw fallback would hand the head the megabyte base64 this whole
-          // branch exists to avoid — fail retryably instead (Codex P2).
-          return {
-            success: false,
-            error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
-            data: { commandId: id, retryable: true },
-          }
+      // One share story for every Mac screenshot (shared with
+      // mac_desk_control): short /files link, never the base64 body.
+      const shared = await shareScreenshot(outcome.stdout ?? '', id, appLabel(bundleId))
+      if (shared.ok) {
+        return {
+          success: true,
+          data: {
+            imageUrl: shared.imageUrl,
+            device: targetDeviceName,
+            app: appLabel(bundleId),
+            instruction: shared.instruction,
+          },
         }
       }
-      // No data URI at all (unexpected daemon payload) — pass the bounded text.
+      if (shared.retryable) {
+        return {
+          success: false,
+          error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
+          data: { commandId: id, retryable: true },
+        }
+      }
+      // No data URI at all (unexpected daemon payload) — bounded passthrough.
       return {
         success: true,
-        data: { screenshot: capTree(uri), device: targetDeviceName, app: appLabel(bundleId) },
+        data: { screenshot: capTree(shared.boundedText), device: targetDeviceName, app: appLabel(bundleId) },
       }
     }
     return {
@@ -381,6 +347,11 @@ const drive_mac_app: AgentTool = {
           'For click/type: the label of the target element EXACTLY as the tree reported it. Required — actions without a named element are refused.',
       },
       text: { type: 'string', description: 'For type: the literal text to type, verbatim.' },
+      replace: {
+        type: 'boolean',
+        description:
+          'For type: true ERASES what is already in the field before typing (the card warns the owner). Use ONLY after a field_not_empty refusal, and tell the owner his old draft will go.',
+      },
       key: { type: 'string', description: 'For key: the combo, e.g. "enter" or "cmd+a".' },
       focusedLabel: {
         type: 'string',

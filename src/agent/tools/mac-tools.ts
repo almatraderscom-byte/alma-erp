@@ -24,6 +24,7 @@ import {
   recentCommands,
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
+import { classifyScreencaptureIntent, shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -65,7 +66,9 @@ const run_mac_command: AgentTool = {
     'Dangerous commands (sudo, rm -rf of home, disk tools, reading key/.env files, curl|sh, shutdown) are REFUSED ' +
     'by policy and cannot be approved — if he insists, tell him he has to run that one himself in his own terminal. ' +
     'Default working directory is his alma-erp checkout. Owner-facing: report results in Bangla, and if a command ' +
-    'fails, show him the actual error line rather than guessing.',
+    'fails, show him the actual error line rather than guessing. ' +
+    'NEVER use this for screenshots (screencapture saves a file nobody can see in chat) — a screen picture is ' +
+    'ALWAYS mac_desk_control action="screenshot", which returns an imageUrl that renders inline.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -91,6 +94,57 @@ const run_mac_command: AgentTool = {
     const command = String(input.command ?? '').trim()
     if (!command) return { success: false, error: 'command is required' }
     const cwd = input.cwd ? String(input.cwd) : undefined
+
+    // WRONG-TOOL INTERCEPTOR (owner rule 2026-08-02: the model must not be
+    // able to pick the wrong tool — and if it does, the SYSTEM catches it).
+    // A shell `screencapture` saves a file nobody can see in chat; the head
+    // chose it live on the owner's own checklist run despite the prompt.
+    // Instead of refusing (the head would flounder), the misuse is ABSORBED:
+    // we run the real screenshot flow and hand back the renderable link, so
+    // the owner gets the right result no matter what the model selected.
+    const shotIntent = classifyScreencaptureIntent(command)
+    if (shotIntent === 'refuse') {
+      // Compound shell mentioning screencapture: running it risks the
+      // invisible-file failure, intercepting it risks capturing the screen on
+      // a command that only PRINTS the word. Deterministic safe answer: do
+      // neither, say which tool is right.
+      return {
+        success: false,
+        error:
+          'এই কমান্ডটার ভেতরে screencapture আছে, তাই চালাইনি — স্ক্রিনের ছবি লাগলে mac_desk_control action="screenshot" ব্যবহার করো (ছবি চ্যাটেই আসবে); আর যদি এটা অন্য কাজ হয়, screencapture শব্দটা ছাড়া কমান্ডটা আবার দাও।',
+        data: { refused: true, code: 'screenshot_wrong_tool' },
+      }
+    }
+    if (shotIntent === 'intercept') {
+      const gateShot = await requireOnlineMac()
+      if (!gateShot.ok) return { success: false, error: gateShot.error }
+      const { id: shotId } = await enqueueCommand({
+        deviceId: gateShot.deviceId,
+        action: 'screenshot',
+        params: {},
+      })
+      const shot = await awaitResult(shotId, 60_000)
+      if (shot.timedOut || shot.status !== 'done') {
+        return { success: false, error: shot.error ?? 'Mac থেকে সময়মতো স্ক্রিনশট আসেনি।' }
+      }
+      const shared = await shareScreenshot(shot.stdout ?? '', shotId, 'Mac screen')
+      if (shared.ok) {
+        return {
+          success: true,
+          data: {
+            redirected: 'screenshot',
+            imageUrl: shared.imageUrl,
+            device: gateShot.deviceName,
+            instruction: shared.instruction,
+          },
+        }
+      }
+      return {
+        success: false,
+        error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
+        data: { commandId: shotId, retryable: true },
+      }
+    }
 
     const verdict = classifyCommand(command, { cwd })
 
@@ -275,7 +329,8 @@ const mac_agent_status: AgentTool = {
 const mac_desk_control: AgentTool = {
   name: 'mac_desk_control',
   description:
-    "Desk-level control of the owner's Mac: take a screenshot of his screen, or stop the Mac from going to sleep " +
+    "Desk-level control of the owner's Mac: take a screenshot of his screen (THE one way to show his screen — " +
+    'returns an imageUrl that renders inline in chat; never run screencapture via run_mac_command), or stop the Mac from going to sleep ' +
     'while a long job runs (and let it sleep again afterwards). ' +
     'A sleeping Mac stops answering entirely, so use keep_awake before starting long work he is waiting on, and ' +
     'allow_sleep when it is done — leaving it awake all night drains his battery. ' +
@@ -311,9 +366,30 @@ const mac_desk_control: AgentTool = {
     if (outcome.status !== 'done') return { success: false, error: outcome.error ?? 'failed' }
 
     if (isShot) {
+      // Same share story as look_mac_app: short /files link, never the base64
+      // body (the owner's checklist run hit the old raw shape live — the head
+      // pasted an unrenderable wall of text).
+      const shared = await shareScreenshot(outcome.stdout ?? '', id, 'Mac screen')
+      if (shared.ok) {
+        return {
+          success: true,
+          data: {
+            imageUrl: shared.imageUrl,
+            device: gate.deviceName,
+            instruction: shared.instruction,
+          },
+        }
+      }
+      if (shared.retryable) {
+        return {
+          success: false,
+          error: 'ছবিটা তোলা হয়েছে কিন্তু storage-এ রাখা গেল না, Boss — একটু পরে আবার চেষ্টা করলেই হবে।',
+          data: { commandId: id, retryable: true },
+        }
+      }
       return {
         success: true,
-        data: { screenshot: outcome.stdout, device: gate.deviceName, message: 'স্ক্রিনশট নিয়েছি, Boss।' },
+        data: { screenshot: shared.boundedText, device: gate.deviceName },
       }
     }
     try {
