@@ -69,6 +69,7 @@ describe('wrong-tool interceptor pattern', () => {
       'screencapture -C ~/Desktop/shot.png',
       '/usr/sbin/screencapture -x /tmp/a.jpg', // path-qualified (Codex P2)
       'FOO=1 screencapture out.png',
+      '/usr/sbin/ScreenCapture -x out.jpg', // case-insensitive fs (Codex round 6)
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('intercept')
     }
@@ -85,6 +86,9 @@ describe('wrong-tool interceptor pattern', () => {
       '/usr/bin/env screencapture -x /tmp/a.jpg', // path-qualified wrapper (Codex round 5)
       'command -- screencapture -c',
       'command -v screencapture',
+      'screencapture -l 123 out.jpg', // scoped — absorbing would WIDEN capture (Codex round 6)
+      'screencapture -R 0,0,100,100 out.jpg',
+      'screencapture -wx out.jpg',
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('refuse')
     }
