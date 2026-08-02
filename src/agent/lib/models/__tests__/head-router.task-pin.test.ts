@@ -28,6 +28,13 @@ let pinRow: PinRow | null = null
 let stickyModel: string | null = null
 const updates: Record<string, unknown>[] = []
 const wheres: Record<string, unknown>[] = []
+/** What the conditional write reports back — 0 means it matched no row. */
+let updateCount = 1
+const toolEvents: Record<string, unknown>[] = []
+
+vi.mock('@/agent/lib/tool-telemetry', () => ({
+  logToolEvent: vi.fn(async (e: Record<string, unknown>) => { toolEvents.push(e) }),
+}))
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -46,7 +53,7 @@ vi.mock('@/lib/prisma', () => ({
       updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
         wheres.push(where)
         updates.push(data)
-        return { count: 1 }
+        return { count: updateCount }
       }),
     },
   },
@@ -206,6 +213,25 @@ describe('head-pin storage rules', () => {
     delete process.env.HEAD_TASK_PIN
     updates.length = 0
     wheres.length = 0
+    toolEvents.length = 0
+    updateCount = 1
+  })
+
+  // Both silent failures of this feature looked identical from outside: no
+  // error, no log, a write that matched nothing while every test stayed green.
+  // A zero-match write is telemetry now, readable straight from the database.
+  it('reports a write that matched no row, instead of failing silently', async () => {
+    updateCount = 0
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'triage' })
+    expect(toolEvents).toHaveLength(1)
+    expect(toolEvents[0].toolName).toBe('__head_pin__')
+    expect(toolEvents[0].errorClass).toBe('pin_write_no_match')
+    expect(toolEvents[0].conversationId).toBe(CONV)
+  })
+
+  it('stays quiet when the write lands', async () => {
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'triage' })
+    expect(toolEvents).toHaveLength(0)
   })
 
   it('never pins listen mode — that tier withholds business tools on purpose', async () => {

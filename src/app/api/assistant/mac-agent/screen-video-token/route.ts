@@ -17,6 +17,7 @@ import { RtcTokenBuilder, RtcRole } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { authenticateDevice, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { isKnownViewUid, registerViewUid } from '@/agent/lib/mac-agent/remote-control'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
   if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { deviceId?: string }
+  let body: { deviceId?: string; uid?: number }
   try {
     body = await req.json()
   } catch {
@@ -73,9 +74,20 @@ export async function POST(req: NextRequest) {
   if (!device) return Response.json({ error: 'no_device' }, { status: 404 })
 
   const channel = `mac-screen-${device.id}`
-  const uid = 1000 + Math.floor(Math.random() * 100000)
+  // RC-1: a caller may RENEW for the uid it is already joined with (stepping
+  // back down from control to view-only, or refreshing before expiry). Only a
+  // uid this server minted qualifies — otherwise a fresh one, as before.
+  const requested = Number(body.uid)
+  const renewing = Number.isInteger(requested) && requested > 0
+    && (await isKnownViewUid(device.id, requested))
+  const uid = renewing ? requested : 1000 + Math.floor(Math.random() * 100000)
   const token = RtcTokenBuilder.buildTokenWithUid(
     appId, appCertificate, channel, uid, RtcRole.SUBSCRIBER, TOKEN_TTL_SEC, expire,
   )
+  // RC-1: remember the uid we just minted. Arming control later renews the
+  // token on THIS connection (no rejoin, no video blackout), and the control
+  // route will only mint for a uid it finds in this register — so the phone
+  // can never name a uid of its own choosing.
+  await registerViewUid(device.id, uid)
   return Response.json({ appId, channel, uid, token, expiresAt: expire })
 }

@@ -12,6 +12,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { activeDevice, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { revokeControl } from '@/agent/lib/mac-agent/remote-control'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
   if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { on?: boolean; maxSeconds?: number }
+  let body: { on?: boolean; maxSeconds?: number; displayIndex?: number }
   try {
     body = await req.json()
   } catch {
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
       .catch(() => {})
     const ids: string[] = []
     for (const d of online) {
+      // RC-1: stopping the view also drops any control grant. Video off means
+      // hands off — the owner should never have to press two stops.
+      await revokeControl(d.id, 'stream_stop')
       const { id } = await enqueueCommand({
         deviceId: d.id,
         action: 'screen_stream',
@@ -75,7 +79,12 @@ export async function POST(req: NextRequest) {
   const { id } = await enqueueCommand({
     deviceId: device.id,
     action: 'screen_stream',
-    params: { mode: 'start', maxSeconds: Number(body.maxSeconds) || undefined },
+    params: {
+      mode: 'start',
+      maxSeconds: Number(body.maxSeconds) || undefined,
+      // RC-3: which screen, when the Mac has more than one.
+      displayIndex: Number.isInteger(body.displayIndex) ? body.displayIndex : undefined,
+    },
   })
   return Response.json({ ok: true, commandId: id, on: true, deviceId: device.id })
 }

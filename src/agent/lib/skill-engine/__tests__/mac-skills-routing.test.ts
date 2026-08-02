@@ -83,6 +83,14 @@ describe('the Mac AI apps', () => {
     expect(applyRules('নতুন চ্যাট খোলো')?.skill).toBe('mac-ai-app-operator')
   })
 
+  // Codex: naming the app is not asking for it to be driven. A bug report about
+  // our own product pinned the isolated operator, which refuses coding work — so
+  // the request had nowhere left to go.
+  it('a software job that merely names the app is not app-driving', () => {
+    expect(applyRules('ChatGPT app integration bug ta fix koro')).toBeNull()
+    expect(applyRules('claude app er ui ta thik koro')).toBeNull()
+  })
+
   it('does not hijack Boss talking to the agent itself', () => {
     // No app word: this is him asking ME, not asking the desktop app.
     expect(applyRules('claude ke jiggesh koro')).toBeNull()
