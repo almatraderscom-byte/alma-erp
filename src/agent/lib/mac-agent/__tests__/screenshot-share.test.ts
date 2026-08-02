@@ -20,7 +20,7 @@ vi.mock('@/agent/lib/storage', () => ({
   agentStorageDelete: (...a: unknown[]) => deleteMock(...(a as [])),
 }))
 
-import { isScreenshotShellCommand, shareScreenshot } from '../screenshot-share'
+import { classifyScreencaptureIntent, shareScreenshot } from '../screenshot-share'
 
 const JPEG_URI = `data:image/jpeg;base64,${Buffer.from('fake-jpeg-bytes').toString('base64')}`
 
@@ -64,30 +64,45 @@ describe('shareScreenshot', () => {
 })
 
 describe('wrong-tool interceptor pattern', () => {
-  it('catches the shell screenshot shapes the head actually produces', () => {
+  it('intercepts only zero-ambiguity simple screencapture commands', () => {
     for (const cmd of [
       'screencapture -C ~/Desktop/shot.png',
-      'screencapture -x /tmp/a.png && echo done',
-      'cd ~ ; screencapture out.png',
       '/usr/sbin/screencapture -x /tmp/a.jpg', // path-qualified (Codex P2)
       'sudo screencapture -c',
       'FOO=1 screencapture out.png',
+      'env -i /usr/sbin/screencapture -x /tmp/a.jpg', // wrapper with options — still simple
+      'command -- screencapture -c',
     ]) {
-      expect(isScreenshotShellCommand(cmd)).toBe(true)
+      expect(classifyScreencaptureIntent(cmd)).toBe('intercept')
     }
   })
 
-  it('leaves ordinary commands alone — including quoted data (Codex P1)', () => {
+  it('anything compound mentioning screencapture is refused — never run, never captured', () => {
+    // Running one risks the invisible file; intercepting one risks capturing
+    // the screen on a command that only PRINTS the word (Codex P1 rounds 2-3:
+    // escaped quotes, comments, wrapper options). No parsing arms race —
+    // compound means refuse.
+    for (const cmd of [
+      'screencapture -x /tmp/a.png && echo done',
+      'cd ~ ; screencapture out.png',
+      "printf 'notes;screencapture usage'",
+      'printf "notes;\\"; screencapture usage"', // escaped quote (Codex round 3)
+      'echo ok # ; screencapture out.png', // comment (Codex round 3)
+      'echo hi | grep screencapture',
+      'grep "screencapture" docs/notes.md',
+    ]) {
+      expect(classifyScreencaptureIntent(cmd)).toBe('refuse')
+    }
+  })
+
+  it('plain commands that merely contain the word still run', () => {
     for (const cmd of [
       'git status',
       'ls ~/Desktop',
-      'echo screencapture-is-a-word-in-this-string.txt',
       'cat notes/screencapture.md',
-      "printf 'notes;screencapture usage'", // quoted — must NOT capture the screen
-      'grep "screencapture" docs/notes.md',
-      'echo hi | grep screencapture',
+      'echo screencapture-is-a-word-in-this-string.txt',
     ]) {
-      expect(isScreenshotShellCommand(cmd)).toBe(false)
+      expect(classifyScreencaptureIntent(cmd)).toBe('run')
     }
   })
 })

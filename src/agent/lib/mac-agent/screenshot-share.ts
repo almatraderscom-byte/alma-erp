@@ -20,35 +20,50 @@ const MAX_BYTES = 9_500_000
 const RETENTION_MS = 24 * 3600 * 1000
 
 /**
- * Is this shell command actually going to EXECUTE screencapture?
+ * How should run_mac_command treat a command that involves `screencapture`?
  *
- * Token-aware on purpose (Codex P1/P2 on the interceptor): a bare regex both
- * fired on quoted data (`printf 'notes;screencapture usage'` — capturing the
- * owner's screen on a command that prints text) and missed the
- * path-qualified `/usr/sbin/screencapture` this repo's own daemon uses.
- * Quoted spans are stripped first — a false NEGATIVE inside quotes is fine
- * (the command just runs normally); a false positive is not — then each
- * pipeline segment's first executable word is compared by basename, skipping
- * env assignments and common wrappers.
+ * NOT by parsing shell — that is an arms race this helper refuses to enter
+ * (Codex found escaped quotes, comments and wrapper options in three rounds;
+ * a "parser" here would never be sh). Instead, two zero-ambiguity buckets:
+ *
+ *   'intercept' — a SIMPLE command (no quoting/chaining/comment characters at
+ *                 all) whose first executable, by basename after env
+ *                 assignments and bare wrappers, is screencapture. Nothing to
+ *                 mis-parse — absorb it into the real screenshot flow.
+ *   'refuse'    — anything COMPOUND that mentions screencapture anywhere.
+ *                 Run nothing, capture nothing: a wrong capture would expose
+ *                 the owner's screen and a wrong run leaves an invisible
+ *                 file, so the only safe deterministic answer is an honest
+ *                 refusal that names the right tool.
+ *   'run'       — everything else: the normal command path.
  */
-export function isScreenshotShellCommand(command: string): boolean {
-  const stripped = String(command)
-    .replace(/'[^']*'/g, "''")
-    .replace(/"[^"]*"/g, '""')
-  for (const seg of stripped.split(/(?:\|\||&&|[;|&\n])/)) {
-    const words = seg.trim().split(/\s+/).filter(Boolean)
+export function classifyScreencaptureIntent(command: string): 'intercept' | 'refuse' | 'run' {
+  const c = String(command)
+  if (!/screencapture/i.test(c)) return 'run'
+  const simple = !/[;&|'"`#\n$(){}<>\\]/.test(c)
+  if (simple) {
+    const words = c.trim().split(/\s+/).filter(Boolean)
     let i = 0
-    while (
-      i < words.length &&
-      (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) ||
-        ['sudo', 'nohup', 'env', 'command', 'exec'].includes(words[i]))
-    ) {
-      i += 1
+    let sawWrapper = false
+    while (i < words.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) {
+        i += 1
+      } else if (['sudo', 'nohup', 'env', 'command', 'exec'].includes(words[i])) {
+        sawWrapper = true
+        i += 1
+      } else if (sawWrapper && words[i].startsWith('-')) {
+        // A wrapper's own options (`env -i …`, `command -- …`) — safe to skip
+        // in a SIMPLE command, where nothing can hide behind quoting.
+        i += 1
+      } else {
+        break
+      }
     }
     const base = (words[i] ?? '').split('/').pop() ?? ''
-    if (base === 'screencapture') return true
+    if (base === 'screencapture') return 'intercept'
+    return 'run' // e.g. `cat notes/screencapture.md` — plain word, plain command
   }
-  return false
+  return 'refuse'
 }
 
 export async function shareScreenshot(

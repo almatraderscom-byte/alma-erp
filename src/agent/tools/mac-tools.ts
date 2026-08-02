@@ -24,7 +24,7 @@ import {
   recentCommands,
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
-import { isScreenshotShellCommand, shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
+import { classifyScreencaptureIntent, shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -102,7 +102,20 @@ const run_mac_command: AgentTool = {
     // Instead of refusing (the head would flounder), the misuse is ABSORBED:
     // we run the real screenshot flow and hand back the renderable link, so
     // the owner gets the right result no matter what the model selected.
-    if (isScreenshotShellCommand(command)) {
+    const shotIntent = classifyScreencaptureIntent(command)
+    if (shotIntent === 'refuse') {
+      // Compound shell mentioning screencapture: running it risks the
+      // invisible-file failure, intercepting it risks capturing the screen on
+      // a command that only PRINTS the word. Deterministic safe answer: do
+      // neither, say which tool is right.
+      return {
+        success: false,
+        error:
+          'এই কমান্ডটার ভেতরে screencapture আছে, তাই চালাইনি — স্ক্রিনের ছবি লাগলে mac_desk_control action="screenshot" ব্যবহার করো (ছবি চ্যাটেই আসবে); আর যদি এটা অন্য কাজ হয়, screencapture শব্দটা ছাড়া কমান্ডটা আবার দাও।',
+        data: { refused: true, code: 'screenshot_wrong_tool' },
+      }
+    }
+    if (shotIntent === 'intercept') {
       const gateShot = await requireOnlineMac()
       if (!gateShot.ok) return { success: false, error: gateShot.error }
       const { id: shotId } = await enqueueCommand({
