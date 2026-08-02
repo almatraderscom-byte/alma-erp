@@ -748,15 +748,17 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         var connection: AgoraRtcConnection?
         weak var canvasView: UIView?
         var joined = false
-        /// Sheet closed while the token request was in flight: the resumed
-        /// task must NOT join a channel nobody will ever leave (Codex P2).
-        var cancelled = false
+        /// Per-join generation: leave() bumps it, so a STALE token request
+        /// resuming after a device switch can neither join nor tear down the
+        /// NEW join (Codex P2 round 6 — a shared boolean reset on re-join
+        /// let the old request through).
+        var joinGeneration = 0
 
         func join(deviceId: String, into view: UIView) {
             guard !joined else { return }
             joined = true
             joinedDeviceId = deviceId
-            cancelled = false
+            let gen = joinGeneration
             Task { @MainActor in
                 struct TokenResp: Decodable {
                     let appId: String; let channel: String; let uid: Int; let token: String
@@ -764,7 +766,7 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                 guard let resp: TokenResp = try? await AlmaAPI.shared.send(
                     "POST", "/api/assistant/mac-agent/screen-video-token",
                     body: ["deviceId": deviceId]) else { return }
-                if self.cancelled { return }
+                if gen != self.joinGeneration { return }
                 let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
                 self.engine = engine
                 engine.enableVideo()
@@ -790,8 +792,12 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                     engine.setupRemoteVideoEx(canvas, connection: conn)
                 }
                 // The view can have been dismantled between the await points —
-                // never linger in the channel behind a closed sheet.
-                if self.cancelled { self.leave() }
+                // never linger in the channel behind a closed sheet. A stale
+                // generation leaves only ITS OWN connection.
+                if gen != self.joinGeneration {
+                    engine.leaveChannelEx(conn, leaveChannelBlock: nil)
+                    if self.connection === conn { self.connection = nil }
+                }
             }
         }
 
@@ -805,7 +811,7 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         }
 
         func leave() {
-            cancelled = true
+            joinGeneration += 1
             if let conn = connection {
                 engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
                 connection = nil

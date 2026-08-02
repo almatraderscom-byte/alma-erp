@@ -349,6 +349,7 @@ let videoActive = false
 // same race class as the iOS join). Generation counter: stop bumps it, the
 // continuation compares.
 let videoGeneration = 0
+let lastBeatFrames = 0
 
 async function startScreenVideo(token) {
   const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
@@ -368,13 +369,19 @@ async function startScreenVideo(token) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     videoChild = child
+    lastBeatFrames = 0
     child.stdout.on('data', (d) => {
       const line = String(d).trim()
       if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
-      // Only REAL delivered frames advertise video — an alive child whose
-      // Agora join failed still beats with frames=0 (Codex P2).
+      // Video is live only while the frame count PROGRESSES — cumulative
+      // count stays positive after a freeze (Codex P2 round 6), and frames=0
+      // (failed join) never advertises at all.
       const m = /^beat frames=(\d+)/.exec(line)
-      if (m) videoActive = Number(m[1]) > 0
+      if (m) {
+        const n = Number(m[1])
+        videoActive = n > lastBeatFrames
+        lastBeatFrames = n
+      }
     })
     child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
     child.on('exit', (code) => {
@@ -389,8 +396,12 @@ async function startScreenVideo(token) {
     log('screen video: broadcaster spawned →', channel)
   } catch (err) {
     log('screen video failed:', String(err?.message ?? err))
-    videoChild = null
-    videoActive = false
+    // A stale failure (stop → fast restart while our token request was in
+    // flight) must not clear the REPLACEMENT's state (Codex P1).
+    if (gen === videoGeneration) {
+      videoChild = null
+      videoActive = false
+    }
   }
 }
 
