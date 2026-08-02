@@ -356,4 +356,22 @@ describe('an overwriting move is refused, not carded', () => {
   it('says what to do instead', () => {
     expect(classifyCommand('mv a b').reasonBn).toContain('-n')
   })
+
+  // Round two of the same live run: with only the FIRST token checked, the head
+  // simply buried the move — `find … -exec mv {} DIR/ \;` moved every match and
+  // walked straight past the guard.
+  it('catches a move buried in find -exec', () => {
+    expect(
+      classifyCommand("find ~/Downloads -maxdepth 1 -type f -iname '*.pdf' -exec mv {} ~/Downloads/Reports/ \\;").code,
+    ).toBe('clobbering_move')
+    expect(
+      classifyCommand("find ~/Downloads -iname '*.pdf' -exec cp {} ~/backup/ +").code,
+    ).toBe('clobbering_move')
+  })
+
+  it('…and lets the guarded form through', () => {
+    expect(
+      classifyCommand("find ~/Downloads -iname '*.pdf' -exec mv -n {} ~/Downloads/Reports/ \\;").level,
+    ).toBe('amber')
+  })
 })

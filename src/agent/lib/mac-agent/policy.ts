@@ -353,22 +353,34 @@ function isGreenSegment(segment: string): boolean {
  */
 function clobberingMove(segment: string): PolicyVerdict | null {
   const tokens = stripEnvPrefix(segment.split(/\s+/).filter(Boolean))
-  if (tokens.length === 0) return null
-  const tool = toolName(tokens[0])
-  if (tool !== 'mv' && tool !== 'cp') return null
-  const guarded = tokens.slice(1).some((t) => {
-    if (t === '--no-clobber' || t === '--interactive') return true
-    // A short-flag cluster carrying n (no-clobber) or i (interactive).
-    return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
-  })
-  if (guarded) return null
-  return {
-    level: 'red',
-    code: 'clobbering_move',
-    reasonBn:
-      `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
-      + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+  // Not just the FIRST token: `find ~/Downloads -iname '*.pdf' -exec mv {} DIR/ \;`
+  // moves every match and the mv is buried mid-line (the head proposed exactly
+  // that once the first-token-only version shipped). Any bare `mv`/`cp` word in
+  // the segment is checked, wherever it sits.
+  for (let i = 0; i < tokens.length; i++) {
+    const tool = toolName(tokens[i])
+    if (tool !== 'mv' && tool !== 'cp') continue
+    // Its own arguments end at the exec terminator, not at the line end.
+    const rest: string[] = []
+    for (let j = i + 1; j < tokens.length; j++) {
+      const t = tokens[j]
+      if (t === ';' || t === '\\;' || t === '+') break
+      rest.push(t)
+    }
+    const guarded = rest.some((t) => {
+      if (t === '--no-clobber' || t === '--interactive') return true
+      return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
+    })
+    if (guarded) continue
+    return {
+      level: 'red',
+      code: 'clobbering_move',
+      reasonBn:
+        `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
+        + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+    }
   }
+  return null
 }
 
 export interface ClassifyOptions {
