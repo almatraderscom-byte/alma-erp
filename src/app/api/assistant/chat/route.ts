@@ -27,6 +27,7 @@ import {
   linkTurnUserMessage,
   linkTurnAssistantMessage,
 } from '@/agent/lib/turn-status'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
@@ -663,6 +664,12 @@ export async function POST(req: NextRequest) {
   }
   if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
+  // P0-2: for a continuation this stamp lands in a DIFFERENT process from the
+  // approve route's stamps, which is exactly the point — the gap between
+  // `continuation_enqueued` and this one is the Redis + worker-pickup cost, the
+  // one piece of the 60–90s wait the audit had to leave unverified.
+  if (internalControl) void traceTurnStage(turnId, 'route_received').catch(() => {})
+
   // Model-upgrade approval resume: re-run the same turn either on the premium model
   // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
   // the cheap fallback (decline → run on the model the thread was already using).
@@ -781,9 +788,17 @@ export async function POST(req: NextRequest) {
     let continuationNeeded = false
     /** The spoken first line, so a verify retry cannot erase it (see below). */
     let preambleText = ''
+    let firstTokenStamped = false
     try {
       for await (const event of runTurn()) {
-        if (event.type === 'text_delta') finalText += event.delta
+        if (event.type === 'text_delta') {
+          finalText += event.delta
+          // P0-2: the moment the wait visibly ends for Boss. Stamped once.
+          if (!firstTokenStamped) {
+            firstTokenStamped = true
+            void traceTurnStage(turnId, 'first_token').catch(() => {})
+          }
+        }
         else if (event.type === 'preamble') preambleText = event.text
         else if (event.type === 'verification_retry') {
           // Drop the unverified draft so the final telegram reply is the truthful
@@ -847,6 +862,9 @@ export async function POST(req: NextRequest) {
       clearTimeout(turnCapTimer)
     }
     await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
+    // P0-2: closes the trace. A turn that errored is stamped too — a wait that
+    // ended in a failure is still a wait Boss sat through.
+    void traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
       try {
@@ -891,6 +909,8 @@ export async function POST(req: NextRequest) {
   let doneTurnMs = -1
   // Short preview of the reply, for the away-push (ntfy) when the app is closed.
   let replyPreview = ''
+  /** P0-2: first_token is stamped once per turn — the stream can emit thousands. */
+  let streamFirstTokenStamped = false
 
   const encoder = new TextEncoder()
   let streamClosed = false
@@ -944,6 +964,11 @@ export async function POST(req: NextRequest) {
           // App-style push (ntfy) ONLY when the owner is away — suppressed while
           // he's in the app (notifyOwnerIfAway checks app-presence). Telegram turns
           // already push via Telegram, so skip them here.
+          if (event.type === 'text_delta' && !streamFirstTokenStamped) {
+            // P0-2: same stamp as the non-stream branch — the visible end of the wait.
+            streamFirstTokenStamped = true
+            void traceTurnStage(turnId, 'first_token').catch(() => {})
+          }
           if (event.type === 'text_delta' && replyPreview.length < 140) {
             replyPreview += (event as { delta?: string }).delta ?? ''
           } else if (event.type === 'confirm_card' && convSource === 'web') {
@@ -965,6 +990,7 @@ export async function POST(req: NextRequest) {
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
             await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            void traceTurnStage(turnId, 'turn_done', 'done').catch(() => {})
             if (turnId && conversationId && convSource === 'web' && event.needContinue !== true) {
               try {
                 const deliveryId = await enqueueTurnCompletionNotification({

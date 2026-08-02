@@ -25,6 +25,7 @@
 import { prisma } from '@/lib/prisma'
 import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 
 /** Hard cap for an INLINE (serverless) continuation turn — callers' maxDuration
  * must leave headroom above this (approve and job-result both run at 120s). */
@@ -211,10 +212,17 @@ export async function enqueueAgentContinuation(opts: {
     })
     if (jobData && turnId) {
       const jobId = await enqueueTurnJob(jobData)
-      if (jobId) return                          // worker will drain it
+      if (jobId) {
+        // P0-2: everything after this stamp happens in another process. The gap
+        // to `route_received` IS the queue hop — the part the audit could only
+        // call "unverified".
+        await traceTurnStage(turnId, 'continuation_enqueued', 'worker')
+        return                                   // worker will drain it
+      }
     }
     console.warn('[approval-continuation] worker enqueue failed — falling back to inline turn')
   }
 
+  await traceTurnStage(turnId, 'continuation_enqueued', 'inline')
   await runContinuationInline(opts, turnId)
 }

@@ -2325,6 +2325,11 @@ model AgentTurn {
   /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
   /// guard reads it so unattended work meets the autonomy ladder + money cap.
   instructionOrigin     String?   @map("instruction_origin")
+  /// P0-2 (foundation audit H.5): append-only per-stage latency trace for this
+  /// turn — [{ stage, at, ms }]. The approval path spans three processes
+  /// (Vercel approve → Redis → VPS worker → chat route), so "approve to first
+  /// visible work took 90s" was unattributable. Each stage stamps itself.
+  stageTrace            Json?     @map("stage_trace")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])

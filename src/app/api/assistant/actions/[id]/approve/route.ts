@@ -3253,6 +3253,13 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
     const turnId = await createTurn(conversationId)
     if (!turnId) return null
 
+    // P0-2: the clock Boss experiences starts at his tap. Both stamps land here
+    // because the ack note is written just above — the gap between them is the
+    // only part of the wait he currently sees working.
+    const { traceTurnStage } = await import('@/agent/lib/turn-stage-trace')
+    await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined)
+    await traceTurnStage(turnId, 'ack_posted')
+
     if (isAsync) {
       // The async completion callback owns this visible turn.
       await db.agentPendingAction.update({

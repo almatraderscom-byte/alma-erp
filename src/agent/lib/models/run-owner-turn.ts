@@ -115,6 +115,7 @@ import {
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { DEFAULT_HEAD_MODEL_ID } from '@/agent/lib/models/routing-config'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -3944,6 +3945,13 @@ export async function* runOwnerTurn(
   // a long chat ages back into per-message routing instead of holding the heavy
   // head forever.
   void rememberHeadPin(conversationId, decision).catch(() => {})
+
+  // P0-2: routing is done; everything after this stamp is prompt build +
+  // inference + tools. The audit's suspicion is that this is the bulk of the
+  // 60–90s approval wait — this is the stamp that will prove or disprove it.
+  if (options.turnId) {
+    void traceTurnStage(options.turnId, 'head_resolved', decision.modelId).catch(() => {})
+  }
 
   const model = getModel(decision.modelId)
 
