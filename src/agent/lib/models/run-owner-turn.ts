@@ -114,6 +114,7 @@ import {
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { rememberHeadPin } from '@/agent/lib/models/head-pin'
 import { DEFAULT_HEAD_MODEL_ID } from '@/agent/lib/models/routing-config'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -153,6 +154,12 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
    * Set by the model-switch resume call — skips the approval gate.
    */
   approveModelSwitch?: boolean
+  /**
+   * P0-1: this turn continues work already in flight (approval resume / internal
+   * workflow control). It resumes on the job's pinned head instead of being
+   * routed again — see head-pin.ts.
+   */
+  continuation?: boolean
 }
 
 /**
@@ -3895,6 +3902,7 @@ export async function* runOwnerTurn(
     personalMode,
     businessId,
     conversationId,
+    continuation: options.continuation === true,
   })
 
   // Worker-only guard (2026-07-12 salah incident): a conversation still PINNED to
@@ -3928,6 +3936,12 @@ export async function* runOwnerTurn(
       decision.via = `${decision.via}+disabled_fallback`
     }
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
+
+  // P0-1: the head this job runs on, written AFTER both redirects above so the
+  // pin always names a model that actually ran. Fire-and-forget — a failed write
+  // costs one re-routed turn, never a wrong one. A continuation re-writes the
+  // same pin, which slides its window over a long approval round-trip.
+  void rememberHeadPin(conversationId, decision).catch(() => {})
 
   const model = getModel(decision.modelId)
 

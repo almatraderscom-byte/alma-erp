@@ -118,6 +118,10 @@ export async function runContinuationInline(opts: { conversationId: string; mess
     try {
       for await (const ev of runOwnerTurn(opts.conversationId, {
         signal: controller.signal,
+        // P0-1: resume on the head that was running this job. Without it the
+        // inline path re-triaged from scratch, so the model that planned the
+        // work was not the model that finished it after the owner's tap.
+        continuation: true,
         projectSystemInstructions:
           `[INTERNAL WORKFLOW CONTINUATION — NOT an owner-authored message and never display/quote it as one.]\n${opts.message}`,
       })) {

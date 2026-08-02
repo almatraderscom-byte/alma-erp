@@ -2061,6 +2061,16 @@ model AgentConversation {
   /// SK-3/U5: WHY that skill was pinned — layer, reason, candidates. Stored so a
   /// wrong pin has an answer instead of a guess.
   skillRouteTrace    Json?           @map("skill_route_trace")
+  /// P0-1 (foundation audit): the head model this JOB runs on. Routing used to be
+  /// decided per message, so one task could start on Luna and finish on DeepSeek.
+  /// The pin holds for the job; it may only ever escalate (light → heavy), never
+  /// downgrade, and it expires so it cannot leak into tomorrow's chat.
+  pinnedHeadModel    String?         @map("pinned_head_model")
+  /// HeadTier the pin was taken at: light | marketing | heavy | explicit.
+  pinnedHeadTier     String?         @map("pinned_head_tier")
+  /// WHY the pin exists — the HeadDecision.via that created it (decision log).
+  pinnedHeadVia      String?         @map("pinned_head_via")
+  pinnedHeadUntil    DateTime?       @map("pinned_head_until")
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]

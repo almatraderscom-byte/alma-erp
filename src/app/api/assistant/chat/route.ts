@@ -729,6 +729,14 @@ export async function POST(req: NextRequest) {
     modelId: isInternalCall
       ? defaultHeadModelId
       : (resumeModelId ?? conversationModelId),
+    // P0-1: a workflow continuation (approval resume, internal control) is the
+    // SAME job as the turn that opened it, so it resumes on that job's pinned
+    // head. This line used to be the bug in disguise: every internal turn was
+    // forced onto `defaultHeadModelId` above, so a job running on the cheap head
+    // silently finished on the heavy one after the owner tapped Approve. The pin
+    // now wins when one exists; `defaultHeadModelId` stays the fallback for
+    // internal turns that have no job to resume (e.g. Telegram).
+    continuation: internalControl,
     signal: turnAbort.signal,
     turnId,
     // Near this moment the turn loop stops offering tools and forces a Bangla
