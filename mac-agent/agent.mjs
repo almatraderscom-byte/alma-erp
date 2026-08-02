@@ -370,23 +370,41 @@ async function startScreenVideo(token) {
     })
     videoChild = child
     lastBeatFrames = 0
+    // Stdout is a byte stream, not lines — a heartbeat can arrive split
+    // across chunks or glued to its neighbours (Codex P2 round 8). Buffer to
+    // newlines before parsing.
+    let stdoutBuf = ''
     child.stdout.on('data', (d) => {
       // Buffered output from a STOPPED child must not touch the replacement's
       // liveness state (Codex P2 round 7).
       if (videoChild !== child) return
-      const line = String(d).trim()
-      if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
-      // Video is live only while the frame count PROGRESSES — cumulative
-      // count stays positive after a freeze (Codex P2 round 6), and frames=0
-      // (failed join) never advertises at all.
-      const m = /^beat frames=(\d+)/.exec(line)
-      if (m) {
-        const n = Number(m[1])
-        videoActive = n > lastBeatFrames
-        lastBeatFrames = n
+      stdoutBuf += String(d)
+      let nl
+      while ((nl = stdoutBuf.indexOf('\n')) >= 0) {
+        const line = stdoutBuf.slice(0, nl).trim()
+        stdoutBuf = stdoutBuf.slice(nl + 1)
+        if (!line) continue
+        if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
+        // Video is live only while the frame count PROGRESSES — cumulative
+        // count stays positive after a freeze, and frames=0 never advertises.
+        const m = /^beat frames=(\d+)/.exec(line)
+        if (m) {
+          const n = Number(m[1])
+          videoActive = n > lastBeatFrames
+          lastBeatFrames = n
+        }
       }
     })
     child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
+    // spawn() reports an unexecutable binary (perm/arch) via an async 'error'
+    // event, not the try/catch (Codex P2 round 8).
+    child.on('error', (err) => {
+      log('screen video spawn error:', String(err?.message ?? err))
+      if (videoChild === child) {
+        videoChild = null
+        videoActive = false
+      }
+    })
     child.on('exit', (code) => {
       log('screen video exited', String(code))
       // A stale exit (stop → fast restart) must not orphan the REPLACEMENT

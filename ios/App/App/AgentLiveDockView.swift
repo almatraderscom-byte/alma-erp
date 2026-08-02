@@ -765,7 +765,16 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                 }
                 guard let resp: TokenResp = try? await AlmaAPI.shared.send(
                     "POST", "/api/assistant/mac-agent/screen-video-token",
-                    body: ["deviceId": deviceId]) else { return }
+                    body: ["deviceId": deviceId]) else {
+                    // Transient token failure must not wedge the view in a
+                    // joined-but-black state — allow the next update pass to
+                    // retry (Codex P2 round 8).
+                    if gen == self.joinGeneration {
+                        self.joined = false
+                        self.joinedDeviceId = nil
+                    }
+                    return
+                }
                 if gen != self.joinGeneration { return }
                 let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
                 self.engine = engine
