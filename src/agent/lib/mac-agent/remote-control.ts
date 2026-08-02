@@ -30,10 +30,14 @@ import { randomUUID } from 'crypto'
 export const CONTROL_TTL_SEC = 120
 /** A viewer uid may be upgraded to control for this long after it was minted. */
 const VIEW_UID_TTL_MS = 15 * 60 * 1000
-const MAX_VIEW_UIDS = 6
 const MAX_AUDIT_ROWS = 30
 
-export const viewUidsKey = (deviceId: string) => `mac_view_uids:${deviceId}`
+/** One row per uid, not one array per device: concurrent viewers registering
+ *  at the same moment would otherwise read the same array and overwrite each
+ *  other, and the loser's phone — already holding a valid video token — could
+ *  never arm control (Codex P2). */
+export const viewUidKey = (deviceId: string, uid: number) => `mac_view_uid:${deviceId}:${uid}`
+const viewUidPrefix = (deviceId: string) => `mac_view_uid:${deviceId}:`
 export const controlPinKey = (deviceId: string) => `mac_control_session:${deviceId}`
 export const controlAuditKey = (deviceId: string) => `mac_control_audit:${deviceId}`
 
@@ -80,26 +84,35 @@ async function delKey(key: string): Promise<void> {
 
 /** Called by the video-token route for every subscriber uid it mints. */
 export async function registerViewUid(deviceId: string, uid: number): Promise<void> {
-  const now = Date.now()
-  const rows = (await readJson<{ uid: number; at: string }[]>(viewUidsKey(deviceId))) ?? []
-  const kept = rows
-    .filter((r) => r && typeof r.uid === 'number' && now - Date.parse(r.at) < VIEW_UID_TTL_MS)
-    .filter((r) => r.uid !== uid)
-  kept.push({ uid, at: new Date(now).toISOString() })
-  await writeJson(viewUidsKey(deviceId), kept.slice(-MAX_VIEW_UIDS))
+  const at = new Date().toISOString()
+  await kv()
+    .upsert({
+      where: { key: viewUidKey(deviceId, uid) },
+      create: { key: viewUidKey(deviceId, uid), value: at },
+      update: { value: at },
+    })
+    .catch(() => {})
+  // Opportunistic prune: ISO timestamps compare correctly as strings, so the
+  // stale rows go without reading anything back.
+  await kv()
+    .deleteMany({
+      where: {
+        key: { startsWith: viewUidPrefix(deviceId) },
+        value: { lt: new Date(Date.now() - VIEW_UID_TTL_MS).toISOString() },
+      },
+    })
+    .catch(() => {})
 }
 
 /** True only if THIS server minted `uid` for THIS device recently. */
 export async function isKnownViewUid(deviceId: string, uid: number): Promise<boolean> {
-  const now = Date.now()
-  const rows = (await readJson<{ uid: number; at: string }[]>(viewUidsKey(deviceId))) ?? []
-  return rows.some((r) => r?.uid === uid && now - Date.parse(r.at) < VIEW_UID_TTL_MS)
+  const row = await kv()
+    .findUnique({ where: { key: viewUidKey(deviceId, uid) }, select: { value: true } })
+    .catch(() => null)
+  if (!row?.value) return false
+  return Date.now() - Date.parse(row.value) < VIEW_UID_TTL_MS
 }
 
-/**
- * Grant (or renew) control for one uid. Renewing keeps the same sessionId so
- * the audit row stays a single session instead of one row per 45s heartbeat.
- */
 export class ControlHeldByAnother extends Error {
   constructor(public readonly heldByUid: number) {
     super('control_held')

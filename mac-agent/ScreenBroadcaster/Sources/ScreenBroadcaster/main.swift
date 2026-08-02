@@ -64,7 +64,9 @@ final class EngineDelegate: NSObject, AgoraRtcEngineDelegate {
                 print("ctl error \(why) uid=\(uid)")
                 fflush(stdout)
             }
-            if why == "idle_timeout" { ControlInput.disarm() }
+            // Both of these mean the grant is over, not that one packet was
+            // bad: stop pretending to be armed (and release anything held).
+            if why == "idle_timeout" || why == "grant_expired" { ControlInput.disarm() }
         case .accept(let msg):
             ControlInput.apply(msg)
         }
@@ -126,6 +128,10 @@ enum ControlInput {
 
     static func disarm() {
         controlGate.disarm()
+        // A half-finished two-step aim must not carry into the next session,
+        // or the first tap after re-arming would commit instead of aiming
+        // (Codex P2).
+        Injector.clearPendingAim()
         HoverRing.setLoupe(false)
         HoverRing.stop()
         DispatchQueue.main.async { Injector.releaseHeldButtons() }
@@ -351,6 +357,13 @@ signal(SIGINT) { _ in
 let beat = DispatchSource.makeTimerSource()
 beat.schedule(deadline: .now() + 1, repeating: 1)
 beat.setEventHandler {
+    // The lease can lapse while the phone says nothing at all. Check it here
+    // rather than only when the next packet arrives — a drag caught by an
+    // expiry would otherwise hold the button indefinitely (Codex P1).
+    if controlGate.isExpired {
+        print("ctl expired — disarming")
+        ControlInput.disarm()
+    }
     print("beat frames=\(pushed)")
     let counters = controlGate.counters
     if counters.events > 0 || counters.drops > 0 {

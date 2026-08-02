@@ -166,6 +166,13 @@ final class ControlGate {
     private var keys = TokenBucket(capacity: 30, rate: 20)
 
     var isArmed: Bool { lock.lock(); defer { lock.unlock() }; return armedFlag }
+    /// Armed but past its lease. Checked on a timer, because a lease can lapse
+    /// while the phone is silent — and if that happens mid-drag, waiting for
+    /// the next packet would leave the mouse button held (Codex P1).
+    var isExpired: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return armedFlag && Date().timeIntervalSince1970 >= expiresAt + 5
+    }
     var sessionId: String { lock.lock(); defer { lock.unlock() }; return session }
     var counters: (events: Int, drops: Int) {
         lock.lock(); defer { lock.unlock() }

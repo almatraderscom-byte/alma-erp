@@ -109,6 +109,11 @@ enum Injector {
     /// The target currently AIMED at and still awaiting its second tap, if the
     /// window has not lapsed. The hover refresh reads this so its 90ms tick
     /// cannot quietly revert the ring to the ordinary style (Codex P2).
+    static func clearPendingAim() {
+        pendingTarget = nil
+        pendingSince = 0
+    }
+
     static var pendingAim: CGRect? {
         guard let pendingTarget, Date().timeIntervalSince1970 - pendingSince < confirmWindow
         else { return nil }
