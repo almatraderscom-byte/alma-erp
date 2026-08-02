@@ -1,0 +1,48 @@
+{
+  "name": "screenshot-annotate-share",
+  "description": "Shows Boss what is on his Mac screen: captures it the one way that renders inline in chat, then points precisely at the part he asked about — in words, and by re-framing a second shot on it. Use when Boss asks what is on his screen, to show him a window, or to look at something he cannot see from his phone.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "Driving an app rather than looking at it → mac-ai-app-operator. Command output he wants to see → run the command and paste the lines; a picture of a terminal is worse than the text. Tidying files → mac-file-organizer.",
+  "requiredCapabilities": [
+    "mac_desk_control",
+    "look_mac_app",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "mac_desk_control"
+    ]
+  },
+  "outputContract": {
+    "kind": "screen_view",
+    "mustInclude": [
+      "image_url",
+      "what_is_on_screen",
+      "where_to_look"
+    ]
+  },
+  "stopConditions": [
+    "স্ক্রিনে পাসওয়ার্ড/OTP/কী/ব্যাংক নম্বর দেখা যাচ্ছে — পড়ে শোনানো নয়",
+    "ছবিটা এল না বা পড়া গেল না — আন্দাজে বর্ণনা নয়",
+    "Screen Recording অনুমতি নেই",
+    "Mac অফলাইন বা ঘুমিয়ে আছে"
+  ],
+  "done": [
+    {
+      "tool": "mac_desk_control"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 10,
+  "status": "active"
+}

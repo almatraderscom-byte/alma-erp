@@ -260,6 +260,21 @@ const AI_APP_ASK =
  */
 const NEW_CHAT_ASK =
   /(?:notun|নতুন|new)\s*(?:chat|চ্যাট|conversation)\s*(?:ta\s*|টা\s*)?(?:khulo|kholo|khule|dao|open|start|শুরু|খোলো)/i
+/**
+ * A picture of his screen. Ordered BEFORE the app rule: "chatgpt app er
+ * screenshot dao" is a looking job, not a driving job, and the looking skill is
+ * the one that knows `screencapture` is the wrong tool.
+ */
+const SCREEN_LOOK_ASK =
+  /(screen\s*shot|screenshot|স্ক্রিনশট|(?:screen|স্ক্রিন)[^\n]{0,20}(?:dekho|dekhao|দেখো|দেখাও|ki\s*ache|কী\s*আছে|chobi|ছবি))/i
+/**
+ * Tidying a cluttered folder. Both halves are required — "downloads" alone is
+ * a folder he might just be reading from, and "porishkar koro" alone could be
+ * about anything from the office to the website.
+ */
+const FOLDER_PLACE = /(downloads?|ডাউনলোড|desktop|ডেস্কটপ|folder|ফোল্ডার)/i
+const TIDY_VERB =
+  /(porishkar|পরিষ্কার|guchi|গুছ|gucha|sajao|সাজাও|sort\s*kor|clean\s*up|cleanup|clean\s*kor|khali\s*kor|খালি\s*কর|jayga\s*(?:khali|nei)|জায়গা\s*(?:খালি|নেই))/i
 
 export interface RouterRule {
   id: string
@@ -328,10 +343,24 @@ export const RULES: RouterRule[] = [
     why: 'branch/commit/push/PR/merge — কোডের কাজ GitHub-এ তোলার ধাপ',
   },
   {
+    id: 'screen-look',
+    skill: 'screenshot-annotate-share',
+    // BEFORE the app rule: "chatgpt app er screenshot dao" is looking, not
+    // driving, and the wrong-tool trap (`screencapture`) lives in this skill.
+    test: (t) => SCREEN_LOOK_ASK.test(t),
+    why: 'স্ক্রিনের ছবি চাওয়া হয়েছে — দেখার কাজ, চালানোর নয়',
+  },
+  {
     id: 'mac-ai-app',
     skill: 'mac-ai-app-operator',
-    test: (t) => AI_APP_ASK.test(t) || NEW_CHAT_ASK.test(t),
+    test: (t) => (AI_APP_ASK.test(t) || NEW_CHAT_ASK.test(t)) && !SCREEN_LOOK_ASK.test(t),
     why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
+  },
+  {
+    id: 'folder-tidy',
+    skill: 'mac-file-organizer',
+    test: (t) => FOLDER_PLACE.test(t) && TIDY_VERB.test(t),
+    why: 'Mac-এর ফোল্ডার গোছানোর কথা — তালিকা আগে, Trash-ই সর্বোচ্চ',
   },
 ]
 

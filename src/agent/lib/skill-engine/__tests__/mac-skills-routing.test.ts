@@ -98,6 +98,37 @@ describe('the Mac AI apps', () => {
   })
 })
 
+describe('looking at the screen', () => {
+  it('routes a screenshot ask', () => {
+    expect(applyRules('screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('আমার স্ক্রিনশট দাও')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('screen e ki ache dekho')?.skill).toBe('screenshot-annotate-share')
+  })
+
+  it('wins over the app rule — a picture of an app is looking, not driving', () => {
+    expect(applyRules('chatgpt app er screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    // …but reading an app WITHOUT the screen word is still the driver's job.
+    expect(applyRules('claude app e ki ache dekho')?.skill).toBe('mac-ai-app-operator')
+  })
+})
+
+describe('tidying a folder', () => {
+  it('needs both halves — the place and the verb', () => {
+    expect(applyRules('downloads folder ta porishkar koro')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('ডেস্কটপ গুছিয়ে দাও')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('downloads e joma hoye thaka file gulo sajao')?.skill).toBe(
+      'mac-file-organizer',
+    )
+  })
+
+  it('does not fire on half a match', () => {
+    // A place with no verb: he may just be reading from it.
+    expect(applyRules('downloads e ki ki ache')).toBeNull()
+    // A verb with no place: could be the office, the site, anything.
+    expect(applyRules('ektu porishkar kore dao')).toBeNull()
+  })
+})
+
 describe('nothing else moved', () => {
   it('the existing rules still win their own traffic', () => {
     expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
@@ -127,6 +158,16 @@ describe('on the index production actually serves', () => {
       text: 'chatgpt app e eta jigges koro',
       skill: 'mac-ai-app-operator',
       caps: ['look_mac_app', 'drive_mac_app'],
+    },
+    {
+      text: 'screenshot dao',
+      skill: 'screenshot-annotate-share',
+      caps: ['mac_desk_control', 'look_mac_app'],
+    },
+    {
+      text: 'downloads folder ta porishkar koro',
+      skill: 'mac-file-organizer',
+      caps: ['run_mac_command', 'check_mac_command'],
     },
   ]
 
