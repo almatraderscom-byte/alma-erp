@@ -251,8 +251,21 @@ const GIT_FLOW_ASK = (t: string): boolean =>
  * pinning the driver there would hand the turn an allowlist with no ERP tool
  * in it.
  */
-const AI_APP_ASK =
+const AI_APP_NAME =
   /((?:chatgpt|claude|chat\s*gpt)\s*(?:desktop\s*)?(?:app|অ্যাপ|apps)|(?:app|অ্যাপ)\s*(?:e|ে|তে)\s*(?:likhe|likhe\s*dao|jigges|jiggesh|type))/i
+/**
+ * Naming the app is not asking for it to be DRIVEN. "ChatGPT app integration
+ * bug ta fix koro" is a coding request about our own product, and pinning the
+ * isolated operator there hands the turn a skill that explicitly refuses coding
+ * work — the request then has nowhere to go (Codex).
+ */
+const AI_APP_OPERATION =
+  /(khulo|kholo|khule|likhe|likho|lekho|jigges|jiggesh|type|pathao|dekho|dekhao|chalao|bolo|\bask\b|\bopen\b|\bsend\b|খোলো|লিখে|লেখো|জিজ্ঞেস|দেখো|দেখাও|পাঠাও)/i
+/** …and any of these means it is a job about the software, not on the desktop. */
+const SOFTWARE_WORK_REF =
+  /(\bbug\b|বাগ|\bfix\b|integration|\bfeature\b|\bcode\b|কোড|\berror\b|crash|deploy|\bapi\b|\bui\b)/i
+const AI_APP_ASK = (t: string): boolean =>
+  AI_APP_NAME.test(t) && AI_APP_OPERATION.test(t) && !SOFTWARE_WORK_REF.test(t)
 /**
  * "notun chat khulo" — a fresh conversation in one of those apps. The verb is
  * REQUIRED: with it optional, "new chat bug ta fix koro" (a bug report about
@@ -330,7 +343,7 @@ export const RULES: RouterRule[] = [
   {
     id: 'mac-ai-app',
     skill: 'mac-ai-app-operator',
-    test: (t) => AI_APP_ASK.test(t) || NEW_CHAT_ASK.test(t),
+    test: (t) => AI_APP_ASK(t) || NEW_CHAT_ASK.test(t),
     why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
   },
 ]
