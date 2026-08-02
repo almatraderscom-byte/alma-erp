@@ -131,7 +131,8 @@ delivered ৩ সেকেন্ড, আজকের test 6)।
 
 1. Message-level model routing, task lock নেই — `head-router.ts` (design)।
 2. Approval continuation = full turn re-run via VPS queue — `approve/route.ts`
-   `enqueueApprovalContinuation` + `worker/src/index.mjs:1553`।
+   `enqueueApprovalContinuation` → `long-agent-task` → `longTaskWorker`
+   (`worker/src/index.mjs:1307`)।
 3. Session identity কোনো স্তরে সংরক্ষিত হয় না — `hintsFor()`/tool params।
 4. `new_chat` semantic verb নেই — helper verb list।
 5. Screenshot head-এর vision-এ ফেরে না — `ui_screenshot` → imageUrl only
