@@ -44,27 +44,18 @@ export function classifyScreencaptureIntent(command: string): 'intercept' | 'ref
   if (simple) {
     const words = c.trim().split(/\s+/).filter(Boolean)
     let i = 0
-    let sawWrapper = false
-    while (i < words.length) {
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) {
-        i += 1
-      } else if (['sudo', 'nohup', 'env', 'command', 'exec'].includes(words[i])) {
-        // `command -v/-V x` LOOKS UP x, it never executes it — that is a
-        // read-only probe and must run normally (Codex P1 round 4).
-        if (words[i] === 'command' && /^-[vV]/.test(words[i + 1] ?? '')) return 'run'
-        sawWrapper = true
-        i += 1
-      } else if (sawWrapper && words[i].startsWith('-')) {
-        // A wrapper's own options (`env -i …`, `command -- …`) — safe to skip
-        // in a SIMPLE command, where nothing can hide behind quoting.
-        i += 1
-      } else {
-        break
-      }
-    }
-    const base = (words[i] ?? '').split('/').pop() ?? ''
-    if (base === 'screencapture') return 'intercept'
-    return 'run' // e.g. `cat notes/screencapture.md` — plain word, plain command
+    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i += 1
+    const baseOf = (w: string) => w.split('/').pop() ?? ''
+    // First word IS screencapture (path-qualified or not): unambiguous.
+    if (baseOf(words[i] ?? '') === 'screencapture') return 'intercept'
+    // The word appears as its own token anywhere else — wrapper forms
+    // (sudo/env/command …), lookups, whatever: there is NO wrapper parser
+    // here on purpose (five review rounds proved that parser would never be
+    // sh — options with operands, lookup modes, path-qualified wrappers…).
+    // Refuse: nothing runs, nothing is captured, the message names the
+    // right tool and how to rephrase.
+    if (words.some((w) => baseOf(w) === 'screencapture')) return 'refuse'
+    return 'run' // plain word inside a filename etc. — `cat notes/screencapture.md`
   }
   return 'refuse'
 }

@@ -68,12 +68,25 @@ describe('wrong-tool interceptor pattern', () => {
     for (const cmd of [
       'screencapture -C ~/Desktop/shot.png',
       '/usr/sbin/screencapture -x /tmp/a.jpg', // path-qualified (Codex P2)
-      'sudo screencapture -c',
       'FOO=1 screencapture out.png',
-      'env -i /usr/sbin/screencapture -x /tmp/a.jpg', // wrapper with options — still simple
-      'command -- screencapture -c',
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('intercept')
+    }
+  })
+
+  it('wrapper and lookup forms are refused — no wrapper parser exists on purpose', () => {
+    // Five review rounds of wrapper edges (options, operands, lookup modes,
+    // path-qualified wrappers) proved that parser would never be sh. Refusal
+    // runs nothing and captures nothing.
+    for (const cmd of [
+      'sudo screencapture -c',
+      'env -i /usr/sbin/screencapture -x /tmp/a.jpg',
+      'env -u screencapture printenv', // operand-consuming option (Codex round 5)
+      '/usr/bin/env screencapture -x /tmp/a.jpg', // path-qualified wrapper (Codex round 5)
+      'command -- screencapture -c',
+      'command -v screencapture',
+    ]) {
+      expect(classifyScreencaptureIntent(cmd)).toBe('refuse')
     }
   })
 
@@ -101,8 +114,6 @@ describe('wrong-tool interceptor pattern', () => {
       'ls ~/Desktop',
       'cat notes/screencapture.md',
       'echo screencapture-is-a-word-in-this-string.txt',
-      'command -v screencapture', // lookup, not execution (Codex round 4)
-      'command -V screencapture',
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('run')
     }
