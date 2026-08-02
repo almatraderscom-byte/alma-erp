@@ -867,8 +867,11 @@ export async function POST(req: NextRequest) {
     }
     await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
     // P0-2: closes the trace. A turn that errored is stamped too — a wait that
-    // ended in a failure is still a wait Boss sat through.
-    void traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
+    // ended in a failure is still a wait Boss sat through. AWAITED: this is the
+    // last thing before the handler returns, and a serverless freeze with the
+    // write still pending would leave exactly the error/Telegram paths untraced
+    // (review bot, #692).
+    await traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
       try {

@@ -73,6 +73,11 @@ const APP_HINTS = {
     // app renames it between builds, and a "New chat" that no longer exists
     // must fall through to the next candidate instead of failing the task.
     newChatLabels: ['New chat', 'New Chat', 'New conversation'],
+    // The app's OWN shortcut. Measured on the owner's Mac 2026-08-02: AXPress
+    // on the New-chat button reports success and does NOTHING (the before/after
+    // trees differed only by a ticking timer), while ⌘N opens a fresh chat
+    // every time. The shortcut leads; the button stays as the fallback.
+    newChatShortcut: 'cmd+n',
   },
   // The ChatGPT desktop app. Seen in the wild under BOTH bundle ids (the
   // 2026 builds on the owner's Mac report com.openai.codex); the policy
@@ -85,6 +90,7 @@ const APP_HINTS = {
     placeholders: ['Do anything'],
     mirror: false, // no per-message structure yet (W1 §2) — refuse honestly
     newChatLabels: ['New chat', 'New Chat'],
+    newChatShortcut: 'cmd+n',
   },
   'com.openai.codex': {
     key: 'chatgpt',
@@ -94,6 +100,7 @@ const APP_HINTS = {
     placeholders: ['Do anything'],
     mirror: false,
     newChatLabels: ['New chat', 'New Chat'],
+    newChatShortcut: 'cmd+n',
   },
 }
 
@@ -131,6 +138,7 @@ function hintsFor(bundleId) {
       placeholders: [],
       mirror: false,
       newChatLabels: [],
+      newChatShortcut: null,
     }
   )
 }
@@ -1232,20 +1240,26 @@ async function uiType(params, cmd) {
 async function uiNewChat(params, cmd) {
   const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const h = hintsFor(bundleId)
-  const candidates = (Array.isArray(params.elementLabel) ? params.elementLabel
-    : params.elementLabel ? [String(params.elementLabel)]
-      : h.newChatLabels ?? [])
-  if (candidates.length === 0) {
+  // A caller-supplied label is a HINT, not the whole list: it goes first, then
+  // the app's own alternatives. Treating it as the complete list defeated the
+  // fallbacks on exactly the renamed builds they exist for (review bot, #690),
+  // while dropping it entirely broke the approval re-validation (#692).
+  const given = Array.isArray(params.elementLabel)
+    ? params.elementLabel.map(String)
+    : params.elementLabel ? [String(params.elementLabel)] : []
+  const candidates = [...new Set([...given, ...(h.newChatLabels ?? [])])]
+  if (candidates.length === 0 && !h.newChatShortcut) {
     return {
       ok: false,
       exitCode: null,
-      error: 'no_new_chat_label — এই অ্যাপে নতুন চ্যাট খোলার বোতামটা চেনা নেই, তাই অনুমান করে চাপিনি।',
+      error: 'no_new_chat_label — এই অ্যাপে নতুন চ্যাট কীভাবে খোলে সেটা চেনা নেই, তাই অনুমান করে কিছু চাপিনি।',
     }
   }
 
-  // Judged as the click it is: same label rules, same approval card.
+  // Judged as the click it is: same label rules, same approval card. The label
+  // shown is the one the card named, whichever route ends up working.
   const { verdict } = await classifyDeferring(
-    { action: 'ui_new_chat', bundleId, elementLabel: candidates[0] },
+    { action: 'ui_new_chat', bundleId, elementLabel: candidates[0] ?? 'New chat' },
     cmd,
   )
   if (verdict.level === 'red') return refusal(verdict)
@@ -1260,38 +1274,84 @@ async function uiNewChat(params, cmd) {
   const before = sessionIdentity(beforeRes, bundleId)
 
   const window = String(params.window ?? h.windowTitle ?? '-')
-  let clicked = null
-  let lastErr = null
-  for (const label of candidates) {
-    const args = ['click', bundleId, '--label', String(label), '--window', window,
+  /**
+   * The postcondition is about the RESULTING STATE, not about change.
+   *
+   * The first version asked "did the conversation change?", which is a false
+   * negative in the ordinary case: opening a new chat while an empty new chat
+   * is already on screen changes nothing observable, and the daemon then
+   * reported failure for work it had actually done (caught live, 2026-08-02).
+   * What Boss asked for is a fresh empty chat to write in — so that is what is
+   * checked.
+   *
+   * The composer is checked SEPARATELY below, because the two failures need
+   * different words: ChatGPT carries a draft across ⌘N, so "the chat did not
+   * open" and "it opened but your old draft is still in the box" are different
+   * situations and only the second one is safe to fix by retyping.
+   */
+  const opened = (after) => after.messages === 0
+
+  let how = null
+  let after = before
+
+  // 1. The app's own shortcut. Measured on the owner's Mac: this is what
+  //    actually opens a chat — see the hint's comment.
+  if (h.newChatShortcut) {
+    const args = ['key', bundleId, '--key', h.newChatShortcut, '--window', window,
       '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
     if (h.manual) args.push('--manual')
     const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
     if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
-    if (res.ok) { clicked = String(label); break }
-    lastErr = res
+    if (res.ok) {
+      const readRes = await readSession(bundleId, params)
+      if (readRes.ok) {
+        const identity = sessionIdentity(readRes, bundleId)
+        if (opened(identity)) { how = h.newChatShortcut; after = identity }
+      }
+    }
   }
-  if (!clicked) return helperError(lastErr ?? { error: 'new_chat_button_not_found' })
 
-  const afterRes = await readSession(bundleId, params)
-  if (!afterRes.ok) return helperError(afterRes)
-  const after = sessionIdentity(afterRes, bundleId)
+  // 2. Fallback: the button, by label. Kept because a future build may answer
+  //    the press even though today's does not, and because an app with no
+  //    shortcut hint has nothing else.
+  if (!how) {
+    let lastErr = null
+    for (const label of candidates) {
+      const args = ['click', bundleId, '--label', String(label), '--window', window,
+        '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
+      if (h.manual) args.push('--manual')
+      const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
+      if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
+      if (!res.ok) { lastErr = res; continue }
+      const readRes = await readSession(bundleId, params)
+      if (!readRes.ok) return helperError(readRes)
+      const identity = sessionIdentity(readRes, bundleId)
+      if (opened(identity)) { how = String(label); after = identity; break }
+      // The press "succeeded" and nothing happened — try the next candidate
+      // rather than reporting a new chat that is not there.
+      lastErr = { error: `pressed "${label}" but the conversation did not change` }
+    }
+    if (!how) {
+      const detail = lastErr?.error ? ` (${String(lastErr.error).slice(0, 120)})` : ''
+      return refusal({
+        code: 'new_chat_not_verified',
+        reasonBn:
+          `নতুন চ্যাট খোলার চেষ্টা করেছি, কিন্তু খুলেছে বলে প্রমাণ পাইনি${detail} — ` +
+          'তাই পুরোনো চ্যাটে কিছু লিখিনি, Boss।',
+      })
+    }
+  }
 
-  // The postcondition. A click that "worked" but left the same conversation on
-  // screen is a FAILURE here — reported as one, so the head cannot go on to
-  // type into the old thread believing it opened a new one.
-  const identityChanged = !sameText(before.windowTitle, after.windowTitle)
-    || !sameText(before.firstText, after.firstText)
-    || (before.messages > 0 && after.messages === 0)
-  if (!identityChanged || !after.composerEmpty) {
+  if (!after.composerEmpty) {
     return refusal({
-      code: 'new_chat_not_verified',
+      code: 'new_chat_draft_present',
       reasonBn:
-        `"${clicked}" চাপা হয়েছে, কিন্তু নতুন খালি চ্যাট খুলেছে বলে প্রমাণ পাইনি ` +
-        `(${identityChanged ? 'লেখার ঘর খালি নয়' : 'একই চ্যাটই খোলা আছে'}) — তাই এখানে কিছু লিখিনি, Boss।`,
+        `নতুন চ্যাট খুলেছে, কিন্তু লেখার ঘরে আগের একটা খসড়া রয়ে গেছে ("${String(after.composerValue).slice(0, 40)}") — ` +
+        'ওটার উপরে লিখলে আপনার লেখা মিশে যেত, তাই থেমেছি, Boss।',
     })
   }
-  return ok({ clicked, session: after, previousSession: before, policy: verdict.level })
+  return ok({ clicked: how, session: after, previousSession: before, policy: verdict.level })
+
 }
 
 async function uiKey(params, cmd) {
