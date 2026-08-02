@@ -135,6 +135,29 @@ WebSocket — বাড়তি অবকাঠামো, লাভ নেই; 
 7. **Fitts-বান্ধব chrome:** control-bar বোতামগুলো বড় (≥44pt), ভিডিওর কোণ থেকে
    দূরে, যাতে UI-বোতাম আর Mac-click গুলিয়ে না যায়।
 
+## অবস্থা (2026-08-03): RC-1 → RC-3 তৈরি — PR #701
+
+চারটা ধাপই কোড হয়ে গেছে, নিচের roadmap অনুযায়ী। পরিকল্পনার সাথে যেসব জায়গায়
+বাস্তবতা আলাদা হয়েছে (কারণসহ, যাতে পরের session ভুল ধারণা না নেয়):
+
+- **দুটো data-stream, একটা নয়** — click / drag-edge / key যায় *ordered*
+  stream-এ, move / scroll যায় unordered-এ। ক্রম উল্টে গেলে `du` তার `dd`-র
+  আগে পৌঁছে মাউস-বোতাম চেপে ধরা অবস্থায় আটকে যেত।
+- **Direct tap = একটাই packet** (নিজের x,y সহ) — position আর click আলাদা
+  পাঠালে সেগুলো আলাদা হয়ে গিয়ে পুরনো জায়গায় click পড়তে পারত।
+- **Loupe Mac-এ আঁকা হয়, ফোনে নয়** — এবং যে SCK ফ্রেম এমনিতেই পাঠানো হচ্ছে
+  সেটাই বড় করে দেখায় (`CGWindowListCreateImage` এখনকার macOS-এ বন্ধ)। কার্সার
+  থেকে দূরের কোণায় বসে, নইলে সে নিজেকেই বড় করে দেখাত।
+- **Grant যায় frames-response-এ** (~৬০০ms), command queue-তে নয় — queue serial,
+  লম্বা shell command-এর পেছনে control কয়েক সেকেন্ড দেরিতে চালু হত।
+- **Two-step confirm** owner-toggle, default OFF — AX-snap এমনিতেই সাধারণ
+  টার্গেট নিরাপদ করে; এটা ছোট টার্গেটের ব্রেক।
+
+মাপা ফাঁদ (কোডে মন্তব্য আছে): posted move-এর পরপর system cursor পড়লে পুরনো
+অবস্থান আসে (virtual cursor লাগে); টাইপিং-এর ঠিক পরে ⌘-chord গিলে ফেলে (settle
+gap লাগে); TCC responsible-process ধরে — launchd-র নিচের broadcaster-এর অনুমতি
+আছে, terminal থেকে চালানো একই binary-র নেই।
+
 ## Phase ভাগ (নতুন session-এর roadmap)
 - **RC-1 (core):** **trackpad-mode** cursor+click+drag+scroll → CGEvent; iOS
   gesture layer; control-toggle + token; coordinate mapping; click-feedback

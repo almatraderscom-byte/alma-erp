@@ -472,6 +472,25 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // RC-3 — screens available on the streaming Mac, so the dock can offer a
+  // picker. Absent (or 1) means there is nothing to choose.
+  let macDisplays: { count: number; index: number } | null = null
+  if (videoDeviceId) {
+    const row = await db.agentKvSetting
+      .findUnique({ where: { key: `mac_displays:${videoDeviceId}` }, select: { value: true } })
+      .catch(() => null)
+    if (row?.value) {
+      try {
+        const parsed = JSON.parse(row.value) as { count?: number; index?: number }
+        if (typeof parsed.count === 'number' && parsed.count > 0) {
+          macDisplays = { count: parsed.count, index: parsed.index ?? 0 }
+        }
+      } catch {
+        /* a malformed row is simply no picker */
+      }
+    }
+  }
+
   // Unchanged frame → metadata only; the client keeps the copy it has.
   // (cast: TS narrows screenshotAt to its `null` initializer here because the
   // assignments happen inside the considerShot closure)
@@ -502,6 +521,8 @@ export async function GET(req: NextRequest) {
       /** L9-B — non-null while the Agora VIDEO broadcaster is live for this
        *  device; the dock joins `mac-screen-<id>` via screen-video-token. */
       videoDeviceId,
+      /** RC-3 — { count, index } for the Mac currently streaming. */
+      macDisplays,
     },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )
