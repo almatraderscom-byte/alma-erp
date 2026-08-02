@@ -30,6 +30,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { isKnownModelId } from '@/agent/lib/models/registry'
+import { logToolEvent } from '@/agent/lib/tool-telemetry'
 import type { HeadTier } from '@/agent/lib/models/head-router'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -171,7 +172,7 @@ export async function rememberHeadPin(
   if (!decision.modelId || !isKnownModelId(decision.modelId)) return
   const nowDate = new Date(now)
   try {
-    await db.agentConversation.updateMany({
+    const written = await db.agentConversation.updateMany({
       where: {
         id: conversationId,
         AND: [
@@ -215,8 +216,39 @@ export async function rememberHeadPin(
         pinnedHeadUntil: new Date(now + headPinTtlMs()),
       },
     })
+    // The pin write REPORTS ITSELF (added after it failed silently twice).
+    //
+    // Both earlier failures — the NULL-comparison predicate, and whatever a
+    // future one turns out to be — looked identical from outside: no error, no
+    // log, a feature quietly doing nothing while every test stayed green. A
+    // write that matches zero rows is now a telemetry row anyone can read
+    // straight from the database, which is the only reason the last one was
+    // ever found.
+    if (!written || written.count === 0) {
+      void logToolEvent({
+        surface: 'owner',
+        toolName: '__head_pin__',
+        phase: 'proof',
+        success: false,
+        errorClass: 'pin_write_no_match',
+        errorCode: 'no_row_matched',
+        conversationId,
+        detail: { modelId: decision.modelId, tier: decision.tier, via: decision.via },
+      })
+    }
   } catch (err) {
-    console.warn('[head-pin] remember failed:', err instanceof Error ? err.message : err)
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('[head-pin] remember failed:', message)
+    void logToolEvent({
+      surface: 'owner',
+      toolName: '__head_pin__',
+      phase: 'proof',
+      success: false,
+      errorClass: 'pin_write_threw',
+      errorCode: 'exception',
+      conversationId,
+      detail: { modelId: decision.modelId, tier: decision.tier, error: message.slice(0, 300) },
+    })
   }
 }
 
