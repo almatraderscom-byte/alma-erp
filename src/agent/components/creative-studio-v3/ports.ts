@@ -41,7 +41,7 @@ export const STUDIO_V3_SCOPE_BOUNDARY = {
   projects: 'Server-derived route context is authoritative for collaborator projects',
   recipes: 'Server-enforced brand recipe filter where the endpoint admits the actor',
   gallery: 'Canonical project-asset and version lineage, filtered by server brand/project access',
-  models: 'Server-filtered resource-scope registry; unscoped legacy identities are excluded',
+  models: 'Server-filtered resource-scope registry; collaborators exclude unscoped legacy identities while the system owner can reuse the existing production model library',
   voices: 'Server-filtered resource-scope registry; unscoped legacy voices are excluded',
   ownedMedia: 'Server-filtered resource-scope registry; unscoped legacy media is excluded',
 } as const

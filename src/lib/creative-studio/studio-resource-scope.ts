@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { isSystemOwner } from '@/lib/roles'
 import {
   requireStudioBrandAccess,
   StudioAccessError,
@@ -210,12 +211,51 @@ export function studioResourceScopeMatches(
   )
 }
 
+/**
+ * Legacy Creative Studio models predate brand/project resource scopes. Keep the
+ * compatibility exception deliberately narrow: only the ERP system owner may
+ * reuse an unscoped model inside a brand they own. A model that already has a
+ * different scope never falls through this exception, and collaborators still
+ * fail closed.
+ */
+export function studioModelScopeMatches(
+  scope: StudioResourceScope | null,
+  expected: { ownerId: string; brandProfileId: string; projectId?: string | null },
+  actor: Pick<StudioActor, 'userId' | 'erpRole'>,
+): boolean {
+  if (studioResourceScopeMatches(scope, expected)) return true
+  return Boolean(
+    !scope
+    && actor.userId === expected.ownerId
+    && isSystemOwner(actor.erpRole),
+  )
+}
+
 export async function assertStudioResourceScope(
   kind: StudioScopedResourceKind,
   id: string,
   expected: { ownerId: string; brandProfileId: string; projectId?: string | null },
+  options?: {
+    legacyModelActor?: Pick<StudioActor, 'userId' | 'erpRole'>
+  },
 ): Promise<StudioResourceScope> {
   const scope = await readStudioResourceScope(kind, id)
+  if (
+    kind === 'model'
+    && options?.legacyModelActor
+    && studioModelScopeMatches(scope, expected, options.legacyModelActor)
+  ) {
+    // Callers only need the assertion. Returning a synthetic record keeps the
+    // historical return contract without mutating production data on a GET/run.
+    return scope ?? {
+      version: 1,
+      ownerId: expected.ownerId,
+      brandProfileId: expected.brandProfileId,
+      projectId: expected.projectId ?? '',
+      createdById: options.legacyModelActor.userId,
+      createdAt: new Date(0).toISOString(),
+    }
+  }
   if (!studioResourceScopeMatches(scope, expected)) {
     throw new StudioAccessError(`${kind}_scope_mismatch`, 403)
   }

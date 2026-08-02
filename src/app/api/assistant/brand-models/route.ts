@@ -22,6 +22,7 @@ import {
   assertStudioResourceScope,
   deleteStudioResourceScope,
   readStudioResourceScope,
+  studioModelScopeMatches,
   studioResourceScopeMatches,
   writeStudioResourceScope,
 } from '@/lib/creative-studio/studio-resource-scope'
@@ -46,7 +47,12 @@ async function requireOwner(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim() ?? ''
   const projectId = req.nextUrl.searchParams.get('projectId')?.trim() ?? ''
-  let scopedAccess: { ownerId: string; brandProfileId: string; projectId: string } | null = null
+  let scopedAccess: {
+    ownerId: string
+    brandProfileId: string
+    projectId: string
+    actor: { userId: string; erpRole: string }
+  } | null = null
   if (brandProfileId || projectId) {
     if (!brandProfileId || !projectId) {
       return Response.json({ error: 'brand_and_project_required' }, { status: 422 })
@@ -65,7 +71,12 @@ export async function GET(req: NextRequest) {
         select: { id: true },
       })
       if (!project) throw new StudioAccessError('project_access_forbidden', 403)
-      scopedAccess = { ownerId: access.ownerId, brandProfileId, projectId }
+      scopedAccess = {
+        ownerId: access.ownerId,
+        brandProfileId,
+        projectId,
+        actor: { userId: actor.userId, erpRole: actor.erpRole },
+      }
     } catch (error) {
       const status = error instanceof StudioAccessError ? error.status : 403
       const code = error instanceof StudioAccessError ? error.code : 'forbidden'
@@ -82,7 +93,11 @@ export async function GET(req: NextRequest) {
         model,
         scope: await readStudioResourceScope('model', model.id),
       }))))
-        .filter(({ scope }) => studioResourceScopeMatches(scope, scopedAccess!))
+        .filter(({ scope }) => studioModelScopeMatches(
+          scope,
+          scopedAccess!,
+          scopedAccess!.actor,
+        ))
         .map(({ model }) => model)
     : allModels
   const visibleIds = new Set(models.map((model) => model.id))

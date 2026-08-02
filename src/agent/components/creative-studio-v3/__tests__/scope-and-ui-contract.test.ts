@@ -64,9 +64,10 @@ describe('Creative Studio V3 accessible-brand contract', () => {
     expect(scopeProjectsToBrand(rows, null)).toEqual(rows)
   })
 
-  it('documents server-enforced canonical scope and excludes unscoped legacy rows', () => {
+  it('documents canonical scope and the owner-only production model exception', () => {
     expect(STUDIO_V3_SCOPE_BOUNDARY.gallery).toContain('server brand/project access')
-    expect(STUDIO_V3_SCOPE_BOUNDARY.models).toContain('unscoped legacy identities are excluded')
+    expect(STUDIO_V3_SCOPE_BOUNDARY.models).toContain('collaborators exclude unscoped legacy identities')
+    expect(STUDIO_V3_SCOPE_BOUNDARY.models).toContain('system owner can reuse the existing production model library')
     expect(STUDIO_V3_SCOPE_BOUNDARY.recipes).toContain('Server-enforced brand recipe filter')
   })
 

@@ -1,5 +1,6 @@
 import type { CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
 import { prisma } from '@/lib/prisma'
+import { isSystemOwner } from '@/lib/roles'
 import {
   assertStudioSpendAllowed,
   requireStudioBrandAccess,
@@ -75,6 +76,11 @@ export async function resolveScopedStudioRun(
     throw new StudioAccessError('studio_run_scope_required', 422)
   }
   const access = await requireStudioBrandAccess(actor, brandProfileId)
+  const legacyModelActor = access.role === 'owner'
+    && access.ownerId === actor.userId
+    && isSystemOwner(actor.erpRole)
+    ? { userId: actor.userId, erpRole: actor.erpRole }
+    : undefined
   // A reviewer never gains a paid/draft path merely by knowing a project id.
   assertStudioSpendAllowed(access.role, 0, access.approvalSpendThresholdBdt)
 
@@ -186,7 +192,7 @@ export async function resolveScopedStudioRun(
       ownerId: access.ownerId,
       brandProfileId,
       projectId,
-    })
+    }, { legacyModelActor })
     const model = await db.agentBrandModel.findUnique({
       where: { id: modelId },
       select: { imagePath: true },
@@ -280,7 +286,7 @@ export async function resolveScopedStudioRun(
         ownerId: access.ownerId,
         brandProfileId,
         projectId,
-      })
+      }, { legacyModelActor })
       const personRef = await resolvePersonRef(entry.model)
       familyModelPins.push({
         role: entry.role,

@@ -94,7 +94,8 @@ export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
   getReview: fetchStudioReview,
   transitionReview: studioV3LifecycleClient.transitionReview,
   // V3 reads require both brand and project. Server routes validate the actor's
-  // assignment and exclude every unscoped legacy resource.
+  // assignment; collaborators fail closed, while the owning system account may
+  // reuse its unscoped production model library for legacy parity.
   listModels: async (brandProfileId, projectId) =>
     (await fetchModels(brandProfileId, projectId)).models ?? [],
   listGallery: async (query, brandProfileId, projectId) =>
