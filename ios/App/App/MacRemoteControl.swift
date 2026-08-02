@@ -166,6 +166,20 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         }
     }
 
+    /// Point the remote video at a different canvas without leaving the
+    /// channel — the full-screen view and the sheet share ONE join, so the
+    /// video must simply move between their two canvases.
+    @MainActor
+    func rebindCanvas(_ view: UIView) {
+        canvasView = view
+        guard let engine, let conn = connection else { return }
+        let canvas = AgoraRtcVideoCanvas()
+        canvas.uid = 1
+        canvas.view = view
+        canvas.renderMode = .fit
+        engine.setupRemoteVideoEx(canvas, connection: conn)
+    }
+
     func leave() {
         joinGeneration += 1
         controlArmed = false
@@ -213,6 +227,21 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         if state == .connected { healAttempts = 0 }
     }
 
+    #if DEBUG
+    var onAgoraEvent: ((String) -> Void)?
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
+        DispatchQueue.main.async { self.onAgoraEvent?("err\(errorCode.rawValue)") }
+    }
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChanged oldRole: AgoraClientRole,
+                   newRole: AgoraClientRole, newRoleOptions: AgoraClientRoleOptions?) {
+        DispatchQueue.main.async { self.onAgoraEvent?("role\(newRole.rawValue)") }
+    }
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChangeFailed reason: AgoraClientRoleChangeFailedReason,
+                   currentRole: AgoraClientRole) {
+        DispatchQueue.main.async { self.onAgoraEvent?("roleFail\(reason.rawValue)") }
+    }
+    #endif
+
     func rtcEngine(_ engine: AgoraRtcEngineKit, tokenPrivilegeWillExpire token: String) {
         DispatchQueue.main.async { self.onTokenExpiring?() }
     }
@@ -234,7 +263,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// messages. Publishing audio/video stays impossible: the control token
     /// carries no publish privilege for either.
     @MainActor
-    func armControl(token: String) -> Bool {
+    func armControl(token: String) async -> Bool {
         guard let engine, let conn = connection else { return false }
         let options = AgoraRtcChannelMediaOptions()
         options.token = token
@@ -244,6 +273,11 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
+        // The role change is asynchronous. A data stream created while the
+        // client is still AUDIENCE is accepted locally and then silently goes
+        // nowhere — measured on the first live run: sends returned 0 and the
+        // Mac never saw a packet.
+        try? await Task.sleep(nanoseconds: 400_000_000)
         // Create the streams ONCE per join and keep them across arm/disarm.
         // Agora keeps created streams for the life of the connection and caps
         // how many a client may create, so re-creating a pair on every toggle
@@ -346,6 +380,10 @@ final class MacRemoteControlStore {
     /// Direct taps need magnification; below this they are refused outright.
     static let directTapMinZoom: CGFloat = 2.0
     var zoom: CGFloat = 1.0
+    /// Landscape, edge-to-edge control. The owner asked for it in the first
+    /// live session: a 3440-wide Mac inside a 230pt strip is not something you
+    /// can drive smoothly — full screen makes the target big enough to aim at.
+    var fullScreen = false
     /// RC-2.5: first tap aims (the Mac paints a solid ring), second commits.
     /// Off by default — the snap already makes ordinary targets safe; this is
     /// the brake for the small ones, and the owner decides when he wants it.
@@ -363,6 +401,17 @@ final class MacRemoteControlStore {
     /// before the down or after the up, and part of the drag degrades into
     /// plain cursor motion (Codex P1).
     @ObservationIgnored private var dragging = false
+    @ObservationIgnored private var sendFailures = 0
+    #if DEBUG
+    /// Temporary instrumentation for the first live run: what the touch layer
+    /// saw versus what actually left the phone.
+    var debugCounters = "began=0 moved=0 sent=0 failed=0"
+    var agoraEvents = ""
+    var began = 0
+    var moved = 0
+    var sent = 0
+    var failed = 0
+    #endif
     /// The lease the server hands out is 120s; the phone renews well inside it.
     private let renewEvery: TimeInterval = 45
     /// Cost guard: an armed-but-untouched control session stops renewing, so
@@ -402,6 +451,12 @@ final class MacRemoteControlStore {
             }
         }
         session.onVideoSize = { [weak self] size in self?.videoSize = size }
+        #if DEBUG
+        session.onAgoraEvent = { [weak self] event in
+            guard let self else { return }
+            self.agoraEvents = (self.agoraEvents + " " + event).suffix(60).description
+        }
+        #endif
         session.onTokenExpiring = { [weak self] in
             guard let self else { return }
             Task { await self.armed ? self.renew() : self.renewViewToken() }
@@ -547,7 +602,20 @@ final class MacRemoteControlStore {
     func sendMove(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: dragging)
+        let ok = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: dragging) == true
+        #if DEBUG
+        if ok { sent += 1 } else { failed += 1 }
+        debugCounters = "began=\(began) moved=\(moved) sent=\(sent) failed=\(failed)"
+        #endif
+        // A silent no-op is the worst failure here: the owner drags and the
+        // Mac does nothing, with no way to tell why.
+        if !ok {
+            sendFailures += 1
+            if sendFailures == 3 { statusBn = "কন্ট্রোল বার্তা যাচ্ছে না — বন্ধ করে আবার চালু করুন।" }
+        } else if sendFailures > 0 {
+            sendFailures = 0
+            if statusBn?.hasPrefix("কন্ট্রোল বার্তা") == true { statusBn = nil }
+        }
     }
 
     func sendClick(count: Int, right: Bool) {
@@ -695,10 +763,47 @@ final class TrackpadSurfaceView: UIView {
     private let doubleTapWindow: TimeInterval = 0.32
     private let longPressDelay: TimeInterval = 0.45
 
+    /// Exists only to CLAIM the drag. The stage lives inside the sheet's
+    /// scroll view, whose pan recogniser would otherwise swallow every finger
+    /// movement on the video and scroll the sheet instead of driving the Mac
+    /// (found on the first live run — nothing reached the Mac at all).
+    private lazy var claim: UIPanGestureRecognizer = {
+        let g = UIPanGestureRecognizer(target: self, action: #selector(claimed(_:)))
+        g.minimumNumberOfTouches = 1
+        g.maximumNumberOfTouches = 2
+        g.cancelsTouchesInView = false // our raw touch handling still runs
+        g.delaysTouchesBegan = false
+        g.delegate = self
+        return g
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = true
         backgroundColor = .clear
+        addGestureRecognizer(claim)
+    }
+
+    @objc private func claimed(_ g: UIPanGestureRecognizer) { /* claiming is the point */ }
+
+    /// Enabled only while control is armed — an unarmed stage must still let
+    /// the owner scroll the sheet with a finger on the video.
+    var claimsDrag: Bool {
+        get { claim.isEnabled }
+        set { claim.isEnabled = newValue }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // Make the enclosing scroll view yield to us rather than the reverse.
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView {
+                scroll.panGestureRecognizer.require(toFail: claim)
+                break
+            }
+            view = current.superview
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
@@ -720,6 +825,10 @@ final class TrackpadSurfaceView: UIView {
     // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        store?.began += 1
+        store?.debugCounters = "began=\(store?.began ?? 0) moved=\(store?.moved ?? 0) sent=\(store?.sent ?? 0) failed=\(store?.failed ?? 0)"
+        #endif
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if all.count >= 2 {
@@ -744,6 +853,9 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        store?.moved += 1
+        #endif
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if phase == .twoFinger || all.count >= 2 {
@@ -930,6 +1042,9 @@ struct MacScreenStage: UIViewRepresentable {
     let deviceId: String
     let session: MacScreenSession
     var store: MacRemoteControlStore
+    /// True for the landscape presentation. Only the stage that matches the
+    /// current mode owns the canvas, so the two never fight over it.
+    var isFullScreen = false
 
     func makeUIView(context: Context) -> UIView {
         let container = UIView()
@@ -984,13 +1099,21 @@ struct MacScreenStage: UIViewRepresentable {
         container.addGestureRecognizer(pan)
 
         context.coordinator.surface = surface
+        context.coordinator.canvas = canvas
         context.coordinator.zoomLayer = zoomLayer
         context.coordinator.pinch = pinch
         context.coordinator.pan = pan
         context.coordinator.store = store
-        session.canvasView = canvas
         store.attach(session: session, deviceId: deviceId)
-        session.join(deviceId: deviceId, into: canvas)
+        if session.joined {
+            // Already in the channel (the sheet joined): this new stage simply
+            // takes the video. Without this the full-screen view came up black,
+            // because join() short-circuits and nothing rebound the canvas.
+            session.rebindCanvas(canvas)
+        } else {
+            session.canvasView = canvas
+            session.join(deviceId: deviceId, into: canvas)
+        }
         return container
     }
 
@@ -1000,10 +1123,23 @@ struct MacScreenStage: UIViewRepresentable {
             store.attach(session: session, deviceId: deviceId)
             session.join(deviceId: deviceId, into: canvas)
         }
+        // Whichever stage matches the current mode takes the video — and it
+        // must be re-bound once the canvas actually HAS a size. Binding a
+        // zero-sized view renders nothing and never recovers, which is what
+        // made the landscape view come up black.
+        if store.fullScreen == isFullScreen, let canvas = context.coordinator.canvas {
+            let size = canvas.bounds.size
+            if size.width > 1, size.height > 1,
+               session.canvasView !== canvas || context.coordinator.boundSize != size {
+                context.coordinator.boundSize = size
+                session.rebindCanvas(canvas)
+            }
+        }
         let direct = store.mode == .direct
         context.coordinator.pinch?.isEnabled = direct
         context.coordinator.pan?.isEnabled = direct
         if let surface = context.coordinator.surface {
+            surface.claimsDrag = store.armed
             surface.directMode = direct
             if store.videoSize.width > 0, store.videoSize.height > 0 {
                 surface.videoAspect = store.videoSize.width / store.videoSize.height
@@ -1026,6 +1162,9 @@ struct MacScreenStage: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         weak var surface: TrackpadSurfaceView?
+        weak var canvas: UIView?
+        /// Size the video was last bound at; a change means re-bind.
+        var boundSize: CGSize = .zero
         weak var zoomLayer: UIView?
         weak var pinch: UIPinchGestureRecognizer?
         weak var pan: UIPanGestureRecognizer?
@@ -1127,6 +1266,20 @@ struct MacControlBar: View {
                 .disabled(control.busy)
                 .accessibilityLabel("Mac রিমোট কন্ট্রোল")
 
+                Button {
+                    AlmaAgentHaptics.commit()
+                    control.fullScreen = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 50, height: 44)
+                        .foregroundStyle(pal.mutedHi)
+                        .background(pal.ink.opacity(0.04), in: RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11)
+                            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .accessibilityLabel("ফুল স্ক্রিন")
+
                 if control.armed {
                     Picker("", selection: Binding(
                         get: { control.mode },
@@ -1169,6 +1322,14 @@ struct MacControlBar: View {
                     .foregroundStyle(pal.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            #if DEBUG
+            if !control.debugCounters.isEmpty {
+                Text(control.debugCounters + " | " + control.agoraEvents)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(pal.mutedHi)
+            }
+            #endif
 
             if let status = control.statusBn {
                 Text(status)
@@ -1279,6 +1440,205 @@ struct MacKeyboardBar: View {
             } else {
                 AlmaAgentHaptics.light()
             }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+extension TrackpadSurfaceView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        // Direct mode's pinch/pan live on the container and must still work.
+        true
+    }
+}
+
+// MARK: - Landscape full-screen control
+
+/// The owner's ask, live on the first session: "let me see it like a full
+/// video, landscape, so I can drive the big screen smoothly." A 3440-wide Mac
+/// rendered into a 230pt strip is not a surface you can aim at — here the same
+/// stage fills the phone, the chrome shrinks to one translucent bar, and the
+/// bar sits along the bottom edge so it never competes with the video.
+@available(iOS 17.0, *)
+struct MacScreenFullScreen: View {
+    let deviceId: String
+    let session: MacScreenSession
+    @Bindable var control: MacRemoteControlStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var showKeys = false
+    @State private var typed = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            // Trust the BOX, not the system. If iOS rotated the window we are
+            // already landscape and rotate nothing; if it refused (a presented
+            // SwiftUI controller can keep its cached orientations, and the
+            // simulator reports landscape while still drawing portrait), we
+            // turn the content ourselves. Either way the owner gets the wide
+            // view he asked for.
+            let rotate = geo.size.width < geo.size.height
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                stack(size: rotate ? CGSize(width: geo.size.height, height: geo.size.width) : geo.size)
+                    .frame(width: rotate ? geo.size.height : geo.size.width,
+                           height: rotate ? geo.size.width : geo.size.height)
+                    .rotationEffect(rotate ? .degrees(90) : .zero)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
+            }
+            .ignoresSafeArea()
+        }
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear {
+            control.fullScreen = true
+            // Lock first, then ask: the request is refused unless the
+            // delegate already allows the orientation being requested.
+            AppDelegate.orientationLock = .landscape
+            Self.requestOrientation(.landscapeRight)
+        }
+        .onDisappear {
+            control.fullScreen = false
+            AppDelegate.orientationLock = .allButUpsideDown
+            Self.requestOrientation(.portrait)
+        }
+    }
+
+    /// The rotatable content: video plus its chrome, laid out for a landscape
+    /// box whatever the system decided to do with the window.
+    private func stack(size: CGSize) -> some View {
+        ZStack {
+            MacScreenStage(deviceId: deviceId, session: session, store: control, isFullScreen: true)
+            VStack {
+                Spacer()
+                if showKeys { keyboardStrip }
+                controlStrip
+            }
+            .padding(.bottom, 14)
+        }
+    }
+
+    private static var isLandscape: Bool {
+        (UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?
+            .interfaceOrientation.isLandscape) ?? false
+    }
+
+    private var controlStrip: some View {
+        HStack(spacing: 10) {
+            barButton(systemName: "xmark", label: "বন্ধ") {
+                dismiss()
+            }
+            barButton(systemName: control.armed ? "hand.raised.slash.fill" : "hand.point.up.left.fill",
+                      label: control.armed ? "কন্ট্রোল বন্ধ" : "কন্ট্রোল চালু",
+                      tint: control.armed ? .red : nil) {
+                Task { await control.toggle() }
+            }
+            if control.armed {
+                barButton(systemName: "keyboard", label: "কীবোর্ড", tint: showKeys ? .orange : nil) {
+                    showKeys.toggle()
+                    typing = showKeys
+                }
+                barButton(systemName: control.mode == .trackpad ? "rectangle.and.hand.point.up.left" : "hand.tap",
+                          label: control.mode == .trackpad ? "ট্র্যাকপ্যাড" : "সরাসরি") {
+                    control.mode = control.mode == .trackpad ? .direct : .trackpad
+                }
+            }
+            if let status = control.statusBn {
+                Text(status)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .frame(maxWidth: 220)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private var keyboardStrip: some View {
+        HStack(spacing: 8) {
+            TextField("Mac-এ লিখুন…", text: $typed)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($typing)
+                .font(.system(size: 14))
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .frame(maxWidth: 420)
+                .onSubmit(sendTyped)
+            Button(action: sendTyped) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(typed.isEmpty)
+            ForEach(["enter", "esc"], id: \.self) { key in
+                Button {
+                    control.sendKey(key)
+                } label: {
+                    Text(key == "enter" ? "⏎" : "esc")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 50, height: 44)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func sendTyped() {
+        let payload = typed
+        guard !payload.isEmpty else { return }
+        typed = ""
+        Task {
+            if await !control.sendText(payload) { typed = payload }
+        }
+    }
+
+    private func barButton(systemName: String, label: String, tint: Color? = nil,
+                           action: @escaping () -> Void) -> some View {
+        Button {
+            AlmaAgentHaptics.light()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemName).font(.system(size: 14, weight: .semibold))
+                Text(label).font(.system(size: 12.5, weight: .semibold))
+            }
+            .frame(minHeight: 44)
+            .padding(.horizontal, 10)
+            .foregroundStyle(tint ?? .primary)
+        }
+        .accessibilityLabel(label)
+    }
+
+    /// Ask the system to rotate. The app already allows landscape, so this is
+    /// a nudge, not a lock — the owner can still turn the phone himself.
+    private static func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        // The FOREGROUND scene, not merely the first one — `connectedScenes` is
+        // an unordered set and the first entry can be a background scene, in
+        // which case the rotation request is silently ignored.
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        guard let scene else { return }
+        // The system asks the TOP-most presented controller, not the root, so
+        // the invalidation has to reach it or the request is ignored.
+        var top = scene.keyWindow?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        top?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+            // Nothing to do — the owner can always rotate the phone himself.
+            _ = error
         }
     }
 }

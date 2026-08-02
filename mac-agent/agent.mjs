@@ -475,7 +475,8 @@ async function startScreenVideo(token) {
             drops: controlCountsBase.drops + controlCountsRaw.drops,
           }
         }
-        if (line.startsWith('ctl error') || line.startsWith('ctl idle')) log('screen control:', line)
+        if (line.startsWith('ctl ') && !line.startsWith('ctl events')) log('screen control:', line)
+        if (line.startsWith('peer joined')) log('screen video:', line)
       }
     })
     child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
