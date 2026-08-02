@@ -235,10 +235,13 @@ describe('head-pin storage rules', () => {
   // Review bot #690 P2: never-downgrade was enforced only while routing ONE
   // turn, so two overlapping turns could land their writes out of order and let
   // a light decision replace a heavy pin. The rule lives in the WHERE clause now.
+  /** The two AND-branches of the write predicate: may-write, and would-change. */
+  const branches = () => (wheres[0].AND as Array<{ OR: Record<string, unknown>[] }>)
+
   it('refuses to overwrite a live HIGHER-ranked pin (atomic, in the where clause)', async () => {
     await rememberHeadPin(CONV, { modelId: 'or-deepseek-v4-flash', tier: 'light', via: 'routine_kw' })
     expect(wheres).toHaveLength(1)
-    const allowedTiers = (wheres[0].OR as Record<string, unknown>[])
+    const allowedTiers = branches()[0].OR
       .map((c) => (c.pinnedHeadTier as { in?: string[] } | undefined)?.in)
       .find(Boolean)
     expect(allowedTiers).toEqual(['light'])
@@ -247,7 +250,7 @@ describe('head-pin storage rules', () => {
 
   it('a heavy write may replace any live pin', async () => {
     await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'deny_kw' })
-    const allowedTiers = (wheres[0].OR as Record<string, unknown>[])
+    const allowedTiers = branches()[0].OR
       .map((c) => (c.pinnedHeadTier as { in?: string[] } | undefined)?.in)
       .find(Boolean) as string[]
     expect(allowedTiers).toEqual(expect.arrayContaining(['light', 'marketing', 'heavy', 'explicit']))
@@ -258,10 +261,24 @@ describe('head-pin storage rules', () => {
   // of everything after it. Re-stamping an identical live pin must match no row.
   it('does not slide the window by re-stamping an identical live pin', async () => {
     await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'task_pin' })
-    const not = wheres[0].NOT as Record<string, unknown>
-    expect(not.pinnedHeadModel).toBe('gpt-5.6-luna')
-    expect(not.pinnedHeadTier).toBe('heavy')
-    expect(not.pinnedHeadUntil).toHaveProperty('gt')
+    const changed = branches()[1].OR
+    expect(changed).toEqual(expect.arrayContaining([
+      { pinnedHeadModel: { not: 'gpt-5.6-luna' } },
+      { pinnedHeadTier: { not: 'heavy' } },
+    ]))
+  })
+
+  // Found by reading a LIVE production conversation whose pin row was still
+  // null after a heavy turn: SQL is three-valued, so `NOT (col = 'x' AND …)`
+  // over NULL columns is UNKNOWN, and WHERE treats UNKNOWN as no match. The
+  // predicate must therefore name the null case explicitly, in BOTH branches,
+  // or a fresh conversation can never take its first pin.
+  it('every branch names the NULL case, so a fresh conversation can be pinned', async () => {
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'triage' })
+    expect(wheres[0].NOT).toBeUndefined()
+    for (const branch of branches()) {
+      expect(branch.OR).toEqual(expect.arrayContaining([{ pinnedHeadModel: null }]))
+    }
   })
 
   it('exposes the clear patch the model picker applies in its own write', () => {

@@ -133,6 +133,21 @@ const run_mac_command: AgentTool = {
           success: true,
           data: {
             redirected: 'screenshot',
+            // P1-10 (audit §C.6) — the false-success path, closed.
+            //
+            // This is the exact shape of the audit's test 9: the command was
+            // ABSORBED into a screenshot, the result said success:true, and
+            // nothing said what had NOT happened — so the head told Boss the
+            // file was "saved to Desktop" when no file was ever written. A
+            // result that only reports what went right is an invitation to
+            // narrate the rest, so it now states the negative first, in the
+            // words the head will be quoting.
+            commandRan: false,
+            fileSaved: false,
+            whatHappenedBn:
+              'যে shell কমান্ডটা চাওয়া হয়েছিল সেটা চালানো হয়নি এবং কোনো ফাইল সেভ হয়নি — '
+              + 'তার বদলে স্ক্রিনের ছবি তুলে Boss-কে চ্যাটেই দেখানো হয়েছে। '
+              + '"সেভ হয়েছে" বা "Desktop-এ আছে" বোলো না; ছবিটা এখানেই আছে।',
             imageUrl: shared.imageUrl,
             device: gateShot.deviceName,
             instruction: shared.instruction,

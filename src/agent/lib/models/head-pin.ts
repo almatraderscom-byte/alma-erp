@@ -174,22 +174,39 @@ export async function rememberHeadPin(
     await db.agentConversation.updateMany({
       where: {
         id: conversationId,
-        // May write when there is no live pin at all, or when the live pin ranks
-        // at or below this decision (equal rank = the same job continuing, a
-        // higher rank = an escalation). A live HIGHER pin matches nothing here.
-        OR: [
-          { pinnedHeadModel: null },
-          { pinnedHeadUntil: null },
-          { pinnedHeadUntil: { lte: nowDate } },
-          { pinnedHeadTier: { in: tiersAtOrBelow(decision.tier) } },
+        AND: [
+          // 1. MAY this decision write? Yes when there is no live pin at all,
+          //    or when the live pin ranks at or below it (equal rank = the same
+          //    job continuing; higher = an escalation). A live HIGHER pin
+          //    matches nothing here, which is the never-downgrade rule.
+          {
+            OR: [
+              { pinnedHeadModel: null },
+              { pinnedHeadUntil: null },
+              { pinnedHeadUntil: { lte: nowDate } },
+              { pinnedHeadTier: { in: tiersAtOrBelow(decision.tier) } },
+            ],
+          },
+          // 2. WOULD it change anything? Re-stamping an identical live pin is
+          //    the window-sliding bug.
+          //
+          //    Expressed as positive OR branches, NOT as `NOT: {...}`. SQL is
+          //    three-valued: on a fresh conversation every pin column is NULL,
+          //    so `pinned_head_model = 'x'` is UNKNOWN, the AND inside NOT is
+          //    UNKNOWN, and NOT UNKNOWN is UNKNOWN — which WHERE treats as no
+          //    match. The pin therefore stopped being written at all the moment
+          //    that clause shipped; caught by reading a live production
+          //    conversation whose pin row was still null after a heavy turn.
+          {
+            OR: [
+              { pinnedHeadModel: null },
+              { pinnedHeadUntil: null },
+              { pinnedHeadUntil: { lte: nowDate } },
+              { pinnedHeadModel: { not: decision.modelId } },
+              { pinnedHeadTier: { not: decision.tier } },
+            ],
+          },
         ],
-        // …but not when it would only re-stamp the pin that is already live:
-        // that is the window-sliding bug.
-        NOT: {
-          pinnedHeadModel: decision.modelId,
-          pinnedHeadTier: decision.tier,
-          pinnedHeadUntil: { gt: nowDate },
-        },
       },
       data: {
         pinnedHeadModel: decision.modelId,
