@@ -101,6 +101,8 @@ describe('wrong-tool interceptor pattern', () => {
       'ls ~/Desktop',
       'cat notes/screencapture.md',
       'echo screencapture-is-a-word-in-this-string.txt',
+      'command -v screencapture', // lookup, not execution (Codex round 4)
+      'command -V screencapture',
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('run')
     }

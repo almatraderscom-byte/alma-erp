@@ -49,6 +49,9 @@ export function classifyScreencaptureIntent(command: string): 'intercept' | 'ref
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) {
         i += 1
       } else if (['sudo', 'nohup', 'env', 'command', 'exec'].includes(words[i])) {
+        // `command -v/-V x` LOOKS UP x, it never executes it — that is a
+        // read-only probe and must run normally (Codex P1 round 4).
+        if (words[i] === 'command' && /^-[vV]/.test(words[i + 1] ?? '')) return 'run'
         sawWrapper = true
         i += 1
       } else if (sawWrapper && words[i].startsWith('-')) {
