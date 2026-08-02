@@ -1350,6 +1350,14 @@ function LiveWorkTimer({ startedAt }: { startedAt: string }) {
 }
 
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen, onRetryDelivery }: AgentThreadProps) {
+
+  /**
+   * The message whose indicator should animate. It used to be "the last message
+   * in the thread", which quietly meant the animation vanished the instant Boss
+   * typed something mid-turn — his own bubble became the last one and the agent
+   * looked stopped while it was still working.
+   */
+  const lastStreamingMessageId = [...messages].reverse().find((m) => m.streaming)?.id ?? null
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -1735,7 +1743,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       vanishes mid-turn (like Claude's). Gated only on `streaming`
                       (NOT on streamStatus) so a momentary empty label can't make
                       it flicker out; it disappears only when the turn is `done`. */}
-                  {msg.streaming && msg.id === messages[messages.length - 1]?.id && (
+                  {msg.streaming && msg.id === lastStreamingMessageId && (
                     <div className="mt-3 flex items-center">
                       <AgentThinkingIndicator
                         mode={streamMode ?? 'thinking'}
@@ -1901,6 +1909,28 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
             </motion.div>
           ))}
         </AnimatePresence>
+
+        {/*
+          The turn is still running, but the newest bubble is one of HIS — he
+          typed while the agent was working. The per-message indicator hangs off
+          the streaming ASSISTANT message, so the moment a mid-turn message is
+          appended below it the animation left the bottom of the thread and, as
+          far as he could see, the agent had stopped (owner report 2026-08-03:
+          "loading animation to show kore na kokhono"). This is the same
+          indicator, anchored to the end of the list instead.
+        */}
+        {messages.length > 0
+          && messages[messages.length - 1]?.role === 'user'
+          && messages.some((m) => m.streaming) && (
+          <div className="mb-8 mt-3 flex items-center">
+            <AgentThinkingIndicator
+              mode={streamMode ?? 'thinking'}
+              variant={streamVariant ?? 'claude'}
+              modelName={streamModelName}
+              modelVia={streamModelVia}
+            />
+          </div>
+        )}
 
         {compacting && (
           <motion.div
