@@ -739,6 +739,9 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
 
     final class Coordinator: NSObject, AgoraRtcEngineDelegate {
         var engine: AgoraRtcEngineKit?
+        /// Which device this join belongs to — updateUIView compares to rejoin
+        /// when the feed switches Macs mid-sheet (Codex P2).
+        var joinedDeviceId: String?
         /// Our OWN Agora connection (joinChannelEx) — never the app's main
         /// channel, so watching the screen during an intercom call neither
         /// collides with it nor tears it down on dismantle (Codex P1).
@@ -752,6 +755,8 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         func join(deviceId: String, into view: UIView) {
             guard !joined else { return }
             joined = true
+            joinedDeviceId = deviceId
+            cancelled = false
             Task { @MainActor in
                 struct TokenResp: Decodable {
                     let appId: String; let channel: String; let uid: Int; let token: String
@@ -819,7 +824,14 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {}
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // Feed switched to another Mac while the sheet stayed open: leave the
+        // old channel and join the new one (Codex P2).
+        if context.coordinator.joinedDeviceId != deviceId {
+            context.coordinator.leave()
+            context.coordinator.join(deviceId: deviceId, into: uiView)
+        }
+    }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
         coordinator.leave()

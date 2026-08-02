@@ -364,10 +364,11 @@ async function startScreenVideo(token) {
       return
     }
     const { appId, channel, uid, token: rtc } = res.json
-    videoChild = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
+    const child = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    videoChild.stdout.on('data', (d) => {
+    videoChild = child
+    child.stdout.on('data', (d) => {
       const line = String(d).trim()
       if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
       // Only REAL delivered frames advertise video — an alive child whose
@@ -375,11 +376,15 @@ async function startScreenVideo(token) {
       const m = /^beat frames=(\d+)/.exec(line)
       if (m) videoActive = Number(m[1]) > 0
     })
-    videoChild.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
-    videoChild.on('exit', (code) => {
+    child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
+    child.on('exit', (code) => {
       log('screen video exited', String(code))
-      videoChild = null
-      videoActive = false
+      // A stale exit (stop → fast restart) must not orphan the REPLACEMENT
+      // by clearing its reference (Codex P1).
+      if (videoChild === child) {
+        videoChild = null
+        videoActive = false
+      }
     })
     log('screen video: broadcaster spawned →', channel)
   } catch (err) {

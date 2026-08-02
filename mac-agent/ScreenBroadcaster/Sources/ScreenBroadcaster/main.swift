@@ -79,8 +79,9 @@ final class Output: NSObject, SCStreamOutput {
         frame.format = 12 // CVPixelBuffer passthrough
         frame.textureBuf = pixelBuffer
         frame.time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        engine.pushExternalVideoFrame(frame)
-        pushed += 1
+        // Count only frames Agora ACCEPTED — rejected pushes (failed join,
+        // wrong state) must not produce a live-looking heartbeat (Codex P2).
+        if engine.pushExternalVideoFrame(frame) { pushed += 1 }
     }
 }
 
