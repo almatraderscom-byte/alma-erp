@@ -53,6 +53,9 @@ export const UI_ACTIONS = [
   'ui_tree',
   'ui_screenshot',
   'ui_scroll',
+  // P1-10: watch an app's chat as live text. A read — the daemon judges it with
+  // the tree rules and refuses any app the allowlist does not carry.
+  'app_mirror',
   // P0-3: reads WHICH conversation a window is showing (title, first message,
   // how much is written, composer empty). Read-only — it is the input to the
   // session guard, so it must never itself need a card.
@@ -69,7 +72,7 @@ export const UI_ACTIONS = [
 export type UiAction = (typeof UI_ACTIONS)[number]
 
 /** Purely observational verbs — they change nothing, so they run by themselves. */
-const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session'])
+const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session', 'app_mirror'])
 
 /**
  * Actions that SYNTHESISE input into whatever the owner is doing. Wider than

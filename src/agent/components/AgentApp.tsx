@@ -312,6 +312,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // The answering model's readable name — every model, not the three families
   // `variant` knew (owner, 2026-07-28: "shob model er name nai").
   const [streamModelName, setStreamModelName] = useState<string>('')
+  /** P1-9: WHY this head was picked ("routine_kw", "task_pin", "deny_kw") —
+   *  shown on hover over the model badge, so the answer exists without adding
+   *  another thing to read (owner rule: keep it lean). */
+  const [streamModelVia, setStreamModelVia] = useState<string>('')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   // File-card focus: which artifact the panel should show (set when a tool files
   // a document mid-turn, or when the owner taps a file card in the thread).
@@ -1168,6 +1172,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)
           setStreamModelName(typeof evt.displayName === 'string' ? evt.displayName : '')
+          setStreamModelVia(typeof evt.via === 'string' ? evt.via : '')
           const label = typeof evt.label === 'string' ? evt.label : ''
           // Every head now streams a live thinking trace (Gemini thoughts /
           // OpenRouter reasoning) — seed the same "ভাবছে…" state for all of them;
@@ -2107,6 +2112,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             streamMode={streamMode}
             streamVariant={streamVariant}
             streamModelName={streamModelName}
+            streamModelVia={streamModelVia}
             compacting={compacting}
             planDrive={planDrive}
             onPlanDriveAction={handlePlanDriveAction}

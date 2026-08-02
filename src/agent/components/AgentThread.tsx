@@ -211,6 +211,8 @@ interface AgentThreadProps {
   streamVariant?: ModelVariant
   /** The answering model's own name, from `model_info` (owner, 2026-07-28). */
   streamModelName?: string
+  /** P1-9 — the routing reason, shown on hover over the model badge. */
+  streamModelVia?: string
   compacting?: boolean
   /** Plan-Drive "Live Desk" panel — shown on the home/empty screen above the greeting. */
   homePanel?: ReactNode
@@ -1330,7 +1332,7 @@ function LiveWorkTimer({ startedAt }: { startedAt: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -1700,6 +1702,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         mode={streamMode ?? 'thinking'}
                         variant={streamVariant ?? 'claude'}
                         modelName={streamModelName}
+                        modelVia={streamModelVia}
                       />
                       {/* The clock starts when the work starts (owner ask
                           2026-07-26) — not only after it finishes. */}

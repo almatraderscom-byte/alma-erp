@@ -55,6 +55,10 @@ export const MAC_AGENT_ACTIONS = [
   // "open a new chat" as one act with a verified postcondition.
   'ui_session',
   'ui_new_chat',
+  // P1-10: the daemon has mirrored an app's live chat into the dock since W3,
+  // but no server verb ever reached it — the audit's "tool exists and is
+  // invisible" class, hit for the third time in this repo.
+  'app_mirror',
 ] as const
 export type MacAgentAction = (typeof MAC_AGENT_ACTIONS)[number]
 
