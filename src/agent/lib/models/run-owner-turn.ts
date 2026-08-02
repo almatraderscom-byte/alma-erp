@@ -1190,6 +1190,20 @@ async function* runAlternateProviderTurn(
   // The canonical job state leads; memory/context blocks follow; the listen
   // note, when present, overrides everything at the very top.
   const volatileSections: string[] = []
+  // P0-4 — a correction outranks everything. Boss's corrections used to live
+  // only in the transcript, where they competed for attention with every other
+  // line; here the newest one LEADS the turn context (only the listen-mode
+  // override, pushed next, sits above it — a turn where he is venting is not a
+  // turn where the agent should be acting on a work correction).
+  if (!listenMode) {
+    try {
+      const { loadCorrections, buildCorrectionNote } = await import('@/agent/lib/owner-corrections')
+      const correctionNote = buildCorrectionNote(await loadCorrections(conversationId))
+      if (correctionNote) volatileSections.push(correctionNote)
+    } catch (err) {
+      console.warn('[run-owner-turn] correction note failed open:', err instanceof Error ? err.message : err)
+    }
+  }
   // LISTEN MODE override — the empathy instruction leads and CANCELs the system
   // prompt's action-pressure for this one turn. There are no business tools on
   // a listen turn (assembled empty below), so the head physically cannot pivot
@@ -3945,6 +3959,17 @@ export async function* runOwnerTurn(
   // a long chat ages back into per-message routing instead of holding the heavy
   // head forever.
   void rememberHeadPin(conversationId, decision).catch(() => {})
+
+  // P0-4: capture a correction the moment it arrives, so it governs THIS turn
+  // and every later one — not just the transcript. Narrow detection by design
+  // (see owner-corrections.ts); awaited because this turn's own context block
+  // is built from it.
+  if (!options.continuation) {
+    try {
+      const { recordCorrectionIfAny } = await import('@/agent/lib/owner-corrections')
+      await recordCorrectionIfAny(conversationId, lastUserText)
+    } catch { /* fail-open: a lost correction costs the old behaviour, not the turn */ }
+  }
 
   // P0-2: routing is done; everything after this stamp is prompt build +
   // inference + tools. The audit's suspicion is that this is the bulk of the

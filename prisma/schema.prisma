@@ -2071,6 +2071,11 @@ model AgentConversation {
   /// WHY the pin exists — the HeadDecision.via that created it (decision log).
   pinnedHeadVia      String?         @map("pinned_head_via")
   pinnedHeadUntil    DateTime?       @map("pinned_head_until")
+  /// P0-4 (foundation audit): Boss's own corrections in this chat, newest first
+  /// — [{ text, at }]. They used to live only in the transcript, so a later turn
+  /// (or a different model) had to notice them among fifty other lines. Stored
+  /// so the newest can ride at the TOP of every following turn's context.
+  corrections        Json?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]
