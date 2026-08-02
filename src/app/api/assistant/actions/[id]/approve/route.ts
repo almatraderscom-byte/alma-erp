@@ -1106,6 +1106,8 @@ async function runApprove(
       replace?: boolean | null
       scrollAmount?: number | null
       deviceId?: string
+      /** P0-3 Session Guard: which chat this act belongs to (see mac-ui-tools). */
+      expect?: Record<string, unknown> | null
     }
     const uiAction = String(p.uiAction ?? '')
     const verdict = classifyUiAction({
@@ -1182,6 +1184,10 @@ async function runApprove(
           // (Codex P2).
           replace: p.replace === true ? true : null,
           scrollAmount: p.scrollAmount ?? null,
+          // P0-3: WITHOUT this the guard was dead on the path that matters —
+          // every act Boss actually approves comes through here, and a card
+          // approved minutes later is exactly when he has switched chats.
+          expect: p.expect ?? null,
           approved: true,
         },
         policyLevel: 'amber',
@@ -1206,19 +1212,50 @@ async function runApprove(
     // The daemon may defer on owner_active and retry, so give it headroom.
     const outcome = await awaitMacResult(commandId, 100_000)
     const uiTail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+
+    // P0-5 — "done" has to be SHOWN. The daemon returns the field's real
+    // contents, the press the app acknowledged, the session after a new chat;
+    // until now nothing read any of it, so the exit status was the whole story
+    // and the head narrated success from there (audit C.6). The verdict below
+    // separates "I did it and checked" from "I tried and could not confirm" —
+    // Boss can act on either, but never on the second dressed as the first.
+    const { verifyUiOutcome, isVerifiableUiAction } = await import('@/agent/lib/mac-agent/ui-postcondition')
+    const check = isVerifiableUiAction(uiAction) && !outcome.timedOut
+      ? verifyUiOutcome({ uiAction, text: p.text, elementLabel: p.elementLabel, stdout: outcome.stdout, status: outcome.status })
+      : null
+    if (check) {
+      const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
+      void logToolEvent({
+        surface: 'owner',
+        toolName: 'drive_mac_app',
+        phase: 'proof',
+        success: check.verdict !== 'failed',
+        verified: check.verdict === 'verified',
+        conversationId: resolveConversationId(action),
+        errorCode: check.verdict === 'verified' ? null : check.verdict,
+        detail: { uiAction, verdict: check.verdict, evidence: check.evidence, commandId },
+      })
+    }
+
     await appendConversationNote(
       db,
       action,
       outcome.timedOut
         ? `✅ অনুমোদিত — কাজটা এখনো চলছে (id: ${commandId})। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
         : outcome.status === 'done'
-          ? `✅ অনুমোদিত ও করা হয়েছে।\n\n\`\`\`\n${uiTail}\n\`\`\``
+          ? check && check.verdict !== 'verified'
+            ? `⚠️ কাজটা পাঠানো হয়েছে, কিন্তু ${check.reasonBn}\n\n\`\`\`\n${uiTail}\n\`\`\``
+            : `✅ অনুমোদিত ও করা হয়েছে${check?.reasonBn ? ` — ${check.reasonBn}` : ''}\n\n\`\`\`\n${uiTail}\n\`\`\``
           : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``,
     )
 
     return Response.json({
-      success: outcome.status === 'done',
+      // A postcondition that FAILED is not a success, whatever the exit status
+      // said — otherwise the card reports ✅ for a click that changed nothing.
+      success: outcome.status === 'done' && check?.verdict !== 'failed',
       commandId,
+      verified: check?.verdict ?? null,
+      verificationNote: check?.reasonBn ?? null,
       stdout: outcome.stdout,
       stderr: outcome.stderr,
       stillRunning: outcome.timedOut,
@@ -3169,6 +3206,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: { id: string } },
 ) {
+  // P0-2: the clock Boss experiences starts at his TAP, not after the workflow
+  // guard and the note. Captured first thing, carried into the trace.
+  const approveReceivedAt = new Date()
   // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
@@ -3184,7 +3224,7 @@ export async function POST(
     }
   } catch { /* fail-open */ }
 
-  const progress = await beginApprovalProgress(ctx.params.id)
+  const progress = await beginApprovalProgress(ctx.params.id, approveReceivedAt)
   const res = await runApprove(req, ctx)
   // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
   // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
@@ -3222,7 +3262,11 @@ export async function POST(
  * turn-status.ts is the crash backstop. Best-effort: an approval must never fail
  * because the progress note couldn't be written.
  */
-async function beginApprovalProgress(actionId: string): Promise<{ turnId: string } | null> {
+async function beginApprovalProgress(
+  actionId: string,
+  /** When Boss's tap actually reached this route — see traceTurnStage. */
+  receivedAt: Date = new Date(),
+): Promise<{ turnId: string } | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
@@ -3249,9 +3293,21 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
           ? `কলের অনুমোদন পেলাম Boss${summaryLine ? ` — "${summaryLine}"` : ''}। এখন ডায়াল করছি; রিং, উত্তর এবং terminal report আলাদা করে track করব।`
           : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
     )
+    const ackAt = new Date()
     const { createTurn } = await import('@/agent/lib/turn-status')
     const turnId = await createTurn(conversationId)
     if (!turnId) return null
+
+    // P0-2: the clock Boss experiences starts at his tap. Both stamps land here
+    // because the ack note is written just above — the gap between them is the
+    // only part of the wait he currently sees working.
+    // The stamps are written here (the turn row exists only now) but they
+    // describe EARLIER moments: the tap, and the note written just above. Using
+    // the write time would hide the lookup + insert — the first slice of the
+    // very wait this trace measures (review bot, #690).
+    const { traceTurnStage } = await import('@/agent/lib/turn-stage-trace')
+    await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined, receivedAt)
+    await traceTurnStage(turnId, 'ack_posted', undefined, ackAt)
 
     if (isAsync) {
       // The async completion callback owns this visible turn.

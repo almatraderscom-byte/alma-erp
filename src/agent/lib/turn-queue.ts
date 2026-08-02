@@ -173,7 +173,13 @@ export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> 
     // whole research restart inside the same thread right after (or while) the
     // first run's work lands (owner bug 2026-07-12). If a turn dies, the durable
     // turn row goes 'error' and the owner re-asks — never a silent double-run.
-    const job = await queue.add('turn', data, { jobId: `turn-${data.turnId}`, attempts: 1 })
+    // P0-2: a turn is the only job kind Boss is SITTING IN FRONT OF. It shares
+    // the `long-agent-task` queue with image/video renders and CS batches, so a
+    // continuation could queue behind minutes of background work while he stared
+    // at silence. BullMQ priority 1 is the highest — renders keep the default (0
+    // = unprioritised, drained after prioritised jobs), which is exactly right:
+    // nobody is watching a render land.
+    const job = await queue.add('turn', data, { jobId: `turn-${data.turnId}`, attempts: 1, priority: 1 })
     await queue.close()
     return job.id ?? null
   } catch (err) {

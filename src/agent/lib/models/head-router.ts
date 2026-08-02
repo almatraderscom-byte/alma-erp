@@ -26,6 +26,7 @@ import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
 import { stripVoiceInstructionPrefix } from '@/agent/lib/voice-instruction'
 import { isModelEnabled } from '@/agent/lib/models/model-enabled'
 import { DEFAULT_HEAD_MODEL_ID, getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
+import { loadHeadPin, headTierRank } from '@/agent/lib/models/head-pin'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
 export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing' | 'personal'
@@ -502,11 +503,28 @@ export async function resolveHeadModelId(opts: {
   personalMode: boolean
   businessId: AgentBusinessId
   conversationId?: string
+  /**
+   * P0-1: this turn is a CONTINUATION of work already running (approval resume,
+   * internal workflow control), not a fresh owner message. It must never be
+   * re-triaged — it resumes on the job's pinned head even if the pin's window
+   * has lapsed while the card waited for a tap.
+   */
+  continuation?: boolean
 }): Promise<HeadDecision> {
   // Owner's KV-tuned default head (Grok 4.20 unless changed) — feeds the heavy
   // fallback so a live default-head change also moves auto-mode sensitive turns.
   const kvDefaultHead = await getDefaultHeadModelId()
   const heavy = (via: string): HeadDecision => ({ modelId: heavyHeadModelId(kvDefaultHead), tier: 'heavy', via })
+
+  // ── Continuation: resume the job's own head, no triage ────────────────────
+  // Before this, the two resume paths disagreed with each other AND with the
+  // job: the worker path forced the default heavy head (chat route), while the
+  // inline fallback ran a full fresh triage. Either way the model that planned
+  // the work was not the model that finished it.
+  if (opts.continuation) {
+    const pin = await loadHeadPin(opts.conversationId, { allowExpired: true })
+    if (pin) return { modelId: pin.modelId, tier: pin.tier, via: 'task_pin_continuation' }
+  }
 
   // Owner's model choice for this conversation:
   //  - a concrete known model id (INCLUDING Sonnet) → run THAT exact model, no triage.
@@ -574,6 +592,40 @@ export async function resolveHeadModelId(opts: {
     }
   }
 
+  // ── P0-1: the job's pinned head ───────────────────────────────────────────
+  // Deliberately placed AFTER every safety guard above (money/destructive,
+  // outbound call, personal, trading) and BEFORE the cost cascade below. That
+  // ordering is the whole safety argument: a pin can never keep a money message
+  // on a cheap head, because such a message never reaches this line.
+  //
+  // A live pin holds unless THIS message would route to a strictly HIGHER tier —
+  // routing may escalate mid-job (light → heavy) but never quietly drop back to
+  // a cheaper head, which is exactly the flip the owner saw. A heavy pin short
+  // circuits: nothing ranks above it, so the paid triage call is skipped too.
+  const pin = await loadHeadPin(opts.conversationId)
+  if (pin) {
+    const held: HeadDecision = { modelId: pin.modelId, tier: pin.tier, via: 'task_pin' }
+    if (headTierRank(pin.tier) >= 2) return held
+    const fresh = await routeByCost(text, opts.conversationId, heavy)
+    if (headTierRank(fresh.tier) > headTierRank(pin.tier)) {
+      return { ...fresh, via: `${fresh.via}+pin_escalate` }
+    }
+    return held
+  }
+
+  return routeByCost(text, opts.conversationId, heavy)
+}
+
+/**
+ * The cost cascade: marketing → routine → sticky follow-up → paid triage. Split
+ * out of resolveHeadModelId so the task pin can run it for the escalation check
+ * without duplicating the ladder. Every safety guard has already passed.
+ */
+async function routeByCost(
+  text: string,
+  conversationId: string | undefined,
+  heavy: (via: string) => HeadDecision,
+): Promise<HeadDecision> {
   // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop),
   // the same direct-responder pattern as the cheap head. FAST PATH: an obvious
   // marketing phrase (regex) skips the triage call entirely.
@@ -595,7 +647,7 @@ export async function resolveHeadModelId(opts: {
   // left to re-triage normally). HEAVY_DENY_RE already forced Sonnet above, so this
   // can never keep a money/destructive turn cheap.
   if (text.length <= CONTINUATION_MAX_LEN || CONTINUATION_RE.test(text)) {
-    const sticky = await loadStickyHeadModelId(opts.conversationId)
+    const sticky = await loadStickyHeadModelId(conversationId)
     if (sticky && isKnownModelId(sticky)) {
       const m = getModel(sticky)
       // headPickable check: never let a follow-up inherit a worker-only head
@@ -609,7 +661,7 @@ export async function resolveHeadModelId(opts: {
 
   // Triage net: the classifier also catches marketing intent the regex missed
   // (any phrasing/language) → Qwen; routine → cheap head; everything else → Sonnet.
-  const tier = await triageTier(text, opts.conversationId)
+  const tier = await triageTier(text, conversationId)
   if (tier === 'marketing') {
     const mk = marketingHeadDecision('marketing_triage')
     if (mk) return mk

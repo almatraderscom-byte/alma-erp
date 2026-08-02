@@ -51,6 +51,10 @@ export const MAC_AGENT_ACTIONS = [
   'ui_click',
   'ui_type',
   'ui_key',
+  // P0-3 (foundation audit G): session identity as a first-class read, and
+  // "open a new chat" as one act with a verified postcondition.
+  'ui_session',
+  'ui_new_chat',
 ] as const
 export type MacAgentAction = (typeof MAC_AGENT_ACTIONS)[number]
 

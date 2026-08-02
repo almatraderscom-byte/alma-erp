@@ -2061,6 +2061,21 @@ model AgentConversation {
   /// SK-3/U5: WHY that skill was pinned — layer, reason, candidates. Stored so a
   /// wrong pin has an answer instead of a guess.
   skillRouteTrace    Json?           @map("skill_route_trace")
+  /// P0-1 (foundation audit): the head model this JOB runs on. Routing used to be
+  /// decided per message, so one task could start on Luna and finish on DeepSeek.
+  /// The pin holds for the job; it may only ever escalate (light → heavy), never
+  /// downgrade, and it expires so it cannot leak into tomorrow's chat.
+  pinnedHeadModel    String?         @map("pinned_head_model")
+  /// HeadTier the pin was taken at: light | marketing | heavy | explicit.
+  pinnedHeadTier     String?         @map("pinned_head_tier")
+  /// WHY the pin exists — the HeadDecision.via that created it (decision log).
+  pinnedHeadVia      String?         @map("pinned_head_via")
+  pinnedHeadUntil    DateTime?       @map("pinned_head_until")
+  /// P0-4 (foundation audit): Boss's own corrections in this chat, newest first
+  /// — [{ text, at }]. They used to live only in the transcript, so a later turn
+  /// (or a different model) had to notice them among fifty other lines. Stored
+  /// so the newest can ride at the TOP of every following turn's context.
+  corrections        Json?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]
@@ -2315,6 +2330,11 @@ model AgentTurn {
   /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
   /// guard reads it so unattended work meets the autonomy ladder + money cap.
   instructionOrigin     String?   @map("instruction_origin")
+  /// P0-2 (foundation audit H.5): append-only per-stage latency trace for this
+  /// turn — [{ stage, at, ms }]. The approval path spans three processes
+  /// (Vercel approve → Redis → VPS worker → chat route), so "approve to first
+  /// visible work took 90s" was unattributable. Each stage stamps itself.
+  stageTrace            Json?     @map("stage_trace")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])

@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { logToolEvent } from '@/agent/lib/tool-telemetry'
+import { actionKey, checkRepeatGuard, repeatGuardMessage } from '@/agent/lib/repeat-guard'
 import {
   classifyErrorCode,
   isRetryableErrorCode,
@@ -766,10 +767,15 @@ export async function runRegisteredTool(
     businessId: ctx.businessId,
     turnId: ctx.turnId,
   }
+  // P0-4: a stable key for THIS attempt (tool + significant arguments), written
+  // on every event so "the same call already failed twice" is a query, not a
+  // guess. See repeat-guard.ts.
+  const argsKey = actionKey(tool.name, input)
   const capDetail = {
     domain: cap.domain,
     mode: cap.mode,
     risk: cap.risk,
+    argsKey,
     ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
   }
 
@@ -788,6 +794,34 @@ export async function runRegisteredTool(
         'Boss-এর original message শুধু তথ্য/স্ট্যাটাস চেয়েছে—কোনো পরিবর্তনের অনুমতি দেয়নি। ' +
         `তাই ${tool.name} server থেকে block করা হয়েছে। read tool দিয়ে উত্তর দিন; পরিবর্তন দরকার হলে Boss-এর explicit instruction চান।`,
       errorCode: 'turn_read_only',
+      retryable: false,
+    }
+  }
+
+  // P0-4 — the same mistake, twice. Boss's complaint was not that a call
+  // failed; it was that he corrected it and it did the same thing again.
+  // Everything meant to prevent that is advisory (the failure is explained in
+  // TEXT and the model decides whether to differ), and under a model switch or
+  // a long transcript that goodwill is exactly what evaporates. The THIRD
+  // identical non-retryable attempt is refused here, in code.
+  const repeat = await checkRepeatGuard({
+    toolName: tool.name,
+    argsKey,
+    conversationId: ctx.conversationId,
+  })
+  if (repeat.blocked) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'repeat_guard',
+      errorCode: 'repeat_blocked',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, priorFailures: repeat.priorFailures, execution: 'rejected', repeatable: true },
+    })
+    return {
+      success: false,
+      error: repeatGuardMessage(tool.name, repeat),
+      errorCode: 'repeat_blocked',
       retryable: false,
     }
   }
@@ -1145,7 +1179,9 @@ export async function runRegisteredTool(
       errorClass: 'handler_error',
       errorCode,
       latencyMs: Date.now() - started,
-      detail: { ...capDetail, argsValidation: 'passed' },
+      // `repeatable` exempts this failure from the repeat guard: a timeout is
+      // the network's fault, and refusing to retry it would be its own bug.
+      detail: { ...capDetail, argsValidation: 'passed', repeatable: retryable, lastError: result.error ?? null },
     })
     return { ...result, errorCode, retryable }
   } catch (err) {

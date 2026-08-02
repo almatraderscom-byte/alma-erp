@@ -114,6 +114,8 @@ import {
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { rememberHeadPin } from '@/agent/lib/models/head-pin'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { DEFAULT_HEAD_MODEL_ID } from '@/agent/lib/models/routing-config'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -153,6 +155,18 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
    * Set by the model-switch resume call — skips the approval gate.
    */
   approveModelSwitch?: boolean
+  /**
+   * P0-1: this turn continues work already in flight (approval resume / internal
+   * workflow control). It resumes on the job's pinned head instead of being
+   * routed again — see head-pin.ts.
+   */
+  continuation?: boolean
+  /**
+   * This turn's model is a ONE-TURN override, not a decision about the job —
+   * today only the declined-upgrade fallback. Such a model must never become
+   * the task pin (review bot, #690).
+   */
+  ephemeralModel?: boolean
 }
 
 /**
@@ -1182,6 +1196,20 @@ async function* runAlternateProviderTurn(
   // The canonical job state leads; memory/context blocks follow; the listen
   // note, when present, overrides everything at the very top.
   const volatileSections: string[] = []
+  // P0-4 — a correction outranks everything. Boss's corrections used to live
+  // only in the transcript, where they competed for attention with every other
+  // line; here the newest one LEADS the turn context (only the listen-mode
+  // override, pushed next, sits above it — a turn where he is venting is not a
+  // turn where the agent should be acting on a work correction).
+  if (!listenMode) {
+    try {
+      const { loadCorrections, buildCorrectionNote } = await import('@/agent/lib/owner-corrections')
+      const correctionNote = buildCorrectionNote(await loadCorrections(conversationId))
+      if (correctionNote) volatileSections.push(correctionNote)
+    } catch (err) {
+      console.warn('[run-owner-turn] correction note failed open:', err instanceof Error ? err.message : err)
+    }
+  }
   // LISTEN MODE override — the empathy instruction leads and CANCELs the system
   // prompt's action-pressure for this one turn. There are no business tools on
   // a listen turn (assembled empty below), so the head physically cannot pivot
@@ -3895,6 +3923,7 @@ export async function* runOwnerTurn(
     personalMode,
     businessId,
     conversationId,
+    continuation: options.continuation === true,
   })
 
   // Worker-only guard (2026-07-12 salah incident): a conversation still PINNED to
@@ -3928,6 +3957,25 @@ export async function* runOwnerTurn(
       decision.via = `${decision.via}+disabled_fallback`
     }
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
+
+
+  // P0-4: capture a correction the moment it arrives, so it governs THIS turn
+  // and every later one — not just the transcript. Narrow detection by design
+  // (see owner-corrections.ts); awaited because this turn's own context block
+  // is built from it.
+  if (!options.continuation) {
+    try {
+      const { recordCorrectionIfAny } = await import('@/agent/lib/owner-corrections')
+      await recordCorrectionIfAny(conversationId, lastUserText)
+    } catch { /* fail-open: a lost correction costs the old behaviour, not the turn */ }
+  }
+
+  // P0-2: routing is done; everything after this stamp is prompt build +
+  // inference + tools. The audit's suspicion is that this is the bulk of the
+  // 60–90s approval wait — this is the stamp that will prove or disprove it.
+  if (options.turnId) {
+    void traceTurnStage(options.turnId, 'head_resolved', decision.modelId).catch(() => {})
+  }
 
   const model = getModel(decision.modelId)
 
@@ -3997,6 +4045,21 @@ export async function* runOwnerTurn(
       }
       return
     }
+  }
+
+  // P0-1: the head this job runs on. Written HERE — not at routing time — for
+  // two reasons the review bot found (#690):
+  //   - a decision that never RAN must not be pinned. Above this line the turn
+  //     can still stop at the model-upgrade gate; pinning first meant an
+  //     unapproved premium model became the job's head and re-presented its own
+  //     gate on the next routine message.
+  //   - a one-turn override is not a job decision. When Boss DECLINES an
+  //     upgrade the route passes the cheap fallback as an explicit modelId for
+  //     that turn alone; pinning it would have parked the whole job on the
+  //     cheap head at the top-ranked 'explicit' tier until expiry.
+  // Fire-and-forget: a failed write costs one re-routed turn, never a wrong one.
+  if (!options.ephemeralModel) {
+    void rememberHeadPin(conversationId, decision).catch(() => {})
   }
 
   // Tell the UI which model is answering so it can show the matching loading

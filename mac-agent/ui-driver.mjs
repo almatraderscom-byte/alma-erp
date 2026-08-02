@@ -69,6 +69,10 @@ const APP_HINTS = {
     composerDesc: 'Prompt',
     placeholders: ['Describe a task or ask a question', 'Type / for commands'],
     mirror: true, // structured AXDocumentArticle conversation — mirrorable
+    // P0-3: the button that starts a fresh conversation. Tried in order — the
+    // app renames it between builds, and a "New chat" that no longer exists
+    // must fall through to the next candidate instead of failing the task.
+    newChatLabels: ['New chat', 'New Chat', 'New conversation'],
   },
   // The ChatGPT desktop app. Seen in the wild under BOTH bundle ids (the
   // 2026 builds on the owner's Mac report com.openai.codex); the policy
@@ -80,6 +84,7 @@ const APP_HINTS = {
     composerDesc: 'Do anything',
     placeholders: ['Do anything'],
     mirror: false, // no per-message structure yet (W1 §2) — refuse honestly
+    newChatLabels: ['New chat', 'New Chat'],
   },
   'com.openai.codex': {
     key: 'chatgpt',
@@ -88,6 +93,7 @@ const APP_HINTS = {
     composerDesc: 'Do anything',
     placeholders: ['Do anything'],
     mirror: false,
+    newChatLabels: ['New chat', 'New Chat'],
   },
 }
 
@@ -124,6 +130,7 @@ function hintsFor(bundleId) {
       composerDesc: null,
       placeholders: [],
       mirror: false,
+      newChatLabels: [],
     }
   )
 }
@@ -459,6 +466,77 @@ case "focused":
     guard let el = attr(app, kAXFocusedUIElementAttribute) else { fail("no_focus") }
     let f = el as! AXUIElement
     emit(["ok": true, "role": role(f), "label": labelOf(f)])
+
+case "session":
+    // P0-3 — WHICH conversation is this window showing?
+    //
+    // The audit's first root cause: nothing in the system had any notion of
+    // session identity, so "open a NEW chat and send X" could not be checked
+    // against "am I still in the chat I was told to use". This verb answers
+    // that in the only terms AX can offer honestly: the window title, the
+    // first thing written in the conversation, how much is written, and
+    // whether the composer is empty. No app-specific ids are invented — a
+    // fingerprint that CHANGES is what proves a different session, and that is
+    // all the guard needs.
+    let win = resolveWindow()
+    let title = str(win, kAXTitleAttribute) ?? ""
+    var texts: [String] = []
+    var articles = 0
+    var messageHeadings = 0
+    var firstMessageTexts: [String] = []
+    var insideConversation = false
+    walk(win, 0, 40) { el, _ in
+        let r = role(el)
+        if r == "AXGroup", str(el, kAXSubroleAttribute) == "AXDocumentArticle" { articles += 1 }
+        // The message boundary BOTH apps expose (found by probing the live
+        // ChatGPT window): every turn is announced by a heading. Counting these
+        // is what makes "how many messages" answerable on ChatGPT, which has no
+        // AXDocumentArticle structure at all.
+        if r == "AXHeading" {
+            let ht = str(el, kAXTitleAttribute) ?? ""
+            if ht.hasPrefix("You said") || ht.hasPrefix("ChatGPT said") || ht.hasPrefix("Claude said") {
+                messageHeadings += 1
+                insideConversation = true
+            }
+        }
+        if r == "AXStaticText", let v = attr(el, kAXValueAttribute) as? String {
+            let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+            // One-character strings are chrome (bullets, separators), not content.
+            if t.count > 1 {
+                texts.append(t)
+                // Text AFTER the first message heading is the conversation
+                // itself. Before it lies the sidebar — whose first entry is the
+                // literal string "New chat", which would have made every
+                // ChatGPT session look identical to every other one.
+                // The heading's own label ("You said:") is itself a static text —
+                // taking it would make every conversation's fingerprint identical.
+                let isHeadingLabel = t.hasPrefix("You said") || t.hasPrefix("ChatGPT said") || t.hasPrefix("Claude said")
+                if insideConversation && !isHeadingLabel && firstMessageTexts.count < 3 {
+                    firstMessageTexts.append(t)
+                }
+            }
+        }
+        return true
+    }
+    // The composer, when the caller names it: an empty composer is half of the
+    // "a new chat really is open" postcondition.
+    var composerFound = false
+    var composerValue = ""
+    if let field = flags["field"], !field.isEmpty,
+       let el = findFirst(win, 40, { e in labelOf(e) == field }) {
+        composerFound = true
+        composerValue = (attr(el, kAXValueAttribute) as? String) ?? ""
+    }
+    emit(["ok": true,
+          "windowTitle": title,
+          "articles": articles,
+          "messages": max(articles, messageHeadings),
+          "textCount": texts.count,
+          // The first line of the CONVERSATION, not of the window.
+          "firstText": String((firstMessageTexts.first ?? "").prefix(160)),
+          "sample": firstMessageTexts.map { String($0.prefix(60)) },
+          "composerFound": composerFound,
+          "composerValue": String(composerValue.prefix(160))])
 
 case "click":
     guard let label = flags["label"], !label.isEmpty else { fail("label_required") }
@@ -957,6 +1035,119 @@ function needsApproval(verdict, params, cmd) {
   return verdict.level === 'amber' && !params.approved && !cmd?.approved
 }
 
+// ---------------------------------------------------------------------------
+// P0-3 — Session Guard.
+//
+// The audit's first root cause was not a bug in any one verb: the system had no
+// notion of WHICH conversation it was acting in. So the head could be told
+// "open a new chat and send this", type into whatever window happened to be
+// front, and nothing anywhere could tell that it had written into the owner's
+// old thread. Element-level verification was already strong — it just answered
+// a smaller question ("did the text land in the field I named?") than the one
+// that mattered ("is this the right chat at all?").
+//
+// The guard is deliberately dumb and deterministic: the server sends what it
+// expects the session to be, the daemon reads what the session IS, and a
+// mismatch REFUSES. No model judgement anywhere in the loop.
+// ---------------------------------------------------------------------------
+
+/** Read the current session identity of an app window. */
+async function readSession(bundleId, params = {}) {
+  const h = hintsFor(bundleId)
+  const args = ['session', bundleId, '--window', String(params.window ?? h.windowTitle ?? '-')]
+  if (h.composerDesc) args.push('--field', h.composerDesc)
+  if (h.manual) args.push('--manual')
+  return await helper(args, { timeoutMs: 45_000 })
+}
+
+/** Just the identity fields, shaped for storing on the task and comparing later. */
+function sessionIdentity(res, bundleId) {
+  const h = hintsFor(bundleId)
+  const composerValue = String(res.composerValue ?? '').trim()
+  const isPlaceholder = h.placeholders?.some((p) => p === composerValue) ?? false
+  return {
+    bundleId,
+    windowTitle: String(res.windowTitle ?? ''),
+    // The first line of the CONVERSATION. Probing the live ChatGPT window is
+    // what caught this: reading the window's first static text returned the
+    // sidebar's "New chat" entry, so every session looked identical to every
+    // other one and the guard would have passed on the wrong chat every time.
+    firstText: String(res.firstText ?? ''),
+    // How many turns are on screen. ChatGPT exposes no AXDocumentArticle at
+    // all, so this comes from the per-message headings both apps do publish.
+    messages: Number(res.messages ?? res.articles ?? 0),
+    textCount: Number(res.textCount ?? 0),
+    articles: Number(res.articles ?? 0),
+    composerEmpty: composerValue === '' || isPlaceholder,
+    composerValue,
+  }
+}
+
+/** Whitespace/case-insensitive compare — AX returns the same text differently spaced. */
+function sameText(a, b) {
+  return String(a ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+    === String(b ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * Does the live session match what the caller expected? Only the fields the
+ * caller ACTUALLY sent are compared — an expectation nobody stated is not a
+ * mismatch, and inventing one would refuse honest work.
+ */
+export function sessionMatches(expect, actual) {
+  if (!expect || typeof expect !== 'object') return { ok: true }
+  if (expect.windowTitle && !sameText(expect.windowTitle, actual.windowTitle)) {
+    return { ok: false, field: 'windowTitle', expected: expect.windowTitle, actual: actual.windowTitle }
+  }
+  if (expect.sessionTitle && !sameText(expect.sessionTitle, actual.windowTitle)) {
+    return { ok: false, field: 'sessionTitle', expected: expect.sessionTitle, actual: actual.windowTitle }
+  }
+  if (expect.sessionFirstText && !sameText(expect.sessionFirstText, actual.firstText)) {
+    return { ok: false, field: 'sessionFirstText', expected: expect.sessionFirstText, actual: actual.firstText }
+  }
+  if (expect.emptySession === true) {
+    // Review bot #690 read this against `articles`, which is always 0 on
+    // ChatGPT — so every old conversation passed as "empty". `messages` counts
+    // the per-message headings instead, which BOTH apps publish, so the
+    // question is now answerable honestly rather than by a threshold guess.
+    if (actual.messages > 0) {
+      return { ok: false, field: 'emptySession', expected: 'empty', actual: `${actual.messages} messages` }
+    }
+    if (!actual.composerEmpty) {
+      return { ok: false, field: 'emptySession', expected: 'empty', actual: 'composer has text' }
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * Run the guard before an act verb. Returns null when the caller expected
+ * nothing (or the read failed — a guard that cannot read must not silently
+ * bless the action, so a failed read refuses too).
+ */
+async function guardSession(params, bundleId) {
+  const expect = params.expect
+  if (!expect || typeof expect !== 'object' || Object.keys(expect).length === 0) return null
+  const res = await readSession(bundleId, params)
+  if (!res.ok) {
+    return refusal({
+      code: 'session_unreadable',
+      reasonBn: 'কোন চ্যাটে কাজ হচ্ছে সেটা পড়তে পারিনি, তাই কিছু করিনি — ভুল জায়গায় লেখার চেয়ে থেমে যাওয়া ভালো।',
+    })
+  }
+  const actual = sessionIdentity(res, bundleId)
+  const verdictM = sessionMatches(expect, actual)
+  if (!verdictM.ok) {
+    return refusal({
+      code: 'session_mismatch',
+      reasonBn:
+        `এখন খোলা আছে অন্য চ্যাট — যেটাতে কাজ করার কথা ছিল ("${String(verdictM.expected).slice(0, 40)}") ` +
+        `সেটা নয় ("${String(verdictM.actual).slice(0, 40)}")। তাই কিছু লিখিনি, Boss।`,
+    })
+  }
+  return null
+}
+
 async function uiClick(params, cmd) {
   const bundleId = resolveBundleId(params.bundleId ?? params.app)
   const label = String(params.elementLabel ?? '').trim()
@@ -967,6 +1158,11 @@ async function uiClick(params, cmd) {
   }
   const stopped = await stoppedBeforeActing(cmd)
   if (stopped) return refusal(stopped)
+  // P0-3: last thing before the click — is this still the session the task
+  // named? Checked HERE, after every other gate, so the reading is as close to
+  // the act as it can be.
+  const mismatch = await guardSession(params, bundleId)
+  if (mismatch) return mismatch
   const h = hintsFor(bundleId)
   const args = ['click', bundleId, '--label', label, '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
@@ -994,6 +1190,9 @@ async function uiType(params, cmd) {
   }
   const stopped = await stoppedBeforeActing(cmd)
   if (stopped) return refusal(stopped)
+  // P0-3: typing into the WRONG chat is the failure Boss actually reported.
+  const mismatchT = await guardSession(params, bundleId)
+  if (mismatchT) return mismatchT
   const args = ['type', bundleId, '--field', field, '--text', text,
     '--window', String(params.window ?? h.windowTitle ?? '-'),
     '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
@@ -1013,6 +1212,86 @@ async function uiType(params, cmd) {
     return refusal({ code: 'label_mismatch', reasonBn: `ঘরের আসল নাম "${res.resolvedLabel}" — যেটা যাচাই হয়েছিল তার সাথে মেলে না, তাই লেখা হয়নি।` })
   }
   return ok({ typed: res.typed, fieldValue: res.fieldValue, diff: res.diff, policy: verdict.level })
+}
+
+/**
+ * P0-3 — "open a NEW chat", as one act with a postcondition.
+ *
+ * Boss asked for a new ChatGPT session and got his old one written into. The
+ * head had to invent that action out of a tree read and a click, and nothing
+ * checked the result — so a click that missed, or landed on a button that only
+ * LOOKED like New chat, was indistinguishable from success.
+ *
+ * This verb: reads the session, clicks the app's new-chat button (candidate
+ * labels tried in order, because the apps rename it between builds), reads the
+ * session again, and only reports success when the identity actually CHANGED
+ * and the composer is empty. It returns the new identity so the server can
+ * store it as the task's target — which is what makes the guard above possible
+ * on every later act.
+ */
+async function uiNewChat(params, cmd) {
+  const bundleId = resolveBundleId(params.bundleId ?? params.app)
+  const h = hintsFor(bundleId)
+  const candidates = (Array.isArray(params.elementLabel) ? params.elementLabel
+    : params.elementLabel ? [String(params.elementLabel)]
+      : h.newChatLabels ?? [])
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      exitCode: null,
+      error: 'no_new_chat_label — এই অ্যাপে নতুন চ্যাট খোলার বোতামটা চেনা নেই, তাই অনুমান করে চাপিনি।',
+    }
+  }
+
+  // Judged as the click it is: same label rules, same approval card.
+  const { verdict } = await classifyDeferring(
+    { action: 'ui_new_chat', bundleId, elementLabel: candidates[0] },
+    cmd,
+  )
+  if (verdict.level === 'red') return refusal(verdict)
+  if (needsApproval(verdict, params, cmd)) {
+    return { ok: false, exitCode: null, error: 'refused_by_daemon:missing_approval' }
+  }
+  const stopped = await stoppedBeforeActing(cmd)
+  if (stopped) return refusal(stopped)
+
+  const beforeRes = await readSession(bundleId, params)
+  if (!beforeRes.ok) return helperError(beforeRes)
+  const before = sessionIdentity(beforeRes, bundleId)
+
+  const window = String(params.window ?? h.windowTitle ?? '-')
+  let clicked = null
+  let lastErr = null
+  for (const label of candidates) {
+    const args = ['click', bundleId, '--label', String(label), '--window', window,
+      '--idle-window', String(OWNER_ACTIVE_WINDOW_SECONDS)]
+    if (h.manual) args.push('--manual')
+    const res = await helper(args, { timeoutMs: 45_000, abortCheck: actAbortCheck(cmd) })
+    if (res.code === 'stopped_by_owner') return refusal(STOPPED_VERDICT)
+    if (res.ok) { clicked = String(label); break }
+    lastErr = res
+  }
+  if (!clicked) return helperError(lastErr ?? { error: 'new_chat_button_not_found' })
+
+  const afterRes = await readSession(bundleId, params)
+  if (!afterRes.ok) return helperError(afterRes)
+  const after = sessionIdentity(afterRes, bundleId)
+
+  // The postcondition. A click that "worked" but left the same conversation on
+  // screen is a FAILURE here — reported as one, so the head cannot go on to
+  // type into the old thread believing it opened a new one.
+  const identityChanged = !sameText(before.windowTitle, after.windowTitle)
+    || !sameText(before.firstText, after.firstText)
+    || (before.messages > 0 && after.messages === 0)
+  if (!identityChanged || !after.composerEmpty) {
+    return refusal({
+      code: 'new_chat_not_verified',
+      reasonBn:
+        `"${clicked}" চাপা হয়েছে, কিন্তু নতুন খালি চ্যাট খুলেছে বলে প্রমাণ পাইনি ` +
+        `(${identityChanged ? 'লেখার ঘর খালি নয়' : 'একই চ্যাটই খোলা আছে'}) — তাই এখানে কিছু লিখিনি, Boss।`,
+    })
+  }
+  return ok({ clicked, session: after, previousSession: before, policy: verdict.level })
 }
 
 async function uiKey(params, cmd) {
@@ -1457,6 +1736,18 @@ export function registerUiHandlers(extraHandlers, { isPaused, checkCancelled, ca
   extraHandlers.set('ui_click', (p, cmd) => uiClick(p, cmd))
   extraHandlers.set('ui_type', (p, cmd) => uiType(p, cmd))
   extraHandlers.set('ui_key', (p, cmd) => uiKey(p, cmd))
+  // P0-3 — one named act for "open a new chat", with its own postcondition.
+  extraHandlers.set('ui_new_chat', (p, cmd) => uiNewChat(p, cmd))
+  // Read-only session identity: what the server stores as the task's target,
+  // and what every later act is checked against.
+  extraHandlers.set('ui_session', async (p) => {
+    const bundleId = resolveBundleId(p.bundleId ?? p.app)
+    const verdict = classifyUiAction({ action: 'ui_tree', bundleId })
+    if (verdict.level === 'red') return refusal(verdict)
+    const res = await readSession(bundleId, p)
+    if (!res.ok) return helperError(res)
+    return ok({ session: sessionIdentity(res, bundleId), sample: res.sample ?? [] })
+  })
   extraHandlers.set('app_mirror', (p) => appMirror(p))
 
   // A mirror LOOKS like a session in the dock, so the dock may offer its reply
