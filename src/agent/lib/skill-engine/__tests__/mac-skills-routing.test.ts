@@ -138,6 +138,20 @@ describe('tidying a folder', () => {
     expect(applyRules('repo folder ta porishkar koro')).toBeNull()
   })
 
+  // Codex-style find, but this one came from a live run: "soriye dao" is the
+  // storefront skill's unpublish phrase AND the obvious way to say "move these
+  // files". The pin gave the turn a storefront allowlist with no Mac tool, and
+  // the head then described an approval card that could not exist.
+  it('takes "soriye dao" back from the storefront skill when it is about files', () => {
+    expect(applyRules('downloads er sob pdf ekta Reports folder e soriye dao')?.skill)
+      .toBe('mac-file-organizer')
+    expect(applyRules('desktop er file gulo soriye rakho')?.skill).toBe('mac-file-organizer')
+  })
+
+  it('…and leaves it with the storefront skill when it is about a product', () => {
+    expect(applyRules('oi panjabi ta site theke soriye dao')?.skill).toBe('storefront-editing')
+  })
+
   it('does not fire on half a match', () => {
     // A place with no verb: he may just be reading from it.
     expect(applyRules('downloads e ki ki ache')).toBeNull()

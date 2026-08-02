@@ -286,6 +286,18 @@ const SCREEN_LOOK_ASK = (t: string): boolean =>
  */
 const FOLDER_PLACE = /(downloads?|ডাউনলোড|desktop|ডেস্কটপ|folder|ফোল্ডার)/i
 /**
+ * The sentence is about FILES ON HIS MAC, not about a product on the website.
+ *
+ * Live 2026-08-03: *"downloads er sob pdf ekta Reports folder e soriye dao"*
+ * pinned `storefront-editing` — its visibility rule owns "soriye dao", which in
+ * that skill means unpublishing a product. The pin then handed the turn a
+ * storefront allowlist with no Mac tool in it, and the head reported an approval
+ * card that could never have existed. Same shape as every other rule here: one
+ * phrase, two jobs, and only the surrounding words can tell them apart.
+ */
+const MAC_FILESYSTEM_CONTEXT =
+  /(downloads?|ডাউনলোড|desktop|ডেস্কটপ|folder|ফোল্ডার|\.(?:pdf|dmg|zip|png|jpe?g|mp4|csv)\b|\bfiles?\b|ফাইল|\bmac\b|ম্যাক)/i
+/**
  * …and a CODE checkout is not this skill's folder (Codex P2). "alma-erp folder
  * clean up koro" matched both halves, and the pin would then hand the turn the
  * organizer's tools and its own refusal — so the request could reach neither
@@ -294,7 +306,7 @@ const FOLDER_PLACE = /(downloads?|ডাউনলোড|desktop|ডেস্ক�
 const CODE_CHECKOUT =
   /(alma-erp|alma-companion|\brepo\b|repository|\bgit\b|node_modules|checkout|codebase|\bcode\s*(?:folder|base)\b|কোডের\s*ফোল্ডার)/i
 const TIDY_VERB =
-  /(porishkar|পরিষ্কার|guchi|গুছ|gucha|sajao|সাজাও|sort\s*kor|clean\s*up|cleanup|clean\s*kor|khali\s*kor|খালি\s*কর|jayga\s*(?:khali|nei)|জায়গা\s*(?:খালি|নেই))/i
+  /(porishkar|পরিষ্কার|guchi|গুছ|gucha|sajao|সাজাও|sort\s*kor|clean\s*up|cleanup|clean\s*kor|khali\s*kor|খালি\s*কর|jayga\s*(?:khali|nei)|জায়গা\s*(?:খালি|নেই)|soriye\s*(?:dao|rakho|felo|rekho)|সরিয়ে\s*(?:দাও|রাখো|রেখো)|\bsorao\b|\bmove\s*kor)/i
 
 export interface RouterRule {
   id: string
@@ -339,7 +351,12 @@ export const RULES: RouterRule[] = [
     skill: 'storefront-editing',
     // After product-listing on purpose: "notun panjabi ta site e tolo, dam 1200"
     // is a new listing that happens to mention a price, not an edit.
-    test: (t) => PRODUCT_EDIT_ASK(t) && !LISTING_ASK.test(t) && !isSeoTopic(t),
+    test: (t) =>
+      PRODUCT_EDIT_ASK(t)
+      && !LISTING_ASK.test(t)
+      && !isSeoTopic(t)
+      // …and it is not his Mac's files. "soriye dao" belongs to both jobs.
+      && !MAC_FILESYSTEM_CONTEXT.test(t),
     why: 'সাইটে থাকা পণ্যের দাম/দৃশ্যমানতা বদলের কথা — নতুন লিস্টিং বা SEO কপি নয়',
   },
   {
