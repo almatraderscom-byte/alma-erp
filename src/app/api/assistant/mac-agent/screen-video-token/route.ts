@@ -16,7 +16,7 @@ import { getToken } from 'next-auth/jwt'
 import { RtcTokenBuilder, RtcRole } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { authenticateDevice, listDevices } from '@/agent/lib/mac-agent/bus'
+import { authenticateDevice, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,6 +31,13 @@ export async function POST(req: NextRequest) {
   const appCertificate = process.env.AGORA_APP_CERTIFICATE?.trim()
   if (!appId || !appCertificate) {
     return Response.json({ error: 'agora_not_configured' }, { status: 503 })
+  }
+
+  // The owner's master Mac kill switch gates token minting exactly like the
+  // stream and frames endpoints — a disabled daemon must not be able to open
+  // a video channel (Codex P1).
+  if (!(await isMacAgentEnabled())) {
+    return Response.json({ error: 'mac_disabled' }, { status: 409 })
   }
 
   const now = Math.floor(Date.now() / 1000)

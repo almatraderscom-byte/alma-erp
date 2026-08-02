@@ -371,6 +371,9 @@ async function startScreenVideo(token) {
     videoChild = child
     lastBeatFrames = 0
     child.stdout.on('data', (d) => {
+      // Buffered output from a STOPPED child must not touch the replacement's
+      // liveness state (Codex P2 round 7).
+      if (videoChild !== child) return
       const line = String(d).trim()
       if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
       // Video is live only while the frame count PROGRESSES — cumulative
