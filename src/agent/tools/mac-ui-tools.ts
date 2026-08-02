@@ -144,10 +144,17 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     // refusing. Ambiguity (several capable) or a fleet of unreported legacy
     // daemons still refuses honestly — never guess which Mac to drive.
     const online = (await listDevices()).filter((d) => d.online && d.pairedAt)
-    const capsOf = (d: (typeof online)[number]) =>
-      Array.isArray((d.meta as Record<string, unknown> | null)?.capabilities)
-        ? ((d.meta as Record<string, unknown>).capabilities as unknown[]).map(String)
-        : null
+    // A report older than a day is EXPIRED: a device rolled back to a
+    // pre-capability daemon keeps polling (lastSeenAt fresh) but never
+    // refreshes its report, and the current daemon re-reports every 6h —
+    // so a stale ui_driving claim cannot select the wrong Mac for long.
+    const capsOf = (d: (typeof online)[number]) => {
+      const meta = d.meta as Record<string, unknown> | null
+      if (!Array.isArray(meta?.capabilities)) return null
+      const at = Date.parse(String(meta.capabilitiesAt ?? ''))
+      if (!Number.isFinite(at) || Date.now() - at > 24 * 3600 * 1000) return null
+      return (meta.capabilities as unknown[]).map(String)
+    }
     const capable = online.filter((d) => capsOf(d)?.includes('ui_driving'))
     let targetDeviceId = gate.deviceId
     let targetDeviceName = gate.deviceName
