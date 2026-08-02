@@ -27,6 +27,7 @@ interface PinRow {
 let pinRow: PinRow | null = null
 let stickyModel: string | null = null
 const updates: Record<string, unknown>[] = []
+const wheres: Record<string, unknown>[] = []
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -39,12 +40,20 @@ vi.mock('@/lib/prisma', () => ({
         updates.push(data)
         return {}
       }),
+      // The real write is a conditional updateMany — the test records both the
+      // data AND the where clause, because the never-downgrade and
+      // don't-slide-the-window rules now live in that clause.
+      updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        wheres.push(where)
+        updates.push(data)
+        return { count: 1 }
+      }),
     },
   },
 }))
 
 import { resolveHeadModelId } from '@/agent/lib/models/head-router'
-import { readHeadPin, rememberHeadPin, headTierRank } from '@/agent/lib/models/head-pin'
+import { readHeadPin, rememberHeadPin, headTierRank, headPinClearFields } from '@/agent/lib/models/head-pin'
 
 const CONV = 'conv-pin-1'
 const HOUR = 60 * 60 * 1000
@@ -196,6 +205,7 @@ describe('head-pin storage rules', () => {
   beforeEach(() => {
     delete process.env.HEAD_TASK_PIN
     updates.length = 0
+    wheres.length = 0
   })
 
   it('never pins listen mode — that tier withholds business tools on purpose', async () => {
@@ -220,5 +230,46 @@ describe('head-pin storage rules', () => {
     expect(headTierRank('light')).toBeLessThan(headTierRank('marketing'))
     expect(headTierRank('marketing')).toBeLessThan(headTierRank('heavy'))
     expect(headTierRank('explicit')).toBe(headTierRank('heavy'))
+  })
+
+  // Review bot #690 P2: never-downgrade was enforced only while routing ONE
+  // turn, so two overlapping turns could land their writes out of order and let
+  // a light decision replace a heavy pin. The rule lives in the WHERE clause now.
+  it('refuses to overwrite a live HIGHER-ranked pin (atomic, in the where clause)', async () => {
+    await rememberHeadPin(CONV, { modelId: 'or-deepseek-v4-flash', tier: 'light', via: 'routine_kw' })
+    expect(wheres).toHaveLength(1)
+    const allowedTiers = (wheres[0].OR as Record<string, unknown>[])
+      .map((c) => (c.pinnedHeadTier as { in?: string[] } | undefined)?.in)
+      .find(Boolean)
+    expect(allowedTiers).toEqual(['light'])
+    expect(allowedTiers).not.toContain('heavy')
+  })
+
+  it('a heavy write may replace any live pin', async () => {
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'deny_kw' })
+    const allowedTiers = (wheres[0].OR as Record<string, unknown>[])
+      .map((c) => (c.pinnedHeadTier as { in?: string[] } | undefined)?.in)
+      .find(Boolean) as string[]
+    expect(allowedTiers).toEqual(expect.arrayContaining(['light', 'marketing', 'heavy', 'explicit']))
+  })
+
+  // Review bot #690 P1: refreshing the expiry every turn meant a chat used all
+  // day never dropped its heavy pin — one heavy question would own the routing
+  // of everything after it. Re-stamping an identical live pin must match no row.
+  it('does not slide the window by re-stamping an identical live pin', async () => {
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'task_pin' })
+    const not = wheres[0].NOT as Record<string, unknown>
+    expect(not.pinnedHeadModel).toBe('gpt-5.6-luna')
+    expect(not.pinnedHeadTier).toBe('heavy')
+    expect(not.pinnedHeadUntil).toHaveProperty('gt')
+  })
+
+  it('exposes the clear patch the model picker applies in its own write', () => {
+    expect(headPinClearFields()).toEqual({
+      pinnedHeadModel: null,
+      pinnedHeadTier: null,
+      pinnedHeadVia: null,
+      pinnedHeadUntil: null,
+    })
   })
 })

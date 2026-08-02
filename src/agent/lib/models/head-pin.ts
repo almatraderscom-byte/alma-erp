@@ -131,12 +131,34 @@ export async function loadHeadPin(
   }
 }
 
+/** Every tier that ranks at or below `tier` — the only pins a new decision may overwrite. */
+function tiersAtOrBelow(tier: HeadTier): HeadTier[] {
+  const ceiling = headTierRank(tier)
+  return (Object.keys(TIER_RANK) as HeadTier[]).filter((t) => TIER_RANK[t] <= ceiling)
+}
+
 /**
  * Persist the head this job runs on. Called with the FINAL model of the turn
  * (after the worker-only redirect and the Monitor-disabled fallback have had
  * their say) so the pin always names a model that actually ran.
  *
- * Fire-and-forget by design: a failed write costs one re-triaged turn.
+ * Two properties the naive version got wrong (review bot, #690):
+ *
+ *  - **The window does not slide.** Refreshing the expiry on every turn means a
+ *    chat that is used all day never drops its heavy pin, and one heavy question
+ *    silently owns the routing of everything after it. The expiry is therefore
+ *    absolute — set when the pin is TAKEN — so a job ages out 45 minutes after
+ *    it started and normal per-message routing resumes. Re-writing an identical,
+ *    still-live pin is skipped entirely (it would slide the window and churn the
+ *    row for nothing).
+ *  - **The write cannot downgrade.** Never-downgrade was enforced only while
+ *    routing one turn; two overlapping turns could land their fire-and-forget
+ *    writes out of order and let a light decision replace a heavy pin. The
+ *    update is now a single conditional statement — the tier filter lives in the
+ *    WHERE clause, so a lower-ranked write against a live higher pin matches no
+ *    row and changes nothing.
+ *
+ * Fire-and-forget by design: a failed write costs one re-routed turn.
  */
 export async function rememberHeadPin(
   conversationId: string | null | undefined,
@@ -147,9 +169,28 @@ export async function rememberHeadPin(
   // Listen mode is deliberately not a job identity — see header.
   if (decision.tier === 'personal') return
   if (!decision.modelId || !isKnownModelId(decision.modelId)) return
+  const nowDate = new Date(now)
   try {
-    await db.agentConversation.update({
-      where: { id: conversationId },
+    await db.agentConversation.updateMany({
+      where: {
+        id: conversationId,
+        // May write when there is no live pin at all, or when the live pin ranks
+        // at or below this decision (equal rank = the same job continuing, a
+        // higher rank = an escalation). A live HIGHER pin matches nothing here.
+        OR: [
+          { pinnedHeadModel: null },
+          { pinnedHeadUntil: null },
+          { pinnedHeadUntil: { lte: nowDate } },
+          { pinnedHeadTier: { in: tiersAtOrBelow(decision.tier) } },
+        ],
+        // …but not when it would only re-stamp the pin that is already live:
+        // that is the window-sliding bug.
+        NOT: {
+          pinnedHeadModel: decision.modelId,
+          pinnedHeadTier: decision.tier,
+          pinnedHeadUntil: { gt: nowDate },
+        },
+      },
       data: {
         pinnedHeadModel: decision.modelId,
         pinnedHeadTier: decision.tier,
@@ -162,15 +203,12 @@ export async function rememberHeadPin(
   }
 }
 
-/** Drop the pin (job finished / owner switched the chat back to auto). */
-export async function clearHeadPin(conversationId: string | null | undefined): Promise<void> {
-  if (!conversationId) return
-  try {
-    await db.agentConversation.update({
-      where: { id: conversationId },
-      data: { pinnedHeadModel: null, pinnedHeadTier: null, pinnedHeadVia: null, pinnedHeadUntil: null },
-    })
-  } catch (err) {
-    console.warn('[head-pin] clear failed:', err instanceof Error ? err.message : err)
-  }
+/**
+ * The patch that drops the pin. Returned as fields rather than performed as its
+ * own write so the one caller that needs it — the conversation PATCH route, when
+ * Boss moves the head picker — clears the pin in the SAME update that changes
+ * the model, instead of racing a second write against it.
+ */
+export function headPinClearFields(): Record<string, null> {
+  return { pinnedHeadModel: null, pinnedHeadTier: null, pinnedHeadVia: null, pinnedHeadUntil: null }
 }

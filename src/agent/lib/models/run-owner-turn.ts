@@ -3939,8 +3939,10 @@ export async function* runOwnerTurn(
 
   // P0-1: the head this job runs on, written AFTER both redirects above so the
   // pin always names a model that actually ran. Fire-and-forget — a failed write
-  // costs one re-routed turn, never a wrong one. A continuation re-writes the
-  // same pin, which slides its window over a long approval round-trip.
+  // costs one re-routed turn, never a wrong one. Re-stamping a still-live
+  // identical pin is a no-op inside rememberHeadPin: the expiry is absolute, so
+  // a long chat ages back into per-message routing instead of holding the heavy
+  // head forever.
   void rememberHeadPin(conversationId, decision).catch(() => {})
 
   const model = getModel(decision.modelId)
