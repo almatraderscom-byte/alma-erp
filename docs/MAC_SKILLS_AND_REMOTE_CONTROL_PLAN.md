@@ -59,6 +59,25 @@
     install/update, dmg-flow (সর্বদা card)। 14. **`window-arranger`** — AX দিয়ে
     resize/tile। 15. **`login-items-auditor`** — startup-item report।
 
+## অগ্রগতি — Tier 1 তৈরি (২০২৬-০৮-০৩)
+
+পাঁচটাই skill engine-এ বসানো হয়েছে, দুই PR-এ: **#699** (`mac-ai-app-operator`,
+`xcode-testflight-shipper`, `git-pr-workflow`) আর **#700** (`mac-file-organizer`,
+`screenshot-annotate-share`)। প্রতিটার guard skill ফাইলের ভেতরেই, পাঁচটার নামই
+head prompt-এর Mac অংশে তোলা, আর প্রতিটা rule-routed (keyword নয় — "build",
+"PR", "chat" শব্দগুলো ব্যবসার অন্য কাজও দাবি করে)।
+
+পরিকল্পনা থেকে যে দুটো জায়গায় সরতে হয়েছে, সৎভাবে:
+
+- **`screenshot-annotate-share`-এ ছবির উপর তীর/দাগ আঁকা যায় না।** স্ক্রিনশট
+  daemon-এ উঠে সরাসরি upload হয়ে যায়, Mac-এ কোনো ফাইল থাকে না; sips/ImageMagick
+  দিয়ে কাটাকাটি করার মতো ফাইলই নেই। তাই "annotate" এখন = লক্ষ্য করে দ্বিতীয় শট
+  (অ্যাপের জানালা / scroll করে আবার) + হুবহু কথায় দেখানো। পিক্সেলে আঁকতে হলে
+  Mac-এর daemon বদলাতে হবে — আলাদা কাজ, চাইলে করা যাবে।
+- **Registry budget ৬,০০০ → ৯,০০০ অক্ষর।** ২১টা skill-এ পুরনো সীমা পেরিয়ে যেত,
+  আর সীমা পেরোলে *সব* description ৮০ অক্ষরে কেটে যায় — যেখানে "কখন ব্যবহার করবে"
+  অংশটাই হারায়। ব্লকটা এখনো live prompt-এ যায় না, আর cached prefix-এ থাকে।
+
 ## Engine-এ বসানোর নিয়ম (নতুন session-এর জন্য)
 - প্রতিটি skill = বিদ্যমান skill-engine format (knowledge file + runner binding);
   approval-ledger-এ প্রথম ব্যবহারে owner-approve — আগের নিয়মই।
