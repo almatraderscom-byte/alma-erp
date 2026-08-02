@@ -48,12 +48,13 @@ export function classifyScreencaptureIntent(command: string): 'intercept' | 'ref
     const baseOf = (w: string) => (w.split('/').pop() ?? '').toLowerCase()
     // First word IS screencapture (path-qualified or not): unambiguous.
     if (baseOf(words[i] ?? '') === 'screencapture') {
-      // SCOPED or interactive capture (-l window, -R rect, -w/-W pick, -i):
-      // absorbing it into a FULL-screen shot would WIDEN what the model asked
-      // to capture (Codex P1). Refuse with guidance instead — app-window
-      // shots belong to look_mac_app.
-      const scoped = words.slice(i + 1).some((w) => /^-[A-Za-z]*[lRwWiU]/.test(w))
-      return scoped ? 'refuse' : 'intercept'
+      // Flag ALLOWLIST, not a scope blocklist (Codex kept finding scope
+      // letters: -l, -R, -w, -s…): only silent/cosmetic output flags are
+      // known-safe to absorb into a full-screen shot. Anything else — scoped,
+      // interactive, unknown — refuses rather than silently WIDENING what
+      // the model asked to capture.
+      const unsafe = words.slice(i + 1).some((w) => w.startsWith('-') && !/^-[xCt]+$/.test(w))
+      return unsafe ? 'refuse' : 'intercept'
     }
     // The word appears as its own token anywhere else — wrapper forms
     // (sudo/env/command …), lookups, whatever: there is NO wrapper parser

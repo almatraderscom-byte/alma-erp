@@ -89,6 +89,8 @@ describe('wrong-tool interceptor pattern', () => {
       'screencapture -l 123 out.jpg', // scoped — absorbing would WIDEN capture (Codex round 6)
       'screencapture -R 0,0,100,100 out.jpg',
       'screencapture -wx out.jpg',
+      'screencapture -s out.jpg', // mouse-selection mode (Codex round 7)
+      'screencapture -T5 out.jpg', // unknown/valued flags refuse too — allowlist, not blocklist
     ]) {
       expect(classifyScreencaptureIntent(cmd)).toBe('refuse')
     }
