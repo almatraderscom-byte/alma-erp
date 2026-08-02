@@ -99,7 +99,7 @@ function bypassToken() {
   return process.env.ALMA_VERCEL_BYPASS?.trim() || readConfig().bypassToken || ''
 }
 
-async function api(path, { method = 'GET', body, token, timeoutMs = 30_000 } = {}) {
+async function api(path, { method = 'GET', body, token, timeoutMs = 30_000, headers } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const bypass = bypassToken()
@@ -109,6 +109,7 @@ async function api(path, { method = 'GET', body, token, timeoutMs = 30_000 } = {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(headers ?? {}),
         ...(bypass ? { 'x-vercel-protection-bypass': bypass, 'x-vercel-set-bypass-cookie': 'false' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -553,8 +554,27 @@ async function handleCommand(cmd) {
 // Loop
 // ---------------------------------------------------------------------------
 
+// What THIS daemon build can do — reported once per start (first successful
+// poll) so the server can pick the right Mac when several are online. Meta
+// at pair time goes stale forever (agentVersion taught us that); reporting
+// on start means an upgrade is visible after its restart.
+const AGENT_CAPABILITIES = 'ui_driving,screen_stream,app_mirror,cli_sessions'
+// Re-reported every 6h, not just on start: a device rolled back to an older
+// daemon stops refreshing, and the server treats reports older than a day as
+// expired — so a stale "ui_driving" claim cannot outlive the rollback.
+const CAPS_REREPORT_MS = 6 * 3600 * 1000
+let capsReportedAt = 0
+
 async function pollOnce(token) {
-  const res = await api('/api/assistant/mac-agent/poll', { token })
+  const sendingCaps = Date.now() - capsReportedAt > CAPS_REREPORT_MS
+  const res = await api('/api/assistant/mac-agent/poll', {
+    token,
+    headers: sendingCaps ? { 'X-Agent-Capabilities': AGENT_CAPABILITIES } : undefined,
+  })
+  // Only an explicit ack stops the report — a server whose meta write failed
+  // answers capsAck:false (or, pre-upgrade, nothing) and gets the header
+  // again next poll.
+  if (res.ok && sendingCaps && res.json?.capsAck === true) capsReportedAt = Date.now()
   if (res.status === 401) throw new Error('unauthorized — pair again')
   if (!res.ok) throw new Error(`poll failed: ${res.status}`)
   return res.json ?? {}

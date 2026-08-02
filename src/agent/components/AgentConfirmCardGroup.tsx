@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
@@ -75,6 +75,12 @@ function GroupedSheet({ actions, onResolved, onQuickSend }: { actions: PendingAc
   const [opinionFor, setOpinionFor] = useState<string | null>(null)
   const [opinionText, setOpinionText] = useState('')
   const [minimized, setMinimized] = useState(false)
+  // When a card resolves, it collapses to a badge and every control below it
+  // jumps up — a tap aimed at the old button position lands on the BACKDROP
+  // and silently minimizes the sheet (hit live: the owner's approve after a
+  // reject "did nothing"). Ignore backdrop taps briefly after any resolve so
+  // the layout settles before the dismiss gesture comes back.
+  const lastResolveAt = useRef(0)
 
   const pending = actions.filter((a) => !decided[a.id])
   const allDone = pending.length === 0
@@ -85,6 +91,7 @@ function GroupedSheet({ actions, onResolved, onQuickSend }: { actions: PendingAc
     const targets = actions.filter((a) => !decided[a.id])
     try {
       await Promise.all(targets.map((a) => postDecision(a.id, 'approve')))
+      lastResolveAt.current = Date.now()
       setDecided((prev) => {
         const next = { ...prev }
         for (const a of targets) next[a.id] = 'approved'
@@ -105,6 +112,7 @@ function GroupedSheet({ actions, onResolved, onQuickSend }: { actions: PendingAc
     setBusy(true)
     try {
       await postDecision(id, 'reject')
+      lastResolveAt.current = Date.now()
       setDecided((prev) => ({ ...prev, [id]: 'rejected' }))
       toast.success('একটি বাতিল করা হয়েছে')
       onResolved('rejected')
@@ -122,6 +130,7 @@ function GroupedSheet({ actions, onResolved, onQuickSend }: { actions: PendingAc
     setBusy(true)
     try {
       await fetch(`/api/assistant/actions/${id}/reject`, { method: 'POST' }).catch(() => {})
+      lastResolveAt.current = Date.now()
       setDecided((prev) => ({ ...prev, [id]: 'rejected' }))
       onResolved('rejected')
       notifyTodosChanged()
@@ -155,7 +164,7 @@ function GroupedSheet({ actions, onResolved, onQuickSend }: { actions: PendingAc
     <MobileModalPortal
       open
       aria-label="অনুমোদন প্রয়োজন"
-      onBackdropClick={() => setMinimized(true)}
+      onBackdropClick={() => { if (Date.now() - lastResolveAt.current > 600) setMinimized(true) }}
       className="agent-confirm-sheet-overlay"
     >
       <div className="mobile-modal-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]">
