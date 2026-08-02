@@ -67,6 +67,8 @@ function describeActionBn(input: {
       return input.replace
         ? `${app} অ্যাপে "${input.elementLabel}" ঘরের আগের লেখা মুছে নতুন লেখা`
         : `${app} অ্যাপে "${input.elementLabel}" ঘরে লেখা`
+    case 'ui_new_chat':
+      return `${app} অ্যাপে নতুন চ্যাট খোলা`
     case 'ui_key':
       return input.focusedLabel
         ? `${app} অ্যাপে "${input.focusedLabel}"-এ ${input.key} চাপা`
@@ -94,6 +96,16 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     const appRaw = String(input.app ?? '').trim()
     if (!appRaw) return { success: false, error: 'app is required' }
     const bundleId = resolveBundleId(appRaw)
+
+    const expectRaw = input.expectSession
+    const expectSession = expectRaw && typeof expectRaw === 'object'
+      ? {
+          ...(expectRaw.windowTitle ? { windowTitle: String(expectRaw.windowTitle) } : {}),
+          ...(expectRaw.sessionTitle ? { sessionTitle: String(expectRaw.sessionTitle) } : {}),
+          ...(expectRaw.sessionFirstText ? { sessionFirstText: String(expectRaw.sessionFirstText) } : {}),
+          ...(expectRaw.emptySession === true ? { emptySession: true } : {}),
+        }
+      : null
 
     const elementLabel = input.elementLabel ? String(input.elementLabel) : undefined
     const text = input.text !== undefined ? String(input.text) : undefined
@@ -188,6 +200,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       // so the model looped on truncated trees without ever seeing the one
       // element it needed (live-demo finding). fullTree=true opts back in.
       interactive: action === 'ui_tree' ? input.fullTree !== true : undefined,
+      // P0-3: WHICH chat this act belongs to. The daemon reads the live session
+      // right before acting and refuses on a mismatch, so a chat the owner
+      // switched away from cannot be written into — the exact failure he
+      // reported. Absent ⇒ no expectation stated ⇒ nothing to violate.
+      expect: expectSession,
     }
 
     // AMBER — the owner reads the app, the element and the LITERAL text before
@@ -308,7 +325,12 @@ const look_mac_app: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['tree', 'screenshot', 'scroll'], description: 'How to look.' },
+      action: {
+        type: 'string',
+        enum: ['tree', 'screenshot', 'scroll', 'session'],
+        description:
+          'How to look. "session" answers WHICH conversation the window is showing (title, first message, whether the composer is empty) — read it BEFORE acting and pass it back as expectSession so you cannot write into the wrong chat.',
+      },
       app: APP_PARAM,
       scrollAmount: { type: 'number', description: 'For scroll: positive scrolls down, negative up. Default 3.' },
       fullTree: {
@@ -319,7 +341,7 @@ const look_mac_app: AgentTool = {
     },
     required: ['action', 'app'],
   },
-  handler: (input) => handleUiAction(input, new Set(['ui_tree', 'ui_screenshot', 'ui_scroll'])),
+  handler: (input) => handleUiAction(input, new Set(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session'])),
 }
 
 const drive_mac_app: AgentTool = {
@@ -339,7 +361,12 @@ const drive_mac_app: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['click', 'type', 'key'], description: 'What to do in the app.' },
+      action: {
+        type: 'string',
+        enum: ['click', 'type', 'key', 'new_chat'],
+        description:
+          'What to do in the app. Use "new_chat" — NOT a click you found yourself — whenever he wants a FRESH conversation: it presses the app\'s own new-chat button and then PROVES a new empty chat is open, and it returns that new session so you can pass it as expectSession on the type that follows.',
+      },
       app: APP_PARAM,
       elementLabel: {
         type: 'string',
@@ -361,6 +388,16 @@ const drive_mac_app: AgentTool = {
         type: 'string',
         description: 'One short Bangla line on WHY — shown to him on the approval card.',
       },
+      expectSession: {
+        type: 'object',
+        description:
+          'The chat this act belongs to, from look_mac_app action="session" (or the session new_chat returned). The Mac re-reads the live chat immediately before acting and REFUSES on a mismatch, so pass it whenever the owner named a specific chat or you just opened one.',
+        properties: {
+          sessionTitle: { type: 'string', description: 'The window/conversation title it must still be.' },
+          sessionFirstText: { type: 'string', description: 'The first message text it must still start with.' },
+          emptySession: { type: 'boolean', description: 'True when it must still be an empty, brand-new chat.' },
+        },
+      },
       conversationId: {
         type: 'string',
         description: 'Server-managed conversation id — omit; the server fills it automatically.',
@@ -368,7 +405,7 @@ const drive_mac_app: AgentTool = {
     },
     required: ['action', 'app'],
   },
-  handler: (input) => handleUiAction(input, new Set(['ui_click', 'ui_type', 'ui_key'])),
+  handler: (input) => handleUiAction(input, new Set(['ui_click', 'ui_type', 'ui_key', 'ui_new_chat'])),
 }
 
 const list_mac_apps: AgentTool = {

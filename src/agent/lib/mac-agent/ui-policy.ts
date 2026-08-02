@@ -53,14 +53,23 @@ export const UI_ACTIONS = [
   'ui_tree',
   'ui_screenshot',
   'ui_scroll',
+  // P0-3: reads WHICH conversation a window is showing (title, first message,
+  // how much is written, composer empty). Read-only — it is the input to the
+  // session guard, so it must never itself need a card.
+  'ui_session',
   'ui_click',
   'ui_type',
   'ui_key',
+  // P0-3: "open a NEW chat" as one named act. It is a click on a named button
+  // and is judged EXACTLY like one — the separate verb exists so the daemon can
+  // attach the postcondition (a new session really is open and empty) that a
+  // bare click cannot express.
+  'ui_new_chat',
 ] as const
 export type UiAction = (typeof UI_ACTIONS)[number]
 
 /** Purely observational verbs — they change nothing, so they run by themselves. */
-const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scroll'])
+const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session'])
 
 /**
  * Actions that SYNTHESISE input into whatever the owner is doing. Wider than
@@ -70,7 +79,7 @@ const READ_ONLY_ACTIONS = new Set<string>(['ui_tree', 'ui_screenshot', 'ui_scrol
  * "safe to do while he is typing" (Codex on the W3 PR; my classification was
  * the root cause, not the driver).
  */
-const SYNTHESISES_INPUT = new Set<string>(['ui_click', 'ui_type', 'ui_key', 'ui_scroll'])
+const SYNTHESISES_INPUT = new Set<string>(['ui_click', 'ui_type', 'ui_key', 'ui_scroll', 'ui_new_chat'])
 
 /**
  * The ONLY apps the agent may touch, by bundle id. Two entries on purpose:
