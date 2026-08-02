@@ -195,8 +195,35 @@ export async function deliverAgentTurn(jobData) {
           signal: AbortSignal.timeout(20_000),
         })
         if (!res2.ok) continue
-        const buf = Buffer.from(await res2.arrayBuffer())
-        if (!buf.length || buf.length > 9_500_000) continue
+        // Enforce the size cap WHILE streaming — the bucket allows objects up
+        // to 512MB (Creative Studio videos live behind the same route), and
+        // buffering one whole before checking could OOM the worker (Codex P2).
+        const declared = Number(res2.headers.get('content-length'))
+        if (Number.isFinite(declared) && declared > 9_500_000) continue
+        let buf = null
+        if (res2.body?.getReader) {
+          const reader = res2.body.getReader()
+          const parts = []
+          let total = 0
+          let over = false
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            total += value.length
+            if (total > 9_500_000) {
+              over = true
+              await reader.cancel().catch(() => {})
+              break
+            }
+            parts.push(value)
+          }
+          if (over) continue
+          buf = Buffer.concat(parts)
+        } else {
+          buf = Buffer.from(await res2.arrayBuffer())
+          if (buf.length > 9_500_000) continue
+        }
+        if (!buf.length) continue
         await bot.telegram.sendPhoto(chatId, { source: buf }, m[1] ? { caption: m[1] } : undefined)
         replyText = replyText.replace(m[0], m[1] ? `📸 ${m[1]}` : '📸').trim()
       } catch {
