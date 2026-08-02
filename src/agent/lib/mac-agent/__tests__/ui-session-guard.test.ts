@@ -15,11 +15,16 @@
 import { describe, it, expect } from 'vitest'
 import { sessionMatches } from '../../../../../mac-agent/ui-driver.mjs'
 
+// Shaped like a real read from the owner's ChatGPT window (probed live
+// 2026-08-02): no AXDocumentArticle at all, message count from the per-message
+// headings, and firstText being the conversation's own first line.
 const live = {
+  bundleId: 'com.openai.codex',
   windowTitle: 'ChatGPT',
   firstText: 'Boss er order gulo niye kotha bolchilam',
-  textCount: 12,
-  articles: 4,
+  textCount: 252,
+  articles: 0,
+  messages: 11,
   composerEmpty: true,
   composerValue: '',
 }
@@ -55,7 +60,9 @@ describe('sessionMatches', () => {
   })
 
   it('accepts an empty-session expectation against a genuinely empty chat', () => {
-    const fresh = { ...live, firstText: '', textCount: 3, articles: 0, bundleId: 'com.anthropic.claudefordesktop' }
+    // A fresh ChatGPT chat still shows sidebar chrome (textCount high) — what
+    // makes it empty is that no message heading exists.
+    const fresh = { ...live, firstText: '', messages: 0 }
     expect(sessionMatches({ emptySession: true }, fresh).ok).toBe(true)
   })
 
@@ -63,22 +70,17 @@ describe('sessionMatches', () => {
   // useless on the app it was written for — ChatGPT has no per-message
   // structure, so every old conversation passed as "empty".
   it('a written-in composer alone disproves an empty session', () => {
-    const v = sessionMatches({ emptySession: true }, { ...live, articles: 0, composerEmpty: false })
+    const v = sessionMatches({ emptySession: true }, { ...live, messages: 0, composerEmpty: false })
     expect(v.ok).toBe(false)
     expect(v.actual).toContain('composer')
   })
 
-  it('refuses instead of guessing on an app with no message structure', () => {
-    const chatgpt = { ...live, articles: 0, bundleId: 'com.openai.codex', textCount: 40 }
-    const v = sessionMatches({ emptySession: true }, chatgpt)
+  // The live probe's real finding: on ChatGPT `articles` is ALWAYS 0, so a
+  // guard reading it would have called an 11-message conversation empty.
+  it('counts messages from headings, so a busy ChatGPT chat is never "empty"', () => {
+    const v = sessionMatches({ emptySession: true }, live)
     expect(v.ok).toBe(false)
-    expect(v.actual).toContain('sessionFirstText')
-  })
-
-  it('…but a stated sessionFirstText settles it, so the normal new_chat flow works', () => {
-    const chatgpt = { ...live, articles: 0, bundleId: 'com.openai.codex', textCount: 40 }
-    const v = sessionMatches({ emptySession: true, sessionFirstText: live.firstText }, chatgpt)
-    expect(v.ok).toBe(true)
+    expect(v.actual).toContain('11 messages')
   })
 
   it('checks the window title independently of the conversation title', () => {

@@ -482,12 +482,39 @@ case "session":
     let title = str(win, kAXTitleAttribute) ?? ""
     var texts: [String] = []
     var articles = 0
+    var messageHeadings = 0
+    var firstMessageTexts: [String] = []
+    var insideConversation = false
     walk(win, 0, 40) { el, _ in
-        if role(el) == "AXGroup", str(el, kAXSubroleAttribute) == "AXDocumentArticle" { articles += 1 }
-        if role(el) == "AXStaticText", let v = attr(el, kAXValueAttribute) as? String {
+        let r = role(el)
+        if r == "AXGroup", str(el, kAXSubroleAttribute) == "AXDocumentArticle" { articles += 1 }
+        // The message boundary BOTH apps expose (found by probing the live
+        // ChatGPT window): every turn is announced by a heading. Counting these
+        // is what makes "how many messages" answerable on ChatGPT, which has no
+        // AXDocumentArticle structure at all.
+        if r == "AXHeading" {
+            let ht = str(el, kAXTitleAttribute) ?? ""
+            if ht.hasPrefix("You said") || ht.hasPrefix("ChatGPT said") || ht.hasPrefix("Claude said") {
+                messageHeadings += 1
+                insideConversation = true
+            }
+        }
+        if r == "AXStaticText", let v = attr(el, kAXValueAttribute) as? String {
             let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
             // One-character strings are chrome (bullets, separators), not content.
-            if t.count > 1 { texts.append(t) }
+            if t.count > 1 {
+                texts.append(t)
+                // Text AFTER the first message heading is the conversation
+                // itself. Before it lies the sidebar — whose first entry is the
+                // literal string "New chat", which would have made every
+                // ChatGPT session look identical to every other one.
+                // The heading's own label ("You said:") is itself a static text —
+                // taking it would make every conversation's fingerprint identical.
+                let isHeadingLabel = t.hasPrefix("You said") || t.hasPrefix("ChatGPT said") || t.hasPrefix("Claude said")
+                if insideConversation && !isHeadingLabel && firstMessageTexts.count < 3 {
+                    firstMessageTexts.append(t)
+                }
+            }
         }
         return true
     }
@@ -503,9 +530,11 @@ case "session":
     emit(["ok": true,
           "windowTitle": title,
           "articles": articles,
+          "messages": max(articles, messageHeadings),
           "textCount": texts.count,
-          "firstText": String((texts.first ?? "").prefix(160)),
-          "sample": texts.prefix(5).map { String($0.prefix(60)) },
+          // The first line of the CONVERSATION, not of the window.
+          "firstText": String((firstMessageTexts.first ?? "").prefix(160)),
+          "sample": firstMessageTexts.map { String($0.prefix(60)) },
           "composerFound": composerFound,
           "composerValue": String(composerValue.prefix(160))])
 
@@ -1039,7 +1068,14 @@ function sessionIdentity(res, bundleId) {
   return {
     bundleId,
     windowTitle: String(res.windowTitle ?? ''),
+    // The first line of the CONVERSATION. Probing the live ChatGPT window is
+    // what caught this: reading the window's first static text returned the
+    // sidebar's "New chat" entry, so every session looked identical to every
+    // other one and the guard would have passed on the wrong chat every time.
     firstText: String(res.firstText ?? ''),
+    // How many turns are on screen. ChatGPT exposes no AXDocumentArticle at
+    // all, so this comes from the per-message headings both apps do publish.
+    messages: Number(res.messages ?? res.articles ?? 0),
     textCount: Number(res.textCount ?? 0),
     articles: Number(res.articles ?? 0),
     composerEmpty: composerValue === '' || isPlaceholder,
@@ -1070,27 +1106,15 @@ export function sessionMatches(expect, actual) {
     return { ok: false, field: 'sessionFirstText', expected: expect.sessionFirstText, actual: actual.firstText }
   }
   if (expect.emptySession === true) {
-    // Review bot #690: requiring BOTH text and article nodes made this useless
-    // on exactly the app it was written for — ChatGPT exposes no per-message
-    // structure, so `articles` is always 0 and any old conversation passed as
-    // "empty". A non-empty composer alone also disproves it.
-    if (actual.articles > 0) {
-      return { ok: false, field: 'emptySession', expected: 'empty', actual: `${actual.articles} messages` }
+    // Review bot #690 read this against `articles`, which is always 0 on
+    // ChatGPT — so every old conversation passed as "empty". `messages` counts
+    // the per-message headings instead, which BOTH apps publish, so the
+    // question is now answerable honestly rather than by a threshold guess.
+    if (actual.messages > 0) {
+      return { ok: false, field: 'emptySession', expected: 'empty', actual: `${actual.messages} messages` }
     }
     if (!actual.composerEmpty) {
       return { ok: false, field: 'emptySession', expected: 'empty', actual: 'composer has text' }
-    }
-    // Without article structure there is no honest way to count messages from
-    // static text alone (a fresh chat still shows suggestion chips). Rather than
-    // guess a threshold and bless the wrong chat, this REFUSES and says what to
-    // send instead — the identity `ui_new_chat` returned is exact.
-    if (!hintsFor(actual.bundleId ?? '').mirror && actual.textCount > 0 && !expect.sessionFirstText) {
-      return {
-        ok: false,
-        field: 'emptySession',
-        expected: 'empty (unverifiable on this app)',
-        actual: 'sessionFirstText দিয়ে পাঠান — এই অ্যাপে শুধু "খালি" দিয়ে নিশ্চিত হওয়া যায় না',
-      }
     }
   }
   return { ok: true }
@@ -1258,7 +1282,7 @@ async function uiNewChat(params, cmd) {
   // type into the old thread believing it opened a new one.
   const identityChanged = !sameText(before.windowTitle, after.windowTitle)
     || !sameText(before.firstText, after.firstText)
-    || (before.articles > 0 && after.articles === 0)
+    || (before.messages > 0 && after.messages === 0)
   if (!identityChanged || !after.composerEmpty) {
     return refusal({
       code: 'new_chat_not_verified',
