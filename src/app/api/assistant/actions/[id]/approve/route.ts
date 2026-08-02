@@ -1106,6 +1106,8 @@ async function runApprove(
       replace?: boolean | null
       scrollAmount?: number | null
       deviceId?: string
+      /** P0-3 Session Guard: which chat this act belongs to (see mac-ui-tools). */
+      expect?: Record<string, unknown> | null
     }
     const uiAction = String(p.uiAction ?? '')
     const verdict = classifyUiAction({
@@ -1182,6 +1184,10 @@ async function runApprove(
           // (Codex P2).
           replace: p.replace === true ? true : null,
           scrollAmount: p.scrollAmount ?? null,
+          // P0-3: WITHOUT this the guard was dead on the path that matters —
+          // every act Boss actually approves comes through here, and a card
+          // approved minutes later is exactly when he has switched chats.
+          expect: p.expect ?? null,
           approved: true,
         },
         policyLevel: 'amber',
@@ -1206,19 +1212,50 @@ async function runApprove(
     // The daemon may defer on owner_active and retry, so give it headroom.
     const outcome = await awaitMacResult(commandId, 100_000)
     const uiTail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+
+    // P0-5 — "done" has to be SHOWN. The daemon returns the field's real
+    // contents, the press the app acknowledged, the session after a new chat;
+    // until now nothing read any of it, so the exit status was the whole story
+    // and the head narrated success from there (audit C.6). The verdict below
+    // separates "I did it and checked" from "I tried and could not confirm" —
+    // Boss can act on either, but never on the second dressed as the first.
+    const { verifyUiOutcome, isVerifiableUiAction } = await import('@/agent/lib/mac-agent/ui-postcondition')
+    const check = isVerifiableUiAction(uiAction) && !outcome.timedOut
+      ? verifyUiOutcome({ uiAction, text: p.text, elementLabel: p.elementLabel, stdout: outcome.stdout, status: outcome.status })
+      : null
+    if (check) {
+      const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
+      void logToolEvent({
+        surface: 'owner',
+        toolName: 'drive_mac_app',
+        phase: 'proof',
+        success: check.verdict !== 'failed',
+        verified: check.verdict === 'verified',
+        conversationId: resolveConversationId(action),
+        errorCode: check.verdict === 'verified' ? null : check.verdict,
+        detail: { uiAction, verdict: check.verdict, evidence: check.evidence, commandId },
+      })
+    }
+
     await appendConversationNote(
       db,
       action,
       outcome.timedOut
         ? `✅ অনুমোদিত — কাজটা এখনো চলছে (id: ${commandId})। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
         : outcome.status === 'done'
-          ? `✅ অনুমোদিত ও করা হয়েছে।\n\n\`\`\`\n${uiTail}\n\`\`\``
+          ? check && check.verdict !== 'verified'
+            ? `⚠️ কাজটা পাঠানো হয়েছে, কিন্তু ${check.reasonBn}\n\n\`\`\`\n${uiTail}\n\`\`\``
+            : `✅ অনুমোদিত ও করা হয়েছে${check?.reasonBn ? ` — ${check.reasonBn}` : ''}\n\n\`\`\`\n${uiTail}\n\`\`\``
           : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``,
     )
 
     return Response.json({
-      success: outcome.status === 'done',
+      // A postcondition that FAILED is not a success, whatever the exit status
+      // said — otherwise the card reports ✅ for a click that changed nothing.
+      success: outcome.status === 'done' && check?.verdict !== 'failed',
       commandId,
+      verified: check?.verdict ?? null,
+      verificationNote: check?.reasonBn ?? null,
       stdout: outcome.stdout,
       stderr: outcome.stderr,
       stillRunning: outcome.timedOut,
