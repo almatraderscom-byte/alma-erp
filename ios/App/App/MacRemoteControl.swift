@@ -693,6 +693,10 @@ final class TrackpadSurfaceView: UIView {
                 return
             }
             cancelLongPress()
+            // One finger lifting early must not drag the tracked midpoint to
+            // the survivor's position — that alone would exceed the tap
+            // threshold and swallow the right-click.
+            guard all.count >= 2 else { return }
             let now = midpoint(of: all)
             let dx = now.x - lastTwoFingerPoint.x
             let dy = now.y - lastTwoFingerPoint.y
