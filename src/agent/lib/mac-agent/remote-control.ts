@@ -78,10 +78,6 @@ async function writeJson(key: string, value: unknown): Promise<void> {
     .catch(() => {})
 }
 
-async function delKey(key: string): Promise<void> {
-  await kv().delete({ where: { key } }).catch(() => {})
-}
-
 /** Called by the video-token route for every subscriber uid it mints. */
 export async function registerViewUid(deviceId: string, uid: number): Promise<void> {
   const at = new Date().toISOString()
@@ -188,18 +184,45 @@ export async function readControlPin(deviceId: string): Promise<ControlPin | nul
     // A phone that was killed or lost signal never sends the off request, so
     // an expired grant must clean up after itself — otherwise its audit row
     // stays open forever and the next session is appended beneath it
-    // (Codex P2).
-    await delKey(controlPinKey(deviceId))
-    await closeAudit(deviceId, pin.sessionId, 'expired')
+    // (Codex P2). Conditional delete: if someone else already retired this
+    // row and claimed the Mac, leave THEIR claim alone.
+    if (await deleteIfUnchanged(controlPinKey(deviceId), pin)) {
+      await closeAudit(deviceId, pin.sessionId, 'expired')
+    }
     return null
   }
   return pin
 }
 
-export async function revokeControl(deviceId: string, endedBy: string, counts?: { events?: number; drops?: number }): Promise<void> {
+/**
+ * `onlyUid` binds the revocation to the grant the caller means to stop. An
+ * off request that raced a re-arm would otherwise delete the NEWER grant,
+ * leaving the phone armed while the daemon drops everything it sends
+ * (Codex P2).
+ */
+export async function revokeControl(
+  deviceId: string,
+  endedBy: string,
+  counts?: { events?: number; drops?: number },
+  onlyUid?: number,
+): Promise<void> {
   const pin = await readJson<ControlPin>(controlPinKey(deviceId))
-  await delKey(controlPinKey(deviceId))
-  if (pin) await closeAudit(deviceId, pin.sessionId, endedBy, counts)
+  if (!pin) return
+  if (typeof onlyUid === 'number' && pin.uid !== onlyUid) return
+  await deleteIfUnchanged(controlPinKey(deviceId), pin)
+  await closeAudit(deviceId, pin.sessionId, endedBy, counts)
+}
+
+/**
+ * Delete only if the row still holds exactly what we read. Two requests that
+ * both saw the same expired pin would otherwise each delete and re-create,
+ * and the second would silently wipe the first's fresh claim (Codex P2).
+ */
+async function deleteIfUnchanged(key: string, expected: ControlPin): Promise<boolean> {
+  const deleted = await kv()
+    .deleteMany({ where: { key, value: JSON.stringify(expected) } })
+    .catch(() => ({ count: 0 }))
+  return (deleted?.count ?? 0) > 0
 }
 
 async function appendAudit(deviceId: string, row: ControlAuditRow): Promise<void> {

@@ -67,7 +67,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.on === false) {
-    await revokeControl(device.id, 'owner')
+    // Naming the uid makes the off request idempotent against a re-arm that
+    // raced it: an unqualified revoke would delete the newer grant.
+    const stopping = Number.isInteger(Number(body.uid)) ? Number(body.uid) : undefined
+    await revokeControl(device.id, 'owner', undefined, stopping)
     return Response.json({ ok: true, on: false })
   }
 

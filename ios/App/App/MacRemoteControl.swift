@@ -384,11 +384,22 @@ final class MacRemoteControlStore {
     func attach(session: MacScreenSession, deviceId: String) {
         self.session = session
         self.deviceId = deviceId
-        session.onConnectionLost = { [weak self] in
+        session.onConnectionLost = { [weak self, weak session] in
             guard let self, self.armed else { return }
             self.armed = false
+            self.dragging = false
             self.statusBn = "সংযোগ কেটে গেছে — কন্ট্রোল বন্ধ।"
             self.renewTask?.cancel()
+            // The heal rejoins with a NEW uid, so the old pin would hold the
+            // Mac for the rest of its lease and answer the next arm with
+            // control_held (Codex P2). Hand it back explicitly.
+            let staleUid = session?.uid
+            Task {
+                _ = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/screen-control-token",
+                    body: ControlTokenRequest(deviceId: deviceId, uid: staleUid, on: false)
+                ) as ControlTokenResponse
+            }
         }
         session.onVideoSize = { [weak self] size in self?.videoSize = size }
         session.onTokenExpiring = { [weak self] in
@@ -428,7 +439,7 @@ final class MacRemoteControlStore {
             // out the owner's other device for the whole lease (Codex P2).
             _ = try? await AlmaAPI.shared.send(
                 "POST", "/api/assistant/mac-agent/screen-control-token",
-                body: ControlTokenRequest(deviceId: deviceId, uid: nil, on: false)
+                body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: false)
             ) as ControlTokenResponse
             statusBn = resp.messageBn ?? "কন্ট্রোল চালু করা গেল না।"
             RemoteHaptics.refused()
@@ -458,7 +469,7 @@ final class MacRemoteControlStore {
         await session.disarmControl(viewToken: viewToken)
         _ = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/screen-control-token",
-            body: ControlTokenRequest(deviceId: deviceId, uid: nil, on: false)
+            body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: false)
         ) as ControlTokenResponse
     }
 
@@ -1259,8 +1270,15 @@ struct MacKeyboardBar: View {
         // UTF-8 bytes a character, so a pasted paragraph would be silently
         // dropped by the Mac's decoder. Split it and only clear the field for
         // the parts that actually left (Codex P2).
-        let sent = control.sendText(payload)
-        if sent { text = "" }
-        sent ? AlmaAgentHaptics.light() : AlmaAgentHaptics.error()
+        text = ""
+        Task {
+            let sent = await control.sendText(payload)
+            if !sent {
+                text = payload // nothing was lost silently — it comes back
+                AlmaAgentHaptics.error()
+            } else {
+                AlmaAgentHaptics.light()
+            }
+        }
     }
 }
