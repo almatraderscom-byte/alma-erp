@@ -27,6 +27,7 @@ import {
 import { ALLOWED_APPS, appLabel, capTree, classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 import { shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 import { requireOnlineMac } from './mac-tools'
+import { normalizeExpectSession } from '@/agent/lib/mac-agent/expect-session'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -97,15 +98,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     if (!appRaw) return { success: false, error: 'app is required' }
     const bundleId = resolveBundleId(appRaw)
 
-    const expectRaw = input.expectSession
-    const expectSession = expectRaw && typeof expectRaw === 'object'
-      ? {
-          ...(expectRaw.windowTitle ? { windowTitle: String(expectRaw.windowTitle) } : {}),
-          ...(expectRaw.sessionTitle ? { sessionTitle: String(expectRaw.sessionTitle) } : {}),
-          ...(expectRaw.sessionFirstText ? { sessionFirstText: String(expectRaw.sessionFirstText) } : {}),
-          ...(expectRaw.emptySession === true ? { emptySession: true } : {}),
-        }
-      : null
+    // See expect-session.ts: the head hands back the DAEMON's session object,
+    // whose field names differ from the expectation's. Normalised in one place
+    // because dropping a field here fails invisibly — the guard still runs and
+    // still says "match".
+    const expectSession = normalizeExpectSession(input.expectSession)
 
     // P0-3 (review bot #690): `new_chat` advertises itself as label-free — the
     // point is that the head does NOT have to discover the button. But the
@@ -198,7 +195,12 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
 
     const params = {
       bundleId,
-      elementLabel: elementLabel ?? null,
+      // For a label-free new_chat the server names the button for the POLICY and
+      // the card only. Forwarding that name would freeze the daemon's candidate
+      // list to it, and the fallbacks exist precisely for builds that renamed
+      // the button (review bot, #690) — so the daemon gets nothing and tries
+      // them all.
+      elementLabel: action === 'ui_new_chat' && !input.elementLabel ? null : (elementLabel ?? null),
       text: text ?? null,
       key: key ?? null,
       focusedLabel: focusedLabel ?? null,
