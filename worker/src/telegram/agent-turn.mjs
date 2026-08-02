@@ -173,7 +173,33 @@ export async function deliverAgentTurn(jobData) {
       else ownerState.conversationId = result.conversationId
     }
 
-    const replyText = result.text || '(কোনো উত্তর নেই)'
+    let replyText = result.text || '(কোনো উত্তর নেই)'
+
+    // L8: the agent embeds app screenshots as ![label](<app>/api/assistant/files?...)
+    // links. That route is owner-session gated, so in Telegram the link is a
+    // login page — send the image as a NATIVE photo instead: fetch it
+    // server-to-server with the same internal bearer used for /chat, strip
+    // the markdown, and let the caption carry the label. Best-effort — a
+    // failed fetch leaves the text (and its link) untouched.
+    const fileImgRe = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+\/api\/assistant\/files\?[^\s)]+)\)/g
+    const fileImages = [...replyText.matchAll(fileImgRe)].slice(0, 4)
+    for (const m of fileImages) {
+      try {
+        const res2 = await fetch(m[2], {
+          headers: { Authorization: `Bearer ${getInternalToken()}` },
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (!res2.ok) continue
+        const buf = Buffer.from(await res2.arrayBuffer())
+        if (!buf.length || buf.length > 9_500_000) continue
+        await bot.telegram.sendPhoto(chatId, { source: buf }, m[1] ? { caption: m[1] } : undefined)
+        replyText = replyText.replace(m[0], m[1] ? `📸 ${m[1]}` : '📸').trim()
+      } catch {
+        /* keep the text with its link */
+      }
+    }
+    if (!replyText) replyText = '📸'
+
     const chunks = splitMessage(replyText)
     for (const chunk of chunks) {
       await bot.telegram.sendMessage(chatId, chunk, { parse_mode: 'Markdown' }).catch(() =>

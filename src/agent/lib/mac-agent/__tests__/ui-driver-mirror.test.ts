@@ -154,6 +154,40 @@ describe('settleNewMessages', () => {
     expect(r.state.emittedCount).toBe(4)
   })
 
+  it('a baselined MID-STREAM message emits its full text once it settles', () => {
+    // Mirror starts while the assistant is replying: the partial last message
+    // is baselined (already counted), the stream finishes, the count never
+    // changes — the completed text must still come out, exactly once.
+    let state = {
+      emittedCount: 2,
+      pendingLast: { who: 'assistant', text: 'partial' },
+      firstText: 'hi',
+      baselineLast: { who: 'assistant', text: 'partial' },
+    }
+    // Grown but not yet settled: held.
+    let r = settleNewMessages(state, [owner('hi'), assistant('partial plus more')])
+    expect(r.emit).toEqual([])
+    // Unchanged read: settled — emit the full text, count stays put.
+    r = settleNewMessages(r.state, [owner('hi'), assistant('partial plus more')])
+    expect(r.emit).toEqual([assistant('partial plus more')])
+    expect(r.state.emittedCount).toBe(2)
+    expect(r.state.baselineLast).toBeNull()
+    // And never again.
+    r = settleNewMessages(r.state, [owner('hi'), assistant('partial plus more')])
+    expect(r.emit).toEqual([])
+  })
+
+  it('a baselined SETTLED message never re-emits', () => {
+    const state = {
+      emittedCount: 2,
+      pendingLast: { who: 'assistant', text: 'done' },
+      firstText: 'hi',
+      baselineLast: { who: 'assistant', text: 'done' },
+    }
+    const r = settleNewMessages(state, [owner('hi'), assistant('done')])
+    expect(r.emit).toEqual([])
+  })
+
   it('tolerates a malformed read', () => {
     expect(settleNewMessages(fresh(), null).emit).toEqual([])
   })

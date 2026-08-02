@@ -138,16 +138,27 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
     const gate = await requireOnlineMac()
     if (!gate.ok) return { success: false, error: gate.error }
 
-    // With several Macs online, "most recently seen" is a guess — and only some
-    // may carry the W3 ui-driver. An honest refusal beats a silent wrong-Mac
-    // action (head ruling on the W4 PR); per-device capability gating replaces
-    // this once the daemon reports capabilities at poll time.
+    // Per-device capability gating: daemons report what they can do at poll
+    // time (X-Agent-Capabilities → device.meta.capabilities), so with several
+    // Macs online we pick the ONE that carries the ui-driver instead of
+    // refusing. Ambiguity (several capable) or a fleet of unreported legacy
+    // daemons still refuses honestly — never guess which Mac to drive.
     const online = (await listDevices()).filter((d) => d.online && d.pairedAt)
-    if (online.length > 1) {
+    const capsOf = (d: (typeof online)[number]) =>
+      Array.isArray((d.meta as Record<string, unknown> | null)?.capabilities)
+        ? ((d.meta as Record<string, unknown>).capabilities as unknown[]).map(String)
+        : null
+    const capable = online.filter((d) => capsOf(d)?.includes('ui_driving'))
+    let targetDeviceId = gate.deviceId
+    if (capable.length === 1) {
+      targetDeviceId = capable[0].id
+    } else if (online.length > 1) {
       return {
         success: false,
         error:
-          'একাধিক Mac এখন অনলাইনে — কোনটার অ্যাপ চালাবো অনুমান করে করবো না, Boss। একটা Mac রেখে (বা অন্যটা ঘুম পাড়িয়ে) আবার বলুন।',
+          capable.length > 1
+            ? 'একাধিক Mac-এই অ্যাপ চালানোর ব্যবস্থা চালু — কোনটায় করবো অনুমান করবো না, Boss। একটা Mac রেখে (বা অন্যটা ঘুম পাড়িয়ে) আবার বলুন।'
+            : 'একাধিক Mac এখন অনলাইনে — কোনটার অ্যাপ চালাবো অনুমান করে করবো না, Boss। একটা Mac রেখে (বা অন্যটা ঘুম পাড়িয়ে) আবার বলুন।',
         data: { refused: true, code: 'multiple_macs_online', online: online.map((d) => d.name) },
       }
     }
@@ -181,7 +192,7 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'mac_ui_action',
-          payload: { uiAction: action, ...params, deviceId: gate.deviceId },
+          payload: { uiAction: action, ...params, deviceId: targetDeviceId },
           summary,
           costEstimate: 0,
           status: 'pending',
@@ -201,7 +212,7 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
 
     // GREEN — a read. Run it now.
     const { id } = await enqueueCommand({
-      deviceId: gate.deviceId,
+      deviceId: targetDeviceId,
       action: action as Parameters<typeof enqueueCommand>[0]['action'],
       params,
       policyLevel: 'green',

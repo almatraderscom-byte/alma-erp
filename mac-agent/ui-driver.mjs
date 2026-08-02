@@ -1113,12 +1113,17 @@ const FROM_EMPTY_HISTORY_THRESHOLD = 3
 export function settleNewMessages(state, messages) {
   const out = []
   if (!Array.isArray(messages) || messages.length === 0) {
-    return { emit: out, state: { emittedCount: 0, pendingLast: null, firstText: null } }
+    return { emit: out, state: { emittedCount: 0, pendingLast: null, firstText: null, baselineLast: null } }
   }
   const first = messages[0]
   const last = messages[messages.length - 1]
 
   const switched = state.firstText != null && state.firstText !== first.text
+  // Known limitation (deliberate): a 1–2 message OLD conversation reopened
+  // from empty is indistinguishable here from a live exchange whose reply
+  // landed within one poll — and muting live conversation is strictly worse
+  // than re-showing two stale messages once. Distinguishing them for real
+  // needs conversation identity (window title), not message counts.
   const emptyToHistory =
     state.firstText == null && messages.length >= FROM_EMPTY_HISTORY_THRESHOLD
   if (switched || emptyToHistory) {
@@ -1129,6 +1134,7 @@ export function settleNewMessages(state, messages) {
         emittedCount: messages.length,
         pendingLast: { who: last.who, text: last.text },
         firstText: first.text,
+        baselineLast: { who: last.who, text: last.text },
       },
     }
   }
@@ -1136,6 +1142,34 @@ export function settleNewMessages(state, messages) {
     // Same conversation, fewer messages visible (virtualized scroll): keep
     // the counter — silence beats duplicates.
     return { emit: out, state: { ...state, firstText: state.firstText ?? first.text } }
+  }
+
+  // The message we baselined as "already on screen" may have been MID-STREAM:
+  // the count never changes as it finishes, so without this check its final
+  // text was never emitted (Codex P2). Once it grows past the baseline and
+  // then settles, emit the full text once; the count stays put because the
+  // message was already counted.
+  if (
+    messages.length === state.emittedCount &&
+    state.baselineLast != null &&
+    last.who === state.baselineLast.who &&
+    last.text !== state.baselineLast.text
+  ) {
+    const settled =
+      state.pendingLast != null &&
+      state.pendingLast.who === last.who &&
+      state.pendingLast.text === last.text
+    if (settled) {
+      out.push(last)
+      return {
+        emit: out,
+        state: { emittedCount: state.emittedCount, pendingLast: null, firstText: first.text, baselineLast: null },
+      }
+    }
+    return {
+      emit: out,
+      state: { ...state, pendingLast: { who: last.who, text: last.text }, firstText: first.text },
+    }
   }
 
   for (let i = state.emittedCount; i < messages.length; i += 1) {
@@ -1169,7 +1203,10 @@ function pushMirrorEvent(m, event) {
 
 function stopMirror(bundleId, reason) {
   const m = mirrors.get(bundleId)
-  if (!m) return false
+  // Idempotent: a manual stop followed by the red-STOP broadcast (or any
+  // double stop before a restart) must not append a second `ended` — each
+  // duplicate re-finished the session in the dock (Codex P2).
+  if (!m || m.stopped) return false
   clearInterval(m.timer)
   m.timer = null
   m.stopped = true
@@ -1202,12 +1239,13 @@ async function mirrorTick(m) {
     }
     m.failures = 0
     const { emit, state } = settleNewMessages(
-      { emittedCount: m.emittedCount, pendingLast: m.pendingLast, firstText: m.firstText },
+      { emittedCount: m.emittedCount, pendingLast: m.pendingLast, firstText: m.firstText, baselineLast: m.baselineLast },
       res.messages ?? [],
     )
     m.emittedCount = state.emittedCount
     m.pendingLast = state.pendingLast
     m.firstText = state.firstText
+    m.baselineLast = state.baselineLast ?? null
     for (const msg of emit) {
       // Same kinds the CLI transcript uses — 'sent' is the owner's side,
       // 'text' the assistant's — so the docks need zero render changes.
@@ -1273,6 +1311,7 @@ async function appMirror(params) {
     emittedCount: 0,
     pendingLast: null,
     firstText: null,
+    baselineLast: null,
     failures: 0,
     busy: false,
     stopped: false,
@@ -1288,6 +1327,9 @@ async function appMirror(params) {
   m.emittedCount = (first.messages ?? []).length
   const lastMsg = (first.messages ?? [])[m.emittedCount - 1] ?? null
   m.pendingLast = lastMsg ? { who: lastMsg.who, text: lastMsg.text } : null
+  // Remember what the baselined last message SAID: if it was mid-stream, its
+  // growth past this text is genuinely new content (see settleNewMessages).
+  m.baselineLast = lastMsg ? { who: lastMsg.who, text: lastMsg.text } : null
   m.firstText = (first.messages ?? [])[0]?.text ?? null
 
   pushMirrorEvent(m, { kind: 'started', model: null, cliSessionId: null })
