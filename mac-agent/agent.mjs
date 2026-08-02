@@ -357,6 +357,9 @@ let lastBeatFrames = 0
 // control by construction.
 let controlGrant = null // { uid, sessionId, expiresAt }
 let controlCounts = { sessionId: null, events: 0, drops: 0 }
+/// The audit row wants a running total, not a per-frame write: counters change
+/// on every tap, and the frame loop posts ~1.7 times a second.
+let controlCountsSentAt = 0
 
 /** Write one control line to the broadcaster's stdin (no respawn — L9 trap 2). */
 function writeControlLine(child, line) {
@@ -568,12 +571,19 @@ function startScreenStream(token, maxSeconds) {
             video: videoActive,
             displays: videoDisplayCount,
             displayIndex: videoDisplayIndex,
-            controlSessionId: controlCounts.sessionId ?? undefined,
-            controlEvents: controlCounts.sessionId ? controlCounts.events : undefined,
-            controlDrops: controlCounts.sessionId ? controlCounts.drops : undefined,
+            ...(controlCounts.sessionId && Date.now() - controlCountsSentAt > 5_000
+              ? {
+                  controlSessionId: controlCounts.sessionId,
+                  controlEvents: controlCounts.events,
+                  controlDrops: controlCounts.drops,
+                }
+              : {}),
           },
           timeoutMs: 10_000,
         }).catch(() => null)
+        if (controlCounts.sessionId && Date.now() - controlCountsSentAt > 5_000) {
+          controlCountsSentAt = Date.now()
+        }
         // The same response carries the owner's control switch (RC-1).
         if (res?.json) applyControlGrant(res.json.control ?? null)
         // The frames response doubles as the STOP channel — the command queue

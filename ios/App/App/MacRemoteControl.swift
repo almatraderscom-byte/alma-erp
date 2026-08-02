@@ -324,10 +324,10 @@ final class MacRemoteControlStore {
     /// Native Mac video size, for mapping a touch onto the display.
     var videoSize: CGSize = .zero
 
-    private var deviceId: String?
-    private weak var session: MacScreenSession?
-    private var renewTask: Task<Void, Never>?
-    private var lastTouchAt = Date()
+    @ObservationIgnored private var deviceId: String?
+    @ObservationIgnored private weak var session: MacScreenSession?
+    @ObservationIgnored private var renewTask: Task<Void, Never>?
+    @ObservationIgnored private var lastTouchAt = Date()
     /// The lease the server hands out is 120s; the phone renews well inside it.
     private let renewEvery: TimeInterval = 45
     /// Cost guard: an armed-but-untouched control session stops renewing, so
@@ -423,10 +423,19 @@ final class MacRemoteControlStore {
             return
         }
         // The lease is renewed server-side by the same call; the Agora token
-        // only needs replacing as it nears expiry.
+        // only needs replacing as it nears expiry. Restate the WHOLE option
+        // set rather than just the token — an options object carrying defaults
+        // for everything else is not obviously a no-op for the fields it does
+        // not mention, and a silent role flip mid-session would be ugly to
+        // diagnose.
         if let token = resp.token, let engine = session.engine, let conn = session.connection {
             let options = AgoraRtcChannelMediaOptions()
             options.token = token
+            options.clientRoleType = .broadcaster
+            options.publishCameraTrack = false
+            options.publishMicrophoneTrack = false
+            options.autoSubscribeVideo = true
+            options.autoSubscribeAudio = false
             _ = engine.updateChannelEx(with: options, connection: conn)
         }
     }
@@ -440,6 +449,11 @@ final class MacRemoteControlStore {
             body: VideoTokenRequest(deviceId: deviceId, uid: session.uid)) else { return }
         let options = AgoraRtcChannelMediaOptions()
         options.token = resp.token
+        options.clientRoleType = .audience
+        options.publishCameraTrack = false
+        options.publishMicrophoneTrack = false
+        options.autoSubscribeVideo = true
+        options.autoSubscribeAudio = false
         _ = engine.updateChannelEx(with: options, connection: conn)
     }
 
@@ -848,7 +862,11 @@ struct MacScreenStage: UIViewRepresentable {
         // always the plain 1:1 view the owner expects.
         if !direct, context.coordinator.scale != 1 {
             context.coordinator.resetZoom(animated: true)
-            store.zoom = 1
+            // Deferred: writing observable state inside updateUIView is a
+            // write during the view-update pass, which SwiftUI answers with
+            // either a warning or another update.
+            let store = store
+            DispatchQueue.main.async { store.zoom = 1 }
         }
     }
 
