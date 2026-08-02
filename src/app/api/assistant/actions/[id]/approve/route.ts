@@ -3206,6 +3206,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: { id: string } },
 ) {
+  // P0-2: the clock Boss experiences starts at his TAP, not after the workflow
+  // guard and the note. Captured first thing, carried into the trace.
+  const approveReceivedAt = new Date()
   // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
@@ -3221,7 +3224,7 @@ export async function POST(
     }
   } catch { /* fail-open */ }
 
-  const progress = await beginApprovalProgress(ctx.params.id)
+  const progress = await beginApprovalProgress(ctx.params.id, approveReceivedAt)
   const res = await runApprove(req, ctx)
   // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
   // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
@@ -3259,7 +3262,11 @@ export async function POST(
  * turn-status.ts is the crash backstop. Best-effort: an approval must never fail
  * because the progress note couldn't be written.
  */
-async function beginApprovalProgress(actionId: string): Promise<{ turnId: string } | null> {
+async function beginApprovalProgress(
+  actionId: string,
+  /** When Boss's tap actually reached this route — see traceTurnStage. */
+  receivedAt: Date = new Date(),
+): Promise<{ turnId: string } | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
@@ -3286,6 +3293,7 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
           ? `কলের অনুমোদন পেলাম Boss${summaryLine ? ` — "${summaryLine}"` : ''}। এখন ডায়াল করছি; রিং, উত্তর এবং terminal report আলাদা করে track করব।`
           : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
     )
+    const ackAt = new Date()
     const { createTurn } = await import('@/agent/lib/turn-status')
     const turnId = await createTurn(conversationId)
     if (!turnId) return null
@@ -3293,9 +3301,13 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
     // P0-2: the clock Boss experiences starts at his tap. Both stamps land here
     // because the ack note is written just above — the gap between them is the
     // only part of the wait he currently sees working.
+    // The stamps are written here (the turn row exists only now) but they
+    // describe EARLIER moments: the tap, and the note written just above. Using
+    // the write time would hide the lookup + insert — the first slice of the
+    // very wait this trace measures (review bot, #690).
     const { traceTurnStage } = await import('@/agent/lib/turn-stage-trace')
-    await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined)
-    await traceTurnStage(turnId, 'ack_posted')
+    await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined, receivedAt)
+    await traceTurnStage(turnId, 'ack_posted', undefined, ackAt)
 
     if (isAsync) {
       // The async completion callback owns this visible turn.

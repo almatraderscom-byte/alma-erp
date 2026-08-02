@@ -55,8 +55,30 @@ describe('sessionMatches', () => {
   })
 
   it('accepts an empty-session expectation against a genuinely empty chat', () => {
-    const fresh = { ...live, firstText: '', textCount: 3, articles: 0 }
+    const fresh = { ...live, firstText: '', textCount: 3, articles: 0, bundleId: 'com.anthropic.claudefordesktop' }
     expect(sessionMatches({ emptySession: true }, fresh).ok).toBe(true)
+  })
+
+  // Review bot #690: requiring BOTH text and article nodes made the check
+  // useless on the app it was written for — ChatGPT has no per-message
+  // structure, so every old conversation passed as "empty".
+  it('a written-in composer alone disproves an empty session', () => {
+    const v = sessionMatches({ emptySession: true }, { ...live, articles: 0, composerEmpty: false })
+    expect(v.ok).toBe(false)
+    expect(v.actual).toContain('composer')
+  })
+
+  it('refuses instead of guessing on an app with no message structure', () => {
+    const chatgpt = { ...live, articles: 0, bundleId: 'com.openai.codex', textCount: 40 }
+    const v = sessionMatches({ emptySession: true }, chatgpt)
+    expect(v.ok).toBe(false)
+    expect(v.actual).toContain('sessionFirstText')
+  })
+
+  it('…but a stated sessionFirstText settles it, so the normal new_chat flow works', () => {
+    const chatgpt = { ...live, articles: 0, bundleId: 'com.openai.codex', textCount: 40 }
+    const v = sessionMatches({ emptySession: true, sessionFirstText: live.firstText }, chatgpt)
+    expect(v.ok).toBe(true)
   })
 
   it('checks the window title independently of the conversation title', () => {

@@ -161,6 +161,12 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
    * routed again — see head-pin.ts.
    */
   continuation?: boolean
+  /**
+   * This turn's model is a ONE-TURN override, not a decision about the job —
+   * today only the declined-upgrade fallback. Such a model must never become
+   * the task pin (review bot, #690).
+   */
+  ephemeralModel?: boolean
 }
 
 /**
@@ -3952,13 +3958,6 @@ export async function* runOwnerTurn(
     }
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
 
-  // P0-1: the head this job runs on, written AFTER both redirects above so the
-  // pin always names a model that actually ran. Fire-and-forget — a failed write
-  // costs one re-routed turn, never a wrong one. Re-stamping a still-live
-  // identical pin is a no-op inside rememberHeadPin: the expiry is absolute, so
-  // a long chat ages back into per-message routing instead of holding the heavy
-  // head forever.
-  void rememberHeadPin(conversationId, decision).catch(() => {})
 
   // P0-4: capture a correction the moment it arrives, so it governs THIS turn
   // and every later one — not just the transcript. Narrow detection by design
@@ -4046,6 +4045,21 @@ export async function* runOwnerTurn(
       }
       return
     }
+  }
+
+  // P0-1: the head this job runs on. Written HERE — not at routing time — for
+  // two reasons the review bot found (#690):
+  //   - a decision that never RAN must not be pinned. Above this line the turn
+  //     can still stop at the model-upgrade gate; pinning first meant an
+  //     unapproved premium model became the job's head and re-presented its own
+  //     gate on the next routine message.
+  //   - a one-turn override is not a job decision. When Boss DECLINES an
+  //     upgrade the route passes the cheap fallback as an explicit modelId for
+  //     that turn alone; pinning it would have parked the whole job on the
+  //     cheap head at the top-ranked 'explicit' tier until expiry.
+  // Fire-and-forget: a failed write costs one re-routed turn, never a wrong one.
+  if (!options.ephemeralModel) {
+    void rememberHeadPin(conversationId, decision).catch(() => {})
   }
 
   // Tell the UI which model is answering so it can show the matching loading

@@ -107,7 +107,18 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
         }
       : null
 
-    const elementLabel = input.elementLabel ? String(input.elementLabel) : undefined
+    // P0-3 (review bot #690): `new_chat` advertises itself as label-free — the
+    // point is that the head does NOT have to discover the button. But the
+    // policy judges it exactly like a click, and a click with no label fails
+    // CLOSED, so a schema-following call could never even reach a card. The
+    // server names the button instead: the card still shows Boss a real label,
+    // and the daemon keeps its own candidate list for the apps that renamed it.
+    const DEFAULT_NEW_CHAT_LABEL = 'New chat'
+    const elementLabel = input.elementLabel
+      ? String(input.elementLabel)
+      : action === 'ui_new_chat'
+        ? DEFAULT_NEW_CHAT_LABEL
+        : undefined
     const text = input.text !== undefined ? String(input.text) : undefined
     const key = input.key ? String(input.key) : undefined
     const focusedLabel = input.focusedLabel ? String(input.focusedLabel) : undefined

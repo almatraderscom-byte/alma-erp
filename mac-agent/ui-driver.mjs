@@ -1037,6 +1037,7 @@ function sessionIdentity(res, bundleId) {
   const composerValue = String(res.composerValue ?? '').trim()
   const isPlaceholder = h.placeholders?.some((p) => p === composerValue) ?? false
   return {
+    bundleId,
     windowTitle: String(res.windowTitle ?? ''),
     firstText: String(res.firstText ?? ''),
     textCount: Number(res.textCount ?? 0),
@@ -1068,8 +1069,29 @@ export function sessionMatches(expect, actual) {
   if (expect.sessionFirstText && !sameText(expect.sessionFirstText, actual.firstText)) {
     return { ok: false, field: 'sessionFirstText', expected: expect.sessionFirstText, actual: actual.firstText }
   }
-  if (expect.emptySession === true && actual.textCount > 0 && actual.articles > 0) {
-    return { ok: false, field: 'emptySession', expected: 'empty', actual: `${actual.articles} messages` }
+  if (expect.emptySession === true) {
+    // Review bot #690: requiring BOTH text and article nodes made this useless
+    // on exactly the app it was written for — ChatGPT exposes no per-message
+    // structure, so `articles` is always 0 and any old conversation passed as
+    // "empty". A non-empty composer alone also disproves it.
+    if (actual.articles > 0) {
+      return { ok: false, field: 'emptySession', expected: 'empty', actual: `${actual.articles} messages` }
+    }
+    if (!actual.composerEmpty) {
+      return { ok: false, field: 'emptySession', expected: 'empty', actual: 'composer has text' }
+    }
+    // Without article structure there is no honest way to count messages from
+    // static text alone (a fresh chat still shows suggestion chips). Rather than
+    // guess a threshold and bless the wrong chat, this REFUSES and says what to
+    // send instead — the identity `ui_new_chat` returned is exact.
+    if (!hintsFor(actual.bundleId ?? '').mirror && actual.textCount > 0 && !expect.sessionFirstText) {
+      return {
+        ok: false,
+        field: 'emptySession',
+        expected: 'empty (unverifiable on this app)',
+        actual: 'sessionFirstText দিয়ে পাঠান — এই অ্যাপে শুধু "খালি" দিয়ে নিশ্চিত হওয়া যায় না',
+      }
+    }
   }
   return { ok: true }
 }

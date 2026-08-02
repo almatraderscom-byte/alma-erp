@@ -56,14 +56,24 @@ export async function traceTurnStage(
   turnId: string | null | undefined,
   stage: TurnStage,
   detail?: string,
+  /**
+   * When the stamp is written LATER than the moment it describes — the approve
+   * route records the tap only after the lookup and the note are done, and that
+   * initial slice is part of the wait being measured (review bot, #690).
+   */
+  at: Date = new Date(),
 ): Promise<void> {
   if (!turnId) return
-  const entry: TurnStageEntry = { stage, at: new Date().toISOString(), ...(detail ? { detail } : {}) }
+  const entry: TurnStageEntry = { stage, at: at.toISOString(), ...(detail ? { detail } : {}) }
   try {
+    // agent_turns.id is TEXT, not uuid. Casting the parameter made every append
+    // throw `operator does not exist: text = uuid` — swallowed by the catch
+    // below, so the instrumentation would have shipped silently dead (review
+    // bot, #690). No cast: text = text.
     await prisma.$executeRaw`
       UPDATE agent_turns
       SET stage_trace = COALESCE(stage_trace, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb
-      WHERE id = ${turnId}::uuid
+      WHERE id = ${turnId}
     `
   } catch (err) {
     console.warn('[turn-stage-trace] stamp failed:', err instanceof Error ? err.message : err)
