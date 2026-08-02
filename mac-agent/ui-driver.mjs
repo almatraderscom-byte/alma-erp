@@ -1172,6 +1172,24 @@ export function settleNewMessages(state, messages) {
     }
   }
 
+  // The baselined mid-stream message can also finish WITH a later message
+  // already appended (owner replied before the next poll) — the count grows,
+  // the equal-count branch above never fires, and the completed text would be
+  // permanently skipped (Codex P2). A message after it settles it by
+  // definition; it was already counted, so it must not advance the count.
+  let alreadyCounted = 0
+  if (state.baselineLast != null && messages.length > state.emittedCount && state.emittedCount > 0) {
+    const baselined = messages[state.emittedCount - 1]
+    if (
+      baselined &&
+      baselined.who === state.baselineLast.who &&
+      baselined.text !== state.baselineLast.text
+    ) {
+      out.push(baselined)
+      alreadyCounted = 1
+    }
+  }
+
   for (let i = state.emittedCount; i < messages.length; i += 1) {
     const isLast = i === messages.length - 1
     if (!isLast) {
@@ -1187,10 +1205,11 @@ export function settleNewMessages(state, messages) {
   return {
     emit: out,
     state: {
-      emittedCount: state.emittedCount + out.length,
+      emittedCount: state.emittedCount + (out.length - alreadyCounted),
       pendingLast:
         out.length > 0 && out[out.length - 1] === last ? null : { who: last.who, text: last.text },
       firstText: first.text,
+      baselineLast: null,
     },
   }
 }

@@ -562,11 +562,15 @@ const AGENT_CAPABILITIES = 'ui_driving,screen_stream,app_mirror,cli_sessions'
 let capsReported = false
 
 async function pollOnce(token) {
+  const sendingCaps = !capsReported
   const res = await api('/api/assistant/mac-agent/poll', {
     token,
-    headers: capsReported ? undefined : { 'X-Agent-Capabilities': AGENT_CAPABILITIES },
+    headers: sendingCaps ? { 'X-Agent-Capabilities': AGENT_CAPABILITIES } : undefined,
   })
-  if (res.ok) capsReported = true
+  // Only an explicit ack stops the report — a server whose meta write failed
+  // answers capsAck:false (or, pre-upgrade, nothing) and gets the header
+  // again next poll.
+  if (res.ok && sendingCaps && res.json?.capsAck === true) capsReported = true
   if (res.status === 401) throw new Error('unauthorized — pair again')
   if (!res.ok) throw new Error(`poll failed: ${res.status}`)
   return res.json ?? {}

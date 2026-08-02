@@ -185,7 +185,12 @@ export async function deliverAgentTurn(jobData) {
     const fileImages = [...replyText.matchAll(fileImgRe)].slice(0, 4)
     for (const m of fileImages) {
       try {
-        const res2 = await fetch(m[2], {
+        // The reply text is MODEL-GENERATED: a crafted ![x](https://attacker/…)
+        // must never receive our internal bearer. Only the app's own origin
+        // gets the authenticated fetch (Codex P1).
+        const target = new URL(m[2])
+        if (target.origin !== new URL(getAppUrl()).origin) continue
+        const res2 = await fetch(target, {
           headers: { Authorization: `Bearer ${getInternalToken()}` },
           signal: AbortSignal.timeout(20_000),
         })

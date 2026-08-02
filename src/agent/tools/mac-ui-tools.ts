@@ -150,8 +150,12 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
         : null
     const capable = online.filter((d) => capsOf(d)?.includes('ui_driving'))
     let targetDeviceId = gate.deviceId
+    let targetDeviceName = gate.deviceName
     if (capable.length === 1) {
+      // Name follows the id — telling the owner one Mac while queueing on
+      // another would make the approval card lie (Codex P2).
       targetDeviceId = capable[0].id
+      targetDeviceName = capable[0].name
     } else if (online.length > 1) {
       return {
         success: false,
@@ -205,7 +209,7 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
           pendingActionId: card.id as string,
           policy: 'amber',
           summary,
-          message: `এটা আপনার অনুমতি ছাড়া করবো না — ${gate.deviceName}-এ করার জন্য একটা approval card পাঠিয়েছি, Boss।`,
+          message: `এটা আপনার অনুমতি ছাড়া করবো না — ${targetDeviceName}-এ করার জন্য একটা approval card পাঠিয়েছি, Boss।`,
         },
       }
     }
@@ -277,7 +281,7 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
             success: true,
             data: {
               imageUrl,
-              device: gate.deviceName,
+              device: targetDeviceName,
               app: appLabel(bundleId),
               instruction:
                 'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও, এক লাইনে: ![' + appLabel(bundleId) + '](imageUrl)। ' +
@@ -297,14 +301,14 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       // No data URI at all (unexpected daemon payload) — pass the bounded text.
       return {
         success: true,
-        data: { screenshot: capTree(uri), device: gate.deviceName, app: appLabel(bundleId) },
+        data: { screenshot: capTree(uri), device: targetDeviceName, app: appLabel(bundleId) },
       }
     }
     return {
       success: true,
       data: {
         commandId: id,
-        device: gate.deviceName,
+        device: targetDeviceName,
         app: appLabel(bundleId),
         output: capTree(outcome.stdout ?? ''),
       },

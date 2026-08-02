@@ -33,29 +33,40 @@ export async function GET(req: NextRequest) {
   // device.meta so tools can pick the RIGHT Mac when several are online. The
   // pair-time meta goes stale forever; this refreshes on every restart.
   const caps = req.headers.get('x-agent-capabilities')
+  // Acknowledged explicitly: the daemon keeps sending the header until it
+  // sees capsAck, so a transient write failure here does not leave the
+  // device capability-less until its next restart (Codex P2).
+  let capsAck: boolean | undefined
   if (caps !== null) {
-    const capabilities = caps.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 20)
-    await prisma.macAgentDevice
-      .update({
+    try {
+      const capabilities = caps.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 20)
+      const existing = (
+        await prisma.macAgentDevice.findUnique({ where: { id: device.id }, select: { meta: true } })
+      )?.meta as object | null
+      await prisma.macAgentDevice.update({
         where: { id: device.id },
         data: {
-          meta: {
-            ...(((await prisma.macAgentDevice.findUnique({ where: { id: device.id }, select: { meta: true } }))
-              ?.meta as object | null) ?? {}),
-            capabilities,
-            capabilitiesAt: new Date().toISOString(),
-          },
+          meta: { ...(existing ?? {}), capabilities, capabilitiesAt: new Date().toISOString() },
         },
       })
-      .catch(() => {})
+      capsAck = true
+    } catch {
+      capsAck = false
+    }
   }
 
   // Kill-switch OFF ⇒ the daemon stays connected (so the owner sees it online and
   // can flip the switch back) but never receives work.
   if (!(await isMacAgentEnabled())) {
-    return Response.json({ command: null, paused: true }, { headers: NO_STORE_HEADERS })
+    return Response.json(
+      { command: null, paused: true, ...(capsAck !== undefined ? { capsAck } : {}) },
+      { headers: NO_STORE_HEADERS },
+    )
   }
 
   const command = await claimNextCommand(device.id)
-  return Response.json({ command }, { headers: NO_STORE_HEADERS })
+  return Response.json(
+    { command, ...(capsAck !== undefined ? { capsAck } : {}) },
+    { headers: NO_STORE_HEADERS },
+  )
 }
