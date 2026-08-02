@@ -100,8 +100,19 @@ export async function isKnownViewUid(deviceId: string, uid: number): Promise<boo
  * Grant (or renew) control for one uid. Renewing keeps the same sessionId so
  * the audit row stays a single session instead of one row per 45s heartbeat.
  */
+export class ControlHeldByAnother extends Error {
+  constructor(public readonly heldByUid: number) {
+    super('control_held')
+  }
+}
+
 export async function grantControl(deviceId: string, uid: number): Promise<ControlPin> {
   const existing = await readControlPin(deviceId)
+  // Two owner devices must not fight over one Mac: without this, the second
+  // phone silently steals the pin, the first keeps showing "armed", and each
+  // 45s renewal flips it back while both see their taps dropped as
+  // uid_mismatch (Codex P2). Whoever holds a FRESH pin keeps it.
+  if (existing && existing.uid !== uid) throw new ControlHeldByAnother(existing.uid)
   const sessionId = existing && existing.uid === uid ? existing.sessionId : randomUUID()
   const now = new Date()
   const pin: ControlPin = {
@@ -123,7 +134,15 @@ export async function grantControl(deviceId: string, uid: number): Promise<Contr
 export async function readControlPin(deviceId: string): Promise<ControlPin | null> {
   const pin = await readJson<ControlPin>(controlPinKey(deviceId))
   if (!pin || typeof pin.uid !== 'number') return null
-  if (Date.parse(pin.expiresAt) <= Date.now()) return null
+  if (Date.parse(pin.expiresAt) <= Date.now()) {
+    // A phone that was killed or lost signal never sends the off request, so
+    // an expired grant must clean up after itself — otherwise its audit row
+    // stays open forever and the next session is appended beneath it
+    // (Codex P2).
+    await delKey(controlPinKey(deviceId))
+    await closeAudit(deviceId, pin.sessionId, 'expired')
+    return null
+  }
   return pin
 }
 

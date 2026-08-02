@@ -240,22 +240,28 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
-        var motion: Int = -1
-        let motionConfig = AgoraDataStreamConfig()
-        motionConfig.ordered = false // a late move is worse than a lost one
-        motionConfig.syncWithAudio = false
-        guard engine.createDataStreamEx(&motion, config: motionConfig, connection: conn) == 0 else {
-            return false
+        // Create the streams ONCE per join and keep them across arm/disarm.
+        // Agora keeps created streams for the life of the connection and caps
+        // how many a client may create, so re-creating a pair on every toggle
+        // eventually fails and control can never be armed again (Codex P2).
+        if motionStreamId < 0 || stateStreamId < 0 {
+            var motion: Int = -1
+            let motionConfig = AgoraDataStreamConfig()
+            motionConfig.ordered = false // a late move is worse than a lost one
+            motionConfig.syncWithAudio = false
+            guard engine.createDataStreamEx(&motion, config: motionConfig, connection: conn) == 0 else {
+                return false
+            }
+            var state: Int = -1
+            let stateConfig = AgoraDataStreamConfig()
+            stateConfig.ordered = true // clicks and drag edges must not overtake
+            stateConfig.syncWithAudio = false
+            guard engine.createDataStreamEx(&state, config: stateConfig, connection: conn) == 0 else {
+                return false
+            }
+            motionStreamId = motion
+            stateStreamId = state
         }
-        var state: Int = -1
-        let stateConfig = AgoraDataStreamConfig()
-        stateConfig.ordered = true // clicks and drag edges must not overtake
-        stateConfig.syncWithAudio = false
-        guard engine.createDataStreamEx(&state, config: stateConfig, connection: conn) == 0 else {
-            return false
-        }
-        motionStreamId = motion
-        stateStreamId = state
         controlArmed = true
         return true
     }
@@ -264,9 +270,8 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// SAME uid so the video never blinks.
     @MainActor
     func disarmControl(viewToken: String?) {
+        // Keep the stream IDs: they belong to the JOIN, not to the grant.
         controlArmed = false
-        motionStreamId = -1
-        stateStreamId = -1
         guard let engine, let conn = connection else { return }
         let options = AgoraRtcChannelMediaOptions()
         options.clientRoleType = .audience
@@ -289,6 +294,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         var payload = action
         payload["v"] = 1
         payload["s"] = seq
+        payload["q"] = ordered ? 1 : 0
         payload["t"] = Int(Date().timeIntervalSince1970 * 1000)
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
         return engine.sendStreamMessageEx(stream, data: data, connection: conn) == 0

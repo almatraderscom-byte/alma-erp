@@ -47,6 +47,10 @@ struct ControlMessage {
     }
     let seq: Int64
     let sentAt: Double // epoch milliseconds, phone clock
+    /// Which data stream carried it. The phone sends state-changing verbs on
+    /// an ORDERED stream and motion on an unordered one; their relative
+    /// delivery order is undefined, so each needs its own sequence gate.
+    let lane: Int
     let action: Action
 }
 
@@ -107,7 +111,8 @@ enum ControlDecoder {
             action = .key(name: name, mods: Array(mods))
         default: return nil
         }
-        return ControlMessage(seq: seq, sentAt: sentAt, action: action)
+        let lane = ((obj["q"] as? Int) == 1) ? 1 : 0
+        return ControlMessage(seq: seq, sentAt: sentAt, lane: lane, action: action)
     }
 }
 
@@ -149,7 +154,9 @@ final class ControlGate {
     private var pinnedUid: UInt = 0
     private var expiresAt: TimeInterval = 0
     private var session = ""
-    private var lastSeq: Int64 = -1
+    /// One per lane (0 = motion/unordered, 1 = state/ordered). A single gate
+    /// across both would drop a `dd` that a later move overtook (Codex P1).
+    private var lastSeq: [Int64] = [-1, -1]
     private var lastActivity = Date.distantPast
     private var eventCount = 0
     private var dropCount = 0
@@ -174,7 +181,7 @@ final class ControlGate {
         session = sessionId
         lastActivity = Date()
         if newSession {
-            lastSeq = -1
+            lastSeq = [-1, -1]
             eventCount = 0
             dropCount = 0
         }
@@ -185,7 +192,7 @@ final class ControlGate {
         armedFlag = false
         pinnedUid = 0
         expiresAt = 0
-        lastSeq = -1
+        lastSeq = [-1, -1]
     }
 
     enum Verdict { case accept(ControlMessage), drop(String) }
@@ -209,7 +216,7 @@ final class ControlGate {
             return reject("idle_timeout")
         }
         guard let msg = ControlDecoder.decode(data) else { return reject("malformed") }
-        guard msg.seq > lastSeq else { return reject("stale_seq") }
+        guard msg.seq > lastSeq[msg.lane] else { return reject("stale_seq") }
         guard abs(now * 1000 - msg.sentAt) < Self.maxAgeMs else { return reject("stale_time") }
 
         let allowed: Bool
@@ -221,7 +228,7 @@ final class ControlGate {
         }
         guard allowed else { return reject("rate_limited") }
 
-        lastSeq = msg.seq
+        lastSeq[msg.lane] = msg.seq
         lastActivity = Date()
         eventCount += 1
         return .accept(msg)

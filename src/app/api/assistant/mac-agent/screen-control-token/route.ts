@@ -25,7 +25,8 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
 import {
-  CONTROL_TTL_SEC, grantControl, isKnownViewUid, listControlAudit, revokeControl,
+  CONTROL_TTL_SEC, ControlHeldByAnother, grantControl, isKnownViewUid, listControlAudit,
+  revokeControl,
 } from '@/agent/lib/mac-agent/remote-control'
 
 export const runtime = 'nodejs'
@@ -93,7 +94,21 @@ export async function POST(req: NextRequest) {
     0,               // publishVideo  — denied
     CONTROL_TTL_SEC, // publishDataStream
   )
-  const pin = await grantControl(device.id, uid)
+  let pin
+  try {
+    pin = await grantControl(device.id, uid)
+  } catch (err) {
+    if (err instanceof ControlHeldByAnother) {
+      return Response.json(
+        {
+          error: 'control_held',
+          messageBn: 'আপনার আরেকটি ডিভাইস এখন Mac চালাচ্ছে — সেখানে বন্ধ করে আবার চেষ্টা করুন।',
+        },
+        { status: 409 },
+      )
+    }
+    throw err
+  }
 
   return Response.json({
     ok: true,

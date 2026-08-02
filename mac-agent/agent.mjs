@@ -360,6 +360,11 @@ let controlCounts = { sessionId: null, events: 0, drops: 0 }
 /// The audit row wants a running total, not a per-frame write: counters change
 /// on every tap, and the frame loop posts ~1.7 times a second.
 let controlCountsSentAt = 0
+/// Totals carried across a broadcaster restart that does NOT end the control
+/// session (switching screens). The replacement process counts from zero, so
+/// without this the audit row would lose everything before the switch.
+let controlCountsBase = { events: 0, drops: 0 }
+let controlCountsRaw = { events: 0, drops: 0 }
 
 /** Write one control line to the broadcaster's stdin (no respawn — L9 trap 2). */
 function writeControlLine(child, line) {
@@ -384,7 +389,11 @@ function applyControlGrant(next) {
   if (same) return
   const changedSession = next?.sessionId !== controlGrant?.sessionId
   controlGrant = next ?? null
-  if (changedSession) controlCounts = { sessionId: next?.sessionId ?? null, events: 0, drops: 0 }
+  if (changedSession) {
+    controlCounts = { sessionId: next?.sessionId ?? null, events: 0, drops: 0 }
+    controlCountsBase = { events: 0, drops: 0 }
+    controlCountsRaw = { events: 0, drops: 0 }
+  }
   if (!videoChild) return // nothing to tell yet; the spawn path re-sends
   if (controlGrant) {
     writeControlLine(videoChild, `control on uid=${controlGrant.uid} exp=${controlGrant.expiresAt} sid=${controlGrant.sessionId}`)
@@ -459,10 +468,11 @@ async function startScreenVideo(token) {
         // two numbers ride the next frame POST into the owner's audit row.
         const c = /^ctl events=(\d+) drops=(\d+)/.exec(line)
         if (c && controlGrant) {
+          controlCountsRaw = { events: Number(c[1]), drops: Number(c[2]) }
           controlCounts = {
             sessionId: controlGrant.sessionId,
-            events: Number(c[1]),
-            drops: Number(c[2]),
+            events: controlCountsBase.events + controlCountsRaw.events,
+            drops: controlCountsBase.drops + controlCountsRaw.drops,
           }
         }
         if (line.startsWith('ctl error') || line.startsWith('ctl idle')) log('screen control:', line)
@@ -689,7 +699,16 @@ async function handleCommand(cmd) {
     if (Number.isInteger(requestedDisplay) && requestedDisplay >= 0 && requestedDisplay !== videoDisplayIndex) {
       videoDisplayIndex = requestedDisplay
       if (streamTimer) {
+        // The control SESSION survives a screen switch, so its totals must
+        // too — the replacement broadcaster starts counting from zero.
+        controlCountsBase = {
+          events: controlCountsBase.events + controlCountsRaw.events,
+          drops: controlCountsBase.drops + controlCountsRaw.drops,
+        }
+        controlCountsRaw = { events: 0, drops: 0 }
+        const carriedGrant = controlGrant
         stopScreenVideo()
+        controlGrant = carriedGrant // re-sent to the replacement on spawn
         void startScreenVideo(activeToken)
         log('screen video: switching to display', String(requestedDisplay))
       }
