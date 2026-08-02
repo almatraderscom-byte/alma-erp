@@ -97,3 +97,46 @@ export async function POST(
     return Response.json({ error: 'persist_failed' }, { status: 500 })
   }
 }
+
+/**
+ * Was a queued message ever actually taken up?
+ *
+ * The client needs this after a RELOAD. `/steer` returning 2xx means the row is
+ * persisted, not that any model loop read it — and the chat route's error path
+ * finalizes without the last-moment claim, so a turn that fails right after a
+ * message is accepted leaves that instruction unexecuted (Codex). Treating
+ * acceptance as delivery made those permanently invisible: excluded from
+ * replay, then dropped on the next load.
+ *
+ * Read-only, owner-gated, keyed by the client's own id.
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+
+  const clientMessageId = String(req.nextUrl.searchParams.get('clientMessageId') ?? '').trim()
+  if (!clientMessageId) return Response.json({ error: 'clientMessageId_required' }, { status: 400 })
+
+  const row = await prisma.agentMessage.findUnique({
+    where: { clientRequestId: clientMessageId },
+    select: { id: true, usage: true },
+  })
+  if (!row) return Response.json({ status: 'unknown', turnId: params.id })
+
+  const usage = row.usage && typeof row.usage === 'object' ? row.usage as Record<string, unknown> : {}
+  const steering = usage.steering && typeof usage.steering === 'object'
+    ? usage.steering as Record<string, unknown>
+    : {}
+  return Response.json({
+    status: steering.status === 'consumed' ? 'consumed' : 'queued',
+    messageId: row.id,
+    turnId: params.id,
+  })
+}

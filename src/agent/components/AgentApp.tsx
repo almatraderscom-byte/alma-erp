@@ -27,6 +27,7 @@ import {
   entriesToResend,
   loadOutbox,
   markAttempt as outboxMarkAttempt,
+  applyServerStatus as outboxApplyServerStatus,
   rehydrate as outboxRehydrate,
   removeEntries as outboxRemove,
   saveOutbox,
@@ -1764,9 +1765,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           toast('চলতি কাজটা শেষ হয়ে গেছে — নতুন কাজ শুরু হলে এটা তখন পাঠানো যাবে, নয়তো ছবিটা আবার যোগ করুন')
           return
         }
-        writeOutbox(outboxRemove(steeringOutboxRef.current, [clientMessageId]))
-        setMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId))
-        await handleSendRef.current?.(item.text, [])
+        // Do NOT replay here. The server emits its terminal SSE event before
+        // finalization, so `streaming` can still be true in this window —
+        // `handleSend` would take its steering branch, hit the same stale turn
+        // id, 409 again, and loop (Codex). Leave the entry unaccepted and let
+        // the settle-effect send it as an ordinary turn once the stream closes.
+        writeOutbox(steeringOutboxRef.current.map((e) =>
+          e.clientMessageId === clientMessageId ? { ...e, accepted: false } : e))
+        setDeliveryState([clientMessageId], 'queued')
         return
       }
       throw new Error(`HTTP ${res.status}`)
@@ -1800,11 +1806,32 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // Rehydrate the outbox once, so a reload mid-delivery does not lose anything.
   useEffect(() => {
-    // Accepted entries are dropped here on purpose: the server already has
-    // them, so replaying could run the same instruction twice (Codex round 3).
+    // Everything is restored, then RECONCILED. Dropping accepted entries here
+    // (round 3's fix) traded a double-run for a silent no-run: `/steer`
+    // accepting a row is persistence, not delivery, and a turn that errors
+    // right afterwards never claims it (round 4). So ask the server which it
+    // was: `consumed` drops the entry, `queued` makes it replayable again.
     const restored = outboxRehydrate(loadOutbox(outboxStorageRef.current))
     steeringOutboxRef.current = restored
     saveOutbox(outboxStorageRef.current, restored)
+    void (async () => {
+      for (const item of restored.filter((e) => e.accepted)) {
+        try {
+          const res = await fetch(
+            `/api/assistant/turn/${item.turnId}/steer?clientMessageId=${encodeURIComponent(item.clientMessageId)}`,
+          )
+          if (!res.ok) continue
+          const body = await res.json() as { status?: string }
+          const status = body.status === 'consumed' ? 'consumed'
+            : body.status === 'queued' ? 'queued'
+              : 'unknown'
+          if (status === 'unknown') continue
+          writeOutbox(outboxApplyServerStatus(steeringOutboxRef.current, item.clientMessageId, status))
+        } catch {
+          // Offline: the entry stays exactly as it was, which is the safe state.
+        }
+      }
+    })()
   }, [])
 
   const handleVoiceMessage = useCallback(async (

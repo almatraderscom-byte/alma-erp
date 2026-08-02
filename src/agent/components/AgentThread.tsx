@@ -1743,7 +1743,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       vanishes mid-turn (like Claude's). Gated only on `streaming`
                       (NOT on streamStatus) so a momentary empty label can't make
                       it flicker out; it disappears only when the turn is `done`. */}
-                  {msg.streaming && msg.id === lastStreamingMessageId && (
+                  {/* Exactly one indicator per turn: this one while the streaming
+                      message is still last, the bottom-anchored one below the
+                      list once Boss's own bubble lands under it. Keying this on
+                      "last streaming message" alone rendered BOTH (Codex). */}
+                  {msg.streaming
+                    && msg.id === lastStreamingMessageId
+                    && msg.id === messages[messages.length - 1]?.id && (
                     <div className="mt-3 flex items-center">
                       <AgentThinkingIndicator
                         mode={streamMode ?? 'thinking'}

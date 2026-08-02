@@ -146,12 +146,32 @@ export function entriesToResend(
 }
 
 /**
- * What survives a reload. An accepted entry is dropped: the server has it, the
- * thread will show it from the server copy, and keeping it could only lead to a
- * replay. Everything unsent is kept — that is the whole point of the outbox.
+ * What survives a reload.
+ *
+ * Everything does. Dropping accepted entries was the first attempt and it was
+ * wrong in the other direction (Codex): `/steer` returning 2xx means the row is
+ * PERSISTED, not that any model loop read it, and the chat route's error path
+ * finalizes without the last-moment claim — so a turn that fails right after a
+ * message is accepted leaves that instruction unexecuted and invisible.
+ *
+ * Accepted entries are therefore kept and RECONCILED against the server (see
+ * `/turn/:id/steer` GET): `consumed` drops them, `queued` clears the accepted
+ * flag so the normal resend path can run them once the turn is over. Neither
+ * blind replay nor blind deletion is safe on its own.
  */
 export function rehydrate(entries: SteeringOutboxEntry[]): SteeringOutboxEntry[] {
-  return entries.filter((e) => !e.accepted)
+  return entries
+}
+
+/** Apply a server verdict for one entry. `consumed` → drop, `queued` → replayable. */
+export function applyServerStatus(
+  entries: SteeringOutboxEntry[],
+  clientMessageId: string,
+  status: 'consumed' | 'queued' | 'unknown',
+): SteeringOutboxEntry[] {
+  if (status === 'consumed') return removeEntries(entries, [clientMessageId])
+  return entries.map((e) =>
+    e.clientMessageId === clientMessageId ? { ...e, accepted: false } : e)
 }
 
 /** Exponential-ish backoff, capped — a retry loop must not become a hot loop. */

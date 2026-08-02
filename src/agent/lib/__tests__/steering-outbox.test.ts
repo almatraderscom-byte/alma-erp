@@ -11,6 +11,7 @@ import {
   entriesToResend,
   loadOutbox,
   markAttempt,
+  applyServerStatus,
   rehydrate,
   removeEntries,
   retryDelayMs,
@@ -68,10 +69,25 @@ describe('a reload must not run the same instruction twice', () => {
   // Codex round 3: a client-side turn id only exists for a LIVE stream, so
   // after a refresh every entry looked stranded and got re-sent as a new turn —
   // even one the running turn had already consumed.
-  it('an accepted entry is dropped on rehydrate and never resent', () => {
+  it('an accepted entry is not blindly replayed', () => {
     const list = [entry({ accepted: true }), entry({ clientMessageId: 'c2' })]
-    expect(rehydrate(list).map((e) => e.clientMessageId)).toEqual(['c2'])
     expect(entriesToResend(list, null, 'conv1').map((e) => e.clientMessageId)).toEqual(['c2'])
+  })
+
+  // …but it is not blindly DELETED either (Codex round 4): the server accepting
+  // a row is persistence, not delivery — a turn that errors right afterwards
+  // never claims it. Everything survives the reload and is reconciled.
+  it('keeps every entry across a reload, for reconciliation', () => {
+    const list = [entry({ accepted: true }), entry({ clientMessageId: 'c2' })]
+    expect(rehydrate(list)).toHaveLength(2)
+  })
+
+  it('a consumed verdict drops it; a still-queued verdict makes it replayable', () => {
+    const list = [entry({ accepted: true })]
+    expect(applyServerStatus(list, 'c1', 'consumed')).toEqual([])
+    const requeued = applyServerStatus(list, 'c1', 'queued')
+    expect(requeued[0].accepted).toBe(false)
+    expect(entriesToResend(requeued, null, 'conv1')).toHaveLength(1)
   })
 })
 
