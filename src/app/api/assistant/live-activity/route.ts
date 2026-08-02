@@ -459,6 +459,19 @@ export async function GET(req: NextRequest) {
     if (!screenshotAt || iso > (screenshotAt as string)) screenshotAt = iso
   }
 
+  // L9-B — is true VIDEO flowing for the streaming device? The daemon stamps
+  // KV on every frames POST while its broadcaster heartbeats; a stamp older
+  // than 10s means the broadcaster died and viewers must fall back to frames.
+  let videoDeviceId: string | null = null
+  if (frameMetaRow && Date.now() - frameMetaRow.at.getTime() < 10_000) {
+    const stamp = await db.agentKvSetting
+      .findUnique({ where: { key: `mac_video_active:${frameMetaRow.deviceId}` }, select: { value: true } })
+      .catch(() => null)
+    if (stamp?.value && Date.now() - Date.parse(stamp.value) < 10_000) {
+      videoDeviceId = frameMetaRow.deviceId
+    }
+  }
+
   // Unchanged frame → metadata only; the client keeps the copy it has.
   // (cast: TS narrows screenshotAt to its `null` initializer here because the
   // assignments happen inside the considerShot closure)
@@ -486,6 +499,9 @@ export async function GET(req: NextRequest) {
       sessions,
       screenshot,
       screenshotAt,
+      /** L9-B — non-null while the Agora VIDEO broadcaster is live for this
+       *  device; the dock joins `mac-screen-<id>` via screen-video-token. */
+      videoDeviceId,
     },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )

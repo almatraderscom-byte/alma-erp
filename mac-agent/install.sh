@@ -41,6 +41,14 @@ cp "$SRC_DIR/agent.mjs" "$SRC_DIR/policy.mjs" "$DEST_DIR/"
 # ui-policy.mjs, so shipping one without the other leaves a fresh install
 # silently missing the whole UI-driving feature (Codex on the W3 PR).
 [ -f "$SRC_DIR/ui-driver.mjs" ] && cp "$SRC_DIR/ui-driver.mjs" "$DEST_DIR/"
+
+# L9-B — the VIDEO broadcaster. swift build is skipped when Xcode tools are
+# missing; the daemon then simply stays on the JPEG frame pipe.
+if command -v swift >/dev/null 2>&1; then
+  (cd "$SRC_DIR/ScreenBroadcaster" && swift build -c release >/dev/null 2>&1 \
+    && cp .build/release/ScreenBroadcaster "$DEST_DIR/ScreenBroadcaster" \
+    && echo "ScreenBroadcaster installed") || echo "ScreenBroadcaster build failed — JPEG frames only"
+fi
 [ -f "$SRC_DIR/ui-policy.mjs" ] && cp "$SRC_DIR/ui-policy.mjs" "$DEST_DIR/"
 
 echo "▸ pairing"

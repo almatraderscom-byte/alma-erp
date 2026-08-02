@@ -76,6 +76,8 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/mac-agent/events') return true
   if (pathname === '/api/assistant/mac-agent/frames') return true
   if (pathname === '/api/assistant/mac-agent/status') return true
+  // L9-B: the daemon mints its Agora PUBLISHER token bearer-authenticated.
+  if (pathname === '/api/assistant/mac-agent/screen-video-token') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

@@ -330,15 +330,95 @@ function screenshot() {
 // kill-switch, or on the local PAUSE file — silence is the default state.
 // ---------------------------------------------------------------------------
 
-const STREAM_FRAME_INTERVAL_MS = Number(process.env.ALMA_STREAM_FRAME_MS) || 1_500
+// L9 phase A: 600ms cadence (was 1500) — still a frame pipe, not video, but
+// motion reads as motion. True video (ScreenCaptureKit + Agora) is phase B.
+const STREAM_FRAME_INTERVAL_MS = Number(process.env.ALMA_STREAM_FRAME_MS) || 600
 const STREAM_DEFAULT_SECONDS = 180
 const STREAM_MAX_SECONDS = 300
 
 let streamTimer = null
 let streamDeadline = 0
 let streamBusy = false
+// L9-B: the VIDEO engine — a spawned ScreenBroadcaster (ScreenCaptureKit →
+// Agora). Optional by design: binary missing or token route absent ⇒ the JPEG
+// frame pipe above stays the only channel, nothing breaks.
+let videoChild = null
+let videoActive = false
+// Stop can arrive while the token request is still in flight — the resumed
+// continuation must NOT spawn a capturer nobody will ever kill (Codex P1,
+// same race class as the iOS join). Generation counter: stop bumps it, the
+// continuation compares.
+let videoGeneration = 0
+let lastBeatFrames = 0
+
+async function startScreenVideo(token) {
+  const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
+  if (!existsSync(bin)) return // not built/deployed on this Mac — JPEG only
+  const gen = videoGeneration
+  try {
+    const res = await api('/api/assistant/mac-agent/screen-video-token', {
+      method: 'POST', token, timeoutMs: 10_000,
+    })
+    if (gen !== videoGeneration) return // stopped while we awaited — do not spawn
+    if (!res.ok || !res.json?.token) {
+      log('screen video: no token', String(res.status))
+      return
+    }
+    const { appId, channel, uid, token: rtc } = res.json
+    const child = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    videoChild = child
+    lastBeatFrames = 0
+    child.stdout.on('data', (d) => {
+      // Buffered output from a STOPPED child must not touch the replacement's
+      // liveness state (Codex P2 round 7).
+      if (videoChild !== child) return
+      const line = String(d).trim()
+      if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
+      // Video is live only while the frame count PROGRESSES — cumulative
+      // count stays positive after a freeze (Codex P2 round 6), and frames=0
+      // (failed join) never advertises at all.
+      const m = /^beat frames=(\d+)/.exec(line)
+      if (m) {
+        const n = Number(m[1])
+        videoActive = n > lastBeatFrames
+        lastBeatFrames = n
+      }
+    })
+    child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
+    child.on('exit', (code) => {
+      log('screen video exited', String(code))
+      // A stale exit (stop → fast restart) must not orphan the REPLACEMENT
+      // by clearing its reference (Codex P1).
+      if (videoChild === child) {
+        videoChild = null
+        videoActive = false
+      }
+    })
+    log('screen video: broadcaster spawned →', channel)
+  } catch (err) {
+    log('screen video failed:', String(err?.message ?? err))
+    // A stale failure (stop → fast restart while our token request was in
+    // flight) must not clear the REPLACEMENT's state (Codex P1).
+    if (gen === videoGeneration) {
+      videoChild = null
+      videoActive = false
+    }
+  }
+}
+
+function stopScreenVideo() {
+  videoGeneration += 1
+  if (videoChild) {
+    try { videoChild.kill('SIGTERM') } catch { /* already gone */ }
+    videoChild = null
+  }
+  videoActive = false
+}
 
 function stopScreenStream(reason) {
+  stopScreenVideo()
   if (streamTimer) {
     clearInterval(streamTimer)
     streamTimer = null
@@ -349,7 +429,9 @@ function stopScreenStream(reason) {
 async function captureFrame() {
   const out = join(CONFIG_DIR, 'stream-frame.jpg')
   return new Promise((resolve) => {
-    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', out], (err) => {
+    // -C: include the cursor — the owner watches to see WHERE the agent is
+    // pointing; a cursorless frame hides exactly that (L9 owner ask).
+    execFile('/usr/sbin/screencapture', ['-xC', '-t', 'jpg', out], (err) => {
       if (err) return resolve(null)
       // Harder downscale than the one-off screenshot: this runs every ~1.5s.
       execFile('/usr/bin/sips', ['-Z', '900', '-s', 'formatOptions', '50', out], () => {
@@ -372,6 +454,7 @@ function startScreenStream(token, maxSeconds) {
   if (streamTimer) return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: true, extended: true, seconds }) }
 
   log(`screen stream started (${seconds}s cap)`)
+  void startScreenVideo(token)
   streamTimer = setInterval(async () => {
     if (Date.now() > streamDeadline || pausedByServer || existsSync(PAUSE_FILE)) {
       return stopScreenStream(Date.now() > streamDeadline ? 'deadline' : 'paused')
@@ -384,7 +467,7 @@ function startScreenStream(token, maxSeconds) {
         const res = await api('/api/assistant/mac-agent/frames', {
           method: 'POST',
           token,
-          body: { dataUri: frame },
+          body: { dataUri: frame, video: videoActive },
           timeoutMs: 10_000,
         }).catch(() => null)
         // The frames response doubles as the STOP channel — the command queue
