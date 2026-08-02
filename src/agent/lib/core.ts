@@ -205,6 +205,24 @@ export type AgentEvent =
       /** The owner-facing sentence, already in Bangla. */
       reason: string
     }
+  /**
+   * A message Boss typed WHILE this turn was running has now actually reached
+   * the model (claimed by `claimTurnSteeringMessages` at the top of a round).
+   *
+   * It exists for one reason: until this arrives, his message has been accepted
+   * by the server but NOT yet seen by the agent, and those two states used to
+   * look identical in the thread. Owner report 2026-08-03 — "message ta jotokkhon
+   * porjonto agent er kache na jay, seta jeno UI te visible thake, hariye na
+   * jay". The client marks the bubble delivered on this event and drops it from
+   * its retry outbox.
+   */
+  | {
+      type: 'steering_delivered'
+      /** AgentMessage row ids. */
+      ids: string[]
+      /** The client's own ids, so an optimistic bubble can be matched without a refetch. */
+      clientMessageIds: string[]
+    }
   | {
       type: 'verification_retry'
       attempt: number

@@ -1,8 +1,12 @@
 import { prisma } from '@/lib/prisma'
 
 export const OWNER_STEERING_NOTE =
-  '[BOSS LIVE UPDATE — this arrived while the current task was running. ' +
-  'Treat it as the newest owner instruction, adapt the current work now, and do not start a duplicate turn.]\n'
+  '[BOSS LIVE UPDATE — this arrived while the current task was running. '
+  + 'Treat it as the newest owner instruction and do not start a duplicate turn. '
+  + 'Do NOT throw away the work already done: finish or checkpoint the step in flight first '
+  + '(save what a tool already returned, note where you stopped), then take this up. '
+  + 'If it changes the goal, say in one line what you are dropping and what you keep — '
+  + 'silently abandoning half-finished work is the failure this update is meant to avoid.]\n'
 
 type StoredBlock = {
   type?: unknown

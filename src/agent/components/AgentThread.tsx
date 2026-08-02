@@ -107,6 +107,21 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
+  /**
+   * Only set on a message Boss typed WHILE a turn was running.
+   *
+   *  `queued`     — accepted by the server, the agent has not picked it up yet
+   *  `delivered`  — the running turn actually read it (`steering_delivered`)
+   *  `failed`     — the send did not land; it is still held in the outbox
+   *
+   * It exists because those states used to render identically, so a message
+   * still waiting looked exactly like one already taken up — and a failed one
+   * was deleted from the thread outright (owner report 2026-08-03: "message ta
+   * … agent er kache na jay … UI te visible thake, hariye na jay").
+   */
+  delivery?: 'queued' | 'delivered' | 'failed'
+  /** The outbox key for this message, so a retry can find it again. */
+  clientMessageId?: string
   toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string; screenshot?: string }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
@@ -220,6 +235,8 @@ interface AgentThreadProps {
   planDrive?: PlanDrivePanelData | null
   onPlanDriveAction?: (planId: string, action: PlanDriveAction, family?: string) => void | Promise<void>
   onPlanDriveOpen?: (conversationId: string) => void
+  /** Re-send a mid-turn message whose delivery failed (its bubble stays put). */
+  onRetryDelivery?: (clientMessageId: string) => void
 }
 
 function detectArtifact(text: string): { type: 'code' | 'markdown' | 'html' | 'svg'; content: string; title: string } | null {
@@ -1332,7 +1349,7 @@ function LiveWorkTimer({ startedAt }: { startedAt: string }) {
   )
 }
 
-export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
+export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onApprovePending, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, streamModelName, streamModelVia, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen, onRetryDelivery }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const reduceMotion = useReducedMotion()
@@ -1558,6 +1575,28 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     {msg.text && (
                       <div className="agent-bubble-press rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
                         <CollapsibleMessage collapsedMaxPx={260}>{msg.text}</CollapsibleMessage>
+                      </div>
+                    )}
+                    {/* Was it actually taken up? Only ever set on a message typed
+                        while a turn was already running. `delivered` deliberately
+                        draws nothing — an ordinary message is the normal state,
+                        and a permanent tick on every bubble is noise. */}
+                    {(msg.delivery === 'queued' || msg.delivery === 'failed') && (
+                      <div className="mt-1 flex justify-end">
+                        {msg.delivery === 'queued' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-[var(--alma-coral)]/30 bg-[var(--alma-coral)]/10 px-2 py-0.5 text-[10px] text-[var(--alma-coral)]">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--alma-coral)]" />
+                            চলতি কাজে যোগ হয়েছে — এজেন্টের কাছে পৌঁছায়নি এখনো
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onRetryDelivery?.(msg.clientMessageId ?? msg.id)}
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300 active:scale-95"
+                          >
+                            ⚠️ পৌঁছায়নি — আবার পাঠাতে চাপুন
+                          </button>
+                        )}
                       </div>
                     )}
                     {msg.createdAt && (

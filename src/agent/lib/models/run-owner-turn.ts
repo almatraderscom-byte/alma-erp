@@ -2019,6 +2019,17 @@ async function* runAlternateProviderTurn(
           ...messages,
           ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
         ]
+        // Say on the wire that it ARRIVED. Accepted-by-the-server and
+        // seen-by-the-agent are different facts, and the thread drew them the
+        // same way — so a message still waiting looked exactly like one already
+        // taken up (owner report 2026-08-03).
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []

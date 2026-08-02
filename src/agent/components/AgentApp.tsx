@@ -21,6 +21,16 @@ import { cn } from '@/lib/utils'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
 import { selectSettledProse } from '@/agent/lib/presentation/build-presentation'
+import {
+  addEntry as outboxAdd,
+  defaultOutboxStorage,
+  entriesToResend,
+  loadOutbox,
+  markAttempt as outboxMarkAttempt,
+  removeEntries as outboxRemove,
+  saveOutbox,
+  type SteeringOutboxEntry,
+} from '@/agent/lib/steering-outbox'
 
 interface AgentAppProps {
   userName: string
@@ -425,6 +435,30 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    * accumulate the streamed text in a ref and flush to React state at most once
    * per animation frame (~60fps), matching how Claude.ai / Cursor render.
    */
+  /**
+   * Messages Boss typed WHILE a turn was running and the agent has not picked
+   * up yet. Kept in a ref (so the send path can read it without re-rendering)
+   * and mirrored to localStorage, because the whole point is that one of these
+   * must never vanish — not on a 409, not on a network blip, not on a reload.
+   */
+  const deliverSteeringRef = useRef<((clientMessageId: string) => Promise<void>) | null>(null)
+  const steeringOutboxRef = useRef<SteeringOutboxEntry[]>([])
+  const outboxStorageRef = useRef(defaultOutboxStorage())
+  const writeOutbox = useCallback((next: SteeringOutboxEntry[]) => {
+    steeringOutboxRef.current = next
+    saveOutbox(outboxStorageRef.current, next)
+  }, [])
+  /** Flip the bubbles for these client ids to a delivery state (or clear it). */
+  const setDeliveryState = useCallback(
+    (clientMessageIds: readonly string[], delivery: 'queued' | 'delivered' | 'failed' | undefined) => {
+      if (clientMessageIds.length === 0) return
+      const ids = new Set(clientMessageIds)
+      setMessages((prev) => prev.map((m) =>
+        m.clientMessageId && ids.has(m.clientMessageId) ? { ...m, delivery } : m))
+    },
+    [],
+  )
+
   const streamBufferRef = useRef<{ msgId: string; pending: string; flushScheduled: boolean } | null>(null)
 
   /** Same rAF-batching for the extended-thinking stream (Cursor-style "Thought" block),
@@ -860,6 +894,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         throw new Error('attachment upload incomplete')
       }
       const optimisticMessageId = nextId('user-queued')
+      // The bubble goes in as `queued` and STAYS. Every exit below either
+      // upgrades it or leaves it visible with a way to retry — deleting it is
+      // what made his message disappear (owner report 2026-08-03).
       setMessages((prev) => [
         ...prev,
         {
@@ -867,6 +904,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           role: 'user',
           text,
           createdAt: new Date().toISOString(),
+          clientMessageId,
+          delivery: 'queued',
           files: pendingFiles.map((pf, idx) => ({
             previewUrl: pf.previewUrl,
             mediaType: pf.file.type,
@@ -874,19 +913,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           })),
         },
       ])
-      try {
-        const res = await fetch(`/api/assistant/turn/${turnId}/steer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientMessageId, message: text, files: fileRefs }),
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        toast.success('বার্তাটি চলতি কাজে যোগ হয়েছে')
-      } catch (err) {
-        setMessages((prev) => prev.filter((message) => message.id !== optimisticMessageId))
-        toast.error(`বার্তাটি queue-তে যোগ হয়নি: ${err instanceof Error ? err.message : String(err)}`)
-        throw err
-      }
+      writeOutbox(outboxAdd(steeringOutboxRef.current, {
+        clientMessageId,
+        conversationId,
+        turnId,
+        text,
+        files: fileRefs,
+        queuedAt: new Date().toISOString(),
+        attempts: 0,
+      }))
+      await deliverSteeringRef.current?.(clientMessageId)
       return
     }
     // Only a real owner turn resets the bounded continuation budget.
@@ -1113,6 +1149,14 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           activeTurnIdRef.current = evt.id as string
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
+        } else if (evt.type === 'steering_delivered') {
+          // It actually reached the model. Clear the "not yet" chip and stop
+          // holding it in the outbox.
+          const ids = Array.isArray(evt.clientMessageIds) ? evt.clientMessageIds.map(String) : []
+          if (ids.length > 0) {
+            setDeliveryState(ids, 'delivered')
+            writeOutbox(outboxRemove(steeringOutboxRef.current, ids))
+          }
         } else if (evt.type === 'skill_pinned') {
           // SK-3: the owner asked to SEE which skill is running, and to be able
           // to change it. This is what feeds the chip beside the model picker.
@@ -1664,6 +1708,82 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       handleSend(t, f, resume, autoContinueFromTurnId)
   }, [handleSend])
 
+  /**
+   * Deliver one outbox entry to the running turn.
+   *
+   * The three exits are the whole feature. It NEVER deletes the bubble:
+   *  • accepted        → stays `queued` until the turn actually claims it
+   *                      (`steering_delivered`), because accepted-by-the-server
+   *                      is not seen-by-the-agent;
+   *  • 409 not running → the turn ended first, so it is re-sent as an ordinary
+   *                      new turn — which is what Boss meant by sending it;
+   *  • anything else   → stays visible as `failed`, still in the outbox, with a
+   *                      retry he can tap and a background retry behind it.
+   */
+  const deliverSteering = useCallback(async (clientMessageId: string) => {
+    const item = steeringOutboxRef.current.find((e) => e.clientMessageId === clientMessageId)
+    if (!item) return
+    try {
+      const res = await fetch(`/api/assistant/turn/${item.turnId}/steer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientMessageId, message: item.text, files: item.files }),
+      })
+      if (res.ok) {
+        setDeliveryState([clientMessageId], 'queued')
+        return
+      }
+      if (res.status === 409) {
+        // The turn finished between his keystroke and this request. Attachments
+        // cannot be replayed (the File objects are gone after a reload), so a
+        // message that carried one keeps its retry chip instead of being sent
+        // without them — silently dropping an attachment would be worse.
+        if (item.files.length > 0) {
+          writeOutbox(outboxMarkAttempt(steeringOutboxRef.current, clientMessageId, 'turn_not_running'))
+          setDeliveryState([clientMessageId], 'failed')
+          toast('চলতি কাজটা এর মধ্যেই শেষ হয়ে গেছে — ছবিসহ বার্তাটা আবার পাঠাতে চাপুন')
+          return
+        }
+        writeOutbox(outboxRemove(steeringOutboxRef.current, [clientMessageId]))
+        setMessages((prev) => prev.filter((m) => m.clientMessageId !== clientMessageId))
+        await handleSendRef.current?.(item.text, [])
+        return
+      }
+      throw new Error(`HTTP ${res.status}`)
+    } catch (err) {
+      writeOutbox(outboxMarkAttempt(
+        steeringOutboxRef.current,
+        clientMessageId,
+        err instanceof Error ? err.message : String(err),
+      ))
+      setDeliveryState([clientMessageId], 'failed')
+    }
+  }, [setDeliveryState, writeOutbox])
+
+  useEffect(() => { deliverSteeringRef.current = deliverSteering }, [deliverSteering])
+
+  /**
+   * Restore anything left undelivered by a reload, and re-send whatever was
+   * aimed at a turn that is no longer running. Runs when the stream settles,
+   * which is exactly when a stranded entry becomes sendable as a normal turn.
+   */
+  useEffect(() => {
+    if (streaming) return
+    const stranded = entriesToResend(steeringOutboxRef.current, activeTurnIdRef.current, activeConvId)
+    if (stranded.length === 0) return
+    const first = stranded.find((e) => e.files.length === 0)
+    if (!first) return
+    writeOutbox(outboxRemove(steeringOutboxRef.current, [first.clientMessageId]))
+    setMessages((prev) => prev.filter((m) => m.clientMessageId !== first.clientMessageId))
+    void handleSendRef.current?.(first.text, [])
+  }, [streaming, activeConvId, writeOutbox])
+
+  // Rehydrate the outbox once, so a reload mid-delivery does not lose anything.
+  useEffect(() => {
+    const restored = loadOutbox(outboxStorageRef.current)
+    if (restored.length > 0) steeringOutboxRef.current = restored
+  }, [])
+
   const handleVoiceMessage = useCallback(async (
     text: string,
     onEvent?: (evt: VoiceTurnEvent) => void,
@@ -2119,6 +2239,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             onPlanDriveOpen={(cid) => void loadConversation({
               id: cid, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
             })}
+            onRetryDelivery={(clientMessageId) => {
+              setDeliveryState([clientMessageId], 'queued')
+              void deliverSteering(clientMessageId)
+            }}
           />
           )}
           <AgentArtifactsPanel
