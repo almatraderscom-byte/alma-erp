@@ -273,4 +273,36 @@ verify-post → expected diff / postcondition → actionLog
 
 ---
 
-*Audit শেষ। Implementation শুরু হয়নি — owner-এর অনুমোদনের অপেক্ষায়।*
+## M. Session Handoff — ২০২৬-০৮-০২ পর্যন্ত সম্পূর্ণ অবস্থা (নতুন session এখান থেকে ধরবে)
+
+**Main-এ merged ও LIVE (এই session-এর সব কাজ):**
+- L8 পুরো program: #676, #677, #679, #680, #681–#683, #684, #685, #686, #687, #688
+- Daemon (`~/.alma-mac-agent`) সর্বশেষ main থেকে deploy + restart ✅; VPS worker
+  (`agent-turn.mjs` Telegram photo) deploy + pm2 restart ✅; KV
+  `mac_ui_driving_enabled=true` ✅; capability report DB-তে proven ✅
+- এই audit doc নিজে (#689) — merge হলে আর কিছু unmerged থাকবে না
+
+**Owner checklist self-run ফলাফল (সব আমার নিজের চালানো, live proof সহ):**
+1✅ 2✅ 3✅ 4/5✅ 6✅ (replace-flow পুরো chain, AX proof `"test 123"`) 7✅ 8✅
+9✅ (interceptor absorb) 10-12✅ (sim) · **13⏳ Telegram photo — শুধু owner-এর
+এক message বাকি** · **14⚠️ mirror head-tool wired নয়** (daemon-এ proven)
+
+**জানা ছোট বাকি (এই doc-এর plan-এই আছে):**
+- Mirror head-tool wiring + test-9 মিথ্যা-বর্ণনা fix → P1 item 10
+- ChatGPT composer-এ harmless `"test 123"` বসে আছে (replace-type demo-র)
+- iOS: dock build sim-proven; **TestFlight পাঠানো হয়নি** — owner-এর explicit
+  "go" লাগবে (নিয়ম: proof → go → preflight script → build-bump commit → Archive)
+- Telegram multi-photo ordering (cosmetic, deferred #687)
+
+**নতুন session-এর প্রথম কাজ:** এই doc পড়া → memory
+`project_l8_head_protocol` + `project_agent_foundation_audit` পড়া → owner-কে
+জিজ্ঞেস: **"P0 শুরু করব?"** (P0 তালিকা section J)। Implementation-এর আগে owner-এর
+অনুমোদন লাগবে — এই নিয়ম বহাল।
+
+**কাজের ধরন যা owner প্রত্যাশা করে (এই session-এ প্রতিষ্ঠিত):**
+- প্রতিটি claim-এর আগে নিজে live-verify (Chrome/AX/DB read-back), তারপর বলা
+- Codex review: P0/P1 fix-then-merge, fresh P2/P3 defer-log; loop terminate
+  করতে ladder ঘোষণা করা
+- Deploy recipe: daemon = cp 5×.mjs + `launchctl kickstart`; worker = per-file
+  checkout + pm2; KV = Supabase REST (pooler unreachable)
+- Owner-কে Bangla, সৎ PASS/FAIL টেবিল, ভুল হলে সরাসরি স্বীকার
