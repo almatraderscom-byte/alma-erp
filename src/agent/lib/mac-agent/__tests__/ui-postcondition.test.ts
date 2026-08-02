@@ -9,8 +9,11 @@
 import { describe, it, expect } from 'vitest'
 import { verifyUiOutcome, isVerifiableUiAction } from '@/agent/lib/mac-agent/ui-postcondition'
 
+// Shaped like a REAL daemon reply (read off a live run 2026-08-02): `typed` is
+// the character count, not a boolean — the first version of this checked for
+// `=== true` and would have called every successful type a failure.
 const typed = (fieldValue: string, ok = true) =>
-  JSON.stringify({ ok: true, typed: ok, fieldValue })
+  JSON.stringify({ ok: true, typed: ok ? fieldValue.length : 0, fieldValue })
 
 describe('verifyUiOutcome — type', () => {
   it('verified when the field really contains what was typed', () => {
@@ -33,6 +36,16 @@ describe('verifyUiOutcome — type', () => {
     const v = verifyUiOutcome({ uiAction: 'ui_type', text: 'salam', stdout: typed('purano lekha'), status: 'done' })
     expect(v.verdict).toBe('unverified')
     expect(v.reasonBn).toContain('নিশ্চিত করে বলছি না')
+  })
+
+  it('accepts the boolean shape too, in case a verb ever reports it that way', () => {
+    const v = verifyUiOutcome({
+      uiAction: 'ui_type',
+      text: 'salam',
+      stdout: JSON.stringify({ ok: true, typed: true, fieldValue: 'salam' }),
+      status: 'done',
+    })
+    expect(v.verdict).toBe('verified')
   })
 
   it('failed when the text never landed', () => {

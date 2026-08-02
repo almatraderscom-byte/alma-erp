@@ -90,14 +90,21 @@ export function verifyUiOutcome(input: {
       const fieldValue = payload.fieldValue
       const wanted = norm(input.text)
       const got = norm(fieldValue)
-      if (payload.typed === true && wanted && got.includes(wanted)) {
+      // The daemon reports `typed` as the CHARACTER COUNT, not a boolean — read
+      // off a real run (fieldValue "ALMA P0-3 proof", typed 15). Checking for
+      // `=== true` turned every successful type into a reported failure, which
+      // is the same class of lie this module exists to prevent, pointed the
+      // other way.
+      const didType = payload.typed === true
+        || (typeof payload.typed === 'number' && payload.typed > 0)
+      if (didType && wanted && got.includes(wanted)) {
         return {
           verdict: 'verified',
           reasonBn: 'লেখাটা ঘরে বসেছে — নিজে পড়ে মিলিয়ে দেখেছি।',
           evidence: { fieldValue, typed: true },
         }
       }
-      if (payload.typed === true) {
+      if (didType) {
         return {
           verdict: 'unverified',
           reasonBn: `লেখা পাঠানো হয়েছে, কিন্তু ঘরে যা আছে সেটা হুবহু মেলেনি (${String(fieldValue ?? '').slice(0, 60)}) — নিশ্চিত করে বলছি না।`,
@@ -107,7 +114,7 @@ export function verifyUiOutcome(input: {
       return {
         verdict: 'failed',
         reasonBn: 'লেখাটা ঘরে বসেনি।',
-        evidence: { fieldValue: fieldValue ?? null, typed: payload.typed ?? false },
+        evidence: { fieldValue: fieldValue ?? null, typed: payload.typed ?? 0 },
       }
     }
     case 'ui_click': {
