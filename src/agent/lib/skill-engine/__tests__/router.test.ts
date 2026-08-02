@@ -211,6 +211,12 @@ describe('U3 — the registry budget', () => {
    * So this asserts the cliff has not been crossed. The day it fails, it is a
    * decision — raise the budget or trim the descriptions — not a silent
    * quality drop.
+   *
+   * It failed on 2026-08-03, as designed, when the Tier-1 Mac skills took the
+   * registry to 21 selectable skills / 6,672 characters. The decision taken was
+   * to trim the three new descriptions AND raise the budget to 9,000 (reasoning
+   * on `REGISTRY_BUDGET_CHARS`). The cliff assertion below is unchanged — it
+   * now guards the new ceiling.
    */
   it('the REAL registry still fits, and has not hit the shortening cliff', async () => {
     const live = await discoverSkills(SKILLS_ROOT)

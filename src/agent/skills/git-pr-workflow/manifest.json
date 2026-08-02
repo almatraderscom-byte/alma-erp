@@ -1,0 +1,51 @@
+{
+  "name": "git-pr-workflow",
+  "description": "Takes finished work on Boss's Mac from branch to merged pull request: branch, commit, push, open the PR, wait for CI and the Codex bot, triage by severity, merge. Use when Boss asks to commit and push, open a PR, check CI, or merge a branch.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "A TestFlight upload → xcode-testflight-shipper (build numbers and the pipeline have their own rules). Writing the code itself → a CLI session on his Mac, not this. Tidying files or folders → mac-file-organizer.",
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
+  "outputContract": {
+    "kind": "pr_report",
+    "mustInclude": [
+      "branch",
+      "pr_url",
+      "ci_state",
+      "bot_findings"
+    ]
+  },
+  "stopConditions": [
+    "main branch-এ সরাসরি commit করতে হচ্ছে — আগে branch",
+    "CI লাল — merge-এর কথা তোলার আগেই থামো",
+    "Codex bot-এর P0/P1 খোলা আছে",
+    "conflict — নিজে resolve করার চেষ্টা নয়",
+    "কোন ফাইল commit হবে সেটা অস্পষ্ট (`git status` অপ্রত্যাশিত)",
+    "Boss merge করতে বলেননি"
+  ],
+  "done": [
+    {
+      "tool": "run_mac_command"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 20,
+  "status": "active"
+}

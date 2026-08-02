@@ -1,0 +1,55 @@
+{
+  "name": "mac-ai-app-operator",
+  "description": "Operates the Claude and ChatGPT desktop apps on Boss's own Mac through the accessibility tree: opens a fresh chat, confirms which conversation is on screen, types a prompt, sends it, reads the answer back. Use when Boss asks to send or ask something in an AI app on his Mac, or to see what one is showing.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Coding work on his Mac (a session that edits files, runs a build) → the CLI-session tools, not app driving. A terminal command → git-pr-workflow or the plain Mac command tool. A picture of his whole screen → screenshot-annotate-share. Any app other than those two → refused in code; say so honestly instead of trying.",
+  "requiredCapabilities": [
+    "list_mac_apps",
+    "look_mac_app",
+    "drive_mac_app",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "look_mac_app",
+      "drive_mac_app"
+    ]
+  },
+  "outputContract": {
+    "kind": "app_action_report",
+    "mustInclude": [
+      "app",
+      "session",
+      "what_was_typed",
+      "what_came_back"
+    ]
+  },
+  "stopConditions": [
+    "Mac অফলাইন বা এজেন্ট বন্ধ — কার্ড বানানোর আগেই থামো",
+    "tree-তে যে element দরকার সেটা নেই — নিজের বানানো label দিয়ে চেষ্টা নয়",
+    "session_mismatch — ভুল চ্যাটে লেখার চেয়ে থেমে জিজ্ঞেস করা ভালো",
+    "Boss কোন চ্যাটের কথা বলছেন বোঝা যাচ্ছে না",
+    "field_not_empty — আগের draft মুছবে কিনা Boss-কে জিজ্ঞেস না করে replace নয়",
+    "যা টাইপ করতে বলা হচ্ছে তাতে পাসওয়ার্ড/কী/গোপন তথ্য আছে",
+    "owner_active তিনবার — Boss কীবোর্ডে আছেন, কাজটা পরে"
+  ],
+  "done": [
+    {
+      "tool": "look_mac_app"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 18,
+  "status": "active"
+}
