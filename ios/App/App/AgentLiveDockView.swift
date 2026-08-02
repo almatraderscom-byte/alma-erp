@@ -741,6 +741,9 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         var engine: AgoraRtcEngineKit?
         weak var canvasView: UIView?
         var joined = false
+        /// Sheet closed while the token request was in flight: the resumed
+        /// task must NOT join a channel nobody will ever leave (Codex P2).
+        var cancelled = false
 
         func join(deviceId: String, into view: UIView) {
             guard !joined else { return }
@@ -752,6 +755,7 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                 guard let resp: TokenResp = try? await AlmaAPI.shared.send(
                     "POST", "/api/assistant/mac-agent/screen-video-token",
                     body: ["deviceId": deviceId]) else { return }
+                if self.cancelled { return }
                 let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: self)
                 self.engine = engine
                 engine.enableVideo()
@@ -759,6 +763,9 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
                 engine.setClientRole(.audience)
                 engine.joinChannel(byToken: resp.token, channelId: resp.channel,
                                    info: nil, uid: UInt(resp.uid))
+                // The view can have been dismantled between the await points —
+                // never linger in the channel behind a closed sheet.
+                if self.cancelled { engine.leaveChannel(nil) }
             }
         }
 
@@ -772,6 +779,7 @@ struct MacScreenVideoPlayer: UIViewRepresentable {
         }
 
         func leave() {
+            cancelled = true
             engine?.leaveChannel(nil)
             joined = false
         }
