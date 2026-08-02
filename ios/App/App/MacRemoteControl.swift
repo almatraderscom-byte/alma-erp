@@ -45,6 +45,10 @@ private struct ControlTokenResponse: Decodable {
     let token: String?
     let sessionId: String?
     let ttlSec: Int?
+    /// The server explains refusals in Bangla (another device holds control,
+    /// the kill-switch is off, the stream is not running). Show ITS words
+    /// rather than a generic failure — the owner can act on the specific one.
+    let messageBn: String?
 }
 
 private struct VideoTokenResponse: Decodable {
@@ -496,6 +500,14 @@ final class MacRemoteControlStore {
     }
 
     // MARK: Sending (called from the touch surface)
+
+    /// Pull the server's Bangla explanation out of an error body.
+    private static func messageBn(from body: String?) -> String? {
+        guard let data = body?.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj["messageBn"] as? String
+    }
 
     func touched() { lastTouchAt = Date() }
 
