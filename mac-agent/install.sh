@@ -47,7 +47,8 @@ cp "$SRC_DIR/agent.mjs" "$SRC_DIR/policy.mjs" "$DEST_DIR/"
 if command -v swift >/dev/null 2>&1; then
   (cd "$SRC_DIR/ScreenBroadcaster" && swift build -c release >/dev/null 2>&1 \
     && cp .build/release/ScreenBroadcaster "$DEST_DIR/ScreenBroadcaster" \
-    && echo "ScreenBroadcaster installed") || echo "ScreenBroadcaster build failed — JPEG frames only"
+    && cp -R .build/*/release/*.framework "$DEST_DIR/" \
+    && echo "ScreenBroadcaster installed (with Agora frameworks)") || echo "ScreenBroadcaster build failed — JPEG frames only"
 fi
 [ -f "$SRC_DIR/ui-policy.mjs" ] && cp "$SRC_DIR/ui-policy.mjs" "$DEST_DIR/"
 
