@@ -208,6 +208,72 @@ export function isStandingPermissionAsk(text: string): boolean {
   return PERMISSION_ASK.test(text) && TIME_WINDOW.test(text)
 }
 
+/**
+ * ── Mac skills (Tier 1) ──────────────────────────────────────────────────────
+ *
+ * The same structural problem as fix-vs-audit: these jobs are named by their
+ * OBJECT ("build", "PR", "chat"), and those words are owned by half the
+ * business vocabulary. Keyword scoring cannot separate "notun build dao" (a
+ * release) from "notun post banao" (marketing), so the deterministic cases are
+ * rules and everything else stays with the head.
+ */
+/** A TestFlight upload. Unmistakable — the word exists for nothing else here. */
+const TESTFLIGHT_ASK = /(testflight|test\s*flight|টেস্টফ্লাইট)/i
+/**
+ * …plus the way he asks for one without the word: an iPhone/iOS BUILD. `build`
+ * alone is far too broad (`npm run build`, "build a campaign"), so an iOS
+ * identifier has to be present.
+ *
+ * Bare `app` was in this list for one review round and is now out: "web app
+ * build koro" and "android app er build chalau" are not TestFlight jobs, and
+ * pinning the highest-risk skill in the set on them is the worst direction to
+ * be wrong in (Codex P2).
+ */
+const IOS_BUILD_ASK =
+  /\b(ios|iphone|আইফোন|ipa)\b[^\n]{0,24}\bbuild\b|\bbuild\b[^\n]{0,24}\b(ios|iphone|আইফোন|ipa)\b/i
+/**
+ * Git verbs that only ever mean the branch→PR→merge job. Split in two, because
+ * `push` and `merge` are ordinary business words on their own — "campaign ta
+ * push koro", "customer list duita merge koro" (Codex P2). The unambiguous
+ * forms fire alone; the ambiguous ones need a git word in the sentence.
+ */
+const GIT_FLOW_STRONG =
+  /(\bpull\s*request\b|\bpr\s*(?:ta\s*)?(?:banao|khulo|kholo|create|open|dao|marge|merge)\b|\bcommit\b[^\n]{0,30}\bpush\b|\bgit\s+(?:push|commit|merge)\b|\bbranch\s*(?:banao|kholo|khulo)\b|কমিট\s*কর)/i
+const GIT_FLOW_WEAK = /(\bpush\s*(?:kore|kor|koro|dao)\b|\bmerge\s*(?:kore|kor|koro|dao)\b|মার্জ\s*কর)/i
+/** What makes a bare "push koro" a GIT push and not a campaign push. */
+const GIT_CONTEXT =
+  /\b(git|github|branch|repo|repository|origin|main|master|commit|pr|pull\s*request|code|kod)\b|কোড|ব্র্যাঞ্চ/i
+const GIT_FLOW_ASK = (t: string): boolean =>
+  GIT_FLOW_STRONG.test(t) || (GIT_FLOW_WEAK.test(t) && GIT_CONTEXT.test(t))
+/**
+ * The Claude / ChatGPT desktop apps. The app word is required: "Claude ke
+ * jiggesh koro" is Boss talking TO the agent, not about the Mac app, and
+ * pinning the driver there would hand the turn an allowlist with no ERP tool
+ * in it.
+ */
+const AI_APP_NAME =
+  /((?:chatgpt|claude|chat\s*gpt)\s*(?:desktop\s*)?(?:app|অ্যাপ|apps)|(?:app|অ্যাপ)\s*(?:e|ে|তে)\s*(?:likhe|likhe\s*dao|jigges|jiggesh|type))/i
+/**
+ * Naming the app is not asking for it to be DRIVEN. "ChatGPT app integration
+ * bug ta fix koro" is a coding request about our own product, and pinning the
+ * isolated operator there hands the turn a skill that explicitly refuses coding
+ * work — the request then has nowhere to go (Codex).
+ */
+const AI_APP_OPERATION =
+  /(khulo|kholo|khule|likhe|likho|lekho|jigges|jiggesh|type|pathao|dekho|dekhao|chalao|bolo|\bask\b|\bopen\b|\bsend\b|খোলো|লিখে|লেখো|জিজ্ঞেস|দেখো|দেখাও|পাঠাও)/i
+/** …and any of these means it is a job about the software, not on the desktop. */
+const SOFTWARE_WORK_REF =
+  /(\bbug\b|বাগ|\bfix\b|integration|\bfeature\b|\bcode\b|কোড|\berror\b|crash|deploy|\bapi\b|\bui\b)/i
+const AI_APP_ASK = (t: string): boolean =>
+  AI_APP_NAME.test(t) && AI_APP_OPERATION.test(t) && !SOFTWARE_WORK_REF.test(t)
+/**
+ * "notun chat khulo" — a fresh conversation in one of those apps. The verb is
+ * REQUIRED: with it optional, "new chat bug ta fix koro" (a bug report about
+ * our own new-chat button) pinned the desktop-app driver (Codex P2).
+ */
+const NEW_CHAT_ASK =
+  /(?:notun|নতুন|new)\s*(?:chat|চ্যাট|conversation)\s*(?:ta\s*|টা\s*)?(?:khulo|kholo|khule|dao|open|start|শুরু|খোলো)/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -259,6 +325,26 @@ export const RULES: RouterRule[] = [
     skill: 'alma-staff-dispatch',
     test: (t) => STAFF_PRESENCE.test(t) && !PARCEL_CONTEXT.test(t),
     why: 'কে কখন আসছে/আছে — মানুষের হাজিরার প্রশ্ন, পার্সেলের নয়',
+  },
+  {
+    id: 'testflight-build',
+    skill: 'xcode-testflight-shipper',
+    // BEFORE the git rule on purpose: a release ask says "build koro, push
+    // koro" too, and the release has stricter gates than a plain PR.
+    test: (t) => TESTFLIGHT_ASK.test(t) || IOS_BUILD_ASK.test(t),
+    why: 'iPhone অ্যাপের রিলিজ — build নম্বর আর pipeline-এর নিজস্ব গেট আছে',
+  },
+  {
+    id: 'git-pr-flow',
+    skill: 'git-pr-workflow',
+    test: (t) => GIT_FLOW_ASK(t) && !TESTFLIGHT_ASK.test(t) && !IOS_BUILD_ASK.test(t),
+    why: 'branch/commit/push/PR/merge — কোডের কাজ GitHub-এ তোলার ধাপ',
+  },
+  {
+    id: 'mac-ai-app',
+    skill: 'mac-ai-app-operator',
+    test: (t) => AI_APP_ASK(t) || NEW_CHAT_ASK.test(t),
+    why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
   },
 ]
 
@@ -364,8 +450,24 @@ export function scoreCandidates(index: SkillIndex, text: string): RouteCandidate
  * The always-loaded name+description list. Codex's number for Codex itself is
  * ~2% of the context window, and the principle is the point: without a cap, the
  * cost of owning 100 skills is invisible until the bill arrives.
+ *
+ * RAISED 6,000 → 9,000 on 2026-08-03, deliberately, because the Tier-1 Mac
+ * skills crossed the old ceiling (21 selectable skills, 6,672 chars). The test
+ * that caught it says the day it fails is a DECISION — raise the budget or trim
+ * the descriptions — and the decision is to raise it, for two reasons:
+ *
+ *  • Trimming is the worse trade at this size. The shortening fallback cuts
+ *    EVERY description to 80 characters at once, and 80 characters is roughly
+ *    where a description stops saying WHEN to use the skill — which is the half
+ *    routing actually needs.
+ *  • The cost is smaller than it looks. This block is name+description only
+ *    (~750 extra tokens at the new ceiling) and it lives in the STABLE prompt
+ *    prefix, so it is a cache read per turn, not a fresh write.
+ *
+ * The cliff itself stays: crossing 9,000 is the next decision, not a silent
+ * quality drop.
  */
-export const REGISTRY_BUDGET_CHARS = 6000
+export const REGISTRY_BUDGET_CHARS = 9000
 const MIN_DESCRIPTION_CHARS = 80
 
 export interface RegistryBlock {

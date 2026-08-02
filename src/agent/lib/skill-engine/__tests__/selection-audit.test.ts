@@ -100,6 +100,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-28: storefront-editing, the ninth — A1. Editing a product that is
     //   already live had no skill at all, so "dam 1200 koro" fell through to the
     //   head and, at best, one approval card per field.
+    //   2026-08-03: the Tier-1 Mac skills — git-pr-workflow,
+    //   mac-ai-app-operator, xcode-testflight-shipper. All three are RULE-routed
+    //   (their objects — "build", "PR", "chat" — are words half the business
+    //   vocabulary already owns), so promotion is about the pin handing the turn
+    //   the right tool allowlist, not about keyword recall.
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -115,10 +120,13 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-research',
       'alma-staff-dispatch',
       'alma-website',
+      'git-pr-workflow',
+      'mac-ai-app-operator',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
       'storefront-editing',
+      'xcode-testflight-shipper',
     ])
 
     // 5 → 4 → 3 → 2 → 1 → 0 on 2026-07-28. Every one of the 14 has been through

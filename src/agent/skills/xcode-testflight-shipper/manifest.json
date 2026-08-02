@@ -1,0 +1,54 @@
+{
+  "name": "xcode-testflight-shipper",
+  "description": "Ships the iPhone app to TestFlight the one safe way: preflight on Boss's Mac, bump the committed build number, push, start the GitHub upload pipeline, watch it to the end. Use when Boss asks for a new TestFlight build, or where the last upload stands.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "high",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Ordinary branch/PR/merge work with no upload → git-pr-workflow. Any terminal work that is not the iPhone release → the plain Mac command tool. A simulator-only check needs no build number and no pipeline at all.",
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
+  "outputContract": {
+    "kind": "release_report",
+    "mustInclude": [
+      "build_number",
+      "commit_sha",
+      "pipeline_run_url",
+      "result"
+    ]
+  },
+  "stopConditions": [
+    "Boss স্পষ্ট করে 'হ্যাঁ, build দাও' না বলা পর্যন্ত pipeline চালু নয়",
+    "preflight ব্যর্থ — git-এর অবস্থা ঠিক না করে কখনো এগোবে না",
+    "main ছাড়া অন্য branch, বা HEAD ≠ origin/main",
+    "কোন build number হবে সেটা নিশ্চিত না হলে",
+    "TestFlight-এ ওই নম্বর আগেই ব্যবহৃত হয়ে থাকলে",
+    "Mac অফলাইন"
+  ],
+  "done": [
+    {
+      "tool": "run_mac_command"
+    },
+    {
+      "tool": "check_mac_command"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 20,
+  "status": "active"
+}
