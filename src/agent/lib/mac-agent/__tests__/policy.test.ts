@@ -88,8 +88,10 @@ describe('mac-agent policy — AMBER (needs a tap)', () => {
     'npm install lodash',
     'mkdir newdir',
     'touch file.txt',
-    'mv a b',
-    'cp a b',
+    // Bare `mv`/`cp` moved to RED on 2026-08-03 (see the clobber-guard block at
+    // the bottom of this file) — an overwrite is not a risk to accept in a tap.
+    'mv -n a b',
+    'cp -n a b',
     'echo hi > out.txt',
     'node script.js',
     'gh pr merge 12',
@@ -321,5 +323,37 @@ describe('mac-agent policy — round 2 findings', () => {
   it('metadata reads on package managers stay green', () => {
     expect(level('npm -v')).toBe('green')
     expect(level('npm ls')).toBe('green')
+  })
+})
+
+/**
+ * The prompt could not stop this one. `mac-file-organizer` says "always mv -n"
+ * three times over; on two consecutive live runs (2026-08-03) the head still
+ * proposed a bare `mv ~/Downloads/*.pdf ~/Downloads/Reports/`, which destroys a
+ * same-named file at the destination with no undo and no Trash. So it is a rule
+ * in the classifier now, where the rules that hold live.
+ */
+describe('an overwriting move is refused, not carded', () => {
+  it('a bare mv or cp is RED', () => {
+    expect(classifyCommand('mv ~/Downloads/a.pdf ~/Downloads/Reports/').level).toBe('red')
+    expect(classifyCommand('cp report.pdf backup/').level).toBe('red')
+    expect(classifyCommand('mv -f old new').code).toBe('clobbering_move')
+  })
+
+  it('the refusal is repairable — -n (or -i) passes the guard', () => {
+    expect(classifyCommand('mv -n ~/Downloads/a.pdf ~/Downloads/Reports/').level).toBe('amber')
+    expect(classifyCommand('cp -n report.pdf backup/').level).toBe('amber')
+    expect(classifyCommand('mv --no-clobber a b').level).toBe('amber')
+    expect(classifyCommand('mv -i a b').level).toBe('amber')
+  })
+
+  it('the worst segment still wins — a guarded move beside a bare one is RED', () => {
+    expect(
+      classifyCommand('mv -n a PDF/ && mv b PDF/').code,
+    ).toBe('clobbering_move')
+  })
+
+  it('says what to do instead', () => {
+    expect(classifyCommand('mv a b').reasonBn).toContain('-n')
   })
 })

@@ -184,6 +184,31 @@ function isGreenSegment(segment) {
   return true
 }
 
+/**
+ * Mirror of `clobberingMove` in policy.ts. A bare `mv`/`cp` can destroy a
+ * same-named file at the destination with no undo and no Trash; the head
+ * proposed exactly that twice on 2026-08-03 despite the skill forbidding it.
+ * RED and repairable: add `-n` and it becomes an ordinary approval card.
+ */
+function clobberingMove(segment) {
+  const tokens = stripEnvPrefix(segment.split(/\s+/).filter(Boolean))
+  if (tokens.length === 0) return null
+  const tool = toolName(tokens[0])
+  if (tool !== 'mv' && tool !== 'cp') return null
+  const guarded = tokens.slice(1).some((t) => {
+    if (t === '--no-clobber' || t === '--interactive') return true
+    return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
+  })
+  if (guarded) return null
+  return {
+    level: 'red',
+    code: 'clobbering_move',
+    reasonBn:
+      `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
+      + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+  }
+}
+
 export function classifyCommand(rawCommand, opts = {}) {
   const command = (rawCommand ?? '').trim()
 
@@ -199,6 +224,11 @@ export function classifyCommand(rawCommand, opts = {}) {
   for (const seg of segments) {
     const hit = firstRedRule(seg)
     if (hit) return { level: 'red', code: hit.code, reasonBn: hit.bn }
+  }
+
+  for (const seg of segments) {
+    const clobber = clobberingMove(seg)
+    if (clobber) return clobber
   }
 
   if (opts.cwd) {

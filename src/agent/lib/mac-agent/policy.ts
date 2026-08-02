@@ -336,6 +336,41 @@ function isGreenSegment(segment: string): boolean {
   return true
 }
 
+/**
+ * A move or copy that can silently OVERWRITE is refused, not merely carded.
+ *
+ * Found live on 2026-08-03. `mac-file-organizer` exists to tidy his Downloads
+ * without ever losing a file, and its SKILL.md says "always `mv -n`" in three
+ * places. On two consecutive live runs the head still proposed a bare
+ * `mv ~/Downloads/*.pdf ~/Downloads/Reports/` — which, with a same-named file
+ * at the destination, destroys the original with no undo and no Trash. Writing
+ * the rule more loudly did not change the behaviour the second time either.
+ *
+ * So it moves to where every rule in this system that has actually held lives:
+ * the classifier. RED rather than AMBER on purpose — this is not a risk the
+ * owner should be asked to accept in a tap, and the refusal is *repairable*:
+ * add `-n` and the same command goes through as a normal approval card.
+ */
+function clobberingMove(segment: string): PolicyVerdict | null {
+  const tokens = stripEnvPrefix(segment.split(/\s+/).filter(Boolean))
+  if (tokens.length === 0) return null
+  const tool = toolName(tokens[0])
+  if (tool !== 'mv' && tool !== 'cp') return null
+  const guarded = tokens.slice(1).some((t) => {
+    if (t === '--no-clobber' || t === '--interactive') return true
+    // A short-flag cluster carrying n (no-clobber) or i (interactive).
+    return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
+  })
+  if (guarded) return null
+  return {
+    level: 'red',
+    code: 'clobbering_move',
+    reasonBn:
+      `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
+      + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+  }
+}
+
 export interface ClassifyOptions {
   /** Resolved (tilde-expanded) working directory the command would run in. */
   cwd?: string
@@ -368,6 +403,12 @@ export function classifyCommand(rawCommand: string, opts: ClassifyOptions = {}):
   for (const seg of segments) {
     const hit = firstRedRule(seg)
     if (hit) return { level: 'red', code: hit.code, reasonBn: hit.bn }
+  }
+
+  // 2b. An overwriting mv/cp — a data-loss shape the prompt could not stop.
+  for (const seg of segments) {
+    const clobber = clobberingMove(seg)
+    if (clobber) return clobber
   }
 
   // 3. A working directory outside the allowlist never auto-runs. `..` escapes are
