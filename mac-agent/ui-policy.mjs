@@ -17,6 +17,8 @@ export const UI_ACTIONS = [
   'ui_tree',
   'ui_screenshot',
   'ui_scroll',
+  // P1-10 — live chat mirror, a read; see the TS twin.
+  'app_mirror',
   // P0-3 — read-only session identity; see the TS twin.
   'ui_session',
   'ui_click',
@@ -26,7 +28,7 @@ export const UI_ACTIONS = [
   'ui_new_chat',
 ]
 
-const READ_ONLY_ACTIONS = new Set(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session'])
+const READ_ONLY_ACTIONS = new Set(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session', 'app_mirror'])
 
 /** Actions that synthesise input into the owner's session — see the TS twin. */
 const SYNTHESISES_INPUT = new Set(['ui_click', 'ui_type', 'ui_key', 'ui_scroll', 'ui_new_chat'])

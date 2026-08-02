@@ -90,7 +90,8 @@ function describeActionBn(input: {
 async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<string>) {
   {
     const short = String(input.action ?? '').trim()
-    const action = short.startsWith('ui_') ? short : `ui_${short}`
+    // `mirror` is the one read whose daemon verb is not ui_-prefixed.
+    const action = short === 'mirror' ? 'app_mirror' : short.startsWith('ui_') ? short : `ui_${short}`
     if (!allowed.has(action)) {
       return { success: false, error: `এই টুল দিয়ে ${short} হয় না।`, data: { refused: true, code: 'wrong_tool' } }
     }
@@ -214,6 +215,9 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       // so the model looped on truncated trees without ever seeing the one
       // element it needed (live-demo finding). fullTree=true opts back in.
       interactive: action === 'ui_tree' ? input.fullTree !== true : undefined,
+      // P1-10 mirror controls: start | stop | stop_all, and how long to watch.
+      mode: action === 'app_mirror' ? String(input.mode ?? 'start') : null,
+      maxSeconds: Number.isFinite(Number(input.maxSeconds)) ? Number(input.maxSeconds) : null,
       // P0-3: WHICH chat this act belongs to. The daemon reads the live session
       // right before acting and refuses on a mismatch, so a chat the owner
       // switched away from cannot be written into — the exact failure he
@@ -285,6 +289,11 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       // mac_desk_control): short /files link, never the base64 body.
       const shared = await shareScreenshot(outcome.stdout ?? '', id, appLabel(bundleId))
       if (shared.ok) {
+        // P1-8: the link is for Boss. Read the capture too, so the HEAD has
+        // seen the screen it is about to talk about — the audit caught it
+        // narrating a save that never happened, from a URL it could not read.
+        const { describeScreenshot, SCREENSHOT_UNREAD_NOTE } = await import('@/agent/lib/mac-agent/screenshot-vision')
+        const seen = await describeScreenshot(outcome.stdout ?? '')
         return {
           success: true,
           data: {
@@ -292,6 +301,12 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
             device: targetDeviceName,
             app: appLabel(bundleId),
             instruction: shared.instruction,
+            // Named `screenContents` and not `description` on purpose: this is
+            // what the agent SAW, and it is a vision model's reading — not the
+            // head's own eyes. When it is missing, the head is told so plainly
+            // instead of being left to fill the gap.
+            screenContents: seen ?? undefined,
+            visionNote: seen ? undefined : SCREENSHOT_UNREAD_NOTE,
           },
         }
       }
@@ -341,12 +356,15 @@ const look_mac_app: AgentTool = {
     properties: {
       action: {
         type: 'string',
-        enum: ['tree', 'screenshot', 'scroll', 'session'],
+        enum: ['tree', 'screenshot', 'scroll', 'session', 'mirror'],
         description:
-          'How to look. "session" answers WHICH conversation the window is showing (title, first message, whether the composer is empty) — read it BEFORE acting and pass it back as expectSession so you cannot write into the wrong chat.',
+          'How to look. "session" answers WHICH conversation the window is showing (title, first message, whether the composer is empty) — read it BEFORE acting and pass it back as expectSession so you cannot write into the wrong chat. ' +
+          '"mirror" streams that app\'s chat into Boss\'s live dock as text so he can WATCH it from his phone (mode="start" to begin, "stop" to end); only the Claude app publishes readable messages today, ChatGPT refuses honestly.',
       },
       app: APP_PARAM,
       scrollAmount: { type: 'number', description: 'For scroll: positive scrolls down, negative up. Default 3.' },
+      mode: { type: 'string', description: 'For mirror: "start" (default), "stop", or "stop_all".' },
+      maxSeconds: { type: 'number', description: 'For mirror: how long to watch, 30–600s.' },
       fullTree: {
         type: 'boolean',
         description:
@@ -355,7 +373,7 @@ const look_mac_app: AgentTool = {
     },
     required: ['action', 'app'],
   },
-  handler: (input) => handleUiAction(input, new Set(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session'])),
+  handler: (input) => handleUiAction(input, new Set(['ui_tree', 'ui_screenshot', 'ui_scroll', 'ui_session', 'app_mirror'])),
 }
 
 const drive_mac_app: AgentTool = {
