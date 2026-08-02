@@ -146,7 +146,12 @@ final class ControlOverlay {
                 return
             }
             let size = CGSize(width: 150, height: 110)
-            let rect = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+            // The frame buffer covers THIS display and starts at its own
+            // (0,0); the cursor arrives in global coordinates, which on a
+            // secondary screen begin somewhere else entirely (Codex P2).
+            let local = CGPoint(x: point.x - self.displayBounds.minX,
+                                y: point.y - self.displayBounds.minY)
+            let rect = CGRect(x: local.x - size.width / 2, y: local.y - size.height / 2,
                               width: size.width, height: size.height)
             view.loupeImage = FrameStore.shared.crop(rect)
             view.loupeAt = self.toLocal(point)

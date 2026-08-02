@@ -107,27 +107,64 @@ export class ControlHeldByAnother extends Error {
 }
 
 export async function grantControl(deviceId: string, uid: number): Promise<ControlPin> {
-  const existing = await readControlPin(deviceId)
-  // Two owner devices must not fight over one Mac: without this, the second
-  // phone silently steals the pin, the first keeps showing "armed", and each
-  // 45s renewal flips it back while both see their taps dropped as
-  // uid_mismatch (Codex P2). Whoever holds a FRESH pin keeps it.
-  if (existing && existing.uid !== uid) throw new ControlHeldByAnother(existing.uid)
-  const sessionId = existing && existing.uid === uid ? existing.sessionId : randomUUID()
+  const key = controlPinKey(deviceId)
   const now = new Date()
-  const pin: ControlPin = {
+  const claim: ControlPin = {
     uid,
-    sessionId,
-    grantedAt: existing && existing.uid === uid ? existing.grantedAt : now.toISOString(),
+    sessionId: randomUUID(),
+    grantedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + CONTROL_TTL_SEC * 1000).toISOString(),
   }
-  await writeJson(controlPinKey(deviceId), pin)
-  if (!existing || existing.sessionId !== sessionId) {
+
+  // Claim by CREATE, not by read-then-write: two owner devices arming at the
+  // same moment would both read "no pin", both write, and the loser would show
+  // itself as armed while every tap it sent was dropped as uid_mismatch. The
+  // unique key makes exactly one of them win (Codex P2).
+  const claimed = await kv()
+    .create({ data: { key, value: JSON.stringify(claim) } })
+    .then(() => true)
+    .catch(() => false)
+  if (claimed) {
     await appendAudit(deviceId, {
-      sessionId, uid, startedAt: pin.grantedAt, events: 0, drops: 0,
+      sessionId: claim.sessionId, uid, startedAt: claim.grantedAt, events: 0, drops: 0,
     })
+    return claim
   }
-  return pin
+
+  // A row exists. `readControlPin` retires it if the lease has lapsed.
+  const existing = await readControlPin(deviceId)
+  if (!existing) {
+    // It was stale and has just been cleared — one retry, then give up rather
+    // than loop against a live competitor.
+    const retried = await kv()
+      .create({ data: { key, value: JSON.stringify(claim) } })
+      .then(() => true)
+      .catch(() => false)
+    if (retried) {
+      await appendAudit(deviceId, {
+        sessionId: claim.sessionId, uid, startedAt: claim.grantedAt, events: 0, drops: 0,
+      })
+      return claim
+    }
+    const winner = await readControlPin(deviceId)
+    if (winner && winner.uid !== uid) throw new ControlHeldByAnother(winner.uid)
+    if (!winner) throw new ControlHeldByAnother(0)
+    return renew(deviceId, winner, now)
+  }
+
+  // Whoever holds a FRESH pin keeps it; the same device simply renews.
+  if (existing.uid !== uid) throw new ControlHeldByAnother(existing.uid)
+  return renew(deviceId, existing, now)
+}
+
+/** Extend an existing grant, keeping its session (and its one audit row). */
+async function renew(deviceId: string, pin: ControlPin, now: Date): Promise<ControlPin> {
+  const renewed: ControlPin = {
+    ...pin,
+    expiresAt: new Date(now.getTime() + CONTROL_TTL_SEC * 1000).toISOString(),
+  }
+  await writeJson(controlPinKey(deviceId), renewed)
+  return renewed
 }
 
 /** Fresh pin, or null when absent/expired — an expired grant is simply no grant. */

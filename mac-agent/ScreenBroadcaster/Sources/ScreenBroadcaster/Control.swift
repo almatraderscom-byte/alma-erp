@@ -222,7 +222,12 @@ final class ControlGate {
         let allowed: Bool
         switch msg.action {
         case .move, .position: allowed = moves.take(now)
-        case .click, .dragDown, .dragUp: allowed = clicks.take(now)
+        case .click, .dragDown: allowed = clicks.take(now)
+        // A drag-UP is cleanup for a down we already accepted. Rate-limiting
+        // it would leave the mouse button HELD on the owner's Mac until the
+        // next accepted up or a full disarm — every later move would drag
+        // something (Codex P1). Releasing is never the dangerous direction.
+        case .dragUp: allowed = true
         case .scroll: allowed = scrolls.take(now)
         case .text, .key: allowed = keys.take(now)
         }

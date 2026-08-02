@@ -358,6 +358,11 @@ final class MacRemoteControlStore {
     @ObservationIgnored private weak var session: MacScreenSession?
     @ObservationIgnored private var renewTask: Task<Void, Never>?
     @ObservationIgnored private var lastTouchAt = Date()
+    /// True between `dd` and `du`. While a drag is held, MOVES must travel on
+    /// the same ordered lane as its edges — otherwise a move can be applied
+    /// before the down or after the up, and part of the drag degrades into
+    /// plain cursor motion (Codex P1).
+    @ObservationIgnored private var dragging = false
     /// The lease the server hands out is 120s; the phone renews well inside it.
     private let renewEvery: TimeInterval = 45
     /// Cost guard: an armed-but-untouched control session stops renewing, so
@@ -418,6 +423,13 @@ final class MacRemoteControlStore {
             return
         }
         guard let token = resp.token, await session.armControl(token: token) else {
+            // The server already pinned this uid. Leaving it pinned would keep
+            // the daemon armed for a phone that thinks control is off, and lock
+            // out the owner's other device for the whole lease (Codex P2).
+            _ = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/screen-control-token",
+                body: ControlTokenRequest(deviceId: deviceId, uid: nil, on: false)
+            ) as ControlTokenResponse
             statusBn = resp.messageBn ?? "কন্ট্রোল চালু করা গেল না।"
             RemoteHaptics.refused()
             return
@@ -434,6 +446,7 @@ final class MacRemoteControlStore {
         renewTask?.cancel()
         renewTask = nil
         armed = false
+        dragging = false
         statusBn = reason
         guard let session, let deviceId else { return }
         // Re-mint a view-only token for the SAME uid before dropping the role,
@@ -523,7 +536,7 @@ final class MacRemoteControlStore {
     func sendMove(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: false)
+        _ = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: dragging)
     }
 
     func sendClick(count: Int, right: Bool) {
@@ -549,6 +562,7 @@ final class MacRemoteControlStore {
     func sendDrag(down: Bool) {
         guard armed else { return }
         touched()
+        dragging = down
         _ = session?.send(["a": down ? "dd" : "du"])
         RemoteHaptics.drag()
     }

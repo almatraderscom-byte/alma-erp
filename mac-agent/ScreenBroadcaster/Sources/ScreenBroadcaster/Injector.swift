@@ -138,8 +138,14 @@ enum Injector {
         }
         if confirm {
             let now = Date().timeIntervalSince1970
+            // Without an AX frame the aim is the cursor point itself, so the
+            // second tap has to be compared against the stored point — else a
+            // plain desktop target could never be committed at all (Codex P2).
             let sameTarget = pendingTarget.map { previous in
-                frame.map { abs(previous.midX - $0.midX) < 4 && abs(previous.midY - $0.midY) < 4 } ?? false
+                if let frame {
+                    return abs(previous.midX - frame.midX) < 4 && abs(previous.midY - frame.midY) < 4
+                }
+                return hypot(previous.midX - p.x, previous.midY - p.y) < 12
             } ?? false
             let fresh = now - pendingSince < confirmWindow
             if !(sameTarget && fresh) {
