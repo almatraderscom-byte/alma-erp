@@ -14,6 +14,7 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { authenticateDevice, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { prisma } from '@/lib/prisma'
+import { readControlPin, recordControlCounts, revokeControl } from '@/agent/lib/mac-agent/remote-control'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -33,7 +34,13 @@ export async function POST(req: NextRequest) {
   const device = await authenticateDevice(h.startsWith('Bearer ') ? h.slice(7).trim() : '')
   if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
-  let body: { dataUri?: string; video?: boolean }
+  let body: {
+    dataUri?: string
+    video?: boolean
+    controlSessionId?: string
+    controlEvents?: number
+    controlDrops?: number
+  }
   try {
     body = await req.json()
   } catch {
@@ -92,5 +99,33 @@ export async function POST(req: NextRequest) {
       .catch(() => {})
   }
 
-  return Response.json({ ok: true, stop })
+  // RC-1: this same ~600ms POST is the control channel to the daemon. A
+  // command-queue round trip would arm control seconds late (the queue is
+  // serial and can sit behind a long shell command); the frame loop is
+  // already running exactly when control matters.
+  let control: { uid: number; sessionId: string; expiresAt: number } | null = null
+  const pin = await readControlPin(device.id)
+  if (pin) {
+    control = {
+      uid: pin.uid,
+      sessionId: pin.sessionId,
+      expiresAt: Math.floor(Date.parse(pin.expiresAt) / 1000),
+    }
+    if (body.controlSessionId === pin.sessionId) {
+      await recordControlCounts(
+        device.id, pin.sessionId,
+        Math.max(0, Number(body.controlEvents) || 0),
+        Math.max(0, Number(body.controlDrops) || 0),
+      )
+    }
+  }
+  // The stream is ending, so control ends with it — the injector IS the
+  // broadcaster process. Close the audit row here rather than leaving it open
+  // until the next grant.
+  if (stop) await revokeControl(device.id, 'stream_stop', {
+    events: Number(body.controlEvents) || undefined,
+    drops: Number(body.controlDrops) || undefined,
+  })
+
+  return Response.json({ ok: true, stop, control: stop ? null : control })
 }

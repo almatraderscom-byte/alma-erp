@@ -470,6 +470,11 @@ struct AgentLiveDockSheet: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var replyText = ""
+    /// RC-1: the Agora connection and the control switch outlive individual
+    /// SwiftUI view identities, so the sheet owns both and tears them down on
+    /// disappear — a re-layout must never silently drop control or the join.
+    @State private var macSession = MacScreenSession()
+    @State private var control = MacRemoteControlStore()
 
     var body: some View {
         let pal = AgentPalette(scheme)
@@ -480,11 +485,17 @@ struct AgentLiveDockSheet: View {
                         // L9-B — TRUE live video (ScreenCaptureKit → Agora),
                         // cursor and clicks in real time. Frames stay the
                         // fallback the moment the broadcaster dies.
-                        MacScreenVideoPlayer(deviceId: videoDevice)
+                        // RC-1 — and the same connection carries his touches
+                        // back the other way once he arms control.
+                        MacScreenStage(deviceId: videoDevice, session: macSession, store: control)
                             .frame(height: 230)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14)
-                                .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                                .strokeBorder(control.armed
+                                              ? Color(red: 0.878, green: 0.478, blue: 0.373)
+                                              : pal.borderSubtle,
+                                              lineWidth: control.armed ? 2 : 1))
+                        MacControlBar(control: control, pal: pal)
                     } else if let shot = store.screenshotImage {
                         Image(uiImage: shot)
                             .resizable()
@@ -578,6 +589,19 @@ struct AgentLiveDockSheet: View {
                     }
                     .accessibilityLabel("ছোট করুন")
                 }
+            }
+        }
+        .onDisappear {
+            // Closing the sheet ends both rights at once: hands off, eyes off.
+            if control.armed { Task { await control.disarm(reason: nil) } }
+            macSession.leave()
+        }
+        .onChange(of: store.feed?.videoDeviceId) { _, now in
+            // The Mac stopped broadcasting (stream ended, broadcaster died):
+            // control has nothing to act on, so it must not look armed.
+            if now == nil {
+                if control.armed { Task { await control.disarm(reason: "লাইভ ভিউ বন্ধ — কন্ট্রোলও বন্ধ।") } }
+                macSession.leave()
             }
         }
     }
@@ -728,127 +752,8 @@ struct AgentLiveDockSheet: View {
 
 import AgoraRtcKit
 
-/// Joins `mac-screen-<deviceId>` as audience and renders the broadcaster
-/// (uid 1). Its OWN lifetime is the join lifetime — disappearing leaves the
-/// channel, so a closed sheet never keeps subscribing in the background.
-/// Constraint (v1): shares the app-wide Agora engine with the intercom, so
-/// watching while ON an intercom call is unsupported — the call wins.
-@available(iOS 17.0, *)
-struct MacScreenVideoPlayer: UIViewRepresentable {
-    let deviceId: String
-
-    final class Coordinator: NSObject, AgoraRtcEngineDelegate {
-        var engine: AgoraRtcEngineKit?
-        /// Which device this join belongs to — updateUIView compares to rejoin
-        /// when the feed switches Macs mid-sheet (Codex P2).
-        var joinedDeviceId: String?
-        /// Our OWN Agora connection (joinChannelEx) — never the app's main
-        /// channel, so watching the screen during an intercom call neither
-        /// collides with it nor tears it down on dismantle (Codex P1).
-        var connection: AgoraRtcConnection?
-        weak var canvasView: UIView?
-        var joined = false
-        /// Per-join generation: leave() bumps it, so a STALE token request
-        /// resuming after a device switch can neither join nor tear down the
-        /// NEW join (Codex P2 round 6 — a shared boolean reset on re-join
-        /// let the old request through).
-        var joinGeneration = 0
-
-        func join(deviceId: String, into view: UIView) {
-            guard !joined else { return }
-            joined = true
-            joinedDeviceId = deviceId
-            let gen = joinGeneration
-            Task { @MainActor in
-                struct TokenResp: Decodable {
-                    let appId: String; let channel: String; let uid: Int; let token: String
-                }
-                guard let resp: TokenResp = try? await AlmaAPI.shared.send(
-                    "POST", "/api/assistant/mac-agent/screen-video-token",
-                    body: ["deviceId": deviceId]) else {
-                    // Transient token failure must not wedge the view in a
-                    // joined-but-black state — allow the next update pass to
-                    // retry (Codex P2 round 8).
-                    if gen == self.joinGeneration {
-                        self.joined = false
-                        self.joinedDeviceId = nil
-                    }
-                    return
-                }
-                if gen != self.joinGeneration { return }
-                let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
-                self.engine = engine
-                engine.enableVideo()
-                let conn = AgoraRtcConnection(channelId: resp.channel, localUid: resp.uid)
-                self.connection = conn
-                let options = AgoraRtcChannelMediaOptions()
-                options.clientRoleType = .audience
-                options.autoSubscribeVideo = true
-                options.autoSubscribeAudio = false
-                options.publishCameraTrack = false
-                options.publishMicrophoneTrack = false
-                engine.joinChannelEx(byToken: resp.token, connection: conn,
-                                     delegate: self, mediaOptions: options)
-                // The broadcaster uid is FIXED (1) — bind the canvas right
-                // away instead of waiting on a delegate callback whose
-                // connection-routing varies by SDK minor (Codex P1); Agora
-                // renders as soon as the remote stream arrives.
-                if let view = self.canvasView {
-                    let canvas = AgoraRtcVideoCanvas()
-                    canvas.uid = 1
-                    canvas.view = view
-                    canvas.renderMode = .fit
-                    engine.setupRemoteVideoEx(canvas, connection: conn)
-                }
-                // The view can have been dismantled between the await points —
-                // never linger in the channel behind a closed sheet. A stale
-                // generation leaves only ITS OWN connection.
-                if gen != self.joinGeneration {
-                    engine.leaveChannelEx(conn, leaveChannelBlock: nil)
-                    if self.connection === conn { self.connection = nil }
-                }
-            }
-        }
-
-        func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
-            guard uid == 1, let view = canvasView, let conn = connection else { return } // 1 = the Mac
-            let canvas = AgoraRtcVideoCanvas()
-            canvas.uid = uid
-            canvas.view = view
-            canvas.renderMode = .fit
-            engine.setupRemoteVideoEx(canvas, connection: conn)
-        }
-
-        func leave() {
-            joinGeneration += 1
-            if let conn = connection {
-                engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
-                connection = nil
-            }
-            joined = false
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .black
-        context.coordinator.canvasView = view
-        context.coordinator.join(deviceId: deviceId, into: view)
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // Feed switched to another Mac while the sheet stayed open: leave the
-        // old channel and join the new one (Codex P2).
-        if context.coordinator.joinedDeviceId != deviceId {
-            context.coordinator.leave()
-            context.coordinator.join(deviceId: deviceId, into: uiView)
-        }
-    }
-
-    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.leave()
-    }
-}
+// RC-1 note: the Agora join used to live here as `MacScreenVideoPlayer`.
+// It now lives in MacRemoteControl.swift as `MacScreenSession` + `MacScreenStage`,
+// because the video canvas and the touch surface must share ONE connection —
+// a second join would double the Agora minutes and could collide with the
+// intercom connection the app already keeps.

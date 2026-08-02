@@ -350,6 +350,47 @@ let videoActive = false
 // continuation compares.
 let videoGeneration = 0
 let lastBeatFrames = 0
+// RC-1 — remote CONTROL grant (phone touch → CGEvent). The daemon does not
+// inject anything itself: it only relays the owner's grant to the broadcaster,
+// which is the process that both captures the screen and posts the events, so
+// coordinate mapping and lifetime are one thing. Killing the video kills
+// control by construction.
+let controlGrant = null // { uid, sessionId, expiresAt }
+let controlCounts = { sessionId: null, events: 0, drops: 0 }
+
+/** Write one control line to the broadcaster's stdin (no respawn — L9 trap 2). */
+function writeControlLine(child, line) {
+  try {
+    if (child?.stdin?.writable) child.stdin.write(line + '\n')
+  } catch (err) {
+    log('control write failed:', String(err?.message ?? err))
+  }
+}
+
+/**
+ * Apply the server's control state, which arrives on the ~600ms frame
+ * response. Idempotent: only a CHANGE is written down the pipe.
+ */
+function applyControlGrant(next) {
+  const same =
+    (!next && !controlGrant) ||
+    (next && controlGrant &&
+      next.uid === controlGrant.uid &&
+      next.sessionId === controlGrant.sessionId &&
+      next.expiresAt === controlGrant.expiresAt)
+  if (same) return
+  const changedSession = next?.sessionId !== controlGrant?.sessionId
+  controlGrant = next ?? null
+  if (changedSession) controlCounts = { sessionId: next?.sessionId ?? null, events: 0, drops: 0 }
+  if (!videoChild) return // nothing to tell yet; the spawn path re-sends
+  if (controlGrant) {
+    writeControlLine(videoChild, `control on uid=${controlGrant.uid} exp=${controlGrant.expiresAt} sid=${controlGrant.sessionId}`)
+    if (changedSession) log('remote control ARMED for uid', String(controlGrant.uid))
+  } else {
+    writeControlLine(videoChild, 'control off')
+    log('remote control disarmed')
+  }
+}
 
 async function startScreenVideo(token) {
   const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
@@ -365,9 +406,13 @@ async function startScreenVideo(token) {
       return
     }
     const { appId, channel, uid, token: rtc } = res.json
+    // stdin is the CONTROL pipe (RC-1): grants are written to the running
+    // process, never by respawning it — a respawn drops the video for seconds
+    // and, worse, `start` on a running stream only extends (L9 trap 2).
     const child = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
+    child.stdin.on('error', () => { /* broadcaster gone; exit handler cleans up */ })
     videoChild = child
     lastBeatFrames = 0
     // Stdout is a byte stream, not lines — a heartbeat can arrive split
@@ -393,6 +438,18 @@ async function startScreenVideo(token) {
           videoActive = n > lastBeatFrames
           lastBeatFrames = n
         }
+        // RC-1 audit: the broadcaster counts what it INJECTED and what it
+        // DROPPED (wrong uid, stale seq, out of bounds, rate-limited). Those
+        // two numbers ride the next frame POST into the owner's audit row.
+        const c = /^ctl events=(\d+) drops=(\d+)/.exec(line)
+        if (c && controlGrant) {
+          controlCounts = {
+            sessionId: controlGrant.sessionId,
+            events: Number(c[1]),
+            drops: Number(c[2]),
+          }
+        }
+        if (line.startsWith('ctl error') || line.startsWith('ctl idle')) log('screen control:', line)
       }
     })
     child.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
@@ -414,6 +471,11 @@ async function startScreenVideo(token) {
         videoActive = false
       }
     })
+    // A grant can land while the broadcaster is still starting (owner arms
+    // control the instant the sheet opens) — replay it once we have a pipe.
+    if (controlGrant) {
+      writeControlLine(child, `control on uid=${controlGrant.uid} exp=${controlGrant.expiresAt} sid=${controlGrant.sessionId}`)
+    }
     log('screen video: broadcaster spawned →', channel)
   } catch (err) {
     log('screen video failed:', String(err?.message ?? err))
@@ -433,6 +495,9 @@ function stopScreenVideo() {
     videoChild = null
   }
   videoActive = false
+  // Control cannot outlive the process that injects it.
+  controlGrant = null
+  controlCounts = { sessionId: null, events: 0, drops: 0 }
 }
 
 function stopScreenStream(reason) {
@@ -485,9 +550,17 @@ function startScreenStream(token, maxSeconds) {
         const res = await api('/api/assistant/mac-agent/frames', {
           method: 'POST',
           token,
-          body: { dataUri: frame, video: videoActive },
+          body: {
+            dataUri: frame,
+            video: videoActive,
+            controlSessionId: controlCounts.sessionId ?? undefined,
+            controlEvents: controlCounts.sessionId ? controlCounts.events : undefined,
+            controlDrops: controlCounts.sessionId ? controlCounts.drops : undefined,
+          },
           timeoutMs: 10_000,
         }).catch(() => null)
+        // The same response carries the owner's control switch (RC-1).
+        if (res?.json) applyControlGrant(res.json.control ?? null)
         // The frames response doubles as the STOP channel — the command queue
         // is serial and a long shell command must not keep the screen
         // streaming after the owner pressed stop. 409 = kill-switch off,

@@ -12,6 +12,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { activeDevice, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { revokeControl } from '@/agent/lib/mac-agent/remote-control'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
       .catch(() => {})
     const ids: string[] = []
     for (const d of online) {
+      // RC-1: stopping the view also drops any control grant. Video off means
+      // hands off — the owner should never have to press two stops.
+      await revokeControl(d.id, 'stream_stop')
       const { id } = await enqueueCommand({
         deviceId: d.id,
         action: 'screen_stream',

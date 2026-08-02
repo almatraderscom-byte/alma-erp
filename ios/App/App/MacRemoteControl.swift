@@ -1,0 +1,790 @@
+//
+//  MacRemoteControl.swift
+//  RC-1 — driving the Mac by touch, from the phone.
+//
+//  L9 gave the owner live VIDEO of his Mac in the dock. This adds the uplink:
+//  his finger becomes the Mac's mouse. The touches ride the SAME Agora
+//  connection the video is already on (a data stream), so a tap costs no new
+//  infrastructure and arrives with video-grade latency.
+//
+//  The owner's requirement, in his words: the Mac screen is big, the phone is
+//  small, and a WRONG CLICK IS NOT ACCEPTABLE. Three decisions follow from it,
+//  and none of them are polish to be added later:
+//
+//    1. TRACKPAD MODE IS THE DEFAULT. The finger moves the Mac's cursor
+//       relative to where it already is, and a tap clicks WHERE THE CURSOR IS
+//       — never under the finger. The finger never covers the target, and a
+//       10-point slip on a phone is not a 90-point slip on a 3440-wide Mac.
+//       This is what Screens, Jump and Chrome Remote Desktop all default to.
+//    2. DIRECT (touch-where-you-look) TAPS ARE ZOOM-GATED. They are allowed
+//       only at ≥2× magnification, where a fingertip really is smaller than a
+//       button. Zoomed out, a direct tap is refused with an error haptic
+//       rather than being silently approximated.
+//    3. THE MAC ITSELF SHOWS THE AIM. The broadcaster snaps to the nearest
+//       clickable element and paints a ring around it, so the owner sees the
+//       target in the video before he commits. That half lives in
+//       mac-agent/ScreenBroadcaster; this file is the hand.
+//
+//  Safety is not implicit: control is a separate switch from viewing, backed
+//  by a separate short-lived token (join + data-stream only — it cannot push
+//  audio or video), pinned to one uid the server minted, and dropped whenever
+//  the stream stops, the lease lapses, or the owner stops touching.
+//
+
+import SwiftUI
+import UIKit
+import AgoraRtcKit
+
+// MARK: - Wire types
+
+private struct ControlTokenResponse: Decodable {
+    let ok: Bool?
+    let appId: String?
+    let channel: String?
+    let uid: Int?
+    let token: String?
+    let sessionId: String?
+    let ttlSec: Int?
+}
+
+private struct VideoTokenResponse: Decodable {
+    let appId: String
+    let channel: String
+    let uid: Int
+    let token: String
+}
+
+/// Typed bodies rather than dictionaries: `[String: Any]` is not Encodable,
+/// and a typo in a key would fail silently at runtime instead of at build time.
+private struct VideoTokenRequest: Encodable {
+    let deviceId: String
+    var uid: Int?
+}
+
+private struct ControlTokenRequest: Encodable {
+    let deviceId: String
+    var uid: Int?
+    let on: Bool
+}
+
+// MARK: - Session: one Agora connection carrying video down and touch up
+
+/// Owns the joined connection for a Mac's screen channel. Split out of
+/// `MacScreenVideoPlayer` so the video canvas and the touch layer are two
+/// views over ONE connection — a second join for control would double the
+/// Agora minutes and could collide with the intercom's connection.
+final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
+    var engine: AgoraRtcEngineKit?
+    /// Which device this join belongs to — the stage rejoins when the feed
+    /// switches Macs mid-sheet (Codex P2 on L9).
+    var joinedDeviceId: String?
+    /// Our OWN connection (joinChannelEx), never the app's main channel.
+    var connection: AgoraRtcConnection?
+    weak var canvasView: UIView?
+    var joined = false
+    /// Per-join generation: leave() bumps it so a stale token request cannot
+    /// join, or tear down the new join (Codex P2 round 6 on L9).
+    var joinGeneration = 0
+    private(set) var uid: Int = 0
+
+    /// Native size of the Mac's video, needed to map a touch to a fraction of
+    /// the DISPLAY rather than of the letterboxed view.
+    private(set) var videoSize: CGSize = .zero
+    var onVideoSize: ((CGSize) -> Void)?
+    var onConnectionLost: (() -> Void)?
+
+    // Control
+    private var streamId: Int = -1
+    private var seq: Int64 = 0
+    private(set) var controlArmed = false
+
+    // MARK: Join / leave (L9 behaviour, unchanged)
+
+    func join(deviceId: String, into view: UIView) {
+        guard !joined else { return }
+        joined = true
+        joinedDeviceId = deviceId
+        let gen = joinGeneration
+        Task { @MainActor in
+            guard let resp: VideoTokenResponse = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/screen-video-token",
+                body: VideoTokenRequest(deviceId: deviceId)) else {
+                // A transient token failure must not wedge the view in a
+                // joined-but-black state (Codex P2 round 8 on L9).
+                if gen == self.joinGeneration {
+                    self.joined = false
+                    self.joinedDeviceId = nil
+                }
+                return
+            }
+            if gen != self.joinGeneration { return }
+            let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
+            self.engine = engine
+            self.uid = resp.uid
+            engine.enableVideo()
+            let conn = AgoraRtcConnection(channelId: resp.channel, localUid: resp.uid)
+            self.connection = conn
+            let options = AgoraRtcChannelMediaOptions()
+            options.clientRoleType = .audience
+            options.autoSubscribeVideo = true
+            options.autoSubscribeAudio = false
+            options.publishCameraTrack = false
+            options.publishMicrophoneTrack = false
+            engine.joinChannelEx(byToken: resp.token, connection: conn,
+                                 delegate: self, mediaOptions: options)
+            // The broadcaster uid is FIXED (1) — bind the canvas immediately
+            // rather than waiting on a delegate whose connection-routing
+            // varies by SDK minor (Codex P1 on L9).
+            if let view = self.canvasView {
+                let canvas = AgoraRtcVideoCanvas()
+                canvas.uid = 1
+                canvas.view = view
+                canvas.renderMode = .fit
+                engine.setupRemoteVideoEx(canvas, connection: conn)
+            }
+            if gen != self.joinGeneration {
+                engine.leaveChannelEx(conn, leaveChannelBlock: nil)
+                if self.connection === conn { self.connection = nil }
+            }
+        }
+    }
+
+    func leave() {
+        joinGeneration += 1
+        controlArmed = false
+        streamId = -1
+        if let conn = connection {
+            engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
+            connection = nil
+        }
+        joined = false
+    }
+
+    // MARK: Agora delegate
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+        guard uid == 1, let view = canvasView, let conn = connection else { return } // 1 = the Mac
+        let canvas = AgoraRtcVideoCanvas()
+        canvas.uid = uid
+        canvas.view = view
+        canvas.renderMode = .fit
+        engine.setupRemoteVideoEx(canvas, connection: conn)
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, videoSizeChangedOf sourceType: AgoraVideoSourceType,
+                   uid: UInt, size: CGSize, rotation: Int) {
+        guard uid == 1, size.width > 0, size.height > 0 else { return }
+        videoSize = size
+        DispatchQueue.main.async { self.onVideoSize?(size) }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, connectionChangedTo state: AgoraConnectionState,
+                   reason: AgoraConnectionChangedReason) {
+        // Losing the connection silently disarms control on this side too —
+        // the Mac drops it on its own lease, but the UI must not keep claiming
+        // the owner is driving something.
+        if state == .failed || state == .disconnected {
+            controlArmed = false
+            streamId = -1
+            DispatchQueue.main.async { self.onConnectionLost?() }
+        }
+    }
+
+    // MARK: Control
+
+    /// Upgrade this connection so it may SEND (and only send) data-stream
+    /// messages. Publishing audio/video stays impossible: the control token
+    /// carries no publish privilege for either.
+    @MainActor
+    func armControl(token: String) -> Bool {
+        guard let engine, let conn = connection else { return false }
+        let options = AgoraRtcChannelMediaOptions()
+        options.token = token
+        options.clientRoleType = .broadcaster // required to send a data stream
+        options.publishCameraTrack = false
+        options.publishMicrophoneTrack = false
+        options.autoSubscribeVideo = true
+        options.autoSubscribeAudio = false
+        guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
+        var newStream: Int = -1
+        let config = AgoraDataStreamConfig()
+        config.ordered = false     // a late packet is worse than a lost one
+        config.syncWithAudio = false
+        guard engine.createDataStreamEx(&newStream, config: config, connection: conn) == 0 else {
+            return false
+        }
+        streamId = newStream
+        controlArmed = true
+        return true
+    }
+
+    /// Step back down to view-only. The subscriber token is re-minted for the
+    /// SAME uid so the video never blinks.
+    @MainActor
+    func disarmControl(viewToken: String?) {
+        controlArmed = false
+        streamId = -1
+        guard let engine, let conn = connection else { return }
+        let options = AgoraRtcChannelMediaOptions()
+        options.clientRoleType = .audience
+        options.autoSubscribeVideo = true
+        options.autoSubscribeAudio = false
+        options.publishCameraTrack = false
+        options.publishMicrophoneTrack = false
+        if let viewToken { options.token = viewToken }
+        _ = engine.updateChannelEx(with: options, connection: conn)
+    }
+
+    /// Fire-and-forget one control message. Sequence numbers are monotonic so
+    /// the Mac can drop replays and out-of-order packets.
+    @discardableResult
+    func send(_ action: [String: Any]) -> Bool {
+        guard controlArmed, streamId >= 0, let engine, let conn = connection else { return false }
+        seq += 1
+        var payload = action
+        payload["v"] = 1
+        payload["s"] = seq
+        payload["t"] = Int(Date().timeIntervalSince1970 * 1000)
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
+        return engine.sendStreamMessageEx(streamId, data: data, connection: conn) == 0
+    }
+}
+
+// MARK: - Store: the owner's control switch, its lease, and its idle death
+
+@available(iOS 17.0, *)
+@MainActor
+@Observable
+final class MacRemoteControlStore {
+    enum Mode: String { case trackpad, direct }
+
+    var armed = false
+    var busy = false
+    var mode: Mode = .trackpad
+    /// Direct taps need magnification; below this they are refused outright.
+    static let directTapMinZoom: CGFloat = 2.0
+    var zoom: CGFloat = 1.0
+    var statusBn: String?
+    /// Native Mac video size, for mapping a touch onto the display.
+    var videoSize: CGSize = .zero
+
+    private var deviceId: String?
+    private weak var session: MacScreenSession?
+    private var renewTask: Task<Void, Never>?
+    private var lastTouchAt = Date()
+    /// The lease the server hands out is 120s; the phone renews well inside it.
+    private let renewEvery: TimeInterval = 45
+    /// Cost guard: an armed-but-untouched control session stops renewing, so
+    /// a phone left in a pocket cannot keep the Mac streaming (and billing).
+    private let idleDisarmAfter: TimeInterval = 120
+
+    func attach(session: MacScreenSession, deviceId: String) {
+        self.session = session
+        self.deviceId = deviceId
+        session.onConnectionLost = { [weak self] in
+            guard let self, self.armed else { return }
+            self.armed = false
+            self.statusBn = "সংযোগ কেটে গেছে — কন্ট্রোল বন্ধ।"
+            self.renewTask?.cancel()
+        }
+        session.onVideoSize = { [weak self] size in self?.videoSize = size }
+    }
+
+    func toggle() async {
+        if armed { await disarm(reason: nil) } else { await arm() }
+    }
+
+    func arm() async {
+        guard !busy, let session, let deviceId, session.connection != nil else { return }
+        busy = true
+        defer { busy = false }
+        guard let resp: ControlTokenResponse = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/screen-control-token",
+            body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: true)
+        ) else {
+            statusBn = "কন্ট্রোল চালু করা গেল না।"
+            AlmaAgentHaptics.error()
+            return
+        }
+        guard let token = resp.token, await session.armControl(token: token) else {
+            statusBn = "কন্ট্রোল চালু করা গেল না।"
+            AlmaAgentHaptics.error()
+            return
+        }
+        armed = true
+        lastTouchAt = Date()
+        statusBn = nil
+        AlmaAgentHaptics.success()
+        startRenewLoop()
+    }
+
+    func disarm(reason: String?) async {
+        renewTask?.cancel()
+        renewTask = nil
+        armed = false
+        statusBn = reason
+        guard let session, let deviceId else { return }
+        // Re-mint a view-only token for the SAME uid before dropping the role,
+        // so the video does not blink when control ends.
+        let viewToken: String? = (try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/screen-video-token",
+            body: VideoTokenRequest(deviceId: deviceId, uid: session.uid)
+        ) as VideoTokenResponse)?.token
+        await session.disarmControl(viewToken: viewToken)
+        _ = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/screen-control-token",
+            body: ControlTokenRequest(deviceId: deviceId, uid: nil, on: false)
+        ) as ControlTokenResponse
+    }
+
+    private func startRenewLoop() {
+        renewTask?.cancel()
+        renewTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(45 * 1_000_000_000))
+                guard let self, self.armed, !Task.isCancelled else { return }
+                if Date().timeIntervalSince(self.lastTouchAt) > self.idleDisarmAfter {
+                    await self.disarm(reason: "নিষ্ক্রিয় থাকায় কন্ট্রোল বন্ধ হয়েছে।")
+                    return
+                }
+                await self.renew()
+            }
+        }
+    }
+
+    private func renew() async {
+        guard let session, let deviceId else { return }
+        guard let resp: ControlTokenResponse = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/screen-control-token",
+            body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: true)
+        ), resp.token != nil else {
+            await disarm(reason: "কন্ট্রোলের মেয়াদ নবায়ন হয়নি।")
+            return
+        }
+        // The lease is renewed server-side by the same call; the Agora token
+        // only needs replacing as it nears expiry.
+        if let token = resp.token, let engine = session.engine, let conn = session.connection {
+            let options = AgoraRtcChannelMediaOptions()
+            options.token = token
+            _ = engine.updateChannelEx(with: options, connection: conn)
+        }
+    }
+
+    // MARK: Sending (called from the touch surface)
+
+    func touched() { lastTouchAt = Date() }
+
+    func sendMove(dx: Double, dy: Double) {
+        guard armed else { return }
+        touched()
+        _ = session?.send(["a": "m", "dx": dx, "dy": dy])
+    }
+
+    func sendClick(count: Int, right: Bool) {
+        guard armed else { return }
+        touched()
+        if session?.send(["a": "c", "b": right ? "r" : "l", "n": count]) == true {
+            right ? AlmaAgentHaptics.rigid() : AlmaAgentHaptics.light()
+        } else {
+            AlmaAgentHaptics.error()
+        }
+    }
+
+    func sendScroll(dx: Double, dy: Double) {
+        guard armed else { return }
+        touched()
+        _ = session?.send(["a": "w", "dx": dx, "dy": dy])
+    }
+
+    func sendDrag(down: Bool) {
+        guard armed else { return }
+        touched()
+        _ = session?.send(["a": down ? "dd" : "du"])
+        AlmaAgentHaptics.commit()
+    }
+
+    /// Direct (absolute) tap — only meaningful when magnified, so the refusal
+    /// is part of the contract rather than an error path.
+    func sendDirectTap(x: Double, y: Double) {
+        guard armed else { return }
+        guard zoom >= Self.directTapMinZoom else {
+            AlmaAgentHaptics.error()
+            statusBn = "সরাসরি ট্যাপের জন্য অন্তত ২× জুম করুন।"
+            return
+        }
+        touched()
+        _ = session?.send(["a": "p", "x": x, "y": y])
+        _ = session?.send(["a": "c", "b": "l", "n": 1])
+        AlmaAgentHaptics.light()
+    }
+
+    func sendText(_ text: String) {
+        guard armed, !text.isEmpty else { return }
+        touched()
+        _ = session?.send(["a": "k", "txt": text])
+    }
+
+    func sendKey(_ name: String, mods: [String] = []) {
+        guard armed else { return }
+        touched()
+        _ = session?.send(["a": "kc", "key": name, "mods": mods])
+        AlmaAgentHaptics.light()
+    }
+}
+
+// MARK: - The touch surface
+
+/// Raw touch handling rather than gesture recognizers: a trackpad needs one
+/// state machine over "how many fingers, how far, how long", and four
+/// recognizers fighting each other is exactly how a remote control develops a
+/// wrong-click problem.
+@available(iOS 17.0, *)
+final class TrackpadSurfaceView: UIView {
+    weak var store: MacRemoteControlStore?
+    /// Aspect (w/h) of the Mac display, so the fitted video rect is exact.
+    var videoAspect: CGFloat = 16.0 / 9.0
+    var directMode = false
+
+    private enum Phase { case idle, undecided, moving, dragging, twoFinger }
+    private var phase: Phase = .idle
+    private var startPoint: CGPoint = .zero
+    private var lastPoint: CGPoint = .zero
+    private var startedAt: Date = .init()
+    private var lastTwoFingerPoint: CGPoint = .zero
+    private var longPressWork: DispatchWorkItem?
+    private var lastClickAt: Date = .distantPast
+    private var lastClickPoint: CGPoint = .zero
+    /// Accumulated motion, flushed on a timer — Agora allows ~60 data messages
+    /// a second and a finger generates far more touch callbacks than that.
+    private var pendingDX: Double = 0
+    private var pendingDY: Double = 0
+    private var flushTimer: Timer?
+
+    private let moveThreshold: CGFloat = 7
+    private let tapMaxDuration: TimeInterval = 0.4
+    private let doubleTapWindow: TimeInterval = 0.32
+    private let longPressDelay: TimeInterval = 0.45
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isMultipleTouchEnabled = true
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    deinit { flushTimer?.invalidate() }
+
+    /// Where the letterboxed video actually sits inside our bounds.
+    var videoRect: CGRect {
+        guard videoAspect > 0, bounds.width > 0, bounds.height > 0 else { return bounds }
+        let boxAspect = bounds.width / bounds.height
+        if boxAspect > videoAspect { // pillarboxed
+            let w = bounds.height * videoAspect
+            return CGRect(x: bounds.midX - w / 2, y: 0, width: w, height: bounds.height)
+        }
+        let h = bounds.width / videoAspect
+        return CGRect(x: 0, y: bounds.midY - h / 2, width: bounds.width, height: h)
+    }
+
+    // MARK: Touches
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard store?.armed == true else { return }
+        let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
+        if all.count >= 2 {
+            cancelLongPress()
+            phase = .twoFinger
+            lastTwoFingerPoint = midpoint(of: all)
+            return
+        }
+        guard let touch = touches.first else { return }
+        phase = .undecided
+        startPoint = touch.location(in: self)
+        lastPoint = startPoint
+        startedAt = Date()
+        scheduleLongPress()
+        startFlushTimer()
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard store?.armed == true else { return }
+        let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
+        if phase == .twoFinger || all.count >= 2 {
+            phase = .twoFinger
+            cancelLongPress()
+            let now = midpoint(of: all)
+            let dx = now.x - lastTwoFingerPoint.x
+            let dy = now.y - lastTwoFingerPoint.y
+            lastTwoFingerPoint = now
+            let rect = videoRect
+            guard rect.width > 0, rect.height > 0 else { return }
+            // Natural scrolling: content follows the fingers, as on the Mac.
+            store?.sendScroll(dx: Double(-dx / rect.width), dy: Double(dy / rect.height))
+            return
+        }
+        guard let touch = touches.first else { return }
+        let p = touch.location(in: self)
+        let moved = hypot(p.x - startPoint.x, p.y - startPoint.y)
+        if phase == .undecided, moved > moveThreshold {
+            phase = .moving
+            cancelLongPress()
+        }
+        guard phase == .moving || phase == .dragging else { return }
+        let rect = videoRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        // 1:1 by default with a gentle acceleration: a slow finger is precise,
+        // a fast flick crosses an ultrawide screen without a dozen swipes.
+        let rawDX = Double((p.x - lastPoint.x) / rect.width)
+        let rawDY = Double((p.y - lastPoint.y) / rect.height)
+        let speed = hypot(rawDX, rawDY)
+        let accel = min(2.2, 1.0 + speed * 22)
+        pendingDX += rawDX * accel
+        pendingDY += rawDY * accel
+        lastPoint = p
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard store?.armed == true else { phase = .idle; return }
+        let remaining = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
+        cancelLongPress()
+        flushPendingMotion()
+        switch phase {
+        case .dragging:
+            store?.sendDrag(down: false)
+        case .twoFinger:
+            // A two-finger tap (no travel, short) is a right-click.
+            if remaining == 0, Date().timeIntervalSince(startedAt) < tapMaxDuration,
+               hypot(lastTwoFingerPoint.x - startPoint.x, lastTwoFingerPoint.y - startPoint.y) < moveThreshold * 2 {
+                store?.sendClick(count: 1, right: true)
+            }
+        case .undecided:
+            handleTap(at: touches.first?.location(in: self) ?? startPoint)
+        case .moving, .idle:
+            break
+        }
+        if remaining == 0 {
+            phase = .idle
+            stopFlushTimer()
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        cancelLongPress()
+        flushPendingMotion()
+        if phase == .dragging { store?.sendDrag(down: false) }
+        phase = .idle
+        stopFlushTimer()
+    }
+
+    private func handleTap(at point: CGPoint) {
+        guard Date().timeIntervalSince(startedAt) < tapMaxDuration else { return }
+        if directMode {
+            let rect = videoRect
+            guard rect.contains(point) else {
+                AlmaAgentHaptics.error()
+                return
+            }
+            store?.sendDirectTap(
+                x: Double((point.x - rect.minX) / rect.width),
+                y: Double((point.y - rect.minY) / rect.height))
+            return
+        }
+        let now = Date()
+        let isDouble = now.timeIntervalSince(lastClickAt) < doubleTapWindow
+            && hypot(point.x - lastClickPoint.x, point.y - lastClickPoint.y) < 24
+        lastClickAt = now
+        lastClickPoint = point
+        store?.sendClick(count: isDouble ? 2 : 1, right: false)
+    }
+
+    // MARK: Long press → drag
+
+    private func scheduleLongPress() {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.phase == .undecided else { return }
+            self.phase = .dragging
+            self.store?.sendDrag(down: true)
+        }
+        longPressWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + longPressDelay, execute: work)
+    }
+
+    private func cancelLongPress() {
+        longPressWork?.cancel()
+        longPressWork = nil
+    }
+
+    // MARK: Motion flushing
+
+    private func startFlushTimer() {
+        guard flushTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.022, repeats: true) { [weak self] _ in
+            self?.flushPendingMotion()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        flushTimer = timer
+    }
+
+    private func stopFlushTimer() {
+        flushTimer?.invalidate()
+        flushTimer = nil
+    }
+
+    private func flushPendingMotion() {
+        guard pendingDX != 0 || pendingDY != 0 else { return }
+        // Clamp to the wire contract: the Mac drops anything past half a screen.
+        let dx = max(-0.45, min(0.45, pendingDX))
+        let dy = max(-0.45, min(0.45, pendingDY))
+        pendingDX = 0
+        pendingDY = 0
+        store?.sendMove(dx: dx, dy: dy)
+    }
+
+    private func midpoint(of touches: Set<UITouch>) -> CGPoint {
+        var sum = CGPoint.zero
+        for t in touches {
+            let p = t.location(in: self)
+            sum.x += p.x
+            sum.y += p.y
+        }
+        let n = CGFloat(max(1, touches.count))
+        return CGPoint(x: sum.x / n, y: sum.y / n)
+    }
+}
+
+// MARK: - The stage: video canvas + touch surface as one view
+
+@available(iOS 17.0, *)
+struct MacScreenStage: UIViewRepresentable {
+    let deviceId: String
+    let session: MacScreenSession
+    var store: MacRemoteControlStore
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        container.backgroundColor = .black
+        container.clipsToBounds = true
+
+        let canvas = UIView()
+        canvas.backgroundColor = .black
+        canvas.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(canvas)
+
+        let surface = TrackpadSurfaceView(frame: .zero)
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        surface.store = store
+        container.addSubview(surface)
+
+        NSLayoutConstraint.activate([
+            canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            canvas.topAnchor.constraint(equalTo: container.topAnchor),
+            canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: container.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        context.coordinator.surface = surface
+        session.canvasView = canvas
+        store.attach(session: session, deviceId: deviceId)
+        session.join(deviceId: deviceId, into: canvas)
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        if session.joinedDeviceId != deviceId, let canvas = session.canvasView {
+            session.leave()
+            store.attach(session: session, deviceId: deviceId)
+            session.join(deviceId: deviceId, into: canvas)
+        }
+        if let surface = context.coordinator.surface {
+            surface.directMode = store.mode == .direct
+            if store.videoSize.width > 0, store.videoSize.height > 0 {
+                surface.videoAspect = store.videoSize.width / store.videoSize.height
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        weak var surface: TrackpadSurfaceView?
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        // The session is owned by the sheet, not by this view: leaving is the
+        // sheet's job on disappear, so a SwiftUI re-layout cannot drop the call.
+    }
+}
+
+// MARK: - Control bar
+
+/// Deliberately BELOW the video and finger-sized (≥44pt): the one thing worse
+/// than a mis-aimed Mac click is a Mac click that was meant to be a button in
+/// our own UI, so the two never share an edge.
+@available(iOS 17.0, *)
+struct MacControlBar: View {
+    @Bindable var control: MacRemoteControlStore
+    let pal: AgentPalette
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    AlmaAgentHaptics.commit()
+                    Task { await control.toggle() }
+                } label: {
+                    HStack(spacing: 7) {
+                        if control.busy {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: control.armed ? "hand.raised.slash.fill" : "hand.point.up.left.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        Text(control.armed ? "কন্ট্রোল বন্ধ" : "কন্ট্রোল চালু")
+                            .font(.system(size: 13.5, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .foregroundStyle(control.armed ? Color.red : pal.mutedHi)
+                    .background(
+                        control.armed ? Color.red.opacity(0.10) : pal.ink.opacity(0.04),
+                        in: RoundedRectangle(cornerRadius: 11))
+                    .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
+                        control.armed ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
+                }
+                .disabled(control.busy)
+                .accessibilityLabel("Mac রিমোট কন্ট্রোল")
+
+                if control.armed {
+                    Picker("", selection: Binding(
+                        get: { control.mode },
+                        set: { control.mode = $0; AlmaAgentHaptics.selection() })) {
+                        Text("ট্র্যাকপ্যাড").tag(MacRemoteControlStore.Mode.trackpad)
+                        Text("সরাসরি").tag(MacRemoteControlStore.Mode.direct)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 168, height: 44)
+                }
+            }
+
+            if control.armed {
+                Text(control.mode == .trackpad
+                     ? "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
+                     : "সরাসরি মোড: অন্তত ২× জুম করে তবেই ট্যাপ করা যাবে — নইলে ভুল জায়গায় পড়তে পারে।")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(pal.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let status = control.statusBn {
+                Text(status)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
