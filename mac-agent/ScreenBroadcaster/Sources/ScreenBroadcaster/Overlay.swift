@@ -17,6 +17,45 @@
  */
 import AppKit
 import CoreGraphics
+import CoreImage
+import CoreVideo
+
+/// The newest captured frame, kept so the RC-2.5 loupe can magnify what is
+/// already on the wire instead of taking a second screenshot. `CGWindowList`
+/// capture is gone from current macOS, and a second ScreenCaptureKit stream
+/// would double the capture cost for a magnifier.
+final class FrameStore {
+    static let shared = FrameStore()
+    private let lock = NSLock()
+    private var buffer: CVPixelBuffer?
+    /// Captured pixels per display point (the stream is downscaled to ≤1600).
+    private var scale: CGFloat = 1
+    private let context = CIContext(options: [.useSoftwareRenderer: false])
+
+    func update(_ pixelBuffer: CVPixelBuffer, displaySize: CGSize) {
+        lock.lock()
+        defer { lock.unlock() }
+        buffer = pixelBuffer
+        if displaySize.width > 0 {
+            scale = CGFloat(CVPixelBufferGetWidth(pixelBuffer)) / displaySize.width
+        }
+    }
+
+    /// `rect` is in display points, top-left origin (the CGEvent space).
+    func crop(_ rect: CGRect) -> CGImage? {
+        lock.lock()
+        let pixels = buffer
+        let s = scale
+        lock.unlock()
+        guard let pixels else { return nil }
+        let height = CGFloat(CVPixelBufferGetHeight(pixels))
+        let image = CIImage(cvPixelBuffer: pixels)
+        // CoreImage is y-up; the control space is y-down.
+        let inPixels = CGRect(x: rect.minX * s, y: height - rect.maxY * s,
+                              width: rect.width * s, height: rect.height * s)
+        return context.createCGImage(image, from: inPixels.integral)
+    }
+}
 
 final class ControlOverlay {
     static let shared = ControlOverlay()
@@ -106,10 +145,10 @@ final class ControlOverlay {
                 }
                 return
             }
-            let windowNumber = CGWindowID(self.window?.windowNumber ?? 0)
-            let image = Injector.loupeImage(
-                around: point, size: CGSize(width: 150, height: 110), excluding: windowNumber)
-            view.loupeImage = image
+            let size = CGSize(width: 150, height: 110)
+            let rect = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                              width: size.width, height: size.height)
+            view.loupeImage = FrameStore.shared.crop(rect)
             view.loupeAt = self.toLocal(point)
             view.needsDisplay = true
         }
@@ -178,9 +217,16 @@ final class OverlayView: NSView {
         guard let image = loupeImage else { return }
         let scale: CGFloat = 2.2
         let size = CGSize(width: 150 * scale / 2, height: 110 * scale / 2)
-        var origin = CGPoint(x: loupeAt.x - size.width - 30, y: loupeAt.y + 30)
-        origin.x = min(max(8, origin.x), bounds.maxX - size.width - 8)
-        origin.y = min(max(8, origin.y), bounds.maxY - size.height - 8)
+        // Parked in the corner FARTHEST from the cursor, not floating beside
+        // it: the loupe magnifies the live frame, so a loupe drawn over the
+        // magnified region would photograph itself every frame. Far corner =
+        // the patch can never contain the panel.
+        let inset: CGFloat = 16
+        let left = loupeAt.x > bounds.midX
+        let bottom = loupeAt.y > bounds.midY
+        let origin = CGPoint(
+            x: left ? inset : bounds.maxX - size.width - inset,
+            y: bottom ? inset : bounds.maxY - size.height - inset)
         let box = NSRect(origin: origin, size: size)
         let clip = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12)
         NSGraphicsContext.saveGraphicsState()

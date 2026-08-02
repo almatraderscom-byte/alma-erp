@@ -343,12 +343,17 @@ final class AgentLiveDockStore {
                              lastBn: "🧠 বুঝেছি — orders পেজের bug টা দেখছি",
                              status: "working", costUsd: 0.0421, at: now),
         ]
+        // RC-1: `control` renders the remote-control surface (video stage,
+        // control bar, keyboard, display picker) without a server, so the
+        // layout can be checked in the simulator before anything ships.
+        let control = mode == "control"
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
-                                     steps: steps, streaming: false, sessions: fixtureSessions,
-                                     screenshot: nil, screenshotAt: nil, videoDeviceId: nil,
-                                     macDisplays: nil)
+                                     steps: steps, streaming: control, sessions: fixtureSessions,
+                                     screenshot: nil, screenshotAt: nil,
+                                     videoDeviceId: control ? "fixture-mac" : nil,
+                                     macDisplays: control ? MacDisplayInfo(count: 2, index: 0) : nil)
         lastActiveAt = Date()
-        if mode == "sheet" { expanded = true }
+        if mode == "sheet" || control { expanded = true }
         return true
         #else
         return false

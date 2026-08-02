@@ -25,6 +25,7 @@
  * Every rejection is COUNTED. The counts ride the frame POST into the owner's
  * audit row, because a silent drop is indistinguishable from a bug.
  */
+import CoreGraphics
 import Foundation
 
 // MARK: - Wire format
@@ -36,7 +37,7 @@ struct ControlMessage {
         case move(dx: Double, dy: Double)
         /// Absolute move (direct/zoomed mode); 0…1 fractions of the display.
         case position(x: Double, y: Double)
-        case click(button: Button, count: Int, confirm: Bool)
+        case click(button: Button, count: Int, confirm: Bool, at: CGPoint?)
         case dragDown
         case dragUp
         case scroll(dx: Double, dy: Double)
@@ -83,7 +84,14 @@ enum ControlDecoder {
             let count = min(max((obj["n"] as? Int) ?? 1, 1), 2)
             // RC-2.5: "cf" means the owner has two-step confirm on — the first
             // tap on a new target only aims, the second commits.
-            action = .click(button: button, count: count, confirm: (obj["cf"] as? Int) == 1)
+            // A direct (zoomed) tap arrives as ONE packet carrying its own
+            // position, so a click can never be separated from the move that
+            // aimed it — see the ordered/unordered stream split on the phone.
+            var at: CGPoint?
+            if let x = frac("x", limit: 1), let y = frac("y", limit: 1), x >= 0, y >= 0 {
+                at = CGPoint(x: x, y: y)
+            }
+            action = .click(button: button, count: count, confirm: (obj["cf"] as? Int) == 1, at: at)
         case "dd": action = .dragDown
         case "du": action = .dragUp
         case "w":

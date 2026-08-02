@@ -99,8 +99,15 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// leave the owner staring at a black rectangle.
     private var healAttempts = 0
 
-    // Control
-    private var streamId: Int = -1
+    // Control. TWO data streams, deliberately:
+    //   • motion (unordered) — moves and scrolls are high-rate and
+    //     loss-tolerant; a late one should be dropped, not waited for.
+    //   • state (ordered) — clicks, drag down/up and keys CHANGE STATE, and
+    //     the monotonic-sequence gate on the Mac drops anything that arrives
+    //     out of order. A reordered `du` before its `dd` would leave the
+    //     button held; a reordered click would fire at the old cursor.
+    private var motionStreamId: Int = -1
+    private var stateStreamId: Int = -1
     private var seq: Int64 = 0
     private(set) var controlArmed = false
 
@@ -158,7 +165,8 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     func leave() {
         joinGeneration += 1
         controlArmed = false
-        streamId = -1
+        motionStreamId = -1
+        stateStreamId = -1
         if let conn = connection {
             engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
             connection = nil
@@ -191,7 +199,8 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         // the owner is driving something.
         if state == .failed || state == .disconnected {
             controlArmed = false
-            streamId = -1
+            motionStreamId = -1
+            stateStreamId = -1
             DispatchQueue.main.async { self.onConnectionLost?() }
         }
         // .reconnecting is Agora healing itself — leave it alone. Only a hard
@@ -231,14 +240,22 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
-        var newStream: Int = -1
-        let config = AgoraDataStreamConfig()
-        config.ordered = false     // a late packet is worse than a lost one
-        config.syncWithAudio = false
-        guard engine.createDataStreamEx(&newStream, config: config, connection: conn) == 0 else {
+        var motion: Int = -1
+        let motionConfig = AgoraDataStreamConfig()
+        motionConfig.ordered = false // a late move is worse than a lost one
+        motionConfig.syncWithAudio = false
+        guard engine.createDataStreamEx(&motion, config: motionConfig, connection: conn) == 0 else {
             return false
         }
-        streamId = newStream
+        var state: Int = -1
+        let stateConfig = AgoraDataStreamConfig()
+        stateConfig.ordered = true // clicks and drag edges must not overtake
+        stateConfig.syncWithAudio = false
+        guard engine.createDataStreamEx(&state, config: stateConfig, connection: conn) == 0 else {
+            return false
+        }
+        motionStreamId = motion
+        stateStreamId = state
         controlArmed = true
         return true
     }
@@ -248,7 +265,8 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     @MainActor
     func disarmControl(viewToken: String?) {
         controlArmed = false
-        streamId = -1
+        motionStreamId = -1
+        stateStreamId = -1
         guard let engine, let conn = connection else { return }
         let options = AgoraRtcChannelMediaOptions()
         options.clientRoleType = .audience
@@ -261,17 +279,19 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     }
 
     /// Fire-and-forget one control message. Sequence numbers are monotonic so
-    /// the Mac can drop replays and out-of-order packets.
+    /// the Mac can drop replays; `ordered` picks the stream that guarantees a
+    /// packet cannot overtake the one before it.
     @discardableResult
-    func send(_ action: [String: Any]) -> Bool {
-        guard controlArmed, streamId >= 0, let engine, let conn = connection else { return false }
+    func send(_ action: [String: Any], ordered: Bool = true) -> Bool {
+        let stream = ordered ? stateStreamId : motionStreamId
+        guard controlArmed, stream >= 0, let engine, let conn = connection else { return false }
         seq += 1
         var payload = action
         payload["v"] = 1
         payload["s"] = seq
         payload["t"] = Int(Date().timeIntervalSince1970 * 1000)
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
-        return engine.sendStreamMessageEx(streamId, data: data, connection: conn) == 0
+        return engine.sendStreamMessageEx(stream, data: data, connection: conn) == 0
     }
 }
 
@@ -333,6 +353,18 @@ final class MacRemoteControlStore {
     /// Cost guard: an armed-but-untouched control session stops renewing, so
     /// a phone left in a pocket cannot keep the Mac streaming (and billing).
     private let idleDisarmAfter: TimeInterval = 120
+
+    init() {
+        #if DEBUG
+        // Simulator layout check: show the armed UI without a server. Nothing
+        // can actually be sent — there is no joined session behind it.
+        let p = ProcessInfo.processInfo
+        if p.environment["ALMA_RC_FIXTURE"] == "1"
+            || p.arguments.contains("ALMA_RC_FIXTURE=1") {
+            armed = true
+        }
+        #endif
+    }
 
     func attach(session: MacScreenSession, deviceId: String) {
         self.session = session
@@ -464,7 +496,7 @@ final class MacRemoteControlStore {
     func sendMove(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "m", "dx": dx, "dy": dy])
+        _ = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: false)
     }
 
     func sendClick(count: Int, right: Bool) {
@@ -484,7 +516,7 @@ final class MacRemoteControlStore {
     func sendScroll(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "w", "dx": dx, "dy": dy])
+        _ = session?.send(["a": "w", "dx": dx, "dy": dy], ordered: false)
     }
 
     func sendDrag(down: Bool) {
@@ -504,8 +536,10 @@ final class MacRemoteControlStore {
             return
         }
         touched()
-        _ = session?.send(["a": "p", "x": x, "y": y])
-        var payload: [String: Any] = ["a": "c", "b": "l", "n": 1]
+        // One packet, not two: a separate position-then-click pair can be
+        // reordered or half-lost, and a click at the OLD cursor is exactly the
+        // wrong-click this whole design exists to prevent.
+        var payload: [String: Any] = ["a": "c", "b": "l", "n": 1, "x": x, "y": y]
         if twoStepConfirm { payload["cf"] = 1 }
         _ = session?.send(payload)
         RemoteHaptics.tap()
@@ -520,15 +554,41 @@ final class MacRemoteControlStore {
             return
         }
         touched()
-        _ = session?.send(["a": "p", "x": x, "y": y])
-        _ = session?.send(["a": "c", "b": "r", "n": 1])
+        _ = session?.send(["a": "c", "b": "r", "n": 1, "x": x, "y": y])
         RemoteHaptics.rightTap()
     }
 
-    func sendText(_ text: String) {
-        guard armed, !text.isEmpty else { return }
+    /// Returns false if nothing could be sent, so the composer keeps the text
+    /// rather than swallowing it.
+    @discardableResult
+    func sendText(_ text: String) -> Bool {
+        guard armed, !text.isEmpty else { return false }
         touched()
-        _ = session?.send(["a": "k", "txt": text])
+        var ok = true
+        for chunk in Self.wireChunks(text) {
+            if session?.send(["a": "k", "txt": chunk]) != true { ok = false; break }
+        }
+        return ok
+    }
+
+    /// Split on the tighter of the two wire limits: 240 characters, and a
+    /// UTF-8 budget that leaves room for the JSON envelope inside 1 KB.
+    static func wireChunks(_ text: String, maxChars: Int = 200, maxBytes: Int = 700) -> [String] {
+        var chunks: [String] = []
+        var current = ""
+        var bytes = 0
+        for character in text {
+            let size = String(character).utf8.count
+            if current.count >= maxChars || bytes + size > maxBytes {
+                chunks.append(current)
+                current = ""
+                bytes = 0
+            }
+            current.append(character)
+            bytes += size
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
     }
 
     func sendKey(_ name: String, mods: [String] = []) {
@@ -558,6 +618,10 @@ final class TrackpadSurfaceView: UIView {
     private var lastPoint: CGPoint = .zero
     private var startedAt: Date = .init()
     private var lastTwoFingerPoint: CGPoint = .zero
+    /// Where the two-finger gesture STARTED (its midpoint). Comparing against
+    /// the first finger's touch-down point instead made every two-finger tap
+    /// look like a swipe, so the right-click never fired (Codex P2).
+    private var twoFingerStart: CGPoint = .zero
     private var longPressWork: DispatchWorkItem?
     private var lastClickAt: Date = .distantPast
     private var lastClickPoint: CGPoint = .zero
@@ -603,6 +667,8 @@ final class TrackpadSurfaceView: UIView {
             cancelLongPress()
             phase = .twoFinger
             lastTwoFingerPoint = midpoint(of: all)
+            twoFingerStart = lastTwoFingerPoint
+            startedAt = Date()
             return
         }
         guard let touch = touches.first else { return }
@@ -618,7 +684,14 @@ final class TrackpadSurfaceView: UIView {
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if phase == .twoFinger || all.count >= 2 {
-            phase = .twoFinger
+            if phase != .twoFinger {
+                phase = .twoFinger
+                lastTwoFingerPoint = midpoint(of: all)
+                twoFingerStart = lastTwoFingerPoint
+                startedAt = Date()
+                cancelLongPress()
+                return
+            }
             cancelLongPress()
             let now = midpoint(of: all)
             let dx = now.x - lastTwoFingerPoint.x
@@ -662,7 +735,8 @@ final class TrackpadSurfaceView: UIView {
         case .twoFinger:
             // A two-finger tap (no travel, short) is a right-click.
             if remaining == 0, Date().timeIntervalSince(startedAt) < tapMaxDuration,
-               hypot(lastTwoFingerPoint.x - startPoint.x, lastTwoFingerPoint.y - startPoint.y) < moveThreshold * 2 {
+               hypot(lastTwoFingerPoint.x - twoFingerStart.x,
+                     lastTwoFingerPoint.y - twoFingerStart.y) < moveThreshold * 2 {
                 store?.sendClick(count: 1, right: true)
             }
         case .undecided:
@@ -698,9 +772,17 @@ final class TrackpadSurfaceView: UIView {
             return
         }
         let now = Date()
-        let isDouble = now.timeIntervalSince(lastClickAt) < doubleTapWindow
+        // The first tap already fired a real click. A double-tap therefore
+        // sends only the SECOND click of the pair (clickState 2), which is
+        // what macOS reads as a double-click — sending a `count: 2` burst on
+        // top of the first click would fire three times (Codex P1).
+        // With two-step confirm on there is no first click to pair with, so
+        // every tap stays a single.
+        let confirmOn = store?.twoStepConfirm == true
+        let isDouble = !confirmOn
+            && now.timeIntervalSince(lastClickAt) < doubleTapWindow
             && hypot(point.x - lastClickPoint.x, point.y - lastClickPoint.y) < 24
-        lastClickAt = now
+        lastClickAt = isDouble ? .distantPast : now // a triple tap starts over
         lastClickPoint = point
         store?.sendClick(count: isDouble ? 2 : 1, right: false)
     }
@@ -1115,8 +1197,12 @@ struct MacKeyboardBar: View {
     private func send() {
         let payload = text
         guard !payload.isEmpty else { return }
-        control.sendText(payload)
-        text = ""
-        AlmaAgentHaptics.light()
+        // The wire caps a message at 240 characters and 1 KB; Bangla is three
+        // UTF-8 bytes a character, so a pasted paragraph would be silently
+        // dropped by the Mac's decoder. Split it and only clear the field for
+        // the parts that actually left (Codex P2).
+        let sent = control.sendText(payload)
+        if sent { text = "" }
+        sent ? AlmaAgentHaptics.light() : AlmaAgentHaptics.error()
     }
 }

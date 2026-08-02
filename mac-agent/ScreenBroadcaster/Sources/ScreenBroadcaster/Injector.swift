@@ -106,14 +106,27 @@ enum Injector {
     private static var pendingSince: TimeInterval = 0
     private static let confirmWindow: TimeInterval = 4
 
+    /// The target currently AIMED at and still awaiting its second tap, if the
+    /// window has not lapsed. The hover refresh reads this so its 90ms tick
+    /// cannot quietly revert the ring to the ordinary style (Codex P2).
+    static var pendingAim: CGRect? {
+        guard let pendingTarget, Date().timeIntervalSince1970 - pendingSince < confirmWindow
+        else { return nil }
+        return pendingTarget
+    }
+
     enum ClickOutcome { case clicked, aimed }
 
     /// Click at the cursor, snapping onto the nearest clickable element first.
     /// Returns the point clicked and the snapped element's frame (for the ring).
     @discardableResult
     static func click(
-        button: ControlMessage.Button, count: Int, confirm: Bool = false,
+        button: ControlMessage.Button, count: Int, confirm: Bool = false, at: CGPoint? = nil,
     ) -> (point: CGPoint, frame: CGRect?, outcome: ClickOutcome) {
+        // A direct tap names its own point; trackpad clicks use the cursor.
+        if let at {
+            moveTo(xFraction: Double(at.x), yFraction: Double(at.y))
+        }
         var p = cursor()
         var frame: CGRect?
         if let target = AXSnap.target(near: p, radius: snapRadius) {
@@ -143,22 +156,17 @@ enum Injector {
             ? (.rightMouseDown, .rightMouseUp)
             : (.leftMouseDown, .leftMouseUp)
         let cgButton: CGMouseButton = button == .right ? .right : .left
-        for i in 1...max(1, count) {
-            for type in [down, up] {
-                let ev = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: cgButton)
-                ev?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
-                ev?.post(tap: .cghidEventTap)
-            }
+        // count == 2 means "this is the SECOND click of a double" — the first
+        // one was already delivered by the previous tap, so emit exactly one
+        // event pair with clickState 2. Emitting a 1-then-2 burst here would
+        // make a double-tap fire three physical clicks (Codex P1).
+        let clickState = Int64(min(max(1, count), 2))
+        for type in [down, up] {
+            let ev = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: cgButton)
+            ev?.setIntegerValueField(.mouseEventClickState, value: clickState)
+            ev?.post(tap: .cghidEventTap)
         }
         return (p, frame, .clicked)
-    }
-
-    /// Magnified crop of the screen around the cursor, EXCLUDING our own
-    /// overlay window so the loupe never photographs itself.
-    static func loupeImage(around point: CGPoint, size: CGSize, excluding windowNumber: CGWindowID) -> CGImage? {
-        let rect = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
-                          width: size.width, height: size.height)
-        return CGWindowListCreateImage(rect, .optionOnScreenBelowWindow, windowNumber, [.boundsIgnoreFraming])
     }
 
     static func dragDown() {

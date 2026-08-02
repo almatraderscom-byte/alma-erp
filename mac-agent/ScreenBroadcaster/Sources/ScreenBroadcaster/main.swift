@@ -84,8 +84,8 @@ enum ControlInput {
             case .position(let x, let y):
                 Injector.moveTo(xFraction: x, yFraction: y)
                 HoverRing.refreshSoon()
-            case .click(let button, let count, let confirm):
-                let result = Injector.click(button: button, count: count, confirm: confirm)
+            case .click(let button, let count, let confirm, let at):
+                let result = Injector.click(button: button, count: count, confirm: confirm, at: at)
                 // Aimed-not-clicked draws a SOLID ring: the owner can see the
                 // difference between "this is the target" and "it went".
                 ControlOverlay.shared.showRing(
@@ -175,8 +175,15 @@ enum HoverRing {
     private static func refresh() {
         guard controlGate.isArmed else { return }
         let cursor = Injector.cursor()
-        let target = AXSnap.target(near: cursor, radius: Injector.snapRadius)
-        ControlOverlay.shared.showRing(globalFrame: target?.frame)
+        // A target that has been aimed at (two-step confirm) owns the ring
+        // until it is committed or the window lapses — otherwise this tick
+        // would erase the very signal the second tap depends on.
+        if let pending = Injector.pendingAim {
+            ControlOverlay.shared.showRing(globalFrame: pending, pending: true)
+        } else {
+            let target = AXSnap.target(near: cursor, radius: Injector.snapRadius)
+            ControlOverlay.shared.showRing(globalFrame: target?.frame)
+        }
         if loupeOn { ControlOverlay.shared.showLoupe(atGlobal: cursor) }
     }
 }
@@ -205,9 +212,17 @@ var gOutput: Output?
 
 final class Output: NSObject, SCStreamOutput {
     let engine: AgoraRtcEngineKit
-    init(engine: AgoraRtcEngineKit) { self.engine = engine }
+    /// Display size in points, so the loupe can map a cursor position onto the
+    /// (downscaled) captured pixels.
+    let displaySize: CGSize
+    init(engine: AgoraRtcEngineKit, displaySize: CGSize) {
+        self.engine = engine
+        self.displaySize = displaySize
+    }
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        // The RC-2.5 loupe magnifies THIS frame — no second capture path.
+        FrameStore.shared.update(pixelBuffer, displaySize: displaySize)
         let frame = AgoraVideoFrame()
         frame.format = 12 // CVPixelBuffer passthrough
         frame.textureBuf = pixelBuffer
@@ -256,7 +271,7 @@ Task {
         cfg.queueDepth = 5
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
-        let output = Output(engine: engine)
+        let output = Output(engine: engine, displaySize: bounds.size)
         gStream = stream
         gOutput = output
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "cap"))
