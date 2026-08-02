@@ -557,6 +557,13 @@ final class MacRemoteControlStore {
     /// is part of the contract rather than an error path.
     func sendDirectTap(x: Double, y: Double) {
         guard armed else { return }
+        // Without the real video size the fitted rect is a guess, and a guess
+        // is exactly what an absolute tap must not be built on.
+        guard videoSize.width > 0, videoSize.height > 0 else {
+            RemoteHaptics.refused()
+            statusBn = "ভিডিও এখনো আসেনি — একটু পরে চেষ্টা করুন।"
+            return
+        }
         guard zoom >= Self.directTapMinZoom else {
             RemoteHaptics.refused()
             statusBn = "সরাসরি ট্যাপের জন্য অন্তত ২× জুম করুন।"
@@ -574,7 +581,7 @@ final class MacRemoteControlStore {
 
     /// Right-click at an absolute point (direct-mode long press).
     func sendDirectRightClick(x: Double, y: Double) {
-        guard armed else { return }
+        guard armed, videoSize.width > 0, videoSize.height > 0 else { return }
         guard zoom >= Self.directTapMinZoom else {
             RemoteHaptics.refused()
             statusBn = "সরাসরি মোডে অন্তত ২× জুম করুন।"
@@ -693,6 +700,10 @@ final class TrackpadSurfaceView: UIView {
         if all.count >= 2 {
             cancelLongPress()
             phase = .twoFinger
+            // Motion the first finger had already banked is not part of this
+            // gesture — flushing it would jog the cursor as the scroll starts.
+            pendingDX = 0
+            pendingDY = 0
             lastTwoFingerPoint = midpoint(of: all)
             twoFingerStart = lastTwoFingerPoint
             startedAt = Date()
@@ -713,6 +724,8 @@ final class TrackpadSurfaceView: UIView {
         if phase == .twoFinger || all.count >= 2 {
             if phase != .twoFinger {
                 phase = .twoFinger
+                pendingDX = 0
+                pendingDY = 0
                 lastTwoFingerPoint = midpoint(of: all)
                 twoFingerStart = lastTwoFingerPoint
                 startedAt = Date()
