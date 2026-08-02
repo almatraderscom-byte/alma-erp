@@ -339,8 +339,56 @@ const STREAM_MAX_SECONDS = 300
 let streamTimer = null
 let streamDeadline = 0
 let streamBusy = false
+// L9-B: the VIDEO engine — a spawned ScreenBroadcaster (ScreenCaptureKit →
+// Agora). Optional by design: binary missing or token route absent ⇒ the JPEG
+// frame pipe above stays the only channel, nothing breaks.
+let videoChild = null
+let videoActive = false
+
+async function startScreenVideo(token) {
+  const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
+  if (!existsSync(bin)) return // not built/deployed on this Mac — JPEG only
+  try {
+    const res = await api('/api/assistant/mac-agent/screen-video-token', {
+      method: 'POST', token, timeoutMs: 10_000,
+    })
+    if (!res.ok || !res.json?.token) {
+      log('screen video: no token', String(res.status))
+      return
+    }
+    const { appId, channel, uid, token: rtc } = res.json
+    videoChild = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    videoChild.stdout.on('data', (d) => {
+      const line = String(d).trim()
+      if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
+      if (line.startsWith('beat')) videoActive = true
+    })
+    videoChild.stderr.on('data', (d) => log('screen video err:', String(d).trim().slice(0, 160)))
+    videoChild.on('exit', (code) => {
+      log('screen video exited', String(code))
+      videoChild = null
+      videoActive = false
+    })
+    log('screen video: broadcaster spawned →', channel)
+  } catch (err) {
+    log('screen video failed:', String(err?.message ?? err))
+    videoChild = null
+    videoActive = false
+  }
+}
+
+function stopScreenVideo() {
+  if (videoChild) {
+    try { videoChild.kill('SIGTERM') } catch { /* already gone */ }
+    videoChild = null
+  }
+  videoActive = false
+}
 
 function stopScreenStream(reason) {
+  stopScreenVideo()
   if (streamTimer) {
     clearInterval(streamTimer)
     streamTimer = null
@@ -376,6 +424,7 @@ function startScreenStream(token, maxSeconds) {
   if (streamTimer) return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: true, extended: true, seconds }) }
 
   log(`screen stream started (${seconds}s cap)`)
+  void startScreenVideo(token)
   streamTimer = setInterval(async () => {
     if (Date.now() > streamDeadline || pausedByServer || existsSync(PAUSE_FILE)) {
       return stopScreenStream(Date.now() > streamDeadline ? 'deadline' : 'paused')
@@ -388,7 +437,7 @@ function startScreenStream(token, maxSeconds) {
         const res = await api('/api/assistant/mac-agent/frames', {
           method: 'POST',
           token,
-          body: { dataUri: frame },
+          body: { dataUri: frame, video: videoActive },
           timeoutMs: 10_000,
         }).catch(() => null)
         // The frames response doubles as the STOP channel — the command queue

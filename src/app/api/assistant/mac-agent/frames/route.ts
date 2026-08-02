@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const device = await authenticateDevice(h.startsWith('Bearer ') ? h.slice(7).trim() : '')
   if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
-  let body: { dataUri?: string }
+  let body: { dataUri?: string; video?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -48,6 +48,18 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const at = new Date()
+  // L9-B: the daemon says its VIDEO broadcaster is live (heartbeats seen).
+  // Kept in KV (no migration): freshness is the truth — the feed treats a
+  // stamp older than ~10s as video-off, so a crashed broadcaster self-heals.
+  if (body.video === true) {
+    await db.agentKvSetting
+      .upsert({
+        where: { key: `mac_video_active:${device.id}` },
+        create: { key: `mac_video_active:${device.id}`, value: at.toISOString() },
+        update: { value: at.toISOString() },
+      })
+      .catch(() => {})
+  }
   await db.macAgentFrame.upsert({
     where: { deviceId: device.id },
     create: { deviceId: device.id, dataUri, at },

@@ -82,6 +82,8 @@ struct AgentLiveActivityFeed: Decodable, Equatable {
     /// data:image/… URI, newest across every surface.
     let screenshot: String?
     let screenshotAt: String?
+    /// L9-B — non-nil while the Mac's Agora VIDEO broadcaster is live.
+    let videoDeviceId: String?
 }
 
 // MARK: - Store
@@ -321,7 +323,7 @@ final class AgentLiveDockStore {
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
                                      steps: steps, streaming: false, sessions: fixtureSessions,
-                                     screenshot: nil, screenshotAt: nil)
+                                     screenshot: nil, screenshotAt: nil, videoDeviceId: nil)
         lastActiveAt = Date()
         if mode == "sheet" { expanded = true }
         return true
@@ -474,7 +476,16 @@ struct AgentLiveDockSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let shot = store.screenshotImage {
+                    if let videoDevice = store.feed?.videoDeviceId {
+                        // L9-B — TRUE live video (ScreenCaptureKit → Agora),
+                        // cursor and clicks in real time. Frames stay the
+                        // fallback the moment the broadcaster dies.
+                        MacScreenVideoPlayer(deviceId: videoDevice)
+                            .frame(height: 230)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                    } else if let shot = store.screenshotImage {
                         Image(uiImage: shot)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -710,5 +721,75 @@ struct AgentLiveDockSheet: View {
         case "failed": return .red
         default: return Color.primary.opacity(0.25)
         }
+    }
+}
+
+// MARK: - L9-B: Mac screen live VIDEO (Agora subscriber)
+
+import AgoraRtcKit
+
+/// Joins `mac-screen-<deviceId>` as audience and renders the broadcaster
+/// (uid 1). Its OWN lifetime is the join lifetime — disappearing leaves the
+/// channel, so a closed sheet never keeps subscribing in the background.
+/// Constraint (v1): shares the app-wide Agora engine with the intercom, so
+/// watching while ON an intercom call is unsupported — the call wins.
+@available(iOS 17.0, *)
+struct MacScreenVideoPlayer: UIViewRepresentable {
+    let deviceId: String
+
+    final class Coordinator: NSObject, AgoraRtcEngineDelegate {
+        var engine: AgoraRtcEngineKit?
+        weak var canvasView: UIView?
+        var joined = false
+
+        func join(deviceId: String, into view: UIView) {
+            guard !joined else { return }
+            joined = true
+            Task { @MainActor in
+                struct TokenResp: Decodable {
+                    let appId: String; let channel: String; let uid: Int; let token: String
+                }
+                guard let resp: TokenResp = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/screen-video-token",
+                    body: ["deviceId": deviceId]) else { return }
+                let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: self)
+                self.engine = engine
+                engine.enableVideo()
+                engine.setChannelProfile(.liveBroadcasting)
+                engine.setClientRole(.audience)
+                engine.joinChannel(byToken: resp.token, channelId: resp.channel,
+                                   info: nil, uid: UInt(resp.uid))
+            }
+        }
+
+        func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+            guard uid == 1, let view = canvasView else { return } // 1 = the Mac broadcaster
+            let canvas = AgoraRtcVideoCanvas()
+            canvas.uid = uid
+            canvas.view = view
+            canvas.renderMode = .fit
+            engine.setupRemoteVideo(canvas)
+        }
+
+        func leave() {
+            engine?.leaveChannel(nil)
+            joined = false
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .black
+        context.coordinator.canvasView = view
+        context.coordinator.join(deviceId: deviceId, into: view)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.leave()
     }
 }
