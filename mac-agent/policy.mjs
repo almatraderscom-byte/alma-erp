@@ -184,6 +184,49 @@ function isGreenSegment(segment) {
   return true
 }
 
+/**
+ * Mirror of `clobberingMove` in policy.ts. A bare `mv`/`cp` can destroy a
+ * same-named file at the destination with no undo and no Trash; the head
+ * proposed exactly that twice on 2026-08-03 despite the skill forbidding it.
+ * RED and repairable: add `-n` and it becomes an ordinary approval card.
+ */
+function clobberingMove(segment) {
+  // Quotes are stripped before tokenizing: a perfectly ordinary wrapper —
+  // `sh -c 'mv "$src" "$dst"'` — yields the token `'mv`, which an exact
+  // comparison walks straight past (Codex round 3). Removing quote characters
+  // can only ever make more things LOOK like a move, never fewer.
+  const unquoted = segment.replace(/["'`]/g, ' ')
+  const tokens = stripEnvPrefix(unquoted.split(/\s+/).filter(Boolean))
+  // Not just the FIRST token: `find ~/Downloads -iname '*.pdf' -exec mv {} DIR/ \;`
+  // moves every match and the mv is buried mid-line (the head proposed exactly
+  // that once the first-token-only version shipped). Any bare `mv`/`cp` word in
+  // the segment is checked, wherever it sits.
+  for (let i = 0; i < tokens.length; i++) {
+    const tool = toolName(tokens[i])
+    if (tool !== 'mv' && tool !== 'cp') continue
+    // Its own arguments end at the exec terminator, not at the line end.
+    const rest = []
+    for (let j = i + 1; j < tokens.length; j++) {
+      const t = tokens[j]
+      if (t === ';' || t === '\\;' || t === '+') break
+      rest.push(t)
+    }
+    const guarded = rest.some((t) => {
+      if (t === '--no-clobber' || t === '--interactive') return true
+      return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
+    })
+    if (guarded) continue
+    return {
+      level: 'red',
+      code: 'clobbering_move',
+      reasonBn:
+        `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
+        + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+    }
+  }
+  return null
+}
+
 export function classifyCommand(rawCommand, opts = {}) {
   const command = (rawCommand ?? '').trim()
 
@@ -199,6 +242,11 @@ export function classifyCommand(rawCommand, opts = {}) {
   for (const seg of segments) {
     const hit = firstRedRule(seg)
     if (hit) return { level: 'red', code: hit.code, reasonBn: hit.bn }
+  }
+
+  for (const seg of segments) {
+    const clobber = clobberingMove(seg)
+    if (clobber) return clobber
   }
 
   if (opts.cwd) {

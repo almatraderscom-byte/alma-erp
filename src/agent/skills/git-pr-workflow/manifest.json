@@ -40,7 +40,8 @@
   ],
   "done": [
     {
-      "tool": "run_mac_command"
+      "tool": "run_mac_command",
+      "argMatch": "git\\s+push|gh\\s+pr\\s+(create|merge)"
     },
     {
       "tool": "check_mac_command"

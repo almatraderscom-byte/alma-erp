@@ -64,10 +64,18 @@ export interface RouteContext {
   namedByOwner?: string[]
 }
 
-export function eligibleSkills(index: SkillIndex, ctx: RouteContext = {}): SkillMetadata[] {
+export function eligibleSkills(
+  index: SkillIndex,
+  ctx: RouteContext = {},
+  text?: string,
+): SkillMetadata[] {
   const named = new Set(ctx.namedByOwner ?? [])
+  // An image he ALREADY HAS is never a reason to photograph his desktop — at
+  // any layer. Without this the keyword layer re-pinned what the rule refused.
+  const vetoScreenSkill = Boolean(text && EXISTING_IMAGE_REF.test(text))
   return index.skills.filter((s) => {
     if (s.implicit === false && !named.has(s.name)) return false
+    if (vetoScreenSkill && s.name === SCREEN_SKILL) return false
     return true
   })
 }
@@ -273,6 +281,62 @@ const AI_APP_ASK = (t: string): boolean =>
  */
 const NEW_CHAT_ASK =
   /(?:notun|নতুন|new)\s*(?:chat|চ্যাট|conversation)\s*(?:ta\s*|টা\s*)?(?:khulo|kholo|khule|dao|open|start|শুরু|খোলো)/i
+/**
+ * A picture of HIS MAC SCREEN, right now. Ordered BEFORE the app rule:
+ * "chatgpt app er screenshot dao" is a looking job, not a driving job, and the
+ * looking skill is the one that knows `screencapture` is the wrong tool.
+ *
+ * Narrowed after review (Codex P1): the word "screenshot" alone also appears
+ * when Boss is talking about an image he ALREADY HAS — "ei screenshot ta dekhe
+ * invoice enter koro". Pinning that to the Mac-only skill is doubly wrong: its
+ * allowlist holds no invoice or image tool, and its procedure would capture his
+ * unrelated desktop. So a capture VERB is required, and a reference to an
+ * existing image vetoes the rule outright.
+ */
+const SCREEN_CAPTURE_ASK =
+  /((?:screen\s*shot|screenshot|স্ক্রিনশট)\s*(?:ta\s*|টা\s*|ekta\s*|একটা\s*)?(?:dao|de\b|nao|nio|tulo|tolo|tule|dekhao|pathao|niye\s*asho|দাও|নাও|তোলো|তুলে|দেখাও|পাঠাও)|(?:ekta\s*|একটা\s*|amar\s*|আমার\s*)?(?:screen\s*shot|screenshot|স্ক্রিনশট)\s*(?:lagbe|চাই|লাগবে)|(?:screen|স্ক্রিন)[^\n]{0,20}(?:dekho|dekhao|দেখো|দেখাও|ki\s*ache|কী\s*আছে|chobi|ছবি))/i
+/** An image he already has — not a request to capture his desktop. */
+const EXISTING_IMAGE_REF =
+  /((?:এই|ei|oi|ওই|উপরের|uporer|attached|uploaded|pathano|পাঠানো)\s*(?:screen\s*shot|screenshot|স্ক্রিনশট|ছবি|chobi|image))/i
+const SCREEN_LOOK_ASK = (t: string): boolean =>
+  SCREEN_CAPTURE_ASK.test(t) && !EXISTING_IMAGE_REF.test(t)
+/**
+ * The skill the veto has to keep out, by name — because vetoing it in the RULE
+ * layer is only half the job. "ei screenshot ta dekho" falls through to keyword
+ * scoring, where the literal word `screenshot` is worth 2 and the skill-name
+ * token another 1: enough to pin the Mac-only skill anyway, and capture his
+ * desktop for a question about an image he already has (Codex round 3, on a
+ * test of mine that only ever exercised `applyRules`).
+ */
+const SCREEN_SKILL = 'screenshot-annotate-share'
+/**
+ * Tidying a cluttered folder. Both halves are required — "downloads" alone is
+ * a folder he might just be reading from, and "porishkar koro" alone could be
+ * about anything from the office to the website.
+ */
+const FOLDER_PLACE = /(downloads?|ডাউনলোড|desktop|ডেস্কটপ|folder|ফোল্ডার)/i
+/**
+ * The sentence is about FILES ON HIS MAC, not about a product on the website.
+ *
+ * Live 2026-08-03: *"downloads er sob pdf ekta Reports folder e soriye dao"*
+ * pinned `storefront-editing` — its visibility rule owns "soriye dao", which in
+ * that skill means unpublishing a product. The pin then handed the turn a
+ * storefront allowlist with no Mac tool in it, and the head reported an approval
+ * card that could never have existed. Same shape as every other rule here: one
+ * phrase, two jobs, and only the surrounding words can tell them apart.
+ */
+const MAC_FILESYSTEM_CONTEXT =
+  /(downloads?|ডাউনলোড|desktop|ডেস্কটপ|folder|ফোল্ডার|\.(?:pdf|dmg|zip|png|jpe?g|mp4|csv)\b|\bfiles?\b|ফাইল|\bmac\b|ম্যাক)/i
+/**
+ * …and a CODE checkout is not this skill's folder (Codex P2). "alma-erp folder
+ * clean up koro" matched both halves, and the pin would then hand the turn the
+ * organizer's tools and its own refusal — so the request could reach neither
+ * this skill nor the git flow that should handle it.
+ */
+const CODE_CHECKOUT =
+  /(alma-erp|alma-companion|\brepo\b|repository|\bgit\b|node_modules|checkout|codebase|\bcode\s*(?:folder|base)\b|কোডের\s*ফোল্ডার)/i
+const TIDY_VERB =
+  /(porishkar|পরিষ্কার|guchi|গুছ|gucha|sajao|সাজাও|sort\s*kor|clean\s*up|cleanup|clean\s*kor|khali\s*kor|খালি\s*কর|jayga\s*(?:khali|nei)|জায়গা\s*(?:খালি|নেই)|soriye\s*(?:dao|rakho|felo|rekho)|সরিয়ে\s*(?:দাও|রাখো|রেখো)|\bsorao\b|\bmove\s*kor)/i
 
 export interface RouterRule {
   id: string
@@ -317,7 +381,12 @@ export const RULES: RouterRule[] = [
     skill: 'storefront-editing',
     // After product-listing on purpose: "notun panjabi ta site e tolo, dam 1200"
     // is a new listing that happens to mention a price, not an edit.
-    test: (t) => PRODUCT_EDIT_ASK(t) && !LISTING_ASK.test(t) && !isSeoTopic(t),
+    test: (t) =>
+      PRODUCT_EDIT_ASK(t)
+      && !LISTING_ASK.test(t)
+      && !isSeoTopic(t)
+      // …and it is not his Mac's files. "soriye dao" belongs to both jobs.
+      && !MAC_FILESYSTEM_CONTEXT.test(t),
     why: 'সাইটে থাকা পণ্যের দাম/দৃশ্যমানতা বদলের কথা — নতুন লিস্টিং বা SEO কপি নয়',
   },
   {
@@ -341,10 +410,24 @@ export const RULES: RouterRule[] = [
     why: 'branch/commit/push/PR/merge — কোডের কাজ GitHub-এ তোলার ধাপ',
   },
   {
+    id: 'screen-look',
+    skill: 'screenshot-annotate-share',
+    // BEFORE the app rule: "chatgpt app er screenshot dao" is looking, not
+    // driving, and the wrong-tool trap (`screencapture`) lives in this skill.
+    test: (t) => SCREEN_LOOK_ASK(t),
+    why: 'স্ক্রিনের ছবি চাওয়া হয়েছে — দেখার কাজ, চালানোর নয়',
+  },
+  {
     id: 'mac-ai-app',
     skill: 'mac-ai-app-operator',
-    test: (t) => AI_APP_ASK(t) || NEW_CHAT_ASK.test(t),
+    test: (t) => (AI_APP_ASK(t) || NEW_CHAT_ASK.test(t)) && !SCREEN_LOOK_ASK(t),
     why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
+  },
+  {
+    id: 'folder-tidy',
+    skill: 'mac-file-organizer',
+    test: (t) => FOLDER_PLACE.test(t) && TIDY_VERB.test(t) && !CODE_CHECKOUT.test(t),
+    why: 'Mac-এর ফোল্ডার গোছানোর কথা — তালিকা আগে, Trash-ই সর্বোচ্চ',
   },
 ]
 
@@ -362,7 +445,7 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     return { skill: null, layer: 'none', reason: 'খালি মেসেজ', candidates: [], needsModel: false }
   }
 
-  const eligible = eligibleSkills(index, ctx)
+  const eligible = eligibleSkills(index, ctx, t)
   const known = new Set(eligible.map((s) => s.name))
 
   // Layer 1.5 — the veto. A request to be asked LESS is not a job for any skill;

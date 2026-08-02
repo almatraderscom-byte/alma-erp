@@ -205,6 +205,24 @@ export type AgentEvent =
       /** The owner-facing sentence, already in Bangla. */
       reason: string
     }
+  /**
+   * A message Boss typed WHILE this turn was running has now actually reached
+   * the model (claimed by `claimTurnSteeringMessages` at the top of a round).
+   *
+   * It exists for one reason: until this arrives, his message has been accepted
+   * by the server but NOT yet seen by the agent, and those two states used to
+   * look identical in the thread. Owner report 2026-08-03 — "message ta jotokkhon
+   * porjonto agent er kache na jay, seta jeno UI te visible thake, hariye na
+   * jay". The client marks the bubble delivered on this event and drops it from
+   * its retry outbox.
+   */
+  | {
+      type: 'steering_delivered'
+      /** AgentMessage row ids. */
+      ids: string[]
+      /** The client's own ids, so an optimistic bubble can be matched without a refetch. */
+      clientMessageIds: string[]
+    }
   | {
       type: 'verification_retry'
       attempt: number
@@ -1289,6 +1307,15 @@ export async function* runAgentTurn(
             content: [{ type: 'text' as const, text: item.prompt }],
           })),
         ]
+        // Parity with the router loop: the client must be told the message
+        // ARRIVED, or it keeps the outbox entry and replays it later.
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       // Serverless deadline close → no more tools; force a Bangla progress
@@ -1434,6 +1461,13 @@ export async function* runAgentTurn(
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           // Native Claude streams its draft before we know this final round has
           // no tool call. Retire that now-stale prose so the replacement is the
           // ONE visible answer, not text appended as a conflicting second reply.

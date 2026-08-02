@@ -34,6 +34,15 @@ const CORPUS: Array<{ cmd: string; cwd?: string }> = [
   { cmd: 'git push --force-with-lease' },
   { cmd: 'find . -name x -delete' },
   { cmd: 'git status', cwd: '~/somewhere-else' },
+  // clobber guard — red, and repairable with -n
+  { cmd: 'mv ~/Downloads/a.pdf ~/Downloads/Reports/' },
+  { cmd: 'mv -n ~/Downloads/a.pdf ~/Downloads/Reports/' },
+  { cmd: 'cp report.pdf backup/' },
+  { cmd: 'cp -n report.pdf backup/' },
+  { cmd: 'mv -f old new' },
+  { cmd: 'mkdir -p ~/Downloads/PDF && mv ~/Downloads/*.pdf ~/Downloads/PDF/' },
+  { cmd: "find ~/Downloads -maxdepth 1 -type f -iname '*.pdf' -exec mv {} ~/Downloads/Reports/ \\;" },
+  { cmd: "find ~/Downloads -iname '*.pdf' -exec mv -n {} ~/Downloads/Reports/ \\;" },
   // red
   { cmd: 'sudo rm -rf /' },
   { cmd: 'rm -rf ~' },

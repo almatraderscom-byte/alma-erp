@@ -345,7 +345,9 @@ const mac_desk_control: AgentTool = {
   name: 'mac_desk_control',
   description:
     "Desk-level control of the owner's Mac: take a screenshot of his screen (THE one way to show his screen — " +
-    'returns an imageUrl that renders inline in chat; never run screencapture via run_mac_command), or stop the Mac from going to sleep ' +
+    'returns an imageUrl that renders inline in chat, plus screenContents: a vision reading of what is actually ' +
+    'on the screen, so you can ANSWER what he asked rather than just hand him a picture; never run screencapture ' +
+    'via run_mac_command), or stop the Mac from going to sleep ' +
     'while a long job runs (and let it sleep again afterwards). ' +
     'A sleeping Mac stops answering entirely, so use keep_awake before starting long work he is waiting on, and ' +
     'allow_sleep when it is done — leaving it awake all night drains his battery. ' +
@@ -386,12 +388,25 @@ const mac_desk_control: AgentTool = {
       // pasted an unrenderable wall of text).
       const shared = await shareScreenshot(outcome.stdout ?? '', id, 'Mac screen')
       if (shared.ok) {
+        // P1-8, extended to the FULL-SCREEN shot (Codex review, PR #700). The
+        // window shot has been read by a vision model since P1-8; this one was
+        // not, so "screen e ki ache dekho" — the most literal reason to take a
+        // screenshot at all — came back as a link the head could not read, and
+        // the only honest answer left was "I sent the picture but cannot read
+        // it". Same helper, same kill switch (MAC_SCREENSHOT_VISION=off), same
+        // fail-soft: an unread capture says so instead of leaving a gap.
+        const { describeScreenshot, SCREENSHOT_UNREAD_NOTE } = await import(
+          '@/agent/lib/mac-agent/screenshot-vision'
+        )
+        const seen = await describeScreenshot(outcome.stdout ?? '')
         return {
           success: true,
           data: {
             imageUrl: shared.imageUrl,
             device: gate.deviceName,
             instruction: shared.instruction,
+            screenContents: seen ?? undefined,
+            visionNote: seen ? undefined : SCREENSHOT_UNREAD_NOTE,
           },
         }
       }

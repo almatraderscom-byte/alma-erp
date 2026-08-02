@@ -2019,6 +2019,17 @@ async function* runAlternateProviderTurn(
           ...messages,
           ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
         ]
+        // Say on the wire that it ARRIVED. Accepted-by-the-server and
+        // seen-by-the-agent are different facts, and the thread drew them the
+        // same way — so a message still waiting looked exactly like one already
+        // taken up (owner report 2026-08-03).
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
@@ -2354,6 +2365,17 @@ async function* runAlternateProviderTurn(
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
             ...lateSteering.map((item) => ({ role: 'user' as const, content: item.prompt })),
           ]
+          // Same acknowledgement as the top-of-round claim. Without it the
+          // client keeps the outbox entry for a message this turn has already
+          // taken up, and replays it as a new turn when the stream ends —
+          // running the instruction twice (Codex round 3).
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
@@ -3448,7 +3470,11 @@ async function* runAlternateProviderTurn(
     if (activeSkills.manifest?.done?.length && claimsCompletion(finalText)) {
       const misses = skillDoneMisses(
         activeSkills.manifest,
-        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status })),
+        // `input` rides along so a `done` condition can name the STEP that
+        // finishes the job (`run_mac_command` with `gh workflow run`) and not
+        // merely the tool that runs every step — including the read-only one
+        // these skills open with.
+        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status, input: r.input })),
       )
       if (misses.length > 0) {
         const gate = `\n\n${doneGateMessage(activeSkills.pinned?.skill ?? activeSkills.manifest.name, misses)}`

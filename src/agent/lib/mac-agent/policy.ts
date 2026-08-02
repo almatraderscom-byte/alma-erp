@@ -336,6 +336,58 @@ function isGreenSegment(segment: string): boolean {
   return true
 }
 
+/**
+ * A move or copy that can silently OVERWRITE is refused, not merely carded.
+ *
+ * Found live on 2026-08-03. `mac-file-organizer` exists to tidy his Downloads
+ * without ever losing a file, and its SKILL.md says "always `mv -n`" in three
+ * places. On two consecutive live runs the head still proposed a bare
+ * `mv ~/Downloads/*.pdf ~/Downloads/Reports/` — which, with a same-named file
+ * at the destination, destroys the original with no undo and no Trash. Writing
+ * the rule more loudly did not change the behaviour the second time either.
+ *
+ * So it moves to where every rule in this system that has actually held lives:
+ * the classifier. RED rather than AMBER on purpose — this is not a risk the
+ * owner should be asked to accept in a tap, and the refusal is *repairable*:
+ * add `-n` and the same command goes through as a normal approval card.
+ */
+function clobberingMove(segment: string): PolicyVerdict | null {
+  // Quotes are stripped before tokenizing: a perfectly ordinary wrapper —
+  // `sh -c 'mv "$src" "$dst"'` — yields the token `'mv`, which an exact
+  // comparison walks straight past (Codex round 3). Removing quote characters
+  // can only ever make more things LOOK like a move, never fewer.
+  const unquoted = segment.replace(/["'`]/g, ' ')
+  const tokens = stripEnvPrefix(unquoted.split(/\s+/).filter(Boolean))
+  // Not just the FIRST token: `find ~/Downloads -iname '*.pdf' -exec mv {} DIR/ \;`
+  // moves every match and the mv is buried mid-line (the head proposed exactly
+  // that once the first-token-only version shipped). Any bare `mv`/`cp` word in
+  // the segment is checked, wherever it sits.
+  for (let i = 0; i < tokens.length; i++) {
+    const tool = toolName(tokens[i])
+    if (tool !== 'mv' && tool !== 'cp') continue
+    // Its own arguments end at the exec terminator, not at the line end.
+    const rest: string[] = []
+    for (let j = i + 1; j < tokens.length; j++) {
+      const t = tokens[j]
+      if (t === ';' || t === '\\;' || t === '+') break
+      rest.push(t)
+    }
+    const guarded = rest.some((t) => {
+      if (t === '--no-clobber' || t === '--interactive') return true
+      return /^-[a-zA-Z]*[ni][a-zA-Z]*$/.test(t)
+    })
+    if (guarded) continue
+    return {
+      level: 'red',
+      code: 'clobbering_move',
+      reasonBn:
+        `${tool} চালানো হয়নি — গন্তব্যে একই নামের ফাইল থাকলে সেটা চাপা পড়ে চিরতরে হারিয়ে যেত। `
+        + `\`${tool} -n\` (no-clobber) দিয়ে আবার দাও; তখন কার্ড হয়ে আপনার কাছে যাবে।`,
+    }
+  }
+  return null
+}
+
 export interface ClassifyOptions {
   /** Resolved (tilde-expanded) working directory the command would run in. */
   cwd?: string
@@ -368,6 +420,12 @@ export function classifyCommand(rawCommand: string, opts: ClassifyOptions = {}):
   for (const seg of segments) {
     const hit = firstRedRule(seg)
     if (hit) return { level: 'red', code: hit.code, reasonBn: hit.bn }
+  }
+
+  // 2b. An overwriting mv/cp — a data-loss shape the prompt could not stop.
+  for (const seg of segments) {
+    const clobber = clobberingMove(seg)
+    if (clobber) return clobber
   }
 
   // 3. A working directory outside the allowlist never auto-runs. `..` escapes are

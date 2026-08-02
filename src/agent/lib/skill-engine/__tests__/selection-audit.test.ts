@@ -105,6 +105,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   (their objects — "build", "PR", "chat" — are words half the business
     //   vocabulary already owns), so promotion is about the pin handing the turn
     //   the right tool allowlist, not about keyword recall.
+    //   2026-08-03: the other half of Tier 1 — mac-file-organizer and
+    //   screenshot-annotate-share. Both rule-routed too: the organizer needs a
+    //   PLACE and a VERB together (either alone is ordinary traffic), and the
+    //   screen rule is ordered ahead of the app rule because a picture of an
+    //   app is a looking job, not a driving one.
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -122,6 +127,8 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-website',
       'git-pr-workflow',
       'mac-ai-app-operator',
+      'mac-file-organizer',
+      'screenshot-annotate-share',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',

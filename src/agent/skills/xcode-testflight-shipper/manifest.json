@@ -40,7 +40,8 @@
   ],
   "done": [
     {
-      "tool": "run_mac_command"
+      "tool": "run_mac_command",
+      "argMatch": "gh\\s+workflow\\s+run"
     },
     {
       "tool": "check_mac_command"

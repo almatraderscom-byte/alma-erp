@@ -106,6 +106,80 @@ describe('the Mac AI apps', () => {
   })
 })
 
+describe('looking at the screen', () => {
+  it('routes a screenshot ask', () => {
+    expect(applyRules('screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('আমার স্ক্রিনশট দাও')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('screen e ki ache dekho')?.skill).toBe('screenshot-annotate-share')
+  })
+
+  // Codex review, PR #700: the rule fired on the WORD, so "ei screenshot ta
+  // dekhe invoice enter koro" — an image he already has — pinned a Mac-only
+  // skill whose allowlist holds no invoice tool.
+  it('does not fire on an image he already has', () => {
+    expect(applyRules('ei screenshot ta dekhe invoice enter koro')).toBeNull()
+    expect(applyRules('এই স্ক্রিনশট টা দেখে অর্ডার তোলো')).toBeNull()
+    expect(applyRules('uporer screenshot theke number gulo nao')).toBeNull()
+  })
+
+  // Codex round 3: the rule refused it, then the KEYWORD layer pinned the same
+  // skill anyway ("screenshot" scores 2, the skill-name token 1). The veto had
+  // to move into eligibility, and the test had to use production routeSkill —
+  // the old one only exercised applyRules, which is why it passed.
+  it('the existing-image veto holds at the keyword layer too', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const text of ['ei screenshot ta dekho', 'ei screenshot ta dekhe invoice enter koro']) {
+      const decision = routeSkill(index, text)
+      expect(decision.skill, text).not.toBe('screenshot-annotate-share')
+    }
+  })
+
+  it('wins over the app rule — a picture of an app is looking, not driving', () => {
+    expect(applyRules('chatgpt app er screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    // …but reading an app WITHOUT the screen word is still the driver's job.
+    expect(applyRules('claude app e ki ache dekho')?.skill).toBe('mac-ai-app-operator')
+  })
+})
+
+describe('tidying a folder', () => {
+  it('needs both halves — the place and the verb', () => {
+    expect(applyRules('downloads folder ta porishkar koro')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('ডেস্কটপ গুছিয়ে দাও')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('downloads e joma hoye thaka file gulo sajao')?.skill).toBe(
+      'mac-file-organizer',
+    )
+  })
+
+  // Codex review, PR #700: a code checkout matched both halves, and the pin
+  // then handed the turn organizer tools plus the skill's own refusal — so the
+  // request could reach neither this skill nor the git flow.
+  it('does not fire on a code checkout', () => {
+    expect(applyRules('alma-erp folder clean up koro')).toBeNull()
+    expect(applyRules('repo folder ta porishkar koro')).toBeNull()
+  })
+
+  // Codex-style find, but this one came from a live run: "soriye dao" is the
+  // storefront skill's unpublish phrase AND the obvious way to say "move these
+  // files". The pin gave the turn a storefront allowlist with no Mac tool, and
+  // the head then described an approval card that could not exist.
+  it('takes "soriye dao" back from the storefront skill when it is about files', () => {
+    expect(applyRules('downloads er sob pdf ekta Reports folder e soriye dao')?.skill)
+      .toBe('mac-file-organizer')
+    expect(applyRules('desktop er file gulo soriye rakho')?.skill).toBe('mac-file-organizer')
+  })
+
+  it('…and leaves it with the storefront skill when it is about a product', () => {
+    expect(applyRules('oi panjabi ta site theke soriye dao')?.skill).toBe('storefront-editing')
+  })
+
+  it('does not fire on half a match', () => {
+    // A place with no verb: he may just be reading from it.
+    expect(applyRules('downloads e ki ki ache')).toBeNull()
+    // A verb with no place: could be the office, the site, anything.
+    expect(applyRules('ektu porishkar kore dao')).toBeNull()
+  })
+})
+
 describe('nothing else moved', () => {
   it('the existing rules still win their own traffic', () => {
     expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
@@ -135,6 +209,16 @@ describe('on the index production actually serves', () => {
       text: 'chatgpt app e eta jigges koro',
       skill: 'mac-ai-app-operator',
       caps: ['look_mac_app', 'drive_mac_app'],
+    },
+    {
+      text: 'screenshot dao',
+      skill: 'screenshot-annotate-share',
+      caps: ['mac_desk_control', 'look_mac_app'],
+    },
+    {
+      text: 'downloads folder ta porishkar koro',
+      skill: 'mac-file-organizer',
+      caps: ['run_mac_command', 'check_mac_command'],
     },
   ]
 
