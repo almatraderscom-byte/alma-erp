@@ -515,7 +515,10 @@ async function* runAlternateProviderTurn(
   // already hold it (focus, workflow run, corrections), so a continuation can
   // resume from notes instead of re-deriving everything from the transcript.
   // Compiled here because the history trim just below depends on having it.
-  const taskCardText = options.continuation ? await compileTaskCard(conversationId) : ''
+  const taskCard = options.continuation
+    ? await compileTaskCard(conversationId)
+    : { text: '', trimSafe: false }
+  const taskCardText = taskCard.text
 
   // A SELF-CONTINUE hop resumes from its CHECKPOINT, not from the transcript
   // (owner ruling 2026-07-26): "তুমি নিজেও তো এভাবে কাজ করো না — একটি session শেষ
@@ -535,7 +538,11 @@ async function* runAlternateProviderTurn(
   // context) plus the turns around Boss's tap, instead of the whole thread.
   // Guarded on the card actually existing — trimming history with nothing to
   // replace it would just make the turn dumber.
-  if (options.continuation && taskCardText && rows.length > CONTINUATION_KEEP_MESSAGES) {
+  // `trimSafe`, not merely a non-empty card: a card built from the conversation
+  // TITLE alone carries no step, no blocker and no next action, so trimming the
+  // transcript behind it would throw away the only context there was (review
+  // bot, #694).
+  if (options.continuation && taskCard.trimSafe && rows.length > CONTINUATION_KEEP_MESSAGES) {
     const before = rows.length
     rows = rows.slice(-CONTINUATION_KEEP_MESSAGES)
     console.log(`[continuation] replaying ${rows.length} of ${before} messages behind the task card`)

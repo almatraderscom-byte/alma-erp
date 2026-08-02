@@ -77,28 +77,66 @@ export function buildTaskCard(input: TaskCardInput): string {
  * Compile the card for a conversation from the records that already hold this
  * state. Fail-open: no card is a slower turn, never a wrong one.
  */
+export interface CompiledTaskCard {
+  text: string
+  /**
+   * Is there DURABLE task state behind this card — a focus or a workflow run,
+   * not merely a conversation title?
+   *
+   * The continuation trim is gated on this, because a card assembled from a
+   * title alone carries no step, no blocker and no legal next action: trimming
+   * the transcript behind it would throw away the only context there was
+   * (review bot, #694).
+   */
+  trimSafe: boolean
+}
+
 export async function compileTaskCard(
   conversationId: string,
-  opts: { approvedJustNow?: string | null } = {},
-): Promise<string> {
-  if (!taskCardEnabled()) return ''
+  opts: { approvedJustNow?: string | null; approvedActionId?: string | null } = {},
+): Promise<CompiledTaskCard> {
+  const empty: CompiledTaskCard = { text: '', trimSafe: false }
+  if (!taskCardEnabled()) return empty
   try {
-    const [focus, run, conv] = await Promise.all([
-      db.agentConversationFocus.findFirst({
-        where: { conversationId, status: { in: ['active', 'awaiting_owner', 'parked'] } },
-        orderBy: { updatedAt: 'desc' },
-        select: { goal: true, currentStep: true, status: true, blocker: true, nextActions: true },
+    // WHICH task is being continued?
+    //
+    // One conversation can hold several active or parked jobs. Taking the
+    // most-recently-updated focus would then hand the head a card for a
+    // DIFFERENT task than the one Boss just approved — while the transcript
+    // that would have revealed the mix-up is trimmed away (review bot, #694).
+    // The approved action is the binding: both AgentConversationFocus and
+    // WorkflowRun carry `pendingActionId`.
+    const actionId = opts.approvedActionId ?? (await latestResolvedActionId(conversationId))
+    const focusWhere = { conversationId, status: { in: ['active', 'awaiting_owner', 'parked'] } }
+    const runWhere = { conversationId, status: { in: ['active', 'waiting_owner', 'waiting_worker'] } }
+    const focusSelect = { goal: true, currentStep: true, status: true, blocker: true, nextActions: true }
+    const runSelect = { goal: true, state: true, status: true, nextAllowedTools: true }
+
+    const [boundFocus, boundRun] = actionId
+      ? await Promise.all([
+          db.agentConversationFocus.findFirst({
+            where: { ...focusWhere, pendingActionId: actionId }, select: focusSelect,
+          }).catch(() => null),
+          db.workflowRun.findFirst({
+            where: { ...runWhere, pendingActionId: actionId }, select: runSelect,
+          }).catch(() => null),
+        ])
+      : [null, null]
+
+    const [latestFocus, latestRun, conv] = await Promise.all([
+      boundFocus ? Promise.resolve(boundFocus) : db.agentConversationFocus.findFirst({
+        where: focusWhere, orderBy: { updatedAt: 'desc' }, select: focusSelect,
       }).catch(() => null),
-      db.workflowRun.findFirst({
-        where: { conversationId, status: { in: ['active', 'waiting_owner', 'waiting_worker'] } },
-        orderBy: { updatedAt: 'desc' },
-        select: { goal: true, state: true, status: true, nextAllowedTools: true },
+      boundRun ? Promise.resolve(boundRun) : db.workflowRun.findFirst({
+        where: runWhere, orderBy: { updatedAt: 'desc' }, select: runSelect,
       }).catch(() => null),
       db.agentConversation.findUnique({
         where: { id: conversationId },
         select: { corrections: true, pinnedHeadModel: true, title: true },
       }).catch(() => null),
     ])
+    const focus = latestFocus
+    const run = latestRun
 
     const { readCorrections } = await import('@/agent/lib/owner-corrections')
     const corrections = readCorrections(conv?.corrections).map((c) => c.text)
@@ -106,7 +144,7 @@ export async function compileTaskCard(
     const nextFromFocus = Array.isArray(focus?.nextActions) ? focus!.nextActions.map(String) : []
     const nextFromRun = Array.isArray(run?.nextAllowedTools) ? run!.nextAllowedTools.map(String) : []
 
-    return buildTaskCard({
+    const text = buildTaskCard({
       // The focus is the owner's own words for the job; the workflow run's goal
       // is the templated one. Prefer his.
       goal: focus?.goal ?? run?.goal ?? conv?.title ?? null,
@@ -118,9 +156,33 @@ export async function compileTaskCard(
       pinnedHead: conv?.pinnedHeadModel ?? null,
       approvedJustNow: opts.approvedJustNow ?? null,
     })
+    return { text, trimSafe: Boolean(focus || run) }
   } catch (err) {
     console.warn('[task-card] compile failed open:', err instanceof Error ? err.message : err)
-    return ''
+    return empty
+  }
+}
+
+/**
+ * The action a continuation is continuing. A continuation fires immediately
+ * after an approval, so the newest RESOLVED card in this conversation is that
+ * action. Bounded to ten minutes so a stale card can never bind a later turn,
+ * and null (rather than a guess) when nothing fits.
+ */
+async function latestResolvedActionId(conversationId: string): Promise<string | null> {
+  try {
+    const row = await db.agentPendingAction.findFirst({
+      where: {
+        conversationId,
+        status: { in: ['approved', 'executed'] },
+        resolvedAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+      },
+      orderBy: { resolvedAt: 'desc' },
+      select: { id: true },
+    })
+    return row?.id ?? null
+  } catch {
+    return null
   }
 }
 
