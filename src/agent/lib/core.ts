@@ -113,6 +113,13 @@ export type AgentEvent =
       displayName?: string
       variant: 'default' | 'claude' | 'qwen' | 'deepseek'
       tier: string
+      /**
+       * P1-9 — WHY this head, not just which one: the HeadDecision `via`
+       * ("routine_kw", "task_pin", "deny_kw", "task_pin_continuation"…). The
+       * audit found the reason existed only in code and cost logs, so a
+       * surprising model choice had no answer anyone could be shown.
+       */
+      via?: string
     }
   // Owner-gated model UPGRADE: the thread was on a cheap head but this turn needs a
   // premium model (Sonnet/Opus). The turn pauses here and the UI shows an approval

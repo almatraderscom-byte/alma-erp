@@ -75,6 +75,7 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
+import { compileTaskCard, CONTINUATION_KEEP_MESSAGES } from '@/agent/lib/task-card'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
 import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
@@ -510,6 +511,12 @@ async function* runAlternateProviderTurn(
     askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
   } catch { /* fail-open */ }
 
+  // P1-6 — the task card: the job's state compiled ONCE from the records that
+  // already hold it (focus, workflow run, corrections), so a continuation can
+  // resume from notes instead of re-deriving everything from the transcript.
+  // Compiled here because the history trim just below depends on having it.
+  const taskCardText = options.continuation ? await compileTaskCard(conversationId) : ''
+
   // A SELF-CONTINUE hop resumes from its CHECKPOINT, not from the transcript
   // (owner ruling 2026-07-26): "তুমি নিজেও তো এভাবে কাজ করো না — একটি session শেষ
   // হওয়ার পর পুরো history নতুন করে পড়ো না, আগের notes/progress/checkpoint থেকে শুরু
@@ -519,6 +526,19 @@ async function* runAlternateProviderTurn(
   const isSelfContinueHop = /^\[SELF-CONTINUE/m.test(lastUserTextPeek(allRows))
   if (isSelfContinueHop && rows.length > SELF_CONTINUE_KEEP_MESSAGES) {
     rows = rows.slice(-SELF_CONTINUE_KEEP_MESSAGES)
+  }
+
+  // P1-6/7 — an APPROVAL continuation resumes the same way, for the same
+  // reason, and this is where the measured 18.5 seconds goes: a continuation
+  // was rebuilding the entire conversation to answer "the thing you approved is
+  // done, carry on". It gets the task card (compiled just below into the turn
+  // context) plus the turns around Boss's tap, instead of the whole thread.
+  // Guarded on the card actually existing — trimming history with nothing to
+  // replace it would just make the turn dumber.
+  if (options.continuation && taskCardText && rows.length > CONTINUATION_KEEP_MESSAGES) {
+    const before = rows.length
+    rows = rows.slice(-CONTINUATION_KEEP_MESSAGES)
+    console.log(`[continuation] replaying ${rows.length} of ${before} messages behind the task card`)
   }
 
   // Size trim on top of turn-count compaction (owner cost analysis 2026-07-26).
@@ -1196,6 +1216,9 @@ async function* runAlternateProviderTurn(
   // The canonical job state leads; memory/context blocks follow; the listen
   // note, when present, overrides everything at the very top.
   const volatileSections: string[] = []
+  // P1-6 — the card leads the whole turn context on a continuation: it IS the
+  // state that the trimmed-away history used to carry.
+  if (taskCardText) volatileSections.push(taskCardText)
   // P0-4 — a correction outranks everything. Boss's corrections used to live
   // only in the transcript, where they competed for attention with every other
   // line; here the newest one LEADS the turn context (only the listen-mode
@@ -3519,7 +3542,11 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider,
+          // P1-9: WHY this head ran, not just which one. Until now `via` lived
+          // only in code and cost logs, so a surprising model choice had no
+          // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -4068,6 +4095,8 @@ export async function* runOwnerTurn(
     type: 'model_info',
     modelId: model.id,
     label: model.label,
+    // P1-9 — the routing REASON travels with the model identity.
+    via: decision.via,
     // Owner 2026-07-28: he wants to see WHO answered, whichever model it is.
     // `variant` only ever knew three families, so Grok/Gemini/GPT showed a bare
     // "ALMA"; this is the readable name for every model in the registry.
