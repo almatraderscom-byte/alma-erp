@@ -45,6 +45,9 @@
   "done": [
     {
       "tool": "look_mac_app"
+    },
+    {
+      "tool": "drive_mac_app"
     }
   ],
   "networkPolicy": "none",

@@ -221,14 +221,30 @@ export function isStandingPermissionAsk(text: string): boolean {
 const TESTFLIGHT_ASK = /(testflight|test\s*flight|টেস্টফ্লাইট)/i
 /**
  * …plus the way he asks for one without the word: an iPhone/iOS BUILD. `build`
- * alone is far too broad (`npm run build`, "build a campaign"), so the app word
- * has to be present.
+ * alone is far too broad (`npm run build`, "build a campaign"), so an iOS
+ * identifier has to be present.
+ *
+ * Bare `app` was in this list for one review round and is now out: "web app
+ * build koro" and "android app er build chalau" are not TestFlight jobs, and
+ * pinning the highest-risk skill in the set on them is the worst direction to
+ * be wrong in (Codex P2).
  */
 const IOS_BUILD_ASK =
-  /\b(ios|iphone|আইফোন|app)\b[^\n]{0,24}\bbuild\b|\bbuild\b[^\n]{0,24}\b(ios|iphone|আইফোন)\b/i
-/** Git verbs that only ever mean the branch→PR→merge job. */
-const GIT_FLOW_ASK =
-  /(\bpull\s*request\b|\bpr\s*(?:ta\s*)?(?:banao|khulo|kholo|create|open|dao|marge|merge)\b|\bcommit\b[^\n]{0,30}\bpush\b|\bpush\s*(?:kore|kor|koro|dao)\b|\bmerge\s*(?:kore|kor|koro|dao)\b|\bgit\s*push\b|\bbranch\s*(?:banao|kholo|khulo)\b|কমিট\s*কর|মার্জ\s*কর)/i
+  /\b(ios|iphone|আইফোন|ipa)\b[^\n]{0,24}\bbuild\b|\bbuild\b[^\n]{0,24}\b(ios|iphone|আইফোন|ipa)\b/i
+/**
+ * Git verbs that only ever mean the branch→PR→merge job. Split in two, because
+ * `push` and `merge` are ordinary business words on their own — "campaign ta
+ * push koro", "customer list duita merge koro" (Codex P2). The unambiguous
+ * forms fire alone; the ambiguous ones need a git word in the sentence.
+ */
+const GIT_FLOW_STRONG =
+  /(\bpull\s*request\b|\bpr\s*(?:ta\s*)?(?:banao|khulo|kholo|create|open|dao|marge|merge)\b|\bcommit\b[^\n]{0,30}\bpush\b|\bgit\s+(?:push|commit|merge)\b|\bbranch\s*(?:banao|kholo|khulo)\b|কমিট\s*কর)/i
+const GIT_FLOW_WEAK = /(\bpush\s*(?:kore|kor|koro|dao)\b|\bmerge\s*(?:kore|kor|koro|dao)\b|মার্জ\s*কর)/i
+/** What makes a bare "push koro" a GIT push and not a campaign push. */
+const GIT_CONTEXT =
+  /\b(git|github|branch|repo|repository|origin|main|master|commit|pr|pull\s*request|code|kod)\b|কোড|ব্র্যাঞ্চ/i
+const GIT_FLOW_ASK = (t: string): boolean =>
+  GIT_FLOW_STRONG.test(t) || (GIT_FLOW_WEAK.test(t) && GIT_CONTEXT.test(t))
 /**
  * The Claude / ChatGPT desktop apps. The app word is required: "Claude ke
  * jiggesh koro" is Boss talking TO the agent, not about the Mac app, and
@@ -237,9 +253,13 @@ const GIT_FLOW_ASK =
  */
 const AI_APP_ASK =
   /((?:chatgpt|claude|chat\s*gpt)\s*(?:desktop\s*)?(?:app|অ্যাপ|apps)|(?:app|অ্যাপ)\s*(?:e|ে|তে)\s*(?:likhe|likhe\s*dao|jigges|jiggesh|type))/i
-/** "notun chat khulo" — a fresh conversation in one of those apps. */
+/**
+ * "notun chat khulo" — a fresh conversation in one of those apps. The verb is
+ * REQUIRED: with it optional, "new chat bug ta fix koro" (a bug report about
+ * our own new-chat button) pinned the desktop-app driver (Codex P2).
+ */
 const NEW_CHAT_ASK =
-  /((?:notun|নতুন|new)\s*(?:chat|চ্যাট|conversation)\s*(?:khulo|kholo|khule|dao|open|start|শুরু|খোলো)?)/i
+  /(?:notun|নতুন|new)\s*(?:chat|চ্যাট|conversation)\s*(?:ta\s*|টা\s*)?(?:khulo|kholo|khule|dao|open|start|শুরু|খোলো)/i
 
 export interface RouterRule {
   id: string
@@ -304,7 +324,7 @@ export const RULES: RouterRule[] = [
   {
     id: 'git-pr-flow',
     skill: 'git-pr-workflow',
-    test: (t) => GIT_FLOW_ASK.test(t) && !TESTFLIGHT_ASK.test(t) && !IOS_BUILD_ASK.test(t),
+    test: (t) => GIT_FLOW_ASK(t) && !TESTFLIGHT_ASK.test(t) && !IOS_BUILD_ASK.test(t),
     why: 'branch/commit/push/PR/merge — কোডের কাজ GitHub-এ তোলার ধাপ',
   },
   {

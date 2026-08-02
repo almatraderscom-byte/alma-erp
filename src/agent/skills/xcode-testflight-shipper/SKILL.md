@@ -2,7 +2,7 @@
 name: xcode-testflight-shipper
 description: Ships the iPhone app to TestFlight the one safe way: preflight on Boss's Mac, bump the committed build number, push, start the GitHub upload pipeline, watch it to the end. Use when Boss asks for a new TestFlight build, or where the last upload stands.
 version: 1.0.0
-keywords: testflight, টেস্টফ্লাইট, test flight, build dao, নতুন build, ios build, iphone app build, app build koro, upload build, build number
+keywords: testflight, টেস্টফ্লাইট, test flight, build dao, নতুন build, ios build, iphone app build, ipa build, upload build, build number
 ---
 
 # TestFlight-এ নতুন build

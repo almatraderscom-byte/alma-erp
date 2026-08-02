@@ -41,6 +41,9 @@
   "done": [
     {
       "tool": "run_mac_command"
+    },
+    {
+      "tool": "check_mac_command"
     }
   ],
   "networkPolicy": "none",

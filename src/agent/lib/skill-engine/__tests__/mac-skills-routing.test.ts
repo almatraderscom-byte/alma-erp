@@ -40,6 +40,14 @@ describe('the iPhone release', () => {
     expect(applyRules('npm run build cholao')).toBeNull()
     expect(applyRules('notun campaign build koro')).toBeNull()
   })
+
+  // Codex review, PR #699: bare `app` was in the iOS pattern, so any "app
+  // build" pinned the highest-risk skill in the set. Wrong in the worst
+  // direction — a web or Android build is not a TestFlight upload.
+  it('does not fire on a build that is not the iPhone app', () => {
+    expect(applyRules('web app build koro')).toBeNull()
+    expect(applyRules('android app er build chalau')).toBeNull()
+  })
 })
 
 describe('branch → PR → merge', () => {
@@ -55,6 +63,16 @@ describe('branch → PR → merge', () => {
     expect(applyRules('amar mac e git status cholao')).toBeNull()
     expect(applyRules('kon branch e achi dekho')).toBeNull()
   })
+
+  // Codex review, PR #699: `push koro` and `merge koro` are ordinary business
+  // words. They now need a git word in the sentence; the unambiguous forms
+  // (PR, pull request, commit+push, git push) still fire on their own.
+  it('needs git context before a bare push or merge counts', () => {
+    expect(applyRules('campaign ta push koro')).toBeNull()
+    expect(applyRules('customer list duita merge koro')).toBeNull()
+    expect(applyRules('code ta push koro')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('git push koro')?.skill).toBe('git-pr-workflow')
+  })
 })
 
 describe('the Mac AI apps', () => {
@@ -69,6 +87,14 @@ describe('the Mac AI apps', () => {
     // No app word: this is him asking ME, not asking the desktop app.
     expect(applyRules('claude ke jiggesh koro')).toBeNull()
     expect(applyRules('ei bishoye tomar mot ki')).toBeNull()
+  })
+
+  // Codex review, PR #699: the open/start verb used to be optional, so any
+  // mention of the phrase pinned the driver — including a bug report about our
+  // OWN new-chat button.
+  it('needs the open verb, not just the phrase "new chat"', () => {
+    expect(applyRules('new chat bug ta fix koro')).toBeNull()
+    expect(applyRules('notun chat page ta slow')).toBeNull()
   })
 })
 
