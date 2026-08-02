@@ -509,7 +509,16 @@ case "type":
     if !replaceMode && !trimmed.isEmpty && !placeholders.isEmpty && !placeholders.contains(trimmed) {
         fail("field_not_empty", String(trimmed.prefix(120)))
     }
+    let winBefore = snapshot(win)
+    activate()
+    frontWindow(win) // keystrokes land in the KEY window — make it the resolved one
+    AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    usleep(300_000)
     if replaceMode && !trimmed.isEmpty {
+        // The erase is INPUT like any other: it must pass the same last-
+        // instant owner-idle gate as the keystrokes, or a draft the owner is
+        // typing RIGHT NOW could vanish under his fingers (Codex P1).
+        guardOwnerStill()
         AXUIElementSetAttributeValue(composer, kAXValueAttribute as CFString, "" as CFString)
         usleep(200_000)
         let cleared = ((attr(composer, kAXValueAttribute) as? String) ?? "")
@@ -518,12 +527,6 @@ case "type":
             fail("clear_failed", String(cleared.prefix(120)))
         }
     }
-
-    let winBefore = snapshot(win)
-    activate()
-    frontWindow(win) // keystrokes land in the KEY window — make it the resolved one
-    AXUIElementSetAttributeValue(composer, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    usleep(300_000)
     typeUnicode(text)
     usleep(500_000)
     // W1's deferred P2, now mandatory: assert the field actually changed —

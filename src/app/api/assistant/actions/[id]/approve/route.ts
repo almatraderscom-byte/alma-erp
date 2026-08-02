@@ -1103,6 +1103,7 @@ async function runApprove(
       text?: string | null
       key?: string | null
       focusedLabel?: string | null
+      replace?: boolean | null
       scrollAmount?: number | null
       deviceId?: string
     }
@@ -1176,6 +1177,10 @@ async function runApprove(
           text: p.text ?? null,
           key: p.key ?? null,
           focusedLabel: p.focusedLabel ?? null,
+          // The card the owner read carried the erase warning; without
+          // forwarding this, the approved overwrite re-hits field_not_empty
+          // (Codex P2).
+          replace: p.replace === true ? true : null,
           scrollAmount: p.scrollAmount ?? null,
           approved: true,
         },
