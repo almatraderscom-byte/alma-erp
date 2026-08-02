@@ -14,6 +14,7 @@
  * failure so the daemon can fall back to the JPEG frame pipe.
  *
  * Args: --appid A --token T --channel C --uid N [--fps 15] [--maxdim 1600]
+ *       [--display INDEX]  (RC-3: which screen, when the Mac has more than one)
  */
 import AgoraRtcKit
 import AppKit
@@ -38,6 +39,7 @@ guard let appId = opts["appid"], let token = opts["token"],
 }
 let fps = Int(opts["fps"] ?? "") ?? 15
 let maxDim = Int(opts["maxdim"] ?? "") ?? 1600
+let displayIndex = Int(opts["display"] ?? "") ?? 0
 
 // ---- control (RC-1) ----------------------------------------------------------
 // The phone's touches arrive as Agora data-stream messages on the SAME channel
@@ -82,14 +84,21 @@ enum ControlInput {
             case .position(let x, let y):
                 Injector.moveTo(xFraction: x, yFraction: y)
                 HoverRing.refreshSoon()
-            case .click(let button, let count):
-                let result = Injector.click(button: button, count: count)
-                ControlOverlay.shared.showRing(globalFrame: result.frame)
-                ControlOverlay.shared.ripple(atGlobal: result.point, ok: true)
+            case .click(let button, let count, let confirm):
+                let result = Injector.click(button: button, count: count, confirm: confirm)
+                // Aimed-not-clicked draws a SOLID ring: the owner can see the
+                // difference between "this is the target" and "it went".
+                ControlOverlay.shared.showRing(
+                    globalFrame: result.frame, pending: result.outcome == .aimed)
+                if result.outcome == .clicked {
+                    ControlOverlay.shared.ripple(atGlobal: result.point, ok: true)
+                }
             case .dragDown:
                 Injector.dragDown()
+                HoverRing.setLoupe(true)
             case .dragUp:
                 Injector.dragUp()
+                HoverRing.setLoupe(false)
             case .scroll(let dx, let dy):
                 Injector.scroll(dxFraction: dx, dyFraction: dy)
             case .text(let text):
@@ -117,6 +126,7 @@ enum ControlInput {
 
     static func disarm() {
         controlGate.disarm()
+        HoverRing.setLoupe(false)
         HoverRing.stop()
         DispatchQueue.main.async { Injector.releaseHeldButtons() }
         ControlOverlay.shared.setArmed(false)
@@ -129,6 +139,17 @@ enum ControlInput {
 enum HoverRing {
     private static var timer: DispatchSourceTimer?
     private static let queue = DispatchQueue(label: "hover-ring")
+    /// RC-2.5: the magnifier only runs during a drag — it costs a screen
+    /// capture per tick, and it is only during a drag that the owner cannot
+    /// see what is under his own finger.
+    private static var loupeOn = false
+
+    static func setLoupe(_ on: Bool) {
+        queue.async {
+            loupeOn = on
+            if !on { ControlOverlay.shared.showLoupe(atGlobal: nil) }
+        }
+    }
 
     static func start() {
         queue.async {
@@ -153,8 +174,10 @@ enum HoverRing {
 
     private static func refresh() {
         guard controlGate.isArmed else { return }
-        let target = AXSnap.target(near: Injector.cursor(), radius: Injector.snapRadius)
+        let cursor = Injector.cursor()
+        let target = AXSnap.target(near: cursor, radius: Injector.snapRadius)
         ControlOverlay.shared.showRing(globalFrame: target?.frame)
+        if loupeOn { ControlOverlay.shared.showLoupe(atGlobal: cursor) }
     }
 }
 let delegate = EngineDelegate()
@@ -205,7 +228,13 @@ func fail(_ msg: String) -> Never {
 Task {
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let display = content.displays.first else { fail("no_display") }
+        // RC-3: the owner picks the screen from his phone; an out-of-range
+        // index falls back to the first display rather than failing the stream.
+        let displays = content.displays
+        guard !displays.isEmpty else { fail("no_display") }
+        let display = displayIndex < displays.count ? displays[displayIndex] : displays[0]
+        // The daemon relays this to the server so the phone can offer a picker.
+        print("displays n=\(displays.count) using=\(displayIndex < displays.count ? displayIndex : 0)")
         // RC-1: injection maps the phone's 0…1 fractions onto exactly the
         // display we are capturing, so what the owner sees and what he touches
         // are the same rectangle — the mapping is right by construction.

@@ -72,18 +72,46 @@ final class ControlOverlay {
         DispatchQueue.main.async {
             if armed { self.ensureWindow() }
             self.view?.armed = armed
-            if !armed { self.view?.ringRect = nil }
+            if !armed {
+                self.view?.ringRect = nil
+                self.view?.loupeImage = nil
+            }
             self.view?.needsDisplay = true
             if !armed { self.window?.orderOut(nil) } else { self.window?.orderFrontRegardless() }
         }
     }
 
     /// Highlight the element the next click would snap to (nil clears it).
-    func showRing(globalFrame: CGRect?) {
+    /// `pending` draws the RC-2.5 two-step state: aimed, awaiting the second tap.
+    func showRing(globalFrame: CGRect?, pending: Bool = false) {
         DispatchQueue.main.async {
             guard self.view?.armed == true else { return }
             self.view?.ringRect = globalFrame.map { self.toLocal($0) }
+            self.view?.ringPending = pending
             self.view?.needsDisplay = true
+        }
+    }
+
+    /// RC-2.5 loupe: a magnified patch of what is under the cursor, drawn ON
+    /// the Mac screen so it reaches the phone through the video already
+    /// running. Doing it here rather than on the phone means no second
+    /// capture path and no guessing where the cursor is.
+    func showLoupe(atGlobal point: CGPoint?) {
+        DispatchQueue.main.async {
+            guard let view = self.view, view.armed else { return }
+            guard let point else {
+                if view.loupeImage != nil {
+                    view.loupeImage = nil
+                    view.needsDisplay = true
+                }
+                return
+            }
+            let windowNumber = CGWindowID(self.window?.windowNumber ?? 0)
+            let image = Injector.loupeImage(
+                around: point, size: CGSize(width: 150, height: 110), excluding: windowNumber)
+            view.loupeImage = image
+            view.loupeAt = self.toLocal(point)
+            view.needsDisplay = true
         }
     }
 
@@ -99,6 +127,11 @@ final class ControlOverlay {
 final class OverlayView: NSView {
     var armed = false
     var ringRect: CGRect?
+    /// Aimed but not yet committed (two-step confirm): drawn solid so the
+    /// owner can tell "this is where the next tap goes" from "this is armed".
+    var ringPending = false
+    var loupeImage: CGImage?
+    var loupeAt: CGPoint = .zero
 
     override var isFlipped: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -107,14 +140,15 @@ final class OverlayView: NSView {
         guard armed else { return }
         if let r = ringRect {
             let path = NSBezierPath(roundedRect: r.insetBy(dx: -3, dy: -3), xRadius: 7, yRadius: 7)
-            path.lineWidth = 2.5
+            path.lineWidth = ringPending ? 4 : 2.5
             // ALMA coral — the same accent the phone UI uses for the control
             // switch, so the ring reads as "your finger", not as an app's own UI.
             NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: 0.95).setStroke()
             path.stroke()
-            NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: 0.14).setFill()
+            NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: ringPending ? 0.30 : 0.14).setFill()
             path.fill()
         }
+        drawLoupe()
         drawBadge()
     }
 
@@ -136,6 +170,36 @@ final class OverlayView: NSView {
         NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: 0.92).setFill()
         bg.fill()
         (text as NSString).draw(at: NSPoint(x: box.minX + pad, y: box.minY + pad), withAttributes: attrs)
+    }
+
+    /// Drawn above and left of the cursor, clamped inside the screen: a
+    /// fingertip-sized target becomes readable while dragging.
+    private func drawLoupe() {
+        guard let image = loupeImage else { return }
+        let scale: CGFloat = 2.2
+        let size = CGSize(width: 150 * scale / 2, height: 110 * scale / 2)
+        var origin = CGPoint(x: loupeAt.x - size.width - 30, y: loupeAt.y + 30)
+        origin.x = min(max(8, origin.x), bounds.maxX - size.width - 8)
+        origin.y = min(max(8, origin.y), bounds.maxY - size.height - 8)
+        let box = NSRect(origin: origin, size: size)
+        let clip = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12)
+        NSGraphicsContext.saveGraphicsState()
+        clip.addClip()
+        NSGraphicsContext.current?.cgContext.draw(image, in: box)
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: 0.95).setStroke()
+        clip.lineWidth = 2
+        clip.stroke()
+        // Crosshair marking the exact cursor point inside the magnified patch.
+        let centre = CGPoint(x: box.midX, y: box.midY)
+        let cross = NSBezierPath()
+        cross.move(to: CGPoint(x: centre.x - 8, y: centre.y))
+        cross.line(to: CGPoint(x: centre.x + 8, y: centre.y))
+        cross.move(to: CGPoint(x: centre.x, y: centre.y - 8))
+        cross.line(to: CGPoint(x: centre.x, y: centre.y + 8))
+        cross.lineWidth = 1.2
+        NSColor(calibratedRed: 0.878, green: 0.478, blue: 0.373, alpha: 0.9).setStroke()
+        cross.stroke()
     }
 
     func ripple(at point: CGPoint, ok: Bool) {

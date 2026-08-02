@@ -36,7 +36,7 @@ struct ControlMessage {
         case move(dx: Double, dy: Double)
         /// Absolute move (direct/zoomed mode); 0…1 fractions of the display.
         case position(x: Double, y: Double)
-        case click(button: Button, count: Int)
+        case click(button: Button, count: Int, confirm: Bool)
         case dragDown
         case dragUp
         case scroll(dx: Double, dy: Double)
@@ -81,7 +81,9 @@ enum ControlDecoder {
         case "c":
             let button = ControlMessage.Button(rawValue: (obj["b"] as? String) ?? "l") ?? .left
             let count = min(max((obj["n"] as? Int) ?? 1, 1), 2)
-            action = .click(button: button, count: count)
+            // RC-2.5: "cf" means the owner has two-step confirm on — the first
+            // tap on a new target only aims, the second commits.
+            action = .click(button: button, count: count, confirm: (obj["cf"] as? Int) == 1)
         case "dd": action = .dragDown
         case "du": action = .dragUp
         case "w":

@@ -41,6 +41,9 @@ enum Injector {
     private static var virtualPoint: CGPoint = .zero
     private static var lastPostAt: TimeInterval = 0
     private static let resyncAfter: TimeInterval = 0.4
+    /// When the last keyboard event went out — chords need a settle gap after
+    /// a burst of typing (measured; see pressKey).
+    private static var lastKeyAt: TimeInterval = 0
 
     /// The live system cursor, unfiltered.
     static func systemCursor() -> CGPoint {
@@ -96,10 +99,21 @@ enum Injector {
         lastPostAt = Date().timeIntervalSince1970
     }
 
+    /// RC-2.5 two-step confirm: which target has been AIMED at but not yet
+    /// clicked, and when. A second tap on the same target within the window
+    /// commits; anything else re-aims.
+    private static var pendingTarget: CGRect?
+    private static var pendingSince: TimeInterval = 0
+    private static let confirmWindow: TimeInterval = 4
+
+    enum ClickOutcome { case clicked, aimed }
+
     /// Click at the cursor, snapping onto the nearest clickable element first.
     /// Returns the point clicked and the snapped element's frame (for the ring).
     @discardableResult
-    static func click(button: ControlMessage.Button, count: Int) -> (point: CGPoint, frame: CGRect?) {
+    static func click(
+        button: ControlMessage.Button, count: Int, confirm: Bool = false,
+    ) -> (point: CGPoint, frame: CGRect?, outcome: ClickOutcome) {
         var p = cursor()
         var frame: CGRect?
         if let target = AXSnap.target(near: p, radius: snapRadius) {
@@ -108,6 +122,22 @@ enum Injector {
                 p = clamp(target.center)
                 post(p)
             }
+        }
+        if confirm {
+            let now = Date().timeIntervalSince1970
+            let sameTarget = pendingTarget.map { previous in
+                frame.map { abs(previous.midX - $0.midX) < 4 && abs(previous.midY - $0.midY) < 4 } ?? false
+            } ?? false
+            let fresh = now - pendingSince < confirmWindow
+            if !(sameTarget && fresh) {
+                // First tap on this target: aim only. The owner sees the ring
+                // go solid in the video and taps again to commit.
+                pendingTarget = frame ?? CGRect(x: p.x - 1, y: p.y - 1, width: 2, height: 2)
+                pendingSince = now
+                return (p, frame, .aimed)
+            }
+            pendingTarget = nil
+            pendingSince = 0
         }
         let (down, up): (CGEventType, CGEventType) = button == .right
             ? (.rightMouseDown, .rightMouseUp)
@@ -120,7 +150,15 @@ enum Injector {
                 ev?.post(tap: .cghidEventTap)
             }
         }
-        return (p, frame)
+        return (p, frame, .clicked)
+    }
+
+    /// Magnified crop of the screen around the cursor, EXCLUDING our own
+    /// overlay window so the loupe never photographs itself.
+    static func loupeImage(around point: CGPoint, size: CGSize, excluding windowNumber: CGWindowID) -> CGImage? {
+        let rect = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                          width: size.width, height: size.height)
+        return CGWindowListCreateImage(rect, .optionOnScreenBelowWindow, windowNumber, [.boundsIgnoreFraming])
     }
 
     static func dragDown() {
@@ -173,7 +211,9 @@ enum Injector {
                 ev.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: &buf)
                 ev.post(tap: .cghidEventTap)
             }
+            usleep(6_000)
         }
+        lastKeyAt = Date().timeIntervalSince1970
     }
 
     @discardableResult
@@ -189,11 +229,20 @@ enum Injector {
             default: break
             }
         }
+        // Measured on the owner's Mac 2026-08-03: a ⌘-chord fired immediately
+        // after a burst of unicode typing was swallowed — the app was still
+        // digesting the previous events. A few milliseconds of settle before
+        // the chord, and between its own down and up, made it reliable. Real
+        // fingers cannot press and release in zero time either.
+        let sinceKey = Date().timeIntervalSince1970 - lastKeyAt
+        if sinceKey < 0.04 { usleep(UInt32((0.04 - sinceKey) * 1_000_000)) }
         for down in [true, false] {
             guard let ev = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { continue }
             ev.flags = flags
             ev.post(tap: .cghidEventTap)
+            usleep(12_000)
         }
+        lastKeyAt = Date().timeIntervalSince1970
         return true
     }
 }

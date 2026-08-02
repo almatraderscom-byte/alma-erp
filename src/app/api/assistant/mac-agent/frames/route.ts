@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
   let body: {
     dataUri?: string
     video?: boolean
+    displays?: number
+    displayIndex?: number
     controlSessionId?: string
     controlEvents?: number
     controlDrops?: number
@@ -64,6 +66,23 @@ export async function POST(req: NextRequest) {
         where: { key: `mac_video_active:${device.id}` },
         create: { key: `mac_video_active:${device.id}`, value: at.toISOString() },
         update: { value: at.toISOString() },
+      })
+      .catch(() => {})
+  }
+  // RC-3: how many screens this Mac has, and which one is being sent. Kept in
+  // KV beside the video stamp so the dock can offer a picker only when there
+  // is actually something to pick.
+  if (Number.isInteger(body.displays)) {
+    const value = JSON.stringify({
+      count: Math.max(1, Math.min(8, Number(body.displays))),
+      index: Math.max(0, Math.min(7, Number(body.displayIndex) || 0)),
+      at: at.toISOString(),
+    })
+    await db.agentKvSetting
+      .upsert({
+        where: { key: `mac_displays:${device.id}` },
+        create: { key: `mac_displays:${device.id}`, value },
+        update: { value },
       })
       .catch(() => {})
   }

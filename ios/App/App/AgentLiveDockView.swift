@@ -84,6 +84,14 @@ struct AgentLiveActivityFeed: Decodable, Equatable {
     let screenshotAt: String?
     /// L9-B — non-nil while the Mac's Agora VIDEO broadcaster is live.
     let videoDeviceId: String?
+    /// RC-3 — how many screens that Mac has, and which one is streaming.
+    let macDisplays: MacDisplayInfo?
+}
+
+/// RC-3 — screens on the streaming Mac. Optional so older servers still decode.
+struct MacDisplayInfo: Decodable, Equatable {
+    let count: Int
+    let index: Int
 }
 
 // MARK: - Store
@@ -246,7 +254,21 @@ final class AgentLiveDockStore {
     }
 
     private struct StreamBody: Encodable { let on: Bool }
+    /// RC-3 — same endpoint, naming the screen to stream. A start on a running
+    /// stream normally just extends it; the daemon treats a CHANGED display as
+    /// a deliberate restart of the capturer.
+    private struct DisplayBody: Encodable { let on: Bool; let displayIndex: Int }
     private struct StreamResponse: Decodable { let ok: Bool? }
+
+    /// Switch which of the Mac's screens is being streamed.
+    func switchDisplay(to index: Int) async {
+        guard !streamBusy else { return }
+        streamBusy = true
+        defer { streamBusy = false }
+        _ = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/mac-agent/stream",
+            body: DisplayBody(on: true, displayIndex: index)) as StreamResponse
+    }
 
     func toggleStream() async {
         guard !streamBusy else { return }
@@ -323,7 +345,8 @@ final class AgentLiveDockStore {
         ]
         feed = AgentLiveActivityFeed(active: true, current: steps.first,
                                      steps: steps, streaming: false, sessions: fixtureSessions,
-                                     screenshot: nil, screenshotAt: nil, videoDeviceId: nil)
+                                     screenshot: nil, screenshotAt: nil, videoDeviceId: nil,
+                                     macDisplays: nil)
         lastActiveAt = Date()
         if mode == "sheet" { expanded = true }
         return true
@@ -495,6 +518,11 @@ struct AgentLiveDockSheet: View {
                                               ? Color(red: 0.878, green: 0.478, blue: 0.373)
                                               : pal.borderSubtle,
                                               lineWidth: control.armed ? 2 : 1))
+                        if let displays = store.feed?.macDisplays, displays.count > 1 {
+                            MacDisplayPicker(displays: displays, pal: pal) { index in
+                                Task { await store.switchDisplay(to: index) }
+                            }
+                        }
                         MacControlBar(control: control, pal: pal)
                     } else if let shot = store.screenshotImage {
                         Image(uiImage: shot)
@@ -757,3 +785,46 @@ import AgoraRtcKit
 // because the video canvas and the touch surface must share ONE connection —
 // a second join would double the Agora minutes and could collide with the
 // intercom connection the app already keeps.
+
+// MARK: - RC-3 display picker
+
+/// Only rendered when the Mac actually has more than one screen — a picker
+/// with one option is clutter, and the owner has said so about other panels.
+@available(iOS 17.0, *)
+struct MacDisplayPicker: View {
+    let displays: MacDisplayInfo
+    let pal: AgentPalette
+    let onPick: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text("স্ক্রিন")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(pal.muted)
+            ForEach(0..<displays.count, id: \.self) { index in
+                Button {
+                    AlmaAgentHaptics.selection()
+                    onPick(index)
+                } label: {
+                    Text("\(index + 1)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .foregroundStyle(index == displays.index
+                                         ? Color(red: 0.878, green: 0.478, blue: 0.373) : pal.mutedHi)
+                        .background(
+                            index == displays.index
+                                ? Color(red: 0.878, green: 0.478, blue: 0.373).opacity(0.12)
+                                : pal.ink.opacity(0.04),
+                            in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(
+                            index == displays.index
+                                ? Color(red: 0.878, green: 0.478, blue: 0.373).opacity(0.4)
+                                : pal.borderSubtle,
+                            lineWidth: 1))
+                }
+                .accessibilityLabel("স্ক্রিন \(index + 1)")
+            }
+            Spacer()
+        }
+    }
+}

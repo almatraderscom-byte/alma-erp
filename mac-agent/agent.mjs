@@ -392,6 +392,10 @@ function applyControlGrant(next) {
   }
 }
 
+/** RC-3: which screen the owner asked for, and how many the Mac has. */
+let videoDisplayIndex = 0
+let videoDisplayCount = 1
+
 async function startScreenVideo(token) {
   const bin = join(CONFIG_DIR, 'ScreenBroadcaster')
   if (!existsSync(bin)) return // not built/deployed on this Mac — JPEG only
@@ -409,7 +413,10 @@ async function startScreenVideo(token) {
     // stdin is the CONTROL pipe (RC-1): grants are written to the running
     // process, never by respawning it — a respawn drops the video for seconds
     // and, worse, `start` on a running stream only extends (L9 trap 2).
-    const child = spawn(bin, ['--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid)], {
+    const child = spawn(bin, [
+      '--appid', appId, '--token', rtc, '--channel', channel, '--uid', String(uid),
+      '--display', String(videoDisplayIndex),
+    ], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     child.stdin.on('error', () => { /* broadcaster gone; exit handler cleans up */ })
@@ -430,6 +437,12 @@ async function startScreenVideo(token) {
         stdoutBuf = stdoutBuf.slice(nl + 1)
         if (!line) continue
         if (line.startsWith('joined') || line.startsWith('capturing')) log('screen video:', line)
+        const d = /^displays n=(\d+) using=(\d+)/.exec(line)
+        if (d) {
+          videoDisplayCount = Number(d[1])
+          videoDisplayIndex = Number(d[2])
+          log('screen video: displays', String(videoDisplayCount), 'using', String(videoDisplayIndex))
+        }
         // Video is live only while the frame count PROGRESSES — cumulative
         // count stays positive after a freeze, and frames=0 never advertises.
         const m = /^beat frames=(\d+)/.exec(line)
@@ -553,6 +566,8 @@ function startScreenStream(token, maxSeconds) {
           body: {
             dataUri: frame,
             video: videoActive,
+            displays: videoDisplayCount,
+            displayIndex: videoDisplayIndex,
             controlSessionId: controlCounts.sessionId ?? undefined,
             controlEvents: controlCounts.sessionId ? controlCounts.events : undefined,
             controlDrops: controlCounts.sessionId ? controlCounts.drops : undefined,
@@ -656,6 +671,18 @@ async function handleCommand(cmd) {
     if (mode === 'stop') {
       stopScreenStream('owner')
       return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: false }) }
+    }
+    // RC-3: the owner can switch which screen is streamed. That is a real
+    // restart of the capturer (a `start` on a running stream only EXTENDS it),
+    // so it is handled here rather than by the extend path below.
+    const requestedDisplay = Number(params.displayIndex)
+    if (Number.isInteger(requestedDisplay) && requestedDisplay >= 0 && requestedDisplay !== videoDisplayIndex) {
+      videoDisplayIndex = requestedDisplay
+      if (streamTimer) {
+        stopScreenVideo()
+        void startScreenVideo(activeToken)
+        log('screen video: switching to display', String(requestedDisplay))
+      }
     }
     return startScreenStream(activeToken, params.maxSeconds)
   }
