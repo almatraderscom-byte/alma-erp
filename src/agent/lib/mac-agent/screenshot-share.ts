@@ -19,6 +19,38 @@ import {
 const MAX_BYTES = 9_500_000
 const RETENTION_MS = 24 * 3600 * 1000
 
+/**
+ * Is this shell command actually going to EXECUTE screencapture?
+ *
+ * Token-aware on purpose (Codex P1/P2 on the interceptor): a bare regex both
+ * fired on quoted data (`printf 'notes;screencapture usage'` — capturing the
+ * owner's screen on a command that prints text) and missed the
+ * path-qualified `/usr/sbin/screencapture` this repo's own daemon uses.
+ * Quoted spans are stripped first — a false NEGATIVE inside quotes is fine
+ * (the command just runs normally); a false positive is not — then each
+ * pipeline segment's first executable word is compared by basename, skipping
+ * env assignments and common wrappers.
+ */
+export function isScreenshotShellCommand(command: string): boolean {
+  const stripped = String(command)
+    .replace(/'[^']*'/g, "''")
+    .replace(/"[^"]*"/g, '""')
+  for (const seg of stripped.split(/(?:\|\||&&|[;|&\n])/)) {
+    const words = seg.trim().split(/\s+/).filter(Boolean)
+    let i = 0
+    while (
+      i < words.length &&
+      (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) ||
+        ['sudo', 'nohup', 'env', 'command', 'exec'].includes(words[i]))
+    ) {
+      i += 1
+    }
+    const base = (words[i] ?? '').split('/').pop() ?? ''
+    if (base === 'screencapture') return true
+  }
+  return false
+}
+
 export async function shareScreenshot(
   rawStdout: string,
   commandId: string,

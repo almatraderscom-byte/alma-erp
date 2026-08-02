@@ -20,10 +20,7 @@ vi.mock('@/agent/lib/storage', () => ({
   agentStorageDelete: (...a: unknown[]) => deleteMock(...(a as [])),
 }))
 
-import { shareScreenshot } from '../screenshot-share'
-
-// The exact pattern run_mac_command uses to absorb shell screenshots.
-const SCREENCAPTURE_RE = /(^|[;&|]\s*)screencapture\b/
+import { isScreenshotShellCommand, shareScreenshot } from '../screenshot-share'
 
 const JPEG_URI = `data:image/jpeg;base64,${Buffer.from('fake-jpeg-bytes').toString('base64')}`
 
@@ -72,20 +69,25 @@ describe('wrong-tool interceptor pattern', () => {
       'screencapture -C ~/Desktop/shot.png',
       'screencapture -x /tmp/a.png && echo done',
       'cd ~ ; screencapture out.png',
-      'echo hi | screencapture -c',
+      '/usr/sbin/screencapture -x /tmp/a.jpg', // path-qualified (Codex P2)
+      'sudo screencapture -c',
+      'FOO=1 screencapture out.png',
     ]) {
-      expect(SCREENCAPTURE_RE.test(cmd)).toBe(true)
+      expect(isScreenshotShellCommand(cmd)).toBe(true)
     }
   })
 
-  it('leaves ordinary commands alone', () => {
+  it('leaves ordinary commands alone — including quoted data (Codex P1)', () => {
     for (const cmd of [
       'git status',
       'ls ~/Desktop',
       'echo screencapture-is-a-word-in-this-string.txt',
       'cat notes/screencapture.md',
+      "printf 'notes;screencapture usage'", // quoted — must NOT capture the screen
+      'grep "screencapture" docs/notes.md',
+      'echo hi | grep screencapture',
     ]) {
-      expect(SCREENCAPTURE_RE.test(cmd)).toBe(false)
+      expect(isScreenshotShellCommand(cmd)).toBe(false)
     }
   })
 })

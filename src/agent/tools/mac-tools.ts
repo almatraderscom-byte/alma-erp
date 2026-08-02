@@ -24,7 +24,7 @@ import {
   recentCommands,
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
-import { shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
+import { isScreenshotShellCommand, shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -102,7 +102,7 @@ const run_mac_command: AgentTool = {
     // Instead of refusing (the head would flounder), the misuse is ABSORBED:
     // we run the real screenshot flow and hand back the renderable link, so
     // the owner gets the right result no matter what the model selected.
-    if (/(^|[;&|]\s*)screencapture\b/.test(command)) {
+    if (isScreenshotShellCommand(command)) {
       const gateShot = await requireOnlineMac()
       if (!gateShot.ok) return { success: false, error: gateShot.error }
       const { id: shotId } = await enqueueCommand({
