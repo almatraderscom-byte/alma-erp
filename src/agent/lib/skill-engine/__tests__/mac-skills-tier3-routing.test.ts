@@ -66,6 +66,39 @@ describe('is this Mac backed up', () => {
   })
 })
 
+describe('the Mac’s safety settings', () => {
+  it('routes the security questions', () => {
+    expect(applyRules('amar mac ta secure kina dekho')?.skill).toBe('mac-security-check')
+    expect(applyRules('filevault on ache?')?.skill).toBe('mac-security-check')
+    expect(applyRules('kono update baki ache kina dekho')?.skill).toBe('mac-security-check')
+  })
+
+  // Codex: "update baki ache kina" is just as likely to be the website or the
+  // ERP, and the Mac skill's toolset cannot answer that.
+  it('does not take a website or ERP update question', () => {
+    expect(applyRules('website update baki ache kina')).toBeNull()
+    expect(applyRules('erp er security dekho')).toBeNull()
+  })
+
+  it('is not the backup skill and not the health one', () => {
+    expect(applyRules('backup ache kina dekho')?.skill).toBe('mac-backup-verifier')
+    expect(applyRules('disk full dekhacche, dekho to')?.skill).toBe('mac-health-monitor')
+  })
+})
+
+describe('his day, in one list', () => {
+  it('routes the calendar questions', () => {
+    expect(applyRules('ajker calendar e ki ache')?.skill).toBe('calendar-reminders-bridge')
+    expect(applyRules('reminder gulo dekhao')?.skill).toBe('calendar-reminders-bridge')
+    expect(applyRules('ajke kono meeting ache?')?.skill).toBe('calendar-reminders-bridge')
+  })
+
+  it('leaves the business questions to the business tools', () => {
+    expect(applyRules('kalker order gulo dekhao')).toBeNull()
+    expect(applyRules('ajker sale koto?')).toBeNull()
+  })
+})
+
 describe('nothing earlier moved', () => {
   it('Tiers 1 and 2 keep their traffic', () => {
     expect(applyRules('kaj ta commit kore push koro')?.skill).toBe('git-pr-workflow')
