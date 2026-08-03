@@ -4514,7 +4514,13 @@ final class AssistantVM {
                 steerAwaitingDelivery.removeValue(forKey: clientMessageId)
             case "unknown":
                 // The turn or row is gone; nothing will ever confirm it. Stop
-                // asking, but leave the bubble on its honest `accepted`.
+                // asking, and undo the restored "waiting" chip — leaving it up
+                // would promise a delivery that can never arrive (Codex P2).
+                for i in messages.indices
+                where messages[i].clientMessageId == clientMessageId
+                    && messages[i].outgoingState == .awaitingAgent {
+                    messages[i].outgoingState = .accepted
+                }
                 steerAwaitingDelivery.removeValue(forKey: clientMessageId)
             case "queued":
                 // Stored but never claimed. If that turn is no longer the one
