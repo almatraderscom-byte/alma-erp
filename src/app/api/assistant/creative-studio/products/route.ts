@@ -14,6 +14,7 @@ import { DEFAULT_CATALOG_BUSINESS } from '@/agent/lib/catalog/inventory-lookup'
 import {
   hydrateLegacyStudioProduct,
   isLegacyStudioProductPath,
+  studioProductPreviewUrl,
 } from '@/lib/creative-studio/studio-product-source'
 
 export const runtime = 'nodejs'
@@ -67,10 +68,7 @@ export async function GET(req: NextRequest) {
     return Response.json({
       products: hydratedProducts.map((product) => ({
         ...product,
-        previewImage: product.previewImage
-          ?? (product.sourceImage && !isRemoteOrAppPath(product.sourceImage)
-            ? signed[product.sourceImage] ?? null
-            : product.sourceImage),
+        previewImage: studioProductPreviewUrl(product, signed),
       })),
       readOnly: true,
     })

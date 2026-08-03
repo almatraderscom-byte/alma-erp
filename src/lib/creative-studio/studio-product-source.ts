@@ -9,6 +9,16 @@ export function isLegacyStudioProductPath(value: string | null | undefined): boo
   return Boolean(value?.startsWith('/agent/product-images/'))
 }
 
+export function studioProductPreviewUrl(
+  product: StudioProductOption,
+  signed: Record<string, string>,
+): string | null {
+  const source = product.sourceImage
+  const isStoragePath = Boolean(source && !/^https?:\/\//i.test(source) && !source.startsWith('/'))
+  if (source && isStoragePath) return signed[source] ?? product.previewImage ?? null
+  return product.previewImage ?? source ?? null
+}
+
 /**
  * Older Studio projects persisted a UI route instead of the private object path.
  * A paid generation must receive the healthy catalog object's stable path, while
@@ -26,4 +36,3 @@ export function hydrateLegacyStudioProduct(
     previewImage: catalogImage?.url ?? null,
   }
 }
-

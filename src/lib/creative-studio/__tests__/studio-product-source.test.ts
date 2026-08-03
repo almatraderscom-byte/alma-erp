@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   hydrateLegacyStudioProduct,
   isLegacyStudioProductPath,
+  studioProductPreviewUrl,
 } from '@/lib/creative-studio/studio-product-source'
 
 const legacyProduct = {
@@ -39,5 +40,16 @@ describe('Studio product generation source', () => {
       storagePath: 'product-images/other.jpg',
       url: 'https://signed.example/other',
     })).toBe(stable)
+  })
+
+  it('prefers a fresh batch-signed preview over a stale cached catalog URL', () => {
+    const product = {
+      ...legacyProduct,
+      sourceImage: 'product-images/alma-lifestyle/133-KIDS/2.jpg',
+      previewImage: 'https://expired.example/133-kids',
+    }
+    expect(studioProductPreviewUrl(product, {
+      [product.sourceImage]: 'https://fresh.example/133-kids',
+    })).toBe('https://fresh.example/133-kids')
   })
 })
