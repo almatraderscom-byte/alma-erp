@@ -25,6 +25,7 @@ import { executeStudioRunConfirmation } from '@/lib/creative-studio/studio-run-c
 import {
   validateScopedStudioVideoSourceReady,
 } from '@/lib/creative-studio/studio-source-readiness'
+import { attachProjectAsset } from '@/lib/creative-studio/project-service'
 
 const AUTO_ERRORS: Record<string, string> = {
   no_default_model: 'প্রথমে Models ট্যাবে একটি মডেল সেভ করুন — তারপর শুধু product upload দিলেই হবে।',
@@ -145,6 +146,30 @@ function errorResponse(error: unknown): Response {
     error: message.split(':')[0] || 'run_rejected',
     message: sanitizeStudioError(mapRunError(message)),
   }, { status: 422 })
+}
+
+async function bindQueuedJobsToProject(input: {
+  ownerId: string
+  projectId: string
+  sourceAssetIds: string[]
+  jobs: Array<{ pendingActionId: string }>
+}): Promise<void> {
+  const settled = await Promise.allSettled(input.jobs.map((job) => attachProjectAsset(
+    input.ownerId,
+    input.projectId,
+    {
+      pendingActionId: job.pendingActionId,
+      sourceAssetIds: input.sourceAssetIds,
+    },
+  )))
+  for (const [index, result] of settled.entries()) {
+    if (result.status === 'rejected') {
+      console.error(
+        `[creative-studio-run] project asset bind failed for ${input.jobs[index]?.pendingActionId ?? 'unknown'}`,
+        result.reason,
+      )
+    }
+  }
 }
 
 async function assertSourceReady(body: ScopedStudioRunRequest): Promise<Response | null> {
@@ -269,6 +294,15 @@ export async function POST(req: NextRequest) {
           pinnedChainVtonEngine: plan.pinned.chainVtonEngine,
         })
       }),
+    })
+    // Project lineage is a server-owned part of confirmation, not a fragile
+    // browser-side follow-up. The client repeats this idempotently for older
+    // deployments, while the final worker callback reconciles the chain head.
+    await bindQueuedJobsToProject({
+      ownerId: scoped.scope.ownerId,
+      projectId: scoped.scope.projectId,
+      sourceAssetIds: scoped.scope.sourceAssetIds,
+      jobs: execution.jobs,
     })
     if (execution.idempotent) {
       return Response.json({

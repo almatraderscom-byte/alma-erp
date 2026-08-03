@@ -693,6 +693,52 @@ export async function attachProjectAsset(
   }
 }
 
+/**
+ * Reconcile a terminal Creative Studio result into its signed project scope.
+ * This is intentionally worker-callable: Gallery lineage must survive a
+ * closed tab, navigation, or a failed secondary client catalog request.
+ */
+export async function reconcileStudioResultProjectAsset(
+  pendingActionId: string,
+): Promise<StudioProjectAsset | null> {
+  const action = await db.agentPendingAction.findFirst({
+    where: {
+      id: pendingActionId,
+      ...studioJobWhere(),
+    },
+  })
+  if (!action) return null
+  const payload = object(action.payload)
+  if (payload.creativeStudio !== true) return null
+
+  const familyChain = object(payload.familyChain)
+  if (Object.keys(familyChain).length > 0) {
+    const plan = Array.isArray(familyChain.plan) ? familyChain.plan : []
+    const stepIndex = Number(familyChain.stepIndex ?? -1)
+    const finalIndex = plan.length - 1
+    if (finalIndex < 0 || stepIndex !== finalIndex) return null
+  } else if (payload.chainInternal === true) {
+    return null
+  }
+
+  const authorization = object(payload.studioRunAuthorization)
+  const scope = Object.keys(object(payload.studioRunScope)).length > 0
+    ? object(payload.studioRunScope)
+    : object(authorization.scope)
+  const ownerId = typeof scope.ownerId === 'string' ? scope.ownerId : ''
+  const projectId = typeof scope.projectId === 'string' ? scope.projectId : ''
+  if (!ownerId || !projectId) {
+    throw new ContentOsServiceError('studio_result_project_scope_missing', 409)
+  }
+  const sourceAssetIds = Array.isArray(scope.sourceAssetIds)
+    ? scope.sourceAssetIds.map(String).filter(Boolean).slice(0, 20)
+    : []
+  return attachProjectAsset(ownerId, projectId, {
+    pendingActionId,
+    sourceAssetIds,
+  })
+}
+
 async function synchronizeProjectAssets(ownerId: string, projectId: string) {
   const assets = await db.creativeProjectAsset.findMany({
     where: { projectId, project: { ownerId, archivedAt: null }, pendingActionId: { not: null } },

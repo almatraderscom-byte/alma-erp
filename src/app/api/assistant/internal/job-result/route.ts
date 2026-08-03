@@ -113,6 +113,15 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: 'family_chain_reconcile_failed' }, { status: 503 })
       }
     }
+    if (replayPayload?.creativeStudio) {
+      try {
+        const { reconcileStudioResultProjectAsset } = await import('@/lib/creative-studio/project-service')
+        await reconcileStudioResultProjectAsset(pendingActionId)
+      } catch (assetError) {
+        console.error('[job-result] studio project-asset replay reconcile failed:', assetError)
+        return Response.json({ error: 'studio_project_asset_reconcile_failed' }, { status: 503 })
+      }
+    }
     // CSE4 callback replay may mean the stage row committed but the pack
     // reconciliation/lineage write did not. Re-run that idempotent hook before
     // acknowledging the duplicate so a restart cannot leave the pack stale.
@@ -209,6 +218,19 @@ export async function POST(req: NextRequest) {
       if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
     } catch (chainErr) {
       console.error('[job-result] family chain advance failed:', chainErr)
+    }
+  }
+
+  // The final artifact belongs in its signed project even if the browser tab
+  // closed before the old client-side catalog POST. Await and retry through the
+  // idempotent callback path so Gallery can never silently lose a paid result.
+  if (payload.creativeStudio) {
+    try {
+      const { reconcileStudioResultProjectAsset } = await import('@/lib/creative-studio/project-service')
+      await reconcileStudioResultProjectAsset(pendingActionId)
+    } catch (assetError) {
+      console.error('[job-result] studio project-asset reconcile failed:', assetError)
+      return Response.json({ error: 'studio_project_asset_reconcile_failed' }, { status: 503 })
     }
   }
 

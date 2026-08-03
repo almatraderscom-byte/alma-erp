@@ -150,6 +150,19 @@ describe('Creative Studio paid-run production boundary', () => {
     expect(batch).toContain('agentPendingAction.upsert')
   })
 
+  it('persists queued and terminal artifacts into the signed project without relying on the browser', () => {
+    const route = source('src/app/api/assistant/creative-studio/run/route.ts')
+    const jobResult = source('src/app/api/assistant/internal/job-result/route.ts')
+    const projectService = source('src/lib/creative-studio/project-service.ts')
+
+    expect(route).toContain('await bindQueuedJobsToProject({')
+    expect(route).toContain('ownerId: scoped.scope.ownerId')
+    expect(jobResult).toContain('await reconcileStudioResultProjectAsset(pendingActionId)')
+    expect(jobResult).toContain("error: 'studio_project_asset_reconcile_failed'")
+    expect(projectService).toContain('export async function reconcileStudioResultProjectAsset(')
+    expect(projectService).toContain("throw new ContentOsServiceError('studio_result_project_scope_missing', 409)")
+  })
+
   it('hydrates the latest Agent rollback identity from Foundation history', () => {
     const service = source('src/lib/creative-studio/composition-service.ts')
     const port = source(
