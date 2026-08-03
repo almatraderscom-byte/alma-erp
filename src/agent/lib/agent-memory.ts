@@ -320,11 +320,14 @@ export async function retrieveRelevantMemories(
   if (!outcome) return []
 
   if (outcome.factIds.length > 0) {
-    try {
-      await reinforceMemoriesOnUse(outcome.factIds)
-    } catch (err) {
+    // Dispatched, not awaited (Codex P2, PR #711). The timeout above promises
+    // that a slow database costs the turn its memory and not the owner's reply —
+    // awaiting an unbounded UPDATE right after it would hand that latency back.
+    // Bookkeeping does not belong on the response path; the request stays alive
+    // for the model call that follows, which is far longer than this statement.
+    void reinforceMemoriesOnUse(outcome.factIds).catch((err) => {
       console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
-    }
+    })
   }
   return outcome.memories
 }

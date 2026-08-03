@@ -98,6 +98,22 @@ describe('buildOrTsQuery / buildLikePatterns', () => {
     expect(patterns).not.toContain('%abc%')
   })
 
+  // Codex P2 round 6 (PR #711): '_' is a single-character wildcard in SQL, so
+  // %inv_88% also matched INVX88 and could outrank the exact identifier.
+  it('escapes LIKE wildcards so an identifier matches literally', () => {
+    expect(buildLikePatterns(['inv_88'])).toEqual(['%inv\\_88%'])
+    expect(buildLikePatterns(['ord-123'])).toEqual(['%ord-123%']) // nothing to escape
+  })
+
+  it('escapes wildcards in the raw-phrase fallback too', () => {
+    expect(rawPhrasePatterns('a_b')).toEqual(['%a\\_b%'])
+    expect(rawPhrasePatterns('100% sure')).toEqual(['%100\\% sure%'])
+  })
+
+  it('escapes a backslash before it can escape something else', () => {
+    expect(rawPhrasePatterns('a\\_b')).toEqual(['%a\\\\\\_b%'])
+  })
+
   it('caps the number of ILIKE patterns', () => {
     const many = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf']
     expect(buildLikePatterns(many).length).toBeLessThanOrEqual(5)

@@ -120,12 +120,25 @@ export function buildOrTsQuery(tokens: string[]): string {
   return [...terms].join(' | ')
 }
 
+/**
+ * Escapes LIKE metacharacters so a pattern matches the literal text.
+ *
+ * `_` is a single-character wildcard in SQL, so the supported identifier form
+ * `INV_88` searched as `%inv_88%` would also match `INVX88` — an unrelated newer
+ * memory could then outrank the exact identifier this arm exists to find (Codex
+ * P2, PR #711). Backslash is Postgres's default LIKE escape character, so no
+ * ESCAPE clause is needed; it is escaped first so it cannot double-escape.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
 /** `%token%` patterns for the trigram arm — long tokens only, capped. */
 export function buildLikePatterns(tokens: string[], limit = MAX_LIKE_PATTERNS): string[] {
   return tokens
     .filter((t) => t.length >= MIN_LIKE_TOKEN_LEN || /\p{N}/u.test(t))
     .slice(0, limit)
-    .map((t) => `%${t}%`)
+    .map((t) => `%${escapeLikePattern(t)}%`)
 }
 
 /**
@@ -160,7 +173,7 @@ export function rawPhrasePatterns(query: string): string[] {
     .replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, '')
     .slice(0, 60)
   if (phrase.length < MIN_RAW_FALLBACK_LEN) return []
-  return [`%${phrase}%`]
+  return [`%${escapeLikePattern(phrase)}%`]
 }
 
 export interface RankedArmHit {
