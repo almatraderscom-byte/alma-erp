@@ -56,7 +56,28 @@ final class EngineDelegate: NSObject, AgoraRtcEngineDelegate {
         print("joined \(channel) uid=\(uid)")
     }
 
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+        print("peer joined uid=\(uid)")
+        fflush(stdout)
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurStreamMessageErrorFromUid uid: UInt, streamId: Int,
+                   error: Int, missed: Int, cached: Int) {
+        print("ctl error stream_message uid=\(uid) code=\(error) missed=\(missed)")
+        fflush(stdout)
+    }
+
+    /// Logged once per process: proof that the phone's packets reach us at
+    /// all, which is the difference between "the gate refused it" and "the
+    /// transport never delivered it".
+    private static var sawFirstPacket = false
+
     func rtcEngine(_ engine: AgoraRtcEngineKit, receiveStreamMessageFromUid uid: UInt, streamId: Int, data: Data) {
+        if !Self.sawFirstPacket {
+            Self.sawFirstPacket = true
+            print("ctl first-packet uid=\(uid) bytes=\(data.count)")
+            fflush(stdout)
+        }
         switch controlGate.admit(uid: uid, data: data) {
         case .drop(let why):
             // Never log per-tap; log the KINDS that mean something is wrong.
@@ -261,7 +282,7 @@ Task {
         // are the same rectangle — the mapping is right by construction.
         let bounds = CGDisplayBounds(display.displayID)
         Injector.displayBounds = bounds
-        ControlOverlay.shared.configure(displayBounds: bounds)
+        ControlOverlay.shared.configure(displayBounds: bounds, displayID: display.displayID)
         // Scale to maxDim on the long edge — phone screens do not need 5K.
         let w = display.width, h = display.height
         let scale = Double(maxDim) / Double(max(w, h))

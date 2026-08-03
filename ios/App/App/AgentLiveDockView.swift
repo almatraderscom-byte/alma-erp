@@ -518,13 +518,29 @@ struct AgentLiveDockSheet: View {
                         MacScreenStage(deviceId: videoDevice, session: macSession, store: control)
                             .frame(height: 230)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
+                            // The border must never compete for the finger —
+                            // every touch on this rectangle belongs to the Mac.
                             .overlay(RoundedRectangle(cornerRadius: 14)
                                 .strokeBorder(control.armed
                                               ? Color(red: 0.878, green: 0.478, blue: 0.373)
                                               : pal.borderSubtle,
-                                              lineWidth: control.armed ? 2 : 1))
+                                              lineWidth: control.armed ? 2 : 1)
+                                .allowsHitTesting(false))
                         if let displays = store.feed?.macDisplays, displays.count > 1 {
                             MacDisplayPicker(displays: displays, pal: pal) { index in
+                                // Re-tapping the current display is a no-op on
+                                // the daemon (it only restarts on a CHANGE), so
+                                // clearing the size caches here would strand aim
+                                // with no fresh videoSizeChanged to follow
+                                // (Codex P2).
+                                guard index != displays.index else { return }
+                                // The new display can have a different aspect;
+                                // until Agora reports the replacement stream's
+                                // size, aim clicks must not map through the old
+                                // one. Zero it so the commit guard refuses until
+                                // the fresh size arrives.
+                                control.videoSize = .zero
+                                macSession.markVideoSizeStale()
                                 Task { await store.switchDisplay(to: index) }
                             }
                         }
@@ -623,6 +639,10 @@ struct AgentLiveDockSheet: View {
                     .accessibilityLabel("ছোট করুন")
                 }
             }
+        }
+        .fullScreenCover(isPresented: $control.fullScreen) {
+            MacScreenFullScreen(deviceId: store.feed?.videoDeviceId ?? "",
+                                session: macSession, control: control)
         }
         .onDisappear {
             // Closing the sheet ends both rights at once: hands off, eyes off.

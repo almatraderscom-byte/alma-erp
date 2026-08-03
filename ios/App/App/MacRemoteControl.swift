@@ -95,6 +95,11 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// the DISPLAY rather than of the letterboxed view.
     private(set) var videoSize: CGSize = .zero
     var onVideoSize: ((CGSize) -> Void)?
+
+    /// A display switch restarts the broadcaster on a possibly different-sized
+    /// screen. Forget the cached size so the next videoSizeChanged is always
+    /// treated as new — even if the dimensions happen to match (Codex P2).
+    func markVideoSizeStale() { videoSize = .zero }
     var onConnectionLost: (() -> Void)?
     /// RC-3: Agora warns ~30s before a token dies. Whoever owns the switch
     /// decides which token to renew — control if armed, view-only if not.
@@ -166,11 +171,26 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         }
     }
 
+    /// Point the remote video at a different canvas without leaving the
+    /// channel — the full-screen view and the sheet share ONE join, so the
+    /// video must simply move between their two canvases.
+    @MainActor
+    func rebindCanvas(_ view: UIView) {
+        canvasView = view
+        guard let engine, let conn = connection else { return }
+        let canvas = AgoraRtcVideoCanvas()
+        canvas.uid = 1
+        canvas.view = view
+        canvas.renderMode = .fit
+        engine.setupRemoteVideoEx(canvas, connection: conn)
+    }
+
     func leave() {
         joinGeneration += 1
         controlArmed = false
         motionStreamId = -1
         stateStreamId = -1
+        resolveRole(false)
         if let conn = connection {
             engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
             connection = nil
@@ -192,8 +212,11 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, videoSizeChangedOf sourceType: AgoraVideoSourceType,
                    uid: UInt, size: CGSize, rotation: Int) {
         guard uid == 1, size.width > 0, size.height > 0 else { return }
+        let changed = videoSize != size
         videoSize = size
-        DispatchQueue.main.async { self.onVideoSize?(size) }
+        // After markVideoSizeStale() the cached value is zero, so re-report even
+        // when the new display's dimensions equal the old ones.
+        if changed { DispatchQueue.main.async { self.onVideoSize?(size) } }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, connectionChangedTo state: AgoraConnectionState,
@@ -212,6 +235,50 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         if state == .failed { scheduleHeal() }
         if state == .connected { healAttempts = 0 }
     }
+
+    /// Resolved the moment Agora confirms the broadcaster role — armControl
+    /// awaits this rather than sleeping a fixed 400ms, because a fixed sleep
+    /// does not establish the role actually changed and a data stream created
+    /// while still an audience goes nowhere (Codex P1). `true` = became
+    /// broadcaster, `false` = the change failed.
+    private var roleContinuation: CheckedContinuation<Bool, Never>?
+    /// Bumped on every arm attempt so a stale watchdog cannot resolve a newer
+    /// arm's continuation (Codex P2).
+    private var roleWaitToken = 0
+
+    private func resolveRole(_ ok: Bool) {
+        let cont = roleContinuation
+        roleContinuation = nil
+        cont?.resume(returning: ok)
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChanged oldRole: AgoraClientRole,
+                   newRole: AgoraClientRole, newRoleOptions: AgoraClientRoleOptions?) {
+        DispatchQueue.main.async {
+            #if DEBUG
+            self.onAgoraEvent?("role\(newRole.rawValue)")
+            #endif
+            if newRole == .broadcaster { self.roleWaitToken += 1; self.resolveRole(true) }
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChangeFailed reason: AgoraClientRoleChangeFailedReason,
+                   currentRole: AgoraClientRole) {
+        DispatchQueue.main.async {
+            #if DEBUG
+            self.onAgoraEvent?("roleFail\(reason.rawValue)")
+            #endif
+            self.roleWaitToken += 1
+            self.resolveRole(false)
+        }
+    }
+
+    #if DEBUG
+    var onAgoraEvent: ((String) -> Void)?
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
+        DispatchQueue.main.async { self.onAgoraEvent?("err\(errorCode.rawValue)") }
+    }
+    #endif
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, tokenPrivilegeWillExpire token: String) {
         DispatchQueue.main.async { self.onTokenExpiring?() }
@@ -234,7 +301,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// messages. Publishing audio/video stays impossible: the control token
     /// carries no publish privilege for either.
     @MainActor
-    func armControl(token: String) -> Bool {
+    func armControl(token: String) async -> Bool {
         guard let engine, let conn = connection else { return false }
         let options = AgoraRtcChannelMediaOptions()
         options.token = token
@@ -244,6 +311,22 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
+        // Wait for Agora to CONFIRM the broadcaster role before creating the
+        // data streams — a stream made while still an audience is accepted
+        // locally and then goes nowhere (Codex P1; measured live). A 3s
+        // watchdog resolves false so a stuck transition fails cleanly instead
+        // of hanging the arm.
+        roleWaitToken += 1
+        let myToken = roleWaitToken
+        let became: Bool = await withCheckedContinuation { cont in
+            self.roleContinuation = cont
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                // Only fire for the arm that armed THIS watchdog.
+                guard let self, self.roleWaitToken == myToken else { return }
+                self.resolveRole(false)
+            }
+        }
+        guard became else { return false }
         // Create the streams ONCE per join and keep them across arm/disarm.
         // Agora keeps created streams for the life of the connection and caps
         // how many a client may create, so re-creating a pair on every toggle
@@ -338,14 +421,29 @@ enum RemoteHaptics {
 @MainActor
 @Observable
 final class MacRemoteControlStore {
-    enum Mode: String { case trackpad, direct }
+    enum Mode: String {
+        case trackpad
+        /// Press where you are looking: the spot under the finger magnifies,
+        /// you adjust while it is big, and the click lands on release. The
+        /// owner asked for exactly this after driving it once — a tap that
+        /// lands "somewhere near" is the failure this whole design is about.
+        case aim
+        case direct
+    }
 
     var armed = false
     var busy = false
-    var mode: Mode = .trackpad
+    var mode: Mode = .aim
     /// Direct taps need magnification; below this they are refused outright.
     static let directTapMinZoom: CGFloat = 2.0
     var zoom: CGFloat = 1.0
+    /// Landscape, edge-to-edge control. The owner asked for it in the first
+    /// live session: a 3440-wide Mac inside a 230pt strip is not something you
+    /// can drive smoothly — full screen makes the target big enough to aim at.
+    var fullScreen = false
+    /// A finger is on the video right now — the full-screen chrome hides so it
+    /// can never sit on top of what is being aimed at.
+    var interacting = false
     /// RC-2.5: first tap aims (the Mac paints a solid ring), second commits.
     /// Off by default — the snap already makes ordinary targets safe; this is
     /// the brake for the small ones, and the owner decides when he wants it.
@@ -363,6 +461,17 @@ final class MacRemoteControlStore {
     /// before the down or after the up, and part of the drag degrades into
     /// plain cursor motion (Codex P1).
     @ObservationIgnored private var dragging = false
+    @ObservationIgnored private var sendFailures = 0
+    #if DEBUG
+    /// Temporary instrumentation for the first live run: what the touch layer
+    /// saw versus what actually left the phone.
+    var debugCounters = "began=0 moved=0 sent=0 failed=0"
+    var agoraEvents = ""
+    var began = 0
+    var moved = 0
+    var sent = 0
+    var failed = 0
+    #endif
     /// The lease the server hands out is 120s; the phone renews well inside it.
     private let renewEvery: TimeInterval = 45
     /// Cost guard: an armed-but-untouched control session stops renewing, so
@@ -402,6 +511,12 @@ final class MacRemoteControlStore {
             }
         }
         session.onVideoSize = { [weak self] size in self?.videoSize = size }
+        #if DEBUG
+        session.onAgoraEvent = { [weak self] event in
+            guard let self else { return }
+            self.agoraEvents = (self.agoraEvents + " " + event).suffix(60).description
+        }
+        #endif
         session.onTokenExpiring = { [weak self] in
             guard let self else { return }
             Task { await self.armed ? self.renew() : self.renewViewToken() }
@@ -547,7 +662,20 @@ final class MacRemoteControlStore {
     func sendMove(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: dragging)
+        let ok = session?.send(["a": "m", "dx": dx, "dy": dy], ordered: dragging) == true
+        #if DEBUG
+        if ok { sent += 1 } else { failed += 1 }
+        debugCounters = "began=\(began) moved=\(moved) sent=\(sent) failed=\(failed)"
+        #endif
+        // A silent no-op is the worst failure here: the owner drags and the
+        // Mac does nothing, with no way to tell why.
+        if !ok {
+            sendFailures += 1
+            if sendFailures == 3 { statusBn = "কন্ট্রোল বার্তা যাচ্ছে না — বন্ধ করে আবার চালু করুন।" }
+        } else if sendFailures > 0 {
+            sendFailures = 0
+            if statusBn?.hasPrefix("কন্ট্রোল বার্তা") == true { statusBn = nil }
+        }
     }
 
     func sendClick(count: Int, right: Bool) {
@@ -568,6 +696,17 @@ final class MacRemoteControlStore {
         guard armed else { return }
         touched()
         _ = session?.send(["a": "w", "dx": dx, "dy": dy], ordered: false)
+    }
+
+    /// Begin an aim drag: pin the position and press the button, both on the
+    /// ordered lane and in order, so mouse-down never precedes its position.
+    func sendAimDragStart(x: Double, y: Double) {
+        guard armed else { return }
+        touched()
+        dragging = true
+        _ = session?.send(["a": "p", "x": x, "y": y], ordered: true)
+        _ = session?.send(["a": "dd"])
+        RemoteHaptics.drag()
     }
 
     func sendDrag(down: Bool) {
@@ -602,6 +741,42 @@ final class MacRemoteControlStore {
         if twoStepConfirm { payload["cf"] = 1 }
         _ = session?.send(payload)
         RemoteHaptics.tap()
+    }
+
+    /// AIM mode: the finger is down and the view is magnified — keep the Mac's
+    /// cursor under it so the snap ring shows the target before the commit.
+    func sendAimMove(x: Double, y: Double) {
+        guard armed else { return }
+        touched()
+        // While a drag is held the position must ride the SAME ordered lane as
+        // dd/du, or a move can overtake mouse-down/up and part of the drag
+        // becomes a plain jump (Codex P1). A free aim move stays unordered.
+        _ = session?.send(["a": "p", "x": x, "y": y], ordered: dragging)
+    }
+
+    /// AIM mode commit: position and click in ONE ordered packet.
+    func sendAimClick(x: Double, y: Double, right: Bool = false, count: Int = 1) {
+        guard armed else { return }
+        // Without the real video size the fitted rect (and therefore this
+        // fraction) is guessed from a 16:9 fallback, and on the ultrawide Mac
+        // that lands the click far from the target (Codex P1).
+        guard videoSize.width > 0, videoSize.height > 0 else {
+            RemoteHaptics.refused()
+            statusBn = "ভিডিও এখনো আসেনি — একটু পরে।"
+            return
+        }
+        touched()
+        var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l",
+                                      "n": min(max(1, count), 2), "x": x, "y": y]
+        // Two-step confirm is a brake for accidental LEFT clicks; a right-click
+        // is already a deliberate two-finger act and a double never pairs
+        // (Codex P2).
+        if twoStepConfirm, count == 1, !right { payload["cf"] = 1 }
+        if session?.send(payload) == true {
+            right ? RemoteHaptics.rightTap() : RemoteHaptics.tap()
+        } else {
+            RemoteHaptics.refused()
+        }
     }
 
     /// Right-click at an absolute point (direct-mode long press).
@@ -670,8 +845,36 @@ final class TrackpadSurfaceView: UIView {
     /// Aspect (w/h) of the Mac display, so the fitted video rect is exact.
     var videoAspect: CGFloat = 16.0 / 9.0
     var directMode = false
+    /// AIM mode: magnify under the finger, commit on release.
+    var aimMode = false
+    private var lastAimSendAt: TimeInterval = 0
+    private var lastAimClickAt: Date = .distantPast
+    private var lastAimClickPoint: CGPoint = .zero
+    /// Called with the touch point when the aim magnifier should show/move/hide.
+    var onAimZoom: ((CGPoint?) -> Void)?
+    /// Called with the point the click would land on (in this view's space), so
+    /// a reticle can be drawn there. The finger sits BELOW it.
+    var onAimTarget: ((CGPoint?) -> Void)?
+    /// True while a finger is down — the chrome hides so it never covers the
+    /// thing being aimed at.
+    var onInteracting: ((Bool) -> Void)?
 
-    private enum Phase { case idle, undecided, moving, dragging, twoFinger }
+    /// How far ABOVE the finger the aimed point sits. A fingertip is ~50pt of
+    /// opaque flesh; aiming at something you cannot see is the whole problem.
+    static let aimLift: CGFloat = 78
+
+    /// The point being aimed at for a touch at `touch`. The lift keeps the
+    /// finger off the target; clamping to the WHOLE video (not just the top)
+    /// keeps the bottom band — the Mac dock — reachable, by letting the finger
+    /// drop below the video while the target rides the bottom edge (Codex P1).
+    private func aimPoint(for touch: CGPoint) -> CGPoint {
+        let rect = videoRect
+        let x = min(max(rect.minX + 1, touch.x), rect.maxX - 1)
+        let y = min(max(rect.minY + 2, touch.y - Self.aimLift), rect.maxY - 2)
+        return CGPoint(x: x, y: y)
+    }
+
+    private enum Phase { case idle, undecided, moving, dragging, twoFinger, aiming }
     private var phase: Phase = .idle
     private var startPoint: CGPoint = .zero
     private var lastPoint: CGPoint = .zero
@@ -695,10 +898,47 @@ final class TrackpadSurfaceView: UIView {
     private let doubleTapWindow: TimeInterval = 0.32
     private let longPressDelay: TimeInterval = 0.45
 
+    /// Exists only to CLAIM the drag. The stage lives inside the sheet's
+    /// scroll view, whose pan recogniser would otherwise swallow every finger
+    /// movement on the video and scroll the sheet instead of driving the Mac
+    /// (found on the first live run — nothing reached the Mac at all).
+    private lazy var claim: UIPanGestureRecognizer = {
+        let g = UIPanGestureRecognizer(target: self, action: #selector(claimed(_:)))
+        g.minimumNumberOfTouches = 1
+        g.maximumNumberOfTouches = 2
+        g.cancelsTouchesInView = false // our raw touch handling still runs
+        g.delaysTouchesBegan = false
+        g.delegate = self
+        return g
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = true
         backgroundColor = .clear
+        addGestureRecognizer(claim)
+    }
+
+    @objc private func claimed(_ g: UIPanGestureRecognizer) { /* claiming is the point */ }
+
+    /// Enabled only while control is armed — an unarmed stage must still let
+    /// the owner scroll the sheet with a finger on the video.
+    var claimsDrag: Bool {
+        get { claim.isEnabled }
+        set { claim.isEnabled = newValue }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // Make the enclosing scroll view yield to us rather than the reverse.
+        var view: UIView? = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView {
+                scroll.panGestureRecognizer.require(toFail: claim)
+                break
+            }
+            view = current.superview
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
@@ -720,9 +960,26 @@ final class TrackpadSurfaceView: UIView {
     // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        store?.began += 1
+        store?.debugCounters = "began=\(store?.began ?? 0) moved=\(store?.moved ?? 0) sent=\(store?.sent ?? 0) failed=\(store?.failed ?? 0)"
+        #endif
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if all.count >= 2 {
+            // A second finger arriving during an aim cancels the aim — the
+            // owner is scrolling, not clicking. A drag already in progress
+            // must RELEASE the held button first, or overwriting the phase to
+            // .twoFinger skips the dragUp and the Mac's button stays down
+            // (Codex P1).
+            if phase == .dragging {
+                store?.sendDrag(down: false)
+            }
+            if phase == .aiming || phase == .dragging {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
             cancelLongPress()
             phase = .twoFinger
             // Motion the first finger had already banked is not part of this
@@ -735,15 +992,38 @@ final class TrackpadSurfaceView: UIView {
             return
         }
         guard let touch = touches.first else { return }
-        phase = .undecided
         startPoint = touch.location(in: self)
         lastPoint = startPoint
         startedAt = Date()
+        if aimMode {
+            // Magnify immediately: the owner is aiming at something he can see,
+            // and a delay would make the first tap feel unresponsive.
+            let rect = videoRect
+            // The FINGER must be on the video, not only its lifted target — a
+            // touch that starts in the black letterbox but whose 78pt-lifted
+            // point falls inside would otherwise commit a real click on empty
+            // space (Codex P1).
+            guard rect.contains(startPoint) else { phase = .idle; return }
+            phase = .aiming
+            let target = aimPoint(for: startPoint)
+            onInteracting?(true)
+            onAimZoom?(target)
+            onAimTarget?(target)
+            RemoteHaptics.tap()
+            store?.sendAimMove(x: Double((target.x - rect.minX) / rect.width),
+                               y: Double((target.y - rect.minY) / rect.height))
+            scheduleLongPress() // hold in aim mode = pick the thing up (drag)
+            return
+        }
+        phase = .undecided
         scheduleLongPress()
         startFlushTimer()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        store?.moved += 1
+        #endif
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if phase == .twoFinger || all.count >= 2 {
@@ -774,6 +1054,30 @@ final class TrackpadSurfaceView: UIView {
         }
         guard let touch = touches.first else { return }
         let p = touch.location(in: self)
+        if phase == .aiming || phase == .dragging, aimMode {
+            // While magnified the finger is fine-tuning: the Mac's cursor (and
+            // therefore its snap ring) follows, so the target is visible before
+            // the click is committed. A drag in progress keeps the same
+            // mapping, it just has the button held.
+            if phase == .aiming, hypot(p.x - startPoint.x, p.y - startPoint.y) > 4 { cancelLongPress() }
+            lastPoint = p
+            let rect = videoRect
+            guard rect.width > 0, rect.height > 0 else { return }
+            let target = aimPoint(for: p)
+            onAimZoom?(target)   // visual: every frame, smooth
+            onAimTarget?(target)
+            // Network: capped near the wire rate (~45/s). The Mac's position
+            // bucket refills at 90/s and a 120Hz finger would blow past it,
+            // producing rate-limited drops (Codex P2). The commit on release
+            // carries the exact final point, so throttling costs no accuracy.
+            let now = Date().timeIntervalSince1970
+            if now - lastAimSendAt >= 0.022 {
+                lastAimSendAt = now
+                store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                                   y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+            }
+            return
+        }
         let moved = hypot(p.x - startPoint.x, p.y - startPoint.y)
         if phase == .undecided, moved > moveThreshold {
             phase = .moving
@@ -794,19 +1098,76 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard store?.armed == true else { phase = .idle; return }
+        guard store?.armed == true else {
+            // Disarmed mid-gesture (connection lost / owner off): the magnifier
+            // and the hidden chrome must not stay stuck (Codex P2).
+            if phase == .aiming || phase == .dragging {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
+            phase = .idle
+            return
+        }
         let remaining = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
         cancelLongPress()
         flushPendingMotion()
         switch phase {
+        case .aiming:
+            let releasePoint = touches.first?.location(in: self) ?? lastPoint
+            let target = aimPoint(for: releasePoint)
+            let rect = videoRect
+            onAimZoom?(nil)
+            onAimTarget?(nil)
+            onInteracting?(false)
+            if rect.contains(target) {
+                // Second quick release near the first = double-click, so the
+                // owner can open files and activate standard controls (Codex
+                // P2). Confirm mode never doubles — there is no first click.
+                let now = Date()
+                let isDouble = store?.twoStepConfirm != true
+                    && now.timeIntervalSince(lastAimClickAt) < doubleTapWindow
+                    && hypot(releasePoint.x - lastAimClickPoint.x, releasePoint.y - lastAimClickPoint.y) < 30
+                lastAimClickAt = isDouble ? .distantPast : now
+                lastAimClickPoint = releasePoint
+                store?.sendAimClick(x: Double((target.x - rect.minX) / rect.width),
+                                    y: Double((target.y - rect.minY) / rect.height),
+                                    count: isDouble ? 2 : 1)
+            }
         case .dragging:
+            if aimMode {
+                // The throttle can drop the last aim move, so send the exact
+                // release point before mouse-up or the item lands where the
+                // previous packet was, not where the finger let go (Codex P2).
+                let rect = videoRect
+                let target = aimPoint(for: touches.first?.location(in: self) ?? lastPoint)
+                if rect.width > 0, rect.height > 0 {
+                    store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                                       y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+                }
+            }
             store?.sendDrag(down: false)
+            if aimMode {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
         case .twoFinger:
             // A two-finger tap (no travel, short) is a right-click.
             if remaining == 0, Date().timeIntervalSince(startedAt) < tapMaxDuration,
                hypot(lastTwoFingerPoint.x - twoFingerStart.x,
                      lastTwoFingerPoint.y - twoFingerStart.y) < moveThreshold * 2 {
-                store?.sendClick(count: 1, right: true)
+                let rect = videoRect
+                if aimMode, rect.contains(twoFingerStart) {
+                    // Position + right-click as ONE ordered packet: a separate
+                    // unordered position could arrive after the click and
+                    // right-click the old spot (Codex P2).
+                    store?.sendAimClick(x: Double((twoFingerStart.x - rect.minX) / rect.width),
+                                        y: Double((twoFingerStart.y - rect.minY) / rect.height),
+                                        right: true)
+                } else {
+                    store?.sendClick(count: 1, right: true)
+                }
             }
         case .undecided:
             handleTap(at: touches.first?.location(in: self) ?? startPoint)
@@ -820,6 +1181,11 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if phase == .aiming || (aimMode && phase == .dragging) {
+            onAimZoom?(nil)
+            onAimTarget?(nil)
+            onInteracting?(false)
+        }
         cancelLongPress()
         flushPendingMotion()
         if phase == .dragging { store?.sendDrag(down: false) }
@@ -860,7 +1226,28 @@ final class TrackpadSurfaceView: UIView {
 
     private func scheduleLongPress() {
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.phase == .undecided else { return }
+            guard let self else { return }
+            if self.aimMode, self.phase == .aiming {
+                // Held still while magnified: PICK IT UP. Dragging a file or a
+                // window is the other half of using a Mac, and switching modes
+                // to do it would break the flow. Right-click stays on the
+                // two-finger tap, the same as everywhere else.
+                self.phase = .dragging
+                // Pin the cursor on the ORDERED lane before mouse-down, or dd
+                // can overtake the earlier unordered position and the drag
+                // starts at the previous spot (Codex P2).
+                let rect = self.videoRect
+                let target = self.aimPoint(for: self.lastPoint)
+                if rect.width > 0, rect.height > 0 {
+                    self.store?.sendAimDragStart(
+                        x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                        y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+                } else {
+                    self.store?.sendDrag(down: true)
+                }
+                return
+            }
+            guard self.phase == .undecided else { return }
             if self.directMode {
                 // Zoomed in, touch-where-you-look: a long press is the natural
                 // right-click, and a drag there would fight the pan gesture.
@@ -923,6 +1310,36 @@ final class TrackpadSurfaceView: UIView {
     }
 }
 
+/// The aiming cross-hair: a ring with a centre dot at the exact point the
+/// click will land. Drawn in ALMA coral, same as the Mac-side snap ring, so
+/// the two read as one system.
+final class ReticleView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1)
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        ctx.setStrokeColor(coral.cgColor)
+        ctx.setLineWidth(2)
+        ctx.strokeEllipse(in: CGRect(x: c.x - 13, y: c.y - 13, width: 26, height: 26))
+        ctx.setFillColor(coral.cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - 2.5, y: c.y - 2.5, width: 5, height: 5))
+        // Four ticks so the centre reads even over busy video.
+        for (dx, dy, dx2, dy2) in [(0.0, -13.0, 0.0, -19.0), (0.0, 13.0, 0.0, 19.0),
+                                   (-13.0, 0.0, -19.0, 0.0), (13.0, 0.0, 19.0, 0.0)] {
+            ctx.move(to: CGPoint(x: c.x + dx, y: c.y + dy))
+            ctx.addLine(to: CGPoint(x: c.x + dx2, y: c.y + dy2))
+        }
+        ctx.strokePath()
+    }
+}
+
 // MARK: - The stage: video canvas + touch surface as one view
 
 @available(iOS 17.0, *)
@@ -930,16 +1347,20 @@ struct MacScreenStage: UIViewRepresentable {
     let deviceId: String
     let session: MacScreenSession
     var store: MacRemoteControlStore
+    /// True for the landscape presentation. Only the stage that matches the
+    /// current mode owns the canvas, so the two never fight over it.
+    var isFullScreen = false
 
     func makeUIView(context: Context) -> UIView {
         let container = UIView()
         container.backgroundColor = .black
         container.clipsToBounds = true
 
-        // Everything that must magnify together lives in one layer: the video
-        // canvas and the touch surface. Transforming the pair keeps a touch's
-        // coordinates valid at any zoom — UIKit hands us pre-transform points,
-        // so the fitted-video maths never has to know about the scale.
+        // Only the VIDEO is magnified, never the touch surface. Codex P1: a
+        // touch read through a transformed surface returns magnified
+        // coordinates, so the click committed above the previewed reticle. The
+        // aim magnifier is purely cosmetic — the click target is always the
+        // finger's position in the STABLE, untransformed frame.
         let zoomLayer = UIView()
         zoomLayer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(zoomLayer)
@@ -949,10 +1370,13 @@ struct MacScreenStage: UIViewRepresentable {
         canvas.translatesAutoresizingMaskIntoConstraints = false
         zoomLayer.addSubview(canvas)
 
+        // Touch surface is a STABLE sibling on top of the zoom layer — it never
+        // scales, so its coordinates are the real ones.
         let surface = TrackpadSurfaceView(frame: .zero)
         surface.translatesAutoresizingMaskIntoConstraints = false
         surface.store = store
-        zoomLayer.addSubview(surface)
+        surface.backgroundColor = .clear
+        container.addSubview(surface)
 
         NSLayoutConstraint.activate([
             zoomLayer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -963,34 +1387,45 @@ struct MacScreenStage: UIViewRepresentable {
             canvas.trailingAnchor.constraint(equalTo: zoomLayer.trailingAnchor),
             canvas.topAnchor.constraint(equalTo: zoomLayer.topAnchor),
             canvas.bottomAnchor.constraint(equalTo: zoomLayer.bottomAnchor),
-            surface.leadingAnchor.constraint(equalTo: zoomLayer.leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: zoomLayer.trailingAnchor),
-            surface.topAnchor.constraint(equalTo: zoomLayer.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: zoomLayer.bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: container.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        // RC-2.5 — pinch to magnify and drag to pan, but ONLY in direct mode.
-        // In trackpad mode a one-finger drag is the cursor; a pan recogniser
-        // there would swallow it.
-        let pinch = UIPinchGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
-        let pan = UIPanGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        pan.minimumNumberOfTouches = 1
-        pan.maximumNumberOfTouches = 1
-        pinch.isEnabled = false
-        pan.isEnabled = false
-        container.addGestureRecognizer(pinch)
-        container.addGestureRecognizer(pan)
+        surface.onAimZoom = { [weak coordinator = context.coordinator] point in
+            coordinator?.magnify(around: point)
+        }
+        surface.onAimTarget = { [weak coordinator = context.coordinator] point in
+            coordinator?.showReticle(at: point)
+        }
+        surface.onInteracting = { [weak store] active in
+            store?.interacting = active
+        }
 
+        // The reticle lives on the STABLE surface at the exact stable point the
+        // click will land — because the zoom is anchored on that point, its
+        // screen position does not move when the video magnifies, so it stays
+        // glued to the target without inheriting the transform.
+        let reticle = ReticleView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        reticle.isHidden = true
+        reticle.isUserInteractionEnabled = false
+        surface.addSubview(reticle)
+        context.coordinator.reticle = reticle
         context.coordinator.surface = surface
+        context.coordinator.canvas = canvas
         context.coordinator.zoomLayer = zoomLayer
-        context.coordinator.pinch = pinch
-        context.coordinator.pan = pan
         context.coordinator.store = store
-        session.canvasView = canvas
         store.attach(session: session, deviceId: deviceId)
-        session.join(deviceId: deviceId, into: canvas)
+        if session.joined {
+            // Already in the channel (the sheet joined): this new stage simply
+            // takes the video. Without this the full-screen view came up black,
+            // because join() short-circuits and nothing rebound the canvas.
+            session.rebindCanvas(canvas)
+        } else {
+            session.canvasView = canvas
+            session.join(deviceId: deviceId, into: canvas)
+        }
         return container
     }
 
@@ -1000,24 +1435,24 @@ struct MacScreenStage: UIViewRepresentable {
             store.attach(session: session, deviceId: deviceId)
             session.join(deviceId: deviceId, into: canvas)
         }
-        let direct = store.mode == .direct
-        context.coordinator.pinch?.isEnabled = direct
-        context.coordinator.pan?.isEnabled = direct
+        // Whichever stage matches the current mode takes the video — and it
+        // must be re-bound once the canvas actually HAS a size. Binding a
+        // zero-sized view renders nothing and never recovers, which is what
+        // made the landscape view come up black.
+        if store.fullScreen == isFullScreen, let canvas = context.coordinator.canvas {
+            let size = canvas.bounds.size
+            if size.width > 1, size.height > 1,
+               session.canvasView !== canvas || context.coordinator.boundSize != size {
+                context.coordinator.boundSize = size
+                session.rebindCanvas(canvas)
+            }
+        }
         if let surface = context.coordinator.surface {
-            surface.directMode = direct
+            surface.claimsDrag = store.armed
+            surface.aimMode = store.mode == .aim
             if store.videoSize.width > 0, store.videoSize.height > 0 {
                 surface.videoAspect = store.videoSize.width / store.videoSize.height
             }
-        }
-        // Leaving direct mode drops the magnification, so trackpad mode is
-        // always the plain 1:1 view the owner expects.
-        if !direct, context.coordinator.scale != 1 {
-            context.coordinator.resetZoom(animated: true)
-            // Deferred: writing observable state inside updateUIView is a
-            // write during the view-update pass, which SwiftUI answers with
-            // either a warning or another update.
-            let store = store
-            DispatchQueue.main.async { store.zoom = 1 }
         }
     }
 
@@ -1026,61 +1461,50 @@ struct MacScreenStage: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         weak var surface: TrackpadSurfaceView?
+        weak var canvas: UIView?
+        weak var reticle: ReticleView?
+        /// Size the video was last bound at; a change means re-bind.
+        var boundSize: CGSize = .zero
+
+        func showReticle(at point: CGPoint?) {
+            guard let reticle else { return }
+            guard let point else {
+                reticle.isHidden = true
+                return
+            }
+            reticle.isHidden = false
+            reticle.center = point
+        }
         weak var zoomLayer: UIView?
-        weak var pinch: UIPinchGestureRecognizer?
-        weak var pan: UIPanGestureRecognizer?
         var store: MacRemoteControlStore?
-        var scale: CGFloat = 1
-        private var offset: CGPoint = .zero
-        private var pinchStartScale: CGFloat = 1
-        private var panStartOffset: CGPoint = .zero
-        static let maxScale: CGFloat = 5
 
-        @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
+        /// AIM magnifier: scale the whole stage about the touched point, so the
+        /// thing under the finger becomes big enough to hit. Nothing is
+        /// snapshotted — it is the same live video, just enlarged, which keeps
+        /// it working with Agora's Metal-backed view.
+        static let aimScale: CGFloat = 2.6
+
+        func magnify(around point: CGPoint?) {
             guard let layer = zoomLayer else { return }
-            if g.state == .began { pinchStartScale = scale }
-            if g.state == .began || g.state == .changed {
-                scale = min(max(1, pinchStartScale * g.scale), Self.maxScale)
-                clampOffset(in: layer)
-                apply(to: layer)
-                store?.zoom = scale
+            guard let point else {
+                UIView.animate(withDuration: 0.16) { layer.transform = .identity }
+                store?.zoom = 1
+                return
             }
-            if g.state == .ended || g.state == .cancelled {
-                if scale <= 1.02 { resetZoom(animated: true); store?.zoom = 1 }
-                AlmaAgentHaptics.selection()
+            let k = Self.aimScale
+            // Anchor the scale on the touched point: what is under the finger
+            // stays under the finger, everything else grows away from it.
+            let tx = (1 - k) * (point.x - layer.bounds.midX)
+            let ty = (1 - k) * (point.y - layer.bounds.midY)
+            let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: k, y: k)
+            if layer.transform == .identity {
+                UIView.animate(withDuration: 0.12) { layer.transform = transform }
+            } else {
+                layer.transform = transform
             }
+            store?.zoom = k
         }
 
-        @objc func handlePan(_ g: UIPanGestureRecognizer) {
-            guard let layer = zoomLayer, scale > 1 else { return }
-            if g.state == .began { panStartOffset = offset }
-            let t = g.translation(in: layer)
-            offset = CGPoint(x: panStartOffset.x + t.x, y: panStartOffset.y + t.y)
-            clampOffset(in: layer)
-            apply(to: layer)
-        }
-
-        /// Never let the magnified image be dragged off its own frame — empty
-        /// black margins would make the owner think the stream died.
-        private func clampOffset(in layer: UIView) {
-            let maxX = layer.bounds.width * (scale - 1) / 2
-            let maxY = layer.bounds.height * (scale - 1) / 2
-            offset.x = min(max(offset.x, -maxX), maxX)
-            offset.y = min(max(offset.y, -maxY), maxY)
-        }
-
-        private func apply(to layer: UIView) {
-            layer.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
-                .scaledBy(x: scale, y: scale)
-        }
-
-        func resetZoom(animated: Bool) {
-            guard let layer = zoomLayer else { return }
-            scale = 1
-            offset = .zero
-            let work = { layer.transform = .identity }
-            animated ? UIView.animate(withDuration: 0.2, animations: work) : work()
-        }
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
@@ -1098,6 +1522,17 @@ struct MacScreenStage: UIViewRepresentable {
 struct MacControlBar: View {
     @Bindable var control: MacRemoteControlStore
     let pal: AgentPalette
+
+    private var hintBn: String {
+        switch control.mode {
+        case .aim:
+            return "আঙুল রাখুন — জায়গাটা বড় হবে, সরিয়ে ঠিক করুন, ছাড়লেই ক্লিক। চেপে ধরে রাখলে জিনিসটা তুলে টানা যায় (ড্র্যাগ) · দুই আঙুলে ট্যাপ = রাইট-ক্লিক।"
+        case .trackpad:
+            return "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
+        case .direct:
+            return "সরাসরি মোড: অন্তত ২× জুম করে তবেই ট্যাপ করা যাবে।"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1127,12 +1562,26 @@ struct MacControlBar: View {
                 .disabled(control.busy)
                 .accessibilityLabel("Mac রিমোট কন্ট্রোল")
 
+                Button {
+                    AlmaAgentHaptics.commit()
+                    control.fullScreen = true
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 50, height: 44)
+                        .foregroundStyle(pal.mutedHi)
+                        .background(pal.ink.opacity(0.04), in: RoundedRectangle(cornerRadius: 11))
+                        .overlay(RoundedRectangle(cornerRadius: 11)
+                            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                .accessibilityLabel("ফুল স্ক্রিন")
+
                 if control.armed {
                     Picker("", selection: Binding(
                         get: { control.mode },
                         set: { control.mode = $0; AlmaAgentHaptics.selection() })) {
+                        Text("নিশানা").tag(MacRemoteControlStore.Mode.aim)
                         Text("ট্র্যাকপ্যাড").tag(MacRemoteControlStore.Mode.trackpad)
-                        Text("সরাসরি").tag(MacRemoteControlStore.Mode.direct)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 168, height: 44)
@@ -1162,13 +1611,19 @@ struct MacControlBar: View {
                                          ? Color.green : pal.muted)
                 }
 
-                Text(control.mode == .trackpad
-                     ? "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
-                     : "সরাসরি মোড: অন্তত ২× জুম করে তবেই ট্যাপ করা যাবে — নইলে ভুল জায়গায় পড়তে পারে।")
+                Text(hintBn)
                     .font(.system(size: 11.5))
                     .foregroundStyle(pal.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            #if DEBUG
+            if !control.debugCounters.isEmpty {
+                Text(control.debugCounters + " | " + control.agoraEvents)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(pal.mutedHi)
+            }
+            #endif
 
             if let status = control.statusBn {
                 Text(status)
@@ -1281,4 +1736,182 @@ struct MacKeyboardBar: View {
             }
         }
     }
+}
+
+@available(iOS 17.0, *)
+extension TrackpadSurfaceView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        // Direct mode's pinch/pan live on the container and must still work.
+        true
+    }
+}
+
+// MARK: - Landscape full-screen control
+
+/// The owner's ask, live on the first session: "let me see it like a full
+/// video, landscape, so I can drive the big screen smoothly." A 3440-wide Mac
+/// rendered into a 230pt strip is not a surface you can aim at — here the same
+/// stage fills the phone, the chrome shrinks to one translucent bar, and the
+/// bar sits along the bottom edge so it never competes with the video.
+@available(iOS 17.0, *)
+struct MacScreenFullScreen: View {
+    let deviceId: String
+    let session: MacScreenSession
+    @Bindable var control: MacRemoteControlStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var showKeys = false
+    @State private var typed = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            // Trust the BOX, not the system. If iOS rotated the window we are
+            // already landscape and rotate nothing; if it refused (a presented
+            // SwiftUI controller can keep its cached orientations, and the
+            // simulator reports landscape while still drawing portrait), we
+            // turn the content ourselves. Either way the owner gets the wide
+            // view he asked for.
+            let rotate = geo.size.width < geo.size.height
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                stack(size: rotate ? CGSize(width: geo.size.height, height: geo.size.width) : geo.size)
+                    .frame(width: rotate ? geo.size.height : geo.size.width,
+                           height: rotate ? geo.size.width : geo.size.height)
+                    // -90, not +90: with the phone turned the natural way for
+                    // video (home indicator to the right) this is the upright
+                    // direction — checked on screen, not reasoned about.
+                    .rotationEffect(rotate ? .degrees(-90) : .zero)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
+            }
+            .ignoresSafeArea()
+        }
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onAppear {
+            control.fullScreen = true
+            // The APP does not rotate — only this view's content does. The
+            // owner was explicit: he wants the Mac wide, not his chat, his
+            // dashboard and everything else turning sideways with it. Pinning
+            // the window to portrait also makes the rotation deterministic:
+            // the content is always turned exactly once, by us.
+            AppDelegate.orientationLock = .portrait
+        }
+        .onDisappear {
+            control.fullScreen = false
+            AppDelegate.orientationLock = .allButUpsideDown
+        }
+    }
+
+    /// The rotatable content: video plus its chrome, laid out for a landscape
+    /// box whatever the system decided to do with the window.
+    private func stack(size: CGSize) -> some View {
+        ZStack {
+            MacScreenStage(deviceId: deviceId, session: session, store: control, isFullScreen: true)
+            VStack {
+                Spacer()
+                if showKeys { keyboardStrip }
+                controlStrip
+            }
+            .padding(.bottom, 14)
+            // The bar gets out of the way the moment a finger touches the
+            // video: nothing of ours may cover what the owner is aiming at.
+            .opacity(control.interacting ? 0 : 1)
+            .animation(.easeOut(duration: 0.15), value: control.interacting)
+        }
+    }
+
+    private var controlStrip: some View {
+        HStack(spacing: 10) {
+            barButton(systemName: "xmark", label: "বন্ধ") {
+                dismiss()
+            }
+            barButton(systemName: control.armed ? "hand.raised.slash.fill" : "hand.point.up.left.fill",
+                      label: control.armed ? "কন্ট্রোল বন্ধ" : "কন্ট্রোল চালু",
+                      tint: control.armed ? .red : nil) {
+                Task { await control.toggle() }
+            }
+            if control.armed {
+                barButton(systemName: "keyboard", label: "কীবোর্ড", tint: showKeys ? .orange : nil) {
+                    showKeys.toggle()
+                    typing = showKeys
+                }
+                barButton(systemName: control.mode == .aim ? "scope" : "rectangle.and.hand.point.up.left",
+                          label: control.mode == .aim ? "নিশানা" : "ট্র্যাকপ্যাড") {
+                    control.mode = control.mode == .aim ? .trackpad : .aim
+                }
+            }
+            if let status = control.statusBn {
+                Text(status)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+                    .frame(maxWidth: 220)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private var keyboardStrip: some View {
+        HStack(spacing: 8) {
+            TextField("Mac-এ লিখুন…", text: $typed)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($typing)
+                .font(.system(size: 14))
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .frame(maxWidth: 420)
+                .onSubmit(sendTyped)
+            Button(action: sendTyped) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(typed.isEmpty)
+            ForEach(["enter", "esc"], id: \.self) { key in
+                Button {
+                    control.sendKey(key)
+                } label: {
+                    Text(key == "enter" ? "⏎" : "esc")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 50, height: 44)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11))
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func sendTyped() {
+        let payload = typed
+        guard !payload.isEmpty else { return }
+        typed = ""
+        Task {
+            if await !control.sendText(payload) { typed = payload }
+        }
+    }
+
+    private func barButton(systemName: String, label: String, tint: Color? = nil,
+                           action: @escaping () -> Void) -> some View {
+        Button {
+            AlmaAgentHaptics.light()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemName).font(.system(size: 14, weight: .semibold))
+                Text(label).font(.system(size: 12.5, weight: .semibold))
+            }
+            .frame(minHeight: 44)
+            .padding(.horizontal, 10)
+            .foregroundStyle(tint ?? .primary)
+        }
+        .accessibilityLabel(label)
+    }
+
 }

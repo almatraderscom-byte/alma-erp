@@ -64,11 +64,24 @@ final class ControlOverlay {
     private var view: OverlayView?
     /// Bounds of the captured display in CG global coords (top-left origin).
     private var displayBounds: CGRect = .zero
+    /// The captured display itself. With more than one screen, deriving the
+    /// AppKit frame arithmetically puts the overlay on the wrong monitor (seen
+    /// live the moment the owner's Mac had two screens) — asking AppKit which
+    /// NSScreen carries this display id is exact.
+    private var displayID: CGDirectDisplayID = 0
 
     private init() {}
 
-    func configure(displayBounds: CGRect) {
+    func configure(displayBounds: CGRect, displayID: CGDirectDisplayID) {
         self.displayBounds = displayBounds
+        self.displayID = displayID
+    }
+
+    private func matchingScreen() -> NSScreen? {
+        NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                .uint32Value == displayID
+        }
     }
 
     /// CG global (y-down) → this window's local coords (y-up).
@@ -83,15 +96,21 @@ final class ControlOverlay {
     private func ensureWindow() {
         guard window == nil, displayBounds != .zero else { return }
         // AppKit's global space is y-up from the bottom-left of the PRIMARY
-        // screen; CGDisplayBounds is y-down from its top-left.
-        let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height
-            ?? displayBounds.height
-        let frame = NSRect(
-            x: displayBounds.minX,
-            y: primaryHeight - displayBounds.maxY,
-            width: displayBounds.width,
-            height: displayBounds.height,
-        )
+        // screen; CGDisplayBounds is y-down from its top-left. Prefer the
+        // screen's own frame — it is already in AppKit coordinates.
+        let frame: NSRect
+        if let screen = matchingScreen() {
+            frame = screen.frame
+        } else {
+            let primaryHeight = (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main)?.frame.height
+                ?? displayBounds.height
+            frame = NSRect(
+                x: displayBounds.minX,
+                y: primaryHeight - displayBounds.maxY,
+                width: displayBounds.width,
+                height: displayBounds.height,
+            )
+        }
         let win = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         win.isOpaque = false
         win.backgroundColor = .clear
