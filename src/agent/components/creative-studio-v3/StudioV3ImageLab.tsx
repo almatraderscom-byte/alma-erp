@@ -495,6 +495,7 @@ export function StudioV3ImageLab({
       familyPreset: isVton ? familyPreset : undefined,
       prompt: prompt.trim() || undefined,
       backgroundPrompt: BACKGROUND_PRESETS.find((item) => item.id === backgroundId)?.prompt || prompt.trim() || undefined,
+      pipelineMode: 'production',
       ...resolutionFieldsForRun(resolutionState),
       generationMode,
       numImages,
