@@ -25,6 +25,18 @@ describe('Studio product generation source', () => {
     })
   })
 
+  it('treats a persisted Supabase product signed URL as expiring legacy lineage', () => {
+    const signedLegacy = {
+      ...legacyProduct,
+      sourceImage: 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/133-KIDS/1.jpg?token=expired',
+    }
+    expect(isLegacyStudioProductPath(signedLegacy.sourceImage)).toBe(true)
+    expect(hydrateLegacyStudioProduct(signedLegacy, {
+      storagePath: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
+      url: 'https://fresh.example/133-kids',
+    }).sourceImage).toBe('product-images/alma-lifestyle/133-KIDS/1.jpg')
+  })
+
   it('fails closed when the legacy SKU has no healthy catalog image', () => {
     expect(hydrateLegacyStudioProduct(legacyProduct, null)).toEqual({
       ...legacyProduct,

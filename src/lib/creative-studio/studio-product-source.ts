@@ -6,7 +6,16 @@ export type StudioCatalogProductImage = {
 }
 
 export function isLegacyStudioProductPath(value: string | null | undefined): boolean {
-  return Boolean(value?.startsWith('/agent/product-images/'))
+  const normalized = value?.trim()
+  if (!normalized) return false
+  if (normalized.startsWith('/agent/product-images/')) return true
+  try {
+    const url = new URL(normalized)
+    return /^\/storage\/v1\/object\/(?:sign|public)\/agent-files\/product-images\//i
+      .test(url.pathname)
+  } catch {
+    return false
+  }
 }
 
 export function studioProductPreviewUrl(
