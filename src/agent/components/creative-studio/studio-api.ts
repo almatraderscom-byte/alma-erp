@@ -318,7 +318,7 @@ export async function fetchErpProducts(query = ''): Promise<StudioProductOption[
   if (query.trim()) params.set('q', query.trim())
   const data = await studioRequest<{ products: StudioProductOption[] }>(
     `/api/assistant/creative-studio/products?${params.toString()}`,
-    undefined,
+    { cache: 'no-store' },
     'products_failed',
   )
   return data.products

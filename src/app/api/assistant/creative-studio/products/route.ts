@@ -72,13 +72,16 @@ export async function GET(req: NextRequest) {
         signed = {}
       }
     }
-    return Response.json({
-      products: hydratedProducts.map((product) => ({
-        ...product,
-        previewImage: studioProductPreviewUrl(product, signed),
-      })),
-      readOnly: true,
-    })
+    return Response.json(
+      {
+        products: hydratedProducts.map((product) => ({
+          ...product,
+          previewImage: studioProductPreviewUrl(product, signed),
+        })),
+        readOnly: true,
+      },
+      { headers: { 'Cache-Control': 'private, no-store, max-age=0' } },
+    )
   } catch (error) {
     if (error instanceof ContentOsServiceError) {
       return Response.json({ error: error.code }, { status: error.status })
