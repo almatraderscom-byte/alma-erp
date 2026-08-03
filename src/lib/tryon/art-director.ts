@@ -5,10 +5,10 @@ import { logCost } from '@/agent/lib/cost-events'
 // current GA multimodal model so a retired endpoint cannot silently turn every
 // clean product reference into `unknown` and block Auto before confirmation.
 export const GARMENT_VISION_MODEL = 'gemini-3.6-flash'
-// v2 includes visual presentation/wearer count. The old garment-only cache
+// v3 includes visual presentation plus dominant-garment safety. The old cache
 // could call a one-child crop a family poster after seeing a stray adult hand,
 // then block the clean replacement forever under the same object path.
-const CACHE_PREFIX = 'tryon_garment_attrs_v2:'
+const CACHE_PREFIX = 'tryon_garment_attrs_v3:'
 const GARMENT_VISION_INPUT_USD_PER_M = 1.5
 const GARMENT_VISION_OUTPUT_USD_PER_M = 7.5
 
@@ -65,6 +65,8 @@ export type GarmentAttrs = {
   /** Number of distinct torsos visibly wearing a garment (a stray hand is not a wearer). */
   visibleWearers?: number
   photoType?: 'on_model' | 'flat_lay' | 'mannequin' | 'multi_person' | 'unknown'
+  /** True only when one foreground garment is unambiguous despite incidental people/limbs. */
+  singleGarmentDominant?: boolean
 }
 
 interface GarmentSpec {
@@ -154,8 +156,9 @@ const CLASSIFY_PROMPT = `Analyze this clothing PRODUCT photo for a Bangladeshi m
   "suggestedRole": one of [father,son,single,family],
   "visibleWearers": 1,
   "photoType": one of [on_model,flat_lay,mannequin,multi_person,unknown],
+  "singleGarmentDominant": true,
   "notes": "any distinctive detail to preserve (specific motif, unusual collar, etc.)" }
-Count distinct visible TORSOS wearing garments; an isolated hand/arm entering the frame is NOT another wearer. Use family_matching_set only when TWO OR MORE distinct garments/wearers are visibly present; one child wearing one panjabi is kids_panjabi even if an adult hand touches the child's shoulder. Only describe what is visibly present. If unsure, use "unknown". No prose, JSON only.`
+Count distinct visible TORSOS wearing garments; an isolated hand/arm entering the frame is NOT another wearer. singleGarmentDominant is true only when ONE foreground garment is clearly the intended product and can be extracted unambiguously; blurred/transparent background silhouettes or a partial arm do not make it false. It is false for a balanced family poster where two or more complete outfits compete equally. Use family_matching_set only when TWO OR MORE distinct garments/wearers are visibly present; one child wearing one panjabi is kids_panjabi even if an adult hand touches the child's shoulder. Only describe what is visibly present. If unsure, use "unknown". No prose, JSON only.`
 
 const UNKNOWN_ATTRS: GarmentAttrs = {
   garmentType: 'unknown',
@@ -167,6 +170,7 @@ const UNKNOWN_ATTRS: GarmentAttrs = {
   notes: '',
   visibleWearers: 0,
   photoType: 'unknown',
+  singleGarmentDominant: false,
 }
 
 /** Never let a transient vision failure poison a product path indefinitely. */
@@ -185,7 +189,12 @@ export function autoProductReferenceError(
   if (!isUsableGarmentClassification(attrs)) return 'product_reference_unclassified'
   // A narrow one-person crop from a matching collection is a valid single
   // product reference. Block only actual/unknown multi-garment presentations.
-  if (!includeFamily && attrs.garmentType === 'family_matching_set' && attrs.visibleWearers !== 1) {
+  if (
+    !includeFamily
+    && attrs.garmentType === 'family_matching_set'
+    && attrs.visibleWearers !== 1
+    && attrs.singleGarmentDominant !== true
+  ) {
     return 'family_product_requires_role_crop'
   }
   return null
@@ -233,6 +242,7 @@ function parseGarmentAttrs(raw: unknown): GarmentAttrs {
     photoType: ['on_model', 'flat_lay', 'mannequin', 'multi_person', 'unknown'].includes(String(o.photoType))
       ? o.photoType as GarmentAttrs['photoType']
       : 'unknown',
+    singleGarmentDominant: o.singleGarmentDominant === true,
   }
 }
 

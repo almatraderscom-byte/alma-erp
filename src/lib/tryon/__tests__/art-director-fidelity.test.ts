@@ -66,5 +66,11 @@ describe('production try-on fidelity prompt', () => {
       visibleWearers: 2,
       photoType: 'multi_person',
     })).toBe('family_product_requires_role_crop')
+    expect(autoProductReferenceError({
+      ...family,
+      visibleWearers: 2,
+      photoType: 'multi_person',
+      singleGarmentDominant: true,
+    })).toBeNull()
   })
 })
