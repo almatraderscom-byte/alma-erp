@@ -391,6 +391,13 @@ const SIMULATOR_ASK =
 const BACKUP_ASK =
   /(backup|ব্যাকআপ|back\s*up|time\s*machine|টাইম\s*মেশিন|(?:file|ফাইল|data|ডেটা)[^\n]{0,20}(?:safe|নিরাপদ|hariye|হারিয়ে))/i
 
+/** Safety settings on the machine — not backups, not disk space. */
+const MAC_SECURITY_ASK =
+  /(filevault|firewall|ফায়ারওয়াল|encrypt|এনক্রিপ|(?:mac|ম্যাক)[^\n]{0,20}(?:secure|নিরাপদ|security|নিরাপত্তা)|(?:update|আপডেট)[^\n]{0,16}(?:baki|বাকি|pending|ache\s*kina))/i
+/** His day — the Mac's calendar/reminders lined up with the ERP's. */
+const CALENDAR_ASK =
+  /((?:calendar|ক্যালেন্ডার|reminder|রিমাইন্ডার)[^\n]{0,24}(?:dekh|দেখ|ki\s*ache|কী\s*আছে|ache\s*kina)|(?:ajke|আজকে|ajker|আজকের)[^\n]{0,20}(?:calendar|ক্যালেন্ডার|meeting|মিটিং|appointment)|(?:ki|কী)\s*(?:ache|আছে)[^\n]{0,14}(?:calendar|ক্যালেন্ডারে))/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -490,6 +497,18 @@ export const RULES: RouterRule[] = [
     // Before the app rule: "claude session kholo" is the CLI, not the GUI app.
     test: (t) => CLI_SESSION_ASK.test(t),
     why: 'Mac-এ Claude/Codex সেশন চালানোর কথা — অ্যাপ নয়, CLI',
+  },
+  {
+    id: 'mac-security',
+    skill: 'mac-security-check',
+    test: (t) => MAC_SECURITY_ASK.test(t),
+    why: 'Mac-এর নিরাপত্তা-সেটিং — শুধু পড়া, বদলানো নয়',
+  },
+  {
+    id: 'calendar-day',
+    skill: 'calendar-reminders-bridge',
+    test: (t) => CALENDAR_ASK.test(t),
+    why: 'Mac-এর ক্যালেন্ডার + ERP মিলিয়ে আজকের তালিকা',
   },
   {
     id: 'backup-check',
