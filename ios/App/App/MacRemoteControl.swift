@@ -185,6 +185,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         controlArmed = false
         motionStreamId = -1
         stateStreamId = -1
+        resolveRole(false)
         if let conn = connection {
             engine?.leaveChannelEx(conn, leaveChannelBlock: nil)
             connection = nil
@@ -227,18 +228,43 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         if state == .connected { healAttempts = 0 }
     }
 
+    /// Resolved the moment Agora confirms the broadcaster role — armControl
+    /// awaits this rather than sleeping a fixed 400ms, because a fixed sleep
+    /// does not establish the role actually changed and a data stream created
+    /// while still an audience goes nowhere (Codex P1). `true` = became
+    /// broadcaster, `false` = the change failed.
+    private var roleContinuation: CheckedContinuation<Bool, Never>?
+
+    private func resolveRole(_ ok: Bool) {
+        let cont = roleContinuation
+        roleContinuation = nil
+        cont?.resume(returning: ok)
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChanged oldRole: AgoraClientRole,
+                   newRole: AgoraClientRole, newRoleOptions: AgoraClientRoleOptions?) {
+        DispatchQueue.main.async {
+            #if DEBUG
+            self.onAgoraEvent?("role\(newRole.rawValue)")
+            #endif
+            if newRole == .broadcaster { self.resolveRole(true) }
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChangeFailed reason: AgoraClientRoleChangeFailedReason,
+                   currentRole: AgoraClientRole) {
+        DispatchQueue.main.async {
+            #if DEBUG
+            self.onAgoraEvent?("roleFail\(reason.rawValue)")
+            #endif
+            self.resolveRole(false)
+        }
+    }
+
     #if DEBUG
     var onAgoraEvent: ((String) -> Void)?
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
         DispatchQueue.main.async { self.onAgoraEvent?("err\(errorCode.rawValue)") }
-    }
-    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChanged oldRole: AgoraClientRole,
-                   newRole: AgoraClientRole, newRoleOptions: AgoraClientRoleOptions?) {
-        DispatchQueue.main.async { self.onAgoraEvent?("role\(newRole.rawValue)") }
-    }
-    func rtcEngine(_ engine: AgoraRtcEngineKit, didClientRoleChangeFailed reason: AgoraClientRoleChangeFailedReason,
-                   currentRole: AgoraClientRole) {
-        DispatchQueue.main.async { self.onAgoraEvent?("roleFail\(reason.rawValue)") }
     }
     #endif
 
@@ -273,11 +299,18 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
-        // The role change is asynchronous. A data stream created while the
-        // client is still AUDIENCE is accepted locally and then silently goes
-        // nowhere — measured on the first live run: sends returned 0 and the
-        // Mac never saw a packet.
-        try? await Task.sleep(nanoseconds: 400_000_000)
+        // Wait for Agora to CONFIRM the broadcaster role before creating the
+        // data streams — a stream made while still an audience is accepted
+        // locally and then goes nowhere (Codex P1; measured live). A 3s
+        // watchdog resolves false so a stuck transition fails cleanly instead
+        // of hanging the arm.
+        let became: Bool = await withCheckedContinuation { cont in
+            self.roleContinuation = cont
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.resolveRole(false)
+            }
+        }
+        guard became else { return false }
         // Create the streams ONCE per join and keep them across arm/disarm.
         // Agora keeps created streams for the life of the connection and caps
         // how many a client may create, so re-creating a pair on every toggle
@@ -688,12 +721,23 @@ final class MacRemoteControlStore {
     func sendAimMove(x: Double, y: Double) {
         guard armed else { return }
         touched()
-        _ = session?.send(["a": "p", "x": x, "y": y], ordered: false)
+        // While a drag is held the position must ride the SAME ordered lane as
+        // dd/du, or a move can overtake mouse-down/up and part of the drag
+        // becomes a plain jump (Codex P1). A free aim move stays unordered.
+        _ = session?.send(["a": "p", "x": x, "y": y], ordered: dragging)
     }
 
     /// AIM mode commit: position and click in ONE ordered packet.
     func sendAimClick(x: Double, y: Double, right: Bool = false) {
         guard armed else { return }
+        // Without the real video size the fitted rect (and therefore this
+        // fraction) is guessed from a 16:9 fallback, and on the ultrawide Mac
+        // that lands the click far from the target (Codex P1).
+        guard videoSize.width > 0, videoSize.height > 0 else {
+            RemoteHaptics.refused()
+            statusBn = "ভিডিও এখনো আসেনি — একটু পরে।"
+            return
+        }
         touched()
         var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l", "n": 1, "x": x, "y": y]
         if twoStepConfirm { payload["cf"] = 1 }
@@ -772,6 +816,7 @@ final class TrackpadSurfaceView: UIView {
     var directMode = false
     /// AIM mode: magnify under the finger, commit on release.
     var aimMode = false
+    private var lastAimSendAt: TimeInterval = 0
     /// Called with the touch point when the aim magnifier should show/move/hide.
     var onAimZoom: ((CGPoint?) -> Void)?
     /// Called with the point the click would land on (in this view's space), so
@@ -970,10 +1015,18 @@ final class TrackpadSurfaceView: UIView {
             let rect = videoRect
             guard rect.width > 0, rect.height > 0 else { return }
             let target = aimPoint(for: p)
-            onAimZoom?(target)
+            onAimZoom?(target)   // visual: every frame, smooth
             onAimTarget?(target)
-            store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
-                               y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+            // Network: capped near the wire rate (~45/s). The Mac's position
+            // bucket refills at 90/s and a 120Hz finger would blow past it,
+            // producing rate-limited drops (Codex P2). The commit on release
+            // carries the exact final point, so throttling costs no accuracy.
+            let now = Date().timeIntervalSince1970
+            if now - lastAimSendAt >= 0.022 {
+                lastAimSendAt = now
+                store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                                   y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+            }
             return
         }
         let moved = hypot(p.x - startPoint.x, p.y - startPoint.y)
@@ -1201,10 +1254,11 @@ struct MacScreenStage: UIViewRepresentable {
         container.backgroundColor = .black
         container.clipsToBounds = true
 
-        // Everything that must magnify together lives in one layer: the video
-        // canvas and the touch surface. Transforming the pair keeps a touch's
-        // coordinates valid at any zoom — UIKit hands us pre-transform points,
-        // so the fitted-video maths never has to know about the scale.
+        // Only the VIDEO is magnified, never the touch surface. Codex P1: a
+        // touch read through a transformed surface returns magnified
+        // coordinates, so the click committed above the previewed reticle. The
+        // aim magnifier is purely cosmetic — the click target is always the
+        // finger's position in the STABLE, untransformed frame.
         let zoomLayer = UIView()
         zoomLayer.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(zoomLayer)
@@ -1214,10 +1268,13 @@ struct MacScreenStage: UIViewRepresentable {
         canvas.translatesAutoresizingMaskIntoConstraints = false
         zoomLayer.addSubview(canvas)
 
+        // Touch surface is a STABLE sibling on top of the zoom layer — it never
+        // scales, so its coordinates are the real ones.
         let surface = TrackpadSurfaceView(frame: .zero)
         surface.translatesAutoresizingMaskIntoConstraints = false
         surface.store = store
-        zoomLayer.addSubview(surface)
+        surface.backgroundColor = .clear
+        container.addSubview(surface)
 
         NSLayoutConstraint.activate([
             zoomLayer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -1228,25 +1285,11 @@ struct MacScreenStage: UIViewRepresentable {
             canvas.trailingAnchor.constraint(equalTo: zoomLayer.trailingAnchor),
             canvas.topAnchor.constraint(equalTo: zoomLayer.topAnchor),
             canvas.bottomAnchor.constraint(equalTo: zoomLayer.bottomAnchor),
-            surface.leadingAnchor.constraint(equalTo: zoomLayer.leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: zoomLayer.trailingAnchor),
-            surface.topAnchor.constraint(equalTo: zoomLayer.topAnchor),
-            surface.bottomAnchor.constraint(equalTo: zoomLayer.bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: container.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-
-        // RC-2.5 — pinch to magnify and drag to pan, but ONLY in direct mode.
-        // In trackpad mode a one-finger drag is the cursor; a pan recogniser
-        // there would swallow it.
-        let pinch = UIPinchGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
-        let pan = UIPanGestureRecognizer(
-            target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        pan.minimumNumberOfTouches = 1
-        pan.maximumNumberOfTouches = 1
-        pinch.isEnabled = false
-        pan.isEnabled = false
-        container.addGestureRecognizer(pinch)
-        container.addGestureRecognizer(pan)
 
         surface.onAimZoom = { [weak coordinator = context.coordinator] point in
             coordinator?.magnify(around: point)
@@ -1258,9 +1301,10 @@ struct MacScreenStage: UIViewRepresentable {
             store?.interacting = active
         }
 
-        // The reticle: a small cross-hair ring at the exact point the click
-        // will land, drawn on the SURFACE so it magnifies with the video and
-        // stays visually glued to the target.
+        // The reticle lives on the STABLE surface at the exact stable point the
+        // click will land — because the zoom is anchored on that point, its
+        // screen position does not move when the video magnifies, so it stays
+        // glued to the target without inheriting the transform.
         let reticle = ReticleView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
         reticle.isHidden = true
         reticle.isUserInteractionEnabled = false
@@ -1269,8 +1313,6 @@ struct MacScreenStage: UIViewRepresentable {
         context.coordinator.surface = surface
         context.coordinator.canvas = canvas
         context.coordinator.zoomLayer = zoomLayer
-        context.coordinator.pinch = pinch
-        context.coordinator.pan = pan
         context.coordinator.store = store
         store.attach(session: session, deviceId: deviceId)
         if session.joined {
@@ -1303,26 +1345,12 @@ struct MacScreenStage: UIViewRepresentable {
                 session.rebindCanvas(canvas)
             }
         }
-        let direct = store.mode == .direct
-        context.coordinator.pinch?.isEnabled = direct
-        context.coordinator.pan?.isEnabled = direct
         if let surface = context.coordinator.surface {
             surface.claimsDrag = store.armed
             surface.aimMode = store.mode == .aim
-            surface.directMode = direct
             if store.videoSize.width > 0, store.videoSize.height > 0 {
                 surface.videoAspect = store.videoSize.width / store.videoSize.height
             }
-        }
-        // Leaving direct mode drops the magnification, so trackpad mode is
-        // always the plain 1:1 view the owner expects.
-        if !direct, context.coordinator.scale != 1 {
-            context.coordinator.resetZoom(animated: true)
-            // Deferred: writing observable state inside updateUIView is a
-            // write during the view-update pass, which SwiftUI answers with
-            // either a warning or another update.
-            let store = store
-            DispatchQueue.main.async { store.zoom = 1 }
         }
     }
 
@@ -1346,52 +1374,7 @@ struct MacScreenStage: UIViewRepresentable {
             reticle.center = point
         }
         weak var zoomLayer: UIView?
-        weak var pinch: UIPinchGestureRecognizer?
-        weak var pan: UIPanGestureRecognizer?
         var store: MacRemoteControlStore?
-        var scale: CGFloat = 1
-        private var offset: CGPoint = .zero
-        private var pinchStartScale: CGFloat = 1
-        private var panStartOffset: CGPoint = .zero
-        static let maxScale: CGFloat = 5
-
-        @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
-            guard let layer = zoomLayer else { return }
-            if g.state == .began { pinchStartScale = scale }
-            if g.state == .began || g.state == .changed {
-                scale = min(max(1, pinchStartScale * g.scale), Self.maxScale)
-                clampOffset(in: layer)
-                apply(to: layer)
-                store?.zoom = scale
-            }
-            if g.state == .ended || g.state == .cancelled {
-                if scale <= 1.02 { resetZoom(animated: true); store?.zoom = 1 }
-                AlmaAgentHaptics.selection()
-            }
-        }
-
-        @objc func handlePan(_ g: UIPanGestureRecognizer) {
-            guard let layer = zoomLayer, scale > 1 else { return }
-            if g.state == .began { panStartOffset = offset }
-            let t = g.translation(in: layer)
-            offset = CGPoint(x: panStartOffset.x + t.x, y: panStartOffset.y + t.y)
-            clampOffset(in: layer)
-            apply(to: layer)
-        }
-
-        /// Never let the magnified image be dragged off its own frame — empty
-        /// black margins would make the owner think the stream died.
-        private func clampOffset(in layer: UIView) {
-            let maxX = layer.bounds.width * (scale - 1) / 2
-            let maxY = layer.bounds.height * (scale - 1) / 2
-            offset.x = min(max(offset.x, -maxX), maxX)
-            offset.y = min(max(offset.y, -maxY), maxY)
-        }
-
-        private func apply(to layer: UIView) {
-            layer.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
-                .scaledBy(x: scale, y: scale)
-        }
 
         /// AIM magnifier: scale the whole stage about the touched point, so the
         /// thing under the finger becomes big enough to hit. Nothing is
@@ -1420,13 +1403,6 @@ struct MacScreenStage: UIViewRepresentable {
             store?.zoom = k
         }
 
-        func resetZoom(animated: Bool) {
-            guard let layer = zoomLayer else { return }
-            scale = 1
-            offset = .zero
-            let work = { layer.transform = .identity }
-            animated ? UIView.animate(withDuration: 0.2, animations: work) : work()
-        }
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
@@ -1448,7 +1424,7 @@ struct MacControlBar: View {
     private var hintBn: String {
         switch control.mode {
         case .aim:
-            return "আঙুল রাখুন — জায়গাটা বড় হবে, আঙুল সরিয়ে ঠিক করুন, ছাড়লেই ক্লিক। চেপে ধরে রাখলে রাইট-ক্লিক।"
+            return "আঙুল রাখুন — জায়গাটা বড় হবে, সরিয়ে ঠিক করুন, ছাড়লেই ক্লিক। চেপে ধরে রাখলে জিনিসটা তুলে টানা যায় (ড্র্যাগ) · দুই আঙুলে ট্যাপ = রাইট-ক্লিক।"
         case .trackpad:
             return "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
         case .direct:
