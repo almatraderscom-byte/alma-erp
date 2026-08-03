@@ -67,7 +67,10 @@ describe('buildDigestForTarget — embedding provider down', () => {
     expect(deletes).toHaveLength(0)
   })
 
-  it('still writes when a persona survives — the persona needs no embedding', async () => {
+  // Codex P2 round 8 (PR #711): a persona alone made `rows` non-empty, so the
+  // write went ahead and replaced the slot — quietly dropping the L2 blocks whose
+  // embeddings had failed. The replacement is all-or-nothing now.
+  it('skips even when a persona survives — a partial write would drop L2 blocks', async () => {
     const { buildDigestForTarget, MIN_SOURCE_FACTS } = await import('@/agent/lib/memory-digest')
     mockPrisma.$queryRawUnsafe.mockResolvedValue(facts(MIN_SOURCE_FACTS + 2))
     smartText.mockResolvedValue(
@@ -79,8 +82,27 @@ describe('buildDigestForTarget — embedding provider down', () => {
 
     const result = await buildDigestForTarget({ scope: 'personal', businessId: null })
 
+    expect(result.skipped).toBe('embedding_failed')
+    expect(result.personaWritten).toBe(false)
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  it('writes normally when the distiller returns a persona and no scenarios', async () => {
+    // Nothing needed an embedding, so there is nothing to lose — this must NOT
+    // be caught by the all-or-nothing guard.
+    const { buildDigestForTarget, MIN_SOURCE_FACTS } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue(facts(MIN_SOURCE_FACTS + 2))
+    smartText.mockResolvedValue(
+      JSON.stringify({
+        persona: 'বস দাম নিয়ে আগে থেকে জানাতে বলেন এবং দেরি হলে সাথে সাথে জানাতে চান।',
+        scenarios: [],
+      }),
+    )
+
+    const result = await buildDigestForTarget({ scope: 'personal', businessId: null })
+
     expect(result.personaWritten).toBe(true)
-    expect(result.scenariosWritten).toBe(0) // the scenario could not be embedded
+    expect(result.skipped).toBeUndefined()
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
   })
 })

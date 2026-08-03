@@ -180,6 +180,16 @@ export interface RankedArmHit {
   id: string
   /** 0-based position within that arm's own ranking. */
   rank: number
+  /**
+   * Marks a hit found by literal/keyword matching rather than by meaning.
+   *
+   * Used ONLY to break exact ties (Codex P2, PR #711): the top hit of each arm
+   * scores identically under RRF, so with `limit: 1` a stable sort would keep
+   * whichever arm the caller happened to list first — always the vector one —
+   * and drop the exact identifier match. When the scores are genuinely equal,
+   * the exact match is the better answer.
+   */
+  exact?: boolean
 }
 
 export interface FusedHit {
@@ -190,6 +200,8 @@ export interface FusedHit {
   arms: number
   /** Best (lowest) rank the row achieved in any arm. */
   bestRank: number
+  /** True when any arm reported this hit as a literal/exact match. */
+  exact: boolean
 }
 
 /** Standard RRF constant: damps the head of each list so one arm cannot dominate. */
@@ -210,12 +222,23 @@ export function fuseRrf(arms: RankedArmHit[][], k = RRF_K): FusedHit[] {
         prev.rrf += contribution
         prev.arms += 1
         prev.bestRank = Math.min(prev.bestRank, hit.rank)
+        prev.exact = prev.exact || hit.exact === true
       } else {
-        acc.set(hit.id, { id: hit.id, rrf: contribution, arms: 1, bestRank: hit.rank })
+        acc.set(hit.id, {
+          id: hit.id,
+          rrf: contribution,
+          arms: 1,
+          bestRank: hit.rank,
+          exact: hit.exact === true,
+        })
       }
     }
   }
-  return [...acc.values()].sort((a, b) => b.rrf - a.rrf || a.bestRank - b.bestRank)
+  // Score, then best rank, then exactness — the last one decides only when the
+  // first two are identical, which is exactly the top-of-both-arms tie.
+  return [...acc.values()].sort(
+    (a, b) => b.rrf - a.rrf || a.bestRank - b.bestRank || Number(b.exact) - Number(a.exact),
+  )
 }
 
 /**

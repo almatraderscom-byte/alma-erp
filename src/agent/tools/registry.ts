@@ -387,7 +387,8 @@ const search_memory: AgentTool = {
         })
       const keywordHits = keywordRows.map((row, rank) => {
         if (!byId.has(row.id)) byId.set(row.id, row)
-        return { id: row.id, rank }
+        // `exact` breaks a tie against the vector arm's top hit (Codex P2).
+        return { id: row.id, rank, exact: true }
       })
 
       const results = fuseRrf([vectorHits, keywordHits])

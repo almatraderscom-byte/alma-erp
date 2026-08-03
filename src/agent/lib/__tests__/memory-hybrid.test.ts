@@ -184,6 +184,28 @@ describe('fuseRrf', () => {
     expect(fused[0].bestRank).toBe(2)
   })
 
+  // Codex P2 round 8 (PR #711): at limit: 1 the top hit of each arm ties on both
+  // rrf and bestRank, and a stable sort kept whichever arm was listed first.
+  it('prefers the exact hit when scores tie exactly', () => {
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const keyword = [{ id: 'exact', rank: 0, exact: true }]
+    expect(fuseRrf([vector, keyword])[0].id).toBe('exact')
+    // Arm order must not decide it either way.
+    expect(fuseRrf([keyword, vector])[0].id).toBe('exact')
+  })
+
+  it('does not let exactness override a genuinely better score', () => {
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const keyword = [{ id: 'exact', rank: 5, exact: true }]
+    expect(fuseRrf([vector, keyword])[0].id).toBe('semantic')
+  })
+
+  it('carries exactness onto a row both arms found', () => {
+    const fused = fuseRrf([[{ id: 'x', rank: 1 }], [{ id: 'x', rank: 0, exact: true }]])
+    expect(fused[0].exact).toBe(true)
+    expect(fused[0].arms).toBe(2)
+  })
+
   it('handles empty arms', () => {
     expect(fuseRrf([[], []])).toEqual([])
     expect(fuseRrf([[{ id: 'a', rank: 0 }], []]).map((h) => h.id)).toEqual(['a'])

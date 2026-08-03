@@ -368,7 +368,8 @@ async function retrieveRelevantMemoriesUnbounded(
     const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
       if (!byId.has(row.id)) byId.set(row.id, row)
       keywordRank.set(row.id, rank)
-      return { id: row.id, rank }
+      // `exact` breaks a tie against the vector arm's top hit in the fusion.
+      return { id: row.id, rank, exact: true }
     })
 
     const now = new Date()

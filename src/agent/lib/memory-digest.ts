@@ -300,11 +300,13 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
     // The persona block is retrieved unconditionally, so its embedding is optional.
     rows.push({ layer: 'L3', topic: 'persona', content: distilled.persona, embedding: null })
   }
+  let anyEmbeddingFailed = false
   for (const scenario of distilled.scenarios) {
     // An L2 block IS matched by similarity, so a failed embedding means it can
     // never be retrieved — skip it rather than store a dead row.
     const embedded = await embed(`${scenario.topic}\n${scenario.summary}`)
     if (!embedded.success) {
+      anyEmbeddingFailed = true
       console.warn(`[memory-digest] embedding failed for ${label}/${scenario.topic}: ${embedded.error}`)
       continue
     }
@@ -316,12 +318,16 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
     })
   }
 
-  if (rows.length === 0) {
-    // The distiller produced something, but nothing survived to be stored — an
-    // embedding outage killed every scenario and there was no persona (Codex P2,
-    // PR #711). Committing that would delete good blocks and replace them with
-    // nothing, so this is treated exactly like `no_signal`: keep what we have and
-    // let the next run replace it.
+  // The replacement is ALL OR NOTHING (Codex P2, PR #711 rounds 7–8).
+  //
+  // `writeDigestRows` deletes the slot before inserting, so a partial result
+  // silently destroys the L2 blocks whose embeddings happened to fail this run —
+  // and a persona alone is enough to make `rows` non-empty, which is how the
+  // first version of this guard was bypassed. An embedding outage is transient
+  // (summaries are capped at 500 characters, so failures are network or cost
+  // gate, never content), and a week-old-but-complete digest beats a fresh one
+  // with holes in it. The 35-day freshness window bounds how long that can last.
+  if (rows.length === 0 || anyEmbeddingFailed) {
     return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'embedding_failed' }
   }
 

@@ -125,7 +125,9 @@ export async function searchAgentMemory(opts: {
     })
   const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
     if (!byId.has(row.id)) byId.set(row.id, row)
-    return { id: row.id, rank }
+    // `exact` breaks a tie against the vector arm's top hit — matters most at
+    // limit: 1, where the identifier lookup would otherwise lose (Codex P2).
+    return { id: row.id, rank, exact: true }
   })
 
   return fuseRrf([vectorHits, keywordHits])
