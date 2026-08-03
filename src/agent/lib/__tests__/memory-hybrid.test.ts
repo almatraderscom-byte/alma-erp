@@ -194,6 +194,14 @@ describe('fuseRrf', () => {
     expect(fuseRrf([keyword, vector])[0].id).toBe('exact')
   })
 
+  it('ignores a keyword hit that is not a literal match', () => {
+    // Codex P2 round 9 (PR #711): marking every keyword row exact let a row
+    // sharing only the generic lexeme "ord" beat the top semantic hit at limit 1.
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const lexemeOnly = [{ id: 'shares-a-word', rank: 0, exact: false }]
+    expect(fuseRrf([vector, lexemeOnly])[0].id).toBe('semantic')
+  })
+
   it('does not let exactness override a genuinely better score', () => {
     const vector = [{ id: 'semantic', rank: 0 }]
     const keyword = [{ id: 'exact', rank: 5, exact: true }]

@@ -52,6 +52,8 @@ type Row = {
   pinned: boolean
   metadata: Record<string, unknown> | null
   score: number
+  /** True when the row matched an ILIKE pattern, not merely a shared lexeme. */
+  literal_match?: boolean
 }
 
 export async function searchAgentMemory(opts: {
@@ -126,8 +128,9 @@ export async function searchAgentMemory(opts: {
   const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
     if (!byId.has(row.id)) byId.set(row.id, row)
     // `exact` breaks a tie against the vector arm's top hit — matters most at
-    // limit: 1, where the identifier lookup would otherwise lose (Codex P2).
-    return { id: row.id, rank, exact: true }
+    // limit: 1. It must mean a LITERAL match: a row sharing only a generic
+    // lexeme has earned no priority over a semantic hit (Codex P2).
+    return { id: row.id, rank, exact: row.literal_match === true }
   })
 
   return fuseRrf([vectorHits, keywordHits])

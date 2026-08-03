@@ -337,6 +337,8 @@ const search_memory: AgentTool = {
       type Row = {
         id: string; scope: string; key: string | null; content: string
         pinned: boolean; created_at: Date; score: number
+        /** True when the row matched an ILIKE pattern, not merely a shared lexeme. */
+        literal_match?: boolean
       }
 
       const [vectorRows, keywordRows] = await Promise.all([
@@ -387,8 +389,9 @@ const search_memory: AgentTool = {
         })
       const keywordHits = keywordRows.map((row, rank) => {
         if (!byId.has(row.id)) byId.set(row.id, row)
-        // `exact` breaks a tie against the vector arm's top hit (Codex P2).
-        return { id: row.id, rank, exact: true }
+        // `exact` breaks a tie against the vector arm's top hit, so it must
+        // mean a LITERAL match rather than "found by the keyword arm" (Codex P2).
+        return { id: row.id, rank, exact: row.literal_match === true }
       })
 
       const results = fuseRrf([vectorHits, keywordHits])

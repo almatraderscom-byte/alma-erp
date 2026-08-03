@@ -78,15 +78,31 @@ const DIGEST_MAX_AGE_DAYS = 35
  * weekly rebuild. A summary that misquotes the owner is worse than no summary,
  * and the underlying facts are still retrieved either way.
  */
-const SOURCES_STILL_LIVE = `AND (
+function sourcesStillLive(scope: 'personal' | 'business', businessId: AgentBusinessId | null): string {
+  // The source must still belong to THIS slot (Codex P2, PR #711 round 9).
+  // `createOrUpdateAgentMemory` matches an existing row by scope+key alone, so
+  // saving the same key from the other business rewrites that row's businessId
+  // while leaving its text — and therefore its hash — untouched. Membership is
+  // re-checked here with the same predicate the build used, so a fact that
+  // changed sides stops validating the digest it used to belong to.
+  const membership =
+    scope === 'personal'
+      ? `m.scope = 'personal'`
+      : businessId === 'ALMA_TRADING'
+        ? `m.scope != 'personal' AND m.metadata->>'businessId' = 'ALMA_TRADING'`
+        : `m.scope != 'personal' AND (m.metadata->>'businessId' IS NULL OR m.metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+
+  return `AND (
        d.source_ids IS NULL
        OR (SELECT count(*)
            FROM jsonb_to_recordset(d.source_ids) AS s(id text, h text)
            JOIN agent_memory m ON m.id = s.id
            WHERE md5(m.content) = s.h
-             AND (m.expires_at IS NULL OR m.expires_at > NOW()))
+             AND (m.expires_at IS NULL OR m.expires_at > NOW())
+             AND (${membership}))
           = jsonb_array_length(d.source_ids)
      )`
+}
 
 export interface DigestTarget {
   scope: 'personal' | 'business'
@@ -375,9 +391,10 @@ export async function retrieveMemoryDigests(opts: {
   personalMode: boolean
   businessId: AgentBusinessId
 }): Promise<DigestHit[]> {
-  const scope = opts.personalMode ? 'personal' : 'business'
+  const scope: 'personal' | 'business' = opts.personalMode ? 'personal' : 'business'
   const businessMatch = opts.personalMode ? `business_id IS NULL` : `business_id = $1`
   const businessParams = opts.personalMode ? [] : [opts.businessId]
+  const sourcesLive = sourcesStillLive(scope, opts.personalMode ? null : opts.businessId)
 
   try {
     const personaRows: Array<{ id: string; topic: string; content: string }> = await db.$queryRawUnsafe(
@@ -385,7 +402,7 @@ export async function retrieveMemoryDigests(opts: {
        FROM agent_memory_digest d
        WHERE d.layer = 'L3' AND d.scope = '${scope}' AND d.${businessMatch}
          AND d.refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
-         ${SOURCES_STILL_LIVE}
+         ${sourcesLive}
        ORDER BY d.refreshed_at DESC
        LIMIT 1`,
       ...businessParams,
@@ -408,7 +425,7 @@ export async function retrieveMemoryDigests(opts: {
            WHERE d.layer = 'L2' AND d.scope = '${scope}' AND d.${businessMatch}
              AND d.embedding IS NOT NULL
              AND d.refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
-             ${SOURCES_STILL_LIVE}
+             ${sourcesLive}
            ORDER BY d.embedding <=> $${vecParamIndex}::vector
            LIMIT 2`,
           ...businessParams,

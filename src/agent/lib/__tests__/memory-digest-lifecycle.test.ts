@@ -136,6 +136,33 @@ describe('retrieveMemoryDigests — a digest may not outlive its sources', () =>
     expect(sql).toContain('d.source_ids IS NULL') // rows without a source list still serve
   })
 
+  // Codex P2 round 9 (PR #711): a keyed row can change business while its text
+  // (and therefore its hash) stays identical, so identity + hash + expiry is not
+  // enough — membership has to be re-checked.
+  it('requires each source to still belong to the slot it was distilled for', async () => {
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue([])
+
+    await retrieveMemoryDigests({ personalMode: false, businessId: 'ALMA_TRADING' })
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain(
+      "m.metadata->>'businessId' = 'ALMA_TRADING'",
+    )
+
+    mockPrisma.$queryRawUnsafe.mockClear()
+    await retrieveMemoryDigests({ personalMode: true, businessId: 'ALMA_LIFESTYLE' })
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain("m.scope = 'personal'")
+  })
+
+  it('treats untagged legacy rows as Lifestyle, matching the build predicate', async () => {
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue([])
+
+    await retrieveMemoryDigests({ personalMode: false, businessId: 'ALMA_LIFESTYLE' })
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain(
+      "m.metadata->>'businessId' IS NULL OR m.metadata->>'businessId' = 'ALMA_LIFESTYLE'",
+    )
+  })
+
   it('also refuses blocks the weekly job stopped refreshing', async () => {
     const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
     mockPrisma.$queryRawUnsafe.mockResolvedValue([])

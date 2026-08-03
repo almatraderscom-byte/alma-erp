@@ -230,6 +230,8 @@ interface FactRow {
   createdAt: Date
   last_used_at: Date | null
   score?: number
+  /** True when the row matched an ILIKE pattern, not merely a shared lexeme. */
+  literal_match?: boolean
 }
 
 /** Vector arm: semantic match. Returns [] when embeddings are unavailable. */
@@ -368,8 +370,11 @@ async function retrieveRelevantMemoriesUnbounded(
     const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
       if (!byId.has(row.id)) byId.set(row.id, row)
       keywordRank.set(row.id, rank)
-      // `exact` breaks a tie against the vector arm's top hit in the fusion.
-      return { id: row.id, rank, exact: true }
+      // `exact` breaks ties in the fusion, so it must mean a LITERAL match —
+      // not merely "found by the keyword arm" (Codex P2, PR #711). A row that
+      // shares only a generic lexeme ("ord" out of "ORD-123") has earned no
+      // priority over a semantic hit.
+      return { id: row.id, rank, exact: row.literal_match === true }
     })
 
     const now = new Date()
