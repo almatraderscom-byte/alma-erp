@@ -266,15 +266,21 @@ async function keywordArm(tokens: string[], rawQuery: string, accessClause: stri
   // and a bare '%%' pattern would match every row.
   if (tokens.length === 0 && likePatterns.length === 0) return []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Literal matches sort FIRST (Codex P2, PR #711). A row found only through
+  // ILIKE — an inflected Bangla word, an identifier Postgres tokenises its own
+  // way — has ts_rank 0, so ordering by rank alone let twenty ordinary full-text
+  // matches push the exact hit past the LIMIT. That row is the entire reason
+  // this arm exists, so it must never be the one that gets cut.
   return (prisma as any).$queryRawUnsafe(
     `SELECT id, content, scope, importance, "createdAt", last_used_at,
+            (content ILIKE ANY($2::text[])) AS literal_match,
             ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
      FROM agent_memory
      WHERE pinned = false ${accessClause}
        AND (expires_at IS NULL OR expires_at > NOW())
        AND (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
             OR content ILIKE ANY($2::text[]))
-     ORDER BY score DESC, COALESCE(last_used_at, "createdAt") DESC
+     ORDER BY literal_match DESC, score DESC, COALESCE(last_used_at, "createdAt") DESC
      LIMIT ${KEYWORD_FETCH_LIMIT}`,
     tsQuery,
     likePatterns,

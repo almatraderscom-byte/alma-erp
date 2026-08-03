@@ -94,13 +94,16 @@ export async function searchAgentMemory(opts: {
         ) as Promise<Row[]>)
       : Promise.resolve<Row[]>([]),
     db.$queryRawUnsafe(
+      // literal_match first — see the note in agent-memory.ts: an ILIKE-only hit
+      // scores 0 on ts_rank and would otherwise be the row the LIMIT drops.
       `SELECT id, scope, key, content, pinned, metadata,
+              (content ILIKE ANY($2::text[])) AS literal_match,
               ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
        FROM agent_memory
        WHERE (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
               OR content ILIKE ANY($2::text[]))
          ${LIVE_FACTS_ONLY} ${scopeClause} ${metaClause}
-       ORDER BY score DESC, "createdAt" DESC
+       ORDER BY literal_match DESC, score DESC, "createdAt" DESC
        LIMIT $3`,
       tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,
       // No usable tokens → search the raw phrase, which is what the old

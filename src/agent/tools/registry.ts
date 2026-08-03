@@ -354,13 +354,16 @@ const search_memory: AgentTool = {
           : Promise.resolve<Row[]>([]),
         // scope is parameterized ($4) for the same reason.
         ((prisma as any).$queryRawUnsafe(
+          // literal_match first — an ILIKE-only hit scores 0 on ts_rank and would
+          // otherwise be the row the LIMIT drops (Codex P2, PR #711).
           `SELECT id, scope, key, content, pinned, "createdAt" AS created_at,
+                  (content ILIKE ANY($2::text[])) AS literal_match,
                   ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
            FROM agent_memory
            WHERE (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
                   OR content ILIKE ANY($2::text[]))
              ${liveFactsOnly} ${scope ? `AND scope = $4` : ''} ${businessFilterClause}
-           ORDER BY score DESC, "createdAt" DESC
+           ORDER BY literal_match DESC, score DESC, "createdAt" DESC
            LIMIT $3`,
           ...(scope
             ? [tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,

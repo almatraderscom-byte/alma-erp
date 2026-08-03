@@ -316,6 +316,15 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
     })
   }
 
+  if (rows.length === 0) {
+    // The distiller produced something, but nothing survived to be stored — an
+    // embedding outage killed every scenario and there was no persona (Codex P2,
+    // PR #711). Committing that would delete good blocks and replace them with
+    // nothing, so this is treated exactly like `no_signal`: keep what we have and
+    // let the next run replace it.
+    return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'embedding_failed' }
+  }
+
   await writeDigestRows(target, rows, fingerprintSources(facts))
 
   return {
