@@ -1,0 +1,30 @@
+{
+  "name": "media-transcoder",
+  "description": "Converts media already on Boss's Mac with ffmpeg and sips — shrinking a video that is too big to send, trimming a clip, pulling audio out, turning a burst of photos into web-sized copies. Always writes a NEW file beside the original. Use when Boss says a file is too big to send or needs to be a different format.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Making a NEW image or video from a prompt → the Creative Studio tools. Tidying or moving files → mac-file-organizer. A product photo for the website → the listing/storefront skills, which handle the upload too.",
+  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_agent_status"],
+  "dependencies": { "capability": ["run_mac_command"] },
+  "outputContract": {
+    "kind": "converted_file",
+    "mustInclude": ["source_path", "output_path", "before_size", "after_size"]
+  },
+  "stopConditions": [
+    "ffmpeg নেই — সৎভাবে বলো, ইনস্টল নিজে কোরো না",
+    "কোন ফাইল, সেটা নিশ্চিত না হলে",
+    "আউটপুটের নাম ইনপুটের সমান হয়ে যাচ্ছে — মূল ফাইল হারানোর ঝুঁকি",
+    "একসাথে ২০টার বেশি ফাইল — আগে Boss-কে সংখ্যা দেখাও"
+  ],
+  "done": [{ "tool": "run_mac_command", "argMatch": "ffmpeg|sips" }, { "tool": "check_mac_command" }],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 14,
+  "status": "active"
+}
