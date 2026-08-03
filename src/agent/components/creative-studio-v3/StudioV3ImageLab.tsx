@@ -207,8 +207,8 @@ export function StudioV3ImageLab({
             return [exact
               ? {
                   ...activeProject.product!,
-                  sourceImage: exact.sourceImage,
-                  previewImage: exact.previewImage,
+                  sourceImage: activeProject.product!.sourceImage ?? exact.sourceImage,
+                  previewImage: activeProject.product!.previewImage ?? exact.previewImage,
                   available: exact.available,
                 }
               : activeProject.product!]

@@ -9,12 +9,6 @@ vi.mock('@/agent/lib/catalog/inventory-lookup', () => ({
   DEFAULT_CATALOG_BUSINESS: 'ALMA_LIFESTYLE',
 }))
 
-vi.mock('@/agent/lib/storage', () => ({
-  agentStorageSignedUrls: vi.fn(async (paths: string[]) => Object.fromEntries(
-    paths.map((path) => [path, `https://fresh.example/${path}?token=fresh`]),
-  )),
-}))
-
 import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
 
 const project: StudioProjectSummary = {
@@ -45,7 +39,7 @@ describe('Studio project product hydration', () => {
       product: {
         ...project.product,
         sourceImage: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
-        previewImage: 'https://fresh.example/product-images/alma-lifestyle/133-KIDS/1.jpg?token=fresh',
+        previewImage: '/api/assistant/creative-studio/projects/project-1/product-preview?brandProfileId=brand-1',
       },
     })
   })
