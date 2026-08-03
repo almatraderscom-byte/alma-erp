@@ -167,7 +167,6 @@ const QC_NUMERIC_AXES = [
   'model_preserved',
   'anatomy',
   'brand_consistency',
-  'text_legibility',
   'composition',
   'overall',
 ] as const
@@ -191,7 +190,9 @@ export function parseQcScoreResponse(rawText: string): QCScore {
     model_preserved: clamp(raw.model_preserved, 'model_preserved'),
     anatomy: clamp(raw.anatomy, 'anatomy'),
     brand_consistency: clamp(raw.brand_consistency, 'brand_consistency'),
-    text_legibility: clamp(raw.text_legibility, 'text_legibility'),
+    // The rubric defines text as N/A=5 when there is no overlay. Gemini may
+    // omit only this N/A field; core/product/identity axes remain mandatory.
+    text_legibility: clamp(raw.text_legibility ?? 5, 'text_legibility'),
     composition: clamp(raw.composition, 'composition'),
     overall: clamp(raw.overall, 'overall'),
     fail_reasons,

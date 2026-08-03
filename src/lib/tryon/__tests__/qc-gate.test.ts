@@ -77,4 +77,10 @@ describe('QC model response integrity', () => {
   it('accepts and bounds a complete response', () => {
     expect(parseQcScoreResponse(JSON.stringify(score({ anatomy: 4.4 }))).anatomy).toBe(4)
   })
+
+  it('treats only omitted no-overlay text legibility as the documented N/A=5', () => {
+    const withoutText = score()
+    delete (withoutText as Partial<QCScore>).text_legibility
+    expect(parseQcScoreResponse(JSON.stringify(withoutText)).text_legibility).toBe(5)
+  })
 })
