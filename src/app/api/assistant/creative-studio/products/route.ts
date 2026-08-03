@@ -37,17 +37,6 @@ export async function GET(req: NextRequest) {
   if (denied) return denied
   try {
     const products = await searchErpProducts(req.nextUrl.searchParams.get('q') ?? '')
-    const storagePaths = products
-      .map((product) => product.sourceImage)
-      .filter((path): path is string => Boolean(path) && !isRemoteOrAppPath(path!))
-    let signed: Record<string, string> = {}
-    if (storagePaths.length) {
-      try {
-        signed = await agentStorageSignedUrls([...new Set(storagePaths)], 3600)
-      } catch {
-        signed = {}
-      }
-    }
     const hydratedProducts = await Promise.all(products.map(async (product) => {
       if (!isLegacyStudioProductPath(product.sourceImage)) return product
       try {
@@ -61,6 +50,20 @@ export async function GET(req: NextRequest) {
         return { ...product, sourceImage: null, previewImage: null }
       }
     }))
+    // Legacy hydration can replace a UI route with the exact catalog object
+    // path. Build the signing batch afterwards so that canonical source gets a
+    // renderable preview even when the older cached catalog URL is unavailable.
+    const storagePaths = hydratedProducts
+      .map((product) => product.sourceImage)
+      .filter((path): path is string => Boolean(path) && !isRemoteOrAppPath(path!))
+    let signed: Record<string, string> = {}
+    if (storagePaths.length) {
+      try {
+        signed = await agentStorageSignedUrls([...new Set(storagePaths)], 3600)
+      } catch {
+        signed = {}
+      }
+    }
     return Response.json({
       products: hydratedProducts.map((product) => ({
         ...product,
