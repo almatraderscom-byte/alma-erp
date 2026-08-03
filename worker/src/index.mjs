@@ -1178,6 +1178,16 @@ async function runPreviewImageE2e() {
     Math.max(60_000, Number(process.env.WORKER_PREVIEW_E2E_TIMEOUT_MS) || 15 * 60_000),
   )
   const deadline = Date.now() + timeoutMs
+  const idleGraceMs = Math.min(
+    60_000,
+    Math.max(5_000, Number(process.env.WORKER_PREVIEW_E2E_IDLE_GRACE_MS) || 15_000),
+  )
+  const maxJobs = Math.min(
+    20,
+    Math.max(1, Number(process.env.WORKER_PREVIEW_E2E_MAX_JOBS) || 8),
+  )
+  let processedJobs = 0
+  let idleSince = null
   console.log(`[preview-e2e] waiting for signed image job in project ${PREVIEW_E2E_PROJECT_ID}`)
   while (Date.now() < deadline) {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
@@ -1192,14 +1202,29 @@ async function runPreviewImageE2e() {
     const body = await res.json()
     const job = selectPreviewImageJob(body.jobs, PREVIEW_E2E_PROJECT_ID)
     if (job) {
+      if (processedJobs >= maxJobs) {
+        throw new Error(`preview_image_job_limit:${maxJobs}`)
+      }
+      idleSince = null
       previewE2eTargetActionId = job.id
+      previewE2eReportedResult = null
       console.log(`[preview-e2e] processing isolated action ${job.id}`)
       await processImageGen({ data: { pendingActionId: job.id, payload: job.payload } })
       if (previewE2eReportedResult?.status !== 'success') {
         throw new Error(`preview_image_generation_failed:${previewE2eReportedResult?.error ?? 'missing_success_callback'}`)
       }
       console.log(`[preview-e2e] action ${job.id} completed successfully`)
-      return true
+      processedJobs += 1
+      // The successful callback may enqueue a hidden garment-prep/rescene/QC
+      // successor. Keep polling this exact project until the chain is quiet.
+      continue
+    }
+    if (processedJobs > 0) {
+      idleSince ??= Date.now()
+      if (Date.now() - idleSince >= idleGraceMs) {
+        console.log(`[preview-e2e] project chain drained after ${processedJobs} action(s)`)
+        return true
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000))
   }

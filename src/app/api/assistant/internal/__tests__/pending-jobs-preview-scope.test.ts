@@ -44,13 +44,17 @@ describe('GET /api/assistant/internal/pending-jobs preview isolation', () => {
   it('returns only signed Creative Studio images from the preview lane', async () => {
     process.env.VERCEL_ENV = 'preview'
     mocks.findMany.mockResolvedValue([
-      { id: 'signed', type: 'image_gen', payload: { creativeStudio: true, studioRunAuthorization: { receipt: 'receipt' } } },
-      { id: 'unsigned', type: 'image_gen', payload: { creativeStudio: true } },
+      { id: 'signed', type: 'image_gen', payload: { creativeStudio: true, studioSurface: 'v3', studioRunAuthorization: { receipt: 'receipt' } } },
+      { id: 'internal', type: 'image_gen', payload: { creativeStudio: false, studioSurface: 'v3', studioRunAuthorization: { receipt: 'receipt' } } },
+      { id: 'unsigned', type: 'image_gen', payload: { creativeStudio: true, studioSurface: 'v3' } },
     ])
 
     const response = await GET(request(true))
     await expect(response.json()).resolves.toEqual({
-      jobs: [{ id: 'signed', type: 'image_gen', payload: { creativeStudio: true, studioRunAuthorization: { receipt: 'receipt' } } }],
+      jobs: [
+        { id: 'signed', type: 'image_gen', payload: { creativeStudio: true, studioSurface: 'v3', studioRunAuthorization: { receipt: 'receipt' } } },
+        { id: 'internal', type: 'image_gen', payload: { creativeStudio: false, studioSurface: 'v3', studioRunAuthorization: { receipt: 'receipt' } } },
+      ],
     })
     expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { status: 'preview_approved', type: 'image_gen' },

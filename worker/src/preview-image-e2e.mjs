@@ -13,7 +13,9 @@ export function selectPreviewImageJob(jobs, projectId) {
     const scope = object(payload.studioRunScope)
     const authorization = object(payload.studioRunAuthorization)
     return job?.type === 'image_gen'
-      && payload.creativeStudio === true
+      // Internal chain artifacts hide from Gallery with creativeStudio=false,
+      // but remain signed Studio V3 jobs and belong to the same isolated run.
+      && payload.studioSurface === 'v3'
       && scope.projectId === expectedProjectId
       && typeof authorization.receipt === 'string'
       && authorization.receipt.length > 0

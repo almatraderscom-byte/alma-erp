@@ -6,6 +6,7 @@ import {
   type StudioRunScope,
 } from '@/lib/creative-studio/studio-run-authorization'
 import {
+  recoveredStudioRunJobId,
   studioRunAuthorizedJobFields,
   withStudioRunExecutionContext,
 } from '@/lib/creative-studio/studio-run-context'
@@ -40,6 +41,41 @@ afterEach(() => {
 })
 
 describe('Studio run crash recovery', () => {
+  it('recognizes an already-created isolated preview job as recoverable', async () => {
+    const estimate = issueStudioRunEstimate({
+      scope,
+      request: { mode: 'product_to_model' },
+      selection,
+      estimateBdt: 30,
+      requestedCapBdt: 30,
+      now: new Date('2026-07-26T06:00:00.000Z'),
+    })
+    const claims = verifyStudioRunEstimateReceipt(estimate.receipt, {
+      phase: 'execute',
+      now: new Date('2026-07-26T06:01:00.000Z'),
+    })
+    const authorized = await withStudioRunExecutionContext({
+      claims,
+      receipt: estimate.receipt,
+      idempotencyKey: 'studio:preview-crash-recovery',
+    }, async () => studioRunAuthorizedJobFields({
+      creativeStudio: false,
+      chainInternal: true,
+      provider: 'garment_prep',
+    }))
+
+    expect(recoveredStudioRunJobId({
+      existing: {
+        id: 'preview-job-1',
+        status: 'preview_approved',
+        dedupeKey: authorized.dedupeKey,
+        payload: authorized.payload,
+      },
+      dedupeKey: authorized.dedupeKey,
+      payload: authorized.payload,
+    })).toBe('preview-job-1')
+  })
+
   it('replays receipt/job indexes after a partial creation crash without duplicates', async () => {
     const estimate = issueStudioRunEstimate({
       scope,

@@ -15,7 +15,10 @@ export function isVercelPreviewRuntime(): boolean {
 export function isSignedCreativeStudioImagePayload(payload: unknown): boolean {
   const value = object(payload)
   const authorization = object(value.studioRunAuthorization)
-  return value.creativeStudio === true
+  // Chain-internal artifacts intentionally set creativeStudio=false so they do
+  // not appear in Gallery. They are still paid, signed Studio V3 work and must
+  // stay on the isolated preview lane with their visible parent action.
+  return value.studioSurface === 'v3'
     && typeof authorization.receipt === 'string'
     && authorization.receipt.length > 0
 }

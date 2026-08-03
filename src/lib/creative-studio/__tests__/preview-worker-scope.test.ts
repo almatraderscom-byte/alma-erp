@@ -14,6 +14,7 @@ afterEach(() => {
 
 const signedPayload = {
   creativeStudio: true,
+  studioSurface: 'v3',
   studioRunAuthorization: { receipt: 'signed-receipt' },
 }
 
@@ -21,8 +22,17 @@ describe('Creative Studio preview worker isolation', () => {
   it('uses the isolated lane only for signed Creative Studio image work in Vercel previews', () => {
     process.env.VERCEL_ENV = 'preview'
     expect(creativeStudioImageQueueStatus(signedPayload)).toBe('preview_approved')
-    expect(creativeStudioImageQueueStatus({ creativeStudio: true })).toBe('approved')
+    expect(creativeStudioImageQueueStatus({ creativeStudio: true, studioSurface: 'v3' })).toBe('approved')
     expect(creativeStudioImageQueueStatus({ studioRunAuthorization: { receipt: 'x' } })).toBe('approved')
+  })
+
+  it('keeps signed chain-internal image artifacts in the same isolated preview lane', () => {
+    process.env.VERCEL_ENV = 'preview'
+    expect(creativeStudioImageQueueStatus({
+      ...signedPayload,
+      creativeStudio: false,
+      chainInternal: true,
+    })).toBe('preview_approved')
   })
 
   it('keeps production on the existing approved lane', () => {

@@ -5,6 +5,7 @@ import {
   signStudioRunJobPayload,
   type StudioRunEstimateReceiptClaims,
 } from '@/lib/creative-studio/studio-run-authorization'
+import { CREATIVE_STUDIO_PREVIEW_STATUS } from '@/lib/creative-studio/preview-worker-scope'
 
 export type StudioRunExecutionContext = {
   claims: StudioRunEstimateReceiptClaims
@@ -106,7 +107,7 @@ export function recoveredStudioRunJobId(input: {
     throw new Error('studio_run_recovery_job_mismatch')
   }
   if (
-    row.status !== 'approved'
+    (row.status !== 'approved' && row.status !== CREATIVE_STUDIO_PREVIEW_STATUS)
     || row.dedupeKey !== input.dedupeKey
     || existingAuthorization.receiptId !== expectedAuthorization.receiptId
     || existingAuthorization.requestFingerprint
