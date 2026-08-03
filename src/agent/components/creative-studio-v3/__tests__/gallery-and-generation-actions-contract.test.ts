@@ -14,6 +14,7 @@ describe('Creative Studio V4 primary action contract', () => {
     expect(imageLab).toContain("setSourceTray('product')")
     expect(imageLab).toContain("setSourceTray('model')")
     expect(imageLab).toContain("setArchitecture('advanced')")
+    expect(imageLab).toContain('isFamilyChainVtonEngine')
     expect(imageLab).toContain('port.estimateRun')
     expect(imageLab).toContain('port.confirmRun')
     expect(imageLab).toContain('setLocalStatus(message)')

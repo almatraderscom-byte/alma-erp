@@ -63,6 +63,7 @@ import { issueStudioRunEstimate } from '@/lib/creative-studio/studio-run-authori
 import { buildStudioRunPlan } from '@/lib/creative-studio/studio-run-plan'
 import { getModelByRole } from '@/lib/tryon/model-library'
 import { getOrClassifyGarment } from '@/lib/tryon/art-director'
+import { isFashnConfigured } from '@/lib/fashn/client'
 
 beforeEach(() => {
   vi.mocked(getModelByRole).mockClear()
@@ -137,6 +138,29 @@ describe('Studio run aggregate plan cap', () => {
 
     expect(plan.selection.plan).toContain('3x_auto_family_guided_image')
     expect(getModelByRole).not.toHaveBeenCalled()
+  })
+
+  it('prices an explicit father-son FASHN request as the orchestrated family chain', async () => {
+    vi.mocked(isFashnConfigured).mockReturnValueOnce(true)
+    const plan = await buildStudioRunPlan({
+      mode: 'product_to_model',
+      provider: 'fashn',
+      vtonEngine: 'fashn',
+      familyPreset: 'father_son',
+      productImagePath: 'products/matching-panjabi.png',
+      generationMode: 'quality',
+      pipelineMode: 'production',
+    })
+
+    expect(plan.selection.provider).toBe('fashn')
+    expect(plan.selection.models).toContain('tryon-max')
+    expect(plan.selection.plan).toEqual([
+      'garment_prep',
+      'adult_vton',
+      'child_vton',
+      'pair_merge',
+    ])
+    expect(plan.pinned.chainVtonEngine).toBe('fashn')
   })
 
   it('prices every production Auto reel attempt into the signed estimate', async () => {

@@ -30,6 +30,7 @@ import {
 } from '@/lib/creative-studio/advanced-image-capabilities'
 import {
   STUDIO_ENGINES,
+  isFamilyChainVtonEngine,
   type StudioEngineId,
 } from '@/lib/creative-studio/provider-registry'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
@@ -299,14 +300,19 @@ export function StudioV3ImageLab({
   const multiPerson = familyPreset !== 'single'
     && (mode === 'product_to_model' || mode === 'try_on')
   const selectedEngine = STUDIO_ENGINES.find((item) => item.id === engine)
-  const capability = multiPerson && selectedEngine?.singlePersonOnly
+  const selectedFamilyChain = multiPerson && isFamilyChainVtonEngine(engine)
+  const capability = multiPerson && selectedEngine?.singlePersonOnly && !selectedFamilyChain
     ? undefined
-    : getAdvancedModeCapability(engine, mode)
+    : getAdvancedModeCapability(selectedFamilyChain ? 'fashn' : engine, mode)
 
   const engines = useMemo(
-    () => STUDIO_ENGINES.filter((item) =>
-      getAdvancedModeCapability(item.id, mode)
-      && !(multiPerson && item.singlePersonOnly)),
+    () => STUDIO_ENGINES.filter((item) => {
+      const familyChain = multiPerson && isFamilyChainVtonEngine(item.id)
+      const supportsMode = getAdvancedModeCapability(item.id, mode)
+        || (familyChain && (mode === 'product_to_model' || mode === 'try_on'))
+      return Boolean(supportsMode)
+        && !(multiPerson && item.singlePersonOnly && !familyChain)
+    }),
     [mode, multiPerson],
   )
 

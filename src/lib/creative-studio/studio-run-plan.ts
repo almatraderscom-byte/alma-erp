@@ -15,6 +15,7 @@ import {
   CS_SINGLE_VTON_DEFAULT_KEY,
   CS_XAI_ENABLED_KEY,
   getEngine,
+  isFamilyChainVtonEngine,
   normalizeSingleVtonDefault,
   type StudioEngineId,
 } from '@/lib/creative-studio/provider-registry'
@@ -243,6 +244,7 @@ async function planAdvanced(
   const requestedEngine = input.vtonEngine
     ?? (input.provider === 'gemini' || input.provider === 'fashn' ? input.provider : undefined)
   if (!requestedEngine) throw new Error('explicit_engine_required')
+  const multiPerson = Boolean(input.familyPreset && input.familyPreset !== 'single')
 
   if (requestedEngine === 'xai_imagine') {
     await assertEngineAvailable('xai_imagine')
@@ -268,6 +270,9 @@ async function planAdvanced(
   }
 
   if (requestedEngine === 'fal_flux_fill') {
+    if (multiPerson) {
+      throw new Error('explicit_engine_mode_unsupported:fal_flux_fill:family')
+    }
     await assertEngineAvailable('fal_flux_fill')
     const usd = estimateFluxFillCostUsd(input.baseWidth ?? 0, input.baseHeight ?? 0) * attempts
     return {
@@ -286,11 +291,10 @@ async function planAdvanced(
     }
   }
 
-  const multiPerson = Boolean(input.familyPreset && input.familyPreset !== 'single')
-  if (multiPerson && getEngine(requestedEngine).singlePersonOnly) {
-    throw new Error(`explicit_engine_mode_unsupported:${requestedEngine}:family`)
-  }
   if (multiPerson && requestedEngine !== 'gemini') {
+    if (!isFamilyChainVtonEngine(requestedEngine)) {
+      throw new Error(`explicit_engine_mode_unsupported:${requestedEngine}:family`)
+    }
     const chainEngine = await resolveChainEngine(requestedEngine)
     await assertGenericSelectionAvailable(generic, false)
     const chain = familyChainCost({

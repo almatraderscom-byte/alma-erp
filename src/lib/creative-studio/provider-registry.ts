@@ -201,6 +201,23 @@ export function isFalVtonEngine(id: string | null | undefined): id is 'fal_fashn
 }
 
 /**
+ * Dedicated VTON engines that can be orchestrated one person at a time inside
+ * a multi-person family chain. They remain `singlePersonOnly` for a single
+ * provider call; the chain is what makes the final composition multi-person.
+ * IDM stays excluded because family execution deliberately has no research-only
+ * fallback.
+ */
+export const FAMILY_CHAIN_VTON_ENGINE_IDS = ['fashn', 'fal_fashn_v16'] as const
+
+export function isFamilyChainVtonEngine(
+  id: string | null | undefined,
+): id is (typeof FAMILY_CHAIN_VTON_ENGINE_IDS)[number] {
+  return FAMILY_CHAIN_VTON_ENGINE_IDS.includes(
+    id as (typeof FAMILY_CHAIN_VTON_ENGINE_IDS)[number],
+  )
+}
+
+/**
  * CS6 — cat-vton garment placement classes (owner-locked mapping, roadmap §CS6):
  * panjabi/long kurta/one-piece → overall; koti/waistcoat → outer;
  * pajama/bottom-only → lower; tunic/top-only → upper.
