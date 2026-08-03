@@ -47,7 +47,7 @@ export async function fetchPipelineMode(supabase) {
   }
 }
 
-export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, personImagePath, surface, pipelineMode }) {
+export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, personImagePath, surface, pipelineMode, generationPrompt }) {
   const res = await fetch(`${appUrl}/api/assistant/internal/image-qc-score`, {
     method: 'POST',
     headers: {
@@ -56,7 +56,7 @@ export async function scoreImageViaApi({ appUrl, token, storagePath, productType
       ...getAppProtectionHeaders(),
     },
     // CS10 — surface selects mode-specific thresholds server-side
-    body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface, pipelineMode }),
+    body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface, pipelineMode, generationPrompt }),
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
@@ -83,6 +83,7 @@ export async function runImageQcLoop({
   /** CS10 — surface-specific thresholds ('single_tryon' | 'family' | …) */
   surface,
   pipelineMode: requestedPipelineMode,
+  generationPrompt,
   /** Signed V3 receipt pins this ceiling; never let mutable KV raise it. */
   maxPaidGenerations,
 }) {
@@ -122,6 +123,7 @@ export async function runImageQcLoop({
         personImagePath,
         surface,
         pipelineMode,
+        generationPrompt,
       })
     } catch (err) {
       // Certification and signed production both prove the QC boundary; neither

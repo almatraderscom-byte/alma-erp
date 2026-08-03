@@ -43,6 +43,8 @@ export async function POST(req: NextRequest) {
     surface?: string
     /** Signed run policy; production can never inherit a mutable `off` level. */
     pipelineMode?: string
+    /** Original generation requirements; explicit exclusions are QC hard gates. */
+    generationPrompt?: string
   }
   try {
     body = await req.json()
@@ -84,6 +86,7 @@ export async function POST(req: NextRequest) {
       productType: body.productType ?? null,
       productImagePath: body.productImagePath ?? null,
       personImagePath: body.personImagePath ?? null,
+      generationPrompt: body.generationPrompt ? String(body.generationPrompt).slice(0, 6_000) : null,
     })
     // CS10 — surface-specific thresholds when the caller names a surface;
     // legacy level-based pass otherwise (backward compatible).

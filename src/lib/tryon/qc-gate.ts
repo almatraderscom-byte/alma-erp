@@ -138,7 +138,15 @@ async function buildRubricContext(productType?: string | null): Promise<string> 
   return `Brand rules + active taste:\n${brandRules.join('\n')}\n${refBlock}`
 }
 
-function buildQcPrompt(rubricContext: string, hasProductReference: boolean, hasPersonReference: boolean): string {
+export function buildQcPrompt(
+  rubricContext: string,
+  hasProductReference: boolean,
+  hasPersonReference: boolean,
+  generationPrompt?: string | null,
+): string {
+  const requestedConstraints = generationPrompt?.trim()
+    ? `\nORIGINAL GENERATION REQUIREMENTS (authoritative):\n${generationPrompt.trim().slice(0, 6_000)}\nAny visible violation of an explicit "no", "do not add", "without", or preservation requirement above is a hard failure. In particular, forbidden watches, jewelry, tattoos, handheld objects, props, extra cloth/accessories, text or logos force model_preserved and composition to at most 2, and the exact object must be named in fail_reasons.`
+    : ''
   return `You are comparing ordered fashion images. Score IMAGE 1 (GENERATED OUTPUT) from 1-5 on each axis.
 ${hasProductReference ? 'IMAGE 2 is the ORIGINAL PRODUCT REFERENCE. Use it only for garment fidelity.' : 'No product reference is supplied; do not invent a garment-fidelity comparison.'}
 ${hasPersonReference ? `IMAGE ${hasProductReference ? '3' : '2'} is the ORIGINAL PERSON REFERENCE. Use it only for identity/model preservation.` : 'No person reference is supplied; do not invent an identity comparison.'}
@@ -159,6 +167,7 @@ Garment fidelity is strict reference matching: color, fabric, cut, length, colla
 Model preservation is strict reference matching: face, age, skin tone, hair and body must match the person reference. Any newly invented tattoo, body art, scar, jewelry, watch, accessory or skin marking that is absent from the person reference is an automatic model_preserved failure (score at most 2) and must be named in fail_reasons.
 Anatomy includes natural hands/fingers/limbs and appropriate skin coverage; distorted or newly decorated hands/arms fail this axis.
 Do not assign a neutral/default score because an image is difficult to compare. Name the exact visible evidence in fail_reasons and make scores differ when the evidence differs.
+${requestedConstraints}
 ${rubricContext}`
 }
 
@@ -212,13 +221,14 @@ export async function scoreCreativeQC(args: {
   productMimeType?: string
   personImageBase64?: string | null
   personMimeType?: string
+  generationPrompt?: string | null
 }): Promise<QCScore> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 
   const rubricContext = await buildRubricContext(args.productType)
   const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [
-    { text: buildQcPrompt(rubricContext, Boolean(args.productImageBase64), Boolean(args.personImageBase64)) },
+    { text: buildQcPrompt(rubricContext, Boolean(args.productImageBase64), Boolean(args.personImageBase64), args.generationPrompt) },
     { text: 'IMAGE 1 — GENERATED OUTPUT TO SCORE:' },
     { inline_data: { mime_type: args.mimeType, data: args.imageBase64 } },
   ]
@@ -295,6 +305,7 @@ export async function scoreCreativeQCFromPath(args: {
   productType?: string | null
   productImagePath?: string | null
   personImagePath?: string | null
+  generationPrompt?: string | null
 }): Promise<QCScore> {
   const buf = await agentStorageDownload(args.storagePath)
   const mime = args.storagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
@@ -330,6 +341,7 @@ export async function scoreCreativeQCFromPath(args: {
     productMimeType,
     personImageBase64,
     personMimeType,
+    generationPrompt: args.generationPrompt,
   })
 }
 

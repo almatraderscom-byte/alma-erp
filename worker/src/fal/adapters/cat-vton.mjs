@@ -176,6 +176,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
         surface: 'single_tryon',
         pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
+        generationPrompt: payload.familyChain?.extraPrompt ?? payload.prompt ?? null,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)

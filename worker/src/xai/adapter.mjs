@@ -310,6 +310,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         surface: payload.studioMode === 'try_on' ? 'single_tryon' : undefined,
         pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
+        generationPrompt: payload.prompt,
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)
           paths.push(retry.storagePath)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PRODUCTION_MIN_CORE_AXIS,
+  buildQcPrompt,
   buildQcFlagMessage,
   evaluateProductionCoreAxes,
   evaluateQCScore,
@@ -69,6 +70,14 @@ describe('weakest axis + flag message', () => {
 })
 
 describe('QC model response integrity', () => {
+  it('makes explicit no-accessory generation requirements hard QC failures', () => {
+    const prompt = buildQcPrompt('brand rules', true, true, 'Do not add a watch, jewelry, wallet, prop, text or logo.')
+    expect(prompt).toContain('ORIGINAL GENERATION REQUIREMENTS (authoritative)')
+    expect(prompt).toContain('forbidden watches')
+    expect(prompt).toContain('handheld objects')
+    expect(prompt).toContain('force model_preserved and composition to at most 2')
+  })
+
   it('rejects an empty or partial response instead of fabricating neutral 3/5 scores', () => {
     expect(() => parseQcScoreResponse('{}')).toThrow('qc_invalid_score:garment_fidelity')
     expect(() => parseQcScoreResponse('{"garment_fidelity":4}')).toThrow('qc_invalid_score:model_preserved')

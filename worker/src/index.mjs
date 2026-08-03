@@ -1012,6 +1012,7 @@ async function processImageGen(job) {
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
+  let totalCostUsd = 0
 
   async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
     // Attribute spend to the ACTUAL engine (2026-07-12: everything was logged as
@@ -1024,6 +1025,7 @@ async function processImageGen(job) {
       : engine === 'fal'
         ? (resolvedImageSize === '1K' ? 0.0675 : 0.135) // Seedream 5.0 Pro 1K / 2K (fal list)
         : calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize)
+    totalCostUsd += engineCostUsd
     void logCost({
       provider: engine,
       kind: 'image',
@@ -1067,6 +1069,7 @@ async function processImageGen(job) {
     surface: payload.qcSurface,
     pipelineMode: payload.pipelineMode,
     maxPaidGenerations: payload.studioPaidAttemptLimit,
+    generationPrompt: basePrompt,
     regenerate: async (fixHint, attemptNum) => {
       regenCount += 1
       await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)
@@ -1126,6 +1129,7 @@ async function processImageGen(job) {
     },
     creativeStudio: Boolean(payload.creativeStudio),
     studioMode: payload.studioMode,
+    costUsd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
     qc: qcResult.qc,
     ...finishing,
   })

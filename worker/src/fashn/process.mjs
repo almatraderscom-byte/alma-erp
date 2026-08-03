@@ -259,6 +259,7 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
         surface: payload.studioMode === 'try_on' ? 'single_tryon' : undefined,
         pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
+        generationPrompt: payload.fashnOptions?.prompt ?? payload.familyChain?.extraPrompt ?? null,
         regenerate: async (_fixHint, attemptNum) => {
           regenAttempt = attemptNum
           if (requiresStudioRunPaidAttemptAuthorization(payload)) {

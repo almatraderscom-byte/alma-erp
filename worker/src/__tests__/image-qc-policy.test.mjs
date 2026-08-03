@@ -33,12 +33,14 @@ test('preview QC scoring forwards the exact Vercel protection bypass', async () 
     token: 'internal-token',
     storagePath: 'generated/result.png',
     pipelineMode: 'production',
+    generationPrompt: 'Do not add a watch, jewelry, prop, text or logo.',
   })
 
   assert.equal(request.url, 'https://preview.example/api/assistant/internal/image-qc-score')
   assert.equal(request.init.headers.Authorization, 'Bearer internal-token')
   assert.equal(request.init.headers['x-vercel-protection-bypass'], 'preview-bypass-secret')
   assert.equal(JSON.parse(request.init.body).pipelineMode, 'production')
+  assert.equal(JSON.parse(request.init.body).generationPrompt, 'Do not add a watch, jewelry, prop, text or logo.')
 })
 
 test('isolated preview certification fails closed when QC is unavailable', async () => {
