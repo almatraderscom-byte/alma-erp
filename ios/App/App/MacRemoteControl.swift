@@ -757,7 +757,10 @@ final class MacRemoteControlStore {
         touched()
         var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l",
                                       "n": min(max(1, count), 2), "x": x, "y": y]
-        if twoStepConfirm, count == 1 { payload["cf"] = 1 }
+        // Two-step confirm is a brake for accidental LEFT clicks; a right-click
+        // is already a deliberate two-finger act and a double never pairs
+        // (Codex P2).
+        if twoStepConfirm, count == 1, !right { payload["cf"] = 1 }
         if session?.send(payload) == true {
             right ? RemoteHaptics.rightTap() : RemoteHaptics.tap()
         } else {
@@ -849,9 +852,15 @@ final class TrackpadSurfaceView: UIView {
     /// opaque flesh; aiming at something you cannot see is the whole problem.
     static let aimLift: CGFloat = 78
 
-    /// The point being aimed at for a touch at `touch`.
+    /// The point being aimed at for a touch at `touch`. The lift keeps the
+    /// finger off the target; clamping to the WHOLE video (not just the top)
+    /// keeps the bottom band — the Mac dock — reachable, by letting the finger
+    /// drop below the video while the target rides the bottom edge (Codex P1).
     private func aimPoint(for touch: CGPoint) -> CGPoint {
-        CGPoint(x: touch.x, y: max(videoRect.minY + 2, touch.y - Self.aimLift))
+        let rect = videoRect
+        let x = min(max(rect.minX + 1, touch.x), rect.maxX - 1)
+        let y = min(max(rect.minY + 2, touch.y - Self.aimLift), rect.maxY - 2)
+        return CGPoint(x: x, y: y)
     }
 
     private enum Phase { case idle, undecided, moving, dragging, twoFinger, aiming }
