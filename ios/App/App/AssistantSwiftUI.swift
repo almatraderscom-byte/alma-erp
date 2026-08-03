@@ -3054,9 +3054,16 @@ final class AssistantVM {
                                       incoming: [AgentChatMessage]) -> Bool {
         guard let localClientId = local.clientMessageId else { return true }
         if let serverClientId = server.clientMessageId { return serverClientId == localClientId }
-        // The server row is anonymous: safe only if no OTHER row in this page
-        // already belongs to this local message.
-        return !incoming.contains { $0.clientMessageId == localClientId }
+        // The server row is ANONYMOUS (clientRequestId is nullable, and the
+        // messages route omits it on some paths), so identity cannot confirm
+        // anything. Only the ordinary optimistic send may claim such a row: a
+        // steered follow-up always has a row of its own, and letting it take an
+        // older anonymous row is the exact mispairing this guard exists to stop
+        // (Codex P1).
+        switch local.outgoingState {
+        case .queued, .awaitingAgent, .delivered: return false
+        default: return !incoming.contains { $0.clientMessageId == localClientId }
+        }
     }
 
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
@@ -4483,6 +4490,17 @@ final class AssistantVM {
     /// Offline or `unknown` changes nothing (the safe state).
     private func reconcileSteerDeliveries() async {
         guard !steerAwaitingDelivery.isEmpty else { return }
+        // History rebuilds these rows as `.accepted`, which renders no chip at
+        // all — so before asking the server, restore what we already know:
+        // these messages were waiting on the agent when the app died
+        // (Codex P2). If the GET then says `consumed`, it upgrades below.
+        for clientMessageId in steerAwaitingDelivery.keys {
+            for i in messages.indices
+            where messages[i].clientMessageId == clientMessageId
+                && messages[i].outgoingState != .delivered {
+                messages[i].outgoingState = .awaitingAgent
+            }
+        }
         for (clientMessageId, awaiting) in steerAwaitingDelivery {
             guard let status: SteeringStatusResponse = try? await AlmaAPI.shared.getQuietAuth(
                 "/api/assistant/turn/\(awaiting.turnId)/steer",
