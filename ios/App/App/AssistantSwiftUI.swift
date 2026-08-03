@@ -790,6 +790,9 @@ struct AgentChatMessage: Identifiable, Equatable {
         case submitting
         case checking
         case accepted
+        /// The RUNNING TURN picked it up — the step after "the server took it".
+        /// Distinct from `accepted`, which only means the row was stored.
+        case delivered
         case failed
         case cancelled
     }
@@ -1812,6 +1815,22 @@ final class AssistantVM {
         var sessionIdentity: String? = nil
     }
     private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
+    /// clientMessageId → turnId for steers the SERVER accepted but the turn has
+    /// not confirmed reading yet. A 2xx on /steer only means "stored"; if the
+    /// turn dies right after, nobody ever reads it. Persisted so a cold start
+    /// can ASK instead of guessing.
+    private static let steerAwaitingDeliveryKey = "alma.assistant.steerAwaitingDelivery.v1"
+    private var steerAwaitingDelivery: [String: String] =
+        (UserDefaults.standard.dictionary(forKey: "alma.assistant.steerAwaitingDelivery.v1")
+            as? [String: String]) ?? [:] {
+        didSet {
+            if steerAwaitingDelivery.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.steerAwaitingDeliveryKey)
+            } else {
+                UserDefaults.standard.set(steerAwaitingDelivery, forKey: Self.steerAwaitingDeliveryKey)
+            }
+        }
+    }
     private var steeringSubmissions: Set<String> = []
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
         didSet {
@@ -2483,6 +2502,7 @@ final class AssistantVM {
         async let todos: Void = loadDailyAgentTodos()
         async let turns: Void = loadActiveBackgroundTurns()
         _ = await (drive, todos, turns)
+        await reconcileSteerDeliveries()
         startPolling()
         // A queued follow-up may outlive the process after the preceding turn
         // became terminal while the app was dead. Recovery clears that stale
@@ -4397,6 +4417,40 @@ final class AssistantVM {
         let turnId: String?
     }
 
+    /// GET /api/assistant/turn/<id>/steer — "did the turn actually read it?"
+    private struct SteeringStatusResponse: Decodable {
+        let status: String?      // consumed | queued | unknown
+        let messageId: String?
+        let turnId: String?
+    }
+
+    /// Cold start: a steer marked `accepted` before the app died may or may not
+    /// have been read. Ask the server rather than guess — a 2xx on /steer only
+    /// means it was stored, and a turn that failed right after never read it.
+    /// Offline or `unknown` changes nothing (the safe state).
+    private func reconcileSteerDeliveries() async {
+        guard !steerAwaitingDelivery.isEmpty else { return }
+        for (clientMessageId, turnId) in steerAwaitingDelivery {
+            guard let status: SteeringStatusResponse = try? await AlmaAPI.shared.getQuietAuth(
+                "/api/assistant/turn/\(turnId)/steer",
+                query: ["clientMessageId": clientMessageId]) else { continue }
+            switch status.status {
+            case "consumed":
+                for i in messages.indices where messages[i].clientMessageId == clientMessageId {
+                    messages[i].outgoingState = .delivered
+                }
+                queuedOwnerMessages.removeAll { $0.id == clientMessageId }
+                steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+            case "unknown":
+                // The turn or row is gone; nothing will ever confirm it. Stop
+                // asking, but leave the bubble on its honest `accepted`.
+                steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+            default:
+                break // still queued — ask again next launch
+            }
+        }
+    }
+
     /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
     /// chosen model (web parity: POST /chat with resume{}, same conversation).
     func resumeModelSwitch(messageId: String, approve: Bool) {
@@ -4533,6 +4587,8 @@ final class AssistantVM {
                 for index in messages.indices where messages[index].clientMessageId == queued.id {
                     messages[index].outgoingState = .accepted
                 }
+                // Remember which turn owes us a "read" confirmation.
+                steerAwaitingDelivery[queued.id] = turnId
                 let ids = Set(queued.attachmentIds ?? [])
                 if !ids.isEmpty { removeAttachmentCacheFiles(ids) }
                 AlmaTurnLog.event("turn.ownerSteeringAccepted", queued.id)
@@ -5214,6 +5270,19 @@ final class AssistantVM {
                     messages[i].skill = .init(name: skill, source: source,
                                               reason: reason, isolated: isolated)
                     touchedStream = true
+                }
+            case .steeringDelivered(let deliveredIds):
+                // The turn has actually READ these mid-turn messages. Mark the
+                // bubbles and drop them from the local queue — a delivered
+                // message must never be re-sent by the drain.
+                let delivered = Set(deliveredIds)
+                if !delivered.isEmpty {
+                    for i in messages.indices
+                    where messages[i].clientMessageId.map(delivered.contains) == true {
+                        messages[i].outgoingState = .delivered
+                    }
+                    queuedOwnerMessages.removeAll { delivered.contains($0.id) }
+                    for id in delivered { steerAwaitingDelivery.removeValue(forKey: id) }
                 }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
@@ -8351,6 +8420,7 @@ struct AgentMessageRow: View {
         case .submitting: return "পাঠানো হচ্ছে"
         case .checking: return "Server status যাচাই হচ্ছে"
         case .accepted: return "পাঠানো হয়েছে"
+        case .delivered: return "এজেন্ট পড়েছে"
         case .failed: return "পাঠানো যায়নি — লেখা ও ফাইল রাখা আছে"
         case .cancelled: return "বাতিল — composer-এ রাখা আছে"
         }
@@ -8362,6 +8432,7 @@ struct AgentMessageRow: View {
         case .queued: return "clock.arrow.circlepath"
         case .submitting, .checking: return "arrow.triangle.2.circlepath"
         case .accepted: return "checkmark"
+        case .delivered: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.circle.fill"
         case .cancelled: return "xmark.circle"
         }
