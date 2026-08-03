@@ -458,6 +458,32 @@ export function classifyCommand(rawCommand: string, opts: ClassifyOptions = {}):
   }
 }
 
+/**
+ * Redact credential PATHS out of command output before the head ever sees it.
+ *
+ * The RED rules stop a command that NAMES a secret file. They cannot stop a
+ * command whose output happens to LIST one: `mdfind key`, `find ~ -name "*.pem"`
+ * and `ls -R ~` are all ordinary approval-gated commands whose stdout can carry
+ * `~/.ssh/id_ed25519` straight into the model's context (Codex, on a skill file
+ * of mine that claimed this was already blocked in code — it was not).
+ *
+ * Paths only, and only the line they appear on. This is not a content scanner:
+ * it removes the pointer, not the file, and says so where it removed something
+ * so nobody — model or owner — is left thinking the listing was complete.
+ */
+const SENSITIVE_PATH_RE =
+  /(^|[\s:"'=])((?:[~/][^\s:"']*)?(?:\.ssh\/[^\s:"']*|\.aws\/credentials|\.git-credentials|\.npmrc|\.netrc|\.pgpass|\.gnupg[^\s:"']*|\.config\/gh\/[^\s:"']*|\.kube\/config|\.docker\/config\.json|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|AuthKey_\w+\.p8|[^\s:"']*\.(?:pem|p12|keystore)|[^\s:"']*\.env(?:\.[\w.]+)?|[^\s:"']*service[-_]account[^\s:"']*\.json))/gi
+
+export function redactSensitivePaths(text: string): { text: string; redacted: number } {
+  if (!text) return { text, redacted: 0 }
+  let redacted = 0
+  const out = text.replace(SENSITIVE_PATH_RE, (_m, lead: string) => {
+    redacted += 1
+    return `${lead}[গোপন ফাইলের পথ — সরানো হয়েছে]`
+  })
+  return { text: out, redacted }
+}
+
 /** Clamp a requested timeout into the allowed band. */
 export function resolveTimeoutMs(requested?: number): number {
   if (!Number.isFinite(requested) || !requested || requested <= 0) return MAC_EXEC_LIMITS.defaultTimeoutMs

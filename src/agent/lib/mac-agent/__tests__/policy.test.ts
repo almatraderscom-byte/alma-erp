@@ -6,6 +6,7 @@ import {
   capOutput,
   MAC_EXEC_LIMITS,
   DEFAULT_ALLOWED_DIRS,
+  redactSensitivePaths,
 } from '../policy'
 
 const green = (c: string, cwd = '~/alma-erp') => classifyCommand(c, { cwd })
@@ -373,5 +374,40 @@ describe('an overwriting move is refused, not carded', () => {
     expect(
       classifyCommand("find ~/Downloads -iname '*.pdf' -exec mv -n {} ~/Downloads/Reports/ \\;").level,
     ).toBe('amber')
+  })
+})
+
+/**
+ * Codex, on Tier 2: `spotlight-finder`'s SKILL.md claimed the credential block
+ * was enforced in code. For a command that NAMES a secret file it is — but
+ * `mdfind key` names nothing and its output can list `~/.ssh/id_ed25519`
+ * anyway. The claim had to become true rather than be softened.
+ */
+describe('credential paths never reach the model', () => {
+  it('strips the obvious key and secret paths out of output', () => {
+    const listing = [
+      '/Users/x/Downloads/report.pdf',
+      '/Users/x/.ssh/id_ed25519',
+      '/Users/x/project/.env.production',
+      '/Users/x/keys/AuthKey_ABC123.p8',
+      '/Users/x/Documents/notes.txt',
+    ].join('\n')
+    const { text, redacted } = redactSensitivePaths(listing)
+    expect(redacted).toBe(3)
+    expect(text).toContain('report.pdf')
+    expect(text).toContain('notes.txt')
+    expect(text).not.toContain('id_ed25519')
+    expect(text).not.toContain('.env.production')
+    expect(text).not.toContain('AuthKey_ABC123')
+  })
+
+  it('says nothing was removed when nothing was', () => {
+    const { text, redacted } = redactSensitivePaths('/Users/x/a.pdf\n/Users/x/b.mp4')
+    expect(redacted).toBe(0)
+    expect(text).toBe('/Users/x/a.pdf\n/Users/x/b.mp4')
+  })
+
+  it('handles empty output without throwing', () => {
+    expect(redactSensitivePaths('').redacted).toBe(0)
   })
 })

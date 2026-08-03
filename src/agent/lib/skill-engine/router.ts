@@ -360,6 +360,13 @@ const MEDIA_CONVERT_ASK =
 /** …but MAKING new media is Creative Studio's job, not a converter's. */
 const MEDIA_CREATE_ASK =
   /(banao|বানাও|toiri|তৈরি|generate|design|ডিজাইন|poster|পোস্টার|creative|ad\s*banao)/i
+/**
+ * …unless the sentence names a SOURCE and a TARGET: "video theke gif banao" is
+ * a conversion wearing the word "banao" (Codex). Source-to-target beats the
+ * creation veto, because nothing is being invented — an existing file is.
+ */
+const MEDIA_DERIVE_ASK =
+  /(?:video|ভিডিও|mp4|mov|clip|chobi|ছবি|image|png|jpe?g|audio|অডিও)\s*(?:theke|থেকে|from|to\b|→)\s*(?:gif|jpe?g|png|mp3|mp4|wav|audio|অডিও|ছবি|chobi|video|ভিডিও)/i
 
 export interface RouterRule {
   id: string
@@ -463,7 +470,9 @@ export const RULES: RouterRule[] = [
     skill: 'media-transcoder',
     // Ordered before folder-tidy: "video gulo choto koro" is a conversion, and
     // the tidy rule would otherwise claim any sentence with a folder in it.
-    test: (t) => MEDIA_CONVERT_ASK.test(t) && !MEDIA_CREATE_ASK.test(t),
+    test: (t) =>
+      MEDIA_DERIVE_ASK.test(t)
+      || (MEDIA_CONVERT_ASK.test(t) && !MEDIA_CREATE_ASK.test(t)),
     why: 'Mac-এ থাকা মিডিয়া রূপান্তর — নতুন কিছু বানানো নয়',
   },
   {

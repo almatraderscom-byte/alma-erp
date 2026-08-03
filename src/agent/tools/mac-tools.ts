@@ -23,7 +23,7 @@ import {
   listDevices,
   recentCommands,
 } from '@/agent/lib/mac-agent/bus'
-import { classifyCommand } from '@/agent/lib/mac-agent/policy'
+import { classifyCommand, redactSensitivePaths } from '@/agent/lib/mac-agent/policy'
 import { classifyScreencaptureIntent, shareScreenshot } from '@/agent/lib/mac-agent/screenshot-share'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,14 +226,22 @@ const run_mac_command: AgentTool = {
       }
     }
 
+    // A command can NAME no secret and still LIST one: `mdfind key`,
+    // `find ~ -name "*.pem"`, `ls -R ~`. The RED rules cover the first case and
+    // cannot cover this one, so credential PATHS are stripped from the output
+    // before the model sees them — and the count is reported, so a shortened
+    // listing never passes for a complete one.
+    const outRedact = redactSensitivePaths(outcome.stdout ?? '')
+    const errRedact = redactSensitivePaths(outcome.stderr ?? '')
     return {
       success: outcome.status === 'done',
       data: {
         commandId: id,
         policy: 'green',
         exitCode: outcome.exitCode,
-        stdout: outcome.stdout,
-        stderr: outcome.stderr,
+        stdout: outRedact.text,
+        stderr: errRedact.text,
+        redactedPaths: outRedact.redacted + errRedact.redacted || undefined,
         error: outcome.error,
         device: gate.deviceName,
       },
@@ -262,14 +270,17 @@ const check_mac_command: AgentTool = {
     const outcome = waitMs > 0 ? await awaitResult(commandId, waitMs) : await getCommand(commandId)
     if (!outcome) return { success: false, error: 'এই id-র কোনো কমান্ড পাইনি।' }
 
+    const checkOut = redactSensitivePaths(outcome.stdout ?? '')
+    const checkErr = redactSensitivePaths(outcome.stderr ?? '')
     return {
       success: outcome.status === 'done',
       data: {
         commandId,
         status: outcome.status,
         exitCode: outcome.exitCode,
-        stdout: outcome.stdout,
-        stderr: outcome.stderr,
+        stdout: checkOut.text,
+        stderr: checkErr.text,
+        redactedPaths: checkOut.redacted + checkErr.redacted || undefined,
         error: outcome.error,
         stillRunning: outcome.timedOut,
       },

@@ -50,6 +50,13 @@ describe('converting media', () => {
     expect(applyRules('chobi gulo resize koro')?.skill).toBe('media-transcoder')
   })
 
+  // Codex: "video theke gif banao" is a conversion wearing the word "banao".
+  // Source-and-target beats the creation veto — nothing is being invented.
+  it('routes source-to-target even when he says "banao"', () => {
+    expect(applyRules('video theke gif banao')?.skill).toBe('media-transcoder')
+    expect(applyRules('mp4 theke mp3 banao')?.skill).toBe('media-transcoder')
+  })
+
   it('does not steal Creative Studio’s job', () => {
     // MAKING media is a different program entirely.
     expect(applyRules('ekta product video banao')).toBeNull()
