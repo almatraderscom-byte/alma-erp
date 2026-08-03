@@ -744,7 +744,7 @@ final class MacRemoteControlStore {
     }
 
     /// AIM mode commit: position and click in ONE ordered packet.
-    func sendAimClick(x: Double, y: Double, right: Bool = false) {
+    func sendAimClick(x: Double, y: Double, right: Bool = false, count: Int = 1) {
         guard armed else { return }
         // Without the real video size the fitted rect (and therefore this
         // fraction) is guessed from a 16:9 fallback, and on the ultrawide Mac
@@ -755,8 +755,9 @@ final class MacRemoteControlStore {
             return
         }
         touched()
-        var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l", "n": 1, "x": x, "y": y]
-        if twoStepConfirm { payload["cf"] = 1 }
+        var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l",
+                                      "n": min(max(1, count), 2), "x": x, "y": y]
+        if twoStepConfirm, count == 1 { payload["cf"] = 1 }
         if session?.send(payload) == true {
             right ? RemoteHaptics.rightTap() : RemoteHaptics.tap()
         } else {
@@ -833,6 +834,8 @@ final class TrackpadSurfaceView: UIView {
     /// AIM mode: magnify under the finger, commit on release.
     var aimMode = false
     private var lastAimSendAt: TimeInterval = 0
+    private var lastAimClickAt: Date = .distantPast
+    private var lastAimClickPoint: CGPoint = .zero
     /// Called with the touch point when the aim magnifier should show/move/hide.
     var onAimZoom: ((CGPoint?) -> Void)?
     /// Called with the point the click would land on (in this view's space), so
@@ -1091,14 +1094,25 @@ final class TrackpadSurfaceView: UIView {
         flushPendingMotion()
         switch phase {
         case .aiming:
-            let target = aimPoint(for: touches.first?.location(in: self) ?? lastPoint)
+            let releasePoint = touches.first?.location(in: self) ?? lastPoint
+            let target = aimPoint(for: releasePoint)
             let rect = videoRect
             onAimZoom?(nil)
             onAimTarget?(nil)
             onInteracting?(false)
             if rect.contains(target) {
+                // Second quick release near the first = double-click, so the
+                // owner can open files and activate standard controls (Codex
+                // P2). Confirm mode never doubles — there is no first click.
+                let now = Date()
+                let isDouble = store?.twoStepConfirm != true
+                    && now.timeIntervalSince(lastAimClickAt) < doubleTapWindow
+                    && hypot(releasePoint.x - lastAimClickPoint.x, releasePoint.y - lastAimClickPoint.y) < 30
+                lastAimClickAt = isDouble ? .distantPast : now
+                lastAimClickPoint = releasePoint
                 store?.sendAimClick(x: Double((target.x - rect.minX) / rect.width),
-                                    y: Double((target.y - rect.minY) / rect.height))
+                                    y: Double((target.y - rect.minY) / rect.height),
+                                    count: isDouble ? 2 : 1)
             }
         case .dragging:
             if aimMode {
@@ -1123,7 +1137,17 @@ final class TrackpadSurfaceView: UIView {
             if remaining == 0, Date().timeIntervalSince(startedAt) < tapMaxDuration,
                hypot(lastTwoFingerPoint.x - twoFingerStart.x,
                      lastTwoFingerPoint.y - twoFingerStart.y) < moveThreshold * 2 {
-                store?.sendClick(count: 1, right: true)
+                let rect = videoRect
+                if aimMode, rect.contains(twoFingerStart) {
+                    // Position + right-click as ONE ordered packet: a separate
+                    // unordered position could arrive after the click and
+                    // right-click the old spot (Codex P2).
+                    store?.sendAimClick(x: Double((twoFingerStart.x - rect.minX) / rect.width),
+                                        y: Double((twoFingerStart.y - rect.minY) / rect.height),
+                                        right: true)
+                } else {
+                    store?.sendClick(count: 1, right: true)
+                }
             }
         case .undecided:
             handleTap(at: touches.first?.location(in: self) ?? startPoint)
