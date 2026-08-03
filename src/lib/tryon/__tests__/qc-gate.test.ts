@@ -5,7 +5,9 @@ import {
   evaluateProductionCoreAxes,
   evaluateQCScore,
   getQcConfig,
+  parseQcScoreResponse,
   pickWeakestAxis,
+  resolveQcLevel,
   type QCScore,
 } from '../qc-gate'
 
@@ -36,6 +38,12 @@ describe('qc level configs', () => {
     expect(evaluateQCScore(score({ anatomy: 2 }), 'strict')).toBe(false)
     expect(evaluateQCScore(score({ anatomy: 1 }), 'off')).toBe(true)
   })
+
+  it('signed production cannot be disabled by the mutable global level', () => {
+    expect(resolveQcLevel('off', 'production')).toBe('strict')
+    expect(resolveQcLevel('normal', 'production')).toBe('strict')
+    expect(resolveQcLevel('off', 'preview')).toBe('off')
+  })
 })
 
 describe('CS8/CS10 production core-axis gate', () => {
@@ -57,5 +65,16 @@ describe('weakest axis + flag message', () => {
     expect(buildQcFlagMessage(3, s, false)).toContain('best of 3')
     expect(buildQcFlagMessage(2, s, true)).toContain('passed on attempt 2')
     expect(buildQcFlagMessage(1, s, true)).toBeUndefined()
+  })
+})
+
+describe('QC model response integrity', () => {
+  it('rejects an empty or partial response instead of fabricating neutral 3/5 scores', () => {
+    expect(() => parseQcScoreResponse('{}')).toThrow('qc_invalid_score:garment_fidelity')
+    expect(() => parseQcScoreResponse('{"garment_fidelity":4}')).toThrow('qc_invalid_score:model_preserved')
+  })
+
+  it('accepts and bounds a complete response', () => {
+    expect(parseQcScoreResponse(JSON.stringify(score({ anatomy: 4.4 }))).anatomy).toBe(4)
   })
 })

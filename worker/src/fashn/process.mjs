@@ -307,6 +307,7 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] fashn ${pendingActionId} — QC skipped: ${err.message}`)
   }
 

@@ -32,11 +32,13 @@ test('preview QC scoring forwards the exact Vercel protection bypass', async () 
     appUrl: 'https://preview.example',
     token: 'internal-token',
     storagePath: 'generated/result.png',
+    pipelineMode: 'production',
   })
 
   assert.equal(request.url, 'https://preview.example/api/assistant/internal/image-qc-score')
   assert.equal(request.init.headers.Authorization, 'Bearer internal-token')
   assert.equal(request.init.headers['x-vercel-protection-bypass'], 'preview-bypass-secret')
+  assert.equal(JSON.parse(request.init.body).pipelineMode, 'production')
 })
 
 test('isolated preview certification fails closed when QC is unavailable', async () => {
@@ -58,6 +60,34 @@ test('isolated preview certification fails closed when QC is unavailable', async
     () => import('../image-qc.mjs').then(({ runImageQcLoop }) => runImageQcLoop({
       supabase,
       appUrl: 'https://preview.example',
+      token: 'internal-token',
+      qcLevel: 'strict',
+      initialPath: 'generated/result.png',
+      pipelineMode: 'production',
+      regenerate: async () => 'generated/retry.png',
+    })),
+    /preview_qc_unavailable:qc transport down/,
+  )
+})
+
+test('signed production fails closed when QC is unavailable outside certification too', async () => {
+  globalThis.fetch = async () => {
+    throw new Error('qc transport down')
+  }
+  const supabase = {
+    from() {
+      return {
+        select() { return this },
+        eq() { return this },
+        async maybeSingle() { return { data: { value: 'production' } } },
+      }
+    },
+  }
+
+  await assert.rejects(
+    () => import('../image-qc.mjs').then(({ runImageQcLoop }) => runImageQcLoop({
+      supabase,
+      appUrl: 'https://app.example',
       token: 'internal-token',
       qcLevel: 'strict',
       initialPath: 'generated/result.png',

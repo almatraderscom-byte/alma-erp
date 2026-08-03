@@ -8,6 +8,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import {
   scoreCreativeQCFromPath,
   getQcLevel,
+  resolveQcLevel,
   evaluateQCScore,
   type QCScore,
 } from '@/lib/tryon/qc-gate'
@@ -40,6 +41,8 @@ export async function POST(req: NextRequest) {
     personImagePath?: string
     /** CS10 — surface-specific thresholds (single_tryon/family/precision_edit/…) */
     surface?: string
+    /** Signed run policy; production can never inherit a mutable `off` level. */
+    pipelineMode?: string
   }
   try {
     body = await req.json()
@@ -51,7 +54,16 @@ export async function POST(req: NextRequest) {
   if (!storagePath) return NextResponse.json({ error: 'storagePath required' }, { status: 400 })
 
   try {
-    const level = await getQcLevel()
+    const configuredLevel = await getQcLevel()
+    const pipelineMode = body.pipelineMode === 'production' ? 'production' : 'preview'
+    const level = resolveQcLevel(configuredLevel, pipelineMode)
+    const surface = body.surface && body.surface in SURFACE_THRESHOLDS ? (body.surface as StudioSurface) : null
+    if (surface === 'single_tryon' && !body.productImagePath?.trim()) {
+      return NextResponse.json({ error: 'single_tryon_product_reference_required' }, { status: 400 })
+    }
+    if (surface === 'single_tryon' && !body.personImagePath?.trim()) {
+      return NextResponse.json({ error: 'single_tryon_person_reference_required' }, { status: 400 })
+    }
     if (level === 'off') {
       const bypass: QCScore = {
         garment_fidelity: 5,
@@ -75,9 +87,8 @@ export async function POST(req: NextRequest) {
     })
     // CS10 — surface-specific thresholds when the caller names a surface;
     // legacy level-based pass otherwise (backward compatible).
-    const surface = body.surface && body.surface in SURFACE_THRESHOLDS ? (body.surface as StudioSurface) : null
     const pass = surface ? evaluateSurfaceScore(score, surface) : evaluateQCScore(score, level)
-    return NextResponse.json({ level, pass, score, surface: surface ?? undefined })
+    return NextResponse.json({ level, pass, score, surface: surface ?? undefined, pipelineMode })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

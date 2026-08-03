@@ -47,7 +47,7 @@ export async function fetchPipelineMode(supabase) {
   }
 }
 
-export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, personImagePath, surface }) {
+export async function scoreImageViaApi({ appUrl, token, storagePath, productType, productImagePath, personImagePath, surface, pipelineMode }) {
   const res = await fetch(`${appUrl}/api/assistant/internal/image-qc-score`, {
     method: 'POST',
     headers: {
@@ -56,7 +56,7 @@ export async function scoreImageViaApi({ appUrl, token, storagePath, productType
       ...getAppProtectionHeaders(),
     },
     // CS10 — surface selects mode-specific thresholds server-side
-    body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface }),
+    body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface, pipelineMode }),
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {
@@ -108,10 +108,9 @@ export async function runImageQcLoop({
   let currentPath = initialPath
 
   for (let i = 0; i < maxGenerations; i++) {
-    // QC FAIL-OPEN (2026-07-12): the scorer rides Gemini vision — when that is
-    // down (e.g. Google prepaid credits depleted → 429) the render itself may
-    // be perfectly fine. A dead QC must never kill a paid, finished image:
-    // deliver what we have, flagged so the owner knows QC was skipped.
+    // Preview may still return a visibly flagged unchecked render when QC is
+    // unavailable. Signed production may not: "strict QC" must never silently
+    // turn into delivery without reference comparison.
     let qc
     try {
       qc = await scoreImageViaApi({
@@ -122,12 +121,12 @@ export async function runImageQcLoop({
         productImagePath,
         personImagePath,
         surface,
+        pipelineMode,
       })
     } catch (err) {
-      // A certification run must prove the QC boundary itself. Production keeps
-      // its historical fail-open delivery policy for provider outages, but an
-      // isolated preview E2E may never report success for an unchecked image.
-      if (Object.keys(getAppProtectionHeaders()).length > 0) {
+      // Certification and signed production both prove the QC boundary; neither
+      // may report success for an unchecked image.
+      if (pipelineMode === 'production' || Object.keys(getAppProtectionHeaders()).length > 0) {
         throw new Error(`preview_qc_unavailable:${err?.message ?? err}`)
       }
       console.warn('[image-qc] scorer unavailable — delivering unscored:', err?.message ?? err)
@@ -201,6 +200,13 @@ export async function runImageQcLoop({
         attempt: a.attempt,
         overall: a.score?.overall,
         pass: a.pass,
+        coreAxes: {
+          garment_fidelity: a.score?.garment_fidelity,
+          model_preserved: a.score?.model_preserved,
+          anatomy: a.score?.anatomy,
+        },
+        failReasons: Array.isArray(a.score?.fail_reasons) ? a.score.fail_reasons.slice(0, 4) : [],
+        fixHint: a.score?.fix_hint,
       })),
       flagged,
     },

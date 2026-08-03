@@ -190,6 +190,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] cat-vton ${pendingActionId} — QC skipped: ${err.message}`)
   }
 

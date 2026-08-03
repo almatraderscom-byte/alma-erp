@@ -324,6 +324,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] xai-imagine ${pendingActionId} — QC skipped: ${err.message}`)
   }
 

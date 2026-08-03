@@ -193,6 +193,7 @@ export async function processFashnV16({ supabase, pendingActionId, payload, logC
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] fashn-v16 ${pendingActionId} — QC skipped: ${err.message}`)
   }
 
