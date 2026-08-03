@@ -180,7 +180,6 @@ vi.mock('@/lib/tryon/scene-pool', async (importOriginal) => {
 
 import { runCreativeStudio } from '@/lib/creative-studio/create-run'
 import { startVeoReelChain } from '@/lib/creative-studio/veo-chain'
-import { startFamilyChain } from '@/lib/tryon/family-chain'
 import {
   issueStudioRunEstimate,
   verifyStudioRunEstimateReceipt,
@@ -380,28 +379,33 @@ describe('real paid-run constructor crash recovery', () => {
         modelName: 'Son',
       },
     ]
+    const familyRequest = {
+      mode: 'product_to_model' as const,
+      provider: 'fashn' as const,
+      vtonEngine: 'fashn' as const,
+      familyPreset: 'father_son' as const,
+      productImagePath: 'products/product-1.jpg',
+      aspectRatio: '4:5',
+      resolution: '2k' as const,
+      generationMode: 'quality' as const,
+      pipelineMode: 'production' as const,
+      pinnedChainVtonEngine: 'fashn' as const,
+      pinnedGenericImageModel: 'gemini-3-pro-image' as const,
+    }
     const result = await crashThenRecoverConstructor({
-      request: {
-        mode: 'product_to_model',
-        familyPreset: 'father_son',
-        productImagePath: 'products/product-1.jpg',
-      },
+      request: familyRequest,
       selection: {
         mode: 'product_to_model',
         architecture: 'advanced',
-        provider: 'family_chain',
-        model: 'family-chain',
+        provider: 'fashn',
+        model: 'tryon-max',
         providers: ['fashn', 'gemini'],
-        models: ['family-chain'],
-        plan: ['father_son_family_chain'],
+        models: ['tryon-max', 'gemini-3-pro-image'],
+        plan: ['garment_prep', 'adult_vton', 'child_vton', 'pair_merge'],
         paidAttemptLimit: 3,
       },
       familyModelPins,
-      createResult: () => startFamilyChain({
-        variant: 'father_son',
-        productImagePath: 'products/product-1.jpg',
-        vtonEngine: 'fashn',
-      }),
+      createResult: () => runCreativeStudio(familyRequest),
     })
 
     expect(harness.sceneCalls).toBe(2)

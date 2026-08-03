@@ -24,6 +24,7 @@ import {
   CS_IDM_VTON_ENABLED_KEY,
   CS_XAI_ENABLED_KEY,
   getEngine,
+  isFamilyChainVtonEngine,
   isFalVtonEngine,
   isVtonClothType,
   type StudioEngineId,
@@ -509,6 +510,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     multiPersonFamily
     && input.vtonEngine
     && getEngine(input.vtonEngine).singlePersonOnly
+    && !isFamilyChainVtonEngine(input.vtonEngine)
   ) {
     throw new Error(`explicit_engine_mode_unsupported:${input.vtonEngine}:family`)
   }
