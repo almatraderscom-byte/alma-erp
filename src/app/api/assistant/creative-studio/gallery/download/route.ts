@@ -55,7 +55,8 @@ export async function GET(req: NextRequest) {
   const projectId = clean(req.nextUrl.searchParams.get('projectId'))
   const projectAssetId = clean(req.nextUrl.searchParams.get('projectAssetId'))
   const assetVersionId = clean(req.nextUrl.searchParams.get('assetVersionId'))
-  const reviewSequence = Number(req.nextUrl.searchParams.get('reviewSequence'))
+  const rawReviewSequence = req.nextUrl.searchParams.get('reviewSequence')
+  const reviewSequence = rawReviewSequence === null ? Number.NaN : Number(rawReviewSequence)
   if (
     !id
     || !brandProfileId
@@ -135,4 +136,3 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'download_original_failed' }, { status: 502 })
   }
 }
-

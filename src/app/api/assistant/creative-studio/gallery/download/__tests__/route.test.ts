@@ -94,6 +94,10 @@ describe('Creative Studio scoped original download', () => {
       'https://studio.example/api/assistant/creative-studio/gallery/download?id=action-1',
     ))
     expect(response.status).toBe(422)
+
+    const missingSequence = request()
+    missingSequence.nextUrl.searchParams.delete('reviewSequence')
+    const missingSequenceResponse = await GET(missingSequence)
+    expect(missingSequenceResponse.status).toBe(422)
   })
 })
-
