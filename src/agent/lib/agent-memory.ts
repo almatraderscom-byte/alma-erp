@@ -291,30 +291,49 @@ async function keywordArm(tokens: string[], rawQuery: string, accessClause: stri
  * whole thing is time-boxed — a slow database costs the turn its memory, never
  * the owner's reply.
  */
+/** What one retrieval pass produced: what to inject, and what to mark as used. */
+interface RetrievalOutcome {
+  memories: RelevantMemory[]
+  /** Fact rows that actually made it into the prompt — never digest blocks. */
+  factIds: string[]
+}
+
 export async function retrieveRelevantMemories(
   userMessage: string,
   personalMode: boolean,
   businessId: AgentBusinessId,
 ): Promise<RelevantMemory[]> {
-  // If the deadline passes, the abandoned work keeps running — this lets it
-  // learn that its result was thrown away, so it does not record memories as
-  // "used" that the turn never saw (Codex P2, PR #711).
-  const abandoned = new AbortController()
-  return withMemoryTimeout(
-    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId, abandoned.signal),
-    [],
+  // Reinforcement lives OUTSIDE the raced work on purpose (Codex P2, PR #711).
+  // Marking a memory "used" lifts its future ranking, so it must happen only for
+  // memories the turn actually received. An abort check inside the race is not
+  // enough — the deadline can pass while the UPDATE itself is in flight, and the
+  // statement cannot be cancelled. Running it after the race removes the window
+  // entirely instead of narrowing it.
+  //
+  // `null` distinguishes "lost the race or failed" from "won, found nothing".
+  const outcome = await withMemoryTimeout<RetrievalOutcome | null>(
+    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId),
+    null,
     MEMORY_RETRIEVAL_TIMEOUT_MS,
     'agent-memory',
-    () => abandoned.abort(),
   )
+  if (!outcome) return []
+
+  if (outcome.factIds.length > 0) {
+    try {
+      await reinforceMemoriesOnUse(outcome.factIds)
+    } catch (err) {
+      console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
+    }
+  }
+  return outcome.memories
 }
 
 async function retrieveRelevantMemoriesUnbounded(
   userMessage: string,
   personalMode: boolean,
   businessId: AgentBusinessId,
-  abandoned?: AbortSignal,
-): Promise<RelevantMemory[]> {
+): Promise<RetrievalOutcome> {
   try {
     const accessClause = buildMemoryAccessClause(personalMode, businessId)
     const tokens = extractQueryTokens(userMessage)
@@ -370,34 +389,26 @@ async function retrieveRelevantMemoriesUnbounded(
 
     const budgeted = applyMemoryBudget(scored, { maxItems: MEMORY_MAX_ITEMS })
 
-    // Reinforcement means "the head actually saw this" — it lifts recency and
-    // therefore future ranking. If the turn already gave up on us, nothing was
-    // seen, so recording use would quietly promote memories that were never read.
-    if (!abandoned?.aborted) {
-      try {
-        await reinforceMemoriesOnUse(budgeted.kept.map((m) => m.id))
-      } catch (err) {
-        console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
-      }
+    return {
+      memories: [
+        // Digest blocks lead: they are the compressed picture the facts belong to.
+        ...digests.map((d) => ({
+          id: d.id,
+          content: d.content,
+          scope: 'digest',
+          score: Math.round(d.score * 100) / 100,
+        })),
+        ...budgeted.kept.map((m) => ({
+          id: m.id,
+          content: m.content,
+          scope: m.scope,
+          score: Math.round(m.score * 100) / 100,
+        })),
+      ],
+      factIds: budgeted.kept.map((m) => m.id),
     }
-
-    return [
-      // Digest blocks lead: they are the compressed picture the facts belong to.
-      ...digests.map((d) => ({
-        id: d.id,
-        content: d.content,
-        scope: 'digest',
-        score: Math.round(d.score * 100) / 100,
-      })),
-      ...budgeted.kept.map((m) => ({
-        id: m.id,
-        content: m.content,
-        scope: m.scope,
-        score: Math.round(m.score * 100) / 100,
-      })),
-    ]
   } catch (err) {
     console.warn('[agent-memory] retrieveRelevantMemories failed:', err instanceof Error ? err.message : err)
-    return []
+    return { memories: [], factIds: [] }
   }
 }

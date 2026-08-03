@@ -118,6 +118,23 @@ describe('rawPhrasePatterns', () => {
     expect(rawPhrasePatterns(long)[0].length).toBe(62) // 60 chars + two % signs
   })
 
+  // Codex P2 round 5 (PR #711): "%মা?%" matched no stored fact that simply said মা.
+  it('strips edge punctuation — the owner types questions, not search terms', () => {
+    expect(rawPhrasePatterns('মা?')).toEqual(['%মা%'])
+    expect(rawPhrasePatterns('"মা"!')).toEqual(['%মা%'])
+    expect(rawPhrasePatterns('  মা।  ')).toEqual(['%মা%'])
+  })
+
+  it('leaves the inside of a phrase alone', () => {
+    expect(rawPhrasePatterns('ORD-123?')).toEqual(['%ORD-123%'])
+    expect(rawPhrasePatterns('মা কেমন আছে?')).toEqual(['%মা কেমন আছে%'])
+  })
+
+  it('refuses a phrase that is only punctuation', () => {
+    expect(rawPhrasePatterns('???')).toEqual([])
+    expect(rawPhrasePatterns('...!')).toEqual([])
+  })
+
   it('refuses a phrase too short to filter — %% would match every row', () => {
     expect(rawPhrasePatterns('')).toEqual([])
     expect(rawPhrasePatterns('   ')).toEqual([])

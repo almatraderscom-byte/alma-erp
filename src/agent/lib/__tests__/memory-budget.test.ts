@@ -93,38 +93,6 @@ describe('withMemoryTimeout', () => {
     ).resolves.toEqual([])
   })
 
-  // Codex P2 (PR #711): abandoned work kept running and still marked memories as
-  // "used", promoting rows the turn never actually saw.
-  it('signals abandoned work the moment the deadline passes', async () => {
-    vi.useFakeTimers()
-    try {
-      const abandoned = new AbortController()
-      const slow = new Promise<string[]>((resolve) => setTimeout(() => resolve(['late']), 10_000))
-      const guarded = withMemoryTimeout(slow, [], 2500, 'memory', () => abandoned.abort())
-
-      expect(abandoned.signal.aborted).toBe(false)
-      await vi.advanceTimersByTimeAsync(2600)
-      await expect(guarded).resolves.toEqual([])
-      expect(abandoned.signal.aborted).toBe(true)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('never signals when the work wins the race', async () => {
-    const onTimeout = vi.fn()
-    await expect(withMemoryTimeout(Promise.resolve(['fact']), [], 1000, 'memory', onTimeout)).resolves.toEqual([
-      'fact',
-    ])
-    expect(onTimeout).not.toHaveBeenCalled()
-  })
-
-  it('does not signal on failure — a failed retrieval is not an abandoned one', async () => {
-    const onTimeout = vi.fn()
-    await withMemoryTimeout(Promise.reject(new Error('db down')), [] as string[], 1000, 'memory', onTimeout)
-    expect(onTimeout).not.toHaveBeenCalled()
-  })
-
   it('swallows a late rejection so it cannot surface as an unhandled rejection', async () => {
     vi.useFakeTimers()
     try {

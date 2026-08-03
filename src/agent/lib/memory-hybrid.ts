@@ -145,10 +145,20 @@ export const MIN_RAW_FALLBACK_LEN = 2
  * Restores the behaviour the old embedding-failure fallback had for short
  * queries (Codex P2, PR #711): with no tokens AND no embedding, both arms would
  * otherwise go silent and a two-letter question like "মা" would find nothing.
- * Returns [] when the phrase is too short to be a filter at all.
+ *
+ * Edge punctuation is stripped first, because the owner types questions, not
+ * search terms: "মা?" would otherwise search for the literal substring `মা?`
+ * and miss every stored fact that simply says মা. Interior characters are left
+ * alone so `ORD-123` keeps its shape. Returns [] when what remains is too short
+ * to be a filter at all.
  */
 export function rawPhrasePatterns(query: string): string[] {
-  const phrase = query.trim().slice(0, 60)
+  // `\p{M}` again: without it the trailing matra of "মা" counts as punctuation
+  // and gets stripped, leaving a bare "ম" that matches the wrong things — the
+  // same Bangla trap as in cleanToken above.
+  const phrase = query
+    .replace(/^[^\p{L}\p{N}\p{M}]+|[^\p{L}\p{N}\p{M}]+$/gu, '')
+    .slice(0, 60)
   if (phrase.length < MIN_RAW_FALLBACK_LEN) return []
   return [`%${phrase}%`]
 }

@@ -96,16 +96,15 @@ export function applyMemoryBudget<T extends BudgetedItem>(
  * it is simply abandoned, and its rejection is swallowed so a late failure
  * cannot surface as an unhandled rejection after the turn moved on.
  *
- * `onTimeout` fires the moment the deadline passes, so abandoned work can tell
- * that it lost the race and skip side effects the turn will never see (Codex P2,
- * PR #711 — memory that was never injected must not be marked as used).
+ * Callers that have side effects must therefore keep them OUT of the raced work
+ * and perform them after this resolves (Codex P2, PR #711 — memory that was
+ * never injected must not be marked as used).
  */
 export async function withMemoryTimeout<T>(
   work: Promise<T>,
   fallback: T,
   ms = MEMORY_RETRIEVAL_TIMEOUT_MS,
   label = 'memory',
-  onTimeout?: () => void,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const guarded = work.catch((err) => {
@@ -118,7 +117,6 @@ export async function withMemoryTimeout<T>(
       new Promise<T>((resolve) => {
         timer = setTimeout(() => {
           console.warn(`[${label}] retrieval exceeded ${ms}ms — turn runs without it`)
-          onTimeout?.()
           resolve(fallback)
         }, ms)
       }),
