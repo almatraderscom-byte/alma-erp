@@ -4,22 +4,36 @@
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
   "riskTier": "low",
   "extends": "alma-base",
   "whenNotToUse": "Actually clearing space by moving or trashing files → mac-file-organizer. A picture of the screen → screenshot-annotate-share. Anything about the VPS or the website — this is his laptop only.",
-  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_agent_status", "mac_desk_control"],
-  "dependencies": { "capability": ["run_mac_command"] },
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status",
+    "mac_desk_control"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
   "outputContract": {
     "kind": "health_report",
-    "mustInclude": ["disk_free", "battery", "biggest_consumers", "daemon_state"]
+    "mustInclude": [
+      "what_was_measured",
+      "the_numbers",
+      "what_was_not_checked"
+    ]
   },
   "stopConditions": [
     "কোনো সংখ্যা টুল থেকে পাওয়া যায়নি — আন্দাজে বলা নয়",
     "Mac অফলাইন",
     "কিছু ঠিক করতে হবে — এই skill শুধু দেখে, বদলায় না"
   ],
-  "done": [{ "tool": "run_mac_command" }],
   "networkPolicy": "none",
   "writePolicy": "none",
   "approvalPolicy": "inherit",
