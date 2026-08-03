@@ -31,8 +31,15 @@ Boss-কে বলো `brew install qpdf` তাঁর নিজের টার
 - **পাতা বের করা:** `qpdf IN.pdf --pages IN.pdf 3-7 -- OUT-3to7.pdf`
 - **প্রতি পাতা আলাদা:** `qpdf --split-pages IN.pdf OUT-page.pdf`
 - **ছোট করা:** `sips -s format pdf --setProperty formatOptions 60 IN.pdf --out OUT-small.pdf`
-- **লেখা বের করা:** `textutil -convert txt IN.pdf -output OUT.txt` (স্ক্যান করা
-  PDF-এ কাজ করবে না — সেখানে লেখা নেই, ছবি আছে; সেটা সৎভাবে বলো)
+- **লেখা বের করা:** `textutil` **PDF পড়তে পারে না** — ওটা rtf/doc/html-এর টুল,
+  PDF দিলে ব্যর্থ হবে। দুইটা পথ, এই ক্রমে:
+  1. `pdftotext IN.pdf OUT.txt` — সবচেয়ে ভালো, কিন্তু poppler লাগে
+     (`which pdftotext` দিয়ে দেখে নাও; না থাকলে ২ নম্বর);
+  2. `mdls -raw -name kMDItemTextContent IN.pdf` — macOS-এর Spotlight নিজেই
+     PDF-এর লেখা তুলে রাখে, তাই কিছু ইনস্টল ছাড়াই চলে। ফাইলটা index না হলে
+     খালি আসবে — তখন সেটাই বলো।
+  **স্ক্যান করা PDF-এ কোনো পথেই লেখা মিলবে না** (ওখানে লেখা নেই, ছবি আছে) —
+  সেটা সৎভাবে বলো, OCR-এর ভান কোরো না।
 
 ## এই skill-এর নিজের নিষেধ
 

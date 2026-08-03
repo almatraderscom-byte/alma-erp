@@ -71,6 +71,12 @@ describe('PDF work', () => {
     expect(applyRules('pdf theke lekha ber koro')?.skill).toBe('pdf-processor')
   })
 
+  // Codex: an existing FILE that happens to be called a client report is still
+  // a file. The veto needs a creation verb, not the phrase alone.
+  it('still processes a file whose name contains "client report"', () => {
+    expect(applyRules('client report pdf ta choto koro')?.skill).toBe('pdf-processor')
+  })
+
   it('does not take PDF GENERATION from our own data', () => {
     expect(applyRules('client report pdf banao')).toBeNull()
     expect(applyRules('ekta invoice banao')).toBeNull()
