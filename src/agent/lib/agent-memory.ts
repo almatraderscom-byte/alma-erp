@@ -296,11 +296,16 @@ export async function retrieveRelevantMemories(
   personalMode: boolean,
   businessId: AgentBusinessId,
 ): Promise<RelevantMemory[]> {
+  // If the deadline passes, the abandoned work keeps running — this lets it
+  // learn that its result was thrown away, so it does not record memories as
+  // "used" that the turn never saw (Codex P2, PR #711).
+  const abandoned = new AbortController()
   return withMemoryTimeout(
-    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId),
+    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId, abandoned.signal),
     [],
     MEMORY_RETRIEVAL_TIMEOUT_MS,
     'agent-memory',
+    () => abandoned.abort(),
   )
 }
 
@@ -308,6 +313,7 @@ async function retrieveRelevantMemoriesUnbounded(
   userMessage: string,
   personalMode: boolean,
   businessId: AgentBusinessId,
+  abandoned?: AbortSignal,
 ): Promise<RelevantMemory[]> {
   try {
     const accessClause = buildMemoryAccessClause(personalMode, businessId)
@@ -364,10 +370,15 @@ async function retrieveRelevantMemoriesUnbounded(
 
     const budgeted = applyMemoryBudget(scored, { maxItems: MEMORY_MAX_ITEMS })
 
-    try {
-      await reinforceMemoriesOnUse(budgeted.kept.map((m) => m.id))
-    } catch (err) {
-      console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
+    // Reinforcement means "the head actually saw this" — it lifts recency and
+    // therefore future ranking. If the turn already gave up on us, nothing was
+    // seen, so recording use would quietly promote memories that were never read.
+    if (!abandoned?.aborted) {
+      try {
+        await reinforceMemoriesOnUse(budgeted.kept.map((m) => m.id))
+      } catch (err) {
+        console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
+      }
     }
 
     return [
