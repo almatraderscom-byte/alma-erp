@@ -653,7 +653,9 @@ struct AgentLiveDockSheet: View {
             // The Mac stopped broadcasting (stream ended, broadcaster died):
             // control has nothing to act on, so it must not look armed.
             if now == nil {
-                if control.armed { Task { await control.disarm(reason: "লাইভ ভিউ বন্ধ — কন্ট্রোলও বন্ধ।") } }
+                if control.armed {
+                    Task { await control.disarm(reason: MacRemoteControlStore.autoDisarmStreamBn) }
+                }
                 macSession.leave()
             }
         }
