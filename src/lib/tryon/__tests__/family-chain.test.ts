@@ -413,7 +413,9 @@ describe('single rescene chain', () => {
       modelRole: 'son',
       backgroundPrompt: 'clean owner-selected warm studio',
     })
-    const first = actions.find((a) => a.id === pendingActionId)!
+    const prep = actions.find((a) => a.id === pendingActionId)!
+    expect(prep.payload.provider).toBe('garment_prep')
+    const first = await passPrep()
     expect(first.payload.provider).toBe('fashn')
 
     const nextId = await completeStep(first, 'generated/tryon.png')
@@ -442,7 +444,9 @@ describe('single rescene chain', () => {
         productImagePath: 'uploads/panjabi.jpg',
         modelImagePath: 'models/owner.jpg',
       })
-      const first = actions.find((a) => a.id === pendingActionId)!
+      const prep = actions.find((a) => a.id === pendingActionId)!
+      expect(prep.status).toBe('preview_approved')
+      const first = await passPrep()
       expect(first.status).toBe('preview_approved')
       const nextId = await completeStep(first, 'generated/tryon.png')
       const rescene = actions.find((a) => a.id === nextId)!
@@ -461,7 +465,9 @@ describe('single rescene chain', () => {
       resolution: '4k',
       imageModel: 'gpt-image-2',
     })
-    const first = actions.find((a) => a.id === pendingActionId)!
+    const prep = actions.find((a) => a.id === pendingActionId)!
+    expect(prep.payload.provider).toBe('garment_prep')
+    const first = await passPrep()
     expect((first.payload.referenceContract as Record<string, unknown>).actualModel).toBe('tryon-max')
     const nextId = await completeStep(first, 'generated/tryon.png')
     const rescene = actions.find((a) => a.id === nextId)!
@@ -627,6 +633,27 @@ describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
 // ── supplier-photo garment prep (owner 2026-07-17) ───────────────────────────
 
 describe('garment_prep step — reseller photos, never garment-only', () => {
+  it('single on-model supplier reference is normalized and tagged for FAL extraction', async () => {
+    await startSingleRescueChain({
+      productImagePath: 'uploads/worn-kids-panjabi.jpg',
+      modelImagePath: 'models/son.jpg',
+      modelRole: 'son',
+      vtonEngine: 'fal_fashn_v16',
+    })
+    const prep = lastAction()
+    expect(prep.payload.provider).toBe('garment_prep')
+
+    const nextId = await completeStep(prep, '', {
+      garmentPrep: true,
+      adultGarmentPath: 'prepped/worn-kids-panjabi-p1.png',
+      childGarmentPath: null,
+    })
+    const tryon = actions.find((a) => a.id === nextId)!
+    expect(tryon.payload.productImagePath).toBe('prepped/worn-kids-panjabi-p1.png')
+    expect(tryon.payload.garmentPhotoType).toBe('model')
+    expect(tryon.payload.falEndpointId).toBe('fal-ai/fashn/tryon/v1.6')
+  })
+
   it('prep runs FIRST and real child crop drops the AI child_garment step', async () => {
     seedModels(['father', 'son'])
     await startFamilyChain({

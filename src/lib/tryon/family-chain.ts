@@ -843,8 +843,17 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   return { jobs: [job], sceneLabel: picked.scene.label }
 }
 
-/** 2-step chain for a single FASHN try-on: accurate garment first, then a
- * Bangladeshi background swap so no two runs look the same. */
+/** Single-person production chain: normalize the supplier reference first,
+ * then run the dedicated VTON engine and finally the requested re-scene.
+ *
+ * ALMA's catalogue references are commonly on-model reseller photos rather
+ * than flat garment packshots. Skipping garment_prep for a photo merely
+ * classified as `kids_panjabi`/`panjabi` made FASHN interpret the visible
+ * wearer (and even a hand resting on their shoulder) as garment pixels. The
+ * resulting embroidery/body corruption could not be repaired safely later.
+ * garment_prep is local/free for signed runs and also marks a successful crop
+ * as garmentPhotoType:model; flat-lay inputs simply fall back to the original.
+ */
 export async function startSingleRescueChain(opts: {
   productImagePath: string
   modelImagePath: string
@@ -880,9 +889,7 @@ export async function startSingleRescueChain(opts: {
     adultRole: 'father',
     singleModelRole: opts.modelRole ?? undefined,
     adultModelPath: opts.modelImagePath,
-    plan: attrs.garmentType === 'family_matching_set' || attrs.garmentType === 'unknown'
-      ? ['garment_prep', 'adult_tryon', 'rescene']
-      : ['adult_tryon', 'rescene'],
+    plan: ['garment_prep', 'adult_tryon', 'rescene'],
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
     pipelineMode: opts.pipelineMode,

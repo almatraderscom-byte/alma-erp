@@ -53,6 +53,7 @@ import {
   PREVIEW_WORKER_SCOPE,
   PREVIEW_WORKER_SCOPE_HEADER,
   selectPreviewImageJob,
+  terminalPreviewImageQcFailure,
 } from './preview-image-e2e.mjs'
 
 const PREVIEW_E2E_APP_URL = String(process.env.WORKER_PREVIEW_E2E_APP_URL ?? '').trim().replace(/\/$/, '')
@@ -1213,6 +1214,8 @@ async function runPreviewImageE2e() {
       if (previewE2eReportedResult?.status !== 'success') {
         throw new Error(`preview_image_generation_failed:${previewE2eReportedResult?.error ?? 'missing_success_callback'}`)
       }
+      const qcFailure = terminalPreviewImageQcFailure(job.payload, previewE2eReportedResult)
+      if (qcFailure) throw new Error(qcFailure)
       console.log(`[preview-e2e] action ${job.id} completed successfully`)
       processedJobs += 1
       // The successful callback may enqueue a hidden garment-prep/rescene/QC
