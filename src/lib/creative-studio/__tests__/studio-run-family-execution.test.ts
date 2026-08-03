@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({
   modelPaths: new Map<string, { imagePath: string; role: string }>(),
   referenceScopes: new Map<string, { referenceKind: 'product' | 'model'; sourcePath: string }>(),
-  scopeChecks: [] as string[],
+  scopeChecks: [] as Array<{
+    id: string
+    legacyModelActor?: { userId: string; erpRole: string }
+  }>,
 }))
 
 vi.mock('@/lib/prisma', () => ({
@@ -13,7 +16,7 @@ vi.mock('@/lib/prisma', () => ({
         id: 'owner-1',
         name: 'Owner',
         email: 'owner@example.com',
-        role: 'OWNER',
+        role: 'SUPER_ADMIN',
       }),
     },
     creativeProject: {
@@ -45,10 +48,18 @@ vi.mock('@/lib/creative-studio/studio-access', () => ({
 }))
 
 vi.mock('@/lib/creative-studio/studio-resource-scope', () => ({
-  assertStudioResourceScope: async (kind: string, id: string) => {
-    state.scopeChecks.push(id)
+  assertStudioResourceScope: async (
+    kind: string,
+    id: string,
+    _expected: unknown,
+    options?: { legacyModelActor?: { userId: string; erpRole: string } },
+  ) => {
+    state.scopeChecks.push({ id, legacyModelActor: options?.legacyModelActor })
     if (kind === 'reference') {
       return state.referenceScopes.get(id) ?? null
+    }
+    if (!options?.legacyModelActor) {
+      throw Object.assign(new Error('model_scope_mismatch'), { status: 403 })
     }
     return { version: 1 }
   },
@@ -163,7 +174,16 @@ describe('family pins at the execution boundary', () => {
     })).resolves.toEqual(expect.objectContaining({
       receiptId: claims.receiptId,
     }))
-    expect(state.scopeChecks).toEqual(['model-father', 'model-son'])
+    expect(state.scopeChecks).toEqual([
+      {
+        id: 'model-father',
+        legacyModelActor: { userId: 'owner-1', erpRole: 'SUPER_ADMIN' },
+      },
+      {
+        id: 'model-son',
+        legacyModelActor: { userId: 'owner-1', erpRole: 'SUPER_ADMIN' },
+      },
+    ])
 
     state.modelPaths.set('model-son', {
       imagePath: 'models/reassigned-son.jpg',

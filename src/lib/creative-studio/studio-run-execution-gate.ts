@@ -23,6 +23,7 @@ import {
   CS_XAI_ENABLED_KEY,
 } from '@/lib/creative-studio/provider-registry'
 import { readKv } from '@/lib/creative-studio/taste'
+import { isSystemOwner } from '@/lib/roles'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -266,6 +267,11 @@ export async function assertStudioRunExecutionGate(input: {
   if (access.ownerId !== claims.scope.ownerId || access.role !== claims.scope.role) {
     throw new StudioAccessError('studio_run_access_changed', 403)
   }
+  const legacyModelActor = access.role === 'owner'
+    && access.ownerId === actor.userId
+    && isSystemOwner(actor.erpRole)
+    ? { userId: actor.userId, erpRole: actor.erpRole }
+    : undefined
   const project = await db.creativeProject.findFirst({
     where: {
       id: claims.scope.projectId,
@@ -281,7 +287,7 @@ export async function assertStudioRunExecutionGate(input: {
       ownerId: access.ownerId,
       brandProfileId: claims.scope.brandProfileId,
       projectId: claims.scope.projectId,
-    })
+    }, { legacyModelActor })
     const model = await db.agentBrandModel.findUnique({
       where: { id: pin.modelId },
       select: { imagePath: true, role: true },
