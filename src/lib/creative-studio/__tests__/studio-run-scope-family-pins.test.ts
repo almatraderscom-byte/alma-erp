@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   roleLookups: [] as string[],
   scopedModels: [] as string[],
   legacyProduct: false,
+  legacySignedProduct: false,
 }))
 
 vi.mock('@/lib/prisma', () => ({
@@ -15,9 +16,11 @@ vi.mock('@/lib/prisma', () => ({
         brandProfileId: 'brand-1',
         archivedAt: null,
         productCode: 'AL-101',
-        productSourceImage: state.legacyProduct
-          ? '/agent/product-images/AL-101'
-          : 'products/al-101.jpg',
+        productSourceImage: state.legacySignedProduct
+          ? 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/AL-101/1.jpg?token=expired'
+          : state.legacyProduct
+            ? '/agent/product-images/AL-101'
+            : 'products/al-101.jpg',
       }),
     },
     creativeProjectAsset: {
@@ -120,6 +123,7 @@ beforeEach(() => {
   state.roleLookups.length = 0
   state.scopedModels.length = 0
   state.legacyProduct = false
+  state.legacySignedProduct = false
 })
 
 describe('server-derived family run scope', () => {
@@ -234,5 +238,25 @@ describe('server-derived family run scope', () => {
       productId: 'AL-101',
       productImagePath: '/agent/product-images/AL-101',
     })).rejects.toThrow('source_lineage_scope_mismatch')
+  })
+
+  it('recovers and scopes the exact object path from an expired project URL', async () => {
+    state.legacySignedProduct = true
+    const scoped = await resolveScopedStudioRun({
+      userId: 'owner-1',
+      name: 'Owner',
+      email: 'owner@example.com',
+      erpRole: 'OWNER',
+    }, {
+      mode: 'try_on',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'AL-101',
+      productImagePath: 'product-images/alma-lifestyle/AL-101/1.jpg',
+    })
+
+    expect(scoped.request.productImagePath).toBe(
+      'product-images/alma-lifestyle/AL-101/1.jpg',
+    )
   })
 })

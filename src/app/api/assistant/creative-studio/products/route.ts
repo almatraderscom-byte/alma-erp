@@ -12,6 +12,7 @@ import {
 } from '@/agent/lib/catalog/product-images'
 import { DEFAULT_CATALOG_BUSINESS } from '@/agent/lib/catalog/inventory-lookup'
 import {
+  canonicalStudioProductStoragePath,
   hydrateLegacyStudioProduct,
   isLegacyStudioProductPath,
   studioProductPreviewUrl,
@@ -40,6 +41,12 @@ export async function GET(req: NextRequest) {
     const products = await searchErpProducts(req.nextUrl.searchParams.get('q') ?? '')
     const hydratedProducts = await Promise.all(products.map(async (product) => {
       if (!isLegacyStudioProductPath(product.sourceImage)) return product
+      // A persisted Supabase signed URL already carries the exact private object
+      // path. Recover it directly; an unrelated business-filtered catalog lookup
+      // must not erase that authoritative lineage when its cache row is missing.
+      if (canonicalStudioProductStoragePath(product.sourceImage)) {
+        return hydrateLegacyStudioProduct(product, null)
+      }
       try {
         const [catalogImage] = await listProductImages(
           product.code,

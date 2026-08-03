@@ -5,6 +5,32 @@ export type StudioCatalogProductImage = {
   url: string | null
 }
 
+const PRODUCT_STORAGE_PREFIX = 'product-images/'
+
+/**
+ * Recover the stable private-object path from an older persisted Supabase URL.
+ * These URLs expire, but the bucket/object lineage embedded in their pathname is
+ * still authoritative for the exact project product and can be signed again.
+ */
+export function canonicalStudioProductStoragePath(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim()
+  if (!normalized) return null
+  if (normalized.startsWith(PRODUCT_STORAGE_PREFIX)) return normalized
+  try {
+    const url = new URL(normalized)
+    const match = url.pathname.match(
+      /^\/storage\/v1\/object\/(?:sign|public)\/agent-files\/(product-images\/.*)$/i,
+    )
+    if (!match?.[1]) return null
+    const decoded = decodeURIComponent(match[1])
+    return decoded.startsWith(PRODUCT_STORAGE_PREFIX) ? decoded : null
+  } catch {
+    return null
+  }
+}
+
 export function isLegacyStudioProductPath(value: string | null | undefined): boolean {
   const normalized = value?.trim()
   if (!normalized) return false
@@ -39,9 +65,10 @@ export function hydrateLegacyStudioProduct(
   catalogImage: StudioCatalogProductImage | null | undefined,
 ): StudioProductOption {
   if (!isLegacyStudioProductPath(product.sourceImage)) return product
+  const canonicalSource = canonicalStudioProductStoragePath(product.sourceImage)
   return {
     ...product,
-    sourceImage: catalogImage?.storagePath ?? null,
+    sourceImage: canonicalSource ?? catalogImage?.storagePath ?? null,
     previewImage: catalogImage?.url ?? null,
   }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canonicalStudioProductStoragePath,
   hydrateLegacyStudioProduct,
   isLegacyStudioProductPath,
   studioProductPreviewUrl,
@@ -35,6 +36,18 @@ describe('Studio product generation source', () => {
       storagePath: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
       url: 'https://fresh.example/133-kids',
     }).sourceImage).toBe('product-images/alma-lifestyle/133-KIDS/1.jpg')
+  })
+
+  it('recovers the exact stable object path from an expired signed URL without a catalog row', () => {
+    const sourceImage = 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/133-KIDS/1.jpg?token=expired'
+    expect(canonicalStudioProductStoragePath(sourceImage)).toBe(
+      'product-images/alma-lifestyle/133-KIDS/1.jpg',
+    )
+    expect(hydrateLegacyStudioProduct({ ...legacyProduct, sourceImage }, null)).toEqual({
+      ...legacyProduct,
+      sourceImage: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
+      previewImage: null,
+    })
   })
 
   it('fails closed when the legacy SKU has no healthy catalog image', () => {

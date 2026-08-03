@@ -18,7 +18,10 @@ import { getModelByRole } from '@/lib/tryon/model-library'
 import { resolvePersonRef } from '@/lib/tryon/model-avatar'
 import { listProductImages } from '@/agent/lib/catalog/product-images'
 import { DEFAULT_CATALOG_BUSINESS } from '@/agent/lib/catalog/inventory-lookup'
-import { isLegacyStudioProductPath } from '@/lib/creative-studio/studio-product-source'
+import {
+  canonicalStudioProductStoragePath,
+  isLegacyStudioProductPath,
+} from '@/lib/creative-studio/studio-product-source'
 
 // Kept structural so this boundary can ship without regenerating Prisma in UI-only
 // worktrees that consume the already-accepted Foundation schema.
@@ -144,12 +147,19 @@ export async function resolveScopedStudioRun(
   const referencePins: StudioRunReferencePin[] = []
   if (project.productSourceImage) {
     if (isLegacyStudioProductPath(String(project.productSourceImage)) && project.productCode) {
-      const [catalogImage] = await listProductImages(
-        String(project.productCode),
-        DEFAULT_CATALOG_BUSINESS,
-        1,
+      const canonicalSource = canonicalStudioProductStoragePath(
+        String(project.productSourceImage),
       )
-      if (catalogImage?.storagePath) allowedPaths.add(catalogImage.storagePath)
+      if (canonicalSource) {
+        allowedPaths.add(canonicalSource)
+      } else {
+        const [catalogImage] = await listProductImages(
+          String(project.productCode),
+          DEFAULT_CATALOG_BUSINESS,
+          1,
+        )
+        if (catalogImage?.storagePath) allowedPaths.add(catalogImage.storagePath)
+      }
     } else {
       allowedPaths.add(String(project.productSourceImage))
     }
