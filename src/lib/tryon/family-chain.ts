@@ -118,6 +118,8 @@ export type FamilyChainState = {
   imageModel?: GenericImageModel
   /** owner's optional free-text direction, carried into generation prompts */
   extraPrompt?: string
+  /** Receipt-pinned quality policy for every paid step and QC retry. */
+  pipelineMode?: 'preview' | 'production'
   /** CS9 — owner opted into protected compositing (no face/garment regen) */
   protectedComposite?: boolean
   /**
@@ -147,6 +149,7 @@ const WHITE_PAJAMA_SHORT =
 const IDENTITY_GUARD =
   "Preserve each person's face, age, skin tone, hair and body EXACTLY as in their reference image — no beautification, no face changes. " +
   'Keep every garment pixel-faithful: color, fabric, embroidery pattern, motif placement, collar, buttons and length must not change. ' +
+  'Do not invent tattoos, body art, scars, jewelry, watches, accessories or skin markings that are absent from the person reference. ' +
   'AVOID: plastic AI skin, warped hands or fingers, distorted faces, redesigned or simplified embroidery, text artifacts.'
 
 function chainSummary(state: FamilyChainState, step: ChainStepKind): string {
@@ -199,10 +202,12 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
   const base = {
     familyChain: state,
     creativeStudio: true,
+    chainInternal: state.stepIndex < state.plan.length - 1,
     skipTelegramCard: true,
     studioMode: state.variant === 'single' ? 'try_on' : 'product_to_model',
     familyPreset: state.variant,
     conversationId: state.conversationId ?? null,
+    pipelineMode: state.pipelineMode,
   }
   const pajama = isPanjabiTop(state.garmentType) ? WHITE_PAJAMA_SHORT : ''
   const genericLineage = state.imageModel
@@ -530,20 +535,39 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           ...base,
           ...genericLineage,
           prompt: [
-            'TASK: replace ONLY the background of this finished fashion photo.',
-            'Keep the person and the garment EXACTLY as shown — face, pose, body, fabric, embroidery, colors all pixel-faithful. Do not re-render or "improve" the person.',
+            'TASK: create the final production fashion image from THREE ordered references.',
+            'Image 1 is the completed virtual try-on. Image 2 is the ORIGINAL selected person. Image 3 is the ORIGINAL product garment.',
+            'Keep the garment pixel-faithful to Image 3: exact color, fabric, embroidery, motif placement, collar, buttons, sleeve and length. Do not redesign it.',
+            'Keep the person faithful to Image 2: same face, age, skin tone, hair, body and hands. Remove any tattoo, body art, scar, jewelry, watch, accessory or skin marking that is not present in Image 2.',
             `NEW BACKGROUND — ${state.scene.scenePrompt}`,
             'Re-light globally so the person sits naturally in the new scene (matching light direction and warmth), with believable ground contact/shadow.',
+            state.extraPrompt ?? '',
             'Photorealistic, e-commerce ready.',
-          ].join(' '),
+          ].filter(Boolean).join(' '),
           quality: 'pro',
+          // Keep the historical primary field for older readers; the ordered
+          // array is authoritative and transports all three references.
           referenceImageId: state.adultImagePath,
+          referenceImageIds: [state.adultImagePath, state.adultModelPath, state.productImagePath],
           referenceContract: genericReferenceContract('edit', [{
             role: 'source',
             path: state.adultImagePath ?? '',
             source: 'derived',
             required: true,
+          }, {
+            role: 'person',
+            path: state.adultModelPath,
+            source: 'saved_model',
+            required: true,
+          }, {
+            role: 'product',
+            path: state.productImagePath,
+            source: 'uploaded',
+            required: true,
           }]),
+          qcProductImagePath: state.productImagePath,
+          qcPersonImagePath: state.adultModelPath,
+          qcSurface: 'single_tryon',
           controlContract: genericControlContract(state.resolution, state.aspectRatio),
           aspectRatio: state.aspectRatio,
           imageSize: state.resolution.toUpperCase(),
@@ -600,6 +624,32 @@ async function createStepAction(state: FamilyChainState, step: ChainStepKind): P
   return row.id as string
 }
 
+/** Keep the canonical project asset pointed at the current chain head. */
+async function rebindProjectAssetsToChainHead(fromActionId: string, toActionId: string): Promise<void> {
+  if (!fromActionId || !toActionId || fromActionId === toActionId || !db.creativeProjectAsset) return
+  const assets = await db.creativeProjectAsset.findMany({
+    where: { pendingActionId: fromActionId },
+    select: { id: true, projectId: true },
+  }) as Array<{ id: string; projectId: string }>
+  for (const asset of assets) {
+    const conflict = await db.creativeProjectAsset.findFirst({
+      where: { projectId: asset.projectId, pendingActionId: toActionId },
+      select: { id: true },
+    })
+    if (conflict && conflict.id !== asset.id) continue
+    await db.$transaction([
+      db.creativeProjectAsset.update({
+        where: { id: asset.id },
+        data: { pendingActionId: toActionId },
+      }),
+      db.creativeAssetVersion.updateMany({
+        where: { assetId: asset.id, jobId: fromActionId },
+        data: { jobId: toActionId },
+      }),
+    ])
+  }
+}
+
 // ── Chain start ───────────────────────────────────────────────────────────────
 
 const VARIANT_ROLES: Record<FamilyChainVariant, { adult: 'father' | 'mother'; child: 'son' | 'daughter' | 'mother' }> = {
@@ -621,6 +671,7 @@ export type StartFamilyChainInput = {
   generationMode?: string
   imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   /** CS9 — protected compositing: no face/garment regeneration in the merge */
   protectedComposite?: boolean
   /** VTON engine for the chain's try-on steps ('fal_fashn_v16' = no direct-FASHN credits needed) */
@@ -674,6 +725,7 @@ async function startPairChain(opts: {
   generationMode: string
   imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   protectedComposite?: boolean
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
@@ -711,6 +763,7 @@ async function startPairChain(opts: {
     plan,
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    pipelineMode: opts.pipelineMode,
     protectedComposite: opts.protectedComposite,
     vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio,
@@ -765,6 +818,7 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
     generationMode: input.generationMode ?? 'quality',
     imageModel: input.imageModel,
     extraPrompt: input.extraPrompt,
+    pipelineMode: input.pipelineMode,
     protectedComposite: input.protectedComposite,
     vtonEngine: input.vtonEngine,
     conversationId: input.conversationId ?? null,
@@ -793,6 +847,7 @@ export async function startSingleRescueChain(opts: {
   generationMode?: string
   imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
@@ -816,6 +871,7 @@ export async function startSingleRescueChain(opts: {
       : ['adult_tryon', 'rescene'],
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    pipelineMode: opts.pipelineMode,
     vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio ?? '4:5',
     resolution: opts.resolution ?? '2k',
@@ -1030,7 +1086,9 @@ export async function advanceFamilyChain(
     const nextStep = state.plan[nextIndex]
     if (!nextStep) return null
     next.stepIndex = nextIndex
-    return await createStepAction(next, nextStep)
+    const nextId = await createStepAction(next, nextStep)
+    await rebindProjectAssetsToChainHead(String(action.id ?? ''), nextId)
+    return nextId
   } catch (err) {
     console.error('[family-chain] advance failed:', err instanceof Error ? err.message : err)
     return null

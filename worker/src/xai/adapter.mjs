@@ -291,9 +291,10 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
 
   let qc = null
   try {
-    const { fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
+    const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
     const { getAppUrl, getInternalToken } = await import('../env.mjs')
-    const qcLevel = await fetchQcLevel(supabase)
+    const configuredQcLevel = await fetchQcLevel(supabase)
+    const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
     if (qcLevel !== 'off') {
       const qcResult = await runImageQcLoop({
         supabase,
@@ -306,6 +307,8 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         personImagePath: payload.referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
           ?? payload.modelImagePath
           ?? null,
+        surface: payload.studioMode === 'try_on' ? 'single_tryon' : undefined,
+        pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)

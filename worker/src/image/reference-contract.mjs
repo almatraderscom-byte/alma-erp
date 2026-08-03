@@ -51,8 +51,12 @@ export function validateOrderedReferenceContract(contract, {
 }
 
 export function requiredReferencePaths(payload) {
-  const paths = [payload?.referenceImageId, payload?.secondReferenceImageId]
+  const arrayPaths = Array.isArray(payload?.referenceImageIds)
+    ? payload.referenceImageIds
+    : null
+  const paths = (arrayPaths ?? [payload?.referenceImageId, payload?.secondReferenceImageId])
     .filter((path) => typeof path === 'string' && path.trim())
+  if (paths.length > 3) throw new Error(`reference limit exceeded: ${paths.length}`)
   const bindings = Array.isArray(payload?.referenceContract?.bindings)
     ? payload.referenceContract.bindings
     : null

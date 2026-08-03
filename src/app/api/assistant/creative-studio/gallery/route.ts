@@ -6,12 +6,14 @@ import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import {
   GALLERY_QC_FAILED_WHERE,
+  GALLERY_INTERNAL_ARTIFACT_WHERE,
   GALLERY_TEST_ARTIFACT_WHERE,
   buildGalleryCursorWhere,
   buildGalleryWhere,
   decodeGalleryCursor,
   encodeGalleryCursor,
   isGalleryTestArtifact,
+  isGalleryInternalArtifact,
   isGalleryQcFailed,
   normalizeGalleryFilters,
   normalizeGalleryLimit,
@@ -251,6 +253,7 @@ export async function GET(req: NextRequest) {
   // scrolling. `page`/skip remains as a backwards-compatible fallback.
   const legacySkip = cursor ? 0 : (page - 1) * limit
   const exclusionPredicates: Array<Record<string, unknown>> = []
+  exclusionPredicates.push(GALLERY_INTERNAL_ARTIFACT_WHERE)
   if (!filters.includeTest) exclusionPredicates.push(GALLERY_TEST_ARTIFACT_WHERE)
   if (filters.state === 'ready') exclusionPredicates.push(GALLERY_QC_FAILED_WHERE)
 
@@ -296,6 +299,7 @@ export async function GET(req: NextRequest) {
       if (batch.length === 0) break
 
       for (const row of batch) {
+        if (isGalleryInternalArtifact(row)) continue
         if (!filters.includeTest && isGalleryTestArtifact(row)) continue
         if (filters.state === 'ready' && isGalleryQcFailed(row)) continue
         if (visibleSkipped < legacySkip) {

@@ -12,6 +12,7 @@ import {
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
 import {
+  buildTryOnPrompt,
   getOrClassifyGarment,
   mapGarmentToVtonClothType,
   mapGarmentToFashnCategory,
@@ -133,6 +134,9 @@ export type CreativeStudioRunInput = {
   familyPreset?: FamilyPresetId
   prompt?: string
   backgroundPrompt?: string
+  pipelineMode?: 'preview' | 'production'
+  /** Server-resolved project product name; caller input is overwritten. */
+  productName?: string
   aspectRatio?: string
   resolution?: FashnResolution
   generationMode?: FashnGenerationMode
@@ -259,6 +263,7 @@ async function mergeGenericApprovedPayload(input: {
     aspectRatio: input.aspectRatio,
     requestedResolution: input.resolution,
     requestedAspectRatio: input.aspectRatio,
+    pipelineMode: input.run.pipelineMode,
     ...input.extraPayload,
     familyPreset: input.familyPreset,
     referenceContract,
@@ -849,6 +854,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       resolution: chainResolution,
       generationMode: input.generationMode,
       extraPrompt: [input.prompt, input.backgroundPrompt].filter(Boolean).join('. ') || undefined,
+      pipelineMode: input.pipelineMode,
       // CS9 — owner opt-in: deterministic protected composite instead of the
       // generative pair/group merge (no face/garment regeneration).
       protectedComposite: input.protectedComposite,
@@ -1010,7 +1016,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
 
     // CS8 — owner-tunable Preview/Production plan (bounded paid generations).
-    const plan = buildRunPlan(await readPipelineMode())
+    const plan = buildRunPlan(input.pipelineMode ?? await readPipelineMode())
 
     const engine = getEngine(input.vtonEngine)
     const referenceContract = makeReferenceContract({
@@ -1135,6 +1141,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           resolution: truthful.resolution,
           generationMode: input.generationMode,
           extraPrompt: extraPrompt || undefined,
+          pipelineMode: input.pipelineMode,
           vtonEngine: chainVtonEngine,
           imageModel: rescueImageModel,
           conversationId: null,
@@ -1206,6 +1213,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
             : []),
           // CS8 — scene/pose lineage for diversity control
           sceneRef: picked ? toSceneRef(picked) : undefined,
+          pipelineMode: input.pipelineMode,
         },
         summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (FASHN)`,
         costEstimate: estimateDirectFashnCostUsd({
@@ -1313,6 +1321,10 @@ export async function runAutoStudio(input: {
   modelId: string
   includeFamily?: boolean
   includeReel?: boolean
+  prompt?: string
+  backgroundPrompt?: string
+  pipelineMode?: 'preview' | 'production'
+  productName?: string
   pinnedAutoEngine?: StudioEngineId
   pinnedGenericImageModel?: GenericImageModel
   pinnedChainVtonEngine?: 'fashn' | 'fal_fashn_v16'
@@ -1323,6 +1335,26 @@ export async function runAutoStudio(input: {
 
   const defaultModel = await resolveModel(input.modelId)
   if (!defaultModel) throw new Error('no_default_model')
+
+  const attrs = await getOrClassifyGarment(productImagePath)
+  const productLooksKids = /\b(kids?|boy|girl|child)\b/i.test(input.productName ?? '')
+    || attrs.garmentType === 'kids_panjabi'
+    || attrs.suggestedRole === 'son'
+  if (productLooksKids && defaultModel.role !== 'son' && defaultModel.role !== 'daughter') {
+    throw new Error(defaultModel.role
+      ? 'kids_product_requires_child_model'
+      : 'kids_product_requires_labeled_child_model')
+  }
+  const ownerDirection = [input.prompt, input.backgroundPrompt]
+    .map((value) => value?.trim())
+    .filter(Boolean)
+    .join('. ')
+  const productionPrompt = buildTryOnPrompt({
+    attrs,
+    garmentType: attrs.garmentType,
+    modelNotes: defaultModel.notes,
+    extra: ownerDirection || undefined,
+  })
 
   // CS13.2 — owner default engine = Grok Imagine: the Auto solo shot runs the
   // xAI try-on brief (person + prepped garment refs). Family variants keep the
@@ -1368,6 +1400,9 @@ export async function runAutoStudio(input: {
       modelImagePath: defaultRef.path,
       avatarSheetPath: defaultRef.sheetPath,
       resolution: '2k',
+      prompt: productionPrompt,
+      backgroundPrompt: input.backgroundPrompt,
+      pipelineMode: input.pipelineMode,
       pinnedGenericImageModel: input.pinnedGenericImageModel,
       pinnedChainVtonEngine: input.pinnedChainVtonEngine,
     })
@@ -1377,6 +1412,8 @@ export async function runAutoStudio(input: {
       productImagePath,
       modelImagePath: defaultRef.path,
       generationMode: 'quality',
+      extraPrompt: productionPrompt,
+      pipelineMode: input.pipelineMode,
       vtonEngine: autoChainEngine,
       imageModel: autoGeneric.model,
       conversationId: null,
@@ -1408,6 +1445,9 @@ export async function runAutoStudio(input: {
             familyPreset: v as FamilyPresetId,
             productImagePath,
             resolution: '2k',
+            prompt: productionPrompt,
+            backgroundPrompt: input.backgroundPrompt,
+            pipelineMode: input.pipelineMode,
           })
           for (const j of pair.jobs) jobs.push(j)
           chainedVariants.push(v as ChatTryOnVariant)
@@ -1424,6 +1464,8 @@ export async function runAutoStudio(input: {
             variant: v,
             productImagePath,
             generationMode: 'quality',
+            extraPrompt: productionPrompt,
+            pipelineMode: input.pipelineMode,
             vtonEngine: autoChainEngine,
             imageModel: autoGeneric.model,
             conversationId: null,
@@ -1444,6 +1486,7 @@ export async function runAutoStudio(input: {
       productImagePath,
       modelId: defaultModel.id,
       variants,
+      extra: productionPrompt,
       conversationId: null,
       dedupePrefix: `studio-run:${execution.claims.receiptId}:auto`,
     })
@@ -1459,6 +1502,9 @@ export async function runAutoStudio(input: {
           aspectRatio: '4:5',
           resolution: '2k',
           generationMode: 'quality',
+          prompt: productionPrompt,
+          backgroundPrompt: input.backgroundPrompt,
+          pipelineMode: input.pipelineMode,
         },
         imageModel: autoGeneric.model,
         quality: 'pro',

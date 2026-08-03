@@ -238,9 +238,10 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
   // ── Best-effort QC gate (same designer score as the Gemini path) ───────────
   let qc = null
   try {
-    const { fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
+    const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
     const { getAppUrl, getInternalToken } = await import('../env.mjs')
-    const qcLevel = await fetchQcLevel(supabase)
+    const configuredQcLevel = await fetchQcLevel(supabase)
+    const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
     if (qcLevel !== 'off') {
       const productType = payload.contentPipeline?.productCode ?? null
       const productImagePath = pickGarmentPath(fashnInputs)
@@ -255,6 +256,8 @@ export async function processFashnImageGen({ supabase, pendingActionId, payload,
         productType,
         productImagePath,
         personImagePath,
+        surface: payload.studioMode === 'try_on' ? 'single_tryon' : undefined,
+        pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (_fixHint, attemptNum) => {
           regenAttempt = attemptNum

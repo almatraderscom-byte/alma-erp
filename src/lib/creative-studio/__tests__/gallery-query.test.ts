@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   GALLERY_TEST_ARTIFACT_WHERE,
+  GALLERY_INTERNAL_ARTIFACT_WHERE,
   buildGalleryCursorWhere,
   buildGalleryWhere,
   decodeGalleryCursor,
   encodeGalleryCursor,
   isGalleryTestArtifact,
+  isGalleryInternalArtifact,
   isGalleryQcFailed,
   mergeGalleryPage,
   normalizeGalleryFilters,
@@ -75,6 +77,13 @@ describe('Creative Studio Gallery query', () => {
     expect(isGalleryTestArtifact({ payload: { e2e: true }, summary: 'Fixture' })).toBe(true)
     expect(isGalleryTestArtifact({ payload: { videoName: 'E2E-reel-1' }, summary: 'Fixture' })).toBe(true)
     expect(isGalleryTestArtifact({ payload: {}, summary: 'E2E-gallery fixture' })).toBe(true)
+  })
+
+  it('hides only explicit chain internals and keeps final chain artifacts', () => {
+    expect(JSON.stringify(GALLERY_INTERNAL_ARTIFACT_WHERE)).toContain('chainInternal')
+    expect(isGalleryInternalArtifact({ payload: { chainInternal: true } })).toBe(true)
+    expect(isGalleryInternalArtifact({ payload: { chainInternal: false } })).toBe(false)
+    expect(isGalleryInternalArtifact({ payload: { creativeStudio: true } })).toBe(false)
   })
 
   it('classifies only explicit QC failures and preserves legacy executed rows', () => {

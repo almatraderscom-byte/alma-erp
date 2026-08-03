@@ -457,6 +457,9 @@ export function StudioV3ImageLab({
         productImagePath: productPath,
         productReferenceId: uploadedProductReferenceId || undefined,
         modelId: selectedModel.id,
+        prompt: prompt.trim() || undefined,
+        backgroundPrompt: BACKGROUND_PRESETS.find((item) => item.id === backgroundId)?.prompt || undefined,
+        pipelineMode: 'production',
         includeFamily,
         includeReel,
       }
@@ -1031,7 +1034,7 @@ export function StudioV3ImageLab({
                   <div className={styles.v4ComposerControls} aria-label="Auto image settings">
                     <button type="button"><StudioV3Icon name="image" />{data.config?.singleVtonDefault ?? 'Server default'}</button>
                     <button type="button">4:5</button>
-                    <button type="button">Server resolution</button>
+                    <button type="button">Strict production QC</button>
                     <label>
                       <input checked={includeFamily} onChange={(event) => setIncludeFamily(event.target.checked)} type="checkbox" />
                       Family
@@ -1273,6 +1276,7 @@ export function StudioV3ImageLab({
           <div><dt>Mode</dt><dd>{architecture === 'auto' ? 'server-selected Auto path' : mode}</dd></div>
           <div><dt>Engine</dt><dd>{reviewEstimate?.selection.provider ?? 'Waiting for server'}</dd></div>
           <div><dt>Exact model</dt><dd>{reviewEstimate?.selection.model ?? 'Waiting for server'}</dd></div>
+          <div><dt>QC policy</dt><dd>{reviewEstimate ? `Production · up to ${reviewEstimate.selection.paidAttemptLimit} paid attempt${reviewEstimate.selection.paidAttemptLimit === 1 ? '' : 's'}` : 'Waiting for server'}</dd></div>
           <div><dt>Resolution</dt><dd>{architecture === 'auto' ? 'server-selected' : resolutionState.kind === 'tiered' ? `${resolutionState.resolution?.toUpperCase()} requested; delivered pixels verified later` : resolutionState.labelBn}</dd></div>
           <div><dt>Exact authorized ceiling</dt><dd>{reviewEstimate ? `৳${reviewEstimate.estimateBdt.toLocaleString('en-BD')} of hard cap ৳${reviewEstimate.maxCostBdt.toLocaleString('en-BD')}` : 'No receipt issued'}</dd></div>
           <div><dt>Receipt expires</dt><dd>{reviewEstimate ? new Date(reviewEstimate.confirmBy).toLocaleTimeString('en-BD') : '—'}</dd></div>

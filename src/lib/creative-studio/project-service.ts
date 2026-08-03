@@ -580,7 +580,7 @@ export async function attachProjectAsset(
   try {
     const project = await requireOwnedProject(ownerId, projectId)
     const input = normalizeProjectAssetLinkInput(value)
-    const action = await db.agentPendingAction.findFirst({
+    let action = await db.agentPendingAction.findFirst({
       where: {
         id: input.pendingActionId,
         ...studioJobWhere(),
@@ -588,6 +588,35 @@ export async function attachProjectAsset(
     })
     if (!action) throw new ContentOsServiceError('studio_asset_not_found', 404)
 
+    // The worker can finish a fast chain step before the client performs this
+    // secondary catalog link. Resolve the latest signed head so the project
+    // never remains attached to an internal VTON artifact.
+    const chain = object(action.payload).familyChain
+    if (chain && typeof chain === 'object') {
+      const chainId = typeof (chain as AnyRecord).chainId === 'string'
+        ? String((chain as AnyRecord).chainId)
+        : ''
+      const receiptId = typeof object(object(action.payload).studioRunAuthorization).receiptId === 'string'
+        ? String(object(object(action.payload).studioRunAuthorization).receiptId)
+        : ''
+      if (chainId && receiptId) {
+        const heads = await db.agentPendingAction.findMany({
+          where: {
+            type: 'image_gen',
+            payload: { path: ['familyChain', 'chainId'], equals: chainId },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+        }) as AnyRecord[]
+        const latest = heads
+          .filter((candidate) => object(object(candidate.payload).studioRunAuthorization).receiptId === receiptId)
+          .sort((left, right) => Number(object(object(right.payload).familyChain).stepIndex ?? -1)
+            - Number(object(object(left.payload).familyChain).stepIndex ?? -1))[0]
+        if (latest) action = latest
+      }
+    }
+
+    const canonicalActionId = String(action.id)
     const recipeId = input.recipeId ?? project.currentRecipeId ?? null
     const recipe = recipeId
       ? await db.creativeBrandRecipe.findFirst({ where: ownedRecipeWhere(ownerId, recipeId) })
@@ -602,7 +631,7 @@ export async function attachProjectAsset(
     const versionData = versionDataFromAction(ownerId, action, recipe)
     const row = await db.$transaction(async (tx: typeof db) => {
       const existing = await tx.creativeProjectAsset.findFirst({
-        where: { projectId, pendingActionId: input.pendingActionId },
+        where: { projectId, pendingActionId: canonicalActionId },
       })
       const asset = existing
         ? await tx.creativeProjectAsset.update({
@@ -615,7 +644,7 @@ export async function attachProjectAsset(
         : await tx.creativeProjectAsset.create({
             data: {
               projectId,
-              pendingActionId: input.pendingActionId,
+              pendingActionId: canonicalActionId,
               assetType: assetTypeFromJob(action.type),
               title: input.title ?? (typeof action.summary === 'string' ? action.summary.slice(0, 160) : null),
               folder: input.folder || project.defaultFolder,
@@ -625,7 +654,7 @@ export async function attachProjectAsset(
           })
 
       const currentVersion = await tx.creativeAssetVersion.findFirst({
-        where: { assetId: asset.id, jobId: input.pendingActionId },
+        where: { assetId: asset.id, jobId: canonicalActionId },
       })
       const version = currentVersion
         ? await tx.creativeAssetVersion.update({

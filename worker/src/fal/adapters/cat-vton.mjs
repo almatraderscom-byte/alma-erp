@@ -159,9 +159,10 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
   // Best-effort bounded QC (same designer gate as the other engines).
   let qc = null
   try {
-    const { fetchQcLevel, runImageQcLoop } = await import('../../image-qc.mjs')
+    const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('../../image-qc.mjs')
     const { getAppUrl, getInternalToken } = await import('../../env.mjs')
-    const qcLevel = await fetchQcLevel(supabase)
+    const configuredQcLevel = await fetchQcLevel(supabase)
+    const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
     if (qcLevel !== 'off') {
       const qcResult = await runImageQcLoop({
         supabase,
@@ -172,6 +173,8 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
         productType: null,
         productImagePath,
         personImagePath: rawModelImagePath,
+        surface: 'single_tryon',
+        pipelineMode: payload.pipelineMode,
         maxPaidGenerations: payload.studioPaidAttemptLimit,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)

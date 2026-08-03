@@ -867,6 +867,8 @@ export type RunPayload = {
   familyPreset?: FamilyPresetId
   prompt?: string
   backgroundPrompt?: string
+  /** Receipt-pinned quality policy; V4 Auto uses production. */
+  pipelineMode?: 'preview' | 'production'
   aspectRatio?: string
   resolution?: FashnResolution
   generationMode?: FashnGenerationMode

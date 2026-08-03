@@ -9,6 +9,10 @@ export const MAX_REGEN = 2
 // production mode — a good overall can no longer carry a 2/5 axis.
 export const PRODUCTION_MIN_CORE_AXIS = 4
 
+export function effectiveQcLevel(configuredLevel, pipelineMode) {
+  return pipelineMode === 'production' ? 'strict' : configuredLevel
+}
+
 export function productionCoreAxesPass(score) {
   return (
     Number(score?.garment_fidelity ?? 0) >= PRODUCTION_MIN_CORE_AXIS
@@ -76,6 +80,7 @@ export async function runImageQcLoop({
   regenerate,
   /** CS10 — surface-specific thresholds ('single_tryon' | 'family' | …) */
   surface,
+  pipelineMode: requestedPipelineMode,
   /** Signed V3 receipt pins this ceiling; never let mutable KV raise it. */
   maxPaidGenerations,
 }) {
@@ -89,7 +94,9 @@ export async function runImageQcLoop({
   // CS8 — the pipeline mode bounds paid work for EVERY engine that runs this
   // loop (FASHN, Gemini, fal VTON): preview = score once, NO paid regen;
   // production = bounded regens + hard core-axis gate on pass/fail.
-  const pipelineMode = await fetchPipelineMode(supabase)
+  const pipelineMode = requestedPipelineMode === 'production' || requestedPipelineMode === 'preview'
+    ? requestedPipelineMode
+    : await fetchPipelineMode(supabase)
   const policyMax = pipelineMode === 'preview' ? 1 : MAX_REGEN + 1
   const receiptMax = Number.isInteger(Number(maxPaidGenerations))
     ? Math.min(MAX_REGEN + 1, Math.max(1, Number(maxPaidGenerations)))

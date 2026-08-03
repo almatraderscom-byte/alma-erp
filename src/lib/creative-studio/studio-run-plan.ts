@@ -419,6 +419,15 @@ async function planAuto(
 ): Promise<Omit<StudioRunPlan, 'estimateBdt'>> {
   const defaultModel = input.modelId ? await resolveModel(input.modelId) : null
   if (!defaultModel) throw new Error('no_default_model')
+  if (
+    /\b(kids?|boy|girl|child)\b/i.test(input.productName ?? '')
+    && defaultModel.role !== 'son'
+    && defaultModel.role !== 'daughter'
+  ) {
+    throw new Error(defaultModel.role
+      ? 'kids_product_requires_child_model'
+      : 'kids_product_requires_labeled_child_model')
+  }
   const generic = await genericSelection({ ...input, generationMode: 'quality', resolution: '2k' })
   await assertGenericSelectionAvailable(generic, false)
   const genericUnit = genericCost(
@@ -537,7 +546,8 @@ async function planAuto(
 }
 
 export async function buildStudioRunPlan(input: StudioRunRequest): Promise<StudioRunPlan> {
-  const attempts = (await readPipelineMode()) === 'production' ? 3 : 1
+  const pipelineMode = input.pipelineMode ?? await readPipelineMode()
+  const attempts = pipelineMode === 'production' ? 3 : 1
   const plan = input.auto
     ? await planAuto(input, attempts)
     : await planAdvanced(input, attempts)

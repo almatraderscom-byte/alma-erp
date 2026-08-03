@@ -60,6 +60,28 @@ afterEach(() => {
 })
 
 describe('Studio run aggregate plan cap', () => {
+  it('pins an explicit V4 quality policy instead of mutable KV state', async () => {
+    const base = {
+      auto: true,
+      mode: 'product_to_model' as const,
+      modelId: 'model-1',
+      productImagePath: 'products/product-1.png',
+    }
+    expect((await buildStudioRunPlan({ ...base, pipelineMode: 'preview' })).selection.paidAttemptLimit).toBe(1)
+    expect((await buildStudioRunPlan({ ...base, pipelineMode: 'production' })).selection.paidAttemptLimit).toBe(3)
+  })
+
+  it('blocks a Kids project with an unlabeled/adult identity before estimate', async () => {
+    await expect(buildStudioRunPlan({
+      auto: true,
+      mode: 'try_on',
+      modelId: 'model-1',
+      productImagePath: 'products/133.png',
+      productName: '133 KIDS',
+      pipelineMode: 'production',
+    })).rejects.toThrow('kids_product_requires_labeled_child_model')
+  })
+
   it('prices Auto family pairs only from server-pinned identities', async () => {
     const familyModelPins = ['father', 'mother', 'son', 'daughter'].map((role) => ({
       role: role as 'father' | 'mother' | 'son' | 'daughter',

@@ -55,3 +55,19 @@ test('stale or reordered legacy fields cannot contradict the immutable contract'
     secondReferenceImageId: 'models/person.jpg',
   }), /order mismatch/)
 })
+
+test('final production repair transports the ordered try-on, person and product references', () => {
+  const three = {
+    referenceImageId: 'generated/tryon.png',
+    referenceImageIds: ['generated/tryon.png', 'models/person.jpg', 'products/product.jpg'],
+    referenceContract: {
+      bindings: [
+        { role: 'source', path: 'generated/tryon.png', source: 'derived', required: true },
+        { role: 'person', path: 'models/person.jpg', source: 'saved_model', required: true },
+        { role: 'product', path: 'products/product.jpg', source: 'uploaded', required: true },
+      ],
+    },
+  }
+  assert.deepEqual(requiredReferencePaths(three), three.referenceImageIds)
+  assert.equal(makeReferenceReceipt(three, 3).allRequiredSent, true)
+})

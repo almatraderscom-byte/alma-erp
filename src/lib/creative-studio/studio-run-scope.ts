@@ -96,6 +96,7 @@ export async function resolveScopedStudioRun(
       brandProfileId: true,
       archivedAt: true,
       productCode: true,
+      productName: true,
       productSourceImage: true,
     },
   })
@@ -328,6 +329,7 @@ export async function resolveScopedStudioRun(
       brandProfileId,
       projectId,
       productId: productId ?? undefined,
+      productName: typeof project.productName === 'string' ? project.productName : undefined,
       sourceAssetIds: assets.map((asset: { id: string }) => asset.id),
       sourcePendingActionId: sourcePendingActionId || undefined,
       familyModelPins,

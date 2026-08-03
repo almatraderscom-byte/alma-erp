@@ -127,6 +127,7 @@ const VALID_ROLES = new Set<string>(['father', 'son', 'single', 'family'])
 export const NEGATIVE_DIRECTIVES =
   "STRICTLY AVOID: changing the garment's color, pattern, embroidery, cut or length; " +
   'adding any motif, logo, text, or jewelry not present in the product; ' +
+  'adding tattoos, body art, scars, watches, jewelry, accessories, skin markings or exposed skin not present in the model reference; ' +
   'redesigning or "improving" the outfit; westernizing the garment or the model\'s face; ' +
   'plastic/over-smoothed AI skin, waxy highlights, or beauty-filter slimming of the model; ' +
   'warped or extra fingers/hands, distorted limbs, asymmetric eyes; ' +

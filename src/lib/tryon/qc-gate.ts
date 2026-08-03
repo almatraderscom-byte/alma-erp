@@ -144,6 +144,9 @@ function buildQcPrompt(rubricContext: string): string {
   "fix_hint": "what to change in regeneration prompt"
 }
 Use N/A=5 for text_legibility if no overlay text.
+Garment fidelity is strict reference matching: color, fabric, cut, length, collar, buttons, embroidery/motif pattern and placement must match the product reference; a redesign is a failure.
+Model preservation is strict reference matching: face, age, skin tone, hair and body must match the person reference. Any newly invented tattoo, body art, scar, jewelry, watch, accessory or skin marking that is absent from the person reference is an automatic model_preserved failure (score at most 2) and must be named in fail_reasons.
+Anatomy includes natural hands/fingers/limbs and appropriate skin coverage; distorted or newly decorated hands/arms fail this axis.
 ${rubricContext}`
 }
 

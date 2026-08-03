@@ -96,6 +96,23 @@ export async function POST(req: NextRequest) {
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
   if (action.status === 'executed' || action.status === 'failed') {
+    // A callback may have committed the step result before chain advancement or
+    // project-asset rebinding completed. Reconcile executed chain steps on
+    // replay; constructors are receipt-deduped, so this cannot double-spend.
+    const replayPayload = action.payload as Record<string, unknown> | null
+    if (action.status === 'executed' && replayPayload?.familyChain) {
+      try {
+        const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
+        const replayResult = action.result as Record<string, unknown> | null
+        await advanceFamilyChain(
+          action,
+          typeof replayResult?.storagePath === 'string' ? replayResult.storagePath : undefined,
+        )
+      } catch (chainError) {
+        console.error('[job-result] family-chain replay reconcile failed:', chainError)
+        return Response.json({ error: 'family_chain_reconcile_failed' }, { status: 503 })
+      }
+    }
     // CSE4 callback replay may mean the stage row committed but the pack
     // reconciliation/lineage write did not. Re-run that idempotent hook before
     // acknowledging the duplicate so a restart cannot leave the pack stale.

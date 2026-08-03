@@ -477,6 +477,7 @@ async function generateImageToStorage({
   quality,
   referenceImageId,
   secondReferenceImageId,
+  referenceImageIds,
   referenceContract,
   aspectRatio,
   imageSize,
@@ -528,7 +529,7 @@ async function generateImageToStorage({
     return { inlineData: { mimeType: fileData.type || 'image/jpeg', data: base64 } }
   }
 
-  const referencePayload = { referenceImageId, secondReferenceImageId, referenceContract }
+  const referencePayload = { referenceImageId, secondReferenceImageId, referenceImageIds, referenceContract }
   const referencePaths = requiredReferencePaths(referencePayload)
   const imageParts = await loadRequiredReferenceParts(referencePaths, toInlinePart)
 
@@ -964,6 +965,7 @@ async function processImageGen(job) {
     quality,
     referenceImageId,
     secondReferenceImageId,
+    referenceImageIds,
     conversationId,
     aspectRatio,
     imageSize,
@@ -971,8 +973,9 @@ async function processImageGen(job) {
     referenceContract,
   } = payload
 
-  const { fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
-  const qcLevel = await fetchQcLevel(supabase)
+  const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
+  const configuredQcLevel = await fetchQcLevel(supabase)
+  const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
   const imageModels = payload.imageModel
     ? {
         standard: assertGenericImageModel(payload.imageModel),
@@ -985,6 +988,7 @@ async function processImageGen(job) {
     quality,
     referenceImageId,
     secondReferenceImageId,
+    referenceImageIds,
     aspectRatio,
     imageSize,
     referenceContract,
@@ -1029,7 +1033,7 @@ async function processImageGen(job) {
   console.log(`[worker] image-gen ${pendingActionId} — gen attempt 1 → ${first.storagePath}`)
 
   const productType = contentPipeline?.productCode ?? null
-  const productImagePath = secondReferenceImageId ?? null
+  const productImagePath = payload.qcProductImagePath ?? secondReferenceImageId ?? null
 
   let regenCount = 0
   const qcResult = await runImageQcLoop({
@@ -1040,9 +1044,12 @@ async function processImageGen(job) {
     initialPath: first.storagePath,
     productType,
     productImagePath,
-    personImagePath: referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+    personImagePath: payload.qcPersonImagePath
+      ?? referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
       ?? referenceImageId
       ?? null,
+    surface: payload.qcSurface,
+    pipelineMode: payload.pipelineMode,
     maxPaidGenerations: payload.studioPaidAttemptLimit,
     regenerate: async (fixHint, attemptNum) => {
       regenCount += 1

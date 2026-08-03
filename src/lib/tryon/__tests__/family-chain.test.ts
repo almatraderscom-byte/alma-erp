@@ -417,7 +417,13 @@ describe('single rescene chain', () => {
     const nextId = await completeStep(first, 'generated/tryon.png')
     const rescene = actions.find((a) => a.id === nextId)!
     expect(rescene.payload.referenceImageId).toBe('generated/tryon.png')
-    expect(String(rescene.payload.prompt)).toContain('background')
+    expect(rescene.payload.referenceImageIds).toEqual([
+      'generated/tryon.png',
+      'models/owner.jpg',
+      'uploads/panjabi.jpg',
+    ])
+    expect(rescene.payload.qcSurface).toBe('single_tryon')
+    expect(String(rescene.payload.prompt)).toMatch(/background/i)
 
     const done = await completeStep(rescene, 'generated/final.png')
     expect(done).toBeNull()

@@ -53,6 +53,17 @@ export const GALLERY_TEST_ARTIFACT_WHERE = {
   ],
 }
 
+/** Chain steps are implementation details; only the final signed artifact belongs in Gallery. */
+export const GALLERY_INTERNAL_ARTIFACT_WHERE = {
+  payload: { path: ['chainInternal'], equals: true },
+}
+
+export function isGalleryInternalArtifact(row: {
+  payload?: Record<string, unknown> | null
+}): boolean {
+  return row.payload?.chainInternal === true
+}
+
 export function isGalleryTestArtifact(row: {
   payload?: Record<string, unknown> | null
   summary?: string | null
