@@ -10,10 +10,12 @@
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import {
+  NO_LEXEME_TSQUERY,
   buildLikePatterns,
   buildOrTsQuery,
   extractQueryTokens,
   fuseRrf,
+  rawPhrasePatterns,
   type RankedArmHit,
 } from '@/agent/lib/memory-hybrid'
 
@@ -31,14 +33,6 @@ export type AgentMemoryHit = {
 const VECTOR_THRESHOLD = 0.35
 /** Fetch depth per arm before fusion — deeper than `limit` so fusion has room. */
 const ARM_FETCH_MULTIPLIER = 3
-/**
- * Stand-in tsquery for a search whose words are all too short or all stopwords
- * ("মা", "the"). `to_tsquery('')` raises, so a term that matches nothing keeps
- * the SQL and its parameters identical while the raw-substring ILIKE below does
- * the actual work — that short-query path used to be the old text fallback and
- * must not silently disappear now that recall is hybrid.
- */
-const NO_LEXEME_TSQUERY = 'zzz_no_lexeme_zzz'
 /**
  * Expired facts must not come back through search (Codex P2, PR #711).
  *
@@ -111,7 +105,7 @@ export async function searchAgentMemory(opts: {
       tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,
       // No usable tokens → search the raw phrase, which is what the old
       // embedding-failure fallback did for exactly these short queries.
-      tokens.length > 0 ? buildLikePatterns(tokens) : [`%${query.slice(0, 60)}%`],
+      tokens.length > 0 ? buildLikePatterns(tokens) : rawPhrasePatterns(query),
       fetchDepth,
     ) as Promise<Row[]>,
   ])

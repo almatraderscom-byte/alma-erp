@@ -128,6 +128,31 @@ export function buildLikePatterns(tokens: string[], limit = MAX_LIKE_PATTERNS): 
     .map((t) => `%${t}%`)
 }
 
+/**
+ * Stand-in tsquery for a search whose words are all too short or all stopwords
+ * ("মা", "the"). `to_tsquery('')` raises, so a term that matches nothing keeps
+ * the SQL and its parameters identical while a raw-substring ILIKE does the
+ * actual work. Shared by both retrieval paths.
+ */
+export const NO_LEXEME_TSQUERY = 'zzz_no_lexeme_zzz'
+
+/** Shortest raw phrase worth an ILIKE fallback — below this `%%` would match everything. */
+export const MIN_RAW_FALLBACK_LEN = 2
+
+/**
+ * ILIKE pattern for a query that produced no usable tokens.
+ *
+ * Restores the behaviour the old embedding-failure fallback had for short
+ * queries (Codex P2, PR #711): with no tokens AND no embedding, both arms would
+ * otherwise go silent and a two-letter question like "মা" would find nothing.
+ * Returns [] when the phrase is too short to be a filter at all.
+ */
+export function rawPhrasePatterns(query: string): string[] {
+  const phrase = query.trim().slice(0, 60)
+  if (phrase.length < MIN_RAW_FALLBACK_LEN) return []
+  return [`%${phrase}%`]
+}
+
 export interface RankedArmHit {
   id: string
   /** 0-based position within that arm's own ranking. */

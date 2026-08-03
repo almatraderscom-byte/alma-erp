@@ -3,11 +3,13 @@ import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { blendedScore } from '@/agent/lib/memory-rerank'
 import {
   BOTH_ARMS_BONUS,
+  NO_LEXEME_TSQUERY,
   buildLikePatterns,
   buildOrTsQuery,
   extractQueryTokens,
   fuseRrf,
   keywordSimilarityProxy,
+  rawPhrasePatterns,
   type RankedArmHit,
 } from '@/agent/lib/memory-hybrid'
 import {
@@ -251,11 +253,18 @@ async function vectorArm(vec: string, accessClause: string): Promise<FactRow[]> 
  * Keyword arm: exact-token match, the half embeddings are bad at (order ids,
  * phone numbers, names, product codes). 'simple' config = no stemming, which is
  * what makes it work for Bangla; pg_trgm ILIKE catches partial/inflected forms.
+ *
+ * A query that yields no tokens (all stopwords, or a word shorter than three
+ * letters like "মা") falls back to searching the raw phrase — otherwise, when
+ * the embedding is also unavailable, BOTH arms would go silent and the turn
+ * would lose memory it used to find (Codex P2, PR #711).
  */
-async function keywordArm(tokens: string[], accessClause: string): Promise<FactRow[]> {
-  if (tokens.length === 0) return []
-  const tsQuery = buildOrTsQuery(tokens)
-  const likePatterns = buildLikePatterns(tokens)
+async function keywordArm(tokens: string[], rawQuery: string, accessClause: string): Promise<FactRow[]> {
+  const tsQuery = tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY
+  const likePatterns = tokens.length > 0 ? buildLikePatterns(tokens) : rawPhrasePatterns(rawQuery)
+  // Nothing to match on at all — an empty ILIKE array would be a no-op anyway,
+  // and a bare '%%' pattern would match every row.
+  if (tokens.length === 0 && likePatterns.length === 0) return []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (prisma as any).$queryRawUnsafe(
     `SELECT id, content, scope, importance, "createdAt", last_used_at,
@@ -309,7 +318,7 @@ async function retrieveRelevantMemoriesUnbounded(
 
     const [vectorRows, keywordRows, digests] = await Promise.all([
       vec ? vectorArm(vec, accessClause) : Promise.resolve<FactRow[]>([]),
-      keywordArm(tokens, accessClause),
+      keywordArm(tokens, userMessage, accessClause),
       retrieveMemoryDigests({ queryVector: vec ?? undefined, personalMode, businessId }),
     ])
 

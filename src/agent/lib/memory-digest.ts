@@ -53,6 +53,28 @@ const L2_SIMILARITY_THRESHOLD = 0.35
  */
 const DIGEST_MAX_AGE_DAYS = 35
 
+/**
+ * A digest may only speak while every fact it was built from is still there.
+ *
+ * Codex P1 round 2 (PR #711): clearing on rebuild only helps once a week. If the
+ * owner approves a `memory_cleanup` on Saturday — or deletes one memory through
+ * the tool or the API — the blocks would keep quoting the removed facts until
+ * Friday. Checking the stored `source_ids` against live rows AT RETRIEVAL makes
+ * a deletion take effect on the very next turn, and it covers every deletion
+ * path there is, including ones added later: nothing has to remember to call an
+ * invalidation hook.
+ *
+ * Strict on purpose — ONE missing source retires the block until the weekly
+ * rebuild. A summary that quotes something the owner deleted is worse than no
+ * summary, and the facts themselves are still retrieved either way.
+ */
+const SOURCES_STILL_LIVE = `AND (
+       d.source_ids IS NULL
+       OR (SELECT count(*) FROM agent_memory m
+           WHERE m.id IN (SELECT jsonb_array_elements_text(d.source_ids)))
+          = jsonb_array_length(d.source_ids)
+     )`
+
 export interface DigestTarget {
   scope: 'personal' | 'business'
   businessId: AgentBusinessId | null
@@ -306,11 +328,12 @@ export async function retrieveMemoryDigests(opts: {
 
   try {
     const personaRows: Array<{ id: string; topic: string; content: string }> = await db.$queryRawUnsafe(
-      `SELECT id, topic, content
-       FROM agent_memory_digest
-       WHERE layer = 'L3' AND scope = '${scope}' AND ${businessMatch}
-         AND refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
-       ORDER BY refreshed_at DESC
+      `SELECT d.id, d.topic, d.content
+       FROM agent_memory_digest d
+       WHERE d.layer = 'L3' AND d.scope = '${scope}' AND d.${businessMatch}
+         AND d.refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
+         ${SOURCES_STILL_LIVE}
+       ORDER BY d.refreshed_at DESC
        LIMIT 1`,
       ...businessParams,
     )
@@ -327,12 +350,13 @@ export async function retrieveMemoryDigests(opts: {
       const vecParamIndex = businessParams.length + 1
       const scenarioRows: Array<{ id: string; topic: string; content: string; score: number }> =
         await db.$queryRawUnsafe(
-          `SELECT id, topic, content, 1 - (embedding <=> $${vecParamIndex}::vector) AS score
-           FROM agent_memory_digest
-           WHERE layer = 'L2' AND scope = '${scope}' AND ${businessMatch}
-             AND embedding IS NOT NULL
-             AND refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
-           ORDER BY embedding <=> $${vecParamIndex}::vector
+          `SELECT d.id, d.topic, d.content, 1 - (d.embedding <=> $${vecParamIndex}::vector) AS score
+           FROM agent_memory_digest d
+           WHERE d.layer = 'L2' AND d.scope = '${scope}' AND d.${businessMatch}
+             AND d.embedding IS NOT NULL
+             AND d.refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
+             ${SOURCES_STILL_LIVE}
+           ORDER BY d.embedding <=> $${vecParamIndex}::vector
            LIMIT 2`,
           ...businessParams,
           opts.queryVector,

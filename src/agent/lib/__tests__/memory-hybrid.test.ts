@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   BOTH_ARMS_BONUS,
   MAX_QUERY_TOKENS,
+  NO_LEXEME_TSQUERY,
   buildLikePatterns,
   buildOrTsQuery,
   extractQueryTokens,
   fuseRrf,
   keywordSimilarityProxy,
+  rawPhrasePatterns,
 } from '@/agent/lib/memory-hybrid'
 
 describe('extractQueryTokens', () => {
@@ -99,6 +101,31 @@ describe('buildOrTsQuery / buildLikePatterns', () => {
   it('caps the number of ILIKE patterns', () => {
     const many = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf']
     expect(buildLikePatterns(many).length).toBeLessThanOrEqual(5)
+  })
+})
+
+// Codex P2 round 2 (PR #711): with no tokens AND no embedding, both arms went
+// silent and a short query like "মা" found nothing at all.
+describe('rawPhrasePatterns', () => {
+  it('falls back to the raw phrase when no token survives extraction', () => {
+    expect(extractQueryTokens('মা')).toEqual([])
+    expect(rawPhrasePatterns('মা')).toEqual(['%মা%'])
+  })
+
+  it('trims the phrase and caps its length', () => {
+    expect(rawPhrasePatterns('  মা  ')).toEqual(['%মা%'])
+    const long = 'ক'.repeat(200)
+    expect(rawPhrasePatterns(long)[0].length).toBe(62) // 60 chars + two % signs
+  })
+
+  it('refuses a phrase too short to filter — %% would match every row', () => {
+    expect(rawPhrasePatterns('')).toEqual([])
+    expect(rawPhrasePatterns('   ')).toEqual([])
+    expect(rawPhrasePatterns('ক')).toEqual([])
+  })
+
+  it('offers a sentinel that parses as a tsquery but matches nothing', () => {
+    expect(NO_LEXEME_TSQUERY).toMatch(/^[a-z_]+$/)
   })
 })
 

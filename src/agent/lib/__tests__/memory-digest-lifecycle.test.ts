@@ -96,6 +96,54 @@ describe('buildDigestForTarget — stale digest cleanup', () => {
   })
 })
 
+describe('retrieveMemoryDigests — a digest may not outlive its sources', () => {
+  it('withholds blocks whose source facts are no longer all present', async () => {
+    // The predicate itself is SQL, so this asserts the guard is IN the query;
+    // its behaviour is verified against a real PostgreSQL instance separately.
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue([])
+
+    await retrieveMemoryDigests({ personalMode: true, businessId: 'ALMA_LIFESTYLE' })
+
+    const sql = String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])
+    expect(sql).toContain('jsonb_array_elements_text(d.source_ids)')
+    expect(sql).toContain('jsonb_array_length(d.source_ids)')
+    expect(sql).toContain('d.source_ids IS NULL') // rows without a source list still serve
+  })
+
+  it('also refuses blocks the weekly job stopped refreshing', async () => {
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue([])
+
+    await retrieveMemoryDigests({ personalMode: true, businessId: 'ALMA_LIFESTYLE' })
+
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain('refreshed_at > NOW() - INTERVAL')
+  })
+
+  it('scopes personal turns to the NULL business and business turns to their id', async () => {
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue([])
+
+    await retrieveMemoryDigests({ personalMode: true, businessId: 'ALMA_LIFESTYLE' })
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain('d.business_id IS NULL')
+
+    mockPrisma.$queryRawUnsafe.mockClear()
+    await retrieveMemoryDigests({ personalMode: false, businessId: 'ALMA_TRADING' })
+    const [sql, param] = mockPrisma.$queryRawUnsafe.mock.calls[0]
+    expect(String(sql)).toContain('d.business_id = $1')
+    expect(param).toBe('ALMA_TRADING')
+  })
+
+  it('never throws into the turn when the table is missing', async () => {
+    const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockRejectedValue(new Error('relation "agent_memory_digest" does not exist'))
+
+    await expect(
+      retrieveMemoryDigests({ personalMode: false, businessId: 'ALMA_LIFESTYLE' }),
+    ).resolves.toEqual([])
+  })
+})
+
 describe('clearDigestRows', () => {
   it('targets exactly one slot', async () => {
     const { clearDigestRows } = await import('@/agent/lib/memory-digest')
