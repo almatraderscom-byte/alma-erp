@@ -11,6 +11,7 @@ import {
   getCreativeStudioV4PreviewFoundationFlags,
 } from '@/lib/creative-studio/composition-feature-flags'
 import { listProjects } from '@/lib/creative-studio/project-service'
+import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
 import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
 import {
@@ -67,13 +68,13 @@ export default async function CreativeStudioPage({
   const accessibleBrandIds = new Set(
     accessibleBrands.map((brand) => brand.brandProfileId),
   )
-  const accessibleProjects = (await Promise.all(
-    ownerIds.map((ownerId) => listProjects(ownerId)),
-  ))
-    .flat()
-    .filter((project) =>
-      Boolean(project.brandProfileId)
-      && accessibleBrandIds.has(project.brandProfileId as string))
+  const accessibleProjects = await hydrateStudioProjectProducts(
+    (await Promise.all(ownerIds.map((ownerId) => listProjects(ownerId))))
+      .flat()
+      .filter((project) =>
+        Boolean(project.brandProfileId)
+        && accessibleBrandIds.has(project.brandProfileId as string)),
+  )
 
   const decision = resolveCreativeStudioV3RouteDecision({
     actorIsSystemOwner,
