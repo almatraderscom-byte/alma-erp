@@ -1485,7 +1485,10 @@ struct MacScreenFullScreen: View {
                 stack(size: rotate ? CGSize(width: geo.size.height, height: geo.size.width) : geo.size)
                     .frame(width: rotate ? geo.size.height : geo.size.width,
                            height: rotate ? geo.size.width : geo.size.height)
-                    .rotationEffect(rotate ? .degrees(90) : .zero)
+                    // -90, not +90: with the phone turned the natural way for
+                    // video (home indicator to the right) this is the upright
+                    // direction — checked on screen, not reasoned about.
+                    .rotationEffect(rotate ? .degrees(-90) : .zero)
                     .position(x: geo.size.width / 2, y: geo.size.height / 2)
             }
             .ignoresSafeArea()
