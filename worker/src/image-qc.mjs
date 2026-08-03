@@ -1,6 +1,7 @@
 /**
  * Designer QC gate — worker-side loop (calls app image-qc-score API).
  */
+import { getAppProtectionHeaders } from './env.mjs'
 
 export const MAX_REGEN = 2
 
@@ -52,6 +53,7 @@ export async function scoreImageViaApi({ appUrl, token, storagePath, productType
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      ...getAppProtectionHeaders(),
     },
     // CS10 — surface selects mode-specific thresholds server-side
     body: JSON.stringify({ storagePath, productType, productImagePath, personImagePath, surface }),
@@ -122,6 +124,12 @@ export async function runImageQcLoop({
         surface,
       })
     } catch (err) {
+      // A certification run must prove the QC boundary itself. Production keeps
+      // its historical fail-open delivery policy for provider outages, but an
+      // isolated preview E2E may never report success for an unchecked image.
+      if (Object.keys(getAppProtectionHeaders()).length > 0) {
+        throw new Error(`preview_qc_unavailable:${err?.message ?? err}`)
+      }
       console.warn('[image-qc] scorer unavailable — delivering unscored:', err?.message ?? err)
       return {
         storagePath: currentPath,
