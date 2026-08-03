@@ -133,6 +133,10 @@ struct AgentSSEEvent: Decodable {
     let layer: String?          // skill_pinned
     let reason: String?         // skill_pinned
     let isolated: Bool?         // skill_pinned — SK-7, ran on the skill's own prompt
+    // steering_delivered — the running turn actually PICKED UP a steer. The
+    // client uuids are the matching key; the row ids are for correlation only.
+    let clientMessageIds: [String]?
+    let ids: [String]?
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -162,6 +166,9 @@ enum AgentTurnEvent: Sendable {
     /// SK-3 — which skill is running this job, announced BEFORE any work starts
     /// so the owner sees it up front and can change it.
     case skillPinned(skill: String, source: String, reason: String, isolated: Bool)
+    /// A mid-turn message the RUNNING TURN has now read — the step after "the
+    /// server accepted it". Without this the phone showed both states the same.
+    case steeringDelivered(clientMessageIds: [String])
     case conversationCompacted(newConversationId: String)
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
@@ -233,6 +240,8 @@ enum AgentTurnEvent: Sendable {
                                 source: ev.source == "owner" ? "owner" : "router",
                                 reason: ev.reason ?? "",
                                 isolated: ev.isolated == true)
+        case "steering_delivered":
+            self = .steeringDelivered(clientMessageIds: ev.clientMessageIds ?? [])
         case "conversation_compacted":
             self = ev.conversationId.map(AgentTurnEvent.conversationCompacted)
                 ?? .unknown(type: "conversation_compacted/noid")

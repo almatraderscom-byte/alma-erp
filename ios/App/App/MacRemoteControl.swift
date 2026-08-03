@@ -659,6 +659,13 @@ final class MacRemoteControlStore {
 
     func touched() { lastTouchAt = Date() }
 
+    /// The owner touched the Mac's video while control was still off.
+    func nudgeToArm() {
+        guard !armed, !busy else { return }
+        RemoteHaptics.refused()
+        statusBn = "Mac ছুঁতে হলে আগে \u{201C}কন্ট্রোল চালু\u{201D} চাপুন।"
+    }
+
     func sendMove(dx: Double, dy: Double) {
         guard armed else { return }
         touched()
@@ -964,7 +971,13 @@ final class TrackpadSurfaceView: UIView {
         store?.began += 1
         store?.debugCounters = "began=\(store?.began ?? 0) moved=\(store?.moved ?? 0) sent=\(store?.sent ?? 0) failed=\(store?.failed ?? 0)"
         #endif
-        guard store?.armed == true else { return }
+        guard store?.armed == true else {
+            // Silence is the worst answer here: the video looks touchable, so a
+            // finger on it while control is off must say what to press rather
+            // than appear broken (owner hit exactly this).
+            store?.nudgeToArm()
+            return
+        }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if all.count >= 2 {
             // A second finger arriving during an aim cancels the aim — the
