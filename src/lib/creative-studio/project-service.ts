@@ -1004,6 +1004,31 @@ export async function searchErpProducts(query: string): Promise<StudioProductOpt
     if (candidates.size >= 30) break
   }
   const selected = [...candidates.values()].slice(0, 30)
+  // Historical Studio projects can legitimately outlive the active ERP stock
+  // row while their approved catalog image remains available. Preserve that
+  // exact-SKU image as a read-only candidate so the composer can refresh its
+  // signed source instead of falling back to the project's expired URL.
+  if (
+    clean
+    && !selected.some((product) => product.code.toLocaleLowerCase() === clean.toLocaleLowerCase())
+  ) {
+    const imageOnly = await db.productImage.findFirst({
+      where: { productCode: { equals: clean, mode: 'insensitive' } },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'desc' }],
+    }) as AnyRecord | null
+    if (imageOnly) {
+      selected.push({
+        code: String(imageOnly.productCode),
+        name: String(imageOnly.productCode),
+        priceBdt: 0,
+        sourceImage:
+          (typeof imageOnly.storagePath === 'string' && imageOnly.storagePath)
+          || (typeof imageOnly.url === 'string' && imageOnly.url)
+          || null,
+        available: null,
+      })
+    }
+  }
   const codes = selected.map((product) => product.code)
   if (!codes.length) return []
   const [images, stock] = await Promise.all([

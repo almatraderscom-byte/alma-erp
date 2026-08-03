@@ -204,7 +204,14 @@ export function StudioV3ImageLab({
       activeProject?.product
         ? port.listProducts(activeProject.product.code).then((products) => {
             const exact = products.find((product) => product.code === activeProject.product?.code)
-            return [exact ?? activeProject.product!]
+            return [exact
+              ? {
+                  ...activeProject.product!,
+                  sourceImage: exact.sourceImage,
+                  previewImage: exact.previewImage,
+                  available: exact.available,
+                }
+              : activeProject.product!]
           })
         : Promise.resolve([]),
       port.listModels(activeBrand?.brandProfileId, activeProject?.id),
