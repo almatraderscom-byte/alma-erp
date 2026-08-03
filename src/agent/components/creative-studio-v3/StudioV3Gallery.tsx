@@ -75,6 +75,26 @@ function downloadFilename(item: StudioV3LibraryItem): string {
   return `alma-${item.id}.${extension}`
 }
 
+function scopedDownloadUrl(item: StudioV3LibraryItem): string | null {
+  const source = item.galleryItem
+  if (
+    !source?.brandProfileId
+    || !source.projectId
+    || !source.projectAssetId
+    || !source.assetVersionId
+    || !Number.isInteger(source.reviewSequence)
+  ) return null
+  const params = new URLSearchParams({
+    id: source.id,
+    brandProfileId: source.brandProfileId,
+    projectId: source.projectId,
+    projectAssetId: source.projectAssetId,
+    assetVersionId: source.assetVersionId,
+    reviewSequence: String(source.reviewSequence),
+  })
+  return `/api/assistant/creative-studio/gallery/download?${params.toString()}`
+}
+
 function formatWhen(value: string | null): string {
   if (!value) return 'Date unavailable'
   const date = new Date(value)
@@ -498,7 +518,15 @@ export function StudioV3Gallery({
                   </div>
                 )}
                 <div className={styles.detailActions}>
-                  {fullMediaUrl(selected) && (
+                  {scopedDownloadUrl(selected) ? (
+                    <a
+                      className={styles.primaryButton}
+                      download={downloadFilename(selected)}
+                      href={scopedDownloadUrl(selected)!}
+                    >
+                      <StudioV3Icon name="download" /> Download original
+                    </a>
+                  ) : fullMediaUrl(selected) ? (
                     <button
                       className={styles.primaryButton}
                       onClick={() => void downloadStudioAsset(fullMediaUrl(selected), downloadFilename(selected))}
@@ -506,7 +534,7 @@ export function StudioV3Gallery({
                     >
                       <StudioV3Icon name="download" /> Download original
                     </button>
-                  )}
+                  ) : null}
                   <button className={styles.secondaryButton} onClick={() => primaryAction(selected)} type="button">
                     {selected.type === 'image' ? 'Create from asset' : selected.type === 'video' ? 'Open Finishing' : selected.type === 'avatar' ? 'Use identity' : 'Open desk'} <StudioV3Icon name="arrow" />
                   </button>
