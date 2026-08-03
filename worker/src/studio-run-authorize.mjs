@@ -1,4 +1,4 @@
-import { getAppUrl, getInternalToken } from './env.mjs'
+import { getAppProtectionHeaders, getAppUrl, getInternalToken } from './env.mjs'
 
 /**
  * Revalidate a V3 paid run against the authoritative app immediately before
@@ -68,6 +68,7 @@ export async function authorizeStudioRunExecution(pendingActionId, payload, opti
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${getInternalToken()}`,
+      ...getAppProtectionHeaders(),
     },
     body: JSON.stringify({
       pendingActionId,

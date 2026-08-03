@@ -19,7 +19,7 @@ import { startHealthPingLoop } from './health-ping.mjs'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
-import { getAppUrl, getInternalToken } from './env.mjs'
+import { getAppProtectionHeaders, getAppUrl, getInternalToken } from './env.mjs'
 import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { loadOwnerStateFromKv } from './telegram/owner-state-persist.mjs'
 import { hydrateAwaitingProof } from './staff/task-verification.mjs'
@@ -1145,6 +1145,7 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
+        ...getAppProtectionHeaders(),
       },
       body: JSON.stringify({ pendingActionId, status, data, error }),
       signal: AbortSignal.timeout(15_000),
@@ -1183,6 +1184,7 @@ async function runPreviewImageE2e() {
       headers: {
         Authorization: `Bearer ${getInternalToken()}`,
         [PREVIEW_WORKER_SCOPE_HEADER]: PREVIEW_WORKER_SCOPE,
+        ...getAppProtectionHeaders(),
       },
       signal: AbortSignal.timeout(15_000),
     })

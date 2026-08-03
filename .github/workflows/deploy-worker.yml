@@ -16,6 +16,20 @@ on:
         description: 'Git ref to deploy on the VPS'
         required: false
         default: 'main'
+      mode:
+        description: 'Deploy live worker or run an isolated Creative Studio preview image job'
+        required: false
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - preview_e2e
+      preview_url:
+        description: 'Exact Ready Vercel preview URL (preview_e2e only)'
+        required: false
+      project_id:
+        description: 'Exact Creative Studio project id (preview_e2e only)'
+        required: false
 
 concurrency:
   group: deploy-worker
@@ -23,6 +37,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ inputs.mode != 'preview_e2e' }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -85,3 +100,72 @@ jobs:
         run: |
           curl -sS -m 10 "http://${{ secrets.VPS_HOST }}:3100/health" || \
             echo "::warning::relay /health not reachable from the runner — expected while inbound is firewalled; two-way calls need a public wss (Cloudflare tunnel or open 443)."
+
+  preview-image-e2e:
+    if: ${{ inputs.mode == 'preview_e2e' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Validate isolated-run inputs
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PREVIEW_URL" =~ ^https://[a-zA-Z0-9-]+\.vercel\.app$ ]] \
+            || { echo "::error::preview_url must be an exact https://*.vercel.app deployment URL"; exit 1; }
+          [[ "$PROJECT_ID" =~ ^[0-9a-fA-F-]{36}$ ]] \
+            || { echo "::error::project_id must be a UUID"; exit 1; }
+
+      - name: Reachability probe
+        run: |
+          set -e
+          timeout 20 bash -c 'until nc -z -w 5 "${{ secrets.VPS_HOST }}" 22; do sleep 2; done' \
+            || { echo "::error::VPS port 22 unreachable from the GitHub runner."; exit 1; }
+
+      - name: Run branch worker once without touching live services
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          REF: ${{ inputs.ref }}
+          PREVIEW_URL: ${{ inputs.preview_url }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          BYPASS_SECRET: ${{ secrets.CS_PREVIEW_BYPASS_TEMP }}
+        run: |
+          set -euo pipefail
+          test -n "$BYPASS_SECRET" || { echo "::error::temporary preview bypass secret is missing"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+            "root@$VPS_HOST" bash -s -- "$REF" "$PREVIEW_URL" "$PROJECT_ID" "$BYPASS_SECRET" <<'EOF'
+            set -euo pipefail
+            REF="$1"
+            PREVIEW_URL="$2"
+            PROJECT_ID="$3"
+            BYPASS_SECRET="$4"
+            SOURCE_REPO=/opt/alma-erp
+            TEMP_ROOT=$(mktemp -d /opt/alma-cs-preview-e2e.XXXXXX)
+            WORKTREE="$TEMP_ROOT/repo"
+            cleanup() {
+              if [ -d "$WORKTREE" ]; then
+                git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" || true
+              fi
+              rmdir "$TEMP_ROOT" 2>/dev/null || true
+            }
+            trap cleanup EXIT
+
+            git -C "$SOURCE_REPO" fetch origin "$REF"
+            git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "origin/$REF"
+            test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$(git -C "$SOURCE_REPO" rev-parse "origin/$REF")"
+            ln -s "$SOURCE_REPO/worker/node_modules" "$WORKTREE/worker/node_modules"
+
+            cd "$WORKTREE/worker"
+            WORKER_ENV_FILE="$SOURCE_REPO/worker/.env" \
+            WORKER_PREVIEW_E2E_APP_URL="$PREVIEW_URL" \
+            WORKER_PREVIEW_E2E_PROJECT_ID="$PROJECT_ID" \
+            WORKER_PREVIEW_E2E_BYPASS_SECRET="$BYPASS_SECRET" \
+            WORKER_PREVIEW_E2E_TIMEOUT_MS=1200000 \
+              node src/index.mjs
+          EOF
