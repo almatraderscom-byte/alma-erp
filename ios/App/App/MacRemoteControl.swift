@@ -372,11 +372,19 @@ enum RemoteHaptics {
 @MainActor
 @Observable
 final class MacRemoteControlStore {
-    enum Mode: String { case trackpad, direct }
+    enum Mode: String {
+        case trackpad
+        /// Press where you are looking: the spot under the finger magnifies,
+        /// you adjust while it is big, and the click lands on release. The
+        /// owner asked for exactly this after driving it once — a tap that
+        /// lands "somewhere near" is the failure this whole design is about.
+        case aim
+        case direct
+    }
 
     var armed = false
     var busy = false
-    var mode: Mode = .trackpad
+    var mode: Mode = .aim
     /// Direct taps need magnification; below this they are refused outright.
     static let directTapMinZoom: CGFloat = 2.0
     var zoom: CGFloat = 1.0
@@ -672,6 +680,27 @@ final class MacRemoteControlStore {
         RemoteHaptics.tap()
     }
 
+    /// AIM mode: the finger is down and the view is magnified — keep the Mac's
+    /// cursor under it so the snap ring shows the target before the commit.
+    func sendAimMove(x: Double, y: Double) {
+        guard armed else { return }
+        touched()
+        _ = session?.send(["a": "p", "x": x, "y": y], ordered: false)
+    }
+
+    /// AIM mode commit: position and click in ONE ordered packet.
+    func sendAimClick(x: Double, y: Double, right: Bool = false) {
+        guard armed else { return }
+        touched()
+        var payload: [String: Any] = ["a": "c", "b": right ? "r" : "l", "n": 1, "x": x, "y": y]
+        if twoStepConfirm { payload["cf"] = 1 }
+        if session?.send(payload) == true {
+            right ? RemoteHaptics.rightTap() : RemoteHaptics.tap()
+        } else {
+            RemoteHaptics.refused()
+        }
+    }
+
     /// Right-click at an absolute point (direct-mode long press).
     func sendDirectRightClick(x: Double, y: Double) {
         guard armed, videoSize.width > 0, videoSize.height > 0 else { return }
@@ -738,8 +767,12 @@ final class TrackpadSurfaceView: UIView {
     /// Aspect (w/h) of the Mac display, so the fitted video rect is exact.
     var videoAspect: CGFloat = 16.0 / 9.0
     var directMode = false
+    /// AIM mode: magnify under the finger, commit on release.
+    var aimMode = false
+    /// Called with the touch point when the aim magnifier should show/move/hide.
+    var onAimZoom: ((CGPoint?) -> Void)?
 
-    private enum Phase { case idle, undecided, moving, dragging, twoFinger }
+    private enum Phase { case idle, undecided, moving, dragging, twoFinger, aiming }
     private var phase: Phase = .idle
     private var startPoint: CGPoint = .zero
     private var lastPoint: CGPoint = .zero
@@ -844,10 +877,23 @@ final class TrackpadSurfaceView: UIView {
             return
         }
         guard let touch = touches.first else { return }
-        phase = .undecided
         startPoint = touch.location(in: self)
         lastPoint = startPoint
         startedAt = Date()
+        if aimMode {
+            // Magnify immediately: the owner is aiming at something he can see,
+            // and a delay would make the first tap feel unresponsive.
+            phase = .aiming
+            let rect = videoRect
+            guard rect.contains(startPoint) else { phase = .idle; return }
+            onAimZoom?(startPoint)
+            RemoteHaptics.tap()
+            store?.sendAimMove(x: Double((startPoint.x - rect.minX) / rect.width),
+                               y: Double((startPoint.y - rect.minY) / rect.height))
+            scheduleLongPress() // long press in aim mode = right click
+            return
+        }
+        phase = .undecided
         scheduleLongPress()
         startFlushTimer()
     }
@@ -886,6 +932,19 @@ final class TrackpadSurfaceView: UIView {
         }
         guard let touch = touches.first else { return }
         let p = touch.location(in: self)
+        if phase == .aiming {
+            // While magnified the finger is fine-tuning: the Mac's cursor (and
+            // therefore its snap ring) follows, so the target is visible before
+            // the click is committed.
+            cancelLongPress()
+            lastPoint = p
+            let rect = videoRect
+            guard rect.width > 0, rect.height > 0 else { return }
+            onAimZoom?(p)
+            store?.sendAimMove(x: Double(min(max(0, (p.x - rect.minX) / rect.width), 1)),
+                               y: Double(min(max(0, (p.y - rect.minY) / rect.height), 1)))
+            return
+        }
         let moved = hypot(p.x - startPoint.x, p.y - startPoint.y)
         if phase == .undecided, moved > moveThreshold {
             phase = .moving
@@ -911,6 +970,14 @@ final class TrackpadSurfaceView: UIView {
         cancelLongPress()
         flushPendingMotion()
         switch phase {
+        case .aiming:
+            let p = touches.first?.location(in: self) ?? lastPoint
+            let rect = videoRect
+            onAimZoom?(nil)
+            if rect.contains(p) {
+                store?.sendAimClick(x: Double((p.x - rect.minX) / rect.width),
+                                    y: Double((p.y - rect.minY) / rect.height))
+            }
         case .dragging:
             store?.sendDrag(down: false)
         case .twoFinger:
@@ -932,6 +999,7 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if phase == .aiming { onAimZoom?(nil) }
         cancelLongPress()
         flushPendingMotion()
         if phase == .dragging { store?.sendDrag(down: false) }
@@ -972,7 +1040,19 @@ final class TrackpadSurfaceView: UIView {
 
     private func scheduleLongPress() {
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.phase == .undecided else { return }
+            guard let self else { return }
+            if self.aimMode, self.phase == .aiming {
+                // Held still while magnified: right-click, then finish.
+                let rect = self.videoRect
+                let p = self.lastPoint
+                self.phase = .idle
+                self.onAimZoom?(nil)
+                guard rect.contains(p) else { return }
+                self.store?.sendAimClick(x: Double((p.x - rect.minX) / rect.width),
+                                         y: Double((p.y - rect.minY) / rect.height), right: true)
+                return
+            }
+            guard self.phase == .undecided else { return }
             if self.directMode {
                 // Zoomed in, touch-where-you-look: a long press is the natural
                 // right-click, and a drag there would fight the pan gesture.
@@ -1098,6 +1178,9 @@ struct MacScreenStage: UIViewRepresentable {
         container.addGestureRecognizer(pinch)
         container.addGestureRecognizer(pan)
 
+        surface.onAimZoom = { [weak coordinator = context.coordinator] point in
+            coordinator?.magnify(around: point)
+        }
         context.coordinator.surface = surface
         context.coordinator.canvas = canvas
         context.coordinator.zoomLayer = zoomLayer
@@ -1140,6 +1223,7 @@ struct MacScreenStage: UIViewRepresentable {
         context.coordinator.pan?.isEnabled = direct
         if let surface = context.coordinator.surface {
             surface.claimsDrag = store.armed
+            surface.aimMode = store.mode == .aim
             surface.directMode = direct
             if store.videoSize.width > 0, store.videoSize.height > 0 {
                 surface.videoAspect = store.videoSize.width / store.videoSize.height
@@ -1213,6 +1297,33 @@ struct MacScreenStage: UIViewRepresentable {
                 .scaledBy(x: scale, y: scale)
         }
 
+        /// AIM magnifier: scale the whole stage about the touched point, so the
+        /// thing under the finger becomes big enough to hit. Nothing is
+        /// snapshotted — it is the same live video, just enlarged, which keeps
+        /// it working with Agora's Metal-backed view.
+        static let aimScale: CGFloat = 2.6
+
+        func magnify(around point: CGPoint?) {
+            guard let layer = zoomLayer else { return }
+            guard let point else {
+                UIView.animate(withDuration: 0.16) { layer.transform = .identity }
+                store?.zoom = 1
+                return
+            }
+            let k = Self.aimScale
+            // Anchor the scale on the touched point: what is under the finger
+            // stays under the finger, everything else grows away from it.
+            let tx = (1 - k) * (point.x - layer.bounds.midX)
+            let ty = (1 - k) * (point.y - layer.bounds.midY)
+            let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: k, y: k)
+            if layer.transform == .identity {
+                UIView.animate(withDuration: 0.12) { layer.transform = transform }
+            } else {
+                layer.transform = transform
+            }
+            store?.zoom = k
+        }
+
         func resetZoom(animated: Bool) {
             guard let layer = zoomLayer else { return }
             scale = 1
@@ -1237,6 +1348,17 @@ struct MacScreenStage: UIViewRepresentable {
 struct MacControlBar: View {
     @Bindable var control: MacRemoteControlStore
     let pal: AgentPalette
+
+    private var hintBn: String {
+        switch control.mode {
+        case .aim:
+            return "আঙুল রাখুন — জায়গাটা বড় হবে, আঙুল সরিয়ে ঠিক করুন, ছাড়লেই ক্লিক। চেপে ধরে রাখলে রাইট-ক্লিক।"
+        case .trackpad:
+            return "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
+        case .direct:
+            return "সরাসরি মোড: অন্তত ২× জুম করে তবেই ট্যাপ করা যাবে।"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -1284,8 +1406,8 @@ struct MacControlBar: View {
                     Picker("", selection: Binding(
                         get: { control.mode },
                         set: { control.mode = $0; AlmaAgentHaptics.selection() })) {
+                        Text("নিশানা").tag(MacRemoteControlStore.Mode.aim)
                         Text("ট্র্যাকপ্যাড").tag(MacRemoteControlStore.Mode.trackpad)
-                        Text("সরাসরি").tag(MacRemoteControlStore.Mode.direct)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 168, height: 44)
@@ -1315,9 +1437,7 @@ struct MacControlBar: View {
                                          ? Color.green : pal.muted)
                 }
 
-                Text(control.mode == .trackpad
-                     ? "আঙুল সরালে কার্সার সরবে · ট্যাপ = কার্সারের জায়গায় ক্লিক · দুই আঙুল = স্ক্রল · দুই আঙুলে ট্যাপ = রাইট-ক্লিক · চেপে ধরে টানলে ড্র্যাগ"
-                     : "সরাসরি মোড: অন্তত ২× জুম করে তবেই ট্যাপ করা যাবে — নইলে ভুল জায়গায় পড়তে পারে।")
+                Text(hintBn)
                     .font(.system(size: 11.5))
                     .foregroundStyle(pal.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1539,9 +1659,9 @@ struct MacScreenFullScreen: View {
                     showKeys.toggle()
                     typing = showKeys
                 }
-                barButton(systemName: control.mode == .trackpad ? "rectangle.and.hand.point.up.left" : "hand.tap",
-                          label: control.mode == .trackpad ? "ট্র্যাকপ্যাড" : "সরাসরি") {
-                    control.mode = control.mode == .trackpad ? .direct : .trackpad
+                barButton(systemName: control.mode == .aim ? "scope" : "rectangle.and.hand.point.up.left",
+                          label: control.mode == .aim ? "নিশানা" : "ট্র্যাকপ্যাড") {
+                    control.mode = control.mode == .aim ? .trackpad : .aim
                 }
             }
             if let status = control.statusBn {
