@@ -117,7 +117,11 @@ export const READINESS_WARNINGS_BN: Record<string, string> = {
 const MIN_MODEL_SIDE = 512
 const MIN_PRODUCT_SIDE = 400
 const READINESS_CACHE_PREFIX = 'cs_input_readiness:'
-const READINESS_VISION_MODEL = 'gemini-2.0-flash'
+// Gemini 2.0 Flash was shut down on 2026-06-01. This check is fail-open, but a
+// dead model made every production readiness review silently skip vision.
+export const READINESS_VISION_MODEL = 'gemini-3.6-flash'
+const READINESS_VISION_INPUT_USD_PER_M = 1.5
+const READINESS_VISION_OUTPUT_USD_PER_M = 7.5
 
 async function imageMinSide(path: string): Promise<number | null> {
   try {
@@ -164,13 +168,26 @@ async function visionReadiness(modelImagePath: string): Promise<VisionReadiness 
               { inline_data: { mime_type: 'image/jpeg', data: buf.toString('base64') } },
             ],
           }],
-          generationConfig: { temperature: 0, maxOutputTokens: 128 },
+          generationConfig: {
+            maxOutputTokens: 256,
+            responseMimeType: 'application/json',
+            thinkingConfig: { thinkingLevel: 'minimal' },
+          },
         }),
         signal: AbortSignal.timeout(20_000),
       },
     )
-    if (!res.ok) return null
-    const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.warn(
+        `[single-pipeline] readiness vision HTTP ${res.status} (${READINESS_VISION_MODEL}): ${body.slice(0, 240)}`,
+      )
+      return null
+    }
+    const data = await res.json() as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+    }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
     const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as Partial<VisionReadiness>
     const result: VisionReadiness = {
@@ -182,8 +199,16 @@ async function visionReadiness(modelImagePath: string): Promise<VisionReadiness 
     void logCost({
       provider: 'gemini',
       kind: 'cs_vision',
-      units: { model: READINESS_VISION_MODEL, purpose: 'input_readiness' },
-      costUsd: 0.0001,
+      units: {
+        model: READINESS_VISION_MODEL,
+        purpose: 'input_readiness',
+        tokens_in: data.usageMetadata?.promptTokenCount ?? 400,
+        tokens_out: data.usageMetadata?.candidatesTokenCount ?? 100,
+      },
+      costUsd: (
+        (data.usageMetadata?.promptTokenCount ?? 400) * READINESS_VISION_INPUT_USD_PER_M
+        + (data.usageMetadata?.candidatesTokenCount ?? 100) * READINESS_VISION_OUTPUT_USD_PER_M
+      ) / 1_000_000,
       dedupKey: `readiness:${modelImagePath}`,
     })
     try {

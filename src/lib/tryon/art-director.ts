@@ -1,8 +1,13 @@
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { logCost } from '@/agent/lib/cost-events'
 
-const VISION_MODEL = 'gemini-2.0-flash'
+// Gemini 2.0 Flash was shut down on 2026-06-01. Keep preflight vision on a
+// current GA multimodal model so a retired endpoint cannot silently turn every
+// clean product reference into `unknown` and block Auto before confirmation.
+export const GARMENT_VISION_MODEL = 'gemini-3.6-flash'
 const CACHE_PREFIX = 'tryon_garment_attrs:'
+const GARMENT_VISION_INPUT_USD_PER_M = 1.5
+const GARMENT_VISION_OUTPUT_USD_PER_M = 7.5
 
 export type TryOnStyle = 'studio' | 'outdoor_bd' | 'festival' | 'lifestyle'
 export type TryOnPose = 'front' | 'three_quarter' | 'walking' | 'sitting' | 'detail'
@@ -262,7 +267,7 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
 
   const mimeType = mimeFromPath(productImagePath)
   const base64 = buffer.toString('base64')
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${key}`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GARMENT_VISION_MODEL}:generateContent?key=${key}`
 
   try {
     const res = await fetch(url, {
@@ -275,12 +280,22 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
             { inline_data: { mime_type: mimeType, data: base64 } },
           ],
         }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
+        generationConfig: {
+          maxOutputTokens: 512,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: 'minimal' },
+        },
       }),
       signal: AbortSignal.timeout(30_000),
     })
 
-    if (!res.ok) return { ...UNKNOWN_ATTRS }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.warn(
+        `[art-director] garment attrs HTTP ${res.status} (${GARMENT_VISION_MODEL}): ${body.slice(0, 240)}`,
+      )
+      return { ...UNKNOWN_ATTRS }
+    }
 
     const data = await res.json() as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
@@ -295,8 +310,11 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
     void logCost({
       provider: 'gemini',
       kind: 'cs_vision',
-      units: { model: VISION_MODEL, tokens_in: tokensIn, tokens_out: tokensOut, purpose: 'garment_classify' },
-      costUsd: 0.0001,
+      units: { model: GARMENT_VISION_MODEL, tokens_in: tokensIn, tokens_out: tokensOut, purpose: 'garment_classify' },
+      costUsd: (
+        tokensIn * GARMENT_VISION_INPUT_USD_PER_M
+        + tokensOut * GARMENT_VISION_OUTPUT_USD_PER_M
+      ) / 1_000_000,
       dedupKey: `garment_classify:${productImagePath}`,
     })
 

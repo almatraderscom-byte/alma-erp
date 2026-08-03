@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GARMENT_VISION_MODEL,
   NEGATIVE_DIRECTIVES,
   autoProductReferenceError,
   buildTryOnPrompt,
@@ -7,6 +8,11 @@ import {
 } from '../art-director'
 
 describe('production try-on fidelity prompt', () => {
+  it('uses a current GA multimodal model for product preflight', () => {
+    expect(GARMENT_VISION_MODEL).toBe('gemini-3.6-flash')
+    expect(GARMENT_VISION_MODEL).not.toContain('gemini-2.0')
+  })
+
   it('forbids invented body art and preserves exact garment/model attributes', () => {
     const prompt = buildTryOnPrompt({
       garmentType: 'panjabi',
