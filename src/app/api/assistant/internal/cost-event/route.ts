@@ -5,7 +5,7 @@ import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { logCost, type LogCostInput } from '@/agent/lib/cost-events'
-import type { CostKind, CostProvider } from '@/agent/lib/pricing'
+import { isCostProvider, type CostKind } from '@/agent/lib/pricing'
 
 export const runtime = 'nodejs'
 
@@ -20,7 +20,6 @@ function verifyToken(provided: string): boolean {
   } catch { return false }
 }
 
-const PROVIDERS = new Set<CostProvider>(['anthropic', 'openai', 'openrouter', 'gemini', 'xai', 'veo', 'google_tts', 'twilio', 'elevenlabs'])
 const KINDS = new Set<CostKind>(['chat', 'embedding', 'transcribe', 'tts', 'image', 'video', 'call'])
 
 export async function POST(req: NextRequest) {
@@ -35,7 +34,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   const { provider, kind, units, costUsd } = body
-  if (!provider || !PROVIDERS.has(provider as CostProvider)) {
+  if (!isCostProvider(provider)) {
     return Response.json({ error: 'invalid_provider' }, { status: 400 })
   }
   if (!kind || !KINDS.has(kind as CostKind)) {
@@ -46,7 +45,7 @@ export async function POST(req: NextRequest) {
   }
 
   const result = await logCost({
-    provider: provider as CostProvider,
+    provider,
     kind: kind as CostKind,
     units: (units && typeof units === 'object' ? units : {}) as Record<string, number | string>,
     costUsd,

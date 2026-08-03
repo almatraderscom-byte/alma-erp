@@ -117,7 +117,7 @@ import {
   getChainProgress,
   type FamilyChainState,
 } from '@/lib/tryon/family-chain'
-import { BD_SCENES, pickScene } from '@/lib/tryon/scene-pool'
+import { BD_SCENES, PAIR_POSES, pickScene } from '@/lib/tryon/scene-pool'
 import {
   issueStudioRunEstimate,
   verifyStudioRunEstimateReceipt,
@@ -234,6 +234,12 @@ describe('scene pool', () => {
     expect(p.adultPose).toBeTruthy()
     expect(p.childPose).toBeTruthy()
     expect(p.pairPose).toBeTruthy()
+  })
+
+  it('keeps child-family poses non-contact so the merge cannot fuse hands', () => {
+    for (const pose of PAIR_POSES) {
+      expect(pose.toLowerCase()).not.toMatch(/hand in hand|hand resting|touching|physical contact/)
+    }
   })
 })
 
@@ -363,6 +369,9 @@ describe('chain advance — father_son end to end', () => {
     expect(row.payload.referenceImageId).toBe('generated/father-shot.png')
     expect(row.payload.secondReferenceImageId).toBe('generated/son-shot.png')
     expect(String(row.payload.prompt)).toContain('SCENE')
+    expect(String(row.payload.prompt)).toContain('no physical contact')
+    expect(String(row.payload.prompt)).toContain('visible gap')
+    expect(String(row.payload.prompt)).toContain('Do not add a watch')
 
     // Step 4: merge done → chain complete, no further action
     nextId = await completeStep(row, 'generated/family.png')

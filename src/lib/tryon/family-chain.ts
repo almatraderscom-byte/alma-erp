@@ -460,7 +460,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
             state.childRole === 'mother'
               ? 'One consistent light source and color grade across both people, natural contact shadows, natural relative heights for a couple.'
               : 'One consistent light source and color grade across both people, natural contact shadows, correct relative height between the adult and the child.',
+            state.childRole === 'mother'
+              ? ''
+              : 'SAFETY COMPOSITION RULE: no physical contact and no overlapping hands, fingers, arms, or bodies. Keep a visible gap between adult and child; show both sets of hands clearly separated, complete, and anatomically natural.',
             'They wear the SAME matching family collection — the shared motif/color must read clearly as a coordinated set.',
+            state.childRole === 'mother'
+              ? ''
+              : 'Do not add a watch, jewelry, tattoo, prop, or accessory that is absent from the two finished reference photos.',
             'Photorealistic professional Bangladeshi family fashion photograph, e-commerce ready.',
             state.extraPrompt ?? '',
           ].filter(Boolean).join(' '),
