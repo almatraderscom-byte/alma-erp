@@ -56,5 +56,15 @@ describe('production try-on fidelity prompt', () => {
     }
     expect(autoProductReferenceError(family)).toBe('family_product_requires_role_crop')
     expect(autoProductReferenceError(family, true)).toBeNull()
+    expect(autoProductReferenceError({
+      ...family,
+      visibleWearers: 1,
+      photoType: 'on_model',
+    })).toBeNull()
+    expect(autoProductReferenceError({
+      ...family,
+      visibleWearers: 2,
+      photoType: 'multi_person',
+    })).toBe('family_product_requires_role_crop')
   })
 })
