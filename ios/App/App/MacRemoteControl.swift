@@ -392,6 +392,9 @@ final class MacRemoteControlStore {
     /// live session: a 3440-wide Mac inside a 230pt strip is not something you
     /// can drive smoothly — full screen makes the target big enough to aim at.
     var fullScreen = false
+    /// A finger is on the video right now — the full-screen chrome hides so it
+    /// can never sit on top of what is being aimed at.
+    var interacting = false
     /// RC-2.5: first tap aims (the Mac paints a solid ring), second commits.
     /// Off by default — the snap already makes ordinary targets safe; this is
     /// the brake for the small ones, and the owner decides when he wants it.
@@ -771,6 +774,21 @@ final class TrackpadSurfaceView: UIView {
     var aimMode = false
     /// Called with the touch point when the aim magnifier should show/move/hide.
     var onAimZoom: ((CGPoint?) -> Void)?
+    /// Called with the point the click would land on (in this view's space), so
+    /// a reticle can be drawn there. The finger sits BELOW it.
+    var onAimTarget: ((CGPoint?) -> Void)?
+    /// True while a finger is down — the chrome hides so it never covers the
+    /// thing being aimed at.
+    var onInteracting: ((Bool) -> Void)?
+
+    /// How far ABOVE the finger the aimed point sits. A fingertip is ~50pt of
+    /// opaque flesh; aiming at something you cannot see is the whole problem.
+    static let aimLift: CGFloat = 78
+
+    /// The point being aimed at for a touch at `touch`.
+    private func aimPoint(for touch: CGPoint) -> CGPoint {
+        CGPoint(x: touch.x, y: max(videoRect.minY + 2, touch.y - Self.aimLift))
+    }
 
     private enum Phase { case idle, undecided, moving, dragging, twoFinger, aiming }
     private var phase: Phase = .idle
@@ -865,6 +883,13 @@ final class TrackpadSurfaceView: UIView {
         guard store?.armed == true else { return }
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if all.count >= 2 {
+            // A second finger arriving during an aim cancels the aim — the
+            // owner is scrolling, not clicking.
+            if phase == .aiming {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
             cancelLongPress()
             phase = .twoFinger
             // Motion the first finger had already banked is not part of this
@@ -885,12 +910,15 @@ final class TrackpadSurfaceView: UIView {
             // and a delay would make the first tap feel unresponsive.
             phase = .aiming
             let rect = videoRect
-            guard rect.contains(startPoint) else { phase = .idle; return }
-            onAimZoom?(startPoint)
+            let target = aimPoint(for: startPoint)
+            guard rect.contains(target) else { phase = .idle; return }
+            onInteracting?(true)
+            onAimZoom?(target)
+            onAimTarget?(target)
             RemoteHaptics.tap()
-            store?.sendAimMove(x: Double((startPoint.x - rect.minX) / rect.width),
-                               y: Double((startPoint.y - rect.minY) / rect.height))
-            scheduleLongPress() // long press in aim mode = right click
+            store?.sendAimMove(x: Double((target.x - rect.minX) / rect.width),
+                               y: Double((target.y - rect.minY) / rect.height))
+            scheduleLongPress() // hold in aim mode = pick the thing up (drag)
             return
         }
         phase = .undecided
@@ -932,17 +960,20 @@ final class TrackpadSurfaceView: UIView {
         }
         guard let touch = touches.first else { return }
         let p = touch.location(in: self)
-        if phase == .aiming {
+        if phase == .aiming || phase == .dragging, aimMode {
             // While magnified the finger is fine-tuning: the Mac's cursor (and
             // therefore its snap ring) follows, so the target is visible before
-            // the click is committed.
-            cancelLongPress()
+            // the click is committed. A drag in progress keeps the same
+            // mapping, it just has the button held.
+            if phase == .aiming, hypot(p.x - startPoint.x, p.y - startPoint.y) > 4 { cancelLongPress() }
             lastPoint = p
             let rect = videoRect
             guard rect.width > 0, rect.height > 0 else { return }
-            onAimZoom?(p)
-            store?.sendAimMove(x: Double(min(max(0, (p.x - rect.minX) / rect.width), 1)),
-                               y: Double(min(max(0, (p.y - rect.minY) / rect.height), 1)))
+            let target = aimPoint(for: p)
+            onAimZoom?(target)
+            onAimTarget?(target)
+            store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                               y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
             return
         }
         let moved = hypot(p.x - startPoint.x, p.y - startPoint.y)
@@ -971,15 +1002,22 @@ final class TrackpadSurfaceView: UIView {
         flushPendingMotion()
         switch phase {
         case .aiming:
-            let p = touches.first?.location(in: self) ?? lastPoint
+            let target = aimPoint(for: touches.first?.location(in: self) ?? lastPoint)
             let rect = videoRect
             onAimZoom?(nil)
-            if rect.contains(p) {
-                store?.sendAimClick(x: Double((p.x - rect.minX) / rect.width),
-                                    y: Double((p.y - rect.minY) / rect.height))
+            onAimTarget?(nil)
+            onInteracting?(false)
+            if rect.contains(target) {
+                store?.sendAimClick(x: Double((target.x - rect.minX) / rect.width),
+                                    y: Double((target.y - rect.minY) / rect.height))
             }
         case .dragging:
             store?.sendDrag(down: false)
+            if aimMode {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
         case .twoFinger:
             // A two-finger tap (no travel, short) is a right-click.
             if remaining == 0, Date().timeIntervalSince(startedAt) < tapMaxDuration,
@@ -999,7 +1037,11 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if phase == .aiming { onAimZoom?(nil) }
+        if phase == .aiming || (aimMode && phase == .dragging) {
+            onAimZoom?(nil)
+            onAimTarget?(nil)
+            onInteracting?(false)
+        }
         cancelLongPress()
         flushPendingMotion()
         if phase == .dragging { store?.sendDrag(down: false) }
@@ -1042,14 +1084,12 @@ final class TrackpadSurfaceView: UIView {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             if self.aimMode, self.phase == .aiming {
-                // Held still while magnified: right-click, then finish.
-                let rect = self.videoRect
-                let p = self.lastPoint
-                self.phase = .idle
-                self.onAimZoom?(nil)
-                guard rect.contains(p) else { return }
-                self.store?.sendAimClick(x: Double((p.x - rect.minX) / rect.width),
-                                         y: Double((p.y - rect.minY) / rect.height), right: true)
+                // Held still while magnified: PICK IT UP. Dragging a file or a
+                // window is the other half of using a Mac, and switching modes
+                // to do it would break the flow. Right-click stays on the
+                // two-finger tap, the same as everywhere else.
+                self.phase = .dragging
+                self.store?.sendDrag(down: true)
                 return
             }
             guard self.phase == .undecided else { return }
@@ -1112,6 +1152,36 @@ final class TrackpadSurfaceView: UIView {
         }
         let n = CGFloat(max(1, touches.count))
         return CGPoint(x: sum.x / n, y: sum.y / n)
+    }
+}
+
+/// The aiming cross-hair: a ring with a centre dot at the exact point the
+/// click will land. Drawn in ALMA coral, same as the Mac-side snap ring, so
+/// the two read as one system.
+final class ReticleView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1)
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        ctx.setStrokeColor(coral.cgColor)
+        ctx.setLineWidth(2)
+        ctx.strokeEllipse(in: CGRect(x: c.x - 13, y: c.y - 13, width: 26, height: 26))
+        ctx.setFillColor(coral.cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - 2.5, y: c.y - 2.5, width: 5, height: 5))
+        // Four ticks so the centre reads even over busy video.
+        for (dx, dy, dx2, dy2) in [(0.0, -13.0, 0.0, -19.0), (0.0, 13.0, 0.0, 19.0),
+                                   (-13.0, 0.0, -19.0, 0.0), (13.0, 0.0, 19.0, 0.0)] {
+            ctx.move(to: CGPoint(x: c.x + dx, y: c.y + dy))
+            ctx.addLine(to: CGPoint(x: c.x + dx2, y: c.y + dy2))
+        }
+        ctx.strokePath()
     }
 }
 
@@ -1181,6 +1251,21 @@ struct MacScreenStage: UIViewRepresentable {
         surface.onAimZoom = { [weak coordinator = context.coordinator] point in
             coordinator?.magnify(around: point)
         }
+        surface.onAimTarget = { [weak coordinator = context.coordinator] point in
+            coordinator?.showReticle(at: point)
+        }
+        surface.onInteracting = { [weak store] active in
+            store?.interacting = active
+        }
+
+        // The reticle: a small cross-hair ring at the exact point the click
+        // will land, drawn on the SURFACE so it magnifies with the video and
+        // stays visually glued to the target.
+        let reticle = ReticleView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        reticle.isHidden = true
+        reticle.isUserInteractionEnabled = false
+        surface.addSubview(reticle)
+        context.coordinator.reticle = reticle
         context.coordinator.surface = surface
         context.coordinator.canvas = canvas
         context.coordinator.zoomLayer = zoomLayer
@@ -1247,8 +1332,19 @@ struct MacScreenStage: UIViewRepresentable {
     final class Coordinator: NSObject {
         weak var surface: TrackpadSurfaceView?
         weak var canvas: UIView?
+        weak var reticle: ReticleView?
         /// Size the video was last bound at; a change means re-bind.
         var boundSize: CGSize = .zero
+
+        func showReticle(at point: CGPoint?) {
+            guard let reticle else { return }
+            guard let point else {
+                reticle.isHidden = true
+                return
+            }
+            reticle.isHidden = false
+            reticle.center = point
+        }
         weak var zoomLayer: UIView?
         weak var pinch: UIPinchGestureRecognizer?
         weak var pan: UIPanGestureRecognizer?
@@ -1641,6 +1737,10 @@ struct MacScreenFullScreen: View {
                 controlStrip
             }
             .padding(.bottom, 14)
+            // The bar gets out of the way the moment a finger touches the
+            // video: nothing of ours may cover what the owner is aiming at.
+            .opacity(control.interacting ? 0 : 1)
+            .animation(.easeOut(duration: 0.15), value: control.interacting)
         }
     }
 
