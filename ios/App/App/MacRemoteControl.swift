@@ -663,7 +663,13 @@ final class MacRemoteControlStore {
     func nudgeToArm() {
         guard !armed, !busy else { return }
         RemoteHaptics.refused()
-        statusBn = "Mac ছুঁতে হলে আগে \u{201C}কন্ট্রোল চালু\u{201D} চাপুন।"
+        // Never clobber a server refusal ("another device holds control", the
+        // kill switch, no stream) — that sentence tells him what to actually
+        // fix, while this one would only tell him to press a button that will
+        // fail again (Codex P2).
+        let nudge = "Mac ছুঁতে হলে আগে \u{201C}কন্ট্রোল চালু\u{201D} চাপুন।"
+        guard statusBn == nil || statusBn == nudge else { return }
+        statusBn = nudge
     }
 
     func sendMove(dx: Double, dy: Double) {
