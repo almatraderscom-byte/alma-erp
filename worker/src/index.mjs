@@ -1210,7 +1210,17 @@ async function runPreviewImageE2e() {
       previewE2eTargetActionId = job.id
       previewE2eReportedResult = null
       console.log(`[preview-e2e] processing isolated action ${job.id}`)
-      await processImageGen({ data: { pendingActionId: job.id, payload: job.payload } })
+      try {
+        await processImageGen({ data: { pendingActionId: job.id, payload: job.payload } })
+      } catch (err) {
+        // Direct certification dispatch bypasses BullMQ, so its normal `failed`
+        // event cannot settle the action. Never leave a paid preview action in
+        // preview_approved after a scorer/provider crash.
+        if (previewE2eReportedResult?.status !== 'failed') {
+          await callJobResult(job.id, 'failed', undefined, err?.message ?? String(err))
+        }
+        throw err
+      }
       if (previewE2eReportedResult?.status !== 'success') {
         throw new Error(`preview_image_generation_failed:${previewE2eReportedResult?.error ?? 'missing_success_callback'}`)
       }

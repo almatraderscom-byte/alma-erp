@@ -2,6 +2,8 @@
  * Worker-side cost logging via app internal API.
  */
 
+import { getAppProtectionHeaders } from './env.mjs'
+
 const APP_URL = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
@@ -22,6 +24,7 @@ export async function logCost(params) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${INT_TOKEN()}`,
+        ...getAppProtectionHeaders(),
       },
       body: JSON.stringify(params),
       signal: AbortSignal.timeout(15_000),

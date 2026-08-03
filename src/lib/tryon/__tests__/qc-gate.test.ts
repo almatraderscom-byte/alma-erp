@@ -82,5 +82,6 @@ describe('QC model response integrity', () => {
     const withoutText = score()
     delete (withoutText as Partial<QCScore>).text_legibility
     expect(parseQcScoreResponse(JSON.stringify(withoutText)).text_legibility).toBe(5)
+    expect(parseQcScoreResponse(JSON.stringify({ ...score(), text_legibility: 'N/A' })).text_legibility).toBe(5)
   })
 })

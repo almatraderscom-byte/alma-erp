@@ -154,7 +154,7 @@ Return JSON only with every field present:
   "fail_reasons": ["specific actionable issues"],
   "fix_hint": "what to change in regeneration prompt"
 }
-Use N/A=5 for text_legibility if no overlay text.
+text_legibility MUST be numeric; use 5 when there is no overlay text (never return the string "N/A").
 Garment fidelity is strict reference matching: color, fabric, cut, length, collar, buttons, embroidery/motif pattern and placement must match the product reference; a redesign is a failure.
 Model preservation is strict reference matching: face, age, skin tone, hair and body must match the person reference. Any newly invented tattoo, body art, scar, jewelry, watch, accessory or skin marking that is absent from the person reference is an automatic model_preserved failure (score at most 2) and must be named in fail_reasons.
 Anatomy includes natural hands/fingers/limbs and appropriate skin coverage; distorted or newly decorated hands/arms fail this axis.
@@ -175,7 +175,11 @@ const QC_NUMERIC_AXES = [
 export function parseQcScoreResponse(rawText: string): QCScore {
   const jsonMatch = rawText.match(/\{[\s\S]*\}/)
   if (!jsonMatch) throw new Error('qc_invalid_json:no_object')
-  const raw = JSON.parse(jsonMatch[0]) as Partial<QCScore>
+  const raw = JSON.parse(jsonMatch[0]) as Record<string, unknown>
+  const normalizedTextLegibility = typeof raw.text_legibility === 'string'
+    && /^(n\/?a|not applicable)$/i.test(raw.text_legibility.trim())
+    ? 5
+    : raw.text_legibility
   const clamp = (n: unknown, axis: string) => {
     const v = Number(n)
     if (!Number.isFinite(v)) throw new Error(`qc_invalid_score:${axis}`)
@@ -192,7 +196,7 @@ export function parseQcScoreResponse(rawText: string): QCScore {
     brand_consistency: clamp(raw.brand_consistency, 'brand_consistency'),
     // The rubric defines text as N/A=5 when there is no overlay. Gemini may
     // omit only this N/A field; core/product/identity axes remain mandatory.
-    text_legibility: clamp(raw.text_legibility ?? 5, 'text_legibility'),
+    text_legibility: clamp(normalizedTextLegibility ?? 5, 'text_legibility'),
     composition: clamp(raw.composition, 'composition'),
     overall: clamp(raw.overall, 'overall'),
     fail_reasons,
