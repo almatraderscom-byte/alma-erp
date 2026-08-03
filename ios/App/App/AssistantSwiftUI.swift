@@ -1819,17 +1819,30 @@ final class AssistantVM {
     /// not confirmed reading yet. A 2xx on /steer only means "stored"; if the
     /// turn dies right after, nobody ever reads it. Persisted so a cold start
     /// can ASK instead of guessing.
-    private static let steerAwaitingDeliveryKey = "alma.assistant.steerAwaitingDelivery.v1"
-    private var steerAwaitingDelivery: [String: String] =
-        (UserDefaults.standard.dictionary(forKey: "alma.assistant.steerAwaitingDelivery.v1")
-            as? [String: String]) ?? [:] {
+    private static let steerAwaitingDeliveryKey = "alma.assistant.steerAwaitingDelivery.v2"
+    /// The turn that owes a "read" confirmation, PLUS the message itself: a
+    /// steer the server stored but no turn ever claimed has to be replayable,
+    /// and the POST path already removed it from the live queue (Codex P1).
+    struct SteerAwaiting: Codable, Equatable {
+        let turnId: String
+        let queued: QueuedOwnerMessage
+    }
+    private var steerAwaitingDelivery: [String: SteerAwaiting] =
+        AssistantVM.loadSteerAwaiting() {
         didSet {
             if steerAwaitingDelivery.isEmpty {
                 UserDefaults.standard.removeObject(forKey: Self.steerAwaitingDeliveryKey)
-            } else {
-                UserDefaults.standard.set(steerAwaitingDelivery, forKey: Self.steerAwaitingDeliveryKey)
+            } else if let data = try? JSONEncoder().encode(steerAwaitingDelivery) {
+                UserDefaults.standard.set(data, forKey: Self.steerAwaitingDeliveryKey)
             }
         }
+    }
+
+    private static func loadSteerAwaiting() -> [String: SteerAwaiting] {
+        guard let data = UserDefaults.standard.data(forKey: steerAwaitingDeliveryKey),
+              let decoded = try? JSONDecoder().decode([String: SteerAwaiting].self, from: data)
+        else { return [:] }
+        return decoded
     }
     private var steeringSubmissions: Set<String> = []
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
@@ -3097,7 +3110,16 @@ final class AssistantVM {
             if old.role == .user, incoming[i].fileRefs.isEmpty { incoming[i].fileRefs = old.fileRefs }
             if old.role == .user {
                 incoming[i].clientMessageId = old.clientMessageId
-                incoming[i].outgoingState = old.outgoingState == .failed ? .failed : .accepted
+                // `delivered` is knowledge the SERVER cannot re-state on a
+                // history fetch (the wire row only says the message exists), so
+                // the merge must carry it forward instead of flattening every
+                // user row back to `accepted` (Codex P2 — this is why the
+                // marker vanished a second after it appeared).
+                switch old.outgoingState {
+                case .failed: incoming[i].outgoingState = .failed
+                case .delivered: incoming[i].outgoingState = .delivered
+                default: incoming[i].outgoingState = .accepted
+                }
             }
             // Delegation cards are live-session state (the server persists only a
             // plain tool row, web parity) — the settle merge must not eat them.
@@ -4430,9 +4452,9 @@ final class AssistantVM {
     /// Offline or `unknown` changes nothing (the safe state).
     private func reconcileSteerDeliveries() async {
         guard !steerAwaitingDelivery.isEmpty else { return }
-        for (clientMessageId, turnId) in steerAwaitingDelivery {
+        for (clientMessageId, awaiting) in steerAwaitingDelivery {
             guard let status: SteeringStatusResponse = try? await AlmaAPI.shared.getQuietAuth(
-                "/api/assistant/turn/\(turnId)/steer",
+                "/api/assistant/turn/\(awaiting.turnId)/steer",
                 query: ["clientMessageId": clientMessageId]) else { continue }
             switch status.status {
             case "consumed":
@@ -4445,8 +4467,18 @@ final class AssistantVM {
                 // The turn or row is gone; nothing will ever confirm it. Stop
                 // asking, but leave the bubble on its honest `accepted`.
                 steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+            case "queued":
+                // Stored but never claimed. If that turn is no longer the one
+                // running, nobody ever will — put the message back on the queue
+                // so the ordinary drain delivers it. Re-sending is safe: the
+                // server dedupes on this same clientMessageId.
+                if awaiting.turnId != currentTurnId,
+                   !queuedOwnerMessages.contains(where: { $0.id == clientMessageId }) {
+                    queuedOwnerMessages.append(awaiting.queued)
+                    steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+                }
             default:
-                break // still queued — ask again next launch
+                break
             }
         }
     }
@@ -4585,10 +4617,20 @@ final class AssistantVM {
                 guard response.success == true else { continue }
                 queuedOwnerMessages.removeAll { $0.id == queued.id }
                 for index in messages.indices where messages[index].clientMessageId == queued.id {
-                    messages[index].outgoingState = .accepted
+                    // The turn can claim the steer and emit steering_delivered
+                    // before this POST's response resumes; never walk that back
+                    // (Codex P2).
+                    if messages[index].outgoingState != .delivered {
+                        messages[index].outgoingState = .accepted
+                    }
                 }
-                // Remember which turn owes us a "read" confirmation.
-                steerAwaitingDelivery[queued.id] = turnId
+                // Remember which turn owes us a "read" confirmation — unless it
+                // has already arrived.
+                if !messages.contains(where: {
+                    $0.clientMessageId == queued.id && $0.outgoingState == .delivered
+                }) {
+                    steerAwaitingDelivery[queued.id] = SteerAwaiting(turnId: turnId, queued: queued)
+                }
                 let ids = Set(queued.attachmentIds ?? [])
                 if !ids.isEmpty { removeAttachmentCacheFiles(ids) }
                 AlmaTurnLog.event("turn.ownerSteeringAccepted", queued.id)
