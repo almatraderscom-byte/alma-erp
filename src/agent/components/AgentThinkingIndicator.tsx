@@ -51,13 +51,15 @@ interface AgentThinkingIndicatorProps {
   /** The model's own name from `model_info` — shown for EVERY model, not the three
    *  families `variant` happened to know (owner, 2026-07-28). */
   modelName?: string
+  /** P1-9 — HeadDecision.via for the tooltip ("routine_kw", "task_pin"…). */
+  modelVia?: string
   className?: string
 }
 
 export function AgentThinkingIndicator({
   mode = 'thinking',
   variant = 'default',
-  modelName,
+  modelName, modelVia,
   className,
 }: AgentThinkingIndicatorProps) {
   const [displayMode, setDisplayMode] = useState<ThinkingMode>(mode)
@@ -109,6 +111,10 @@ export function AgentThinkingIndicator({
   // The server now names the model on every turn; `variant` is the fallback for
   // an older stream and for the sub-agent spinners that have no model_info.
   const name = modelName?.trim() || VARIANT_NAME[variant] || 'ALMA'
+  // P1-9 — the routing reason lives in the tooltip, not on the line: the answer
+  // to "why THIS model" has to exist somewhere, but the chat header is not the
+  // place to add another thing to read (owner rule on lean UI).
+  const viaTitle = modelVia?.trim() ? `কেন এই মডেল: ${modelVia.trim()}` : undefined
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
@@ -118,7 +124,7 @@ export function AgentThinkingIndicator({
           single start/finish taps fired in AgentThread. */}
       <AlmaSpinner mode={spinnerMode} size={20} showVerb haptics sound={false} />
       {/* Brand + model name so the owner always sees WHO is working. */}
-      <span className="alma-brand-shimmer text-[12px] font-semibold">
+      <span className="alma-brand-shimmer text-[12px] font-semibold" title={viaTitle}>
         {name === 'ALMA' ? 'ALMA' : `ALMA · ${name}`}
       </span>
     </div>

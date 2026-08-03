@@ -61,6 +61,23 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/live-browser/pair') return true
   if (pathname === '/api/assistant/live-browser/poll') return true
   if (pathname === '/api/assistant/live-browser/result') return true
+  // Same three-endpoint shape for the Mac daemon, and the same reason: it holds a
+  // bearer token, not a browser cookie, and each handler authenticates that token
+  // itself (constant-time hash compare). Missing this made every pairing attempt
+  // 401 before the code was ever read — caught only by pairing a real Mac.
+  // NOTE: /status carries BOTH surfaces now. The owner's control page stays
+  // cookie-authenticated — the route's own requireOwner() enforces that — and
+  // W3 added a daemon Bearer branch (the out-of-band STOP check while a UI
+  // action waits out the owner-idle gate), which is why the path must be
+  // listed here like the other token-authenticated daemon endpoints.
+  if (pathname === '/api/assistant/mac-agent/pair') return true
+  if (pathname === '/api/assistant/mac-agent/poll') return true
+  if (pathname === '/api/assistant/mac-agent/result') return true
+  if (pathname === '/api/assistant/mac-agent/events') return true
+  if (pathname === '/api/assistant/mac-agent/frames') return true
+  if (pathname === '/api/assistant/mac-agent/status') return true
+  // L9-B: the daemon mints its Agora PUBLISHER token bearer-authenticated.
+  if (pathname === '/api/assistant/mac-agent/screen-video-token') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true

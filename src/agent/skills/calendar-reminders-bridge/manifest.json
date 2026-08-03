@@ -1,0 +1,32 @@
+{
+  "name": "calendar-reminders-bridge",
+  "description": "Reads what is on the Mac's own Calendar and Reminders for today and lines it up against the appointments already in the ERP, so Boss sees one list instead of two. Writing an event goes to him as a card. Use when Boss asks what is on his calendar today or what he is forgetting.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "ERP appointments, staff tasks and business todos on their own — those tools answer directly and need no Mac. Prayer times have their own tools. Setting a reminder for the AGENT to do something later is a reminder tool, not a calendar entry.",
+  "requiredCapabilities": [
+    "run_mac_command", "check_mac_command", "mac_agent_status",
+    "list_appointments", "list_owner_todos", "list_reminders"
+  ],
+  "dependencies": { "capability": ["run_mac_command", "list_appointments"] },
+  "outputContract": {
+    "kind": "day_view",
+    "mustInclude": ["mac_calendar_items", "erp_appointments", "conflicts_or_gaps"]
+  },
+  "stopConditions": [
+    "Automation অনুমতি নেই — Boss-কে একবার অনুমতি দিতে হবে",
+    "নতুন event লিখতে হবে — কার্ড ছাড়া নয়",
+    "দুই জায়গায় দুই রকম তথ্য — মিলিয়ে দেওয়ার আগে Boss-কে দেখাও",
+    "কিছু মুছতে হবে — এই skill কিছু মোছে না"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 12,
+  "done": [{ "tool": "run_mac_command", "argMatch": "osascript" }],
+  "status": "active"
+}

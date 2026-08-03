@@ -519,6 +519,20 @@ final class AlmaAPI: NSObject {
         return try decode(data)
     }
 
+    /// GET for OWNER-ONLY feeds a staff session may legitimately hit (e.g. the
+    /// live dock's poll). A 403 there means "not for you", not "logged out" —
+    /// posting `authExpiredNotification` would flash the login banner at a
+    /// perfectly valid staff session (Codex P2). Auth failures still throw
+    /// `.notAuthenticated`; the caller stops itself, the UI stays quiet.
+    func getQuietAuth<T: Decodable>(_ path: String, query: [String: String?] = [:]) async throws -> T {
+        let key = AlmaRequestCache.key(method: "GET", path: path, query: query)
+        let request = makeRequest(method: "GET", path: path, query: query, bodyData: nil)
+        let data = try await AlmaRequestCache.shared.singleFlight(key: key) { [self] in
+            try await perform(request: request, notifyOnAuthFailure: false)
+        }
+        return try decode(data)
+    }
+
     /// IOSP-3: GET with an opt-in TTL. Within `ttl` seconds a warm re-navigation
     /// returns the cached bytes with ZERO refetch; after it, one fresh fetch (also
     /// single-flighted). For READ-ONLY resources only — never approvals/mutations,
@@ -594,7 +608,9 @@ final class AlmaAPI: NSObject {
 
     /// One request with the auth-retry loop: stale-cookie check → attempt →
     /// on auth failure force a fresh cookie copy and try exactly once more.
-    private func perform(request: URLRequest) async throws -> Data {
+    /// `notifyOnAuthFailure: false` keeps a terminal auth failure SILENT (no
+    /// login banner) for callers polling owner-only feeds from staff sessions.
+    private func perform(request: URLRequest, notifyOnAuthFailure: Bool = true) async throws -> Data {
         let decision = Self.approvalPetDecision(for: request)
         let reactionId: UUID? = await MainActor.run {
             guard let decision,
@@ -625,8 +641,10 @@ final class AlmaAPI: NSObject {
             let (retryData, retryResponse) = try await attempt(request)
             if Self.looksUnauthenticated(retryResponse) {
                 // Genuinely logged out — tell the UI layer so it can surface the login flow.
-                await MainActor.run {
-                    NotificationCenter.default.post(name: Self.authExpiredNotification, object: nil)
+                if notifyOnAuthFailure {
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: Self.authExpiredNotification, object: nil)
+                    }
                 }
                 throw AlmaAPIError.notAuthenticated
             }

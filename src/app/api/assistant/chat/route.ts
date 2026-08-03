@@ -27,6 +27,7 @@ import {
   linkTurnUserMessage,
   linkTurnAssistantMessage,
 } from '@/agent/lib/turn-status'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
@@ -663,6 +664,12 @@ export async function POST(req: NextRequest) {
   }
   if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
+  // P0-2: for a continuation this stamp lands in a DIFFERENT process from the
+  // approve route's stamps, which is exactly the point — the gap between
+  // `continuation_enqueued` and this one is the Redis + worker-pickup cost, the
+  // one piece of the 60–90s wait the audit had to leave unverified.
+  if (internalControl) void traceTurnStage(turnId, 'route_received').catch(() => {})
+
   // Model-upgrade approval resume: re-run the same turn either on the premium model
   // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
   // the cheap fallback (decline → run on the model the thread was already using).
@@ -729,6 +736,18 @@ export async function POST(req: NextRequest) {
     modelId: isInternalCall
       ? defaultHeadModelId
       : (resumeModelId ?? conversationModelId),
+    // P0-1: a workflow continuation (approval resume, internal control) is the
+    // SAME job as the turn that opened it, so it resumes on that job's pinned
+    // head. This line used to be the bug in disguise: every internal turn was
+    // forced onto `defaultHeadModelId` above, so a job running on the cheap head
+    // silently finished on the heavy one after the owner tapped Approve. The pin
+    // now wins when one exists; `defaultHeadModelId` stays the fallback for
+    // internal turns that have no job to resume (e.g. Telegram).
+    continuation: internalControl,
+    // P0-1 (review bot #690): the declined-upgrade fallback is this turn's model
+    // ONLY. Pinning it would park the whole job on the cheap head at the
+    // top-ranked 'explicit' tier until the pin expired.
+    ephemeralModel: Boolean(resumeModelId),
     signal: turnAbort.signal,
     turnId,
     // Near this moment the turn loop stops offering tools and forces a Bangla
@@ -773,9 +792,17 @@ export async function POST(req: NextRequest) {
     let continuationNeeded = false
     /** The spoken first line, so a verify retry cannot erase it (see below). */
     let preambleText = ''
+    let firstTokenStamped = false
     try {
       for await (const event of runTurn()) {
-        if (event.type === 'text_delta') finalText += event.delta
+        if (event.type === 'text_delta') {
+          finalText += event.delta
+          // P0-2: the moment the wait visibly ends for Boss. Stamped once.
+          if (!firstTokenStamped) {
+            firstTokenStamped = true
+            void traceTurnStage(turnId, 'first_token').catch(() => {})
+          }
+        }
         else if (event.type === 'preamble') preambleText = event.text
         else if (event.type === 'verification_retry') {
           // Drop the unverified draft so the final telegram reply is the truthful
@@ -839,6 +866,12 @@ export async function POST(req: NextRequest) {
       clearTimeout(turnCapTimer)
     }
     await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
+    // P0-2: closes the trace. A turn that errored is stamped too — a wait that
+    // ended in a failure is still a wait Boss sat through. AWAITED: this is the
+    // last thing before the handler returns, and a serverless freeze with the
+    // write still pending would leave exactly the error/Telegram paths untraced
+    // (review bot, #692).
+    await traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
       try {
@@ -883,6 +916,10 @@ export async function POST(req: NextRequest) {
   let doneTurnMs = -1
   // Short preview of the reply, for the away-push (ntfy) when the app is closed.
   let replyPreview = ''
+  /** P0-2: first_token is stamped once per turn — the stream can emit thousands. */
+  let streamFirstTokenStamped = false
+  /** P0-2: the terminal stamp is written once — by done, by error, or by the finally net. */
+  let streamTerminalStamped = false
 
   const encoder = new TextEncoder()
   let streamClosed = false
@@ -936,6 +973,11 @@ export async function POST(req: NextRequest) {
           // App-style push (ntfy) ONLY when the owner is away — suppressed while
           // he's in the app (notifyOwnerIfAway checks app-presence). Telegram turns
           // already push via Telegram, so skip them here.
+          if (event.type === 'text_delta' && !streamFirstTokenStamped) {
+            // P0-2: same stamp as the non-stream branch — the visible end of the wait.
+            streamFirstTokenStamped = true
+            void traceTurnStage(turnId, 'first_token').catch(() => {})
+          }
           if (event.type === 'text_delta' && replyPreview.length < 140) {
             replyPreview += (event as { delta?: string }).delta ?? ''
           } else if (event.type === 'confirm_card' && convSource === 'web') {
@@ -950,6 +992,13 @@ export async function POST(req: NextRequest) {
               deliveryId: (event as { pendingActionId?: string }).pendingActionId,
             }).catch(() => ({ skipped: false }))
           }
+          if (event.type === 'error') {
+            // P0-2 (review bot #690): a wait that ended in a FAILURE is still a
+            // wait Boss sat through — without this the trace stopped at
+            // first_token and the split under-reported the real elapsed time.
+            streamTerminalStamped = true
+            void traceTurnStage(turnId, 'turn_done', 'error').catch(() => {})
+          }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
             // Terminal linkage (roadmap 3.6): the exact persisted assistant row,
@@ -957,6 +1006,8 @@ export async function POST(req: NextRequest) {
             const doneMessageId = (event as { messageId?: string }).messageId
             if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
             await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
+            streamTerminalStamped = true
+            void traceTurnStage(turnId, 'turn_done', 'done').catch(() => {})
             if (turnId && conversationId && convSource === 'web' && event.needContinue !== true) {
               try {
                 const deliveryId = await enqueueTurnCompletionNotification({
@@ -1043,6 +1094,14 @@ export async function POST(req: NextRequest) {
         // crash), leave it marked error rather than stuck 'running'. No-op if the
         // turn already reached a terminal status (done / canceled by Stop).
         await finalizeTurnIfRunning(turnId, 'error')
+        // P0-2: close the trace here too. A turn killed by the hard cap is the
+        // WORST wait Boss experiences, and it was the one the split could not
+        // measure at all (review bot #690). Duplicate stamps are harmless — the
+        // summariser orders by time and the earliest terminal stamp wins.
+        if (!streamTerminalStamped) {
+          streamTerminalStamped = true
+          void traceTurnStage(turnId, 'turn_done', 'aborted').catch(() => {})
+        }
         // Owner backgrounded the app and a SLOW turn still finished unseen → ping
         // Telegram so the answer isn't missed. Both conditions required (>30s AND
         // disconnected) so quick foreground turns never spam.

@@ -1,0 +1,27 @@
+{
+  "name": "mac-backup-verifier",
+  "description": "Checks that Boss's Mac is actually backed up — when Time Machine last finished, whether the disk is still attached, whether iCloud Drive is syncing — and says plainly how many days of work would be lost right now. Use when Boss asks about backup, or whether his files are safe.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "Freeing space or moving files → mac-file-organizer. Disk/battery health → mac-health-monitor. Backups of the ERP database or the website — those are server-side and have nothing to do with this Mac.",
+  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_agent_status"],
+  "dependencies": { "capability": ["run_mac_command"] },
+  "outputContract": {
+    "kind": "backup_status",
+    "mustInclude": ["last_backup_time", "days_at_risk", "what_is_not_covered"]
+  },
+  "stopConditions": [
+    "কোনো তারিখ টুল থেকে পাওয়া যায়নি — আন্দাজে বলা নয়",
+    "ব্যাকআপ চালু/বন্ধ করতে বলা হয়েছে — এই skill শুধু দেখে",
+    "Mac অফলাইন"
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 8,
+  "status": "active"
+}

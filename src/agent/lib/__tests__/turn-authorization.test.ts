@@ -172,3 +172,24 @@ describe('banglish -aw imperative spellings (live miss 2026-07-22)', () => {
     expect(auth.reason).toBe('information_only')
   })
 })
+
+describe('common Banglish imperatives the owner actually types', () => {
+  it('"cholao" and "dekho" are orders, not questions', () => {
+    // Both were missing, so "amar mac e git status cholao" — a plain instruction
+    // — was gated as information_only and had its write tools stripped.
+    for (const t of [
+      'amar mac e git status cholao',
+      'amar mac e git status dekho',
+      'test ta cholao',
+      'order ta dekho',
+    ]) {
+      expect(deriveOwnerTurnAuthorization(t).allowMutations, t).toBe(true)
+    }
+  })
+
+  it('a question is still a question', () => {
+    for (const t of ['aj koto sale holo?', 'ki obostha']) {
+      expect(deriveOwnerTurnAuthorization(t).allowMutations, t).toBe(false)
+    }
+  })
+})

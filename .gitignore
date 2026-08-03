@@ -40,3 +40,6 @@ src/agent/replay/fixtures-drafts/
 
 # Saved browser logins (per-site Chromium profiles) — data, never source.
 worker/data/browser-profiles/
+
+# Mac app build output (built locally with mac-app/build.sh)
+mac-app/build/

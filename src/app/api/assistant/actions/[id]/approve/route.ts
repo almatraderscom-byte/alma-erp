@@ -14,6 +14,17 @@ import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
 import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
+import {
+  activeDevice as activeMacDevice,
+  awaitResult as awaitMacResult,
+  enqueueCommand as enqueueMacCommand,
+  isMacAgentEnabled,
+  isMacUiDrivingEnabled,
+  listDevices as listMacDevices,
+  UI_SERVER_IDLE_SENTINEL,
+} from '@/agent/lib/mac-agent/bus'
+import { classifyCommand } from '@/agent/lib/mac-agent/policy'
+import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -279,6 +290,18 @@ async function runApprove(
         toolContext: {
           ...((payload.parentToolContext as Record<string, unknown> | undefined) ?? {}),
           instructionOrigin: 'owner_direct',
+          // The grant is read NOW, not from the snapshot taken when the card was
+          // staged: Boss may have revoked it while this card waited.
+          elevationGrant: await (async () => {
+            if (!conversationId) return null
+            const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+            const conv = await db.agentConversation.findUnique({
+              where: { id: conversationId },
+              select: { elevationGrant: true },
+            })
+            const g = parseElevationGrant(conv?.elevationGrant)
+            return isElevationGrantLive(g, Date.now()) ? g : null
+          })(),
         },
       })
       const note = result.success
@@ -1003,6 +1026,307 @@ async function runApprove(
       taskIds: refreshed.taskIds,
       message: 'Tasks approved from current DB proposal. Worker will dispatch to staff via Telegram.',
     })
+  }
+
+  // M1 — an amber Mac command the owner just approved. The command text he saw on
+  // the card is the ONLY thing that runs: we re-read it from the stored payload and
+  // re-classify it here, so an edited or replayed card can't smuggle in something
+  // else, and a rule that turned RED since the card was created still wins.
+  if (action.type === 'mac_command') {
+    const p = payload as { command?: string; cwd?: string | null; timeoutMs?: number | null; deviceId?: string }
+    const command = String(p.command ?? '')
+    const verdict = classifyCommand(command, { cwd: p.cwd ?? undefined })
+    if (verdict.level === 'red') {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+      return Response.json(
+        { success: false, error: `refused_by_policy:${verdict.code}`, message: verdict.reasonBn },
+        { status: 400 },
+      )
+    }
+
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+
+    // Claim the card first: two overlapping approvals both read it as pending and
+    // both enqueued, running the owner's command twice (Codex review round 2).
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'run_command',
+      params: { command, cwd: p.cwd ?? null, timeoutMs: p.timeoutMs ?? null, approved: true },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 100_000)
+    const tail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+    await appendConversationNote(
+      db,
+      action,
+      outcome.timedOut
+        ? `✅ অনুমোদিত — \`${command}\` চলছে এখনো (id: ${commandId})। শেষ হলে জানাবো।`
+        : outcome.status === 'done'
+          ? `✅ অনুমোদিত ও চালানো হয়েছে — \`${command}\`\n\n\`\`\`\n${tail}\n\`\`\``
+          : `⚠️ \`${command}\` চালাতে গিয়ে সমস্যা হয়েছে (exit ${outcome.exitCode ?? '?'}):\n\n\`\`\`\n${tail}\n\`\`\``,
+    )
+
+    return Response.json({
+      success: outcome.status === 'done',
+      commandId,
+      exitCode: outcome.exitCode,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      stillRunning: outcome.timedOut,
+    })
+  }
+
+  // L8 (W4) — the owner approved one UI action inside an allowlisted desktop
+  // app. Re-classified on approval (the card could be stale), enqueued with the
+  // approval id, and re-judged once more by the daemon with the REAL owner-idle
+  // measurement before any event is synthesised.
+  if (action.type === 'mac_ui_action') {
+    const p = payload as {
+      uiAction?: string
+      bundleId?: string
+      elementLabel?: string | null
+      text?: string | null
+      key?: string | null
+      focusedLabel?: string | null
+      replace?: boolean | null
+      scrollAmount?: number | null
+      deviceId?: string
+      /** P0-3 Session Guard: which chat this act belongs to (see mac-ui-tools). */
+      expect?: Record<string, unknown> | null
+    }
+    const uiAction = String(p.uiAction ?? '')
+    const verdict = classifyUiAction({
+      action: uiAction,
+      bundleId: p.bundleId,
+      elementLabel: p.elementLabel ?? undefined,
+      text: p.text ?? undefined,
+      key: p.key ?? undefined,
+      focusedLabel: p.focusedLabel ?? undefined,
+      ownerIdleSeconds: UI_SERVER_IDLE_SENTINEL,
+    })
+    if (verdict.level === 'red') {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'rejected', resolvedAt: new Date() },
+      })
+      return Response.json(
+        { success: false, error: `refused_by_policy:${verdict.code}`, message: verdict.reasonBn },
+        { status: 400 },
+      )
+    }
+
+    // The owner's master STOP wins over an already-created card: a card
+    // approved after he flipped /agent/mac off must not enqueue (Codex round 2).
+    if (!(await isMacAgentEnabled())) {
+      return Response.json(
+        { success: false, error: 'mac_disabled', message: 'Mac control এখন বন্ধ আছে, Boss — /agent/mac থেকে চালু করে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+    if (!(await isMacUiDrivingEnabled())) {
+      return Response.json(
+        { success: false, error: 'ui_driving_disabled', message: 'Mac-এর অ্যাপ চালানোর ফিচারটা এখনো চালু হয়নি, Boss।' },
+        { status: 409 },
+      )
+    }
+
+    // Revalidate the DEVICE at approval time, not card-creation time: the Mac
+    // may have slept or been revoked since — a card must never fabricate a
+    // device object and queue work for a machine that is gone (Codex P2).
+    const macDevices = await listMacDevices()
+    const device = p.deviceId
+      ? macDevices.find((d) => d.id === p.deviceId && d.online && d.pairedAt)
+      : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss — জাগিয়ে আবার approve করুন।' },
+        { status: 409 },
+      )
+    }
+
+    // Same claim-first race guard as the mac_command branch above.
+    const claimedUi = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimedUi.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    let commandId: string
+    try {
+      const enq = await enqueueMacCommand({
+        deviceId: device.id,
+        action: uiAction as Parameters<typeof enqueueMacCommand>[0]['action'],
+        params: {
+          bundleId: p.bundleId ?? null,
+          elementLabel: p.elementLabel ?? null,
+          text: p.text ?? null,
+          key: p.key ?? null,
+          focusedLabel: p.focusedLabel ?? null,
+          // The card the owner read carried the erase warning; without
+          // forwarding this, the approved overwrite re-hits field_not_empty
+          // (Codex P2).
+          replace: p.replace === true ? true : null,
+          scrollAmount: p.scrollAmount ?? null,
+          // P0-3: WITHOUT this the guard was dead on the path that matters —
+          // every act Boss actually approves comes through here, and a card
+          // approved minutes later is exactly when he has switched chats.
+          expect: p.expect ?? null,
+          approved: true,
+        },
+        policyLevel: 'amber',
+        approvedBy: actionId,
+      })
+      commandId = enq.id
+    } catch (err) {
+      // A transient failure after the claim would otherwise strand the card as
+      // `approved` with nothing queued — a retry then hits already_resolved and
+      // the owner's approval is silently lost (Codex P2). Hand the card back.
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending', resolvedAt: null },
+      })
+      const msg = err instanceof Error ? err.message : 'enqueue_failed'
+      return Response.json(
+        { success: false, error: 'enqueue_failed', message: `কাজটা পাঠাতে গিয়ে সমস্যা হয়েছে (${msg}) — কার্ডটা আবার approve করা যাবে।` },
+        { status: 500 },
+      )
+    }
+
+    // The daemon may defer on owner_active and retry, so give it headroom.
+    const outcome = await awaitMacResult(commandId, 100_000)
+    const uiTail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
+
+    // P0-5 — "done" has to be SHOWN. The daemon returns the field's real
+    // contents, the press the app acknowledged, the session after a new chat;
+    // until now nothing read any of it, so the exit status was the whole story
+    // and the head narrated success from there (audit C.6). The verdict below
+    // separates "I did it and checked" from "I tried and could not confirm" —
+    // Boss can act on either, but never on the second dressed as the first.
+    const { verifyUiOutcome, isVerifiableUiAction } = await import('@/agent/lib/mac-agent/ui-postcondition')
+    const check = isVerifiableUiAction(uiAction) && !outcome.timedOut
+      ? verifyUiOutcome({ uiAction, text: p.text, elementLabel: p.elementLabel, stdout: outcome.stdout, status: outcome.status })
+      : null
+    if (check) {
+      const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
+      void logToolEvent({
+        surface: 'owner',
+        toolName: 'drive_mac_app',
+        phase: 'proof',
+        success: check.verdict !== 'failed',
+        verified: check.verdict === 'verified',
+        conversationId: resolveConversationId(action),
+        errorCode: check.verdict === 'verified' ? null : check.verdict,
+        detail: { uiAction, verdict: check.verdict, evidence: check.evidence, commandId },
+      })
+    }
+
+    await appendConversationNote(
+      db,
+      action,
+      outcome.timedOut
+        ? `✅ অনুমোদিত — কাজটা এখনো চলছে (id: ${commandId})। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
+        : outcome.status === 'done'
+          ? check && check.verdict !== 'verified'
+            ? `⚠️ কাজটা পাঠানো হয়েছে, কিন্তু ${check.reasonBn}\n\n\`\`\`\n${uiTail}\n\`\`\``
+            : `✅ অনুমোদিত ও করা হয়েছে${check?.reasonBn ? ` — ${check.reasonBn}` : ''}\n\n\`\`\`\n${uiTail}\n\`\`\``
+          : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``,
+    )
+
+    return Response.json({
+      // A postcondition that FAILED is not a success, whatever the exit status
+      // said — otherwise the card reports ✅ for a click that changed nothing.
+      success: outcome.status === 'done' && check?.verdict !== 'failed',
+      commandId,
+      verified: check?.verdict ?? null,
+      verificationNote: check?.reasonBn ?? null,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      stillRunning: outcome.timedOut,
+    })
+  }
+
+  // M2 — the owner approved an UNATTENDED Claude/Codex session. This is a standing
+  // grant rather than one action, which is exactly why it needed a card: once the
+  // session is open, nothing checks it step by step.
+  if (action.type === 'cli_session_bypass') {
+    const p = payload as {
+      task?: string | null
+      cwd?: string | null
+      tool?: string
+      model?: string | null
+      deviceId?: string
+    }
+    const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
+    if (!device) {
+      return Response.json(
+        { success: false, error: 'mac_offline', message: 'আপনার Mac এখন অফলাইন, Boss।' },
+        { status: 409 },
+      )
+    }
+
+    // Same race as the mac_command branch above.
+    const claimedSession = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimedSession.count === 0) {
+      return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
+    }
+
+    const { id: commandId } = await enqueueMacCommand({
+      deviceId: device.id,
+      action: 'session_open',
+      params: {
+        task: p.task ?? undefined,
+        cwd: p.cwd ?? undefined,
+        tool: p.tool ?? 'claude',
+        model: p.model ?? undefined,
+        permissionMode: 'bypass',
+        // The daemon refuses an unattended session without this marker.
+        approved: true,
+      },
+      policyLevel: 'amber',
+      approvedBy: actionId,
+    })
+
+    const outcome = await awaitMacResult(commandId, 60_000)
+    let sessionId: string | null = null
+    try {
+      sessionId = (JSON.parse(outcome.stdout || '{}') as { sessionId?: string }).sessionId ?? null
+    } catch {
+      sessionId = null
+    }
+
+    await appendConversationNote(
+      db,
+      action,
+      sessionId
+        ? `✅ অনুমোদিত — ${p.tool === 'codex' ? 'Codex' : 'Claude'} সেশন চালু হয়েছে (id: ${sessionId})। অগ্রগতি দেখে জানাবো।`
+        : `⚠️ সেশন চালু করতে পারিনি: ${outcome.error ?? outcome.stderr ?? 'unknown'}`,
+    )
+
+    return Response.json({ success: Boolean(sessionId), sessionId, commandId })
   }
 
   if (action.type === 'oxylabs_spend') {
@@ -2198,14 +2522,13 @@ async function runApprove(
     })
   }
 
-  if (action.type === 'erp_order_update') {
-    const { orderId, status, fields } = payload as {
-      orderId: string
-      status?: string | null
-      fields?: Record<string, string>
-      changes?: Record<string, { before: unknown; after: unknown }>
-    }
-    const reason = (payload as { reason?: string | null }).reason ?? null
+  if (action.type === 'erp_order_update' || action.type === 'erp_order_batch') {
+    // B5 — one card per JOB, not per item. A batch carries the same payload
+    // shape as a single card, N times, and runs the SAME executor for each:
+    // a batch of ten must not be able to behave differently from a batch of one.
+    const items = action.type === 'erp_order_batch'
+      ? ((payload as { items?: unknown[] }).items ?? []) as Array<Record<string, unknown>>
+      : [payload as Record<string, unknown>]
 
     // One approval, one execution. Without the claim a double tap (or a client
     // retry) runs every write twice and appends two completion notes.
@@ -2217,77 +2540,42 @@ async function runApprove(
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
 
-    const { updateOrderTextFieldsInPostgres } = await import('@/lib/lifestyle/write')
-    const { applyOrderStatusChange, normalizeOrderStatus: normalizeOrderStatusForCheck } =
-      await import('@/lib/lifestyle/order-status-workflow')
+    const { executeOrderUpdate, outcomeNoteLines, readBackOrderOutcome } =
+      await import('@/lib/agent-approvals/order-update')
 
-    const applied: string[] = []
-    const failures: string[] = []
-
-    // Courier, tracking and the note FIRST, status last. A parcel that is marked
-    // shipped before its tracking id exists is one a customer can be told about
-    // and then not found; the reverse order leaves a tracking id on an order that
-    // has not moved yet, which is harmless and self-correcting. (It also means
-    // the courier SMS the status change queues carries the tracking id.)
-    const textFields = Object.fromEntries(
-      Object.entries(fields ?? {}).filter(([k]) => ['courier', 'trackingId', 'notes'].includes(k)),
-    ) as { courier?: string; trackingId?: string; notes?: string }
-    if (Object.keys(textFields).length) {
-      // A text-only path on purpose: the edit-form helper recalculates sellPrice
-      // and profit on every write, so adding a tracking id would rewrite the
-      // order's financial result.
-      const res = await updateOrderTextFieldsInPostgres(String(orderId), textFields)
-      if ('error' in res) failures.push(`fields: ${res.error}`)
-      else applied.push(...Object.keys(textFields))
-    }
-
-    if (status) {
-      // Through the SHARED workflow, never the low-level helper: a status change
-      // also creates or reverses the handler's commission, queues the courier
-      // SMS on Shipped, notifies the role matrix and the handler, and logs.
-      const res = await applyOrderStatusChange({
-        id: String(orderId),
-        status,
-        reason: reason ?? '',
-        actorUserId: 'owner-approval',
-      })
-      if (!res.ok) failures.push(`status: ${res.error}`)
-      else applied.push('status')
-    }
-
-    // The write reporting success is not the evidence — read the row back.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const live = await (db as any).lifestyleOrder.findUnique({ where: { id: String(orderId) } })
-    const liveValue = (field: string): unknown => {
-      switch (field) {
-        case 'status': return live?.status ?? null
-        case 'courier': return live?.courier ?? null
-        case 'trackingId': return live?.trackingId ?? null
-        case 'notes': return live?.notes ?? null
-        default: return null
+    const outcomes = []
+    for (const item of items) {
+      const label = String(item.invoiceNum ?? item.orderId ?? '')
+      try {
+        outcomes.push(await executeOrderUpdate({
+          orderId: String(item.orderId ?? ''),
+          invoiceNum: (item.invoiceNum as string | null | undefined) ?? null,
+          status: (item.status as string | null | undefined) ?? null,
+          fields: (item.fields as Record<string, string> | undefined) ?? {},
+          reason: (item.reason as string | null | undefined) ?? null,
+        }))
+      } catch (err) {
+        // One order throwing (a notification provider, a courier SMS, anything
+        // downstream) must not abandon the rest of an approved batch — nor leave
+        // the card stuck in `approved` while earlier orders already changed.
+        // The text fields commit before the status workflow runs, so some of
+        // this order may well have landed: read the row back rather than
+        // reporting a blank "nothing applied", which would be its own false claim.
+        outcomes.push(await readBackOrderOutcome({
+          orderId: String(item.orderId ?? ''),
+          invoiceNum: (item.invoiceNum as string | null | undefined) ?? label,
+          status: (item.status as string | null | undefined) ?? null,
+          fields: (item.fields as Record<string, string> | undefined) ?? {},
+        }, err))
       }
     }
-    const wanted: Record<string, unknown> = { ...(fields ?? {}) }
-    if (status) wanted.status = status
 
-    const verified = Object.entries(wanted).map(([field, want]) => {
-      const got = liveValue(field)
-      const same = field === 'status'
-        // The ERP has one spelling per status; both sides go through the same
-        // normaliser so "processing" and "Packed" are not read as a mismatch.
-        ? normalizeOrderStatusForCheck(String(got ?? '')) === normalizeOrderStatusForCheck(String(want))
-        : String(got ?? '').trim() === String(want).trim()
-      return { field, expected: want, live: got, ok: same }
-    })
-
-    const allGood = failures.length === 0 && verified.every((v) => v.ok)
+    const allGood = outcomes.every((o) => o.ok)
     const result = {
       ok: allGood,
-      orderId: String(orderId),
-      invoiceNum: live?.invoiceNum ?? null,
-      applied,
-      failures,
-      verified,
+      count: outcomes.length,
+      done: outcomes.filter((o) => o.ok).length,
+      items: outcomes,
     }
 
     await db.agentPendingAction.update({
@@ -2295,22 +2583,249 @@ async function runApprove(
       data: { status: allGood ? 'executed' : 'failed', resolvedAt: new Date(), result },
     })
 
-    const lines = verified
-      .map((v) => `${v.ok ? '✅' : '❌'} ${v.field}: ${String(v.live ?? '(খালি)').slice(0, 60)}`)
+    // Per item, so a partial batch names WHICH order still needs a hand.
+    const body = outcomes
+      .map((o) => `— ${o.label}\n${outcomeNoteLines(o)}` + (o.failures.length ? `\nব্যর্থ: ${o.failures.join(' · ')}` : ''))
       .join('\n')
+    const header = outcomes.length === 1
+      ? (allGood ? `✅ অর্ডার আপডেট হয়েছে` : `⚠️ অর্ডার আপডেট আংশিক`)
+      : (allGood
+        ? `✅ ${outcomes.length}টি অর্ডার আপডেট হয়েছে`
+        : `⚠️ ${result.done}/${outcomes.length}টি অর্ডার হয়েছে`)
     await appendConversationNote(
       db,
       action,
-      allGood
-        ? `✅ অর্ডার আপডেট হয়েছে — ${live?.invoiceNum || orderId}\nERP থেকে পড়ে মিলিয়ে দেখা হলো:\n${lines}`
-        : `⚠️ অর্ডার আপডেট আংশিক — ${live?.invoiceNum || orderId}\n${lines}`
-          + (failures.length ? `\nব্যর্থ: ${failures.join(' · ')}` : '')
-          + `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`,
+      `${header} — ERP থেকে পড়ে মিলিয়ে দেখা হলো:\n${body}`
+        + (allGood ? '' : `\nযেগুলো বসেছে সেগুলো বসেই আছে; বাকিগুলো আবার চেষ্টা করতে হবে।`),
     )
 
     return Response.json(allGood ? { success: true, ...result } : { error: 'partial', ...result }, {
       status: allGood ? 200 : 502,
     })
+  }
+
+  if (action.type === 'permission_grant') {
+    // B6 — the standing "just do it", and the only place a grant is ever born.
+    // The agent can ASK; only this route (reached by Boss pressing Approve) can
+    // write one, and it always carries an expiry.
+    const { families, minutes, expiresAt: cardExpiresAt } = payload as {
+      families?: string[]
+      minutes?: number
+      expiresAt?: string
+    }
+    const conversationId = resolveConversationId(action)
+    if (!conversationId) {
+      return Response.json({ error: 'no_conversation' }, { status: 400 })
+    }
+
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved' },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    // The card is claimed but the grant is not written yet. If anything between
+    // here and the commit throws — the serializable merge exhausting its retries,
+    // a database blip — the row would sit at `approved` with no grant behind it,
+    // and Boss's next tap would get `already_resolved`. His approval would be
+    // gone (review bot, #667). Put the card back so he can try again. The grant
+    // and the card's `executed` state commit together inside `runMerge`, so this
+    // can only ever undo a card whose grant was never written.
+    try {
+
+    const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+    const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
+    // Re-validate at approval time. The card was written minutes ago by a model;
+    // what actually grants power is checked here, against the catalog, again.
+    // A family whose every tool stages its own card is dropped too: granting it
+    // would promise card-free work and deliver the same cards (review bot, #667).
+    const safe = (families ?? []).filter((id) => {
+      const fam = known.get(id)
+      return Boolean(fam) && fam!.tier !== 'R4' && familyGrantHasEffect(id)
+    })
+    const mins = Math.min(Math.max(Math.round(Number(minutes ?? 0)), 1), 240)
+
+    if (!safe.length) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'no_grantable_family' } },
+      })
+      return Response.json({ error: 'no_grantable_family' }, { status: 400 })
+    }
+
+    // The cutoff the card SHOWED is the cutoff that binds. Recomputing from
+    // approval time would quietly hand out a longer window than Boss read.
+    const cardCutoff = cardExpiresAt ? Date.parse(cardExpiresAt) : NaN
+    const expiresMs = Number.isFinite(cardCutoff)
+      ? cardCutoff
+      : Date.now() + mins * 60_000
+    if (expiresMs <= Date.now()) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_window_passed' } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        '⌛ অনুমতির সময়টা পেরিয়ে গেছে — কিছু চালু করিনি। দরকার হলে আবার চাইব।',
+      )
+      return Response.json({ error: 'grant_window_passed' }, { status: 409 })
+    }
+
+    // A second grant must not silently revoke a live one. Union the families,
+    // keep the later end — and say so, because a quietly widened permission is
+    // the thing this whole feature exists to avoid.
+    const { parseElevationGrant, isElevationGrantLive } = await import('@/agent/lib/permission-mode')
+    // Two cards approved at once would both read the old grant and the second
+    // write would erase the first. Read-modify-write in one transaction.
+    const { familyExpiry, isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+    // READ AND WRITE in ONE transaction. Two cards approved at the same moment
+    // would otherwise both read the old grant and the loser's families would
+    // vanish. Per-family windows: each family keeps the window Boss approved.
+    // Serializable aborts the loser of a concurrent merge (Prisma P2034). That is
+    // the right outcome for the DATA and the wrong one for Boss: his card was
+    // already claimed, so a failure here would lose the approval he just gave.
+    // Retry the transaction a few times before giving up.
+    const runMerge = async () => db.$transaction(async (tx: typeof db) => {
+      const conv = await tx.agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { elevationGrant: true, permissionMode: true },
+      })
+      // Plan mode refuses every grant at use time (`modeVerdict`). Writing one
+      // here would leave a row that reports itself active and authorises nothing
+      // — a confirmation Boss cannot trust (review bot, #667). The mode is read
+      // inside the transaction so a switch to Plan mid-approval still catches it.
+      if (conv?.permissionMode === 'plan') throw new Error('grant_mode_plan')
+      // A family that already runs card-free in the CURRENT mode gains nothing
+      // from a grant, and the mode may have changed since the card was written.
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const modeNow = normalizePermissionMode(conv?.permissionMode ?? undefined)
+      const effective = safe.filter((id) => modeVerdict({
+        mode: modeNow,
+        tier: known.get(id)!.tier,
+        taskClass: id,
+        grant: null,
+        now: Date.now(),
+      }) === 'card')
+      if (!effective.length) throw new Error('grant_no_op_in_mode')
+      const existing = parseElevationGrant(conv?.elevationGrant)
+      const live = isElevationGrantLive(existing, Date.now()) ? existing : null
+
+      const windows: Record<string, string> = {}
+      // Carry forward only families that are STILL live. A grant-wide cutoff can
+      // be the latest of several windows, so copying every family would give an
+      // already-expired one a fresh lease (review bot, #667).
+      if (live) {
+        for (const fam of live.families) {
+          if (isFamilyGrantLive(live, fam, Date.now())) windows[fam] = familyExpiry(live, fam)
+        }
+      }
+      const thisCutoff = new Date(expiresMs).toISOString()
+      for (const fam of effective) {
+        const prev = windows[fam] ? Date.parse(windows[fam]) : 0
+        if (expiresMs > prev) windows[fam] = thisCutoff
+      }
+      const families = Object.keys(windows)
+      const expiresAt = new Date(Math.max(...families.map((f) => Date.parse(windows[f])))).toISOString()
+
+      await tx.agentConversation.update({
+        where: { id: conversationId },
+        // The MODE is deliberately left alone: a family-scoped grant is read on
+        // top of whatever mode Boss chose, never instead of it.
+        data: { elevationGrant: { families, expiresAt, windows } },
+      })
+      // Settle the CARD in the same transaction. Committing the grant first and
+      // the card second left a window where the permission was live while the
+      // card looked pending — Boss could then "reject" a grant that was already
+      // running, and reject only marks the card (review bot, #667).
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: 'executed',
+          resolvedAt: new Date(),
+          result: { families, minutes: mins, expiresAt, windows, carriedOver: live?.families ?? [] },
+        },
+      })
+      return { carried: live, families, expiresAt, windows }
+    }, {
+      // Read-committed lets two concurrent approvals read the same old grant and
+      // write disjoint snapshots, dropping whichever loses the race.
+      isolationLevel: 'Serializable',
+    })
+
+    let merged: Awaited<ReturnType<typeof runMerge>> | null = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        merged = await runMerge()
+        break
+      } catch (err) {
+        if ((err as Error)?.message === 'grant_no_op_in_mode') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_no_op_in_mode' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '✅ এখনকার মোডে এই কাজগুলো এমনিতেই কার্ড ছাড়া চলে — আলাদা অনুমতির দরকার নেই, তাই কিছু চালু করিনি।',
+          ).catch(() => {})
+          return Response.json({ error: 'grant_no_op_in_mode' }, { status: 409 })
+        }
+        if ((err as Error)?.message === 'grant_mode_plan') {
+          await db.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'failed', resolvedAt: new Date(), result: { error: 'grant_mode_plan' } },
+          })
+          await appendConversationNote(
+            db,
+            action,
+            '🧭 চ্যাটটা এখন Plan মোডে — Plan মোডে কোনো অনুমতি কাজ করে না, তাই কিছু চালু করিনি। মোড বদলে আবার বললে চাইব।',
+          )
+          return Response.json({ error: 'grant_mode_plan' }, { status: 409 })
+        }
+        const code = (err as { code?: string }).code
+        if (code !== 'P2034' || attempt === 3) throw err
+        await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+      }
+    }
+    if (!merged) throw new Error('grant_merge_failed')
+    const carried = merged.carried
+    const families_ = merged.families
+    const expiresAt = merged.expiresAt
+    const windows = merged.windows
+
+    const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', {
+      timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit',
+    })
+    const labels = (families_ as string[])
+      .map((id: string) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
+      .join(', ')
+    const until = fmt(expiresAt)
+    // The grant is COMMITTED by now, so a failed chat note must not turn into a
+    // failed approval: the card cannot be handed back, and Boss would be told it
+    // failed while the permission runs (review bot, #667). Log and carry on.
+    await appendConversationNote(
+      db,
+      action,
+      `🔓 অনুমতি চালু — ${labels}।\n`
+      + (carried ? `(আগের চালু অনুমতিটাও রাখা হয়েছে — দুটো একসাথে চলবে।)\n` : '')
+      + `মেয়াদ শেষে নিজে থেকেই বন্ধ, মোড যা ছিল তাই আছে। এখনই বন্ধ করতে চাইলে বলুন।\n`
+      + `⛔ টাকা সরানো ও পারমিশন এর বাইরেই থাকল।`,
+    ).catch((err: unknown) => {
+      console.warn('[approve] grant note failed:', err instanceof Error ? err.message : err)
+    })
+
+    return Response.json({ success: true, families: families_, minutes: mins, expiresAt })
+
+    } catch (err) {
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending' },
+      }).catch(() => {})
+      throw err
+    }
   }
 
   if (action.type === 'auto_fix') {
@@ -2695,6 +3210,9 @@ export async function POST(
   req: NextRequest,
   ctx: { params: { id: string } },
 ) {
+  // P0-2: the clock Boss experiences starts at his TAP, not after the workflow
+  // guard and the note. Captured first thing, carried into the trace.
+  const approveReceivedAt = new Date()
   // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
@@ -2710,7 +3228,7 @@ export async function POST(
     }
   } catch { /* fail-open */ }
 
-  const progress = await beginApprovalProgress(ctx.params.id)
+  const progress = await beginApprovalProgress(ctx.params.id, approveReceivedAt)
   const res = await runApprove(req, ctx)
   // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
   // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
@@ -2748,7 +3266,11 @@ export async function POST(
  * turn-status.ts is the crash backstop. Best-effort: an approval must never fail
  * because the progress note couldn't be written.
  */
-async function beginApprovalProgress(actionId: string): Promise<{ turnId: string } | null> {
+async function beginApprovalProgress(
+  actionId: string,
+  /** When Boss's tap actually reached this route — see traceTurnStage. */
+  receivedAt: Date = new Date(),
+): Promise<{ turnId: string } | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
@@ -2775,9 +3297,21 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
           ? `কলের অনুমোদন পেলাম Boss${summaryLine ? ` — "${summaryLine}"` : ''}। এখন ডায়াল করছি; রিং, উত্তর এবং terminal report আলাদা করে track করব।`
           : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
     )
+    const ackAt = new Date()
     const { createTurn } = await import('@/agent/lib/turn-status')
     const turnId = await createTurn(conversationId)
     if (!turnId) return null
+
+    // P0-2: the clock Boss experiences starts at his tap. Both stamps land here
+    // because the ack note is written just above — the gap between them is the
+    // only part of the wait he currently sees working.
+    // The stamps are written here (the turn row exists only now) but they
+    // describe EARLIER moments: the tap, and the note written just above. Using
+    // the write time would hide the lookup + insert — the first slice of the
+    // very wait this trace measures (review bot, #690).
+    const { traceTurnStage } = await import('@/agent/lib/turn-stage-trace')
+    await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined, receivedAt)
+    await traceTurnStage(turnId, 'ack_posted', undefined, ackAt)
 
     if (isAsync) {
       // The async completion callback owns this visible turn.

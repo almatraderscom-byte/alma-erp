@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { logToolEvent } from '@/agent/lib/tool-telemetry'
+import { actionKey, checkRepeatGuard, repeatGuardMessage } from '@/agent/lib/repeat-guard'
 import {
   classifyErrorCode,
   isRetryableErrorCode,
@@ -28,6 +29,9 @@ import { FINANCE_TOOLS } from './finance-tools'
 import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { CS_AUTONOMY_TOOLS } from './cs-autonomy-tools'
 import { ORDER_AUTONOMY_TOOLS } from './order-autonomy-tools'
+import { MAC_TOOLS } from './mac-tools'
+import { MAC_UI_TOOLS } from './mac-ui-tools'
+import { CLI_SESSION_TOOLS } from './cli-session-tools'
 import { FINANCE_AUTONOMY_TOOLS } from './finance-autonomy-tools'
 import { COST_TOOLS } from './cost-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
@@ -445,6 +449,10 @@ export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
   ...APPOINTMENT_TOOLS,
   ...HEALTH_TOOLS,
   ...DOCUMENT_TOOLS,
+  // B6 — "আর জিজ্ঞেস কোরো না" happens in personal chats too, and the tools
+  // that answer it are an approval card and its cancel button; withholding
+  // them here left the personal head able only to describe the problem.
+  ...AUTONOMY_TOOLS.filter((t) => t.name === 'request_standing_permission' || t.name === 'revoke_standing_permission'),
 ]
 
 export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
@@ -485,6 +493,11 @@ export async function executePersonalTool(
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+    // The personal toolbox is not exempt from the mode. Without this, Plan let a
+    // routine personal write (`add_bill`) execute on the native loop — the one
+    // promise Plan makes is that nothing changes (review bot, #667).
+    permissionMode: serverContext.permissionMode as string | undefined,
+    elevationGrant: serverContext.elevationGrant as ToolRunContext['elevationGrant'],
   })
 }
 
@@ -504,6 +517,13 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...NATIVE_PUSH_TOOLS,
   ...LIVE_BROWSER_TOOLS,
   ...WORKBENCH_TOOLS,
+  // M1 — the owner's own Mac. Sits with the other computer-use tools so any
+  // chat can reach it ("Mac-e test chalao") without a keyword unlocking a group.
+  ...MAC_TOOLS,
+  // M2 — Claude/Codex sessions driven on that same Mac.
+  ...CLI_SESSION_TOOLS,
+  // L8 (W4) — driving the allowlisted desktop apps (Claude, ChatGPT) on that Mac.
+  ...MAC_UI_TOOLS,
   ...SKILL_PACK_TOOLS,
   ...SEO_AUDIT_TOOLS,
   ...ARTIFACT_TOOLS,
@@ -675,6 +695,8 @@ interface ToolRunContext {
   turnId?: string
   /** PM-1 — the permission mode this call ran under. Recorded, not yet enforced. */
   permissionMode?: string
+  /** B6 — a live, family-scoped grant. Read alongside the mode, never instead. */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
   driveClientSeoBatch?: boolean
@@ -745,10 +767,15 @@ export async function runRegisteredTool(
     businessId: ctx.businessId,
     turnId: ctx.turnId,
   }
+  // P0-4: a stable key for THIS attempt (tool + significant arguments), written
+  // on every event so "the same call already failed twice" is a query, not a
+  // guess. See repeat-guard.ts.
+  const argsKey = actionKey(tool.name, input)
   const capDetail = {
     domain: cap.domain,
     mode: cap.mode,
     risk: cap.risk,
+    argsKey,
     ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
   }
 
@@ -771,6 +798,34 @@ export async function runRegisteredTool(
     }
   }
 
+  // P0-4 — the same mistake, twice. Boss's complaint was not that a call
+  // failed; it was that he corrected it and it did the same thing again.
+  // Everything meant to prevent that is advisory (the failure is explained in
+  // TEXT and the model decides whether to differ), and under a model switch or
+  // a long transcript that goodwill is exactly what evaporates. The THIRD
+  // identical non-retryable attempt is refused here, in code.
+  const repeat = await checkRepeatGuard({
+    toolName: tool.name,
+    argsKey,
+    conversationId: ctx.conversationId,
+  })
+  if (repeat.blocked) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'repeat_guard',
+      errorCode: 'repeat_blocked',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, priorFailures: repeat.priorFailures, execution: 'rejected', repeatable: true },
+    })
+    return {
+      success: false,
+      error: repeatGuardMessage(tool.name, repeat),
+      errorCode: 'repeat_blocked',
+      retryable: false,
+    }
+  }
+
   // PM-5 — the permission mode, ENFORCED here rather than only recorded.
   //
   // The head applies the mode before it calls a tool, so for a head turn this is
@@ -782,13 +837,29 @@ export async function runRegisteredTool(
   //   • plan   → anything above a pure read is absent, not merely gated
   //   • careful→ an ordinary R1/R2 write belongs on a card, and only the head
   //              can stage one, so the worker must hand it back.
-  if (ctx.permissionMode) {
+  // Taking a permission AWAY is safe in every mode — gating it would trap Boss
+  // inside a grant he just asked to end (review bot, #667).
+  const MODE_EXEMPT_TOOLS = new Set(['revoke_standing_permission'])
+  if (ctx.permissionMode && !MODE_EXEMPT_TOOLS.has(tool.name)) {
     try {
       const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
       const mode = normalizePermissionMode(ctx.permissionMode)
       const task = taskClassForTool(tool.name, cap)
-      const verdict = modeVerdict({ mode, tier: task.tier, taskClass: task.taskClass, now: Date.now() })
+      // Only an EXPLICIT tool→family mapping may be lifted by a grant, and only
+      // one the ROW still confirms — a worker's snapshot can outlive a revoke.
+      let grantForVerdict = task.explicit ? ctx.elevationGrant ?? null : null
+      if (grantForVerdict) {
+        const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+        if (!(await confirmGrantStillCovers(ctx.conversationId, task.taskClass))) grantForVerdict = null
+      }
+      const verdict = modeVerdict({
+        mode,
+        tier: task.tier,
+        taskClass: task.taskClass,
+        grant: grantForVerdict,
+        now: Date.now(),
+      })
       const blockedByMode =
         verdict === 'blocked'
         || (verdict === 'card' && mode === 'careful' && cap.mode === 'write')
@@ -906,7 +977,29 @@ export async function runRegisteredTool(
   }
   {
     const { guardToolCall } = await import('@/agent/lib/policy/tool-guard')
+    // Does the owner's standing grant name THIS call's family? Explicit mappings
+    // only — a fallback class is a risk floor, not a family.
+    let standingGrantCoversCall = false
+    if (ctx.elevationGrant) {
+      try {
+        const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+        const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+        const task = taskClassForTool(tool.name, cap)
+        standingGrantCoversCall =
+          task.explicit && isFamilyGrantLive(ctx.elevationGrant, task.taskClass, Date.now())
+        // A delegated worker holds the grant it was handed at the start and can
+        // run for a while; a revoke or mode change meanwhile must bite here, at
+        // the one door every tool call passes through.
+        if (standingGrantCoversCall) {
+          const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+          standingGrantCoversCall = await confirmGrantStillCovers(ctx.conversationId, task.taskClass)
+        }
+      } catch {
+        standingGrantCoversCall = false
+      }
+    }
     const guard = await guardToolCall(tool.name, input ?? {}, cap, {
+      standingGrantCoversCall,
       surface: ctx.surface,
       conversationId: ctx.conversationId,
       businessId: ctx.businessId,
@@ -983,6 +1076,7 @@ export async function runRegisteredTool(
       ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
       ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
       ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
+      ...(ctx.elevationGrant ? { elevationGrant: ctx.elevationGrant } : {}),
     }
 
     // Phase 53/65: route direct write effects through the exactly-once effect
@@ -1085,21 +1179,27 @@ export async function runRegisteredTool(
       errorClass: 'handler_error',
       errorCode,
       latencyMs: Date.now() - started,
-      detail: { ...capDetail, argsValidation: 'passed' },
+      // `repeatable` exempts this failure from the repeat guard: a timeout is
+      // the network's fault, and refusing to retry it would be its own bug.
+      detail: { ...capDetail, argsValidation: 'passed', repeatable: retryable, lastError: result.error ?? null },
     })
     return { ...result, errorCode, retryable }
   } catch (err) {
     await releaseClaimOnFailure()
     const errorCode = classifyErrorCode(String(err))
+    const thrownRetryable = isRetryableErrorCode(errorCode)
     void logToolEvent({
       ...baseEvent,
       success: false,
       errorClass: 'uncaught_exception',
       errorCode,
       latencyMs: Date.now() - started,
-      detail: { ...capDetail, argsValidation: 'passed' },
+      // Same marker the returned-failure path writes: without it a thrown
+      // timeout counted toward the repeat guard and the third honest retry was
+      // refused (review bot, #692).
+      detail: { ...capDetail, argsValidation: 'passed', repeatable: thrownRetryable, lastError: String(err).slice(0, 300) },
     })
-    return { success: false, error: String(err), errorCode, retryable: isRetryableErrorCode(errorCode) }
+    return { success: false, error: String(err), errorCode, retryable: thrownRetryable }
   }
 }
 
@@ -1135,6 +1235,7 @@ export async function executeTool(
     businessId,
     turnId,
     permissionMode: typeof serverContext.permissionMode === 'string' ? serverContext.permissionMode : undefined,
+    elevationGrant: (serverContext.elevationGrant as ToolRunContext['elevationGrant']) ?? null,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
     instructionOrigin: serverContext.instructionOrigin as ToolRunContext['instructionOrigin'],

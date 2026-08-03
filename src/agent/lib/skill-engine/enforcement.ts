@@ -24,6 +24,12 @@ import type { SkillManifest } from '@/agent/lib/skill-engine/types'
 export interface SkillToolRecord {
   toolName: string
   status: 'success' | 'error'
+  /**
+   * The arguments the tool was called with. Optional so every existing caller
+   * keeps working; a `done` condition carrying `argMatch` simply cannot be
+   * satisfied by a record that does not report its input.
+   */
+  input?: Record<string, unknown>
 }
 
 /** Tools every skill keeps — discovery and honest escalation are never removed. */
@@ -32,6 +38,32 @@ export const ALWAYS_ALLOWED = new Set([
   'ask_user',
   'save_memory',
   'request_agent_action',
+  // B6: asking for a time-boxed permission is the honest answer to "stop asking
+  // me every time", and Boss says that DURING some other job — a staff dispatch,
+  // an order run. Live on 2026-08-01 the pinned skill's allowlist withheld it and
+  // the head searched for a tool it was holding. Asking is never the thing a
+  // skill needs protecting from; it stages a card like any other request.
+  'request_standing_permission',
+  'revoke_standing_permission',
+  // The owner's own Mac. These are owner-service capabilities, like ask_user:
+  // when he says "open a Claude session on my Mac", that must work regardless of
+  // which skill the router happened to pin. Live-hit 2026-08-01: an unrelated
+  // invoice skill was pinned on exactly that sentence and stripped every Mac
+  // tool, so the head truthfully reported it could not open a session.
+  // Skill isolation is not what keeps these safe — the command classifier and
+  // the approval cards are, and both still apply.
+  'run_mac_command',
+  'check_mac_command',
+  'mac_agent_status',
+  'mac_desk_control',
+  'start_cli_session',
+  'send_to_cli_session',
+  'read_cli_session',
+  'stop_cli_session',
+  'list_cli_sessions',
+  'look_mac_app',
+  'drive_mac_app',
+  'list_mac_apps',
 ])
 
 /**
@@ -116,10 +148,28 @@ export interface DoneMiss {
   name: string
 }
 
+/** Does this record's input match the condition's regex? */
+function inputMatches(record: SkillToolRecord, pattern: string): boolean {
+  if (!record.input) return false
+  let re: RegExp
+  try {
+    re = new RegExp(pattern, 'i')
+  } catch {
+    // A bad regex in a manifest must not make the gate unsatisfiable — that is
+    // the `check:` failure mode (a warning on every honest claim). Fall back to
+    // a literal substring test.
+    return JSON.stringify(record.input).toLowerCase().includes(pattern.toLowerCase())
+  }
+  return re.test(JSON.stringify(record.input))
+}
+
 /**
  * Which of the skill's `done:` conditions are NOT met. Tool conditions are
- * checked against real successful calls; named `check:` conditions are returned
- * for the caller's own verifier (the grind engine owns those).
+ * checked against real successful calls — and, when the condition carries
+ * `argMatch`, against a call whose INPUT matches it, so a skill can name the
+ * step that finishes the job instead of the tool that runs every step. Named
+ * `check:` conditions are returned for the caller's own verifier (the grind
+ * engine owns those).
  */
 export function skillDoneMisses(
   manifest: Pick<SkillManifest, 'done'>,
@@ -129,8 +179,13 @@ export function skillDoneMisses(
   const misses: DoneMiss[] = []
   for (const cond of manifest.done ?? []) {
     if (cond.tool) {
-      const ok = records.some((r) => r.toolName === cond.tool && r.status === 'success')
-      if (!ok) misses.push({ kind: 'tool', name: cond.tool })
+      const ok = records.some(
+        (r) =>
+          r.toolName === cond.tool
+          && r.status === 'success'
+          && (!cond.argMatch || inputMatches(r, cond.argMatch)),
+      )
+      if (!ok) misses.push({ kind: 'tool', name: cond.argMatch ? `${cond.tool} (${cond.argMatch})` : cond.tool })
     }
     if (cond.check && !passedChecks.includes(cond.check)) {
       misses.push({ kind: 'check', name: cond.check })

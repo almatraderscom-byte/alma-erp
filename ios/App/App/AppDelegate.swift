@@ -9,6 +9,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
 
     var window: UIWindow?
 
+    /// RC: the Mac remote-control view runs LANDSCAPE and full-screen — the
+    /// owner drives a 3440-wide desktop, and a portrait letterbox is not a
+    /// surface you can aim at. Everything else keeps the app's normal freedom.
+    static var orientationLock: UIInterfaceOrientationMask = .allButUpsideDown
+
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        AppDelegate.orientationLock
+    }
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         AlmaPerfLog.event("launch.didFinishLaunching")
         // Register at the earliest native lifecycle point, per OneSignal's iOS

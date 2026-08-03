@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isSelectableModelId } from '@/agent/lib/models/registry'
+import { headPinClearFields } from '@/agent/lib/models/head-pin'
 import { isPermissionMode } from '@/agent/lib/permission-mode'
 import { prisma } from '@/lib/prisma'
 
@@ -61,6 +62,11 @@ export async function PATCH(
       return Response.json({ error: 'invalid_model' }, { status: 400 })
     }
     data.modelId = id
+    // P0-1: changing the head picker is an explicit routing decision by Boss, so
+    // the job's remembered head must not survive it — switching back to 'auto'
+    // would otherwise keep answering on the pin until it expired, which reads as
+    // the picker being ignored. Cleared in the same write.
+    Object.assign(data, headPinClearFields())
   }
 
   // The chat-mode picker was RETIRED on 2026-07-28 (owner: one chip, Claude Code
@@ -83,9 +89,11 @@ export async function PATCH(
       return Response.json({ error: 'invalid_permission_mode' }, { status: 400 })
     }
     data.permissionMode = body.permissionMode
-    // Leaving 'elevated' drops the grant with it — a time-boxed permission must
-    // never survive the mode that justified it.
-    if (body.permissionMode !== 'elevated') data.elevationGrant = null
+    // ANY mode change drops the grant. The card tells Boss that changing the
+    // mode cancels it, and switching INTO elevated used to keep it — a promise
+    // the system did not keep (review bot, #667). A standing permission is
+    // asked for and granted deliberately; re-granting is one sentence.
+    data.elevationGrant = null
   }
 
   const updated = await prisma.agentConversation.update({

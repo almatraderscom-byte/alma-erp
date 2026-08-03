@@ -113,6 +113,13 @@ export type AgentEvent =
       displayName?: string
       variant: 'default' | 'claude' | 'qwen' | 'deepseek'
       tier: string
+      /**
+       * P1-9 — WHY this head, not just which one: the HeadDecision `via`
+       * ("routine_kw", "task_pin", "deny_kw", "task_pin_continuation"…). The
+       * audit found the reason existed only in code and cost logs, so a
+       * surprising model choice had no answer anyone could be shown.
+       */
+      via?: string
     }
   // Owner-gated model UPGRADE: the thread was on a cheap head but this turn needs a
   // premium model (Sonnet/Opus). The turn pauses here and the UI shows an approval
@@ -198,6 +205,24 @@ export type AgentEvent =
       /** The owner-facing sentence, already in Bangla. */
       reason: string
     }
+  /**
+   * A message Boss typed WHILE this turn was running has now actually reached
+   * the model (claimed by `claimTurnSteeringMessages` at the top of a round).
+   *
+   * It exists for one reason: until this arrives, his message has been accepted
+   * by the server but NOT yet seen by the agent, and those two states used to
+   * look identical in the thread. Owner report 2026-08-03 — "message ta jotokkhon
+   * porjonto agent er kache na jay, seta jeno UI te visible thake, hariye na
+   * jay". The client marks the bubble delivered on this event and drops it from
+   * its retry outbox.
+   */
+  | {
+      type: 'steering_delivered'
+      /** AgentMessage row ids. */
+      ids: string[]
+      /** The client's own ids, so an optimistic bubble can be matched without a refetch. */
+      clientMessageIds: string[]
+    }
   | {
       type: 'verification_retry'
       attempt: number
@@ -219,6 +244,11 @@ export type AgentEvent =
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
 export const MUTATING_TOOLS = new Set([
+  // B6 — the two permission tools run SEQUENTIALLY with everything else on
+  // purpose. A single response can contain a revoke followed by a covered
+  // write, and running those two concurrently would let the write ride the
+  // grant the revoke had already cancelled (review bot, #667).
+  'request_standing_permission', 'revoke_standing_permission',
   'add_family_contact', 'add_owner_todo', 'add_product_asset', 'add_staff_task_now',
   'add_subscription', 'approve_and_dispatch_tasks', 'approve_pending_dispatch',
   'approve_pending_staff_message', 'approve_playbook', 'cancel_reminder',
@@ -787,6 +817,9 @@ export async function* runAgentTurn(
   if (ownerCorrectionNudge) {
     messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
   }
+  // B6 — this turn's copy of the standing grant. Mutable because a revoke in
+  // the middle of a turn must stop covering the calls that follow it.
+  let liveGrant = options.elevationGrant ?? null
   const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
@@ -1274,6 +1307,15 @@ export async function* runAgentTurn(
             content: [{ type: 'text' as const, text: item.prompt }],
           })),
         ]
+        // Parity with the router loop: the client must be told the message
+        // ARRIVED, or it keeps the outbox entry and replays it later.
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       // Serverless deadline close → no more tools; force a Bangla progress
@@ -1419,6 +1461,13 @@ export async function* runAgentTurn(
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           // Native Claude streams its draft before we know this final round has
           // no tool call. Retire that now-stale prose so the replacement is the
           // ONE visible answer, not text appended as a conflicting second reply.
@@ -1633,7 +1682,66 @@ export async function* runAgentTurn(
         // AIOS mandatory enforcement (ON by default; AIOS_ENFORCE=off opts out) — native Claude path.
         // Same door as the multi-model path: every tool call is forced through
         // policy + autonomy/approval before it can run.
-        const aiosGuard = !ownerIntentViolation && !hookBlocked && enforcementEnabled()
+        // B6 — the same family-scoped bypass as the multi-model path. Without it
+        // the documented kill switch (AGENT_NATIVE_ANTHROPIC_LOOP=true) silently
+        // loses the card-free behaviour the grant card promised.
+        const grantCoversThisCall = await (async () => {
+          const grant = liveGrant
+          if (!grant) return false
+          // Plan mode is not liftable by a grant — in Plan nothing changes at
+          // all. The multi-model path refuses there; the kill-switch path must
+          // refuse for the same reason (review bot, #667).
+          const { normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+          if (normalizePermissionMode(options.permissionMode ?? undefined) === 'plan') return false
+          const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+          const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+          const { getCapability } = await import('@/agent/tools/capability-manifest')
+          const cap = getCapability(tb.name)
+          const task = taskClassForTool(tb.name, cap)
+          // EXPLICIT mapping only — a fallback class is a risk floor, not a family.
+          if (!task.explicit || !isFamilyGrantLive(grant, task.taskClass, Date.now())) return false
+          // …and confirmed against the row: a revoke from another request while
+          // this turn runs must take effect on the very next call.
+          const { confirmGrantStillCovers } = await import('@/agent/lib/standing-grant')
+          return confirmGrantStillCovers(conversationId, task.taskClass)
+        })()
+        // Careful mode: an everyday R1/R2 write that AIOS calls routine still
+        // belongs on a card. The multi-model path stages it (`carefulNeedsCard`);
+        // this path used to run it, so flipping the kill switch quietly downgraded
+        // Careful to Standard (review bot, #667). Plan mode is already refused by
+        // the registry — this is only the staging half.
+        const carefulNeedsCard = await (async () => {
+          if (grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
+          if (!conversationId) return false
+          // Cancelling a permission is never staged — that would trap Boss inside
+          // the grant he just asked to end.
+          if (tb.name === 'revoke_standing_permission') return false
+          const { normalizePermissionMode, modeVerdict } = await import('@/agent/lib/permission-mode')
+          if (normalizePermissionMode(options.permissionMode ?? undefined) !== 'careful') return false
+          const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')
+          const { getCapability } = await import('@/agent/tools/capability-manifest')
+          const cap = getCapability(tb.name)
+          if (cap?.mode !== 'write') return false
+          const task = taskClassForTool(tb.name, cap)
+          // Whatever the tier: if the verdict says card, it gets a card. Gating
+          // this on R1/R2 let an explicitly mapped R3 write — `set_staff_task_due`
+          // in `staff-messaging` — run straight through on this path (review bot,
+          // #667). The verdict already knows which tiers Careful lets pass.
+          const verdict = modeVerdict({
+            mode: 'careful',
+            tier: task.tier,
+            taskClass: task.taskClass,
+            // Only an explicit mapping may be lifted by a grant — and only one
+            // the ROW still confirms. `grantCoversThisCall` above already ran
+            // that check; reaching here with a grant means it came back false,
+            // so the snapshot is stale and must not clear the card (review bot,
+            // #667). The multi-model path does the same.
+            grant: null,
+            now: Date.now(),
+          })
+          return verdict === 'card'
+        })()
+        const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && !carefulNeedsCard && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1665,9 +1773,40 @@ export async function* runAgentTurn(
                 klass: aiosGuard.klass as Exclude<typeof aiosGuard.klass, 'routine'>,
               })
             : { success: false as const, error: aiosGuard.message }
+          : carefulNeedsCard
+          ? await stageEnforcedToolApproval({
+              conversationId: conversationId!,
+              businessId: String(businessId ?? 'ALMA_LIFESTYLE'),
+              turnId,
+              toolCallId: tb.id,
+              toolName: tb.name,
+              toolInput: tb.input as Record<string, unknown>,
+              model: chatModel.id,
+              klass: 'unknown',
+            })
           : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant })
+          : await executeTool(tb.name, tb.input, {
+              conversationId, businessId, modelId: chatModel.id, turnAuthorization,
+              ownerVoicePref, voiceCallInstruction, callbackRequested,
+              // The registry runs the canonical guard itself; without these it
+              // would refuse the very call the outer bypass just allowed.
+              // The mode travels now that this path stages Careful writes itself:
+              // anything reaching here in Plan must be refused, and Plan is what
+              // was leaking — `request_standing_permission` was still building a
+              // card in a mode that promises no changes at all (review bot, #667).
+              permissionMode: options.permissionMode ?? undefined,
+              elevationGrant: liveGrant,
+            })
+        // A revoke must stop covering the REST of this turn here too — the row is
+        // cleared, but this loop holds its own copy of the grant.
+        if (tb.name === 'revoke_standing_permission' && result.success) {
+          const revoked = (result as { data?: { remaining?: string[] } }).data
+          const remaining = revoked?.remaining ?? []
+          liveGrant = remaining.length && liveGrant
+            ? { ...liveGrant, families: remaining }
+            : null
+        }
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
           toolName: tb.name,
@@ -1700,6 +1839,21 @@ export async function* runAgentTurn(
         } else {
           reads.push(tb)
         }
+      }
+
+      // B6 — a permission change in this response makes the WHOLE response
+      // ordered. Bucketing the revoke as a write is not enough: a covered tool
+      // that is not itself in MUTATING_TOOLS (send_whatsapp, say) would still sit
+      // in the parallel read bucket and run BEFORE the revoke that cancels it
+      // (review bot, #667). Source order is the only thing that keeps
+      // "revoke, then that" meaning what it says.
+      const permissionChangeInResponse = toolUseBlocks.some(
+        (tb) => tb.name === 'revoke_standing_permission' || tb.name === 'request_standing_permission',
+      )
+      if (permissionChangeInResponse) {
+        writes.length = 0
+        reads.length = 0
+        for (const tb of toolUseBlocks) writes.push(tb)
       }
 
       // Execute reads in parallel, writes sequentially after

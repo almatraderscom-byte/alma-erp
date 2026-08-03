@@ -314,6 +314,12 @@ export async function GET(
       // How long the agent actually WORKED on this reply (owner ask 2026-07-26:
       // "reply শেষ হলেও time টা যেন show করে token এর সাথে").
       durationMs: typeof u.duration_ms === 'number' ? u.duration_ms : undefined,
+      // P1-9 — WHY this head answered, not just which one ("routine_kw",
+      // "task_pin", "deny_kw"). Persisted on the turn; surfaced here so a
+      // surprising model choice has an answer that survives a reload, instead
+      // of living only in code and cost logs (audit §F).
+      headVia: typeof u.headVia === 'string' ? u.headVia : undefined,
+      headTier: typeof u.headTier === 'string' ? u.headTier : undefined,
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,

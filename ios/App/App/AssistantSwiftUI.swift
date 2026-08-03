@@ -790,6 +790,14 @@ struct AgentChatMessage: Identifiable, Equatable {
         case submitting
         case checking
         case accepted
+        /// Stored by the server, but the running turn has NOT read it yet.
+        /// Kept separate from `accepted` because `accepted` is also every
+        /// ordinary history row — the owner must see "not seen yet" ONLY on a
+        /// message that is genuinely waiting on the agent, and must keep
+        /// seeing it until the agent picks it up.
+        case awaitingAgent
+        /// The RUNNING TURN picked it up — the step after "the server took it".
+        case delivered
         case failed
         case cancelled
     }
@@ -1812,6 +1820,35 @@ final class AssistantVM {
         var sessionIdentity: String? = nil
     }
     private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
+    /// clientMessageId → turnId for steers the SERVER accepted but the turn has
+    /// not confirmed reading yet. A 2xx on /steer only means "stored"; if the
+    /// turn dies right after, nobody ever reads it. Persisted so a cold start
+    /// can ASK instead of guessing.
+    private static let steerAwaitingDeliveryKey = "alma.assistant.steerAwaitingDelivery.v2"
+    /// The turn that owes a "read" confirmation, PLUS the message itself: a
+    /// steer the server stored but no turn ever claimed has to be replayable,
+    /// and the POST path already removed it from the live queue (Codex P1).
+    struct SteerAwaiting: Codable, Equatable {
+        let turnId: String
+        let queued: QueuedOwnerMessage
+    }
+    private var steerAwaitingDelivery: [String: SteerAwaiting] =
+        AssistantVM.loadSteerAwaiting() {
+        didSet {
+            if steerAwaitingDelivery.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.steerAwaitingDeliveryKey)
+            } else if let data = try? JSONEncoder().encode(steerAwaitingDelivery) {
+                UserDefaults.standard.set(data, forKey: Self.steerAwaitingDeliveryKey)
+            }
+        }
+    }
+
+    private static func loadSteerAwaiting() -> [String: SteerAwaiting] {
+        guard let data = UserDefaults.standard.data(forKey: steerAwaitingDeliveryKey),
+              let decoded = try? JSONDecoder().decode([String: SteerAwaiting].self, from: data)
+        else { return [:] }
+        return decoded
+    }
     private var steeringSubmissions: Set<String> = []
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
         didSet {
@@ -2483,6 +2520,7 @@ final class AssistantVM {
         async let todos: Void = loadDailyAgentTodos()
         async let turns: Void = loadActiveBackgroundTurns()
         _ = await (drive, todos, turns)
+        await reconcileSteerDeliveries()
         startPolling()
         // A queued follow-up may outlive the process after the preceding turn
         // became terminal while the app was dead. Recovery clears that stale
@@ -3007,6 +3045,27 @@ final class AssistantVM {
     /// Server truth replaces the thread WITHOUT clobbering the freshly streamed tail:
     /// the tail keeps its id (no remove+insert animation) and its richer streamed
     /// content wherever the server copy is thinner. Fixes "prose vanishes at stream end".
+    /// The positional "last local ↔ last server user" guess is only allowed
+    /// when the two identities agree, or when neither can be checked. Any
+    /// contradiction means the local row has a server row of its own that this
+    /// page simply has not shown yet.
+    private func positionalPairIsSafe(local: AgentChatMessage,
+                                      server: AgentChatMessage,
+                                      incoming: [AgentChatMessage]) -> Bool {
+        guard let localClientId = local.clientMessageId else { return true }
+        if let serverClientId = server.clientMessageId { return serverClientId == localClientId }
+        // The server row is ANONYMOUS (clientRequestId is nullable, and the
+        // messages route omits it on some paths), so identity cannot confirm
+        // anything. Only the ordinary optimistic send may claim such a row: a
+        // steered follow-up always has a row of its own, and letting it take an
+        // older anonymous row is the exact mispairing this guard exists to stop
+        // (Codex P1).
+        switch local.outgoingState {
+        case .queued, .awaitingAgent, .delivered: return false
+        default: return !incoming.contains { $0.clientMessageId == localClientId }
+        }
+    }
+
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
@@ -3031,7 +3090,16 @@ final class AssistantVM {
                $0.role == .user && $0.id.hasPrefix("local-")
                    && $0.outgoingState != .queued
            }),
-           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
+           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil,
+           // Identity must not CONTRADICT the guess. A mid-turn follow-up is a
+           // local row with its own clientMessageId and its own server row; if
+           // that row has not landed in this history page yet, the positional
+           // guess would hand it the PREVIOUS message's server id. The rows
+           // then render in server order, so the follow-up jumps up the
+           // transcript, the older message loses its row, and when the real
+           // row arrives it renders again — the scrambled, duplicated thread
+           // the owner reproduced twice.
+           positionalPairIsSafe(local: localUser, server: incoming[uIdx], incoming: incoming) {
             _ = claimLocalRowId(serverId: incoming[uIdx].id, localId: localUser.id,
                                 activeServerIds: activeServerIds)
         }
@@ -3077,7 +3145,19 @@ final class AssistantVM {
             if old.role == .user, incoming[i].fileRefs.isEmpty { incoming[i].fileRefs = old.fileRefs }
             if old.role == .user {
                 incoming[i].clientMessageId = old.clientMessageId
-                incoming[i].outgoingState = old.outgoingState == .failed ? .failed : .accepted
+                // `delivered` is knowledge the SERVER cannot re-state on a
+                // history fetch (the wire row only says the message exists), so
+                // the merge must carry it forward instead of flattening every
+                // user row back to `accepted` (Codex P2 — this is why the
+                // marker vanished a second after it appeared).
+                switch old.outgoingState {
+                case .failed: incoming[i].outgoingState = .failed
+                case .delivered: incoming[i].outgoingState = .delivered
+                // Still waiting on the agent — a history fetch cannot know
+                // that, so the merge must not erase it either.
+                case .awaitingAgent: incoming[i].outgoingState = .awaitingAgent
+                default: incoming[i].outgoingState = .accepted
+                }
             }
             // Delegation cards are live-session state (the server persists only a
             // plain tool row, web parity) — the settle merge must not eat them.
@@ -4397,6 +4477,67 @@ final class AssistantVM {
         let turnId: String?
     }
 
+    /// GET /api/assistant/turn/<id>/steer — "did the turn actually read it?"
+    private struct SteeringStatusResponse: Decodable {
+        let status: String?      // consumed | queued | unknown
+        let messageId: String?
+        let turnId: String?
+    }
+
+    /// Cold start: a steer marked `accepted` before the app died may or may not
+    /// have been read. Ask the server rather than guess — a 2xx on /steer only
+    /// means it was stored, and a turn that failed right after never read it.
+    /// Offline or `unknown` changes nothing (the safe state).
+    private func reconcileSteerDeliveries() async {
+        guard !steerAwaitingDelivery.isEmpty else { return }
+        // History rebuilds these rows as `.accepted`, which renders no chip at
+        // all — so before asking the server, restore what we already know:
+        // these messages were waiting on the agent when the app died
+        // (Codex P2). If the GET then says `consumed`, it upgrades below.
+        for clientMessageId in steerAwaitingDelivery.keys {
+            for i in messages.indices
+            where messages[i].clientMessageId == clientMessageId
+                && messages[i].outgoingState != .delivered {
+                messages[i].outgoingState = .awaitingAgent
+            }
+        }
+        for (clientMessageId, awaiting) in steerAwaitingDelivery {
+            guard let status: SteeringStatusResponse = try? await AlmaAPI.shared.getQuietAuth(
+                "/api/assistant/turn/\(awaiting.turnId)/steer",
+                query: ["clientMessageId": clientMessageId]) else { continue }
+            switch status.status {
+            case "consumed":
+                for i in messages.indices where messages[i].clientMessageId == clientMessageId {
+                    messages[i].outgoingState = .delivered
+                }
+                queuedOwnerMessages.removeAll { $0.id == clientMessageId }
+                steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+            case "unknown":
+                // The turn or row is gone; nothing will ever confirm it. Stop
+                // asking, and undo the restored "waiting" chip — leaving it up
+                // would promise a delivery that can never arrive (Codex P2).
+                for i in messages.indices
+                where messages[i].clientMessageId == clientMessageId
+                    && messages[i].outgoingState == .awaitingAgent {
+                    messages[i].outgoingState = .accepted
+                }
+                steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+            case "queued":
+                // Stored but never claimed. If that turn is no longer the one
+                // running, nobody ever will — put the message back on the queue
+                // so the ordinary drain delivers it. Re-sending is safe: the
+                // server dedupes on this same clientMessageId.
+                if awaiting.turnId != currentTurnId,
+                   !queuedOwnerMessages.contains(where: { $0.id == clientMessageId }) {
+                    queuedOwnerMessages.append(awaiting.queued)
+                    steerAwaitingDelivery.removeValue(forKey: clientMessageId)
+                }
+            default:
+                break
+            }
+        }
+    }
+
     /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
     /// chosen model (web parity: POST /chat with resume{}, same conversation).
     func resumeModelSwitch(messageId: String, approve: Bool) {
@@ -4531,7 +4672,23 @@ final class AssistantVM {
                 guard response.success == true else { continue }
                 queuedOwnerMessages.removeAll { $0.id == queued.id }
                 for index in messages.indices where messages[index].clientMessageId == queued.id {
-                    messages[index].outgoingState = .accepted
+                    // The turn can claim the steer and emit steering_delivered
+                    // before this POST's response resumes; never walk that back
+                    // (Codex P2).
+                    if messages[index].outgoingState != .delivered {
+                        // NOT `.accepted`: that hides the chip, which left the
+                        // owner with no sign his message was still unread
+                        // (his P0 #1). It stays "waiting on the agent" until
+                        // steering_delivered says otherwise.
+                        messages[index].outgoingState = .awaitingAgent
+                    }
+                }
+                // Remember which turn owes us a "read" confirmation — unless it
+                // has already arrived.
+                if !messages.contains(where: {
+                    $0.clientMessageId == queued.id && $0.outgoingState == .delivered
+                }) {
+                    steerAwaitingDelivery[queued.id] = SteerAwaiting(turnId: turnId, queued: queued)
                 }
                 let ids = Set(queued.attachmentIds ?? [])
                 if !ids.isEmpty { removeAttachmentCacheFiles(ids) }
@@ -5214,6 +5371,19 @@ final class AssistantVM {
                     messages[i].skill = .init(name: skill, source: source,
                                               reason: reason, isolated: isolated)
                     touchedStream = true
+                }
+            case .steeringDelivered(let deliveredIds):
+                // The turn has actually READ these mid-turn messages. Mark the
+                // bubbles and drop them from the local queue — a delivered
+                // message must never be re-sent by the drain.
+                let delivered = Set(deliveredIds)
+                if !delivered.isEmpty {
+                    for i in messages.indices
+                    where messages[i].clientMessageId.map(delivered.contains) == true {
+                        messages[i].outgoingState = .delivered
+                    }
+                    queuedOwnerMessages.removeAll { delivered.contains($0.id) }
+                    for id in delivered { steerAwaitingDelivery.removeValue(forKey: id) }
                 }
             case .preamble:
                 // The line already streamed in as text_delta; pin whichever prose
@@ -8351,6 +8521,8 @@ struct AgentMessageRow: View {
         case .submitting: return "পাঠানো হচ্ছে"
         case .checking: return "Server status যাচাই হচ্ছে"
         case .accepted: return "পাঠানো হয়েছে"
+        case .awaitingAgent: return "এজেন্ট এখনো দেখেনি — অপেক্ষায়"
+        case .delivered: return "এজেন্ট পড়েছে"
         case .failed: return "পাঠানো যায়নি — লেখা ও ফাইল রাখা আছে"
         case .cancelled: return "বাতিল — composer-এ রাখা আছে"
         }
@@ -8362,6 +8534,8 @@ struct AgentMessageRow: View {
         case .queued: return "clock.arrow.circlepath"
         case .submitting, .checking: return "arrow.triangle.2.circlepath"
         case .accepted: return "checkmark"
+        case .awaitingAgent: return "clock.badge.questionmark"
+        case .delivered: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.circle.fill"
         case .cancelled: return "xmark.circle"
         }
@@ -14724,7 +14898,13 @@ struct AssistantScreen: View {
         .onChange(of: vm.restoreReadyTick) { _, _ in awakening.markReady(hasContent: !vm.messages.isEmpty) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            AgentComposerView(vm: vm, openWeb: openWeb)
+            // The live dock sits ABOVE the composer inside the same inset, so it
+            // rides the keyboard with the composer instead of fighting it, and
+            // the chat scroll region shrinks to make room (never an overlay).
+            VStack(spacing: 0) {
+                AgentLiveDockView()
+                AgentComposerView(vm: vm, openWeb: openWeb)
+            }
         }
         .task {
             AlmaTurnLog.event("assistant.open.begin")

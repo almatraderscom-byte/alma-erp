@@ -1,0 +1,237 @@
+/**
+ * Tier-1 Mac skills — the routing half.
+ *
+ * These jobs are named by their OBJECT ("build", "PR", "chat"), and every one of
+ * those words is already owned by some other part of the business vocabulary.
+ * So each is a RULE, and each rule has to be narrow enough that it never steals
+ * a marketing post, an ERP question or an SEO batch.
+ *
+ * The second half — that the skill exists on the index production actually
+ * serves, with the tools it names — is what makes the pin usable at all: a
+ * pinned skill hands the turn its own allowlist, so a skill that cannot name a
+ * tool cannot use it (feedback_wire_tools_into_prompt, twice live).
+ */
+import { describe, expect, it } from 'vitest'
+import path from 'path'
+import { discoverSkills } from '@/agent/lib/skill-engine/loader'
+import { applyRules, routeSkill } from '@/agent/lib/skill-engine/router'
+
+const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
+
+describe('the iPhone release', () => {
+  it('routes a TestFlight ask in either script', () => {
+    expect(applyRules('testflight build dao')?.skill).toBe('xcode-testflight-shipper')
+    expect(applyRules('নতুন টেস্টফ্লাইট বিল্ড দাও')?.skill).toBe('xcode-testflight-shipper')
+    expect(applyRules('test flight e notun build pathao')?.skill).toBe('xcode-testflight-shipper')
+  })
+
+  it('routes the same ask without the word TestFlight', () => {
+    expect(applyRules('iphone app er notun build dao')?.skill).toBe('xcode-testflight-shipper')
+    expect(applyRules('ios build koro')?.skill).toBe('xcode-testflight-shipper')
+  })
+
+  it('wins over the git rule, because a release says "push" too', () => {
+    expect(applyRules('ios build er jonno commit kore push koro')?.skill).toBe(
+      'xcode-testflight-shipper',
+    )
+  })
+
+  it('does not steal an ordinary build word', () => {
+    expect(applyRules('npm run build cholao')).toBeNull()
+    expect(applyRules('notun campaign build koro')).toBeNull()
+  })
+
+  // Codex review, PR #699: bare `app` was in the iOS pattern, so any "app
+  // build" pinned the highest-risk skill in the set. Wrong in the worst
+  // direction — a web or Android build is not a TestFlight upload.
+  it('does not fire on a build that is not the iPhone app', () => {
+    expect(applyRules('web app build koro')).toBeNull()
+    expect(applyRules('android app er build chalau')).toBeNull()
+  })
+})
+
+describe('branch → PR → merge', () => {
+  it('routes the git flow verbs', () => {
+    expect(applyRules('kaj ta commit kore push koro')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('ekta PR banao')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('pull request kholo')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('PR ta merge koro')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('এই কাজটা কমিট করো')?.skill).toBe('git-pr-workflow')
+  })
+
+  it('leaves a plain read-only git question to the head', () => {
+    expect(applyRules('amar mac e git status cholao')).toBeNull()
+    expect(applyRules('kon branch e achi dekho')).toBeNull()
+  })
+
+  // Codex review, PR #699: `push koro` and `merge koro` are ordinary business
+  // words. They now need a git word in the sentence; the unambiguous forms
+  // (PR, pull request, commit+push, git push) still fire on their own.
+  it('needs git context before a bare push or merge counts', () => {
+    expect(applyRules('campaign ta push koro')).toBeNull()
+    expect(applyRules('customer list duita merge koro')).toBeNull()
+    expect(applyRules('code ta push koro')?.skill).toBe('git-pr-workflow')
+    expect(applyRules('git push koro')?.skill).toBe('git-pr-workflow')
+  })
+})
+
+describe('the Mac AI apps', () => {
+  it('routes app driving', () => {
+    expect(applyRules('chatgpt app e eta jigges koro')?.skill).toBe('mac-ai-app-operator')
+    expect(applyRules('claude app e ki ache dekho')?.skill).toBe('mac-ai-app-operator')
+    expect(applyRules('notun chat khulo')?.skill).toBe('mac-ai-app-operator')
+    expect(applyRules('নতুন চ্যাট খোলো')?.skill).toBe('mac-ai-app-operator')
+  })
+
+  // Codex: naming the app is not asking for it to be driven. A bug report about
+  // our own product pinned the isolated operator, which refuses coding work — so
+  // the request had nowhere left to go.
+  it('a software job that merely names the app is not app-driving', () => {
+    expect(applyRules('ChatGPT app integration bug ta fix koro')).toBeNull()
+    expect(applyRules('claude app er ui ta thik koro')).toBeNull()
+  })
+
+  it('does not hijack Boss talking to the agent itself', () => {
+    // No app word: this is him asking ME, not asking the desktop app.
+    expect(applyRules('claude ke jiggesh koro')).toBeNull()
+    expect(applyRules('ei bishoye tomar mot ki')).toBeNull()
+  })
+
+  // Codex review, PR #699: the open/start verb used to be optional, so any
+  // mention of the phrase pinned the driver — including a bug report about our
+  // OWN new-chat button.
+  it('needs the open verb, not just the phrase "new chat"', () => {
+    expect(applyRules('new chat bug ta fix koro')).toBeNull()
+    expect(applyRules('notun chat page ta slow')).toBeNull()
+  })
+})
+
+describe('looking at the screen', () => {
+  it('routes a screenshot ask', () => {
+    expect(applyRules('screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('আমার স্ক্রিনশট দাও')?.skill).toBe('screenshot-annotate-share')
+    expect(applyRules('screen e ki ache dekho')?.skill).toBe('screenshot-annotate-share')
+  })
+
+  // Codex review, PR #700: the rule fired on the WORD, so "ei screenshot ta
+  // dekhe invoice enter koro" — an image he already has — pinned a Mac-only
+  // skill whose allowlist holds no invoice tool.
+  it('does not fire on an image he already has', () => {
+    expect(applyRules('ei screenshot ta dekhe invoice enter koro')).toBeNull()
+    expect(applyRules('এই স্ক্রিনশট টা দেখে অর্ডার তোলো')).toBeNull()
+    expect(applyRules('uporer screenshot theke number gulo nao')).toBeNull()
+  })
+
+  // Codex round 3: the rule refused it, then the KEYWORD layer pinned the same
+  // skill anyway ("screenshot" scores 2, the skill-name token 1). The veto had
+  // to move into eligibility, and the test had to use production routeSkill —
+  // the old one only exercised applyRules, which is why it passed.
+  it('the existing-image veto holds at the keyword layer too', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const text of ['ei screenshot ta dekho', 'ei screenshot ta dekhe invoice enter koro']) {
+      const decision = routeSkill(index, text)
+      expect(decision.skill, text).not.toBe('screenshot-annotate-share')
+    }
+  })
+
+  it('wins over the app rule — a picture of an app is looking, not driving', () => {
+    expect(applyRules('chatgpt app er screenshot dao')?.skill).toBe('screenshot-annotate-share')
+    // …but reading an app WITHOUT the screen word is still the driver's job.
+    expect(applyRules('claude app e ki ache dekho')?.skill).toBe('mac-ai-app-operator')
+  })
+})
+
+describe('tidying a folder', () => {
+  it('needs both halves — the place and the verb', () => {
+    expect(applyRules('downloads folder ta porishkar koro')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('ডেস্কটপ গুছিয়ে দাও')?.skill).toBe('mac-file-organizer')
+    expect(applyRules('downloads e joma hoye thaka file gulo sajao')?.skill).toBe(
+      'mac-file-organizer',
+    )
+  })
+
+  // Codex review, PR #700: a code checkout matched both halves, and the pin
+  // then handed the turn organizer tools plus the skill's own refusal — so the
+  // request could reach neither this skill nor the git flow.
+  it('does not fire on a code checkout', () => {
+    expect(applyRules('alma-erp folder clean up koro')).toBeNull()
+    expect(applyRules('repo folder ta porishkar koro')).toBeNull()
+  })
+
+  // Codex-style find, but this one came from a live run: "soriye dao" is the
+  // storefront skill's unpublish phrase AND the obvious way to say "move these
+  // files". The pin gave the turn a storefront allowlist with no Mac tool, and
+  // the head then described an approval card that could not exist.
+  it('takes "soriye dao" back from the storefront skill when it is about files', () => {
+    expect(applyRules('downloads er sob pdf ekta Reports folder e soriye dao')?.skill)
+      .toBe('mac-file-organizer')
+    expect(applyRules('desktop er file gulo soriye rakho')?.skill).toBe('mac-file-organizer')
+  })
+
+  it('…and leaves it with the storefront skill when it is about a product', () => {
+    expect(applyRules('oi panjabi ta site theke soriye dao')?.skill).toBe('storefront-editing')
+  })
+
+  it('does not fire on half a match', () => {
+    // A place with no verb: he may just be reading from it.
+    expect(applyRules('downloads e ki ki ache')).toBeNull()
+    // A verb with no place: could be the office, the site, anything.
+    expect(applyRules('ektu porishkar kore dao')).toBeNull()
+  })
+})
+
+describe('nothing else moved', () => {
+  it('the existing rules still win their own traffic', () => {
+    expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
+    expect(applyRules('ei product tar dam 1200 koro')?.skill).toBe('storefront-editing')
+    expect(applyRules('Mustahid ajke kokhon asche?')?.skill).toBe('alma-staff-dispatch')
+  })
+
+  it('leaves unrelated messages alone', () => {
+    expect(applyRules('kalker order gulo dekhao')).toBeNull()
+    expect(applyRules('ajker sale koto?')).toBeNull()
+  })
+})
+
+describe('on the index production actually serves', () => {
+  const cases: Array<{ text: string; skill: string; caps: string[] }> = [
+    {
+      text: 'testflight build dao',
+      skill: 'xcode-testflight-shipper',
+      caps: ['run_mac_command', 'check_mac_command'],
+    },
+    {
+      text: 'kaj ta commit kore push koro',
+      skill: 'git-pr-workflow',
+      caps: ['run_mac_command', 'check_mac_command'],
+    },
+    {
+      text: 'chatgpt app e eta jigges koro',
+      skill: 'mac-ai-app-operator',
+      caps: ['look_mac_app', 'drive_mac_app'],
+    },
+    {
+      text: 'screenshot dao',
+      skill: 'screenshot-annotate-share',
+      caps: ['mac_desk_control', 'look_mac_app'],
+    },
+    {
+      text: 'downloads folder ta porishkar koro',
+      skill: 'mac-file-organizer',
+      caps: ['run_mac_command', 'check_mac_command'],
+    },
+  ]
+
+  for (const c of cases) {
+    it(`${c.skill} is discoverable, wins by rule, and names its tools`, async () => {
+      const index = await discoverSkills(SKILLS_ROOT)
+      const decision = routeSkill(index, c.text)
+      expect(decision.skill).toBe(c.skill)
+      expect(decision.layer).toBe('rule')
+
+      const meta = index.skills.find((s) => s.name === c.skill)
+      expect(meta, `${c.skill} must be discoverable (status active)`).toBeTruthy()
+      for (const cap of c.caps) expect(meta?.requiredCapabilities).toContain(cap)
+    })
+  }
+})

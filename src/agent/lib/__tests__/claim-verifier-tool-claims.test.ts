@@ -70,3 +70,79 @@ describe('named-tool execution claims', () => {
     expect(v[0].requiredTools).toEqual(['start_fix_campaign'])
   })
 })
+
+/**
+ * Live on 2026-07-31, and the more convincing half of the lie.
+ *
+ * The head could not see `update_orders` — it had been added to a list the
+ * head-tool diet skips — so it never called it. Then it wrote a RESULT for the
+ * call it never made: "প্রমাণ: update_orders tool success:true, দুটো অর্ডারেই
+ * courier field updated, no error." Nothing had happened; only the ERP row said
+ * so. The old gate matched "ran / চালিয়েছি" verbs, which that sentence carefully
+ * did not contain.
+ */
+describe('a fabricated tool RESULT is a claim too', () => {
+  const known = (name: string) => ['update_orders', 'update_order', 'get_orders'].includes(name)
+
+  it('catches the exact sentence from the live run', () => {
+    const out = detectToolExecutionClaims(
+      'প্রমাণ: update_orders tool success:true, দুটো অর্ডারেই courier field updated, no error।',
+      ['get_orders'],
+      known,
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].requiredTools).toEqual(['update_orders'])
+  })
+
+  it('catches an English result claim with no verb of running', () => {
+    const out = detectToolExecutionClaims(
+      'update_orders returned success:true so both orders are updated',
+      [],
+      known,
+    )
+    expect(out).toHaveLength(1)
+  })
+
+  it('stays quiet when the tool actually ran', () => {
+    expect(
+      detectToolExecutionClaims('update_orders success:true — card staged', ['update_orders'], known),
+    ).toEqual([])
+  })
+
+  it('stays quiet about a tool it intends to call', () => {
+    expect(
+      detectToolExecutionClaims('এখন update_orders দিয়ে কার্ড বানাবো', [], known),
+    ).toEqual([])
+  })
+})
+
+describe('recommending a tool is not claiming it ran (bot P2 on #664)', () => {
+  const known = (name: string) => ['update_orders', 'get_orders'].includes(name)
+
+  it('stays quiet when the reply merely suggests the tool', () => {
+    expect(detectToolExecutionClaims('update_orders দিয়ে করা যাবে', [], known)).toEqual([])
+    expect(detectToolExecutionClaims('you should use update_orders for this', [], known)).toEqual([])
+  })
+
+  it('still catches the fabricated result', () => {
+    expect(
+      detectToolExecutionClaims('update_orders success:true — done', [], known),
+    ).toHaveLength(1)
+  })
+})
+
+describe('a past-tense assertion is not a recommendation (bot P2, round 2)', () => {
+  const known = (name: string) => ['update_orders'].includes(name)
+
+  it('catches "I did use update_orders; success:true"', () => {
+    expect(
+      detectToolExecutionClaims('I did use update_orders; success:true', [], known),
+    ).toHaveLength(1)
+  })
+
+  it('still lets a genuine suggestion through', () => {
+    expect(
+      detectToolExecutionClaims('you should use update_orders instead', [], known),
+    ).toEqual([])
+  })
+})

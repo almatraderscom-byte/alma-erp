@@ -75,8 +75,9 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested, getTurnInstructionOrigin } from '@/agent/lib/turn-status'
 import { SELF_CONTINUE_DELAY_MS } from '@/agent/lib/self-continue'
 import { estimateChars, trimHistoryBySize, SELF_CONTINUE_KEEP_MESSAGES, lastUserTextPeek } from '@/agent/lib/history-trim'
+import { compileTaskCard, CONTINUATION_KEEP_MESSAGES } from '@/agent/lib/task-card'
 import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agent/lib/chat-mode'
-import { adviseForAction, filterToolsForPermissionMode, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
+import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
@@ -114,6 +115,8 @@ import {
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
+import { rememberHeadPin } from '@/agent/lib/models/head-pin'
+import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { DEFAULT_HEAD_MODEL_ID } from '@/agent/lib/models/routing-config'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/specialist-roles'
@@ -153,6 +156,18 @@ export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
    * Set by the model-switch resume call — skips the approval gate.
    */
   approveModelSwitch?: boolean
+  /**
+   * P0-1: this turn continues work already in flight (approval resume / internal
+   * workflow control). It resumes on the job's pinned head instead of being
+   * routed again — see head-pin.ts.
+   */
+  continuation?: boolean
+  /**
+   * This turn's model is a ONE-TURN override, not a decision about the job —
+   * today only the declined-upgrade fallback. Such a model must never become
+   * the task pin (review bot, #690).
+   */
+  ephemeralModel?: boolean
 }
 
 /**
@@ -411,7 +426,7 @@ async function* runAlternateProviderTurn(
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
   // event records it, but nothing is withheld or blocked until PM-2.
   const permissionMode = normalizePermissionMode(options.permissionMode)
-  const elevationGrant = options.elevationGrant ?? null
+  let elevationGrant = options.elevationGrant ?? null
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -496,6 +511,15 @@ async function* runAlternateProviderTurn(
     askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
   } catch { /* fail-open */ }
 
+  // P1-6 — the task card: the job's state compiled ONCE from the records that
+  // already hold it (focus, workflow run, corrections), so a continuation can
+  // resume from notes instead of re-deriving everything from the transcript.
+  // Compiled here because the history trim just below depends on having it.
+  const taskCard = options.continuation
+    ? await compileTaskCard(conversationId)
+    : { text: '', trimSafe: false }
+  const taskCardText = taskCard.text
+
   // A SELF-CONTINUE hop resumes from its CHECKPOINT, not from the transcript
   // (owner ruling 2026-07-26): "তুমি নিজেও তো এভাবে কাজ করো না — একটি session শেষ
   // হওয়ার পর পুরো history নতুন করে পড়ো না, আগের notes/progress/checkpoint থেকে শুরু
@@ -505,6 +529,23 @@ async function* runAlternateProviderTurn(
   const isSelfContinueHop = /^\[SELF-CONTINUE/m.test(lastUserTextPeek(allRows))
   if (isSelfContinueHop && rows.length > SELF_CONTINUE_KEEP_MESSAGES) {
     rows = rows.slice(-SELF_CONTINUE_KEEP_MESSAGES)
+  }
+
+  // P1-6/7 — an APPROVAL continuation resumes the same way, for the same
+  // reason, and this is where the measured 18.5 seconds goes: a continuation
+  // was rebuilding the entire conversation to answer "the thing you approved is
+  // done, carry on". It gets the task card (compiled just below into the turn
+  // context) plus the turns around Boss's tap, instead of the whole thread.
+  // Guarded on the card actually existing — trimming history with nothing to
+  // replace it would just make the turn dumber.
+  // `trimSafe`, not merely a non-empty card: a card built from the conversation
+  // TITLE alone carries no step, no blocker and no next action, so trimming the
+  // transcript behind it would throw away the only context there was (review
+  // bot, #694).
+  if (options.continuation && taskCard.trimSafe && rows.length > CONTINUATION_KEEP_MESSAGES) {
+    const before = rows.length
+    rows = rows.slice(-CONTINUATION_KEEP_MESSAGES)
+    console.log(`[continuation] replaying ${rows.length} of ${before} messages behind the task card`)
   }
 
   // Size trim on top of turn-count compaction (owner cost analysis 2026-07-26).
@@ -1182,6 +1223,23 @@ async function* runAlternateProviderTurn(
   // The canonical job state leads; memory/context blocks follow; the listen
   // note, when present, overrides everything at the very top.
   const volatileSections: string[] = []
+  // P1-6 — the card leads the whole turn context on a continuation: it IS the
+  // state that the trimmed-away history used to carry.
+  if (taskCardText) volatileSections.push(taskCardText)
+  // P0-4 — a correction outranks everything. Boss's corrections used to live
+  // only in the transcript, where they competed for attention with every other
+  // line; here the newest one LEADS the turn context (only the listen-mode
+  // override, pushed next, sits above it — a turn where he is venting is not a
+  // turn where the agent should be acting on a work correction).
+  if (!listenMode) {
+    try {
+      const { loadCorrections, buildCorrectionNote } = await import('@/agent/lib/owner-corrections')
+      const correctionNote = buildCorrectionNote(await loadCorrections(conversationId))
+      if (correctionNote) volatileSections.push(correctionNote)
+    } catch (err) {
+      console.warn('[run-owner-turn] correction note failed open:', err instanceof Error ? err.message : err)
+    }
+  }
   // LISTEN MODE override — the empathy instruction leads and CANCELs the system
   // prompt's action-pressure for this one turn. There are no business tools on
   // a listen turn (assembled empty below), so the head physically cannot pivot
@@ -1961,6 +2019,17 @@ async function* runAlternateProviderTurn(
           ...messages,
           ...steering.map((item) => ({ role: 'user' as const, content: item.prompt })),
         ]
+        // Say on the wire that it ARRIVED. Accepted-by-the-server and
+        // seen-by-the-agent are different facts, and the thread drew them the
+        // same way — so a message still waiting looked exactly like one already
+        // taken up (owner report 2026-08-03).
+        yield {
+          type: 'steering_delivered',
+          ids: steering.map((item) => item.id),
+          clientMessageIds: steering
+            .map((item) => item.clientMessageId)
+            .filter((id): id is string => Boolean(id)),
+        }
       }
 
       const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
@@ -2296,6 +2365,17 @@ async function* runAlternateProviderTurn(
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
             ...lateSteering.map((item) => ({ role: 'user' as const, content: item.prompt })),
           ]
+          // Same acknowledgement as the top-of-round claim. Without it the
+          // client keeps the outbox entry for a message this turn has already
+          // taken up, and replays it as a new turn when the stream ends —
+          // running the instruction twice (Codex round 3).
+          yield {
+            type: 'steering_delivered',
+            ids: lateSteering.map((item) => item.id),
+            clientMessageIds: lateSteering
+              .map((item) => item.clientMessageId)
+              .filter((id): id is string => Boolean(id)),
+          }
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
@@ -2684,7 +2764,11 @@ async function* runAlternateProviderTurn(
           mode: permissionMode,
           tier: permissionTier.tier,
           taskClass: permissionTier.taskClass,
-          grant: elevationGrant,
+          // Only an EXPLICIT tool→family mapping may be lifted by a grant. A
+          // fallback class is a risk floor, so passing the grant here would let a
+          // reminders grant clear the Careful-mode card for an unmapped write
+          // like delete_memory (review bot, #667).
+          grant: permissionTier.explicit ? elevationGrant : null,
           now: Date.now(),
         })
         if (permissionVerdict === 'blocked') {
@@ -2716,10 +2800,33 @@ async function* runAlternateProviderTurn(
         // as a card instead. Stage-mode tools already make their own card, and
         // R3/R4 are handled by the ladder above — this only covers the everyday
         // writes that Standard lets through silently.
+        // The verdict above used the TURN's snapshot of the grant. If the row no
+        // longer confirms it — Boss revoked from another request mid-turn — the
+        // `auto` it produced is stale, and Careful must go back to staging a card
+        // instead of letting the registry refuse the call (review bot, #667).
+        const verdictAfterConfirmation = permissionVerdict === 'auto'
+          && permissionTier.explicit
+          && elevationGrant
+          && permissionMode !== 'plan'
+          && !(await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass))
+          ? modeVerdict({
+              mode: permissionMode,
+              tier: permissionTier.tier,
+              taskClass: permissionTier.taskClass,
+              grant: null,
+              now: Date.now(),
+            })
+          : permissionVerdict
         const carefulNeedsCard =
-          permissionVerdict === 'card'
+          verdictAfterConfirmation === 'card'
+          // Cancelling a permission is never staged — that would trap Boss inside
+          // the grant he just asked to end (the registry exempts it too).
+          && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
-          && (permissionTier.tier === 'R1' || permissionTier.tier === 'R2')
+          // Any tier whose verdict is `card` gets one. Gating on R1/R2 sent an
+          // explicitly mapped R3 write (`set_staff_task_due`) to the registry's
+          // flat refusal instead of a card (review bot, #667).
           && getCapability(call.name)?.mode === 'write'
           && conversationId
         const ownerIntentViolation = personalMode
@@ -2732,7 +2839,27 @@ async function* runAlternateProviderTurn(
         // tool call through policy + autonomy/approval before it can run. A
         // sensitive action (money/publish/HR/export) is held for owner approval;
         // routine/read tools run. Identical decision for every model.
-        const aiosGuard = !ownerIntentViolation && enforcementEnabled()
+        // B6 — a LIVE, family-scoped grant is the owner's own standing yes for
+        // this exact family, so the enforcement layer must not stage a card he
+        // has already signed. Without this the grant changed the verdict and
+        // nothing else: the card still appeared, and the promise on the grant
+        // card ("this runs without a card for 15 minutes") was false.
+        // Everything the grant does NOT name still goes through the guard, and
+        // R4 is never granted in the first place.
+        // EXPLICIT mapping only. A fallback task class is a risk floor, not a
+        // statement of what the tool does: `camera_speak` falls back to
+        // `internal-reminders`, so a reminders grant would otherwise have let it
+        // speak over the office camera with no card (review bot, #667).
+        const grantCoversThisCall =
+          permissionVerdict === 'auto'
+          && permissionTier.explicit
+          && isFamilyGrantLive(elevationGrant, permissionTier.taskClass, Date.now())
+          // …and still true in the DATABASE. A turn runs for a while; Boss can
+          // revoke from the app or another chat meanwhile, and the in-memory
+          // snapshot would keep authorising work he already cancelled.
+          && await (await import('@/agent/lib/standing-grant'))
+            .confirmGrantStillCovers(conversationId, permissionTier.taskClass)
+        const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -2789,7 +2916,7 @@ async function* runAlternateProviderTurn(
               klass: 'unknown',
             })
           : personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,
@@ -2798,6 +2925,9 @@ async function* runAlternateProviderTurn(
             // PM-1: recorded on every tool event so "why did this run / why did
             // this ask" has an answer later. Not enforced until PM-2.
             permissionMode,
+            // The registry recomputes the verdict; without the grant it would
+            // block a Careful-mode call the grant had just authorised.
+            elevationGrant,
             turnAuthorization,
             driveClientSeoBatch,
             ownerVoicePref,
@@ -2807,6 +2937,16 @@ async function* runAlternateProviderTurn(
             // ladder and the money cap apply to work Boss is not watching.
             ...(turnInstructionOrigin ? { instructionOrigin: turnInstructionOrigin } : {}),
           })
+        // A revoked grant must stop covering calls immediately — the row is
+        // cleared, but this turn holds the grant in memory and would keep
+        // bypassing for every later call in the same turn.
+        if (call.name === 'revoke_standing_permission' && result.success) {
+          const cleared = (result.data as { cleared?: string[]; remaining?: string[] } | undefined)
+          const remaining = cleared?.remaining ?? []
+          elevationGrant = remaining.length && elevationGrant
+            ? { ...elevationGrant, families: remaining }
+            : null
+        }
         const durationMs = Date.now() - started
         // Harness Gap 2 — observational post-tool hooks (errors swallowed inside).
         runPostToolHooks({
@@ -3330,7 +3470,11 @@ async function* runAlternateProviderTurn(
     if (activeSkills.manifest?.done?.length && claimsCompletion(finalText)) {
       const misses = skillDoneMisses(
         activeSkills.manifest,
-        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status })),
+        // `input` rides along so a `done` condition can name the STEP that
+        // finishes the job (`run_mac_command` with `gh workflow run`) and not
+        // merely the tool that runs every step — including the read-only one
+        // these skills open with.
+        toolRecords.map((r) => ({ toolName: r.toolName, status: r.status, input: r.input })),
       )
       if (misses.length > 0) {
         const gate = `\n\n${doneGateMessage(activeSkills.pinned?.skill ?? activeSkills.manifest.name, misses)}`
@@ -3431,7 +3575,11 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: model.id, apiModel: model.apiModel, provider: model.provider,
+          // P1-9: WHY this head ran, not just which one. Until now `via` lived
+          // only in code and cost logs, so a surprising model choice had no
+          // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -3835,6 +3983,7 @@ export async function* runOwnerTurn(
     personalMode,
     businessId,
     conversationId,
+    continuation: options.continuation === true,
   })
 
   // Worker-only guard (2026-07-12 salah incident): a conversation still PINNED to
@@ -3868,6 +4017,25 @@ export async function* runOwnerTurn(
       decision.via = `${decision.via}+disabled_fallback`
     }
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
+
+
+  // P0-4: capture a correction the moment it arrives, so it governs THIS turn
+  // and every later one — not just the transcript. Narrow detection by design
+  // (see owner-corrections.ts); awaited because this turn's own context block
+  // is built from it.
+  if (!options.continuation) {
+    try {
+      const { recordCorrectionIfAny } = await import('@/agent/lib/owner-corrections')
+      await recordCorrectionIfAny(conversationId, lastUserText)
+    } catch { /* fail-open: a lost correction costs the old behaviour, not the turn */ }
+  }
+
+  // P0-2: routing is done; everything after this stamp is prompt build +
+  // inference + tools. The audit's suspicion is that this is the bulk of the
+  // 60–90s approval wait — this is the stamp that will prove or disprove it.
+  if (options.turnId) {
+    void traceTurnStage(options.turnId, 'head_resolved', decision.modelId).catch(() => {})
+  }
 
   const model = getModel(decision.modelId)
 
@@ -3939,12 +4107,29 @@ export async function* runOwnerTurn(
     }
   }
 
+  // P0-1: the head this job runs on. Written HERE — not at routing time — for
+  // two reasons the review bot found (#690):
+  //   - a decision that never RAN must not be pinned. Above this line the turn
+  //     can still stop at the model-upgrade gate; pinning first meant an
+  //     unapproved premium model became the job's head and re-presented its own
+  //     gate on the next routine message.
+  //   - a one-turn override is not a job decision. When Boss DECLINES an
+  //     upgrade the route passes the cheap fallback as an explicit modelId for
+  //     that turn alone; pinning it would have parked the whole job on the
+  //     cheap head at the top-ranked 'explicit' tier until expiry.
+  // Fire-and-forget: a failed write costs one re-routed turn, never a wrong one.
+  if (!options.ephemeralModel) {
+    void rememberHeadPin(conversationId, decision).catch(() => {})
+  }
+
   // Tell the UI which model is answering so it can show the matching loading
   // animation + label ("🧠 Sonnet ভাবছে" / "⚡ DeepSeek উত্তর দিচ্ছে").
   yield {
     type: 'model_info',
     modelId: model.id,
     label: model.label,
+    // P1-9 — the routing REASON travels with the model identity.
+    via: decision.via,
     // Owner 2026-07-28: he wants to see WHO answered, whichever model it is.
     // `variant` only ever knew three families, so Grok/Gemini/GPT showed a bare
     // "ALMA"; this is the readable name for every model in the registry.
@@ -3955,6 +4140,32 @@ export async function* runOwnerTurn(
 
   if (disabledSwitchNote) {
     yield { type: 'text_delta', delta: disabledSwitchNote }
+  }
+
+  // The chat route reads the mode and the grant off the conversation row and
+  // passes them in. Every OTHER entry point — the plan driver, the approval
+  // continuation — calls this with a conversation id and nothing else, so a turn
+  // Boss had already granted arrived with `elevationGrant: null` and was staged
+  // or blocked anyway (review bot, #667). The row is the source of truth, so
+  // read it here when the caller did not supply it.
+  if (options.elevationGrant === undefined || options.permissionMode === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const conv = await (prisma as any).agentConversation.findUnique({
+        where: { id: conversationId },
+        select: { permissionMode: true, elevationGrant: true },
+      })
+      const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+      options = {
+        ...options,
+        permissionMode: options.permissionMode ?? conv?.permissionMode ?? undefined,
+        elevationGrant: options.elevationGrant ?? parseElevationGrant(conv?.elevationGrant),
+      }
+    } catch (err) {
+      // A read failure must not widen anything: no grant is the safe answer, and
+      // the mode falls back to the caller's default exactly as before.
+      console.warn('[run-owner-turn] permission row read failed:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Phase 6 — ONE turn engine: Anthropic heads run through the SAME neutral

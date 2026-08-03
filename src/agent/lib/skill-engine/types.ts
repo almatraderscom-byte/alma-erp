@@ -90,8 +90,22 @@ export interface SkillManifest {
   }
   /** U2. Where the skill must stop and ask Boss rather than guess. */
   stopConditions?: string[]
-  /** Machine-checkable completion, fed to the existing skill-pack gate. */
-  done?: Array<{ tool?: string; check?: string }>
+  /**
+   * Machine-checkable completion, fed to the existing skill-pack gate.
+   *
+   * `argMatch` (2026-08-03) is a case-insensitive regex the tool call's INPUT
+   * must match, so a condition can name the step that actually finishes the
+   * job rather than the tool that runs every step. Codex found the hole on the
+   * first three Mac skills: they all open with a read-only `run_mac_command`,
+   * so `{ tool: 'run_mac_command' }` was satisfied before anything had been
+   * done. `{ tool: 'run_mac_command', argMatch: 'gh workflow run' }` is the
+   * dispatch itself.
+   *
+   * Deliberately matched on the input and not the output: an input is a stable
+   * shape we control, while a gate that mis-reads an output shape becomes a
+   * warning on every honest claim — the failure mode `check:` already has.
+   */
+  done?: Array<{ tool?: string; check?: string; argMatch?: string }>
 }
 
 /**

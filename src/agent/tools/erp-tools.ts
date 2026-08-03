@@ -1139,6 +1139,22 @@ function forOrderCard(value: unknown): string {
   return text.length > 70 ? `${text.slice(0, 70)}…` : text
 }
 
+/**
+ * The ERP's own courier spellings (`components/orders/new-order/constants.ts`).
+ *
+ * A model writes what Boss said — "steadfast" — and a lowercase value is a
+ * different courier to every filter, report and dropdown that matches on the
+ * name. Live on 2026-07-31: two orders ended up on `steadfast` while 313 sat on
+ * `Pathao`.
+ */
+const CANONICAL_COURIERS = ['Pathao', 'Redx', 'Steadfast', 'Paperfly', 'E-courier', 'Sundarban', 'SA Paribahan']
+
+function canonicalCourier(name: string): string {
+  const key = name.trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const hit = CANONICAL_COURIERS.find((c) => c.toLowerCase().replace(/[\s_-]+/g, '') === key)
+  return hit ?? name.trim()
+}
+
 async function findOrderByNumber(orderNumber: string) {
   const key = orderNumber.trim()
   if (!key) return null
@@ -1168,6 +1184,145 @@ async function findOrderByNumber(orderNumber: string) {
   return null
 }
 
+/**
+ * One order's proposed change, validated — the unit BOTH the single card and the
+ * batch card are built from (B5: one card per job, not per item).
+ *
+ * Returns an error string the head can act on, or the payload the approval
+ * executor will apply plus what the card should say.
+ */
+interface OrderChangePlan {
+  orderId: string
+  label: string
+  customer: string
+  product: string
+  payload: Record<string, unknown>
+  changes: Record<string, { before: unknown; after: unknown }>
+  unchanged: string[]
+  stockWarning: string | null
+}
+
+async function planOrderChange(
+  input: Record<string, unknown>,
+): Promise<{ error: string } | { plan: OrderChangePlan }> {
+  const orderNumber = String(input.orderNumber ?? '').trim()
+  if (!orderNumber) return { error: 'কোন order, সেটা বলুন (order/invoice number)।' }
+
+  const order = await findOrderByNumber(orderNumber)
+  if (order && (order as { __ambiguous?: string[] }).__ambiguous) {
+    const list = (order as { __ambiguous: string[] }).__ambiguous.join(', ')
+    return { error: `"${orderNumber}"-এ একাধিক অর্ডার মিলছে (${list}) — কোনটা, সেটা বলুন।` }
+  }
+  if (!order) {
+    return { error: `order পাওয়া যায়নি: ${orderNumber} — get_orders দিয়ে নম্বরটা মিলিয়ে নিন।` }
+  }
+
+    const changes: Record<string, { before: unknown; after: unknown }> = {}
+    const fields: Record<string, string> = {}
+    const unchanged: string[] = []
+
+    if (input.status != null) {
+      const raw = String(input.status).trim()
+      // The ERP has ONE spelling per status. "processing" is the word the
+      // agent's order adapter shows for `Packed`; writing it verbatim (as the
+      // first version did) produces an order no pending predicate matches and
+      // no UI transition can move.
+      const want = normalizeOrderStatus(raw)
+      if (!VALID_ORDER_STATUSES.has(want)) {
+        return { error: `status "${raw}" চেনা গেল না — ${ORDER_STATUSES.join(', ')}-এর একটা দিন।` }
+      }
+      const current = String(order.status ?? '').trim()
+      if (normalizeOrderStatus(current) === want) unchanged.push('status')
+      else if (isTerminalOrderStatus(current)) {
+        // Reopening a cancelled/returned order re-applies the stock deduction.
+        // The ERP's own route refuses this; a chat message must not be a way
+        // around it.
+        return {
+          error: `${order.invoiceNum || order.id} ইতিমধ্যে ${current} — শেষ হয়ে যাওয়া অর্ডার আবার খোলা যায় না (খুললে স্টকও নড়বে)। দরকার হলে নতুন অর্ডার করুন।`,
+        }
+      }
+      else changes.status = { before: order.status, after: want }
+    }
+
+    for (const [key, current] of [
+      ['courier', order.courier],
+      ['trackingId', order.trackingId],
+    ] as const) {
+      const raw = input[key]
+      if (raw == null) continue
+      // A courier is a name the rest of the ERP matches on — spell it the ERP's way.
+      const next = key === 'courier' ? canonicalCourier(String(raw)) : String(raw).trim()
+      if (next === String(current ?? '').trim()) unchanged.push(key)
+      else {
+        changes[key] = { before: current, after: next }
+        fields[key] = next
+      }
+    }
+
+    // The note is APPENDED, never replaced.
+    //
+    // Caught on the card, one click before it landed (2026-07-31): this ERP
+    // keeps a machine-readable `ORDER_ITEMS_JSON:{…}` payload — every line
+    // item, size, price and COGS of the order — in the very same `notes`
+    // column a human note goes in. Replacing the field would have deleted the
+    // order's items to write one sentence. A note is worth adding; nothing a
+    // note says is worth that.
+    if (input.notes != null) {
+      const note = String(input.notes).trim()
+      const existing = String(order.notes ?? '')
+      // Compare against the HUMAN part only. The machine payload is a long
+      // JSON string, so a short note ("black", "111", "paid") matches inside
+      // it and would be dropped as already-present though nobody ever wrote it.
+      const humanPart = existing
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('ORDER_ITEMS_JSON'))
+        .join('\n')
+      if (!note) unchanged.push('notes')
+      else if (humanPart.split('\n').some((line) => line.trim() === note)) unchanged.push('notes')
+      else {
+        const merged = existing ? `${existing}\n${note}` : note
+        changes.notes = { before: existing ? '(আগের নোট অপরিবর্তিত থাকবে)' : '(খালি)', after: note }
+        fields.notes = merged
+      }
+    }
+
+  if (!Object.keys(changes).length) {
+    const already = unchanged.length ? ` (${unchanged.join(', ')} আগে থেকেই এমনই আছে)` : ''
+    return { error: `${order.invoiceNum || order.id}: বদলানোর মতো কিছু নেই${already}।` }
+  }
+
+  const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+  const statusAfter = changes.status ? String(changes.status.after) : null
+
+  return {
+    plan: {
+      orderId: order.id,
+      label: String(order.invoiceNum || order.id),
+      customer: String(order.customer ?? ''),
+      product: String(order.product ?? ''),
+      payload: {
+        orderId: order.id,
+        invoiceNum: order.invoiceNum,
+        status: statusAfter,
+        fields,
+        changes,
+        reason,
+      },
+      changes,
+      unchanged,
+      stockWarning: statusAfter && STOCK_EFFECT[normalizeOrderStatus(statusAfter).toLowerCase()]
+        ? STOCK_EFFECT[normalizeOrderStatus(statusAfter).toLowerCase()]
+        : (statusAfter && isTerminalOrderStatus(statusAfter) ? 'স্টক ফেরত যাবে' : null),
+    },
+  }
+}
+
+function planLines(plan: OrderChangePlan): string {
+  return Object.entries(plan.changes)
+    .map(([field, v]) => `• ${field}: ${forOrderCard(v.before)} → ${forOrderCard(v.after)}`)
+    .join('\n')
+}
+
 const update_order: AgentTool = {
   name: 'update_order',
   description:
@@ -1175,13 +1330,20 @@ const update_order: AgentTool = {
     + 'with before → after per field. Use for "order ta shipped kore dao", "tracking boshiye dao", '
     + '"oi order ta cancel koro". Send only what changes. Cancel/return statuses restore stock, and the card says so. '
     + 'After approval the order is read back from the ERP and the live values are reported — never claim it landed on your own. '
-    + 'Money fields (price, discount, COGS) are NOT editable here.',
+    + 'Money fields (price, discount, COGS) are NOT editable here. For SEVERAL orders at once use update_orders — one card, not one per order.',
   input_schema: {
     type: 'object' as const,
     properties: {
       orderNumber: { type: 'string', description: 'Order/invoice number as Boss says it (e.g. "1234", "#ALM-1234"), or the order id.' },
       status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status.' },
-      courier: { type: 'string', description: 'Courier name (Steadfast, Pathao, RedX …).' },
+      courier: {
+        type: 'string',
+        // NOT an enum: schema validation runs BEFORE the handler, so a lowercase
+        // "steadfast" would be rejected as invalid_args and never reach the
+        // normaliser that exists to repair exactly that. Accept what the model
+        // says; canonicalCourier decides how it is spelled.
+        description: `Courier name. Stored in the ERP's own spelling — one of: ${CANONICAL_COURIERS.join(', ')}.`,
+      },
       trackingId: { type: 'string', description: 'Courier tracking id.' },
       notes: {
         type: 'string',
@@ -1196,109 +1358,17 @@ const update_order: AgentTool = {
   },
   handler: async (input) => {
     try {
-      const orderNumber = String(input.orderNumber ?? '').trim()
-      if (!orderNumber) return { success: false, error: 'কোন order, সেটা বলুন (order/invoice number)।' }
-
-      const order = await findOrderByNumber(orderNumber)
-      if (order && (order as { __ambiguous?: string[] }).__ambiguous) {
-        const list = (order as { __ambiguous: string[] }).__ambiguous.join(', ')
-        return { success: false, error: `"${orderNumber}"-এ একাধিক অর্ডার মিলছে (${list}) — কোনটা, সেটা বলুন।` }
-      }
-      if (!order) {
-        return {
-          success: false,
-          error: `order পাওয়া যায়নি: ${orderNumber} — get_orders দিয়ে নম্বরটা মিলিয়ে নিন।`,
-        }
-      }
-
-      const changes: Record<string, { before: unknown; after: unknown }> = {}
-      const fields: Record<string, string> = {}
-      const unchanged: string[] = []
-
-      if (input.status != null) {
-        const raw = String(input.status).trim()
-        // The ERP has ONE spelling per status. "processing" is the word the
-        // agent's order adapter shows for `Packed`; writing it verbatim (as the
-        // first version did) produces an order no pending predicate matches and
-        // no UI transition can move.
-        const want = normalizeOrderStatus(raw)
-        if (!VALID_ORDER_STATUSES.has(want)) {
-          return { success: false, error: `status "${raw}" চেনা গেল না — ${ORDER_STATUSES.join(', ')}-এর একটা দিন।` }
-        }
-        const current = String(order.status ?? '').trim()
-        if (normalizeOrderStatus(current) === want) unchanged.push('status')
-        else if (isTerminalOrderStatus(current)) {
-          // Reopening a cancelled/returned order re-applies the stock deduction.
-          // The ERP's own route refuses this; a chat message must not be a way
-          // around it.
-          return {
-            success: false,
-            error: `${order.invoiceNum || order.id} ইতিমধ্যে ${current} — শেষ হয়ে যাওয়া অর্ডার আবার খোলা যায় না (খুললে স্টকও নড়বে)। দরকার হলে নতুন অর্ডার করুন।`,
-          }
-        }
-        else changes.status = { before: order.status, after: want }
-      }
-
-      for (const [key, current] of [
-        ['courier', order.courier],
-        ['trackingId', order.trackingId],
-      ] as const) {
-        const raw = input[key]
-        if (raw == null) continue
-        const next = String(raw).trim()
-        if (next === String(current ?? '').trim()) unchanged.push(key)
-        else {
-          changes[key] = { before: current, after: next }
-          fields[key] = next
-        }
-      }
-
-      // The note is APPENDED, never replaced.
-      //
-      // Caught on the card, one click before it landed (2026-07-31): this ERP
-      // keeps a machine-readable `ORDER_ITEMS_JSON:{…}` payload — every line
-      // item, size, price and COGS of the order — in the very same `notes`
-      // column a human note goes in. Replacing the field would have deleted the
-      // order's items to write one sentence. A note is worth adding; nothing a
-      // note says is worth that.
-      if (input.notes != null) {
-        const note = String(input.notes).trim()
-        const existing = String(order.notes ?? '')
-        // Compare against the HUMAN part only. The machine payload is a long
-        // JSON string, so a short note ("black", "111", "paid") matches inside
-        // it and would be dropped as already-present though nobody ever wrote it.
-        const humanPart = existing
-          .split('\n')
-          .filter((line) => !line.trim().startsWith('ORDER_ITEMS_JSON'))
-          .join('\n')
-        if (!note) unchanged.push('notes')
-        else if (humanPart.split('\n').some((line) => line.trim() === note)) unchanged.push('notes')
-        else {
-          const merged = existing ? `${existing}\n${note}` : note
-          changes.notes = { before: existing ? '(আগের নোট অপরিবর্তিত থাকবে)' : '(খালি)', after: note }
-          fields.notes = merged
-        }
-      }
-
-      if (!Object.keys(changes).length) {
-        const already = unchanged.length ? ` (${unchanged.join(', ')} আগে থেকেই এমনই আছে)` : ''
-        return { success: false, error: `বদলানোর মতো কিছু নেই${already}।` }
-      }
-
-      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
-      const statusAfter = changes.status ? String(changes.status.after) : null
-      const stockLine = statusAfter && STOCK_EFFECT[statusAfter] ? `⚠️ ${STOCK_EFFECT[statusAfter]}।\n` : ''
+      const planned = await planOrderChange(input)
+      if ('error' in planned) return { success: false, error: planned.error }
+      const { plan } = planned
 
       const summary =
-        `📦 অর্ডার আপডেট — ${order.invoiceNum || order.id}\n`
-        + `${order.customer} · ${order.product}\n`
-        + Object.entries(changes)
-          .map(([field, v]) => `• ${field}: ${forOrderCard(v.before)} → ${forOrderCard(v.after)}`)
-          .join('\n')
-        + '\n'
-        + (unchanged.length ? `(অপরিবর্তিত: ${unchanged.join(', ')})\n` : '')
-        + (reason ? `কারণ: ${reason}\n` : '')
-        + stockLine
+        `📦 অর্ডার আপডেট — ${plan.label}\n`
+        + `${plan.customer} · ${plan.product}\n`
+        + planLines(plan) + '\n'
+        + (plan.unchanged.length ? `(অপরিবর্তিত: ${plan.unchanged.join(', ')})\n` : '')
+        + (plan.payload.reason ? `কারণ: ${plan.payload.reason}\n` : '')
+        + (plan.stockWarning ? `⚠️ ${plan.stockWarning}।\n` : '')
         + `\n✅ approve করলে সব একসাথে বসবে, তারপর ERP থেকে পড়ে মিলিয়ে দেখানো হবে।`
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1307,13 +1377,127 @@ const update_order: AgentTool = {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           businessId: 'ALMA_LIFESTYLE',
           type: 'erp_order_update',
+          payload: { ...plan.payload, conversationId: input.conversationId ?? null },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          orderId: plan.orderId,
+          changedFields: Object.keys(plan.changes),
+          unchangedFields: plan.unchanged,
+          message: `${Object.keys(plan.changes).length}টি পরিবর্তনের একটাই approval card পাঠানো হয়েছে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+/** A batch stays a batch a person can read — ten orders, not a hundred. */
+const MAX_ORDERS_PER_BATCH = 15
+
+const update_orders: AgentTool = {
+  name: 'update_orders',
+  description:
+    'Change SEVERAL ERP orders in ONE approval card — "ei tin ta order shipped kore dao", '
+    + '"ajker sob order e courier boshiye dao". Each order carries its own fields (status, courier, '
+    + 'trackingId, notes) and the card shows before → after per order. Boss approves once for the whole job. '
+    + 'Every order runs the same checks as a single update — cancel/return restores stock, a finished order '
+    + 'cannot be reopened, money is not editable — and after approval each order is read back from the ERP '
+    + 'and reported separately, so a partly-failed batch names WHICH order still needs a hand. '
+    + `Maximum ${MAX_ORDERS_PER_BATCH} orders per card.`,
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      orders: {
+        type: 'array',
+        description: 'The orders to change — one entry each. An entry with nothing to change is refused, not silently skipped.',
+        items: {
+          type: 'object',
+          properties: {
+            orderNumber: { type: 'string', description: 'Order/invoice number, or the order id.' },
+            status: { type: 'string', enum: [...ORDER_STATUSES], description: 'New status for THIS order.' },
+            courier: {
+              type: 'string',
+              description: `Courier name for THIS order — stored in the ERP's own spelling (${CANONICAL_COURIERS.join(', ')}).`,
+            },
+            trackingId: { type: 'string', description: 'Courier tracking id for THIS order.' },
+            notes: { type: 'string', description: 'A note to ADD to this order (appended, never replaces).' },
+          },
+          required: ['orderNumber'],
+        },
+      },
+      reason: { type: 'string', description: 'Why this batch, in one line — shown on the card.' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['orders'],
+  },
+  handler: async (input) => {
+    try {
+      const raw = Array.isArray(input.orders) ? (input.orders as Array<Record<string, unknown>>) : []
+      if (!raw.length) return { success: false, error: 'কোন কোন অর্ডার, সেটা দিন (orders খালি)।' }
+      if (raw.length > MAX_ORDERS_PER_BATCH) {
+        return {
+          success: false,
+          error: `একবারে সর্বোচ্চ ${MAX_ORDERS_PER_BATCH}টি অর্ডার — ${raw.length}টি দেওয়া হয়েছে। ভাগ করে পাঠান।`,
+        }
+      }
+
+      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+      const plans: OrderChangePlan[] = []
+      const rejected: string[] = []
+      const seen = new Set<string>()
+
+      for (const entry of raw) {
+        const planned = await planOrderChange({ ...entry, reason: entry.reason ?? reason })
+        if ('error' in planned) {
+          rejected.push(planned.error)
+          continue
+        }
+        // The same order twice in one card would apply twice and read back once.
+        if (seen.has(planned.plan.orderId)) {
+          rejected.push(`${planned.plan.label}: একই অর্ডার দুবার এসেছে।`)
+          continue
+        }
+        seen.add(planned.plan.orderId)
+        plans.push(planned.plan)
+      }
+
+      // Nothing staged means nothing to approve — say what went wrong instead of
+      // showing Boss an empty card.
+      if (!plans.length) {
+        return { success: false, error: `একটাও অর্ডার নেওয়া গেল না:\n${rejected.join('\n')}` }
+      }
+
+      const stockWarned = plans.filter((p) => p.stockWarning)
+      const summary =
+        `📦 ${plans.length}টি অর্ডার আপডেট — একটাই approval\n`
+        + plans
+          .map((p) => `\n▪ ${p.label} · ${p.customer}\n${planLines(p)}`)
+          .join('')
+        + '\n'
+        + (reason ? `\nকারণ: ${reason}\n` : '')
+        + (stockWarned.length ? `⚠️ ${stockWarned.map((p) => p.label).join(', ')} — স্টক ফেরত যাবে।\n` : '')
+        + (rejected.length ? `\nবাদ পড়েছে (${rejected.length}): ${rejected.join(' · ')}\n` : '')
+        + `\n✅ approve করলে সবগুলো একসাথে চলবে, তারপর প্রতিটা অর্ডার ERP থেকে পড়ে আলাদা করে দেখানো হবে।`
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const action = await (prisma as any).agentPendingAction.create({
+        data: {
+          conversationId: input.conversationId ? String(input.conversationId) : null,
+          businessId: 'ALMA_LIFESTYLE',
+          type: 'erp_order_batch',
           payload: {
-            orderId: order.id,
-            invoiceNum: order.invoiceNum,
-            status: statusAfter,
-            fields,
-            changes,
+            items: plans.map((p) => p.payload),
             reason,
+            rejected,
             conversationId: input.conversationId ?? null,
           },
           summary,
@@ -1326,10 +1510,9 @@ const update_order: AgentTool = {
         success: true,
         data: {
           pendingActionId: action.id as string,
-          orderId: order.id,
-          changedFields: Object.keys(changes),
-          unchangedFields: unchanged,
-          message: `${Object.keys(changes).length}টি পরিবর্তনের একটাই approval card পাঠানো হয়েছে।`,
+          staged: plans.map((p) => p.label),
+          rejected,
+          message: `${plans.length}টি অর্ডারের জন্য একটাই approval card পাঠানো হয়েছে।`,
         },
       }
     } catch (err) {
@@ -1342,6 +1525,7 @@ export const ERP_TOOLS: AgentTool[] = [
   get_sales_summary,
   get_orders,
   update_order,
+  update_orders,
   get_inventory_status,
   get_product,
   get_customer_summary,

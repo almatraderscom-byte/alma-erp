@@ -18,6 +18,7 @@ import {
   permissionModeNote,
   isElevationGrantLive,
   type PermissionMode,
+  isFamilyGrantLive,
 } from '@/agent/lib/permission-mode'
 import type { RiskTier } from '@/agent/lib/autonomy-task-catalog'
 
@@ -159,10 +160,14 @@ describe('the per-turn banner', () => {
     expect(note).toContain('মোড তুমি নিজে বদলাবে না')
   })
 
-  it('shows what an elevation covers and until when', () => {
-    const note = permissionModeNote('elevated', { families: ['public-publish'], expiresAt: '2026-07-27T12:30:00Z' })
+  it('shows what a LIVE grant covers and until when', () => {
+    // A fixed past timestamp used to pass here; the banner now filters expired
+    // families, which is the point — it must never advertise a permission the
+    // execution checks would refuse.
+    const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString()
+    const note = permissionModeNote('elevated', { families: ['public-publish'], expiresAt })
     expect(note).toContain('public-publish')
-    expect(note).toContain('2026-07-27T12:30:00Z')
+    expect(note).toContain(expiresAt)
   })
 })
 
@@ -172,5 +177,162 @@ describe('housekeeping', () => {
     expect(normalizePermissionMode('nonsense')).toBe('standard')
     expect(normalizePermissionMode(undefined)).toBe('standard')
     expect(normalizePermissionMode('elevated')).toBe('elevated')
+  })
+})
+
+/**
+ * B6 review-bot P1 (#667): reaching a grant by switching the whole conversation
+ * to `elevated` was a much larger promise than the card made. From Careful, that
+ * one switch also stopped asking about every unrelated R1/R2 write. A grant for
+ * one family must mean one family.
+ */
+describe('a family-scoped grant sits ON TOP of the mode, not instead of it', () => {
+  const live = { families: ['staff-messaging'], expiresAt: new Date(Date.now() + 60_000).toISOString() }
+  const now = Date.now()
+
+  it('lifts the card for the family it names, even under Careful', () => {
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'staff-messaging', grant: live, now }))
+      .toBe('auto')
+  })
+
+  it('leaves every other family exactly as Careful had it', () => {
+    expect(modeVerdict({ mode: 'careful', tier: 'R1', taskClass: 'internal-reminders', grant: live, now }))
+      .toBe('card')
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'public-publish', grant: live, now }))
+      .toBe('card')
+  })
+
+  it('never touches R4, grant or no grant', () => {
+    const withMoney = { families: ['money-movement'], expiresAt: live.expiresAt }
+    expect(modeVerdict({ mode: 'standard', tier: 'R4', taskClass: 'money-movement', grant: withMoney, now }))
+      .toBe('owner_only')
+  })
+
+  it('does not un-plan Plan mode', () => {
+    expect(modeVerdict({ mode: 'plan', tier: 'R3', taskClass: 'staff-messaging', grant: live, now }))
+      .toBe('blocked')
+  })
+
+  it('is over the moment it expires', () => {
+    const dead = { families: ['staff-messaging'], expiresAt: new Date(now - 1000).toISOString() }
+    expect(modeVerdict({ mode: 'careful', tier: 'R3', taskClass: 'staff-messaging', grant: dead, now }))
+      .toBe('card')
+  })
+})
+
+/** Review-bot round 2 on #667 — two grants, two clocks. */
+describe('each family keeps the window it was given', () => {
+  const now = Date.now()
+  const grant = {
+    families: ['staff-messaging', 'customer-messaging'],
+    expiresAt: new Date(now + 4 * 60 * 60_000).toISOString(),
+    windows: {
+      'staff-messaging': new Date(now + 15 * 60_000).toISOString(),
+      'customer-messaging': new Date(now + 4 * 60 * 60_000).toISOString(),
+    },
+  }
+
+  it('does not extend the short grant to the long one’s cutoff', () => {
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now + 20 * 60_000)).toBe(false)
+    expect(isFamilyGrantLive(grant, 'customer-messaging', now + 20 * 60_000)).toBe(true)
+  })
+
+  it('reads the per-family window in the verdict', () => {
+    expect(modeVerdict({ mode: 'standard', tier: 'R3', taskClass: 'staff-messaging', grant, now: now + 20 * 60_000 }))
+      .toBe('card')
+    expect(modeVerdict({ mode: 'standard', tier: 'R3', taskClass: 'customer-messaging', grant, now: now + 20 * 60_000 }))
+      .toBe('auto')
+  })
+
+  it('falls back to the grant-wide cutoff for older rows without windows', () => {
+    const old = { families: ['staff-messaging'], expiresAt: new Date(now + 60_000).toISOString() }
+    expect(isFamilyGrantLive(old, 'staff-messaging', now)).toBe(true)
+    expect(isFamilyGrantLive(old, 'staff-messaging', now + 120_000)).toBe(false)
+  })
+})
+
+/** Review-bot P2 (#667 round 5): the row outlives the permission. */
+describe('the banner names only families that are still live', () => {
+  const now = Date.now()
+  it('drops an expired family and keeps the live one', () => {
+    const grant = {
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': new Date(now - 60_000).toISOString(),
+        'customer-messaging': new Date(now + 60 * 60_000).toISOString(),
+      },
+    }
+    const note = permissionModeNote('standard', grant)
+    expect(note).toContain('customer-messaging')
+    expect(note).not.toContain('staff-messaging')
+  })
+
+  it('says nothing about a grant that has fully expired', () => {
+    const dead = { families: ['staff-messaging'], expiresAt: new Date(now - 1000).toISOString() }
+    expect(permissionModeNote('standard', dead)).not.toContain('সময়-বাঁধা অনুমতি চালু')
+  })
+})
+
+/** Review-bot P2 (#667 round 15): a half-written windows map must not widen. */
+describe('a family without its own window is not granted', () => {
+  it('drops the family whose window is missing or malformed', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 4 * 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': 'not-a-date',
+        'customer-messaging': new Date(now + 4 * 60 * 60_000).toISOString(),
+      },
+    })
+    expect(grant?.families).toEqual(['customer-messaging'])
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(false)
+  })
+
+  it('keeps the old shape working — no windows means the grant-wide cutoff', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging'],
+      expiresAt: new Date(now + 60_000).toISOString(),
+    })
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(true)
+  })
+
+  it('never lets a family window reach past the grant-wide cutoff', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const now = Date.now()
+    const grant = parseElevationGrant({
+      families: ['staff-messaging', 'customer-messaging'],
+      expiresAt: new Date(now + 60 * 60_000).toISOString(),
+      windows: {
+        'staff-messaging': new Date(now + 9 * 60 * 60_000).toISOString(), // past the cutoff
+        'customer-messaging': new Date(now + 30 * 60_000).toISOString(),
+      },
+    })
+    expect(grant?.families).toEqual(['customer-messaging'])
+    expect(isFamilyGrantLive(grant, 'staff-messaging', now)).toBe(false)
+  })
+
+  it('rejects a present but malformed windows field', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const future = new Date(Date.now() + 4 * 60 * 60_000).toISOString()
+    for (const windows of ['bad', null, [], 7]) {
+      expect(
+        parseElevationGrant({ families: ['staff-messaging'], expiresAt: future, windows }),
+      ).toBeNull()
+    }
+  })
+
+  it('rejects a windows object in which nothing parses', async () => {
+    const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
+    const grant = parseElevationGrant({
+      families: ['staff-messaging'],
+      expiresAt: new Date(Date.now() + 4 * 60 * 60_000).toISOString(),
+      windows: { 'staff-messaging': 'bad' },
+    })
+    expect(grant).toBeNull()
   })
 })

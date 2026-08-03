@@ -107,6 +107,12 @@ export interface DelegatedToolContext {
   /** A read-only turn stays read-only through the hop. */
   turnAuthorization?: OwnerTurnAuthorization
   instructionOrigin?: 'owner_direct' | 'owner_policy' | 'model_initiative' | 'external_content'
+  /**
+   * B6 — the owner's standing grant. A specialist working under Careful mode on
+   * a granted family would otherwise be refused by the registry's own check
+   * (`permission_mode_blocked`) for work Boss had already authorised.
+   */
+  elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
 }
 
 /**
@@ -123,10 +129,12 @@ export function delegatedToolContextFrom(source: Record<string, unknown>): Deleg
   const origin = pick('instructionOrigin')
   const turnId = pick('turnId')
   const permissionMode = pick('permissionMode')
+  const grant = pick('elevationGrant') as DelegatedToolContext['elevationGrant']
   return {
     turnId: typeof turnId === 'string' ? turnId : undefined,
     permissionMode: typeof permissionMode === 'string' ? permissionMode : undefined,
     turnAuthorization: (pick('turnAuthorization') as OwnerTurnAuthorization | undefined) ?? undefined,
+    elevationGrant: grant ?? null,
     instructionOrigin:
       origin === 'owner_direct' || origin === 'owner_policy'
         || origin === 'model_initiative' || origin === 'external_content'

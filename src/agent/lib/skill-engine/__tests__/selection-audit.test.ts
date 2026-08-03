@@ -100,6 +100,26 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   2026-07-28: storefront-editing, the ninth — A1. Editing a product that is
     //   already live had no skill at all, so "dam 1200 koro" fell through to the
     //   head and, at best, one approval card per field.
+    //   2026-08-03: the Tier-1 Mac skills — git-pr-workflow,
+    //   mac-ai-app-operator, xcode-testflight-shipper. All three are RULE-routed
+    //   (their objects — "build", "PR", "chat" — are words half the business
+    //   vocabulary already owns), so promotion is about the pin handing the turn
+    //   the right tool allowlist, not about keyword recall.
+    //   2026-08-03: the other half of Tier 1 — mac-file-organizer and
+    //   screenshot-annotate-share. Both rule-routed too: the organizer needs a
+    //   PLACE and a VERB together (either alone is ordinary traffic), and the
+    //   screen rule is ordered ahead of the app rule because a picture of an
+    //   app is a looking job, not a driving one.
+    //   2026-08-03: Tier 2 — mac-health-monitor, spotlight-finder,
+    //   media-transcoder. Two are read-only; the transcoder writes and is
+    //   isolated. All three rule-routed, each with the veto its verb needs
+    //   ("khujo" is also research, "banao" is also Creative Studio).
+    //   2026-08-03: Tier 2 completed — pdf-processor and workspace-launcher.
+    //   2026-08-03: Tier 3, chosen with Boss rather than taken from the plan's
+    //   list — mac-cli-session-runner (his CLI-session tools existed and were
+    //   going unused for want of a playbook), ios-simulator-verifier (kills the
+    //   TestFlight round-trip), mac-backup-verifier (the business documents live
+    //   on that Mac).
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -115,10 +135,25 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-research',
       'alma-staff-dispatch',
       'alma-website',
+      'calendar-reminders-bridge',
+      'git-pr-workflow',
+      'ios-simulator-verifier',
+      'mac-ai-app-operator',
+      'mac-backup-verifier',
+      'mac-cli-session-runner',
+      'mac-file-organizer',
+      'mac-health-monitor',
+      'mac-security-check',
+      'media-transcoder',
+      'pdf-processor',
+      'screenshot-annotate-share',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
+      'spotlight-finder',
       'storefront-editing',
+      'workspace-launcher',
+      'xcode-testflight-shipper',
     ])
 
     // 5 → 4 → 3 → 2 → 1 → 0 on 2026-07-28. Every one of the 14 has been through

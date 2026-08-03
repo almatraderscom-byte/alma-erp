@@ -173,7 +173,65 @@ export async function deliverAgentTurn(jobData) {
       else ownerState.conversationId = result.conversationId
     }
 
-    const replyText = result.text || '(কোনো উত্তর নেই)'
+    let replyText = result.text || '(কোনো উত্তর নেই)'
+
+    // L8: the agent embeds app screenshots as ![label](<app>/api/assistant/files?...)
+    // links. That route is owner-session gated, so in Telegram the link is a
+    // login page — send the image as a NATIVE photo instead: fetch it
+    // server-to-server with the same internal bearer used for /chat, strip
+    // the markdown, and let the caption carry the label. Best-effort — a
+    // failed fetch leaves the text (and its link) untouched.
+    const fileImgRe = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+\/api\/assistant\/files\?[^\s)]+)\)/g
+    const fileImages = [...replyText.matchAll(fileImgRe)].slice(0, 4)
+    for (const m of fileImages) {
+      try {
+        // The reply text is MODEL-GENERATED: a crafted ![x](https://attacker/…)
+        // must never receive our internal bearer. Only the app's own origin
+        // gets the authenticated fetch (Codex P1).
+        const target = new URL(m[2])
+        if (target.origin !== new URL(getAppUrl()).origin) continue
+        const res2 = await fetch(target, {
+          headers: { Authorization: `Bearer ${getInternalToken()}` },
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (!res2.ok) continue
+        // Enforce the size cap WHILE streaming — the bucket allows objects up
+        // to 512MB (Creative Studio videos live behind the same route), and
+        // buffering one whole before checking could OOM the worker (Codex P2).
+        const declared = Number(res2.headers.get('content-length'))
+        if (Number.isFinite(declared) && declared > 9_500_000) continue
+        let buf = null
+        if (res2.body?.getReader) {
+          const reader = res2.body.getReader()
+          const parts = []
+          let total = 0
+          let over = false
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            total += value.length
+            if (total > 9_500_000) {
+              over = true
+              await reader.cancel().catch(() => {})
+              break
+            }
+            parts.push(value)
+          }
+          if (over) continue
+          buf = Buffer.concat(parts)
+        } else {
+          buf = Buffer.from(await res2.arrayBuffer())
+          if (buf.length > 9_500_000) continue
+        }
+        if (!buf.length) continue
+        await bot.telegram.sendPhoto(chatId, { source: buf }, m[1] ? { caption: m[1] } : undefined)
+        replyText = replyText.replace(m[0], m[1] ? `📸 ${m[1]}` : '📸').trim()
+      } catch {
+        /* keep the text with its link */
+      }
+    }
+    if (!replyText) replyText = '📸'
+
     const chunks = splitMessage(replyText)
     for (const chunk of chunks) {
       await bot.telegram.sendMessage(chatId, chunk, { parse_mode: 'Markdown' }).catch(() =>

@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { assembleTurnTrace } from '@/agent/lib/turn-trace'
+import { loadStageTrace } from '@/agent/lib/turn-stage-trace'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,7 +21,13 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  const trace = await assembleTurnTrace(params.id)
+  // P0-2 rides along here rather than getting its own route: the decision trace
+  // answers "what did it do", the stage split answers "where did the minute go",
+  // and when an approval feels slow those are the same question.
+  const [trace, stageTrace] = await Promise.all([
+    assembleTurnTrace(params.id),
+    loadStageTrace(params.id),
+  ])
   if (!trace) return Response.json({ error: 'turn_not_found' }, { status: 404 })
-  return Response.json(trace)
+  return Response.json({ ...trace, stageTrace })
 }

@@ -111,4 +111,73 @@ describe('the done gate — "হয়ে গেছে" must be earned', () => {
     expect(msg).toContain('draft_seo_fixes')
     expect(msg).toContain('"হয়ে গেছে" বলছি না')
   })
+
+  /**
+   * `argMatch` (Codex review, PR #700). Every Mac skill opens with a read-only
+   * command, so naming the TOOL was satisfied before anything had been done —
+   * the gate passed on the listing call, before a single file moved.
+   */
+  describe('argMatch — the step, not the tool', () => {
+    const organizer = { done: [{ tool: 'run_mac_command', argMatch: '\\bmv\\b|Finder to delete' }] }
+
+    it('the opening listing call does not satisfy the gate', () => {
+      const misses = skillDoneMisses(organizer, [
+        { toolName: 'run_mac_command', status: 'success', input: { command: 'ls -la ~/Downloads' } },
+      ])
+      expect(misses).toEqual([{ kind: 'tool', name: 'run_mac_command (\\bmv\\b|Finder to delete)' }])
+    })
+
+    it('the move does', () => {
+      const misses = skillDoneMisses(organizer, [
+        { toolName: 'run_mac_command', status: 'success', input: { command: 'ls -la ~/Downloads' } },
+        {
+          toolName: 'run_mac_command',
+          status: 'success',
+          input: { command: 'mv -n ~/Downloads/a.pdf ~/Downloads/PDF/' },
+        },
+      ])
+      expect(misses).toEqual([])
+    })
+
+    it('a record that reports no input cannot satisfy an argMatch condition', () => {
+      const misses = skillDoneMisses(organizer, [{ toolName: 'run_mac_command', status: 'success' }])
+      expect(misses).toHaveLength(1)
+    })
+
+    it('a bad regex degrades to a substring test rather than becoming unsatisfiable', () => {
+      // The `check:` failure mode is a condition nothing can ever meet, which
+      // turns into a warning on every honest claim. A typo must not do that.
+      const broken = { done: [{ tool: 'run_mac_command', argMatch: 'mv (' }] }
+      expect(
+        skillDoneMisses(broken, [
+          { toolName: 'run_mac_command', status: 'success', input: { command: 'mv (weird) file' } },
+        ]),
+      ).toEqual([])
+    })
+  })
+})
+
+describe('Mac tools survive skill isolation (live-hit 2026-08-01)', () => {
+  it('a pinned skill cannot strip the owner’s Mac capabilities', () => {
+    // An unrelated invoice skill got pinned on "amar mac e ekta claude session
+    // kholo" and removed every Mac tool, so the head could not do the one thing
+    // he asked for. These are owner-service tools like ask_user.
+    const manifest = { requiredCapabilities: ['get_orders'] }
+    const tools = [
+      { name: 'get_orders' },
+      { name: 'run_mac_command' },
+      { name: 'start_cli_session' },
+      { name: 'read_cli_session' },
+      { name: 'mac_agent_status' },
+      { name: 'get_sales_summary' },
+    ]
+    const { tools: kept, removed } = filterToolsForSkill(tools, manifest)
+    const keptNames = kept.map((t) => t.name)
+    expect(keptNames).toContain('run_mac_command')
+    expect(keptNames).toContain('start_cli_session')
+    expect(keptNames).toContain('read_cli_session')
+    expect(keptNames).toContain('mac_agent_status')
+    // Unrelated tools are still narrowed away — isolation still works.
+    expect(removed).toContain('get_sales_summary')
+  })
 })

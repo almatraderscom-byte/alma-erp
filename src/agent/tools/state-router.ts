@@ -99,6 +99,17 @@ export const CORE_PACK = [
   // FULL registry and loads matched schemas for the rest of the turn, so the
   // whole registry stays ONE hop away from every routed turn. ~60 tokens.
   'find_tool',
+  // B6 — "আর জিজ্ঞেস কোরো না, তুমি নিজে করো" arrives in the middle of ANY job,
+  // so the tool that answers it belongs in the pack every turn carries. Live on
+  // 2026-08-01 it was registered, allowed, on the head's diet list and named in
+  // the prompt — and still absent, because pack selection decides membership and
+  // the diet only filters. Three honest "I can't" replies before the mechanism
+  // was found. ~40 tokens.
+  'request_standing_permission',
+  // The way back (`revoke_standing_permission`) is NOT here: the core pack sits
+  // against the 24-tool ceiling, and revoking is rarer than asking. It stays on
+  // the head's core list, in ALWAYS_ALLOWED, and one find_tool hop from any
+  // routed turn.
 ] as const
 
 export const DOMAIN_PACKS = {
@@ -116,7 +127,7 @@ export const DOMAIN_PACKS = {
     'get_dashboard_snapshot', 'check_order_issues', 'get_reorder_suggestions',
     'analyze_returns', 'analyze_pricing', 'get_customer_summary', 'order_lifecycle_scan',
     // B1: the pack that reads orders must also be able to propose a change to one.
-    'update_order',
+    'update_order', 'update_orders',
   ],
   staff_read: [
     'get_staff_tasks', 'get_all_staff', 'get_dispatch_status', 'get_current_proposal',
@@ -155,7 +166,11 @@ export const DOMAIN_PACKS = {
   // should reach for on its own.
   seo: [
     'audit_product_seo', 'draft_seo_fixes', 'run_website_seo_audit', 'check_website_seo_audit',
-    'track_keyword', 'list_tracked_keywords', 'untrack_keyword', 'submit_to_indexnow',
+    // `untrack_keyword` left the pack when the core gained
+    // request_standing_permission (2026-08-01): seo was at the 24-tool ceiling
+    // and something had to give. Removing a keyword from tracking is the
+    // rarest ask here and is one find_tool hop away.
+    'track_keyword', 'list_tracked_keywords', 'submit_to_indexnow',
     'get_search_console_performance', 'get_indexing_status', 'get_ga4_report',
     // The client_seo batch contract ENDS on complete_skill_pack_run; without it
     // in the pack the contract could never be satisfied, and the owner's final
@@ -192,6 +207,21 @@ export const DOMAIN_PACKS = {
     'research_competitor_creatives', 'manage_competitor_watchlist',
   ],
   camera: ['get_office_camera_snapshot', 'camera_speak', 'get_staff_location', 'get_staff_location_history'],
+  // The owner's own Mac (M1/M2). Registering the tools and naming them in the
+  // prompt is not enough on a routed turn — without a pack the router never puts
+  // them in the request, and the head correctly reports it has no such tool.
+  // Live-hit 2026-07-31: "amar mac e git status dekho" answered "tool available
+  // নেই" with the daemon paired and online.
+  // Round-robin drains each pack from the FRONT, so order = priority under the
+  // 24 cap. The app-driving pair sits right behind run_mac_command on purpose:
+  // a mixed turn ("ম্যাকে ChatGPT app-এ research করো") must not let the router
+  // trim the exact tools the sentence names (§0.4's trap in a new costume).
+  mac: [
+    'run_mac_command', 'look_mac_app', 'drive_mac_app', 'start_cli_session',
+    'check_mac_command', 'mac_agent_status', 'mac_desk_control',
+    'send_to_cli_session', 'read_cli_session', 'stop_cli_session',
+    'list_cli_sessions', 'list_mac_apps',
+  ],
 } as const
 
 export type PackKey = keyof typeof DOMAIN_PACKS
@@ -234,6 +264,8 @@ const PACK_HOME_GROUP: Record<PackKey, ToolGroupName[]> = {
   todo: ['base'],
   research: ['growth'],
   camera: ['base'],
+  // Mac tools live in CORE_AGENT_TOOLS, which is spread into `base`.
+  mac: ['base'],
 }
 
 // ── 1-3. Structured state signals (precede text routing) ─────────────────────
@@ -292,6 +324,13 @@ const INTENT_RULES: Array<{ pack: PackKey; re: RegExp }> = [
   { pack: 'todo', re: /todo|টুডু|আমার কাজ|করতে হবে|daily digest|ডাইজেস্ট|আজকের সারাংশ/i },
   { pack: 'research', re: /research|রিসার্চ|competitor|প্রতিযোগী|market (দেখ|ঘেটে)|দাম যাচাই|খুঁজে (দেখ|বের)/i },
   { pack: 'camera', re: /camera|ক্যামেরা|অফিস (দেখাও|দেখি)|কে আছে অফিসে|location|লোকেশন|কোথায় আছে/i },
+  // His Mac: terminal work, and the Claude/Codex sessions that run on it. Kept
+  // narrow — "mac"/"ম্যাক" plus the words he actually uses for developer work,
+  // so ordinary business chat never drags these tools into the request.
+  {
+    pack: 'mac',
+    re: /\bmac\b|ম্যাক|ল্যাপটপ|laptop|terminal|টার্মিনাল|\bgit\b|\bnpm\b|\bbuild\b|টেস্ট চালা|test চালা|\bcommit\b|\bpush\b|claude.{0,12}(session|সেশন)|codex|(session|সেশন).{0,12}(খোল|khol|open)|স্ক্রিনশট (নাও|দাও)|ঘুমাতে দিও না|keep.?awake/i,
+  },
 ]
 
 /** Pure keyword → packs (exported for golden tests). */
@@ -450,6 +489,30 @@ async function readStateSignals(conversationId: string): Promise<{
     add(packsForCheckpointTaskType(String(cp.checkpoint?.taskType ?? '')), `checkpoint:${cp.checkpoint?.taskType ?? 'unknown'}`)
   }
   if ((plans as unknown[]).length > 0) add(['plan'], 'plan:active')
+
+  // What the PREVIOUS turn worked on. Without this, a bare follow-up — "abar try
+  // koro", "ok koro" — carries no keywords, matches no pack, and the head loses
+  // the very tools it was mid-task with. Live-hit 2026-07-31: "amar mac e git
+  // status dekho" routed correctly, then "akhon abar try koro" answered "tool
+  // callable নয়". Only used when the reply IS a continuation (the caller decides
+  // that); a fresh instruction still routes on its own words.
+  if (packs.length === 0) {
+    try {
+      const last = await db.agentMessage.findFirst({
+        where: { conversationId, role: 'assistant' },
+        orderBy: { createdAt: 'desc' },
+        select: { usage: true },
+      })
+      const prev = (last?.usage as { packs?: unknown } | null)?.packs
+      if (Array.isArray(prev)) {
+        const carried = prev.filter((p): p is PackKey => typeof p === 'string' && p in DOMAIN_PACKS)
+        if (carried.length > 0) add(carried, `carried:${carried.join('+')}`)
+      }
+    } catch {
+      /* no history is not an error — the caller falls back */
+    }
+  }
+
   return { packs, signals, workflowTools }
 }
 

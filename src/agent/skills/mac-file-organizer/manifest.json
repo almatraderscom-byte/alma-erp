@@ -1,0 +1,55 @@
+{
+  "name": "mac-file-organizer",
+  "description": "Tidies the cluttered folders on Boss's Mac — Downloads, Desktop — by listing what is there, proposing a grouping, and moving files only after he approves; anything unwanted goes to the Trash, never a delete. Use when Boss asks to clean up, sort, rename or find space in a folder on his Mac.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "high",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Anything inside a code checkout (~/alma-erp and friends) — that is git's job, not a tidy-up. Sending or showing a file → screenshot-annotate-share. A build, a commit, a release → the git or TestFlight skills.",
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
+  "outputContract": {
+    "kind": "cleanup_plan",
+    "mustInclude": [
+      "folder",
+      "file_count",
+      "grouping",
+      "what_moves_where"
+    ]
+  },
+  "stopConditions": [
+    "তালিকা Boss-কে না দেখিয়ে একটা ফাইলও সরানো নয়",
+    "কোনো ফাইল কী, সেটা নিশ্চিত না হলে — বিশেষ করে নামহীন বা অচেনা",
+    "একই নামের ফাইল গন্তব্যে আগে থেকেই আছে",
+    "কাজের/হিসাবের নথি বলে মনে হচ্ছে এমন কিছু সরাতে হলে",
+    "কোড ফোল্ডার (~/alma-erp জাতীয়) — এই skill ওখানে হাত দেয় না",
+    "Boss 'মুছে দাও' বললেন — Trash পর্যন্তই, স্থায়ী delete নয়"
+  ],
+  "done": [
+    {
+      "tool": "run_mac_command",
+      "argMatch": "\\bmv\\b|Finder to delete"
+    },
+    {
+      "tool": "check_mac_command"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 16,
+  "status": "active"
+}

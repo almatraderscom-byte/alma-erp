@@ -2077,6 +2077,21 @@ model AgentConversation {
   /// SK-3/U5: WHY that skill was pinned — layer, reason, candidates. Stored so a
   /// wrong pin has an answer instead of a guess.
   skillRouteTrace    Json?           @map("skill_route_trace")
+  /// P0-1 (foundation audit): the head model this JOB runs on. Routing used to be
+  /// decided per message, so one task could start on Luna and finish on DeepSeek.
+  /// The pin holds for the job; it may only ever escalate (light → heavy), never
+  /// downgrade, and it expires so it cannot leak into tomorrow's chat.
+  pinnedHeadModel    String?         @map("pinned_head_model")
+  /// HeadTier the pin was taken at: light | marketing | heavy | explicit.
+  pinnedHeadTier     String?         @map("pinned_head_tier")
+  /// WHY the pin exists — the HeadDecision.via that created it (decision log).
+  pinnedHeadVia      String?         @map("pinned_head_via")
+  pinnedHeadUntil    DateTime?       @map("pinned_head_until")
+  /// P0-4 (foundation audit): Boss's own corrections in this chat, newest first
+  /// — [{ text, at }]. They used to live only in the transcript, so a later turn
+  /// (or a different model) had to notice them among fifty other lines. Stored
+  /// so the newest can ride at the TOP of every following turn's context.
+  corrections        Json?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   messages           AgentMessage[]
@@ -2331,6 +2346,11 @@ model AgentTurn {
   /// owner_policy (a standing policy / an unattended Plan-Driver step). The tool
   /// guard reads it so unattended work meets the autonomy ladder + money cap.
   instructionOrigin     String?   @map("instruction_origin")
+  /// P0-2 (foundation audit H.5): append-only per-stage latency trace for this
+  /// turn — [{ stage, at, ms }]. The approval path spans three processes
+  /// (Vercel approve → Redis → VPS worker → chat route), so "approve to first
+  /// visible work took 90s" was unattributable. Each stage stamps itself.
+  stageTrace            Json?     @map("stage_trace")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])
@@ -3948,7 +3968,124 @@ model LiveBrowserCommand {
   resolvedAt  DateTime?
 
   @@index([deviceId, status])
+  /// Same live-dock poll (see mac_agent_commands).
+  @@index([createdAt])
   @@map("live_browser_commands")
+}
+
+// M1 (Mac control) — the owner's own Mac running the ALMA Mac Agent daemon.
+// Same shape and same safety posture as LiveBrowserDevice above: pull-based, no
+// inbound port on the Mac, token stored hashed, one-time pairing code.
+model MacAgentDevice {
+  id          String    @id @default(uuid())
+  ownerUserId String
+  name        String    @default("My Mac")
+  /// sha256(token) — the raw token only ever lives on the Mac.
+  tokenHash   String?   @unique
+  pairingCode String?   @unique
+  pairingExp  DateTime?
+  pairedAt    DateTime?
+  lastSeenAt  DateTime?
+  revoked     Boolean   @default(false)
+  /// Daemon-reported facts (hostname, agent version, node version) for the status page.
+  meta        Json?
+  createdAt   DateTime  @default(now())
+
+  commands MacAgentCommand[]
+
+  @@index([ownerUserId])
+  @@map("mac_agent_devices")
+}
+
+// One unit of work for the Mac daemon: a shell command, or (M2) a CLI-session verb.
+// `policyLevel` records the classifier's verdict at enqueue time and `approvedBy`
+// records how an amber command earned its run — together they are the audit trail
+// for every single thing the agent did on the owner's machine.
+model MacAgentCommand {
+  id       String         @id @default(uuid())
+  deviceId String
+  device   MacAgentDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// run_command | session_open | session_send | session_read | session_stop | screenshot | ping
+  action   String
+  params   Json?
+  /// green | amber (red is never enqueued)
+  policyLevel String      @default("green")
+  /// null for green, else the AgentPendingAction id the owner approved.
+  approvedBy  String?
+  /// queued → delivered → done | failed | cancelled
+  status      String      @default("queued")
+  exitCode    Int?
+  stdout      String?     @db.Text
+  stderr      String?     @db.Text
+  error       String?     @db.Text
+  /// Free-form session/task correlation (M2 groups many commands under one session).
+  sessionKey  String?
+  /// How many times delivery was attempted. A poll response can be lost after the
+  /// row is already marked delivered; the bus requeues those, and gives up loudly
+  /// rather than redelivering forever.
+  deliveryAttempts Int @default(0)
+  createdAt   DateTime    @default(now())
+  deliveredAt DateTime?
+  resolvedAt  DateTime?
+
+  @@index([deviceId, status])
+  @@index([sessionKey])
+  /// The live dock polls "what happened in the last 10 minutes" every 3s while
+  /// work runs; without this it degrades into a scan as history grows.
+  @@index([createdAt])
+  @@map("mac_agent_commands")
+}
+
+// L4 — what a CLI session on the owner's Mac is actually SAYING. The daemon's
+// session driver buffers per-session events (text / tool / turn_done…) with
+// sequence numbers; it pushes them here so the live dock can show the session's
+// own words, not just "a session exists". Text is capped at ingest; tool inputs
+// and outputs never leave the Mac (same rule as session_read).
+model MacAgentSessionEvent {
+  id        String   @id @default(uuid())
+  deviceId  String
+  /// The daemon's own session id (not the CLI's).
+  sessionId String
+  /// claude | codex
+  tool      String   @default("claude")
+  /// The daemon's per-session monotonic sequence number — dedupe key on retry.
+  seq       Int
+  /// started | text | tool | sent | turn_done | error | ended
+  kind      String
+  /// Assistant text, turn result, sent text, or tool name — whichever the kind carries.
+  text      String?  @db.Text
+  isError   Boolean  @default(false)
+  /// Per-turn cost, reported on turn_done.
+  costUsd   Float?
+  /// When the event happened on the Mac (daemon clock).
+  at        DateTime
+  createdAt DateTime @default(now())
+  /// Push ledger: set once this event's owner notification was delivered (or
+  /// deliberately skipped). Null + attempts<3 = still owed; later event POSTs
+  /// sweep and retry, so a transient OneSignal failure loses nothing.
+  pushedAt     DateTime?
+  pushAttempts Int       @default(0)
+
+  /// A daemon retry after a dropped POST must not duplicate the feed.
+  @@unique([sessionId, seq])
+  /// The live dock polls "last 10 minutes" every 3s while work runs.
+  @@index([createdAt])
+  @@map("mac_agent_session_events")
+}
+
+// L7 — live screen streaming: the daemon's ~1.5s capture loop upserts the
+// newest frame here (ONE row per device, never a history — the dock only ever
+// wants "now", and history would grow at a frame every second or two). The
+// live-activity feed serves it through the same screenshot channel the docks
+// already render, so streaming needed zero dock render changes.
+model MacAgentFrame {
+  deviceId  String   @id
+  /// data:image/jpeg;base64,… downscaled daemon-side (Vercel body limit).
+  dataUri   String   @db.Text
+  /// Capture time on the Mac.
+  at        DateTime
+  updatedAt DateTime @updatedAt
+  @@map("mac_agent_frames")
 }
 
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category

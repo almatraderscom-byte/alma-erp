@@ -284,4 +284,290 @@ const undo_action: AgentTool = {
   },
 }
 
-export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action]
+
+// ── B6 — a standing "just do it", time-boxed and asked for, never taken ──────
+
+/** Longest a single grant may run. A permission with no end is not a grant. */
+const MAX_GRANT_MINUTES = 240
+
+/**
+ * Families a grant may NEVER cover, whatever Boss types in a hurry.
+ * R4 is owner-only in every mode, forever (permission-mode rule 2).
+ */
+const UNGRANTABLE_FAMILIES = new Set(['money-movement', 'security-permissions'])
+
+const request_standing_permission: AgentTool = {
+  name: 'request_standing_permission',
+  description:
+    'Ask Boss for a TIME-BOXED standing permission so a family of work stops asking each time — '
+    + '"আজ বিকেল পর্যন্ত স্টাফের কাজগুলো নিজেই বসাও", "পরের ২ ঘণ্টা রিমাইন্ডার আর নোট নিজেই রাখো". '
+    + 'Order updates are NOT one of these: those tools build their own card by design, '
+    + 'so a grant cannot make them run card-free. '
+    + 'Stages an approval card naming the families, the minutes and the reason; the grant only exists '
+    + 'after Boss approves, and it expires on its own. NEVER call this to widen your own hands mid-task — '
+    + 'only when Boss says the asking itself is the problem. Money movement and permissions can never be granted.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      families: {
+        type: 'array',
+        description:
+          'Task families to cover, from the autonomy catalog (e.g. staff-messaging, '
+          + 'customer-messaging, memory-notes, personal-records, internal-reminders). '
+          + 'Families whose every tool builds its own approval card — public-publish, '
+          + 'ads-budget, finance-entries, drafts-previews — are refused, because a grant '
+          + 'cannot make those run card-free.',
+        items: { type: 'string' },
+      },
+      minutes: { type: 'number', description: `How long, in minutes (max ${MAX_GRANT_MINUTES}).` },
+      reason: { type: 'string', description: 'Why this helps, in one line — shown on the card.' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['families', 'minutes'],
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!conversationId) {
+        return { success: false, error: 'grant একটা নির্দিষ্ট কথোপকথনে বসে — conversation ছাড়া দেওয়া যায় না।' }
+      }
+
+      const { TASK_FAMILIES, familyGrantHasEffect } = await import('@/agent/lib/autonomy-task-catalog')
+      const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
+      const known = new Map(TASK_FAMILIES.map((f) => [f.id, f]))
+
+      const raw = Array.isArray(input.families) ? input.families.map((f) => String(f).trim()) : []
+      if (!raw.length) return { success: false, error: 'কোন কাজের পরিবারের জন্য, সেটা বলুন (families খালি)।' }
+
+      const families: string[] = []
+      for (const id of raw) {
+        const fam = known.get(id)
+        if (!fam) {
+          return {
+            success: false,
+            error: `"${id}" চেনা task family নয় — check_autonomy দিয়ে নামগুলো দেখে নিন।`,
+          }
+        }
+        if (UNGRANTABLE_FAMILIES.has(id) || fam.tier === 'R4') {
+          return {
+            success: false,
+            error: `${fam.label} কখনোই আগাম অনুমতিতে চলে না — টাকা সরানো আর পারমিশন প্রতিবার Boss-এর হাতেই থাকে।`,
+          }
+        }
+        // Every tool in the family stages its own card, so a grant here would be
+        // a permission Boss can see and never feel (review bot, #667).
+        if (!familyGrantHasEffect(id)) {
+          return {
+            success: false,
+            error:
+              `${fam.label}-এর কাজগুলো নিজেরাই আলাদা কার্ড বানায়, তাই আগাম অনুমতি দিলেও কার্ড আসতেই থাকবে — `
+              + 'ভুয়া অনুমতি না দিয়ে সোজা কাজটার কার্ডই পাঠাই।',
+          }
+        }
+        if (!families.includes(id)) families.push(id)
+      }
+
+      // In the CURRENT mode a family may already run card-free, in which case the
+      // grant removes no prompt now, and a mode change clears it anyway — a card
+      // that promises nothing (review bot, #667). The mode is read from the row;
+      // if that read fails the ask proceeds, because refusing on a database blip
+      // would be worse than one redundant card.
+      let currentMode: ReturnType<typeof normalizePermissionMode> | null = null
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const convRow = await (prisma as any).agentConversation.findUnique({
+          where: { id: conversationId },
+          select: { permissionMode: true },
+        })
+        currentMode = normalizePermissionMode(convRow?.permissionMode ?? undefined)
+      } catch { currentMode = null }
+      if (currentMode) {
+        for (const id of families) {
+          const fam = known.get(id)!
+          const verdict = modeVerdict({ mode: currentMode, tier: fam.tier, taskClass: id, grant: null, now: Date.now() })
+          if (verdict !== 'card') {
+            return {
+              success: false,
+              error:
+                currentMode === 'plan'
+                  ? 'এখন Plan মোড — এই মোডে কিছুই বদলায় না, তাই আগাম অনুমতিরও কাজ নেই। মোড বদলে নিলে চাইতে পারি।'
+                  : `${fam.label}-এর কাজ এই মোডে (${currentMode}) এমনিতেই কার্ড ছাড়া চলে — `
+                    + 'বাড়তি অনুমতির দরকার নেই, কাজটা সরাসরি করে দিচ্ছি।',
+            }
+          }
+        }
+      }
+
+      const minutes = Math.round(Number(input.minutes))
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        return { success: false, error: 'কত মিনিটের জন্য, সেটা ০-এর বেশি সংখ্যায় দিন।' }
+      }
+      if (minutes > MAX_GRANT_MINUTES) {
+        return {
+          success: false,
+          error: `একবারে সর্বোচ্চ ${MAX_GRANT_MINUTES} মিনিট — এর বেশি লাগলে মেয়াদ শেষে আবার চাইব।`,
+        }
+      }
+
+      const reason = input.reason ? String(input.reason).trim().slice(0, 200) : null
+      const labels = families.map((id) => known.get(id)!.label)
+      const expiresAt = new Date(Date.now() + minutes * 60_000)
+
+      const summary =
+        `🔓 সময়-বাঁধা অনুমতি চাইছি\n`
+        + `কাজ: ${labels.join(', ')}\n`
+        + `মেয়াদ: ${minutes} মিনিট (আনুমানিক ${expiresAt.toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit' })} পর্যন্ত)\n`
+        + (reason ? `কারণ: ${reason}\n` : '')
+        + `\n✅ approve করলে এই কাজগুলো ওই সময়টুকু আর কার্ড ছাড়াই হবে — মেয়াদ শেষে নিজে থেকেই বন্ধ।\n`
+        + `⏳ সময় গোনা শুরু কার্ড বানানোর মুহূর্ত থেকে, তাই দেরিতে approve করলে বাকি সময়টুকুই পাওয়া যাবে।\n`
+        + `⛔ টাকা সরানো ও পারমিশন এর বাইরে — ওগুলো সবসময় আপনার হাতে।\n`
+        + `ℹ️ যেসব টুল নিজেই প্রস্তাবের কার্ড বানায় (যেমন স্টাফ টাস্ক প্রস্তাব), সেগুলো তখনও কার্ডেই আসবে — অনুমতিটা ওই ধরনের কাজ থামায় না, শুধু বাড়তি approval ধাপটা সরায়।\n`
+        + `যেকোনো সময় মোড বদলালেই অনুমতি বাতিল।`
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const action = await (prisma as any).agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'permission_grant',
+          // The cutoff the CARD shows is the cutoff the grant gets. Computing it
+          // again at approval time would hand Boss a longer window than the one
+          // he read, every time he took a minute to decide (review bot, #667).
+          payload: { families, minutes, reason, expiresAt: expiresAt.toISOString(), conversationId },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          families,
+          minutes,
+          message: 'সময়-বাঁধা অনুমতির approval card পাঠানো হয়েছে — approve করলেই চালু, তার আগে নয়।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+
+const revoke_standing_permission: AgentTool = {
+  name: 'revoke_standing_permission',
+  description:
+    'Cancel a live time-boxed permission IMMEDIATELY. Run this the moment Boss says to stop — '
+    + '"আর নিজে কোরো না", "অনুমতিটা বাতিল করো", "stop, ask me again". Takes effect at once; no card, '
+    + 'because taking a permission away is always safe. Say what was cancelled and what is left.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      families: {
+        type: 'array',
+        description: 'Only these families — omit to cancel the whole standing permission.',
+        items: { type: 'string' },
+      },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!conversationId) return { success: false, error: 'কোন কথোপকথনের অনুমতি, সেটা ছাড়া বাতিল করা যায় না।' }
+
+      const { parseElevationGrant, familyExpiry } = await import('@/agent/lib/permission-mode')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      // Read AND write in ONE transaction: two overlapping revocations would
+      // otherwise both read {staff, customer} and write {customer} and {staff},
+      // leaving a family alive that Boss had explicitly cancelled.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const runRevoke = async () => db.$transaction(async (tx: any) => {
+        const conv = await tx.agentConversation.findUnique({
+          where: { id: conversationId },
+          select: { elevationGrant: true },
+        })
+        const grant = parseElevationGrant(conv?.elevationGrant)
+        if (!grant) return null
+
+        const asked = Array.isArray(input.families)
+          ? (input.families as unknown[]).map((f) => String(f).trim()).filter(Boolean)
+          : []
+        const cleared = asked.length ? grant.families.filter((f) => asked.includes(f)) : [...grant.families]
+        // ANY named family that matches nothing means the model spelled it wrong
+        // or translated it. Revoking the half it got right and reporting success
+        // would leave the other permission running after Boss asked it to stop
+        // (review bot, #667) — so the whole request fails and nothing is written.
+        const unmatched = asked.filter((f) => !grant.families.includes(f))
+        if (unmatched.length) return { unmatched, live: grant.families }
+        // An already-expired family is not "still active" — keeping it would
+        // persist a grant whose only cutoff is in the past and tell Boss it runs.
+        const { isFamilyGrantLive } = await import('@/agent/lib/permission-mode')
+        const kept = grant.families.filter(
+          (f) => !cleared.includes(f) && isFamilyGrantLive(grant, f, Date.now()),
+        )
+
+        if (!kept.length) {
+          await tx.agentConversation.update({ where: { id: conversationId }, data: { elevationGrant: null } })
+        } else {
+          const windows: Record<string, string> = {}
+          for (const fam of kept) windows[fam] = familyExpiry(grant, fam)
+          const expiresAt = new Date(Math.max(...kept.map((f) => Date.parse(windows[f])))).toISOString()
+          await tx.agentConversation.update({
+            where: { id: conversationId },
+            data: { elevationGrant: { families: kept, expiresAt, windows } },
+          })
+        }
+        return { cleared, kept }
+      }, { isolationLevel: 'Serializable' })
+
+      // Serializable aborts the loser of a concurrent update (P2034). Boss asked
+      // for this to STOP — returning an error and leaving the grant alive is the
+      // one outcome a revoke must never have.
+      let outcome: Awaited<ReturnType<typeof runRevoke>> = null
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          outcome = await runRevoke()
+          break
+        } catch (err) {
+          const code = (err as { code?: string }).code
+          if (code !== 'P2034' || attempt === 3) throw err
+          await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+        }
+      }
+
+      if (!outcome) {
+        return { success: true, data: { cleared: [], remaining: [], message: 'কোনো সময়-বাঁধা অনুমতি চালু ছিল না।' } }
+      }
+      if ('unmatched' in outcome) {
+        return {
+          success: false,
+          error:
+            `এই নামগুলো চালু অনুমতির মধ্যে নেই: ${outcome.unmatched.join(', ')}। `
+            + `এখন চালু আছে: ${outcome.live.join(', ')}। সঠিক নাম দিয়ে আবার বলো, `
+            + 'নাহলে families বাদ দিলে পুরোটাই বাতিল হবে।',
+          retryable: false,
+        }
+      }
+      const { cleared, kept } = outcome
+
+      return {
+        success: true,
+        data: {
+          cleared,
+          remaining: kept,
+          message: kept.length
+            ? `বাতিল: ${cleared.join(', ')}। এখনো চালু: ${kept.join(', ')}।`
+            : 'সময়-বাঁধা অনুমতি পুরোপুরি বাতিল — সব কাজ আবার আগের মতো কার্ডে আসবে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const AUTONOMY_TOOLS: AgentTool[] = [check_autonomy, set_autonomy_policy, undo_action, request_standing_permission, revoke_standing_permission]

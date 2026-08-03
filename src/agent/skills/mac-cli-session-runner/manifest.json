@@ -1,0 +1,34 @@
+{
+  "name": "mac-cli-session-runner",
+  "description": "Runs a Claude or Codex coding session on Boss's own Mac from chat — opens it, sends the task, watches the progress, relays questions to him in Bangla and his answers back, and stops it when the work is done. Use when Boss wants code work done on his Mac while he is away from it.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "high",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "One shell command → the plain Mac command tool. Branch/PR/merge → git-pr-workflow. A TestFlight build → xcode-testflight-shipper. Typing into the Claude/ChatGPT desktop APP → mac-ai-app-operator (that is the GUI, this is the CLI).",
+  "requiredCapabilities": [
+    "start_cli_session", "send_to_cli_session", "read_cli_session",
+    "stop_cli_session", "list_cli_sessions", "mac_agent_status", "check_mac_command"
+  ],
+  "dependencies": { "capability": ["start_cli_session", "read_cli_session"] },
+  "outputContract": {
+    "kind": "session_report",
+    "mustInclude": ["session_id", "permission_mode", "what_it_did", "what_is_left"]
+  },
+  "stopConditions": [
+    "সেশন কিছু জিজ্ঞেস করেছে — উত্তর Boss-এর, আন্দাজে দিও না",
+    "bypass mode চাওয়া হচ্ছে — Boss স্পষ্ট না বললে কখনো নয়",
+    "not_logged_in — Boss-কে একবার `claude` চালিয়ে `/login` করতে হবে",
+    "সেশন ২০ মিনিটের বেশি নীরব",
+    "কাজটা টাকা খরচ করে বা কিছু publish করে"
+  ],
+  "done": [{ "tool": "read_cli_session" }],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 20,
+  "status": "active"
+}

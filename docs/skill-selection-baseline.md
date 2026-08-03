@@ -32,7 +32,7 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-product-listing, seo-fixing-own-site | ✅ hit |
 | website | website e ki ki somossa ache? | alma-website | alma-website, alma-product-listing, seo-fixing-client-site | ✅ hit |
-| incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis | ✅ hit |
+| incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis, mac-health-monitor | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-agent-incident-diagnosis, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support | ✅ hit |
 | browser | chrome khule daraz e dekho dam koto | alma-browser-operator | alma-browser-operator | ✅ hit |
