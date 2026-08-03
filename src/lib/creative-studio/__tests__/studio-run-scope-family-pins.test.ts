@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({
   roleLookups: [] as string[],
   scopedModels: [] as string[],
+  legacyProduct: false,
 }))
 
 vi.mock('@/lib/prisma', () => ({
@@ -14,7 +15,9 @@ vi.mock('@/lib/prisma', () => ({
         brandProfileId: 'brand-1',
         archivedAt: null,
         productCode: 'AL-101',
-        productSourceImage: 'products/al-101.jpg',
+        productSourceImage: state.legacyProduct
+          ? '/agent/product-images/AL-101'
+          : 'products/al-101.jpg',
       }),
     },
     creativeProjectAsset: {
@@ -101,11 +104,22 @@ vi.mock('@/lib/tryon/model-avatar', () => ({
   }),
 }))
 
+vi.mock('@/agent/lib/catalog/product-images', () => ({
+  listProductImages: async (code: string) => code === 'AL-101'
+    ? [{ storagePath: 'product-images/alma-lifestyle/AL-101/1.jpg', url: 'https://signed.example/al-101' }]
+    : [],
+}))
+
+vi.mock('@/agent/lib/catalog/inventory-lookup', () => ({
+  DEFAULT_CATALOG_BUSINESS: 'ALMA_LIFESTYLE',
+}))
+
 import { resolveScopedStudioRun } from '@/lib/creative-studio/studio-run-scope'
 
 beforeEach(() => {
   state.roleLookups.length = 0
   state.scopedModels.length = 0
+  state.legacyProduct = false
 })
 
 describe('server-derived family run scope', () => {
@@ -189,5 +203,36 @@ describe('server-derived family run scope', () => {
       productReferenceId: 'product-reference',
       modelReferenceId: 'model-reference',
     }))
+  })
+
+  it('accepts only the healthy catalog object resolved from a legacy project SKU', async () => {
+    state.legacyProduct = true
+    const scoped = await resolveScopedStudioRun({
+      userId: 'owner-1',
+      name: 'Owner',
+      email: 'owner@example.com',
+      erpRole: 'OWNER',
+    }, {
+      mode: 'try_on',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'AL-101',
+      productImagePath: 'product-images/alma-lifestyle/AL-101/1.jpg',
+    })
+
+    expect(scoped.request.productImagePath).toBe('product-images/alma-lifestyle/AL-101/1.jpg')
+
+    await expect(resolveScopedStudioRun({
+      userId: 'owner-1',
+      name: 'Owner',
+      email: 'owner@example.com',
+      erpRole: 'OWNER',
+    }, {
+      mode: 'try_on',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'AL-101',
+      productImagePath: '/agent/product-images/AL-101',
+    })).rejects.toThrow('source_lineage_scope_mismatch')
   })
 })
