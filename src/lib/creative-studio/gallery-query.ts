@@ -61,7 +61,16 @@ export const GALLERY_INTERNAL_ARTIFACT_WHERE = {
 export function isGalleryInternalArtifact(row: {
   payload?: Record<string, unknown> | null
 }): boolean {
-  return row.payload?.chainInternal === true
+  if (row.payload?.chainInternal === true) return true
+
+  // Legacy in-flight chains predate the explicit marker. Their signed state
+  // still identifies every non-final implementation step deterministically.
+  const familyChain = row.payload?.familyChain
+  if (!familyChain || typeof familyChain !== 'object') return false
+  const state = familyChain as Record<string, unknown>
+  const plan = Array.isArray(state.plan) ? state.plan : []
+  const stepIndex = Number(state.stepIndex)
+  return Number.isInteger(stepIndex) && plan.length > 0 && stepIndex < plan.length - 1
 }
 
 export function isGalleryTestArtifact(row: {

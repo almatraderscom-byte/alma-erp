@@ -267,6 +267,7 @@ export async function GET(req: NextRequest) {
       ]).then(([all, tests]: [number, number]) => Math.max(0, all - tests))
 
   let visibleRows: Row[] = []
+  let exactVisibleTotal: number | null = null
   if (exclusionPredicates.length === 0) {
     const where = cursor
       ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
@@ -310,14 +311,21 @@ export async function GET(req: NextRequest) {
         if (visibleRows.length >= target) break
       }
 
-      if (visibleRows.length >= target || batch.length < batchSize) break
+      if (visibleRows.length >= target) break
+      if (batch.length < batchSize) {
+        // This scan reached the end, so the positive-marker filter gives us an
+        // exact legacy-safe total even though SQL cannot compare chain indices.
+        exactVisibleTotal = visibleSkipped + visibleRows.length
+        break
+      }
       const lastScanned = batch.at(-1)
       if (!lastScanned) break
       scanCursor = { createdAt: lastScanned.createdAt.toISOString(), id: lastScanned.id }
     }
   }
 
-  const total = await totalPromise
+  const countedTotal = await totalPromise
+  const total = exactVisibleTotal ?? countedTotal
   const hasMore = visibleRows.length > limit
   const slice = visibleRows.slice(0, limit)
 

@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
-import { describe, expect, it } from 'vitest'
-import { fetchStudioDownloadFile } from '@/lib/capacitor-native'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  fetchStudioDownloadFile,
+  shouldUseNativeFileShare,
+} from '@/lib/capacitor-native'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('Creative Studio full-resolution download', () => {
   it('copies signed response bytes without resize or recompression', async () => {
@@ -30,5 +37,17 @@ describe('Creative Studio full-resolution download', () => {
     expect(metadata.height).toBe(1152)
     expect(createHash('sha256').update(downloaded).digest('hex'))
       .toBe(createHash('sha256').update(stored).digest('hex'))
+  })
+
+  it('uses the share sheet only in the Capacitor shell, never desktop Chrome', () => {
+    vi.stubGlobal('window', {
+      Capacitor: { isNativePlatform: () => false },
+    })
+    expect(shouldUseNativeFileShare()).toBe(false)
+
+    vi.stubGlobal('window', {
+      Capacitor: { isNativePlatform: () => true },
+    })
+    expect(shouldUseNativeFileShare()).toBe(true)
   })
 })

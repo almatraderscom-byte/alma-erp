@@ -5,6 +5,11 @@ export function isCapacitorNative(): boolean {
   return Boolean(cap?.isNativePlatform?.())
 }
 
+/** Desktop Chrome must download; only the native shell should open a share sheet. */
+export function shouldUseNativeFileShare(): boolean {
+  return isCapacitorNative()
+}
+
 /**
  * Fetch a signed Studio object into a File without decoding or re-encoding it.
  * Kept separate from the platform share/download UI so byte identity is
@@ -46,7 +51,7 @@ export async function saveImageToDevice(
       share?: (data: { files?: File[]; title?: string }) => Promise<void>
     }
     // Preferred on iOS WKWebView: native share sheet with the actual file → Save Image.
-    if (nav.canShare?.({ files: [file] }) && nav.share) {
+    if (shouldUseNativeFileShare() && nav.canShare?.({ files: [file] }) && nav.share) {
       try {
         await nav.share({ files: [file], title: filename })
         return 'shared'

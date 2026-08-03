@@ -84,6 +84,12 @@ describe('Creative Studio Gallery query', () => {
     expect(isGalleryInternalArtifact({ payload: { chainInternal: true } })).toBe(true)
     expect(isGalleryInternalArtifact({ payload: { chainInternal: false } })).toBe(false)
     expect(isGalleryInternalArtifact({ payload: { creativeStudio: true } })).toBe(false)
+    expect(isGalleryInternalArtifact({
+      payload: { familyChain: { plan: ['adult_tryon', 'rescene'], stepIndex: 0 } },
+    })).toBe(true)
+    expect(isGalleryInternalArtifact({
+      payload: { familyChain: { plan: ['adult_tryon', 'rescene'], stepIndex: 1 } },
+    })).toBe(false)
   })
 
   it('classifies only explicit QC failures and preserves legacy executed rows', () => {
