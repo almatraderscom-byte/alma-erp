@@ -790,8 +790,13 @@ struct AgentChatMessage: Identifiable, Equatable {
         case submitting
         case checking
         case accepted
+        /// Stored by the server, but the running turn has NOT read it yet.
+        /// Kept separate from `accepted` because `accepted` is also every
+        /// ordinary history row — the owner must see "not seen yet" ONLY on a
+        /// message that is genuinely waiting on the agent, and must keep
+        /// seeing it until the agent picks it up.
+        case awaitingAgent
         /// The RUNNING TURN picked it up — the step after "the server took it".
-        /// Distinct from `accepted`, which only means the row was stored.
         case delivered
         case failed
         case cancelled
@@ -3040,6 +3045,20 @@ final class AssistantVM {
     /// Server truth replaces the thread WITHOUT clobbering the freshly streamed tail:
     /// the tail keeps its id (no remove+insert animation) and its richer streamed
     /// content wherever the server copy is thinner. Fixes "prose vanishes at stream end".
+    /// The positional "last local ↔ last server user" guess is only allowed
+    /// when the two identities agree, or when neither can be checked. Any
+    /// contradiction means the local row has a server row of its own that this
+    /// page simply has not shown yet.
+    private func positionalPairIsSafe(local: AgentChatMessage,
+                                      server: AgentChatMessage,
+                                      incoming: [AgentChatMessage]) -> Bool {
+        guard let localClientId = local.clientMessageId else { return true }
+        if let serverClientId = server.clientMessageId { return serverClientId == localClientId }
+        // The server row is anonymous: safe only if no OTHER row in this page
+        // already belongs to this local message.
+        return !incoming.contains { $0.clientMessageId == localClientId }
+    }
+
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
@@ -3064,7 +3083,16 @@ final class AssistantVM {
                $0.role == .user && $0.id.hasPrefix("local-")
                    && $0.outgoingState != .queued
            }),
-           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
+           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil,
+           // Identity must not CONTRADICT the guess. A mid-turn follow-up is a
+           // local row with its own clientMessageId and its own server row; if
+           // that row has not landed in this history page yet, the positional
+           // guess would hand it the PREVIOUS message's server id. The rows
+           // then render in server order, so the follow-up jumps up the
+           // transcript, the older message loses its row, and when the real
+           // row arrives it renders again — the scrambled, duplicated thread
+           // the owner reproduced twice.
+           positionalPairIsSafe(local: localUser, server: incoming[uIdx], incoming: incoming) {
             _ = claimLocalRowId(serverId: incoming[uIdx].id, localId: localUser.id,
                                 activeServerIds: activeServerIds)
         }
@@ -3118,6 +3146,9 @@ final class AssistantVM {
                 switch old.outgoingState {
                 case .failed: incoming[i].outgoingState = .failed
                 case .delivered: incoming[i].outgoingState = .delivered
+                // Still waiting on the agent — a history fetch cannot know
+                // that, so the merge must not erase it either.
+                case .awaitingAgent: incoming[i].outgoingState = .awaitingAgent
                 default: incoming[i].outgoingState = .accepted
                 }
             }
@@ -4621,7 +4652,11 @@ final class AssistantVM {
                     // before this POST's response resumes; never walk that back
                     // (Codex P2).
                     if messages[index].outgoingState != .delivered {
-                        messages[index].outgoingState = .accepted
+                        // NOT `.accepted`: that hides the chip, which left the
+                        // owner with no sign his message was still unread
+                        // (his P0 #1). It stays "waiting on the agent" until
+                        // steering_delivered says otherwise.
+                        messages[index].outgoingState = .awaitingAgent
                     }
                 }
                 // Remember which turn owes us a "read" confirmation — unless it
@@ -8462,6 +8497,7 @@ struct AgentMessageRow: View {
         case .submitting: return "পাঠানো হচ্ছে"
         case .checking: return "Server status যাচাই হচ্ছে"
         case .accepted: return "পাঠানো হয়েছে"
+        case .awaitingAgent: return "এজেন্ট এখনো দেখেনি — অপেক্ষায়"
         case .delivered: return "এজেন্ট পড়েছে"
         case .failed: return "পাঠানো যায়নি — লেখা ও ফাইল রাখা আছে"
         case .cancelled: return "বাতিল — composer-এ রাখা আছে"
@@ -8474,6 +8510,7 @@ struct AgentMessageRow: View {
         case .queued: return "clock.arrow.circlepath"
         case .submitting, .checking: return "arrow.triangle.2.circlepath"
         case .accepted: return "checkmark"
+        case .awaitingAgent: return "clock.badge.questionmark"
         case .delivered: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.circle.fill"
         case .cancelled: return "xmark.circle"
