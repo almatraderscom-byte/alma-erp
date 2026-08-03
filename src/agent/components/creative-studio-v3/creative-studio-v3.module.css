@@ -4416,11 +4416,15 @@ label.secondaryButton[aria-disabled='true'] {
 }
 
 .v4SourceTray {
-  position: absolute;
+  /* Compact composer scrolls and has a transform, so an out-of-bounds
+     absolute tray is clipped and lets the page underneath steal clicks. Keep
+     the picker in the composer flow; expanded mode promotes it to a viewport
+     overlay below. */
+  position: relative;
   z-index: 4;
-  right: 0;
-  bottom: calc(100% + 8px);
-  left: 0;
+  right: auto;
+  bottom: auto;
+  left: auto;
   max-height: 250px;
   margin: 0;
   padding: 11px;

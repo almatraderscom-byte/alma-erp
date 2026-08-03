@@ -84,10 +84,14 @@ describe('Creative Studio production responsive and a11y contract', () => {
     const floatingComposerRule =
       v3Styles.match(/\.v3Composer\.v4FloatingComposer\s*\{[\s\S]*?\n\}/)?.[0] ??
       ''
+    const sourceTrayRule =
+      v3Styles.match(/\.v4SourceTray\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(pageRule).not.toContain('transform:')
     expect(enterFrames).not.toContain('transform:')
     expect(floatingComposerRule).toContain('top: auto;')
     expect(floatingComposerRule).toContain('bottom: 22px;')
+    expect(sourceTrayRule).toContain('position: relative;')
+    expect(sourceTrayRule).not.toContain('bottom: calc(100%')
     expect(v3Styles).toContain('.v3Composer.v4FloatingComposer.v6ComposerExpanded')
     expect(v3Styles).toContain('inset: 68px 0 0;')
     expect(v3Styles).toMatch(
