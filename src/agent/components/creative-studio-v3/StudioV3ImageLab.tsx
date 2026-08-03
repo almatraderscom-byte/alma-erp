@@ -501,7 +501,11 @@ export function StudioV3ImageLab({
       setReviewEstimate(estimate)
       setReviewOpen(true)
     } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'The server could not issue an exact estimate.')
+      const message = reason instanceof Error
+        ? reason.message
+        : 'The server could not issue an exact estimate.'
+      setLocalStatus(message)
+      toast.error(message)
     } finally {
       setEstimating(false)
     }

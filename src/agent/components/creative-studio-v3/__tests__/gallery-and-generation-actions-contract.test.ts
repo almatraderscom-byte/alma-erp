@@ -16,6 +16,7 @@ describe('Creative Studio V4 primary action contract', () => {
     expect(imageLab).toContain("setArchitecture('advanced')")
     expect(imageLab).toContain('port.estimateRun')
     expect(imageLab).toContain('port.confirmRun')
+    expect(imageLab).toContain('setLocalStatus(message)')
     expect(imageLab.indexOf('port.estimateRun')).toBeLessThan(imageLab.indexOf('port.confirmRun'))
   })
 
