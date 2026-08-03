@@ -1,6 +1,6 @@
 ---
 name: mac-security-check
-description: Checks the safety settings on Boss's Mac — disk encryption, firewall, screen lock, pending system updates, whether the agent's own daemon is the only thing listening — and reports what is off in plain Bangla. Use when Boss asks whether his Mac is secure, or whether anything needs updating.
+description: Checks the safety settings on Boss's Mac — disk encryption, firewall, screen lock, pending system updates, and which services are listening — and reports what is off in plain Bangla. Use when Boss asks whether his Mac is secure, or whether anything needs updating.
 version: 1.0.0
 keywords: mac secure kina, security check, filevault, firewall on ache, update baki ache, mac nirapod, encryption on
 ---
@@ -20,6 +20,10 @@ keywords: mac secure kina, security check, filevault, firewall on ache, update b
 - **বাকি আপডেট:** `softwareupdate -l` — ধীর, তাই একবারই; timeout হলে
   `check_mac_command` দিয়ে পরে ফল নাও।
 - **macOS সংস্করণ:** `sw_vers`
+- **কে কে বাইরের সংযোগের জন্য বসে আছে:** `lsof -nP -iTCP -sTCP:LISTEN`
+  **সৎ সীমা:** `sudo` ছাড়া এটা শুধু Boss-এর নিজের ইউজারের প্রসেস দেখায়, পুরো
+  সিস্টেমের নয় — তাই "আর কিছু বসে নেই" **কখনো বলবে না**; বলো "আপনার ইউজারের
+  অধীনে এই কয়টা"। অচেনা কিছু দেখলে নাম আর পোর্টটা দেখাও, রায় দিও না।
 
 ## যেভাবে বলবে
 
@@ -29,6 +33,8 @@ keywords: mac secure kina, security check, filevault, firewall on ache, update b
 - আপডেট বাকি → কয়টা, আর কোনটা security update
 
 সব ঠিক থাকলে **সংক্ষেপে "সব ঠিক আছে" বলো** — লম্বা তালিকা দিয়ে ভয় দেখিয়ো না।
+তবে "সব ঠিক" মানে **যেগুলো দেখা গেছে সেগুলো ঠিক** — listening-এর তালিকা যেহেতু
+আংশিক, সেটা এক লাইনে বলে দাও।
 
 ## এই skill-এর নিজের নিষেধ
 

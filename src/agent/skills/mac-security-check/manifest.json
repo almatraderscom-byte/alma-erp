@@ -1,18 +1,36 @@
 {
   "name": "mac-security-check",
-  "description": "Checks the safety settings on Boss's Mac — disk encryption, firewall, screen lock, pending system updates, whether the agent's own daemon is the only thing listening — and reports what is off in plain Bangla. Use when Boss asks whether his Mac is secure, or whether anything needs updating.",
+  "description": "Checks the safety settings on Boss's Mac — disk encryption, firewall, screen lock, pending system updates, and which services are listening — and reports what is off in plain Bangla. Use when Boss asks whether his Mac is secure, or whether anything needs updating.",
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "ALMA_TRADING",
+    "CDIT"
+  ],
   "riskTier": "low",
   "extends": "alma-base",
   "whenNotToUse": "Backups → mac-backup-verifier. Disk space, battery, why it is slow → mac-health-monitor. Website or ERP security — those are server-side and nothing to do with this Mac.",
-  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_agent_status"],
-  "dependencies": { "capability": ["run_mac_command"] },
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
   "outputContract": {
     "kind": "security_report",
-    "mustInclude": ["encryption", "firewall", "updates_pending", "what_needs_his_hand"]
+    "mustInclude": [
+      "encryption",
+      "firewall",
+      "updates_pending",
+      "listening_services",
+      "what_needs_his_hand"
+    ]
   },
   "stopConditions": [
     "কোনো সেটিং বদলাতে বলা হয়েছে — এই skill শুধু দেখে",

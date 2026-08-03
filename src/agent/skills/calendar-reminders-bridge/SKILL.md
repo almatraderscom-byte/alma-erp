@@ -23,13 +23,18 @@ todo। এই skill **দুইটা পড়ে এক তালিকা** 
    এগুলো সঙ্গে সঙ্গে আসে, কার্ড লাগে না। **এটাই আগে করো** — Mac বন্ধ থাকলেও
    অন্তত অর্ধেক উত্তর হাতে থাকে।
 
-২. **Mac** — `osascript` দিয়ে, এক কমান্ডে (কার্ড হবে):
+২. **Mac** — `osascript` দিয়ে (কার্ড হবে)। দুইটা জিনিস ঠিক রাখতে হবে, নইলে
+   তালিকাটাই ভুল হবে:
+   - **দিনের সীমা মাঝরাত থেকে মাঝরাত** — `current date` মানে *এই মুহূর্ত*, তাই
+     ওটা দিয়ে ছাঁকলে আজকের সকালের ইভেন্ট বাদ পড়ে আর কালকের সকালেরটা ঢুকে যায়;
+   - **সময়সহ আনতে হবে** — শুধু নাম আনলে সময় অনুযায়ী সাজানো বা সংঘর্ষ ধরা যায় না।
+
    ```
-   osascript -e 'tell application "Calendar" to get summary of every event of every calendar whose start date ≥ (current date) and start date ≤ ((current date) + 1 * days)'
+   osascript -e 'set d to current date' -e 'set hours of d to 0' -e 'set minutes of d to 0' -e 'set seconds of d to 0' -e 'set d2 to d + 1 * days' -e 'tell application "Calendar" to get {summary, start date, end date} of every event of every calendar whose start date ≥ d and start date < d2'
    ```
-   রিমাইন্ডার:
+   রিমাইন্ডার (সময়সহ):
    ```
-   osascript -e 'tell application "Reminders" to get name of every reminder whose completed is false'
+   osascript -e 'tell application "Reminders" to get {name, due date} of every reminder whose completed is false'
    ```
    **প্রথমবার macOS অনুমতি চাইবে** (Automation)। অনুমতি না থাকলে কমান্ড ব্যর্থ
    হবে — তখন Boss-কে বলো: System Settings → Privacy & Security → Automation-এ

@@ -73,6 +73,13 @@ describe('the Mac’s safety settings', () => {
     expect(applyRules('kono update baki ache kina dekho')?.skill).toBe('mac-security-check')
   })
 
+  // Codex: "update baki ache kina" is just as likely to be the website or the
+  // ERP, and the Mac skill's toolset cannot answer that.
+  it('does not take a website or ERP update question', () => {
+    expect(applyRules('website update baki ache kina')).toBeNull()
+    expect(applyRules('erp er security dekho')).toBeNull()
+  })
+
   it('is not the backup skill and not the health one', () => {
     expect(applyRules('backup ache kina dekho')?.skill).toBe('mac-backup-verifier')
     expect(applyRules('disk full dekhacche, dekho to')?.skill).toBe('mac-health-monitor')
