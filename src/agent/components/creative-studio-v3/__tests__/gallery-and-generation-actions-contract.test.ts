@@ -54,4 +54,15 @@ describe('Creative Studio V4 Gallery interaction contract', () => {
     expect(gallery).toContain('Download original')
     expect(gallery).toContain('artifactFileExtension')
   })
+
+  it('constrains the original media to the lightbox viewport without cropping portrait assets', () => {
+    const styles = source('creative-studio-v3.module.css')
+    const mediaRule = styles.match(/\.galleryLightboxMedia > img,[\s\S]*?\n\}/)?.[0] ?? ''
+
+    expect(mediaRule).toContain('position: absolute')
+    expect(mediaRule).toContain('inset: 0')
+    expect(mediaRule).toContain('width: 100%')
+    expect(mediaRule).toContain('height: 100%')
+    expect(mediaRule).toContain('object-fit: contain')
+  })
 })
