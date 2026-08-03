@@ -234,6 +234,9 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// while still an audience goes nowhere (Codex P1). `true` = became
     /// broadcaster, `false` = the change failed.
     private var roleContinuation: CheckedContinuation<Bool, Never>?
+    /// Bumped on every arm attempt so a stale watchdog cannot resolve a newer
+    /// arm's continuation (Codex P2).
+    private var roleWaitToken = 0
 
     private func resolveRole(_ ok: Bool) {
         let cont = roleContinuation
@@ -247,7 +250,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
             #if DEBUG
             self.onAgoraEvent?("role\(newRole.rawValue)")
             #endif
-            if newRole == .broadcaster { self.resolveRole(true) }
+            if newRole == .broadcaster { self.roleWaitToken += 1; self.resolveRole(true) }
         }
     }
 
@@ -257,6 +260,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
             #if DEBUG
             self.onAgoraEvent?("roleFail\(reason.rawValue)")
             #endif
+            self.roleWaitToken += 1
             self.resolveRole(false)
         }
     }
@@ -304,10 +308,14 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         // locally and then goes nowhere (Codex P1; measured live). A 3s
         // watchdog resolves false so a stuck transition fails cleanly instead
         // of hanging the arm.
+        roleWaitToken += 1
+        let myToken = roleWaitToken
         let became: Bool = await withCheckedContinuation { cont in
             self.roleContinuation = cont
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                self?.resolveRole(false)
+                // Only fire for the arm that armed THIS watchdog.
+                guard let self, self.roleWaitToken == myToken else { return }
+                self.resolveRole(false)
             }
         }
         guard became else { return false }
@@ -953,10 +961,14 @@ final class TrackpadSurfaceView: UIView {
         if aimMode {
             // Magnify immediately: the owner is aiming at something he can see,
             // and a delay would make the first tap feel unresponsive.
-            phase = .aiming
             let rect = videoRect
+            // The FINGER must be on the video, not only its lifted target — a
+            // touch that starts in the black letterbox but whose 78pt-lifted
+            // point falls inside would otherwise commit a real click on empty
+            // space (Codex P1).
+            guard rect.contains(startPoint) else { phase = .idle; return }
+            phase = .aiming
             let target = aimPoint(for: startPoint)
-            guard rect.contains(target) else { phase = .idle; return }
             onInteracting?(true)
             onAimZoom?(target)
             onAimTarget?(target)
@@ -1065,6 +1077,17 @@ final class TrackpadSurfaceView: UIView {
                                     y: Double((target.y - rect.minY) / rect.height))
             }
         case .dragging:
+            if aimMode {
+                // The throttle can drop the last aim move, so send the exact
+                // release point before mouse-up or the item lands where the
+                // previous packet was, not where the finger let go (Codex P2).
+                let rect = videoRect
+                let target = aimPoint(for: touches.first?.location(in: self) ?? lastPoint)
+                if rect.width > 0, rect.height > 0 {
+                    store?.sendAimMove(x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                                       y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+                }
+            }
             store?.sendDrag(down: false)
             if aimMode {
                 onAimZoom?(nil)
