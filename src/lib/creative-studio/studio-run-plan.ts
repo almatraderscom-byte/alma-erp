@@ -26,6 +26,7 @@ import {
 } from '@/lib/creative-studio/studio-run-authorization'
 import { estimateXaiImageCostUsd, toXaiResolution } from '@/lib/creative-studio/xai-imagine'
 import { resolveModel } from '@/lib/tryon/model-library'
+import { autoProductReferenceError, getOrClassifyGarment } from '@/lib/tryon/art-director'
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { roundMoney } from '@/lib/money'
 
@@ -419,6 +420,10 @@ async function planAuto(
 ): Promise<Omit<StudioRunPlan, 'estimateBdt'>> {
   const defaultModel = input.modelId ? await resolveModel(input.modelId) : null
   if (!defaultModel) throw new Error('no_default_model')
+  if (!input.productImagePath) throw new Error('product_image_required')
+  const attrs = await getOrClassifyGarment(input.productImagePath)
+  const productReferenceError = autoProductReferenceError(attrs, Boolean(input.includeFamily))
+  if (productReferenceError) throw new Error(productReferenceError)
   if (
     /\b(kids?|boy|girl|child)\b/i.test(input.productName ?? '')
     && defaultModel.role !== 'son'

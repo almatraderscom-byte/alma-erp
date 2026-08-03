@@ -12,6 +12,7 @@ import {
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
 import {
+  autoProductReferenceError,
   buildTryOnPrompt,
   getOrClassifyGarment,
   mapGarmentToVtonClothType,
@@ -72,6 +73,7 @@ import {
   requireStudioRunExecutionContext,
   studioRunAuthorizedJobFields,
 } from '@/lib/creative-studio/studio-run-context'
+import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
 import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
 import type {
   StudioRunFamilyModelPin,
@@ -296,7 +298,7 @@ async function mergeGenericApprovedPayload(input: {
   await db.agentPendingAction.update({
     where: { id: input.pendingActionId },
     data: {
-      status: 'approved',
+      status: creativeStudioImageQueueStatus(authorized.payload),
       dedupeKey: authorized.dedupeKey,
       payload: authorized.payload,
     },
@@ -344,7 +346,9 @@ async function createApprovedAction(data: {
       payload: authorized.payload,
       summary: data.summary,
       costEstimate: data.costEstimate,
-      status: 'approved',
+      status: data.type === 'image_gen'
+        ? creativeStudioImageQueueStatus(authorized.payload)
+        : 'approved',
     },
     update: {},
   })
@@ -1337,6 +1341,8 @@ export async function runAutoStudio(input: {
   if (!defaultModel) throw new Error('no_default_model')
 
   const attrs = await getOrClassifyGarment(productImagePath)
+  const productReferenceError = autoProductReferenceError(attrs, Boolean(input.includeFamily))
+  if (productReferenceError) throw new Error(productReferenceError)
   const productLooksKids = /\b(kids?|boy|girl|child)\b/i.test(input.productName ?? '')
     || attrs.garmentType === 'kids_panjabi'
     || attrs.suggestedRole === 'son'
@@ -1353,7 +1359,12 @@ export async function runAutoStudio(input: {
     attrs,
     garmentType: attrs.garmentType,
     modelNotes: defaultModel.notes,
-    extra: ownerDirection || undefined,
+    extra: [
+      defaultModel.role
+        ? `TARGET MODEL ROLE: ${defaultModel.role}. Use only the ${defaultModel.role}'s matching garment from the product reference; never substitute another family member's garment or an adult cut on a child.`
+        : '',
+      ownerDirection,
+    ].filter(Boolean).join(' ') || undefined,
   })
 
   // CS13.2 — owner default engine = Grok Imagine: the Auto solo shot runs the
@@ -1411,6 +1422,8 @@ export async function runAutoStudio(input: {
     const job = await startSingleRescueChain({
       productImagePath,
       modelImagePath: defaultRef.path,
+      modelRole: defaultModel.role,
+      backgroundPrompt: input.backgroundPrompt,
       generationMode: 'quality',
       extraPrompt: productionPrompt,
       pipelineMode: input.pipelineMode,

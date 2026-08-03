@@ -410,6 +410,8 @@ describe('single rescene chain', () => {
     const { pendingActionId } = await startSingleRescueChain({
       productImagePath: 'uploads/panjabi.jpg',
       modelImagePath: 'models/owner.jpg',
+      modelRole: 'son',
+      backgroundPrompt: 'clean owner-selected warm studio',
     })
     const first = actions.find((a) => a.id === pendingActionId)!
     expect(first.payload.provider).toBe('fashn')
@@ -424,9 +426,31 @@ describe('single rescene chain', () => {
     ])
     expect(rescene.payload.qcSurface).toBe('single_tryon')
     expect(String(rescene.payload.prompt)).toMatch(/background/i)
+    expect(String(rescene.payload.prompt)).toContain('clean owner-selected warm studio')
+    expect(String(rescene.payload.prompt)).toContain('selected person role is son')
+    expect(String(rescene.payload.prompt)).not.toContain('mosque')
 
     const done = await completeStep(rescene, 'generated/final.png')
     expect(done).toBeNull()
+  })
+
+  it('keeps every signed chain image in the isolated preview lane', async () => {
+    const previous = process.env.VERCEL_ENV
+    process.env.VERCEL_ENV = 'preview'
+    try {
+      const { pendingActionId } = await startSingleRescueChain({
+        productImagePath: 'uploads/panjabi.jpg',
+        modelImagePath: 'models/owner.jpg',
+      })
+      const first = actions.find((a) => a.id === pendingActionId)!
+      expect(first.status).toBe('preview_approved')
+      const nextId = await completeStep(first, 'generated/tryon.png')
+      const rescene = actions.find((a) => a.id === nextId)!
+      expect(rescene.status).toBe('preview_approved')
+    } finally {
+      if (previous === undefined) delete process.env.VERCEL_ENV
+      else process.env.VERCEL_ENV = previous
+    }
   })
 
   it('carries the selected tier and aspect into the final rescene instead of hard-coding 2K', async () => {

@@ -154,6 +154,26 @@ const UNKNOWN_ATTRS: GarmentAttrs = {
   notes: '',
 }
 
+/** Never let a transient vision failure poison a product path indefinitely. */
+export function isUsableGarmentClassification(attrs: GarmentAttrs): boolean {
+  return attrs.garmentType !== 'unknown'
+    || attrs.dominantColors.length > 0
+    || Boolean(attrs.fabricGuess || attrs.notes)
+    || attrs.embroideryZones.length > 0
+}
+
+/** Paid Auto runs fail closed when the reference cannot identify one garment. */
+export function autoProductReferenceError(
+  attrs: GarmentAttrs,
+  includeFamily = false,
+): 'product_reference_unclassified' | 'family_product_requires_role_crop' | null {
+  if (!isUsableGarmentClassification(attrs)) return 'product_reference_unclassified'
+  if (!includeFamily && attrs.garmentType === 'family_matching_set') {
+    return 'family_product_requires_role_crop'
+  }
+  return null
+}
+
 export function normalizeGarmentType(value?: string | null, fallback?: GarmentType): GarmentType {
   if (!value) return fallback ?? 'unknown'
   const v = value.toLowerCase().trim().replace(/\s+/g, '_')
@@ -208,6 +228,7 @@ async function readGarmentCache(cacheKey: string): Promise<GarmentAttrs | null> 
 }
 
 async function writeGarmentCache(cacheKey: string, attrs: GarmentAttrs): Promise<void> {
+  if (!isUsableGarmentClassification(attrs)) return
   try {
     const { prisma } = await import('@/lib/prisma')
     await prisma.agentKvSetting.upsert({
@@ -298,7 +319,7 @@ export async function getOrClassifyGarment(
 
   for (const key of keys) {
     const cached = await readGarmentCache(key)
-    if (cached) return cached
+    if (cached && isUsableGarmentClassification(cached)) return cached
   }
 
   const attrs = await classifyGarment(productImagePath)

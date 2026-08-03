@@ -42,6 +42,8 @@ const AUTO_ERRORS: Record<string, string> = {
   prompt_required: 'কী বানাতে চান প্রম্পটে লিখে দিন — Generate/Edit মোডে প্রম্পট লাগবেই।',
   kids_product_requires_child_model: 'এইটি Kids product। Son বা Daughter role-এর saved child model বাছুন—adult model দিয়ে paid generation block করা হয়েছে।',
   kids_product_requires_labeled_child_model: 'এইটি Kids product। আগে model-টিকে Son বা Daughter role দিয়ে save করুন—ভুল বয়সের model-এ paid generation block করা হয়েছে।',
+  product_reference_unclassified: 'Product reference থেকে একক garment নির্ভরযোগ্যভাবে শনাক্ত করা যায়নি। পরিষ্কার, পুরো garment দেখা যায় এমন product photo upload করুন—কোনো paid generation চালানো হয়নি।',
+  family_product_requires_role_crop: 'এই Product ছবিতে একাধিক family garment আছে। Single model-এর জন্য যে role-এর পোশাক দরকার (যেমন Son), সেটার পরিষ্কার crop Product source হিসেবে upload করুন—ভুল garment-এ paid generation block করা হয়েছে।',
   custom_prompt_required: 'নিজের প্রম্পট প্রিসেটে কী বদলাতে চান লিখে দিন।',
   mask_empty: 'মাস্ক খালি — আগে ব্রাশ দিয়ে এলাকা আঁকুন।',
   mask_covers_everything: 'পুরো ছবি মাস্ক করা যাবে না — যেটুকু বদলাবে সেটুকুই আঁকুন।',

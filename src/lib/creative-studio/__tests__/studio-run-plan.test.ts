@@ -43,12 +43,30 @@ vi.mock('@/lib/fashn/client', async (importOriginal) => {
   }
 })
 
+vi.mock('@/lib/tryon/art-director', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tryon/art-director')>()
+  return {
+    ...actual,
+    getOrClassifyGarment: vi.fn(async () => ({
+      garmentType: 'panjabi',
+      dominantColors: ['rose'],
+      fabricGuess: 'cotton',
+      embroideryZones: ['collar'],
+      hasContrastBottom: false,
+      suggestedRole: 'single',
+      notes: '',
+    })),
+  }
+})
+
 import { issueStudioRunEstimate } from '@/lib/creative-studio/studio-run-authorization'
 import { buildStudioRunPlan } from '@/lib/creative-studio/studio-run-plan'
 import { getModelByRole } from '@/lib/tryon/model-library'
+import { getOrClassifyGarment } from '@/lib/tryon/art-director'
 
 beforeEach(() => {
   vi.mocked(getModelByRole).mockClear()
+  vi.mocked(getOrClassifyGarment).mockClear()
   process.env.GEMINI_API_KEY = 'test-gemini-key'
   process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET =
     'test-only-studio-run-confirmation-secret'
@@ -80,6 +98,24 @@ describe('Studio run aggregate plan cap', () => {
       productName: '133 KIDS',
       pipelineMode: 'production',
     })).rejects.toThrow('kids_product_requires_labeled_child_model')
+  })
+
+  it('blocks an ambiguous family collage before issuing an Auto estimate', async () => {
+    vi.mocked(getOrClassifyGarment).mockResolvedValueOnce({
+      garmentType: 'family_matching_set',
+      dominantColors: ['rose'],
+      fabricGuess: 'cotton',
+      embroideryZones: ['collar'],
+      hasContrastBottom: true,
+      suggestedRole: 'family',
+      notes: 'multiple role garments',
+    })
+    await expect(buildStudioRunPlan({
+      auto: true,
+      mode: 'try_on',
+      modelId: 'model-1',
+      productImagePath: 'products/family-collage.png',
+    })).rejects.toThrow('family_product_requires_role_crop')
   })
 
   it('prices Auto family pairs only from server-pinned identities', async () => {

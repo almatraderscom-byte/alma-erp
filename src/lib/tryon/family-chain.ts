@@ -43,6 +43,7 @@ import type {
   StudioRunFamilyModelPin,
 } from '@/lib/creative-studio/studio-run-authorization'
 import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
+import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -98,6 +99,8 @@ export type FamilyChainState = {
   garmentType: string
   fabricNote?: string
   adultRole: 'father' | 'mother'
+  /** Exact saved-model role for a single-person chain. */
+  singleModelRole?: 'father' | 'mother' | 'son' | 'daughter' | 'single'
   childRole?: 'son' | 'daughter' | 'mother'
   adultModelPath: string
   childModelPath?: string
@@ -539,6 +542,9 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
             'Image 1 is the completed virtual try-on. Image 2 is the ORIGINAL selected person. Image 3 is the ORIGINAL product garment.',
             'Keep the garment pixel-faithful to Image 3: exact color, fabric, embroidery, motif placement, collar, buttons, sleeve and length. Do not redesign it.',
             'Keep the person faithful to Image 2: same face, age, skin tone, hair, body and hands. Remove any tattoo, body art, scar, jewelry, watch, accessory or skin marking that is not present in Image 2.',
+            state.variant === 'single' && state.singleModelRole
+              ? `The selected person role is ${state.singleModelRole}. From Image 3 use ONLY the matching ${state.singleModelRole} garment; never replace it with another family member's outfit or put an adult cut on a child.`
+              : '',
             `NEW BACKGROUND — ${state.scene.scenePrompt}`,
             'Re-light globally so the person sits naturally in the new scene (matching light direction and warmth), with believable ground contact/shadow.',
             state.extraPrompt ?? '',
@@ -617,7 +623,7 @@ async function createStepAction(state: FamilyChainState, step: ChainStepKind): P
       payload: authorized.payload,
       summary,
       costEstimate,
-      status: 'approved',
+      status: creativeStudioImageQueueStatus(authorized.payload),
     },
     update: {},
   })
@@ -842,6 +848,9 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
 export async function startSingleRescueChain(opts: {
   productImagePath: string
   modelImagePath: string
+  modelRole?: 'father' | 'mother' | 'son' | 'daughter' | 'single' | null
+  /** Owner-selected background. When present it replaces scene-pool randomness. */
+  backgroundPrompt?: string
   aspectRatio?: string
   resolution?: string
   generationMode?: string
@@ -854,7 +863,11 @@ export async function startSingleRescueChain(opts: {
   const execution = currentStudioRunExecutionContext()
   if (!execution) throw new Error('studio_run_authorization_required')
   const picked = pickScene()
-  const scene = toSceneRef(picked)
+  const pickedScene = toSceneRef(picked)
+  const ownerBackground = opts.backgroundPrompt?.trim()
+  const scene = ownerBackground
+    ? { ...pickedScene, sceneId: 'owner_selected', scenePrompt: ownerBackground }
+    : pickedScene
   const attrs = await getOrClassifyGarment(opts.productImagePath)
 
   const state: FamilyChainState = {
@@ -865,8 +878,9 @@ export async function startSingleRescueChain(opts: {
     garmentType: attrs.garmentType,
     fabricNote: attrs.fabricGuess ? `Garment fabric: ${attrs.fabricGuess}.` : undefined,
     adultRole: 'father',
+    singleModelRole: opts.modelRole ?? undefined,
     adultModelPath: opts.modelImagePath,
-    plan: attrs.garmentType === 'family_matching_set'
+    plan: attrs.garmentType === 'family_matching_set' || attrs.garmentType === 'unknown'
       ? ['garment_prep', 'adult_tryon', 'rescene']
       : ['adult_tryon', 'rescene'],
     stepIndex: 0,
@@ -994,7 +1008,7 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
       payload: authorized.payload,
       summary,
       costEstimate,
-      status: 'approved',
+      status: creativeStudioImageQueueStatus(authorized.payload),
     },
     update: {},
   })
@@ -1025,7 +1039,10 @@ export async function advanceFamilyChain(
       const res = (action as { result?: Record<string, unknown> }).result ?? {}
       const adult = typeof res.adultGarmentPath === 'string' ? res.adultGarmentPath : null
       const child = typeof res.childGarmentPath === 'string' ? res.childGarmentPath : null
-      if (adult) next.preppedAdultGarmentPath = adult
+      const singleChildRole = state.variant === 'single'
+        && (state.singleModelRole === 'son' || state.singleModelRole === 'daughter')
+      const singleGarment = singleChildRole ? (child ?? adult) : adult
+      if (singleGarment) next.preppedAdultGarmentPath = singleGarment
       if (child && state.childRole && state.childRole !== 'mother') {
         // real supplier child piece — skip the AI child_garment generation
         next.preppedChildGarmentPath = child

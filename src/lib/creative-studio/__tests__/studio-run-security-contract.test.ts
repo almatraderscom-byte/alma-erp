@@ -32,11 +32,12 @@ describe('Creative Studio paid-run production boundary', () => {
     const context = source('src/lib/creative-studio/studio-run-context.ts')
     const createRun = source('src/lib/creative-studio/create-run.ts')
     const gateIndex = createRun.indexOf('await assertStudioRunExecutionGate({')
-    const approvedInsertIndex = createRun.indexOf("status: 'approved'", gateIndex)
+    const approvedInsertIndex = createRun.indexOf('creativeStudioImageQueueStatus(authorized.payload)', gateIndex)
 
     expect(context).toContain("studioSurface: 'v3'")
     expect(context).toContain('signStudioRunJobPayload')
     expect(createRun).toContain('studioRunAuthorizedJobFields')
+    expect(createRun).toContain("from '@/lib/creative-studio/preview-worker-scope'")
     expect(gateIndex).toBeGreaterThan(0)
     expect(approvedInsertIndex).toBeGreaterThan(gateIndex)
   })
