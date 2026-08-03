@@ -115,7 +115,7 @@ export function StudioConfirmationDialog({
           aria-modal="true"
           aria-label={ariaLabel}
           onClick={onCancel}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[700] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
         >
           <motion.div
             initial={{ y: 16, scale: 0.98 }}
