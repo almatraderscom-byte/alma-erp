@@ -64,6 +64,38 @@ describe('converting media', () => {
   })
 })
 
+describe('PDF work', () => {
+  it('routes work on a PDF he already has', () => {
+    expect(applyRules('ei tinta pdf ek kore dao')?.skill).toBe('pdf-processor')
+    expect(applyRules('pdf ta choto koro, mail e jacche na')?.skill).toBe('pdf-processor')
+    expect(applyRules('pdf theke lekha ber koro')?.skill).toBe('pdf-processor')
+  })
+
+  // Codex: an existing FILE that happens to be called a client report is still
+  // a file. The veto needs a creation verb, not the phrase alone.
+  it('still processes a file whose name contains "client report"', () => {
+    expect(applyRules('client report pdf ta choto koro')?.skill).toBe('pdf-processor')
+  })
+
+  it('does not take PDF GENERATION from our own data', () => {
+    expect(applyRules('client report pdf banao')).toBeNull()
+    expect(applyRules('ekta invoice banao')).toBeNull()
+  })
+})
+
+describe('opening a workspace', () => {
+  it('routes a named mode', () => {
+    expect(applyRules('kajer mode chalu koro')?.skill).toBe('workspace-launcher')
+    expect(applyRules('hisab mode chalu koro')?.skill).toBe('workspace-launcher')
+    expect(applyRules('amar roj er app gulo kholo')?.skill).toBe('workspace-launcher')
+  })
+
+  it('does not claim ordinary "mode" talk', () => {
+    expect(applyRules('permission mode ta ki')).toBeNull()
+    expect(applyRules('notun chat kholo')?.skill).toBe('mac-ai-app-operator')
+  })
+})
+
 describe('Tier 1 still owns its own traffic', () => {
   it('nothing moved', () => {
     expect(applyRules('downloads folder ta porishkar koro')?.skill).toBe('mac-file-organizer')

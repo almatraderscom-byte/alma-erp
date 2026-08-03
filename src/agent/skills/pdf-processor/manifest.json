@@ -1,0 +1,54 @@
+{
+  "name": "pdf-processor",
+  "description": "Works on PDFs already sitting on Boss's Mac — joining several into one, pulling out a page range, shrinking a file that is too big to email, reading the text out of one. Always writes a new file beside the original. Use when Boss asks to merge, split, shrink or read a PDF on his computer.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "ALMA_TRADING",
+    "CDIT"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Producing a client report or invoice PDF from our own data → the report tools, which generate it properly. Finding which PDF he means → spotlight-finder. Filing or tidying them afterwards → mac-file-organizer.",
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
+  "outputContract": {
+    "kind": "pdf_result",
+    "mustInclude": [
+      "source_paths",
+      "output_path",
+      "page_count_or_size"
+    ]
+  },
+  "stopConditions": [
+    "qpdf নেই — সৎভাবে বলো, ইনস্টল কোরো না",
+    "কোন কোন ফাইল, কোন ক্রমে — নিশ্চিত না হলে",
+    "আউটপুটের নাম কোনো ইনপুটের সমান",
+    "পাসওয়ার্ড-দেওয়া PDF — খোলার চেষ্টা নয়"
+  ],
+  "done": [
+    {
+      "tool": "run_mac_command",
+      "argMatch": "qpdf|sips[^\"]*--out|pdftotext|kMDItemTextContent"
+    },
+    {
+      "tool": "check_mac_command"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 14,
+  "status": "active"
+}

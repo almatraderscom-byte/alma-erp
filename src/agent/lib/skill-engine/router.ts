@@ -368,6 +368,16 @@ const MEDIA_CREATE_ASK =
 const MEDIA_DERIVE_ASK =
   /(?:video|ভিডিও|mp4|mov|clip|chobi|ছবি|image|png|jpe?g|audio|অডিও)\s*(?:theke|থেকে|from|to\b|→)\s*(?:gif|jpe?g|png|mp3|mp4|wav|audio|অডিও|ছবি|chobi|video|ভিডিও)/i
 
+/** PDF work on files he already has. */
+const PDF_ASK =
+  /\bpdf\b[^\n]{0,30}(?:merge|jora|jode|ek\s*kor|vag|bhag|split|choto|compress|page|pata|porho|poro|lekha|text)|(?:merge|jora|ek\s*kor|split|vag)[^\n]{0,20}\bpdf\b/i
+/** …but producing a report/invoice PDF from OUR data is the report tools' job. */
+const PDF_GENERATE_ASK =
+  /(report\s*banao|invoice\s*banao|রিপোর্ট\s*বানাও|generate|toiri\s*koro|client\s*report[^\n]{0,20}(?:banao|toiri|generate|বানাও))/i
+/** "kajer mode chalu koro" — open the usual set of apps. */
+const WORKSPACE_ASK =
+  /((?:kaj|কাজ|hisab|হিসাব|code|কোড|office|অফিস)[^\n]{0,10}(?:er)?\s*(?:mode|মোড)|(?:mode|মোড)\s*(?:chalu|চালু|on\s*kor)|(?:amar|আমার)\s*(?:sob|সব|roj|রোজ)[^\n]{0,14}(?:app|অ্যাপ)[^\n]{0,12}(?:kholo|খোলো|chalu|open))/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -474,6 +484,18 @@ export const RULES: RouterRule[] = [
       MEDIA_DERIVE_ASK.test(t)
       || (MEDIA_CONVERT_ASK.test(t) && !MEDIA_CREATE_ASK.test(t)),
     why: 'Mac-এ থাকা মিডিয়া রূপান্তর — নতুন কিছু বানানো নয়',
+  },
+  {
+    id: 'pdf-work',
+    skill: 'pdf-processor',
+    test: (t) => PDF_ASK.test(t) && !PDF_GENERATE_ASK.test(t),
+    why: 'Mac-এ থাকা PDF নিয়ে কাজ — নতুন রিপোর্ট বানানো নয়',
+  },
+  {
+    id: 'workspace-open',
+    skill: 'workspace-launcher',
+    test: (t) => WORKSPACE_ASK.test(t),
+    why: 'নাম-করা অ্যাপ-সেট একসাথে খোলা',
   },
   {
     id: 'folder-tidy',

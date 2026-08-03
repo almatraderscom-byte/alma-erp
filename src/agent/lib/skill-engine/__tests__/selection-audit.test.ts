@@ -114,6 +114,7 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   media-transcoder. Two are read-only; the transcoder writes and is
     //   isolated. All three rule-routed, each with the veto its verb needs
     //   ("khujo" is also research, "banao" is also Creative Studio).
+    //   2026-08-03: Tier 2 completed — pdf-processor and workspace-launcher.
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -134,12 +135,14 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'mac-file-organizer',
       'mac-health-monitor',
       'media-transcoder',
+      'pdf-processor',
       'screenshot-annotate-share',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
       'spotlight-finder',
       'storefront-editing',
+      'workspace-launcher',
       'xcode-testflight-shipper',
     ])
 

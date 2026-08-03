@@ -1,0 +1,51 @@
+{
+  "name": "workspace-launcher",
+  "description": "Opens a named set of apps and pages on Boss's Mac in one go — his work mode, his accounts mode — instead of him opening six things by hand. Use when Boss says to set up his Mac for a kind of work, or to open his usual apps.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "whenNotToUse": "Typing or clicking INSIDE an app once it is open → mac-ai-app-operator (and only the two AI apps can be driven). Closing or quitting apps — this skill only opens. A website he wants read, not opened → the browser tools.",
+  "requiredCapabilities": [
+    "run_mac_command",
+    "check_mac_command",
+    "mac_agent_status",
+    "list_mac_apps"
+  ],
+  "dependencies": {
+    "capability": [
+      "run_mac_command"
+    ]
+  },
+  "outputContract": {
+    "kind": "workspace_opened",
+    "mustInclude": [
+      "mode_name",
+      "apps_opened",
+      "anything_that_failed"
+    ]
+  },
+  "stopConditions": [
+    "কোন মোড, সেটা আগে বলা হয়নি — নাম আর তালিকা নিশ্চিত করো",
+    "কোনো অ্যাপ Mac-এ নেই",
+    "অ্যাপ বন্ধ করতে বলা হয়েছে — এই skill শুধু খোলে"
+  ],
+  "done": [
+    {
+      "tool": "run_mac_command",
+      "argMatch": "open\\s+-a|open\\s+[\"']?http"
+    },
+    {
+      "tool": "check_mac_command"
+    }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 10,
+  "status": "active"
+}
