@@ -1,6 +1,22 @@
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
-import { blendedScore, rerankMemories } from '@/agent/lib/memory-rerank'
+import { blendedScore } from '@/agent/lib/memory-rerank'
+import {
+  BOTH_ARMS_BONUS,
+  buildLikePatterns,
+  buildOrTsQuery,
+  extractQueryTokens,
+  fuseRrf,
+  keywordSimilarityProxy,
+  type RankedArmHit,
+} from '@/agent/lib/memory-hybrid'
+import {
+  MEMORY_MAX_ITEMS,
+  MEMORY_RETRIEVAL_TIMEOUT_MS,
+  applyMemoryBudget,
+  withMemoryTimeout,
+} from '@/agent/lib/memory-budget'
+import { retrieveMemoryDigests } from '@/agent/lib/memory-digest'
 import type { RelevantMemory } from '@/agent/lib/system-prompt'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
@@ -8,7 +24,10 @@ const HIGH_IMPORTANCE = /(পছন্দ|না করবে|ভুল হয�
 
 const SIMILARITY_THRESHOLD = 0.45
 const VECTOR_FETCH_LIMIT = 20
-const RERANK_TAKE = 6
+/** Keyword arm depth — matched to the vector arm so neither dominates the fusion. */
+const KEYWORD_FETCH_LIMIT = 20
+/** Fused candidates carried into the reranker before the budget trims to final size. */
+const FUSED_POOL = 15
 
 function resolveImportance(content: string, explicit?: number | null): number {
   if (explicit != null && explicit >= 1 && explicit <= 5) return explicit
@@ -200,78 +219,163 @@ async function reinforceMemoriesOnUse(selectedIds: string[]): Promise<void> {
   )
 }
 
+/** One fact row as returned by either retrieval arm. */
+interface FactRow {
+  id: string
+  content: string
+  scope: string
+  importance: number
+  createdAt: Date
+  last_used_at: Date | null
+  score?: number
+}
+
+/** Vector arm: semantic match. Returns [] when embeddings are unavailable. */
+async function vectorArm(vec: string, accessClause: string): Promise<FactRow[]> {
+  const rows: FactRow[] =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).$queryRawUnsafe(
+      `SELECT id, content, scope, importance, "createdAt", last_used_at,
+              1 - (embedding <=> $1::vector) AS score
+       FROM agent_memory
+       WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
+         AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY embedding <=> $1::vector
+       LIMIT ${VECTOR_FETCH_LIMIT}`,
+      vec,
+    )
+  return rows.filter((r) => (r.score ?? 0) >= SIMILARITY_THRESHOLD)
+}
+
+/**
+ * Keyword arm: exact-token match, the half embeddings are bad at (order ids,
+ * phone numbers, names, product codes). 'simple' config = no stemming, which is
+ * what makes it work for Bangla; pg_trgm ILIKE catches partial/inflected forms.
+ */
+async function keywordArm(tokens: string[], accessClause: string): Promise<FactRow[]> {
+  if (tokens.length === 0) return []
+  const tsQuery = buildOrTsQuery(tokens)
+  const likePatterns = buildLikePatterns(tokens)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (prisma as any).$queryRawUnsafe(
+    `SELECT id, content, scope, importance, "createdAt", last_used_at,
+            ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
+     FROM agent_memory
+     WHERE pinned = false ${accessClause}
+       AND (expires_at IS NULL OR expires_at > NOW())
+       AND (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
+            OR content ILIKE ANY($2::text[]))
+     ORDER BY score DESC, COALESCE(last_used_at, "createdAt") DESC
+     LIMIT ${KEYWORD_FETCH_LIMIT}`,
+    tsQuery,
+    likePatterns,
+  )
+}
+
+/**
+ * Hybrid recall for one turn: digest layers first, then facts fused from the
+ * vector and keyword arms.
+ *
+ * Both arms run in parallel and are merged with Reciprocal Rank Fusion, so a
+ * fact that only one arm can see still surfaces while the ones both arms agree
+ * on rank highest. The final list passes through the retrieval budget, and the
+ * whole thing is time-boxed — a slow database costs the turn its memory, never
+ * the owner's reply.
+ */
 export async function retrieveRelevantMemories(
+  userMessage: string,
+  personalMode: boolean,
+  businessId: AgentBusinessId,
+): Promise<RelevantMemory[]> {
+  return withMemoryTimeout(
+    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId),
+    [],
+    MEMORY_RETRIEVAL_TIMEOUT_MS,
+    'agent-memory',
+  )
+}
+
+async function retrieveRelevantMemoriesUnbounded(
   userMessage: string,
   personalMode: boolean,
   businessId: AgentBusinessId,
 ): Promise<RelevantMemory[]> {
   try {
     const accessClause = buildMemoryAccessClause(personalMode, businessId)
+    const tokens = extractQueryTokens(userMessage)
+
     const embedResult = await embed(userMessage)
-    if (!embedResult.success) {
-      // ILIKE fallback when embedding is unavailable
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const fbRows: Array<{ id: string; content: string; scope: string }> = await (prisma as any).$queryRawUnsafe(
-        `SELECT id, content, scope FROM agent_memory
-         WHERE pinned = false AND content ILIKE $1 ${accessClause}
-           AND (expires_at IS NULL OR expires_at > NOW())
-         ORDER BY "createdAt" DESC LIMIT 6`,
-        `%${userMessage.slice(0, 100)}%`,
-      )
-      return fbRows.map((r) => ({ id: r.id, content: r.content, scope: r.scope, score: 0.5 }))
-    }
+    const vec = embedResult.success ? vectorLiteral(embedResult.data) : null
 
-    const vec = vectorLiteral(embedResult.data)
+    const [vectorRows, keywordRows, digests] = await Promise.all([
+      vec ? vectorArm(vec, accessClause) : Promise.resolve<FactRow[]>([]),
+      keywordArm(tokens, accessClause),
+      retrieveMemoryDigests({ queryVector: vec ?? undefined, personalMode, businessId }),
+    ])
 
-    const rows: Array<{
-      id: string
-      content: string
-      scope: string
-      score: number
-      importance: number
-      createdAt: Date
-      last_used_at: Date | null
-    }> =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (prisma as any).$queryRawUnsafe(
-        `SELECT id, content, scope, importance, "createdAt", last_used_at,
-                1 - (embedding <=> $1::vector) AS score
-         FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
-           AND (expires_at IS NULL OR expires_at > NOW())
-         ORDER BY embedding <=> $1::vector
-         LIMIT ${VECTOR_FETCH_LIMIT}`,
-        vec,
-      )
+    const byId = new Map<string, FactRow>()
+    const vectorSimilarity = new Map<string, number>()
+    const keywordRank = new Map<string, number>()
+
+    const vectorHits: RankedArmHit[] = vectorRows.map((row, rank) => {
+      byId.set(row.id, row)
+      vectorSimilarity.set(row.id, row.score ?? 0)
+      return { id: row.id, rank }
+    })
+    const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
+      if (!byId.has(row.id)) byId.set(row.id, row)
+      keywordRank.set(row.id, rank)
+      return { id: row.id, rank }
+    })
 
     const now = new Date()
-    const candidates = rows
-      .filter((r) => r.score >= SIMILARITY_THRESHOLD)
-      .map((r) => ({
-        id: r.id,
-        content: r.content,
-        scope: r.scope,
-        similarity: r.score,
-        importance: r.importance,
-        createdAt: r.createdAt,
-        lastUsedAt: r.last_used_at,
-      }))
+    const fused = fuseRrf([vectorHits, keywordHits]).slice(0, FUSED_POOL)
 
-    const ranked = rerankMemories(candidates, RERANK_TAKE, now)
-    const selectedIds = ranked.map((m) => m.id)
+    const scored = fused
+      .map((hit) => {
+        const row = byId.get(hit.id)
+        if (!row) return null
+        const similarity =
+          vectorSimilarity.get(hit.id) ?? keywordSimilarityProxy(keywordRank.get(hit.id) ?? KEYWORD_FETCH_LIMIT)
+        const rankable = {
+          id: row.id,
+          content: row.content,
+          similarity,
+          importance: row.importance,
+          createdAt: row.createdAt,
+          lastUsedAt: row.last_used_at,
+        }
+        // Agreement between the two arms is the one signal a hybrid setup adds
+        // that neither arm produces alone — worth a small, explicit nudge.
+        const score = blendedScore(rankable, now) + (hit.arms > 1 ? BOTH_ARMS_BONUS : 0)
+        return { id: row.id, content: row.content, scope: row.scope, score }
+      })
+      .filter((x): x is { id: string; content: string; scope: string; score: number } => x !== null)
+      .sort((a, b) => b.score - a.score)
+
+    const budgeted = applyMemoryBudget(scored, { maxItems: MEMORY_MAX_ITEMS })
 
     try {
-      await reinforceMemoriesOnUse(selectedIds)
+      await reinforceMemoriesOnUse(budgeted.kept.map((m) => m.id))
     } catch (err) {
       console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
     }
 
-    return ranked.map((m) => ({
-      id: m.id,
-      content: m.content,
-      scope: m.scope,
-      score: Math.round(blendedScore(m, now) * 100) / 100,
-    }))
+    return [
+      // Digest blocks lead: they are the compressed picture the facts belong to.
+      ...digests.map((d) => ({
+        id: d.id,
+        content: d.content,
+        scope: 'digest',
+        score: Math.round(d.score * 100) / 100,
+      })),
+      ...budgeted.kept.map((m) => ({
+        id: m.id,
+        content: m.content,
+        scope: m.scope,
+        score: Math.round(m.score * 100) / 100,
+      })),
+    ]
   } catch (err) {
     console.warn('[agent-memory] retrieveRelevantMemories failed:', err instanceof Error ? err.message : err)
     return []

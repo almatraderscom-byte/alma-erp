@@ -1,0 +1,318 @@
+/**
+ * Distilled memory layers — L2 (scenario) and L3 (persona).
+ *
+ * Owner-approved 2026-08-03, idea borrowed from TencentDB Agent Memory's L0→L3
+ * ladder but rebuilt on our own Postgres so no extra service is introduced.
+ *
+ * The problem it solves: `agent_memory` holds flat facts ("L1"). Answering
+ * "কীভাবে কাজ করি / কী পছন্দ করি না" from flat facts means dragging in a dozen
+ * rows and letting the head re-derive the same picture every single turn — the
+ * same tokens, paid again and again. So once a week the facts are distilled into:
+ *
+ *   L2 scenario — up to 3 topic blocks per scope ("Trading pricing", "স্টাফ রুটিন")
+ *   L3 persona  — ONE standing block per scope: how the owner works, what he
+ *                 refuses, what he always wants.
+ *
+ * At retrieval time the persona block goes in first (always, no similarity gate —
+ * it is short and always relevant) and the best-matching scenario block follows
+ * if it clears the threshold. Both are subject to the digest budget, so the
+ * layers can never crowd out the facts.
+ *
+ * DERIVED DATA ONLY. Every row is rebuilt from `agent_memory`; nothing is ever
+ * authored here. Deleting the table costs nothing but a rebuild.
+ */
+import { randomUUID } from 'crypto'
+import { prisma } from '@/lib/prisma'
+import { embed, vectorLiteral } from '@/agent/lib/embeddings'
+import { agentSmartText } from '@/agent/lib/llm-text'
+import { DIGEST_MAX_ITEMS, DIGEST_MAX_TOTAL_CHARS, applyMemoryBudget } from '@/agent/lib/memory-budget'
+import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
+
+/** Below this many source facts a distillation says more about the model than the owner. */
+export const MIN_SOURCE_FACTS = 8
+/** Facts fed into one distillation pass. */
+const SOURCE_FACT_LIMIT = 60
+/** Ceilings the prompt asks for AND the parser enforces. */
+export const MAX_SCENARIOS = 3
+export const MAX_PERSONA_CHARS = 600
+export const MAX_SCENARIO_CHARS = 500
+export const MAX_TOPIC_CHARS = 40
+/** An L2 block must actually match the turn; the persona block is exempt. */
+const L2_SIMILARITY_THRESHOLD = 0.35
+
+export interface DigestTarget {
+  scope: 'personal' | 'business'
+  businessId: AgentBusinessId | null
+}
+
+/** Every digest slot we maintain: personal, plus one per business. */
+export const DIGEST_TARGETS: DigestTarget[] = [
+  { scope: 'personal', businessId: null },
+  { scope: 'business', businessId: 'ALMA_LIFESTYLE' },
+  { scope: 'business', businessId: 'ALMA_TRADING' },
+]
+
+const DISTILL_SYSTEM = `তুমি ALMA-র ব্যক্তিগত এজেন্টের স্মৃতি-সংক্ষেপক।
+তোমাকে বসের সম্পর্কে সংরক্ষিত কিছু আলাদা আলাদা তথ্য (fact) দেওয়া হবে। সেগুলো থেকে দুই ধরনের সারাংশ বানাবে:
+
+1. persona — বস কীভাবে কাজ করেন, কী পছন্দ/অপছন্দ করেন, কোন নিয়মগুলো সবসময় প্রযোজ্য। স্থায়ী প্যাটার্ন, একদিনের ঘটনা নয়।
+2. scenarios — সর্বোচ্চ ৩টি বিষয়ভিত্তিক ব্লক (যেমন দাম নির্ধারণ, স্টাফ, অর্ডার, খরচ)। প্রতিটিতে ওই বিষয়ের বর্তমান অবস্থা এক জায়গায়।
+
+কঠিন নিয়ম:
+- শুধু দেওয়া তথ্য থেকেই লিখবে। কিছু আবিষ্কার করবে না, অনুমান করবে না।
+- পুরোটা বাংলায়। বসকে "Boss" বলবে, "Sir"/"স্যার" কখনো নয়। কোনো ইমোজি নয়।
+- persona সর্বোচ্চ ${MAX_PERSONA_CHARS} অক্ষর; প্রতিটি scenario summary সর্বোচ্চ ${MAX_SCENARIO_CHARS} অক্ষর; topic সর্বোচ্চ ${MAX_TOPIC_CHARS} অক্ষর।
+- একদিনের ঘটনা (আজকের ছুটি, একদিনের নামাজের লগ) বাদ দেবে — এগুলো স্থায়ী নয়।
+- যথেষ্ট প্যাটার্ন না থাকলে খালি ফল দেবে।
+
+শুধু JSON আউটপুট, আর কিছু নয়:
+{"persona":"...","scenarios":[{"topic":"...","summary":"..."}]}
+যথেষ্ট তথ্য না থাকলে: {"persona":"","scenarios":[]}`
+
+export interface DistilledDigest {
+  persona: string
+  scenarios: Array<{ topic: string; summary: string }>
+}
+
+/**
+ * Parses + hard-caps the model's JSON. The prompt asks for the ceilings; this
+ * enforces them, because a prompt is a request and a budget is a guarantee.
+ */
+export function parseDistilledDigest(raw: string): DistilledDigest {
+  const match = raw.match(/\{[\s\S]*\}/)
+  if (!match) return { persona: '', scenarios: [] }
+  let parsed: { persona?: unknown; scenarios?: unknown }
+  try {
+    parsed = JSON.parse(match[0]) as { persona?: unknown; scenarios?: unknown }
+  } catch {
+    return { persona: '', scenarios: [] }
+  }
+
+  const persona = String(parsed.persona ?? '').trim().slice(0, MAX_PERSONA_CHARS)
+  const rawScenarios = Array.isArray(parsed.scenarios) ? parsed.scenarios : []
+  const scenarios: Array<{ topic: string; summary: string }> = []
+  const seenTopics = new Set<string>()
+
+  for (const entry of rawScenarios) {
+    if (scenarios.length >= MAX_SCENARIOS) break
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as { topic?: unknown; summary?: unknown }
+    const topic = String(e.topic ?? '').trim().slice(0, MAX_TOPIC_CHARS)
+    const summary = String(e.summary ?? '').trim().slice(0, MAX_SCENARIO_CHARS)
+    if (!topic || summary.length < 20) continue
+    const dedupeKey = topic.toLowerCase()
+    if (seenTopics.has(dedupeKey)) continue
+    seenTopics.add(dedupeKey)
+    scenarios.push({ topic, summary })
+  }
+
+  return { persona: persona.length >= 20 ? persona : '', scenarios }
+}
+
+/** SQL fragment selecting the fact rows that belong to one digest target. */
+function sourceClause(target: DigestTarget): string {
+  if (target.scope === 'personal') return `scope = 'personal'`
+  const businessFilter =
+    target.businessId === 'ALMA_TRADING'
+      ? `metadata->>'businessId' = 'ALMA_TRADING'`
+      : `(metadata->>'businessId' IS NULL OR metadata->>'businessId' = 'ALMA_LIFESTYLE')`
+  return `scope != 'personal' AND ${businessFilter}`
+}
+
+async function loadSourceFacts(target: DigestTarget): Promise<Array<{ id: string; content: string; pinned: boolean }>> {
+  return db.$queryRawUnsafe(
+    `SELECT id, content, pinned
+     FROM agent_memory
+     WHERE ${sourceClause(target)}
+       AND (expires_at IS NULL OR expires_at > NOW())
+     ORDER BY pinned DESC, importance DESC, COALESCE(last_used_at, "createdAt") DESC
+     LIMIT ${SOURCE_FACT_LIMIT}`,
+  )
+}
+
+/** Replaces every stored block for one slot in a single transaction. */
+async function writeDigestRows(
+  target: DigestTarget,
+  rows: Array<{ layer: 'L2' | 'L3'; topic: string; content: string; embedding: string | null }>,
+  sourceIds: string[],
+): Promise<void> {
+  const businessId = target.businessId
+  const businessMatch = businessId === null ? `business_id IS NULL` : `business_id = '${businessId}'`
+
+  const statements = [
+    db.$executeRawUnsafe(
+      `DELETE FROM agent_memory_digest WHERE scope = $1 AND ${businessMatch}`,
+      target.scope,
+    ),
+    ...rows.map((row) =>
+      db.$executeRawUnsafe(
+        `INSERT INTO agent_memory_digest
+           (id, layer, scope, business_id, topic, content, embedding, source_count, source_ids,
+            refreshed_at, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9::jsonb, NOW(), NOW(), NOW())`,
+        randomUUID(),
+        row.layer,
+        target.scope,
+        businessId,
+        row.topic,
+        row.content,
+        row.embedding,
+        sourceIds.length,
+        JSON.stringify(sourceIds.slice(0, 60)),
+      ),
+    ),
+  ]
+
+  await db.$transaction(statements)
+}
+
+export interface DigestBuildResult {
+  target: string
+  sourceFacts: number
+  personaWritten: boolean
+  scenariosWritten: number
+  skipped?: string
+}
+
+/** Rebuilds one slot's L2 + L3 blocks from its current facts. */
+export async function buildDigestForTarget(target: DigestTarget): Promise<DigestBuildResult> {
+  const label = target.businessId ? `${target.scope}:${target.businessId}` : target.scope
+  const facts = await loadSourceFacts(target)
+  if (facts.length < MIN_SOURCE_FACTS) {
+    return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'too_few_facts' }
+  }
+
+  const raw = await agentSmartText({
+    system: DISTILL_SYSTEM,
+    prompt:
+      `${target.scope === 'personal' ? 'ব্যক্তিগত' : `ব্যবসা (${target.businessId})`} স্মৃতি — ${facts.length}টি তথ্য:\n\n` +
+      facts.map((f, i) => `${i + 1}. ${f.pinned ? '[স্থায়ী] ' : ''}${f.content.slice(0, 400)}`).join('\n'),
+    maxTokens: 1400,
+    costLabel: 'memory_digest',
+  })
+
+  const distilled = parseDistilledDigest(raw)
+  if (!distilled.persona && distilled.scenarios.length === 0) {
+    return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'no_signal' }
+  }
+
+  const rows: Array<{ layer: 'L2' | 'L3'; topic: string; content: string; embedding: string | null }> = []
+
+  if (distilled.persona) {
+    // The persona block is retrieved unconditionally, so its embedding is optional.
+    rows.push({ layer: 'L3', topic: 'persona', content: distilled.persona, embedding: null })
+  }
+  for (const scenario of distilled.scenarios) {
+    // An L2 block IS matched by similarity, so a failed embedding means it can
+    // never be retrieved — skip it rather than store a dead row.
+    const embedded = await embed(`${scenario.topic}\n${scenario.summary}`)
+    if (!embedded.success) {
+      console.warn(`[memory-digest] embedding failed for ${label}/${scenario.topic}: ${embedded.error}`)
+      continue
+    }
+    rows.push({
+      layer: 'L2',
+      topic: scenario.topic,
+      content: scenario.summary,
+      embedding: vectorLiteral(embedded.data),
+    })
+  }
+
+  await writeDigestRows(target, rows, facts.map((f) => f.id))
+
+  return {
+    target: label,
+    sourceFacts: facts.length,
+    personaWritten: rows.some((r) => r.layer === 'L3'),
+    scenariosWritten: rows.filter((r) => r.layer === 'L2').length,
+  }
+}
+
+/** Weekly entry point — rebuilds every slot, one failure never stops the rest. */
+export async function runMemoryDigest(): Promise<{ results: DigestBuildResult[] }> {
+  const results: DigestBuildResult[] = []
+  for (const target of DIGEST_TARGETS) {
+    try {
+      results.push(await buildDigestForTarget(target))
+    } catch (err) {
+      const label = target.businessId ? `${target.scope}:${target.businessId}` : target.scope
+      console.warn(`[memory-digest] build failed for ${label}:`, err instanceof Error ? err.message : err)
+      results.push({ target: label, sourceFacts: 0, personaWritten: false, scenariosWritten: 0, skipped: 'error' })
+    }
+  }
+  return { results }
+}
+
+export interface DigestHit {
+  id: string
+  layer: 'L2' | 'L3'
+  topic: string
+  content: string
+  score: number
+}
+
+/**
+ * Retrieval side: the standing persona block plus the best-matching scenario
+ * block, inside the digest budget. Fails soft — if the table is missing (preview
+ * database before the migration runs) the turn simply gets no digest.
+ */
+export async function retrieveMemoryDigests(opts: {
+  /** pgvector literal of the turn's query embedding; omitted → persona only. */
+  queryVector?: string
+  personalMode: boolean
+  businessId: AgentBusinessId
+}): Promise<DigestHit[]> {
+  const scope = opts.personalMode ? 'personal' : 'business'
+  const businessMatch = opts.personalMode ? `business_id IS NULL` : `business_id = $1`
+  const businessParams = opts.personalMode ? [] : [opts.businessId]
+
+  try {
+    const personaRows: Array<{ id: string; topic: string; content: string }> = await db.$queryRawUnsafe(
+      `SELECT id, topic, content
+       FROM agent_memory_digest
+       WHERE layer = 'L3' AND scope = '${scope}' AND ${businessMatch}
+       ORDER BY refreshed_at DESC
+       LIMIT 1`,
+      ...businessParams,
+    )
+
+    const hits: DigestHit[] = personaRows.map((r) => ({
+      id: r.id,
+      layer: 'L3' as const,
+      topic: r.topic,
+      content: r.content,
+      score: 1,
+    }))
+
+    if (opts.queryVector) {
+      const vecParamIndex = businessParams.length + 1
+      const scenarioRows: Array<{ id: string; topic: string; content: string; score: number }> =
+        await db.$queryRawUnsafe(
+          `SELECT id, topic, content, 1 - (embedding <=> $${vecParamIndex}::vector) AS score
+           FROM agent_memory_digest
+           WHERE layer = 'L2' AND scope = '${scope}' AND ${businessMatch}
+             AND embedding IS NOT NULL
+           ORDER BY embedding <=> $${vecParamIndex}::vector
+           LIMIT 2`,
+          ...businessParams,
+          opts.queryVector,
+        )
+      for (const row of scenarioRows) {
+        if (row.score < L2_SIMILARITY_THRESHOLD) continue
+        hits.push({ id: row.id, layer: 'L2', topic: row.topic, content: row.content, score: row.score })
+      }
+    }
+
+    const budgeted = applyMemoryBudget(
+      hits.map((h) => ({ ...h, content: `[${h.layer === 'L3' ? 'বসের ধরন' : h.topic}] ${h.content}` })),
+      { maxItems: DIGEST_MAX_ITEMS, maxTotalChars: DIGEST_MAX_TOTAL_CHARS, maxItemChars: DIGEST_MAX_TOTAL_CHARS },
+    )
+    return budgeted.kept
+  } catch (err) {
+    console.warn('[memory-digest] retrieval skipped:', err instanceof Error ? err.message : err)
+    return []
+  }
+}
