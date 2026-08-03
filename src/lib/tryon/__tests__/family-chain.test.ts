@@ -123,6 +123,7 @@ import {
   verifyStudioRunEstimateReceipt,
 } from '@/lib/creative-studio/studio-run-authorization'
 import { withStudioRunExecutionContext } from '@/lib/creative-studio/studio-run-context'
+import type { StudioReferenceContract } from '@/lib/creative-studio/advanced-image-capabilities'
 
 function issueAuthorizedRun() {
   const estimate = issueStudioRunEstimate({
@@ -307,6 +308,10 @@ describe('startFamilyChain', () => {
       model_image: 'models/father.jpg',
       product_image: 'uploads/panjabi.jpg',
     })
+    expect((row.payload.referenceContract as StudioReferenceContract).bindings[0]).toMatchObject({
+      source: 'saved_model',
+      sourceId: 'model-father',
+    })
     const state = chainState(row)
     expect(state.plan).toEqual(['garment_prep', 'adult_tryon', 'child_tryon', 'pair_merge'])
     expect(state.stepIndex).toBe(1)
@@ -343,6 +348,10 @@ describe('chain advance — father_son end to end', () => {
     expect(row.payload.fashnInputs).toEqual({
       model_image: 'models/son.jpg',
       product_image: 'uploads/panjabi.jpg',
+    })
+    expect((row.payload.referenceContract as StudioReferenceContract).bindings[0]).toMatchObject({
+      source: 'saved_model',
+      sourceId: 'model-son',
     })
 
     // Step 2: child shot done

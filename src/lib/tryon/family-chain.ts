@@ -251,6 +251,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
     actualModel: string,
     personPath: string | undefined,
     productPath: string | undefined,
+    personRole?: 'father' | 'mother' | 'son' | 'daughter',
   ): StudioReferenceContract => ({
     version: 1,
     mode: 'try_on',
@@ -261,6 +262,12 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
         role: 'person',
         path: personPath ?? '',
         source: 'saved_model',
+        ...(personRole
+          ? {
+              sourceId: state.runAuthorization.claims.scope.familyModelPins
+                ?.find((pin) => pin.role === personRole)?.modelId,
+            }
+          : {}),
         required: true,
       },
       {
@@ -275,7 +282,11 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
   // Owner directive 2026-07-17: VTON steps honour the chosen engine. The Fal
   // FASHN v1.6 payload rides the CS6 durable adapter (provider:'fal').
   const useFalVton = state.vtonEngine === 'fal_fashn_v16'
-  const falVtonPayload = (personPath: string | undefined, garmentPath: string | undefined) => ({
+  const falVtonPayload = (
+    personPath: string | undefined,
+    garmentPath: string | undefined,
+    personRole?: 'father' | 'mother' | 'son' | 'daughter',
+  ) => ({
     ...base,
     provider: 'fal',
     falEngine: 'fal_fashn_v16',
@@ -287,6 +298,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       'fal-ai/fashn/tryon/v1.6',
       personPath,
       garmentPath,
+      personRole,
     ),
     clothType: isPanjabiTop(state.garmentType) ? 'overall' : undefined,
     fashnCategory: 'one-pieces',
@@ -314,7 +326,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       if (useFalVton) {
         return {
           payload: {
-            ...falVtonPayload(state.adultModelPath, adultGarment),
+            ...falVtonPayload(state.adultModelPath, adultGarment, state.adultRole),
             // supplier photos are always worn (model/mannequin)
             garmentPhotoType: state.preppedAdultGarmentPath ? 'model' : undefined,
           },
@@ -328,7 +340,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           provider: 'fashn',
           fashnModel: 'tryon-max',
           fashnInputs: { model_image: state.adultModelPath, product_image: adultGarment },
-          referenceContract: tryOnReferenceContract('fashn', 'tryon-max', state.adultModelPath, adultGarment),
+          referenceContract: tryOnReferenceContract(
+            'fashn',
+            'tryon-max',
+            state.adultModelPath,
+            adultGarment,
+            state.adultRole,
+          ),
           fashnOptions: {
             prompt: fashnPosePrompt(state.scene.adultPose, state.scene, [pajama, state.extraPrompt].filter(Boolean).join(' ')),
             resolution: state.resolution,
@@ -385,7 +403,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       if (useFalVton) {
         return {
           payload: {
-            ...falVtonPayload(state.childModelPath, childGarment),
+            ...falVtonPayload(state.childModelPath, childGarment, state.childRole),
             // supplier references are worn (model/mannequin) shots
             garmentPhotoType: state.preppedChildGarmentPath || state.preppedAdultGarmentPath ? 'model' : undefined,
           },
@@ -399,7 +417,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           provider: 'fashn',
           fashnModel: 'tryon-max',
           fashnInputs: { model_image: state.childModelPath, product_image: childGarment },
-          referenceContract: tryOnReferenceContract('fashn', 'tryon-max', state.childModelPath, childGarment),
+          referenceContract: tryOnReferenceContract(
+            'fashn',
+            'tryon-max',
+            state.childModelPath,
+            childGarment,
+            state.childRole,
+          ),
           fashnOptions: {
             prompt: fashnPosePrompt(
               state.scene.childPose,
