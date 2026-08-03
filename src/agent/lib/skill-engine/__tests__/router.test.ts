@@ -181,7 +181,11 @@ describe('U3 — the registry budget', () => {
   })
 
   it('shortens descriptions before dropping any skill', () => {
-    const b = buildRegistryBlock(fake(40))
+    // Sized off the budget rather than hard-coded, so raising the ceiling for a
+    // new tier cannot quietly turn this into a no-op (it did at 40 when the
+    // budget went to 13,000).
+    const enoughToOverflow = Math.ceil(REGISTRY_BUDGET_CHARS / 300) + 5
+    const b = buildRegistryBlock(fake(enoughToOverflow))
     expect(b.shortened).toBe(true)
     expect(b.dropped).toEqual([])
     expect(b.text.length).toBeLessThanOrEqual(REGISTRY_BUDGET_CHARS)

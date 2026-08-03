@@ -115,6 +115,11 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   isolated. All three rule-routed, each with the veto its verb needs
     //   ("khujo" is also research, "banao" is also Creative Studio).
     //   2026-08-03: Tier 2 completed — pdf-processor and workspace-launcher.
+    //   2026-08-03: Tier 3, chosen with Boss rather than taken from the plan's
+    //   list — mac-cli-session-runner (his CLI-session tools existed and were
+    //   going unused for want of a playbook), ios-simulator-verifier (kills the
+    //   TestFlight round-trip), mac-backup-verifier (the business documents live
+    //   on that Mac).
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -131,7 +136,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-staff-dispatch',
       'alma-website',
       'git-pr-workflow',
+      'ios-simulator-verifier',
       'mac-ai-app-operator',
+      'mac-backup-verifier',
+      'mac-cli-session-runner',
       'mac-file-organizer',
       'mac-health-monitor',
       'media-transcoder',

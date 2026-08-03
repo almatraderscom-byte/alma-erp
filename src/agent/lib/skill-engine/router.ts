@@ -378,6 +378,28 @@ const PDF_GENERATE_ASK =
 const WORKSPACE_ASK =
   /((?:kaj|কাজ|hisab|হিসাব|code|কোড|office|অফিস)[^\n]{0,10}(?:er)?\s*(?:mode|মোড)|(?:mode|মোড)\s*(?:chalu|চালু|on\s*kor)|(?:amar|আমার)\s*(?:sob|সব|roj|রোজ)[^\n]{0,14}(?:app|অ্যাপ)[^\n]{0,12}(?:kholo|খোলো|chalu|open))/i
 
+/**
+ * ── Mac skills (Tier 3) ──────────────────────────────────────────────────────
+ */
+/** A Claude/Codex CLI session on his Mac — not the desktop app, not one command. */
+const CLI_SESSION_ASK =
+  /((?:claude|codex)\s*(?:cli\s*)?(?:session|সেশন)|(?:session|সেশন)\s*(?:ta\s*)?(?:kholo|khulo|khule|chalao|start|open|শুরু|খোলো)|(?:mac|ম্যাক)[^\n]{0,20}(?:session|সেশন))/i
+/** Running the app in the Simulator to LOOK at it. */
+const SIMULATOR_ASK =
+  /(simulator|সিমুলেটর|simulater|(?:build\s*kore|বিল্ড\s*করে)\s*(?:dekho|দেখো)|(?:app|অ্যাপ)[^\n]{0,20}(?:screen|স্ক্রিন)[^\n]{0,16}(?:thik|ঠিক|dekho|দেখো))/i
+/** Is this Mac backed up at all. */
+const BACKUP_WORD =
+  /(backup|ব্যাকআপ|back\s*up|time\s*machine|টাইম\s*মেশিন|(?:file|ফাইল|data|ডেটা)[^\n]{0,20}(?:safe|নিরাপদ|hariye|হারিয়ে))/i
+/**
+ * …but "backup" is also the PRODUCTION database and the website (this repo has
+ * `scripts/backup-production.mjs`). Those are server-side and have nothing to do
+ * with his laptop — pinning the Mac skill there sends a worker to check Time
+ * Machine when he asked about the ERP (Codex).
+ */
+const SERVER_BACKUP_REF =
+  /(database|ডাটাবেস|\bdb\b|erp\b|server|সার্ভার|production|prod\b|website|ওয়েবসাইট|supabase|vercel|vps)/i
+const BACKUP_ASK = (t: string): boolean => BACKUP_WORD.test(t) && !SERVER_BACKUP_REF.test(t)
+
 export interface RouterRule {
   id: string
   skill: string
@@ -436,11 +458,19 @@ export const RULES: RouterRule[] = [
     why: 'কে কখন আসছে/আছে — মানুষের হাজিরার প্রশ্ন, পার্সেলের নয়',
   },
   {
+    id: 'simulator-check',
+    skill: 'ios-simulator-verifier',
+    // BEFORE the release rule: "ios build kore dekho" is looking at the app,
+    // not shipping it, and the release rule owns the word "build".
+    test: (t) => SIMULATOR_ASK.test(t) && !TESTFLIGHT_ASK.test(t),
+    why: 'Simulator-এ চালিয়ে দেখা — TestFlight-এ পাঠানো নয়',
+  },
+  {
     id: 'testflight-build',
     skill: 'xcode-testflight-shipper',
     // BEFORE the git rule on purpose: a release ask says "build koro, push
     // koro" too, and the release has stricter gates than a plain PR.
-    test: (t) => TESTFLIGHT_ASK.test(t) || IOS_BUILD_ASK.test(t),
+    test: (t) => TESTFLIGHT_ASK.test(t) || (IOS_BUILD_ASK.test(t) && !SIMULATOR_ASK.test(t)),
     why: 'iPhone অ্যাপের রিলিজ — build নম্বর আর pipeline-এর নিজস্ব গেট আছে',
   },
   {
@@ -462,6 +492,19 @@ export const RULES: RouterRule[] = [
     skill: 'mac-ai-app-operator',
     test: (t) => (AI_APP_ASK(t) || NEW_CHAT_ASK.test(t)) && !SCREEN_LOOK_ASK(t),
     why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
+  },
+  {
+    id: 'cli-session',
+    skill: 'mac-cli-session-runner',
+    // Before the app rule: "claude session kholo" is the CLI, not the GUI app.
+    test: (t) => CLI_SESSION_ASK.test(t),
+    why: 'Mac-এ Claude/Codex সেশন চালানোর কথা — অ্যাপ নয়, CLI',
+  },
+  {
+    id: 'backup-check',
+    skill: 'mac-backup-verifier',
+    test: (t) => BACKUP_ASK(t),
+    why: 'ব্যাকআপ আছে কিনা — শুধু পড়ার কাজ',
   },
   {
     id: 'mac-health',
@@ -621,10 +664,16 @@ export function scoreCandidates(index: SkillIndex, text: string): RouteCandidate
  *    (~750 extra tokens at the new ceiling) and it lives in the STABLE prompt
  *    prefix, so it is a cache read per turn, not a fresh write.
  *
- * The cliff itself stays: crossing 9,000 is the next decision, not a silent
+ * RAISED AGAIN 9,000 → 13,000 on 2026-08-03 for the Tier-3 Mac skills, on the
+ * same reasoning and one more fact: this block is still not wired into any live
+ * prompt (`buildRegistryBlock` has no production caller yet), so the raise costs
+ * nothing today and the guard keeps doing the only job it currently has —
+ * failing loudly instead of shortening every description at once.
+ *
+ * The cliff itself stays: crossing 13,000 is the next decision, not a silent
  * quality drop.
  */
-export const REGISTRY_BUDGET_CHARS = 9000
+export const REGISTRY_BUDGET_CHARS = 13000
 const MIN_DESCRIPTION_CHARS = 80
 
 export interface RegistryBlock {

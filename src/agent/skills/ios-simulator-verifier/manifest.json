@@ -1,0 +1,33 @@
+{
+  "name": "ios-simulator-verifier",
+  "description": "Builds the iPhone app and runs it in the Simulator on Boss's Mac, then looks at the screen and reports what it actually shows — so a UI problem is found before a TestFlight build instead of on his phone. Use when Boss asks to check the app before shipping, or whether a screen looks right.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "isolation": "subagent",
+  "whenNotToUse": "Actually shipping to TestFlight → xcode-testflight-shipper. Web pages rendered inside the app → his own Chrome with `?native=1`, which needs no build at all. Real push notifications, real Face ID, real device feel — those cannot be simulated and belong on his phone.",
+  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_desk_control", "mac_agent_status"],
+  "dependencies": { "capability": ["run_mac_command", "mac_desk_control"] },
+  "outputContract": {
+    "kind": "simulator_check",
+    "mustInclude": ["build_result", "what_the_screen_showed", "problems_found"]
+  },
+  "stopConditions": [
+    "build ব্যর্থ — আসল error লাইনটা দেখাও, ঘুরপথ খুঁজো না",
+    "কোন স্ক্রিন দেখতে হবে সেটা অস্পষ্ট",
+    "ছবি না দেখে কোনো রায় দেওয়া",
+    "TestFlight-এ পাঠানোর কথা উঠলে — সেটা অন্য skill আর Boss-এর অনুমতি"
+  ],
+  "done": [
+    { "tool": "run_mac_command", "argMatch": "xcodebuild|simctl" },
+    { "tool": "mac_desk_control" }
+  ],
+  "networkPolicy": "none",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 18,
+  "status": "active"
+}
