@@ -49,6 +49,19 @@ import {
   requiresStudioRunPaidAttemptAuthorization,
   studioRunQueueJobOptions,
 } from './studio-run-authorize.mjs'
+import {
+  PREVIEW_WORKER_SCOPE,
+  PREVIEW_WORKER_SCOPE_HEADER,
+  selectPreviewImageJob,
+} from './preview-image-e2e.mjs'
+
+const PREVIEW_E2E_APP_URL = String(process.env.WORKER_PREVIEW_E2E_APP_URL ?? '').trim().replace(/\/$/, '')
+const PREVIEW_E2E_PROJECT_ID = String(process.env.WORKER_PREVIEW_E2E_PROJECT_ID ?? '').trim()
+const PREVIEW_E2E_MODE = Boolean(PREVIEW_E2E_APP_URL || PREVIEW_E2E_PROJECT_ID)
+if (PREVIEW_E2E_MODE && (!PREVIEW_E2E_APP_URL || !PREVIEW_E2E_PROJECT_ID)) {
+  throw new Error('WORKER_PREVIEW_E2E_APP_URL and WORKER_PREVIEW_E2E_PROJECT_ID are both required')
+}
+if (PREVIEW_E2E_MODE) process.env.APP_URL = PREVIEW_E2E_APP_URL
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -144,6 +157,8 @@ const seoAuditQueue = new Queue('seo-audit', {
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 const stuckReenqueueCounts = new Map()
+let previewE2eTargetActionId = null
+let previewE2eReportedResult = null
 
 const STUCK_APPROVED_MS = 10 * 60 * 1000
 const STUCK_MAX_REENQUEUES = 5
@@ -1141,6 +1156,8 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
         return callJobResult(pendingActionId, status, data, error, attempt + 1)
       }
+    } else if (PREVIEW_E2E_MODE && pendingActionId === previewE2eTargetActionId) {
+      previewE2eReportedResult = { status, data, error }
     }
   } catch (err) {
     console.error('[worker] job-result callback error:', err.message)
@@ -1152,6 +1169,53 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
 }
 
 // ── Workers ────────────────────────────────────────────────────────────────
+
+async function runPreviewImageE2e() {
+  if (!PREVIEW_E2E_MODE) return false
+  const timeoutMs = Math.min(
+    30 * 60_000,
+    Math.max(60_000, Number(process.env.WORKER_PREVIEW_E2E_TIMEOUT_MS) || 15 * 60_000),
+  )
+  const deadline = Date.now() + timeoutMs
+  console.log(`[preview-e2e] waiting for signed image job in project ${PREVIEW_E2E_PROJECT_ID}`)
+  while (Date.now() < deadline) {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
+      headers: {
+        Authorization: `Bearer ${getInternalToken()}`,
+        [PREVIEW_WORKER_SCOPE_HEADER]: PREVIEW_WORKER_SCOPE,
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) throw new Error(`preview_pending_jobs_http_${res.status}`)
+    const body = await res.json()
+    const job = selectPreviewImageJob(body.jobs, PREVIEW_E2E_PROJECT_ID)
+    if (job) {
+      previewE2eTargetActionId = job.id
+      console.log(`[preview-e2e] processing isolated action ${job.id}`)
+      await processImageGen({ data: { pendingActionId: job.id, payload: job.payload } })
+      if (previewE2eReportedResult?.status !== 'success') {
+        throw new Error(`preview_image_generation_failed:${previewE2eReportedResult?.error ?? 'missing_success_callback'}`)
+      }
+      console.log(`[preview-e2e] action ${job.id} completed successfully`)
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+  }
+  throw new Error('preview_image_job_timeout')
+}
+
+if (PREVIEW_E2E_MODE) {
+  try {
+    await runPreviewImageE2e()
+  } finally {
+    await Promise.all([
+      imageGenQueue, videoGenQueue, videoEditQueue, videoFinishQueue, audioGenQueue,
+      longTaskQueue, workbenchQueue, seoAuditQueue, staffDispatchQueue, csReplyQueue,
+      agentGraphQueue, browserTaskQueue,
+    ].map((queue) => queue.close().catch(() => undefined)))
+  }
+  process.exit(0)
+}
 
 const imageGenWorker = new Worker('image-gen', processImageGen, {
   connection,

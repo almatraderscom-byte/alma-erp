@@ -8,6 +8,7 @@ import {
   StudioRunAuthorizationError,
 } from '@/lib/creative-studio/studio-run-authorization'
 import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
+import { isPreviewApprovedCreativeStudioImageAction } from '@/lib/creative-studio/preview-worker-scope'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -67,7 +68,8 @@ export async function POST(req: NextRequest) {
       && action.type === 'image_gen'
       && payload.provider === 'campaign_pack_local'
     )
-    if (action.status !== 'approved' && !nonPaidLocalCampaign) {
+    const previewApproved = isPreviewApprovedCreativeStudioImageAction(action)
+    if (action.status !== 'approved' && !nonPaidLocalCampaign && !previewApproved) {
       throw new StudioRunAuthorizationError('run_job_not_approved', 409)
     }
     const authorization = asRecord(payload.studioRunAuthorization)

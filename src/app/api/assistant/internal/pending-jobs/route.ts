@@ -4,6 +4,11 @@ import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
+import {
+  CREATIVE_STUDIO_PREVIEW_STATUS,
+  isAuthorizedPreviewWorkerRequest,
+  isSignedCreativeStudioImagePayload,
+} from '@/lib/creative-studio/preview-worker-scope'
 
 export const runtime = 'nodejs'
 
@@ -32,8 +37,12 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
+  const previewWorker = isAuthorizedPreviewWorkerRequest(req)
   const jobs = await db.agentPendingAction.findMany({
-    where: {
+    where: previewWorker ? {
+      status: CREATIVE_STUDIO_PREVIEW_STATUS,
+      type: 'image_gen',
+    } : {
       // NOTE: this list is the single gate between "queued" and "the worker ever
       // sees it" — a job type missing here hangs at approved until the watchdog
       // checkpoints it (exactly how workbench_run was caught missing in the P2 e2e).
@@ -52,6 +61,9 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'asc' },
     take: 20,
   })
+  const dispatchableJobs = previewWorker
+    ? jobs.filter((job: { payload?: unknown }) => isSignedCreativeStudioImagePayload(job.payload))
+    : jobs
 
   // Phase 5 execution lease (roadmap §A leaseUntil): handing a job to the worker
   // takes the lease on its WorkflowRun, so overlapping polls / a second worker
@@ -71,18 +83,18 @@ export async function GET(req: NextRequest) {
   // Phase 7 kill switch: AGENT_WORKFLOW_LEASES=false hands every job out
   // unleased (pre-Phase-5 behavior) without a deploy.
   if (process.env.AGENT_WORKFLOW_LEASES === 'false') {
-    return Response.json({ jobs })
+    return Response.json({ jobs: dispatchableJobs })
   }
   try {
     const { acquireWorkflowLease } = await import('@/agent/lib/workflow-run')
     const handout: unknown[] = []
-    for (const job of jobs as Array<{ id: string; type: string }>) {
+    for (const job of dispatchableJobs as Array<{ id: string; type: string }>) {
       const lease = await acquireWorkflowLease(job.id, LEASE_TTL_MS[job.type] ?? 5 * 60_000)
         .catch(() => 'no_run' as const)
       if (lease !== 'held') handout.push(job)
     }
     return Response.json({ jobs: handout })
   } catch {
-    return Response.json({ jobs }) // lease layer down → behave exactly as before
+    return Response.json({ jobs: dispatchableJobs }) // lease layer down → behave exactly as before
   }
 }
