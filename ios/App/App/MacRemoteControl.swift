@@ -95,6 +95,11 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     /// the DISPLAY rather than of the letterboxed view.
     private(set) var videoSize: CGSize = .zero
     var onVideoSize: ((CGSize) -> Void)?
+
+    /// A display switch restarts the broadcaster on a possibly different-sized
+    /// screen. Forget the cached size so the next videoSizeChanged is always
+    /// treated as new — even if the dimensions happen to match (Codex P2).
+    func markVideoSizeStale() { videoSize = .zero }
     var onConnectionLost: (() -> Void)?
     /// RC-3: Agora warns ~30s before a token dies. Whoever owns the switch
     /// decides which token to renew — control if armed, view-only if not.
@@ -207,8 +212,11 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     func rtcEngine(_ engine: AgoraRtcEngineKit, videoSizeChangedOf sourceType: AgoraVideoSourceType,
                    uid: UInt, size: CGSize, rotation: Int) {
         guard uid == 1, size.width > 0, size.height > 0 else { return }
+        let changed = videoSize != size
         videoSize = size
-        DispatchQueue.main.async { self.onVideoSize?(size) }
+        // After markVideoSizeStale() the cached value is zero, so re-report even
+        // when the new display's dimensions equal the old ones.
+        if changed { DispatchQueue.main.async { self.onVideoSize?(size) } }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, connectionChangedTo state: AgoraConnectionState,
@@ -937,8 +945,14 @@ final class TrackpadSurfaceView: UIView {
         let all = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled } ?? touches
         if all.count >= 2 {
             // A second finger arriving during an aim cancels the aim — the
-            // owner is scrolling, not clicking.
-            if phase == .aiming {
+            // owner is scrolling, not clicking. A drag already in progress
+            // must RELEASE the held button first, or overwriting the phase to
+            // .twoFinger skips the dragUp and the Mac's button stays down
+            // (Codex P1).
+            if phase == .dragging {
+                store?.sendDrag(down: false)
+            }
+            if phase == .aiming || phase == .dragging {
                 onAimZoom?(nil)
                 onAimTarget?(nil)
                 onInteracting?(false)
@@ -1061,7 +1075,17 @@ final class TrackpadSurfaceView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard store?.armed == true else { phase = .idle; return }
+        guard store?.armed == true else {
+            // Disarmed mid-gesture (connection lost / owner off): the magnifier
+            // and the hidden chrome must not stay stuck (Codex P2).
+            if phase == .aiming || phase == .dragging {
+                onAimZoom?(nil)
+                onAimTarget?(nil)
+                onInteracting?(false)
+            }
+            phase = .idle
+            return
+        }
         let remaining = event?.allTouches?.filter { $0.phase != .ended && $0.phase != .cancelled }.count ?? 0
         cancelLongPress()
         flushPendingMotion()
