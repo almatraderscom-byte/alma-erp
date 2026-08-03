@@ -42,6 +42,16 @@ export const MAX_SCENARIO_CHARS = 500
 export const MAX_TOPIC_CHARS = 40
 /** An L2 block must actually match the turn; the persona block is exempt. */
 const L2_SIMILARITY_THRESHOLD = 0.35
+/**
+ * A block older than this stops being injected (Codex P1, PR #711).
+ *
+ * The weekly job is the only thing that refreshes these rows. If it ever stops —
+ * cron disabled, route broken, model failing — the digests would otherwise keep
+ * describing a business that has moved on, with nothing to signal it. Five weeks
+ * tolerates a few missed runs and then falls silent, which is the safe direction:
+ * the facts themselves are still retrieved.
+ */
+const DIGEST_MAX_AGE_DAYS = 35
 
 export interface DigestTarget {
   scope: 'personal' | 'business'
@@ -133,6 +143,26 @@ async function loadSourceFacts(target: DigestTarget): Promise<Array<{ id: string
   )
 }
 
+/** SQL fragment identifying one digest slot's rows (personal has a NULL business). */
+function slotMatch(target: DigestTarget): string {
+  return target.businessId === null ? `business_id IS NULL` : `business_id = '${target.businessId}'`
+}
+
+/**
+ * Drops a slot's blocks without writing new ones.
+ *
+ * Needed when a scope no longer has enough facts to distill (Codex P1, PR #711):
+ * the old blocks would otherwise survive forever, and since the persona block is
+ * injected on every turn, facts the owner deliberately deleted in the weekly
+ * revision would keep speaking from a summary. No facts, no summary.
+ */
+export async function clearDigestRows(target: DigestTarget): Promise<void> {
+  await db.$executeRawUnsafe(
+    `DELETE FROM agent_memory_digest WHERE scope = $1 AND ${slotMatch(target)}`,
+    target.scope,
+  )
+}
+
 /** Replaces every stored block for one slot in a single transaction. */
 async function writeDigestRows(
   target: DigestTarget,
@@ -140,7 +170,7 @@ async function writeDigestRows(
   sourceIds: string[],
 ): Promise<void> {
   const businessId = target.businessId
-  const businessMatch = businessId === null ? `business_id IS NULL` : `business_id = '${businessId}'`
+  const businessMatch = slotMatch(target)
 
   const statements = [
     db.$executeRawUnsafe(
@@ -182,6 +212,8 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
   const label = target.businessId ? `${target.scope}:${target.businessId}` : target.scope
   const facts = await loadSourceFacts(target)
   if (facts.length < MIN_SOURCE_FACTS) {
+    // The facts are gone — so must be any summary of them.
+    await clearDigestRows(target)
     return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'too_few_facts' }
   }
 
@@ -196,6 +228,9 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
 
   const distilled = parseDistilledDigest(raw)
   if (!distilled.persona && distilled.scenarios.length === 0) {
+    // Facts still exist — only this run produced nothing (a flaky or throttled
+    // model call). The previous blocks are kept rather than thrown away, and the
+    // freshness window above stops them from lingering if this keeps happening.
     return { target: label, sourceFacts: facts.length, personaWritten: false, scenariosWritten: 0, skipped: 'no_signal' }
   }
 
@@ -274,6 +309,7 @@ export async function retrieveMemoryDigests(opts: {
       `SELECT id, topic, content
        FROM agent_memory_digest
        WHERE layer = 'L3' AND scope = '${scope}' AND ${businessMatch}
+         AND refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
        ORDER BY refreshed_at DESC
        LIMIT 1`,
       ...businessParams,
@@ -295,6 +331,7 @@ export async function retrieveMemoryDigests(opts: {
            FROM agent_memory_digest
            WHERE layer = 'L2' AND scope = '${scope}' AND ${businessMatch}
              AND embedding IS NOT NULL
+             AND refreshed_at > NOW() - INTERVAL '${DIGEST_MAX_AGE_DAYS} days'
            ORDER BY embedding <=> $${vecParamIndex}::vector
            LIMIT 2`,
           ...businessParams,

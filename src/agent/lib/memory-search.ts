@@ -39,6 +39,16 @@ const ARM_FETCH_MULTIPLIER = 3
  * must not silently disappear now that recall is hybrid.
  */
 const NO_LEXEME_TSQUERY = 'zzz_no_lexeme_zzz'
+/**
+ * Expired facts must not come back through search (Codex P2, PR #711).
+ *
+ * A day-scoped fact ("আজ অফিস ছুটি") stops being true after its expiry, and the
+ * per-turn retrieval path has always filtered on this. This search path did NOT
+ * — not on the new keyword arm and, as it turns out, not on the pre-existing
+ * vector arm either. Both are filtered now, so an old daily event cannot
+ * resurface as if it were still standing.
+ */
+const LIVE_FACTS_ONLY = `AND (expires_at IS NULL OR expires_at > NOW())`
 
 type Row = {
   id: string
@@ -82,7 +92,7 @@ export async function searchAgentMemory(opts: {
           `SELECT id, scope, key, content, pinned, metadata,
                   1 - (embedding <=> $1::vector) AS score
            FROM agent_memory
-           WHERE embedding IS NOT NULL ${scopeClause} ${metaClause}
+           WHERE embedding IS NOT NULL ${LIVE_FACTS_ONLY} ${scopeClause} ${metaClause}
            ORDER BY embedding <=> $1::vector
            LIMIT $2`,
           vec,
@@ -95,7 +105,7 @@ export async function searchAgentMemory(opts: {
        FROM agent_memory
        WHERE (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
               OR content ILIKE ANY($2::text[]))
-         ${scopeClause} ${metaClause}
+         ${LIVE_FACTS_ONLY} ${scopeClause} ${metaClause}
        ORDER BY score DESC, "createdAt" DESC
        LIMIT $3`,
       tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,

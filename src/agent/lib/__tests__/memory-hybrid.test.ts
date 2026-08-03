@@ -34,6 +34,19 @@ describe('extractQueryTokens', () => {
     expect(extractQueryTokens('"পেমেন্ট", (bkash)!')).toEqual(['পেমেন্ট', 'bkash'])
   })
 
+  // Codex P2 (PR #711): collapsing ORD-123 → ord123 matched neither the stored
+  // substring nor any lexeme, defeating the exact-identifier case entirely.
+  it('keeps separators INSIDE an identifier', () => {
+    expect(extractQueryTokens('ORD-123 kothay')).toContain('ord-123')
+    expect(extractQueryTokens('invoice INV_88/2026')).toContain('inv_88/2026')
+  })
+
+  it('strips separators at the edges of a token', () => {
+    expect(extractQueryTokens('-ORD-123-')).toEqual(['ord-123'])
+    expect(extractQueryTokens('...')).toEqual([])
+    expect(extractQueryTokens('--')).toEqual([])
+  })
+
   it('deduplicates and caps the token count', () => {
     const tokens = extractQueryTokens('alpha beta alpha gamma delta epsilon zeta eta theta iota kappa')
     expect(new Set(tokens).size).toBe(tokens.length)
@@ -54,6 +67,26 @@ describe('buildOrTsQuery / buildLikePatterns', () => {
     // Tokens are cleaned before they get here — nothing but letters/digits survives.
     const tokens = extractQueryTokens('a&b | c:*')
     expect(buildOrTsQuery(tokens)).not.toMatch(/[&:*()!]/)
+  })
+
+  it('splits identifier tokens into their parts for the tsquery arm', () => {
+    // Postgres indexes ORD-123 as 'ord-123', 'ord' and '123', so the parts hit
+    // the same rows — and no separator can reach the tsquery grammar.
+    expect(buildOrTsQuery(['ord-123'])).toBe('ord | 123')
+    expect(buildOrTsQuery(['inv_88/2026'])).toBe('inv | 88 | 2026')
+  })
+
+  it('never lets a separator into the tsquery string', () => {
+    const tokens = extractQueryTokens('ORD-123 INV_88/2026 bkash.01711')
+    expect(buildOrTsQuery(tokens)).not.toMatch(/[-_./]/)
+  })
+
+  it('deduplicates repeated parts across identifiers', () => {
+    expect(buildOrTsQuery(['ord-123', 'ord-456'])).toBe('ord | 123 | 456')
+  })
+
+  it('keeps the FULL identifier for the ILIKE arm — the exact substring is the point', () => {
+    expect(buildLikePatterns(['ord-123'])).toEqual(['%ord-123%'])
   })
 
   it('builds ILIKE patterns for long tokens and digit tokens only', () => {

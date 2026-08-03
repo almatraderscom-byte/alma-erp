@@ -46,19 +46,32 @@ const MIN_LIKE_TOKEN_LEN = 4
 export const MAX_LIKE_PATTERNS = 5
 
 /**
- * Strips everything that is not a letter, digit or combining mark.
+ * Separators that belong INSIDE an identifier — `ORD-123`, `2026/07`, `INV_88`.
+ * Kept between alphanumerics, stripped at the edges.
+ */
+const INTERNAL_SEPARATOR_SPLIT = /[-_./]+/
+const EDGE_SEPARATORS = /^[-_./]+|[-_./]+$/g
+
+/**
+ * Strips everything that is not a letter, digit, combining mark or internal
+ * separator.
  *
  * `\p{M}` is NOT optional here: Bangla builds words out of a base letter plus
  * matras and the hasant (U+09CD), all of which are combining marks. Dropping
  * them turned "পেমেন্ট" into "পমনট" — a token that matches nothing in the
- * database and silently killed Bangla keyword recall. Zero-width joiners are
- * still removed: they are invisible, inconsistently typed, and would make two
- * identical-looking words fail to match.
+ * database and silently killed Bangla keyword recall.
+ *
+ * Internal separators survive for the same reason (Codex review, PR #711):
+ * collapsing "ORD-123" to "ord123" produced a token matching neither the stored
+ * substring nor any lexeme — precisely the exact-identifier case this arm exists
+ * to recover. Zero-width joiners are still removed: they are invisible,
+ * inconsistently typed, and would make two identical-looking words fail to match.
  */
 function cleanToken(raw: string): string {
   return raw
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[^\p{L}\p{N}\p{M}]/gu, '')
+    .replace(/[^\p{L}\p{N}\p{M}\-_./]/gu, '')
+    .replace(EDGE_SEPARATORS, '')
     .toLowerCase()
 }
 
@@ -88,12 +101,23 @@ export function extractQueryTokens(text: string, limit = MAX_QUERY_TOKENS): stri
  * OR-joined tsquery for `to_tsquery('simple', …)`.
  *
  * plainto_tsquery ANDs every term, which finds nothing for a normal sentence —
- * so the OR query is built here. Tokens are already stripped to letters/digits,
- * so no tsquery operator can survive into the string (the value is still passed
- * as a bound parameter).
+ * so the OR query is built here.
+ *
+ * Identifier tokens are SPLIT on their separators for this arm: Postgres indexes
+ * "ORD-123" as the lexemes 'ord-123', 'ord' and '123', so searching the parts
+ * hits the same rows, and it guarantees nothing but letters, digits and marks
+ * reaches to_tsquery — no character that the tsquery grammar could read as an
+ * operator. The full token with its separators is still used for the ILIKE arm,
+ * where the exact substring is what matters. (Value is a bound parameter.)
  */
 export function buildOrTsQuery(tokens: string[]): string {
-  return tokens.join(' | ')
+  const terms = new Set<string>()
+  for (const token of tokens) {
+    for (const part of token.split(INTERNAL_SEPARATOR_SPLIT)) {
+      if (part) terms.add(part)
+    }
+  }
+  return [...terms].join(' | ')
 }
 
 /** `%token%` patterns for the trigram arm — long tokens only, capped. */
