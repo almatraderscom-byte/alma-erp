@@ -698,6 +698,17 @@ final class MacRemoteControlStore {
         _ = session?.send(["a": "w", "dx": dx, "dy": dy], ordered: false)
     }
 
+    /// Begin an aim drag: pin the position and press the button, both on the
+    /// ordered lane and in order, so mouse-down never precedes its position.
+    func sendAimDragStart(x: Double, y: Double) {
+        guard armed else { return }
+        touched()
+        dragging = true
+        _ = session?.send(["a": "p", "x": x, "y": y], ordered: true)
+        _ = session?.send(["a": "dd"])
+        RemoteHaptics.drag()
+    }
+
     func sendDrag(down: Bool) {
         guard armed else { return }
         touched()
@@ -1222,7 +1233,18 @@ final class TrackpadSurfaceView: UIView {
                 // to do it would break the flow. Right-click stays on the
                 // two-finger tap, the same as everywhere else.
                 self.phase = .dragging
-                self.store?.sendDrag(down: true)
+                // Pin the cursor on the ORDERED lane before mouse-down, or dd
+                // can overtake the earlier unordered position and the drag
+                // starts at the previous spot (Codex P2).
+                let rect = self.videoRect
+                let target = self.aimPoint(for: self.lastPoint)
+                if rect.width > 0, rect.height > 0 {
+                    self.store?.sendAimDragStart(
+                        x: Double(min(max(0, (target.x - rect.minX) / rect.width), 1)),
+                        y: Double(min(max(0, (target.y - rect.minY) / rect.height), 1)))
+                } else {
+                    self.store?.sendDrag(down: true)
+                }
                 return
             }
             guard self.phase == .undecided else { return }

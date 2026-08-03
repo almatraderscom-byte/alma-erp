@@ -528,11 +528,17 @@ struct AgentLiveDockSheet: View {
                                 .allowsHitTesting(false))
                         if let displays = store.feed?.macDisplays, displays.count > 1 {
                             MacDisplayPicker(displays: displays, pal: pal) { index in
+                                // Re-tapping the current display is a no-op on
+                                // the daemon (it only restarts on a CHANGE), so
+                                // clearing the size caches here would strand aim
+                                // with no fresh videoSizeChanged to follow
+                                // (Codex P2).
+                                guard index != displays.index else { return }
                                 // The new display can have a different aspect;
                                 // until Agora reports the replacement stream's
                                 // size, aim clicks must not map through the old
-                                // one (Codex P2). Zero it so the commit guard
-                                // refuses until the fresh size arrives.
+                                // one. Zero it so the commit guard refuses until
+                                // the fresh size arrives.
                                 control.videoSize = .zero
                                 macSession.markVideoSizeStale()
                                 Task { await store.switchDisplay(to: index) }
