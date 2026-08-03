@@ -1497,15 +1497,16 @@ struct MacScreenFullScreen: View {
         .persistentSystemOverlays(.hidden)
         .onAppear {
             control.fullScreen = true
-            // Lock first, then ask: the request is refused unless the
-            // delegate already allows the orientation being requested.
-            AppDelegate.orientationLock = .landscape
-            Self.requestOrientation(.landscapeRight)
+            // The APP does not rotate — only this view's content does. The
+            // owner was explicit: he wants the Mac wide, not his chat, his
+            // dashboard and everything else turning sideways with it. Pinning
+            // the window to portrait also makes the rotation deterministic:
+            // the content is always turned exactly once, by us.
+            AppDelegate.orientationLock = .portrait
         }
         .onDisappear {
             control.fullScreen = false
             AppDelegate.orientationLock = .allButUpsideDown
-            Self.requestOrientation(.portrait)
         }
     }
 
@@ -1521,13 +1522,6 @@ struct MacScreenFullScreen: View {
             }
             .padding(.bottom, 14)
         }
-    }
-
-    private static var isLandscape: Bool {
-        (UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }?
-            .interfaceOrientation.isLandscape) ?? false
     }
 
     private var controlStrip: some View {
@@ -1622,26 +1616,4 @@ struct MacScreenFullScreen: View {
         .accessibilityLabel(label)
     }
 
-    /// Ask the system to rotate. The app already allows landscape, so this is
-    /// a nudge, not a lock — the owner can still turn the phone himself.
-    private static func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        // The FOREGROUND scene, not merely the first one — `connectedScenes` is
-        // an unordered set and the first entry can be a background scene, in
-        // which case the rotation request is silently ignored.
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
-        guard let scene else { return }
-        // The system asks the TOP-most presented controller, not the root, so
-        // the invalidation has to reach it or the request is ignored.
-        var top = scene.keyWindow?.rootViewController
-        while let presented = top?.presentedViewController { top = presented }
-        top?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-            // Nothing to do — the owner can always rotate the phone himself.
-            _ = error
-        }
-    }
 }
