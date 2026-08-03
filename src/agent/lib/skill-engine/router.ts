@@ -388,8 +388,17 @@ const CLI_SESSION_ASK =
 const SIMULATOR_ASK =
   /(simulator|সিমুলেটর|simulater|(?:build\s*kore|বিল্ড\s*করে)\s*(?:dekho|দেখো)|(?:app|অ্যাপ)[^\n]{0,20}(?:screen|স্ক্রিন)[^\n]{0,16}(?:thik|ঠিক|dekho|দেখো))/i
 /** Is this Mac backed up at all. */
-const BACKUP_ASK =
+const BACKUP_WORD =
   /(backup|ব্যাকআপ|back\s*up|time\s*machine|টাইম\s*মেশিন|(?:file|ফাইল|data|ডেটা)[^\n]{0,20}(?:safe|নিরাপদ|hariye|হারিয়ে))/i
+/**
+ * …but "backup" is also the PRODUCTION database and the website (this repo has
+ * `scripts/backup-production.mjs`). Those are server-side and have nothing to do
+ * with his laptop — pinning the Mac skill there sends a worker to check Time
+ * Machine when he asked about the ERP (Codex).
+ */
+const SERVER_BACKUP_REF =
+  /(database|ডাটাবেস|\bdb\b|erp\b|server|সার্ভার|production|prod\b|website|ওয়েবসাইট|supabase|vercel|vps)/i
+const BACKUP_ASK = (t: string): boolean => BACKUP_WORD.test(t) && !SERVER_BACKUP_REF.test(t)
 
 export interface RouterRule {
   id: string
@@ -494,7 +503,7 @@ export const RULES: RouterRule[] = [
   {
     id: 'backup-check',
     skill: 'mac-backup-verifier',
-    test: (t) => BACKUP_ASK.test(t),
+    test: (t) => BACKUP_ASK(t),
     why: 'ব্যাকআপ আছে কিনা — শুধু পড়ার কাজ',
   },
   {

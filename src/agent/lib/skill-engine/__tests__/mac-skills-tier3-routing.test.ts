@@ -51,6 +51,15 @@ describe('is this Mac backed up', () => {
     expect(applyRules('amar file gulo safe to')?.skill).toBe('mac-backup-verifier')
   })
 
+  // Codex: "backup" is also the production database and the website — those
+  // are server-side, and sending a worker to check Time Machine instead is the
+  // wrong machine entirely.
+  it('does not take a SERVER backup question', () => {
+    expect(applyRules('erp database er backup ache to?')).toBeNull()
+    expect(applyRules('website er backup koto din por por hoy')).toBeNull()
+    expect(applyRules('production db backup dekho')).toBeNull()
+  })
+
   it('does not take tidying or disk-space work', () => {
     expect(applyRules('downloads folder ta porishkar koro')?.skill).toBe('mac-file-organizer')
     expect(applyRules('disk full dekhacche, dekho to')?.skill).toBe('mac-health-monitor')

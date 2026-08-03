@@ -31,7 +31,7 @@ keywords: simulator e dekho, app ta dekho, screen thik ache kina, simulator chal
 
 ৩. **চালানো** —
    `xcrun simctl install booted /tmp/alma-sim-dd/Build/Products/Debug-iphonesimulator/App.app`
-   তারপর `xcrun simctl launch booted com.almatraders.app`।
+   তারপর `xcrun simctl launch booted com.almatraders.erp`।
 
 ৪. **দেখা** — `mac_desk_control` action="screenshot"। ছবিটা চ্যাটেই আসে **আর
    ফলাফলে `screenContents`-এ লেখা থাকে স্ক্রিনে কী দেখা যাচ্ছে** — সেটাই তোমার
