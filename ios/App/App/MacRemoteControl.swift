@@ -444,6 +444,12 @@ final class MacRemoteControlStore {
     /// A finger is on the video right now — the full-screen chrome hides so it
     /// can never sit on top of what is being aimed at.
     var interacting = false
+    /// Messages an automatic disarm leaves behind. Pressing the control button
+    /// is the correct answer to each, so the touch nudge may replace them.
+    static let autoDisarmIdleBn = "নিষ্ক্রিয় থাকায় কন্ট্রোল বন্ধ হয়েছে।"
+    static let autoDisarmRenewBn = "কন্ট্রোলের মেয়াদ নবায়ন হয়নি।"
+    static let autoDisarmLostBn = "সংযোগ কেটে গেছে — কন্ট্রোল বন্ধ।"
+    static let autoDisarmStreamBn = "লাইভ ভিউ বন্ধ — কন্ট্রোলও বন্ধ।"
     /// RC-2.5: first tap aims (the Mac paints a solid ring), second commits.
     /// Off by default — the snap already makes ordinary targets safe; this is
     /// the brake for the small ones, and the owner decides when he wants it.
@@ -497,7 +503,7 @@ final class MacRemoteControlStore {
             guard let self, self.armed else { return }
             self.armed = false
             self.dragging = false
-            self.statusBn = "সংযোগ কেটে গেছে — কন্ট্রোল বন্ধ।"
+            self.statusBn = Self.autoDisarmLostBn
             self.renewTask?.cancel()
             // The heal rejoins with a NEW uid, so the old pin would hold the
             // Mac for the rest of its lease and answer the next arm with
@@ -595,7 +601,7 @@ final class MacRemoteControlStore {
                 try? await Task.sleep(nanoseconds: UInt64(45 * 1_000_000_000))
                 guard let self, self.armed, !Task.isCancelled else { return }
                 if Date().timeIntervalSince(self.lastTouchAt) > self.idleDisarmAfter {
-                    await self.disarm(reason: "নিষ্ক্রিয় থাকায় কন্ট্রোল বন্ধ হয়েছে।")
+                    await self.disarm(reason: Self.autoDisarmIdleBn)
                     return
                 }
                 await self.renew()
@@ -609,7 +615,7 @@ final class MacRemoteControlStore {
             "POST", "/api/assistant/mac-agent/screen-control-token",
             body: ControlTokenRequest(deviceId: deviceId, uid: session.uid, on: true)
         ), resp.token != nil else {
-            await disarm(reason: "কন্ট্রোলের মেয়াদ নবায়ন হয়নি।")
+            await disarm(reason: Self.autoDisarmRenewBn)
             return
         }
         // The lease is renewed server-side by the same call; the Agora token
@@ -663,12 +669,17 @@ final class MacRemoteControlStore {
     func nudgeToArm() {
         guard !armed, !busy else { return }
         RemoteHaptics.refused()
-        // Never clobber a server refusal ("another device holds control", the
-        // kill switch, no stream) — that sentence tells him what to actually
-        // fix, while this one would only tell him to press a button that will
-        // fail again (Codex P2).
+        // Never clobber a REFUSAL ("another device holds control", the kill
+        // switch, no stream) — that sentence tells him what to actually fix,
+        // while this one would only send him to a button that fails again
+        // (Codex P2). An automatic disarm (idle, lapsed renewal, dropped
+        // connection) is different: pressing the button IS the answer there,
+        // so those messages step aside for the nudge.
         let nudge = "Mac ছুঁতে হলে আগে \u{201C}কন্ট্রোল চালু\u{201D} চাপুন।"
-        guard statusBn == nil || statusBn == nudge else { return }
+        let recoverable = statusBn == nil || statusBn == nudge
+            || statusBn == Self.autoDisarmIdleBn || statusBn == Self.autoDisarmRenewBn
+            || statusBn == Self.autoDisarmLostBn || statusBn == Self.autoDisarmStreamBn
+        guard recoverable else { return }
         statusBn = nudge
     }
 
