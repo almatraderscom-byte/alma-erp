@@ -21,7 +21,7 @@
  * DERIVED DATA ONLY. Every row is rebuilt from `agent_memory`; nothing is ever
  * authored here. Deleting the table costs nothing but a rebuild.
  */
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { agentSmartText } from '@/agent/lib/llm-text'
@@ -54,24 +54,37 @@ const L2_SIMILARITY_THRESHOLD = 0.35
 const DIGEST_MAX_AGE_DAYS = 35
 
 /**
- * A digest may only speak while every fact it was built from is still there.
+ * A digest may only speak while every fact it was built from is still true.
  *
- * Codex P1 round 2 (PR #711): clearing on rebuild only helps once a week. If the
- * owner approves a `memory_cleanup` on Saturday — or deletes one memory through
- * the tool or the API — the blocks would keep quoting the removed facts until
- * Friday. Checking the stored `source_ids` against live rows AT RETRIEVAL makes
- * a deletion take effect on the very next turn, and it covers every deletion
- * path there is, including ones added later: nothing has to remember to call an
- * invalidation hook.
+ * Codex P1 rounds 2–3 (PR #711). Round 2 established that a weekly rebuild is
+ * too slow: a deletion on any other day left the blocks quoting facts that no
+ * longer existed. Round 3 found the hole in the first fix — checking that each
+ * source ID still EXISTS says nothing about whether its content changed, and
+ * keyed saves (`createOrUpdateAgentMemory`, `update_memory`, owner corrections)
+ * rewrite a row in place while keeping its id.
  *
- * Strict on purpose — ONE missing source retires the block until the weekly
- * rebuild. A summary that quotes something the owner deleted is worse than no
- * summary, and the facts themselves are still retrieved either way.
+ * So the check is on CONTENT, not identity: each source is stored with an md5 of
+ * the text it was distilled from, and a block serves only while every source
+ * still hashes the same and has not expired. Postgres `md5()` and Node's md5
+ * agree byte for byte, so the comparison is exact.
+ *
+ * Content hashing rather than `updatedAt <= refreshed_at` on purpose: a row whose
+ * importance or expiry was merely refreshed — which happens whenever the head
+ * re-saves an identical observation — bumps the timestamp without changing what
+ * the summary said. Timestamps would retire a perfectly correct block; hashes
+ * only fire when the words actually changed.
+ *
+ * Strict: ONE changed, deleted or expired source retires the block until the
+ * weekly rebuild. A summary that misquotes the owner is worse than no summary,
+ * and the underlying facts are still retrieved either way.
  */
 const SOURCES_STILL_LIVE = `AND (
        d.source_ids IS NULL
-       OR (SELECT count(*) FROM agent_memory m
-           WHERE m.id IN (SELECT jsonb_array_elements_text(d.source_ids)))
+       OR (SELECT count(*)
+           FROM jsonb_to_recordset(d.source_ids) AS s(id text, h text)
+           JOIN agent_memory m ON m.id = s.id
+           WHERE md5(m.content) = s.h
+             AND (m.expires_at IS NULL OR m.expires_at > NOW()))
           = jsonb_array_length(d.source_ids)
      )`
 
@@ -154,12 +167,24 @@ function sourceClause(target: DigestTarget): string {
   return `scope != 'personal' AND ${businessFilter}`
 }
 
+/**
+ * Rolling data blobs are not standing facts.
+ *
+ * `business_snapshot` is one keyed row rewritten on every briefing — today's
+ * numbers, not how the owner works. Distilling it into a persona block would be
+ * wrong on the merits, and because its content changes daily it would also
+ * retire the block within a day of every rebuild (Codex P1 round 3, PR #711).
+ */
+const VOLATILE_SOURCE_TYPES = ['business_snapshot']
+
 async function loadSourceFacts(target: DigestTarget): Promise<Array<{ id: string; content: string; pinned: boolean }>> {
+  const volatileList = VOLATILE_SOURCE_TYPES.map((t) => `'${t}'`).join(', ')
   return db.$queryRawUnsafe(
     `SELECT id, content, pinned
      FROM agent_memory
      WHERE ${sourceClause(target)}
        AND (expires_at IS NULL OR expires_at > NOW())
+       AND (metadata->>'type' IS NULL OR metadata->>'type' NOT IN (${volatileList}))
      ORDER BY pinned DESC, importance DESC, COALESCE(last_used_at, "createdAt") DESC
      LIMIT ${SOURCE_FACT_LIMIT}`,
   )
@@ -185,11 +210,24 @@ export async function clearDigestRows(target: DigestTarget): Promise<void> {
   )
 }
 
+/** What a block was distilled from: the row id plus a hash of its exact text. */
+export interface SourceFingerprint {
+  id: string
+  h: string
+}
+
+/** md5 of the stored text — matches Postgres `md5(content)` byte for byte. */
+export function fingerprintSources(
+  facts: Array<{ id: string; content: string }>,
+): SourceFingerprint[] {
+  return facts.map((f) => ({ id: f.id, h: createHash('md5').update(f.content).digest('hex') }))
+}
+
 /** Replaces every stored block for one slot in a single transaction. */
 async function writeDigestRows(
   target: DigestTarget,
   rows: Array<{ layer: 'L2' | 'L3'; topic: string; content: string; embedding: string | null }>,
-  sourceIds: string[],
+  sources: SourceFingerprint[],
 ): Promise<void> {
   const businessId = target.businessId
   const businessMatch = slotMatch(target)
@@ -212,8 +250,8 @@ async function writeDigestRows(
         row.topic,
         row.content,
         row.embedding,
-        sourceIds.length,
-        JSON.stringify(sourceIds.slice(0, 60)),
+        sources.length,
+        JSON.stringify(sources.slice(0, SOURCE_FACT_LIMIT)),
       ),
     ),
   ]
@@ -278,7 +316,7 @@ export async function buildDigestForTarget(target: DigestTarget): Promise<Digest
     })
   }
 
-  await writeDigestRows(target, rows, facts.map((f) => f.id))
+  await writeDigestRows(target, rows, fingerprintSources(facts))
 
   return {
     target: label,

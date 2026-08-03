@@ -75,6 +75,30 @@ describe('buildDigestForTarget — stale digest cleanup', () => {
     expect(deleteStatements()).toHaveLength(0)
   })
 
+  it('stores a content fingerprint per source, not a bare id', async () => {
+    const { buildDigestForTarget, MIN_SOURCE_FACTS } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue(facts(MIN_SOURCE_FACTS + 1))
+    smartText.mockResolvedValue(
+      JSON.stringify({ persona: 'বস আগে থেকে জানাতে বলেন এবং দেরি হলে সাথে সাথে জানাতে চান।', scenarios: [] }),
+    )
+
+    await buildDigestForTarget({ scope: 'personal', businessId: null })
+
+    // Last INSERT parameter is the JSON source list.
+    const insertCall = mockPrisma.$executeRawUnsafe.mock.calls.find((c) => String(c[0]).includes('INSERT INTO'))
+    const stored = JSON.parse(String(insertCall?.[insertCall.length - 1]))
+    expect(stored[0]).toEqual({ id: expect.any(String), h: expect.stringMatching(/^[0-9a-f]{32}$/) })
+  })
+
+  it('excludes the rolling daily snapshot from the source set', async () => {
+    const { buildDigestForTarget, MIN_SOURCE_FACTS } = await import('@/agent/lib/memory-digest')
+    mockPrisma.$queryRawUnsafe.mockResolvedValue(facts(MIN_SOURCE_FACTS - 1))
+
+    await buildDigestForTarget({ scope: 'personal', businessId: null })
+
+    expect(String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])).toContain("NOT IN ('business_snapshot')")
+  })
+
   it('replaces the slot in one transaction on a successful build', async () => {
     const { buildDigestForTarget, MIN_SOURCE_FACTS } = await import('@/agent/lib/memory-digest')
     mockPrisma.$queryRawUnsafe.mockResolvedValue(facts(MIN_SOURCE_FACTS + 5))
@@ -97,7 +121,7 @@ describe('buildDigestForTarget — stale digest cleanup', () => {
 })
 
 describe('retrieveMemoryDigests — a digest may not outlive its sources', () => {
-  it('withholds blocks whose source facts are no longer all present', async () => {
+  it('withholds blocks whose sources changed, expired or disappeared', async () => {
     // The predicate itself is SQL, so this asserts the guard is IN the query;
     // its behaviour is verified against a real PostgreSQL instance separately.
     const { retrieveMemoryDigests } = await import('@/agent/lib/memory-digest')
@@ -106,7 +130,8 @@ describe('retrieveMemoryDigests — a digest may not outlive its sources', () =>
     await retrieveMemoryDigests({ personalMode: true, businessId: 'ALMA_LIFESTYLE' })
 
     const sql = String(mockPrisma.$queryRawUnsafe.mock.calls[0][0])
-    expect(sql).toContain('jsonb_array_elements_text(d.source_ids)')
+    expect(sql).toContain('md5(m.content) = s.h') // content, not just identity
+    expect(sql).toContain('m.expires_at > NOW()')
     expect(sql).toContain('jsonb_array_length(d.source_ids)')
     expect(sql).toContain('d.source_ids IS NULL') // rows without a source list still serve
   })
@@ -153,5 +178,29 @@ describe('clearDigestRows', () => {
     expect(String(sql)).toContain("business_id = 'ALMA_LIFESTYLE'")
     expect(String(sql)).toContain('scope = $1')
     expect(param).toBe('business')
+  })
+})
+
+describe('fingerprintSources', () => {
+  it('produces a Postgres-compatible md5 of the exact stored text', async () => {
+    const { fingerprintSources } = await import('@/agent/lib/memory-digest')
+    const { createHash } = await import('crypto')
+    const content = 'বসের স্ত্রীর নাম Mim, নম্বর 01711223344'
+    const [fp] = fingerprintSources([{ id: 'm1', content }])
+
+    expect(fp.id).toBe('m1')
+    // Same algorithm Postgres md5() uses — verified equal on a real instance.
+    expect(fp.h).toBe(createHash('md5').update(content).digest('hex'))
+    expect(fp.h).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  it('changes when the text changes and stays put when it does not', async () => {
+    const { fingerprintSources } = await import('@/agent/lib/memory-digest')
+    const a = fingerprintSources([{ id: 'm', content: 'কস্ট প্রাইস ছাড়া কোটেশন নয়' }])[0]
+    const same = fingerprintSources([{ id: 'm', content: 'কস্ট প্রাইস ছাড়া কোটেশন নয়' }])[0]
+    const edited = fingerprintSources([{ id: 'm', content: 'কস্ট প্রাইস ছাড়া কোটেশন যাবে' }])[0]
+
+    expect(same.h).toBe(a.h)
+    expect(edited.h).not.toBe(a.h)
   })
 })
