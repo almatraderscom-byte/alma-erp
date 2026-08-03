@@ -110,6 +110,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   PLACE and a VERB together (either alone is ordinary traffic), and the
     //   screen rule is ordered ahead of the app rule because a picture of an
     //   app is a looking job, not a driving one.
+    //   2026-08-03: Tier 2 — mac-health-monitor, spotlight-finder,
+    //   media-transcoder. Two are read-only; the transcoder writes and is
+    //   isolated. All three rule-routed, each with the veto its verb needs
+    //   ("khujo" is also research, "banao" is also Creative Studio).
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
@@ -128,10 +132,13 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'git-pr-workflow',
       'mac-ai-app-operator',
       'mac-file-organizer',
+      'mac-health-monitor',
+      'media-transcoder',
       'screenshot-annotate-share',
       'seo-auditing-own-site',
       'seo-fixing-client-site',
       'seo-fixing-own-site',
+      'spotlight-finder',
       'storefront-editing',
       'xcode-testflight-shipper',
     ])

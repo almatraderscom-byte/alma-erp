@@ -1,0 +1,28 @@
+{
+  "name": "spotlight-finder",
+  "description": "Finds a file on Boss's Mac from a plain-language description — last month's invoice PDF, that screenshot from Eid, the contract he cannot remember saving — by turning it into a Spotlight query and reporting the matches with their real paths and dates. Use when Boss is looking for a file and does not know where it is.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": ["ALMA_LIFESTYLE"],
+  "riskTier": "low",
+  "extends": "alma-base",
+  "whenNotToUse": "Tidying or moving what was found → mac-file-organizer. Searching the ERP, the website or a customer's message — those have their own tools and Spotlight cannot see them.",
+  "requiredCapabilities": ["run_mac_command", "check_mac_command", "mac_agent_status"],
+  "dependencies": { "capability": ["run_mac_command"] },
+  "outputContract": {
+    "kind": "file_matches",
+    "mustInclude": ["query_used", "match_count", "paths_with_dates"]
+  },
+  "stopConditions": [
+    "কী খুঁজতে হবে সেটা অস্পষ্ট — আন্দাজে খোঁজা নয়",
+    "৫০-এর বেশি ফল — আগে সংকীর্ণ করো",
+    "কিছুই পাওয়া যায়নি — অন্য শব্দে আরেকবার, তারপর সৎভাবে বলো"
+  ],
+  "done": [{ "tool": "run_mac_command" }],
+  "networkPolicy": "none",
+  "writePolicy": "none",
+  "approvalPolicy": "inherit",
+  "maxSteps": 10,
+  "status": "active"
+}

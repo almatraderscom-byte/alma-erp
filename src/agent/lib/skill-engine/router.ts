@@ -338,6 +338,36 @@ const CODE_CHECKOUT =
 const TIDY_VERB =
   /(porishkar|পরিষ্কার|guchi|গুছ|gucha|sajao|সাজাও|sort\s*kor|clean\s*up|cleanup|clean\s*kor|khali\s*kor|খালি\s*কর|jayga\s*(?:khali|nei)|জায়গা\s*(?:খালি|নেই)|soriye\s*(?:dao|rakho|felo|rekho)|সরিয়ে\s*(?:দাও|রাখো|রেখো)|\bsorao\b|\bmove\s*kor)/i
 
+/**
+ * ── Mac skills (Tier 2) ──────────────────────────────────────────────────────
+ */
+/** "mac ta slow", "jayga nei" — a question about the machine's own health. */
+const MAC_HEALTH_ASK =
+  /((?:mac|ম্যাক|laptop|ল্যাপটপ)[^\n]{0,24}(?:slow|স্লো|dhire|obostha|অবস্থা|health|garam|hang|atke)|(?:disk|ডিস্ক|storage|স্টোরেজ|memory|ram|battery|ব্যাটারি)[^\n]{0,20}(?:full|ভরে|nei|নেই|koto|কত|obostha|check|dekho|দেখো)|jayga\s*(?:nei|ses|kome)|জায়গা\s*(?:নেই|শেষ))/i
+/**
+ * Looking for a FILE he cannot place. The verb has to be a search verb and the
+ * object has to be a file — "khujo" alone is how he asks for research, and
+ * `alma-research` owns that.
+ */
+const FILE_SEARCH_ASK =
+  /((?:file|ফাইল|pdf|invoice|ইনভয়েস|document|ডকুমেন্ট|chobi|ছবি|screenshot|folder)[^\n]{0,30}(?:khujo|khuje|খুঁজ|kothay|কোথায়|pacchi\s*na|পাচ্ছি\s*না|find|search)|(?:khujo|khuje\s*dao|খুঁজে\s*দাও)[^\n]{0,20}(?:file|ফাইল|pdf|document|ডকুমেন্ট))/i
+/** …but a search of the WEB or the business data is not a Spotlight job. */
+const NOT_LOCAL_SEARCH =
+  /(google|web\s*e|internet|online|competitor|প্রতিযোগী|website|ওয়েবসাইট|erp\b|order|অর্ডার|customer|কাস্টমার)/i
+/** Shrinking / converting media that already exists on the Mac. */
+const MEDIA_CONVERT_ASK =
+  /((?:video|ভিডিও|clip|ছবি|chhobi|chobi|image|photo|ফটো|gif|audio|অডিও|mp4|mov|png|jpe?g)[^\n]{0,30}(?:compress|choto\s*kor|ছোট\s*কর|resize|convert|bodla|বদলা|trim|kato|কাটো|ber\s*kor|বের\s*কর)|(?:compress|choto\s*kor|ছোট\s*কর)[^\n]{0,20}(?:video|ভিডিও|ছবি|chobi|image|file|ফাইল))/i
+/** …but MAKING new media is Creative Studio's job, not a converter's. */
+const MEDIA_CREATE_ASK =
+  /(banao|বানাও|toiri|তৈরি|generate|design|ডিজাইন|poster|পোস্টার|creative|ad\s*banao)/i
+/**
+ * …unless the sentence names a SOURCE and a TARGET: "video theke gif banao" is
+ * a conversion wearing the word "banao" (Codex). Source-to-target beats the
+ * creation veto, because nothing is being invented — an existing file is.
+ */
+const MEDIA_DERIVE_ASK =
+  /(?:video|ভিডিও|mp4|mov|clip|chobi|ছবি|image|png|jpe?g|audio|অডিও)\s*(?:theke|থেকে|from|to\b|→)\s*(?:gif|jpe?g|png|mp3|mp4|wav|audio|অডিও|ছবি|chobi|video|ভিডিও)/i
+
 export interface RouterRule {
   id: string
   skill: string
@@ -422,6 +452,28 @@ export const RULES: RouterRule[] = [
     skill: 'mac-ai-app-operator',
     test: (t) => (AI_APP_ASK(t) || NEW_CHAT_ASK.test(t)) && !SCREEN_LOOK_ASK(t),
     why: 'Boss-এর Mac-এর Claude/ChatGPT অ্যাপ চালানোর কথা — দেখা আগে, ছোঁয়া পরে',
+  },
+  {
+    id: 'mac-health',
+    skill: 'mac-health-monitor',
+    test: (t) => MAC_HEALTH_ASK.test(t),
+    why: 'Mac-এর নিজের অবস্থার প্রশ্ন — শুধু পড়া, কিছু বদলানো নয়',
+  },
+  {
+    id: 'file-search',
+    skill: 'spotlight-finder',
+    test: (t) => FILE_SEARCH_ASK.test(t) && !NOT_LOCAL_SEARCH.test(t),
+    why: 'Mac-এ পড়ে থাকা ফাইল খোঁজা — ওয়েব বা ERP-র খোঁজ নয়',
+  },
+  {
+    id: 'media-convert',
+    skill: 'media-transcoder',
+    // Ordered before folder-tidy: "video gulo choto koro" is a conversion, and
+    // the tidy rule would otherwise claim any sentence with a folder in it.
+    test: (t) =>
+      MEDIA_DERIVE_ASK.test(t)
+      || (MEDIA_CONVERT_ASK.test(t) && !MEDIA_CREATE_ASK.test(t)),
+    why: 'Mac-এ থাকা মিডিয়া রূপান্তর — নতুন কিছু বানানো নয়',
   },
   {
     id: 'folder-tidy',
