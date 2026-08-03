@@ -449,6 +449,9 @@ final class MacRemoteControlStore {
     static let autoDisarmIdleBn = "নিষ্ক্রিয় থাকায় কন্ট্রোল বন্ধ হয়েছে।"
     static let autoDisarmRenewBn = "কন্ট্রোলের মেয়াদ নবায়ন হয়নি।"
     static let autoDisarmLostBn = "সংযোগ কেটে গেছে — কন্ট্রোল বন্ধ।"
+    /// Deliberately NOT in the replaceable set: with the stream gone, pressing
+    /// the control button cannot help — he has to start the live view again,
+    /// which is what this sentence tells him (Codex P2).
     static let autoDisarmStreamBn = "লাইভ ভিউ বন্ধ — কন্ট্রোলও বন্ধ।"
     /// RC-2.5: first tap aims (the Mac paints a solid ring), second commits.
     /// Off by default — the snap already makes ordinary targets safe; this is
@@ -678,7 +681,7 @@ final class MacRemoteControlStore {
         let nudge = "Mac ছুঁতে হলে আগে \u{201C}কন্ট্রোল চালু\u{201D} চাপুন।"
         let recoverable = statusBn == nil || statusBn == nudge
             || statusBn == Self.autoDisarmIdleBn || statusBn == Self.autoDisarmRenewBn
-            || statusBn == Self.autoDisarmLostBn || statusBn == Self.autoDisarmStreamBn
+            || statusBn == Self.autoDisarmLostBn
         guard recoverable else { return }
         statusBn = nudge
     }
