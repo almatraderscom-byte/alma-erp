@@ -273,7 +273,7 @@ export async function fetchStudioProjects(
   if (brandProfileId) query.set('brandProfileId', brandProfileId)
   const data = await studioRequest<{ projects: StudioProjectSummary[] }>(
     `/api/assistant/creative-studio/projects${query.size ? `?${query.toString()}` : ''}`,
-    undefined,
+    { cache: 'no-store' },
     'projects_failed',
   )
   return data.projects

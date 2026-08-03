@@ -8,6 +8,7 @@ import {
   updateProject,
 } from '@/lib/creative-studio/project-service'
 import { isLegacyProjectId } from '@/lib/creative-studio/project-contract'
+import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,7 +40,13 @@ export async function GET(
     return Response.json({ error: 'legacy_readonly' }, { status: 409 })
   }
   try {
-    return Response.json({ project: await getProject(owner, params.id) })
+    const [project] = await hydrateStudioProjectProducts([
+      await getProject(owner, params.id),
+    ])
+    return Response.json(
+      { project },
+      { headers: { 'Cache-Control': 'private, no-store, max-age=0' } },
+    )
   } catch (error) {
     return errorResponse(error)
   }
@@ -61,7 +68,10 @@ export async function PATCH(
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
   try {
-    return Response.json({ project: await updateProject(owner, params.id, body) })
+    const [project] = await hydrateStudioProjectProducts([
+      await updateProject(owner, params.id, body),
+    ])
+    return Response.json({ project })
   } catch (error) {
     return errorResponse(error)
   }

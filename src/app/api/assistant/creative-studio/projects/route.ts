@@ -12,6 +12,7 @@ import {
   requireStudioBrandAccess,
   studioAccessErrorResponse,
 } from '@/lib/creative-studio/studio-access'
+import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -40,10 +41,12 @@ export async function GET(req: NextRequest) {
     if (actor instanceof Response) return actor
     try {
       const access = await requireStudioBrandAccess(actor, brandProfileId)
-      return Response.json({
-        projects: (await listProjects(access.ownerId)).filter((project) =>
-          project.brandProfileId === brandProfileId),
-      })
+      const projects = (await listProjects(access.ownerId)).filter((project) =>
+        project.brandProfileId === brandProfileId)
+      return Response.json(
+        { projects: await hydrateStudioProjectProducts(projects) },
+        { headers: { 'Cache-Control': 'private, no-store, max-age=0' } },
+      )
     } catch (error) {
       return studioAccessErrorResponse(error, 'creative-projects-list')
     }
@@ -51,7 +54,10 @@ export async function GET(req: NextRequest) {
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   try {
-    return Response.json({ projects: await listProjects(owner) })
+    return Response.json(
+      { projects: await hydrateStudioProjectProducts(await listProjects(owner)) },
+      { headers: { 'Cache-Control': 'private, no-store, max-age=0' } },
+    )
   } catch (error) {
     return errorResponse(error)
   }
@@ -67,7 +73,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
   try {
-    return Response.json({ project: await createProject(owner, body) }, { status: 201 })
+    const [project] = await hydrateStudioProjectProducts([await createProject(owner, body)])
+    return Response.json({ project }, { status: 201 })
   } catch (error) {
     return errorResponse(error)
   }
