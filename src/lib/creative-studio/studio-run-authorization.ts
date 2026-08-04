@@ -109,16 +109,46 @@ export class StudioRunAuthorizationError extends Error {
   }
 }
 
+/**
+ * Lanes that predate signed run receipts and keep their own explicit
+ * owner-approval spend gate on the pending action itself. The V3 studio never
+ * uses them (its jobs are signed and carry V3 markers, which hard-fail before
+ * this check), so exempting them cannot open a bypass for studio paid runs.
+ */
+const LEGACY_UNSIGNED_IMAGE_LANES: ReadonlySet<string> = new Set([
+  'golden_eval', // creative-studio/evaluations admin lane
+  'avatar_build', // brand-models/avatar build lane
+])
+
 export function assertUnsignedStudioJobCompatibility(input: {
   type: unknown
   createdAt: unknown
   payload: unknown
-}): { compatibilityReason: 'pre_receipt_job_before_cutoff' | 'non_paid_local_job' } {
+}): {
+  compatibilityReason:
+    | 'pre_receipt_job_before_cutoff'
+    | 'non_paid_local_job'
+    | 'legacy_owner_approved_lane'
+} {
   const payload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)
     ? input.payload as Record<string, unknown>
     : {}
   if (input.type === 'image_gen' && payload.provider === 'campaign_pack_local') {
     return { compatibilityReason: 'non_paid_local_job' }
+  }
+  if (input.type === 'image_gen') {
+    if (typeof payload.provider === 'string' && LEGACY_UNSIGNED_IMAGE_LANES.has(payload.provider)) {
+      return { compatibilityReason: 'legacy_owner_approved_lane' }
+    }
+    if (typeof payload.modelCreator === 'string' && payload.modelCreator) {
+      // creative-studio/model-creator brand-identity lane
+      return { compatibilityReason: 'legacy_owner_approved_lane' }
+    }
+    if (payload.provider == null && payload.creativeStudio !== true && payload.studioMode == null) {
+      // Head-chat image approvals (confirm-tools): owner approves the pending
+      // action card itself; that approval IS the spend confirmation.
+      return { compatibilityReason: 'legacy_owner_approved_lane' }
+    }
   }
   if (input.type !== 'image_gen' && input.type !== 'video_gen') {
     throw new StudioRunAuthorizationError('unsigned_generation_job_forbidden', 409)

@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { runAutoStudio, runCreativeStudio, type CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
 import { READINESS_ERRORS_BN } from '@/lib/creative-studio/single-pipeline'
 import { resolveModel } from '@/lib/tryon/model-library'
+import { resolvePersonRef } from '@/lib/tryon/model-avatar'
 import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
 import { prisma } from '@/lib/prisma'
 import {
@@ -209,9 +210,15 @@ export async function POST(req: NextRequest) {
     if (effectiveRequest.modelId && !effectiveRequest.modelImagePath) {
       const model = await resolveModel(effectiveRequest.modelId)
       if (!model) throw new StudioAccessError('model_not_found', 404)
-      effectiveRequest.modelImagePath = model.imagePath
+      // CS14 — a built avatar takes over: canonical (or sheet) becomes the
+      // person reference. Scope already allow-listed these exact paths.
+      const ref = await resolvePersonRef(model)
+      effectiveRequest.modelImagePath = ref.path
+      if (ref.sheetPath && effectiveRequest.avatarSheetPath === undefined) {
+        effectiveRequest.avatarSheetPath = ref.sheetPath
+      }
       if (effectiveRequest.faceReferencePath === undefined) {
-        effectiveRequest.faceReferencePath = model.imagePath
+        effectiveRequest.faceReferencePath = ref.path
       }
     }
 

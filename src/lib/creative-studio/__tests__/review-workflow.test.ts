@@ -213,6 +213,7 @@ const workflowHarness = vi.hoisted(() => {
 
 vi.mock('@/lib/prisma', () => ({ prisma: workflowHarness.prisma }))
 vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: () => null }))
+vi.mock('@/lib/agent-runtime-flag', () => ({ isAgentEnabled: () => true }))
 vi.mock('@/agent/lib/storage', () => ({
   agentStorageSignedUrls: vi.fn(async (paths: string[]) =>
     Object.fromEntries(paths.map((path) => [path, `https://signed.local/${path}`]))),

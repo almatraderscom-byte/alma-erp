@@ -300,6 +300,7 @@ const compositionHarness = vi.hoisted(() => {
 
 vi.mock('@/lib/prisma', () => ({ prisma: compositionHarness.prisma }))
 vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: () => null }))
+vi.mock('@/lib/agent-runtime-flag', () => ({ isAgentEnabled: () => true }))
 vi.mock('next-auth/jwt', () => ({
   getToken: vi.fn(async () => compositionHarness.state.token),
 }))
