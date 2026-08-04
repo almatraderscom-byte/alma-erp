@@ -11,7 +11,7 @@ import {
   getCreativeStudioV4PreviewFoundationFlags,
 } from '@/lib/creative-studio/composition-feature-flags'
 import { listProjects } from '@/lib/creative-studio/project-service'
-import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
+import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
 import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
 import {

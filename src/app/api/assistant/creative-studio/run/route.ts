@@ -19,7 +19,7 @@ import { buildStudioRunPlan } from '@/lib/creative-studio/studio-run-plan'
 import {
   resolveScopedStudioRun,
   type ScopedStudioRunRequest,
-} from '@/lib/creative-studio/studio-run-scope'
+} from '@/agent/lib/creative-studio/studio-run-scope'
 import { withStudioRunExecutionContext } from '@/lib/creative-studio/studio-run-context'
 import { executeStudioRunConfirmation } from '@/lib/creative-studio/studio-run-confirmation'
 import {

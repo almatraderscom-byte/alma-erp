@@ -98,7 +98,7 @@ describe('Creative Studio V3 production source contract', () => {
       'utf8',
     )
     const runScope = readFileSync(
-      join(process.cwd(), 'src/lib/creative-studio/studio-run-scope.ts'),
+      join(process.cwd(), 'src/agent/lib/creative-studio/studio-run-scope.ts'),
       'utf8',
     )
     const executionGate = readFileSync(

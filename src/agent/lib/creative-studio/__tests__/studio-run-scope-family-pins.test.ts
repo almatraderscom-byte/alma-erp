@@ -117,7 +117,7 @@ vi.mock('@/agent/lib/catalog/inventory-lookup', () => ({
   DEFAULT_CATALOG_BUSINESS: 'ALMA_LIFESTYLE',
 }))
 
-import { resolveScopedStudioRun } from '@/lib/creative-studio/studio-run-scope'
+import { resolveScopedStudioRun } from '@/agent/lib/creative-studio/studio-run-scope'
 
 beforeEach(() => {
   state.roleLookups.length = 0

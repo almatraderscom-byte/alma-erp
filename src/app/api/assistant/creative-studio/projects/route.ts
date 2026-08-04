@@ -12,7 +12,7 @@ import {
   requireStudioBrandAccess,
   studioAccessErrorResponse,
 } from '@/lib/creative-studio/studio-access'
-import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
+import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

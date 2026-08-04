@@ -9,7 +9,7 @@ vi.mock('@/agent/lib/catalog/inventory-lookup', () => ({
   DEFAULT_CATALOG_BUSINESS: 'ALMA_LIFESTYLE',
 }))
 
-import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
+import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
 
 const project: StudioProjectSummary = {
   id: 'project-1',

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
+import { isAgentEnabled } from '@/lib/agent-runtime-flag'
 import { prisma } from '@/lib/prisma'
 import { roundMoney } from '@/lib/money'
 import { isSystemOwner } from '@/lib/roles'
@@ -126,8 +126,14 @@ export function assertStudioBrandScope(
 export async function authenticateStudioRequest(
   req: NextRequest,
 ): Promise<StudioActor | Response> {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
+  // Neutral kill-switch check: shared-lib code must not import src/agent
+  // (one-way dependency rule), so mirror requireAgentEnabled() here.
+  if (!isAgentEnabled()) {
+    return new Response(JSON.stringify({ error: 'agent_disabled' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   return {

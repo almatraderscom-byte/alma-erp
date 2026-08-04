@@ -10,7 +10,7 @@ import {
   ContentOsServiceError,
   getProject,
 } from '@/lib/creative-studio/project-service'
-import { hydrateStudioProjectProducts } from '@/lib/creative-studio/studio-project-product-hydration'
+import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
