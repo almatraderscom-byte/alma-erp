@@ -98,8 +98,8 @@ export const CHILD_POSES: string[] = [
 ]
 
 export const PAIR_POSES: string[] = [
-  'standing side by side, the adult\'s hand resting on the child\'s shoulder, both smiling at the camera',
-  'walking together hand in hand toward the camera, natural mid-stride, both outfits fully visible',
+  'standing side by side with a visible gap, both hands relaxed and fully visible, both smiling at the camera',
+  'walking in parallel toward the camera with clear separation, hands and fingers fully visible, both outfits fully visible',
   'the child standing a half-step in front with arms crossed playfully, the adult behind with a proud smile',
   'facing each other mid-laugh in a candid moment, both garments clearly visible to camera',
   'seated together on heritage steps, relaxed and warm, garments neatly arranged and fully visible',

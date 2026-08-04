@@ -19,11 +19,12 @@ import { startHealthPingLoop } from './health-ping.mjs'
 import { Queue, Worker } from 'bullmq'
 import { createClient } from '@supabase/supabase-js'
 import { GoogleGenAI } from '@google/genai'
-import { getAppUrl, getInternalToken } from './env.mjs'
+import { getAppProtectionHeaders, getAppUrl, getInternalToken } from './env.mjs'
 import { launchTelegramBot, stopTelegramBot } from './telegram/launcher.mjs'
 import { loadOwnerStateFromKv } from './telegram/owner-state-persist.mjs'
 import { hydrateAwaitingProof } from './staff/task-verification.mjs'
 import { setupSchedulers } from './schedulers/index.mjs'
+import { startCreativeDistributionLoop } from './schedulers/creative-performance.mjs'
 import { dispatchTasksToStaff } from './staff/dispatch.mjs'
 import { sendStaffAnnouncement } from './staff/announcement.mjs'
 import { initializeDailySalahRecords } from './salah/scheduler.mjs'
@@ -32,6 +33,36 @@ import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
 import { processVideoGen } from './video-gen.mjs'
 import { processVideoEdit } from './video-edit.mjs'
+import {
+  assertGenericImageModel,
+  genericProviderForModel,
+  loadRequiredReferenceParts,
+  makeReferenceReceipt,
+  requiredReferencePaths,
+} from './image/reference-contract.mjs'
+import { uploadImageArtifact } from './image-artifact.mjs'
+import { resolveGenericImageRequest } from './image-resolution-contract.mjs'
+import {
+  allowPaidGarmentPrepCleanup,
+  assertStudioRunPaidAttempt,
+  authorizeStudioRunExecution,
+  requiresStudioRunPaidAttemptAuthorization,
+  studioRunQueueJobOptions,
+} from './studio-run-authorize.mjs'
+import {
+  PREVIEW_WORKER_SCOPE,
+  PREVIEW_WORKER_SCOPE_HEADER,
+  selectPreviewImageJob,
+  terminalPreviewImageQcFailure,
+} from './preview-image-e2e.mjs'
+
+const PREVIEW_E2E_APP_URL = String(process.env.WORKER_PREVIEW_E2E_APP_URL ?? '').trim().replace(/\/$/, '')
+const PREVIEW_E2E_PROJECT_ID = String(process.env.WORKER_PREVIEW_E2E_PROJECT_ID ?? '').trim()
+const PREVIEW_E2E_MODE = Boolean(PREVIEW_E2E_APP_URL || PREVIEW_E2E_PROJECT_ID)
+if (PREVIEW_E2E_MODE && (!PREVIEW_E2E_APP_URL || !PREVIEW_E2E_PROJECT_ID)) {
+  throw new Error('WORKER_PREVIEW_E2E_APP_URL and WORKER_PREVIEW_E2E_PROJECT_ID are both required')
+}
+if (PREVIEW_E2E_MODE) process.env.APP_URL = PREVIEW_E2E_APP_URL
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -127,6 +158,8 @@ const seoAuditQueue = new Queue('seo-audit', {
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 const stuckReenqueueCounts = new Map()
+let previewE2eTargetActionId = null
+let previewE2eReportedResult = null
 
 const STUCK_APPROVED_MS = 10 * 60 * 1000
 const STUCK_MAX_REENQUEUES = 5
@@ -245,11 +278,19 @@ async function pollPendingJobs() {
       }
       let handled = false
       if (job.type === 'image_gen') {
-        await imageGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        await imageGenQueue.add(
+          'generate',
+          { pendingActionId: job.id, payload: job.payload },
+          { jobId: job.id, ...studioRunQueueJobOptions(job.payload) },
+        )
         console.log(`[worker] enqueued image-gen job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_gen') {
-        await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        await videoGenQueue.add(
+          'generate',
+          { pendingActionId: job.id, payload: job.payload },
+          { jobId: job.id, ...studioRunQueueJobOptions(job.payload) },
+        )
         console.log(`[worker] enqueued video-gen job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_edit') {
@@ -452,16 +493,49 @@ async function generateImageToStorage({
   quality,
   referenceImageId,
   secondReferenceImageId,
+  referenceImageIds,
+  referenceContract,
   aspectRatio,
   imageSize,
   suffix = '',
   models,
 }) {
   const resolvedModels = models ?? DEFAULT_IMAGE_MODELS
-  const modelName = quality === 'standard' ? resolvedModels.standard : resolvedModels.pro
+  const modelName = assertGenericImageModel(quality === 'standard' ? resolvedModels.standard : resolvedModels.pro)
+  // Resolve capability and exact dimensions before references are loaded and,
+  // critically, before any paid provider request can be made.
+  const imageRequest = resolveGenericImageRequest({ modelName, imageSize, aspectRatio })
+  const resolvedAspectRatio = imageRequest.requestedAspectRatio
+  const resolvedImageSize = imageRequest.requestedTier.toUpperCase()
+  if (referenceContract?.actualModel && referenceContract.actualModel !== modelName) {
+    throw new Error(`generic image model snapshot mismatch: expected ${referenceContract.actualModel}, queued ${modelName}`)
+  }
 
-  const resolvedAspectRatio = aspectRatio ?? '4:5'
-  const resolvedImageSize = imageSize ?? '2K'
+  async function storeOriginal(buffer) {
+    const storageBasePath = suffix
+      ? `generated/${pendingActionId}-${suffix}`
+      : `generated/${pendingActionId}`
+    const original = await uploadImageArtifact({
+      supabase,
+      buffer,
+      storageBasePath,
+      kind: 'original',
+      requestedTier: imageRequest.requestedTier,
+      requestedAspectRatio: imageRequest.requestedAspectRatio,
+      provider: imageRequest.provider,
+      model: modelName,
+      contract: imageRequest.validationContract,
+    })
+    return {
+      storagePath: original.storagePath,
+      original,
+      modelName,
+      quality,
+      resolvedAspectRatio,
+      resolvedImageSize,
+      sentReferenceCount: imageParts.length,
+    }
+  }
 
   async function toInlinePart(path) {
     const { data: fileData, error: dlErr } = await supabase.storage.from('agent-files').download(path)
@@ -471,15 +545,9 @@ async function generateImageToStorage({
     return { inlineData: { mimeType: fileData.type || 'image/jpeg', data: base64 } }
   }
 
-  const imageParts = []
-  if (referenceImageId) {
-    const p1 = await toInlinePart(referenceImageId)
-    if (p1) imageParts.push(p1)
-  }
-  if (secondReferenceImageId) {
-    const p2 = await toInlinePart(secondReferenceImageId)
-    if (p2) imageParts.push(p2)
-  }
+  const referencePayload = { referenceImageId, secondReferenceImageId, referenceImageIds, referenceContract }
+  const referencePaths = requiredReferencePaths(referencePayload)
+  const imageParts = await loadRequiredReferenceParts(referencePaths, toInlinePart)
 
   // ── Seedream engine (owner-switchable via cs_image_models → "seedream-5.0-pro") ──
   // ByteDance Seedream 5.0 Pro via fal.ai (verdict 2026-07-12: the only genuine
@@ -490,13 +558,7 @@ async function generateImageToStorage({
   if (modelName.startsWith('seedream')) {
     const key = process.env.FAL_KEY
     if (!key) throw new Error('FAL_KEY missing on worker — Seedream engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
-    const ratio = /^\d+:\d+$/.test(resolvedAspectRatio) ? resolvedAspectRatio : '4:5'
-    const [rw, rh] = ratio.split(':').map(Number)
-    // standard stays in fal's cheaper ≤1536px band; pro renders the 2K tier.
-    const maxSide = quality === 'standard' ? 1536 : 2048
-    const scale = maxSide / Math.max(rw, rh)
-    const width = Math.max(512, Math.round((rw * scale) / 32) * 32)
-    const height = Math.max(512, Math.round((rh * scale) / 32) * 32)
+    const { width, height } = imageRequest.dimensions
     const endpoint = imageParts.length
       ? 'https://fal.run/bytedance/seedream/v5/pro/edit'
       : 'https://fal.run/bytedance/seedream/v5/pro/text-to-image'
@@ -522,17 +584,7 @@ async function generateImageToStorage({
     const imgRes = await fetch(url)
     if (!imgRes.ok) throw new Error(`Seedream image download ${imgRes.status}`)
     const buf = Buffer.from(await imgRes.arrayBuffer())
-    const contentType = imgRes.headers.get('content-type') || 'image/png'
-    const ext = contentType.includes('jpeg') ? 'jpg' : 'png'
-    const storagePath = suffix
-      ? `generated/${pendingActionId}-${suffix}.${ext}`
-      : `generated/${pendingActionId}.${ext}`
-    const { error: uploadErr } = await supabase
-      .storage
-      .from('agent-files')
-      .upload(storagePath, buf, { contentType, upsert: true })
-    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+    return storeOriginal(buf)
   }
 
   // ── OpenAI engine (owner-switchable via cs_image_models → "gpt-image-2") ──
@@ -543,9 +595,7 @@ async function generateImageToStorage({
   if (modelName.startsWith('gpt-image')) {
     const key = process.env.OPENAI_API_KEY
     if (!key) throw new Error('OPENAI_API_KEY missing on worker — GPT image engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
-    const portrait = ['9:16', '3:4', '4:5', '2:3'].includes(resolvedAspectRatio)
-    const landscape = ['16:9', '4:3', '5:4', '3:2'].includes(resolvedAspectRatio)
-    const size = portrait ? '1024x1536' : landscape ? '1536x1024' : '1024x1024'
+    const size = imageRequest.providerImageSize
     const gptQuality = quality === 'standard' ? 'medium' : 'high'
     let res
     if (imageParts.length) {
@@ -577,15 +627,7 @@ async function generateImageToStorage({
     const json = await res.json()
     const b64 = json?.data?.[0]?.b64_json
     if (!b64) throw new Error('No image in OpenAI response')
-    const storagePath = suffix
-      ? `generated/${pendingActionId}-${suffix}.png`
-      : `generated/${pendingActionId}.png`
-    const { error: uploadErr } = await supabase
-      .storage
-      .from('agent-files')
-      .upload(storagePath, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: true })
-    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+    return storeOriginal(Buffer.from(b64, 'base64'))
   }
 
   const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
@@ -597,39 +639,25 @@ async function generateImageToStorage({
       responseModalities: ['IMAGE', 'TEXT'],
       imageConfig: {
         aspectRatio: resolvedAspectRatio,
-        imageSize: resolvedImageSize,
+        imageSize: imageRequest.providerImageSize,
       },
     },
   })
 
   const parts = response?.candidates?.[0]?.content?.parts ?? []
   let imageBase64 = null
-  let imageMimeType = 'image/png'
 
   for (const part of parts) {
     if (part.inlineData?.data) {
       imageBase64 = part.inlineData.data
-      imageMimeType = part.inlineData.mimeType || 'image/png'
       break
     }
   }
 
   if (!imageBase64) throw new Error('No image in Gemini response')
 
-  const ext = imageMimeType.split('/')[1] || 'png'
-  const storagePath = suffix
-    ? `generated/${pendingActionId}-${suffix}.${ext}`
-    : `generated/${pendingActionId}.${ext}`
   const imageBuffer = Buffer.from(imageBase64, 'base64')
-
-  const { error: uploadErr } = await supabase
-    .storage
-    .from('agent-files')
-    .upload(storagePath, imageBuffer, { contentType: imageMimeType, upsert: true })
-
-  if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
-
-  return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+  return storeOriginal(imageBuffer)
 }
 
 async function processImageGen(job) {
@@ -641,13 +669,48 @@ async function processImageGen(job) {
     return
   }
 
+  const authorization = await authorizeStudioRunExecution(pendingActionId, payload)
+  if (!authorization.authorized) {
+    await callJobResult(
+      pendingActionId,
+      'failed',
+      undefined,
+      `studio_run_revalidation_failed:${authorization.error}`,
+    )
+    return
+  }
+
+  // CSE4 — deterministic campaign-pack previews, crops/frames and Bangla
+  // captions. These are local/free and storage-addressed; a worker restart can
+  // safely repeat the exact path without duplicating any paid provider call.
+  if (payload.provider === 'campaign_pack_local') {
+    try {
+      const { processCampaignPackStage } = await import('./campaign-pack.mjs')
+      const result = await processCampaignPackStage({ supabase, pendingActionId, payload })
+      await callJobResult(pendingActionId, 'success', result)
+      console.log(`[worker] campaign-pack ${payload.campaignPack?.stageId} ${pendingActionId} — done`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] campaign-pack ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   // Supplier-photo garment prep (free local segmentation): split the reseller
   // photo into per-person crops; the chain uses the REAL adult/child pieces.
   if (payload.provider === 'garment_prep') {
     try {
       const { prepSupplierPhoto } = await import('./garment-prep.mjs')
       const { logCost } = await import('./cost-log.mjs')
-      const result = await prepSupplierPhoto({ supabase, imagePath: payload.imagePath, pendingActionId, logCost })
+      const result = await prepSupplierPhoto({
+        supabase,
+        imagePath: payload.imagePath,
+        pendingActionId,
+        logCost,
+        // The signed plan calls garment prep local/free. Optional Gemini/FLUX
+        // cleanup is therefore disabled rather than spending outside its cap.
+        allowPaidCleanup: allowPaidGarmentPrepCleanup(payload),
+      })
       await callJobResult(pendingActionId, 'success', {
         garmentPrep: true,
         multiPerson: result.multiPerson,
@@ -702,7 +765,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await processFamilyComposite({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -752,7 +817,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await process({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -763,6 +830,8 @@ async function processImageGen(job) {
         seed: result.seed ?? undefined,
         latencyMs: result.latencyMs,
         costUsd: result.costUsd,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         researchOnly: result.researchOnly ?? undefined,
         // CS7 — precision-edit lineage: mask + protected-pixel proof
         maskPath: result.maskPath ?? undefined,
@@ -829,7 +898,9 @@ async function processImageGen(job) {
       const { logCost } = await import('./cost-log.mjs')
       const result = await processXaiImagine({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
@@ -839,6 +910,8 @@ async function processImageGen(job) {
         xaiOp: result.xaiOp,
         latencyMs: result.latencyMs,
         costUsd: result.costUsd,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         creativeStudio: true,
         studioMode: payload.studioMode,
         qc: result.qc ?? undefined,
@@ -865,11 +938,16 @@ async function processImageGen(job) {
       const { postProcessImage } = await import('./cs/branding.mjs')
       // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
       // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
-      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
+        original: result.original,
+      })
       await callJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'fashn',
+        imageModel: result.imageModel,
+        referenceReceipt: result.referenceReceipt,
+        controlReceipt: payload.controlContract,
         creativeStudio: true,
         studioMode: payload.studioMode,
         qc: result.qc ?? undefined,
@@ -883,32 +961,58 @@ async function processImageGen(job) {
     return
   }
 
+  // CSE-A — the owner-facing generic image lane (Gemini/GPT Image/Seedream)
+  // keeps the existing `gemini` kill switch as its umbrella control.
+  if (payload.creativeStudio) {
+    const { isEngineKilled } = await import('./fal/client.mjs')
+    if (await isEngineKilled(supabase, 'gemini')) {
+      await callJobResult(
+        pendingActionId,
+        'failed',
+        undefined,
+        'Guided image engine lane is disabled by the owner kill switch.',
+      )
+      return
+    }
+  }
+
   const {
     prompt: basePrompt,
     quality,
     referenceImageId,
     secondReferenceImageId,
+    referenceImageIds,
     conversationId,
     aspectRatio,
     imageSize,
     contentPipeline,
+    referenceContract,
   } = payload
 
-  const { fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
-  const qcLevel = await fetchQcLevel(supabase)
-  const imageModels = await fetchImageModels()
+  const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
+  const configuredQcLevel = await fetchQcLevel(supabase)
+  const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
+  const imageModels = payload.imageModel
+    ? {
+        standard: assertGenericImageModel(payload.imageModel),
+        pro: assertGenericImageModel(payload.imageModel),
+      }
+    : await fetchImageModels()
 
   const genOpts = {
     pendingActionId,
     quality,
     referenceImageId,
     secondReferenceImageId,
+    referenceImageIds,
     aspectRatio,
     imageSize,
+    referenceContract,
     models: imageModels,
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
+  let totalCostUsd = 0
 
   async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
     // Attribute spend to the ACTUAL engine (2026-07-12: everything was logged as
@@ -919,8 +1023,9 @@ async function processImageGen(job) {
     const engineCostUsd = engine === 'openai'
       ? (quality === 'standard' ? 0.05 : 0.19)     // gpt-image-2 medium / high (approx list)
       : engine === 'fal'
-        ? (quality === 'standard' ? 0.0675 : 0.135) // Seedream 5.0 Pro ≤1536px / 2K (fal list)
+        ? (resolvedImageSize === '1K' ? 0.0675 : 0.135) // Seedream 5.0 Pro 1K / 2K (fal list)
         : calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize)
+    totalCostUsd += engineCostUsd
     void logCost({
       provider: engine,
       kind: 'image',
@@ -939,12 +1044,14 @@ async function processImageGen(job) {
     })
   }
 
+  await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
   const first = await generateImageToStorage({ ...genOpts, prompt: basePrompt })
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
   await logImageCost(first.storagePath, first.modelName, first.resolvedAspectRatio, first.resolvedImageSize, 1)
   console.log(`[worker] image-gen ${pendingActionId} — gen attempt 1 → ${first.storagePath}`)
 
   const productType = contentPipeline?.productCode ?? null
-  const productImagePath = secondReferenceImageId ?? null
+  const productImagePath = payload.qcProductImagePath ?? secondReferenceImageId ?? null
 
   let regenCount = 0
   const qcResult = await runImageQcLoop({
@@ -955,14 +1062,24 @@ async function processImageGen(job) {
     initialPath: first.storagePath,
     productType,
     productImagePath,
+    personImagePath: payload.qcPersonImagePath
+      ?? referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+      ?? referenceImageId
+      ?? null,
+    surface: payload.qcSurface,
+    pipelineMode: payload.pipelineMode,
+    maxPaidGenerations: payload.studioPaidAttemptLimit,
+    generationPrompt: basePrompt,
     regenerate: async (fixHint, attemptNum) => {
       regenCount += 1
+      await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)
       const regenPrompt = `${basePrompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
       const regen = await generateImageToStorage({
         ...genOpts,
         prompt: regenPrompt,
         suffix: `qc${attemptNum}`,
       })
+      artifactsByPath.set(regen.storagePath, regen.original)
       await logImageCost(regen.storagePath, regen.modelName, regen.resolvedAspectRatio, regen.resolvedImageSize, attemptNum)
       console.log(`[worker] image-gen ${pendingActionId} — QC regen ${attemptNum} → ${regen.storagePath}`)
       return regen.storagePath
@@ -976,11 +1093,43 @@ async function processImageGen(job) {
   const { postProcessImage } = await import('./cs/branding.mjs')
   // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
   // on-demand, per-image step the owner runs from the Studio, not auto-stamped.
-  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath)
+  const finishing = await postProcessImage(supabase, pendingActionId, qcResult.storagePath, {
+    original: artifactsByPath.get(qcResult.storagePath),
+    inspectOptions: {
+      kind: 'original',
+      requestedTier: first.original.requestedTier,
+      requestedAspectRatio: first.original.requestedAspectRatio,
+      provider: first.original.provider,
+      model: first.original.model,
+      contract: {
+        mode: 'exact',
+        width: first.original.expected?.width,
+        height: first.original.expected?.height,
+        tolerance: first.original.expected?.tolerance ?? 0,
+      },
+    },
+  })
 
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
+    allPaths: [...artifactsByPath.keys()],
     conversationId,
+    provider: genericProviderForModel(first.modelName),
+    model: first.modelName,
+    imageModel: first.modelName,
+    referenceReceipt: makeReferenceReceipt(payload, first.sentReferenceCount),
+    controlReceipt: {
+      ...(payload.controlContract ?? {}),
+      actual: {
+        model: first.modelName,
+        aspectRatio: first.resolvedAspectRatio,
+        imageSize: first.resolvedImageSize,
+        quality: first.quality,
+      },
+    },
+    creativeStudio: Boolean(payload.creativeStudio),
+    studioMode: payload.studioMode,
+    costUsd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
     qc: qcResult.qc,
     ...finishing,
   })
@@ -1001,6 +1150,7 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
+        ...getAppProtectionHeaders(),
       },
       body: JSON.stringify({ pendingActionId, status, data, error }),
       signal: AbortSignal.timeout(15_000),
@@ -1012,6 +1162,8 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
         return callJobResult(pendingActionId, status, data, error, attempt + 1)
       }
+    } else if (PREVIEW_E2E_MODE && pendingActionId === previewE2eTargetActionId) {
+      previewE2eReportedResult = { status, data, error }
     }
   } catch (err) {
     console.error('[worker] job-result callback error:', err.message)
@@ -1023,6 +1175,91 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
 }
 
 // ── Workers ────────────────────────────────────────────────────────────────
+
+async function runPreviewImageE2e() {
+  if (!PREVIEW_E2E_MODE) return false
+  const timeoutMs = Math.min(
+    30 * 60_000,
+    Math.max(60_000, Number(process.env.WORKER_PREVIEW_E2E_TIMEOUT_MS) || 15 * 60_000),
+  )
+  const deadline = Date.now() + timeoutMs
+  const idleGraceMs = Math.min(
+    60_000,
+    Math.max(5_000, Number(process.env.WORKER_PREVIEW_E2E_IDLE_GRACE_MS) || 15_000),
+  )
+  const maxJobs = Math.min(
+    20,
+    Math.max(1, Number(process.env.WORKER_PREVIEW_E2E_MAX_JOBS) || 8),
+  )
+  let processedJobs = 0
+  let idleSince = null
+  console.log(`[preview-e2e] waiting for signed image job in project ${PREVIEW_E2E_PROJECT_ID}`)
+  while (Date.now() < deadline) {
+    const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
+      headers: {
+        Authorization: `Bearer ${getInternalToken()}`,
+        [PREVIEW_WORKER_SCOPE_HEADER]: PREVIEW_WORKER_SCOPE,
+        ...getAppProtectionHeaders(),
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) throw new Error(`preview_pending_jobs_http_${res.status}`)
+    const body = await res.json()
+    const job = selectPreviewImageJob(body.jobs, PREVIEW_E2E_PROJECT_ID)
+    if (job) {
+      if (processedJobs >= maxJobs) {
+        throw new Error(`preview_image_job_limit:${maxJobs}`)
+      }
+      idleSince = null
+      previewE2eTargetActionId = job.id
+      previewE2eReportedResult = null
+      console.log(`[preview-e2e] processing isolated action ${job.id}`)
+      try {
+        await processImageGen({ data: { pendingActionId: job.id, payload: job.payload } })
+      } catch (err) {
+        // Direct certification dispatch bypasses BullMQ, so its normal `failed`
+        // event cannot settle the action. Never leave a paid preview action in
+        // preview_approved after a scorer/provider crash.
+        if (previewE2eReportedResult?.status !== 'failed') {
+          await callJobResult(job.id, 'failed', undefined, err?.message ?? String(err))
+        }
+        throw err
+      }
+      if (previewE2eReportedResult?.status !== 'success') {
+        throw new Error(`preview_image_generation_failed:${previewE2eReportedResult?.error ?? 'missing_success_callback'}`)
+      }
+      const qcFailure = terminalPreviewImageQcFailure(job.payload, previewE2eReportedResult)
+      if (qcFailure) throw new Error(qcFailure)
+      console.log(`[preview-e2e] action ${job.id} completed successfully`)
+      processedJobs += 1
+      // The successful callback may enqueue a hidden garment-prep/rescene/QC
+      // successor. Keep polling this exact project until the chain is quiet.
+      continue
+    }
+    if (processedJobs > 0) {
+      idleSince ??= Date.now()
+      if (Date.now() - idleSince >= idleGraceMs) {
+        console.log(`[preview-e2e] project chain drained after ${processedJobs} action(s)`)
+        return true
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+  }
+  throw new Error('preview_image_job_timeout')
+}
+
+if (PREVIEW_E2E_MODE) {
+  try {
+    await runPreviewImageE2e()
+  } finally {
+    await Promise.all([
+      imageGenQueue, videoGenQueue, videoEditQueue, videoFinishQueue, audioGenQueue,
+      longTaskQueue, workbenchQueue, seoAuditQueue, staffDispatchQueue, csReplyQueue,
+      agentGraphQueue, browserTaskQueue,
+    ].map((queue) => queue.close().catch(() => undefined)))
+  }
+  process.exit(0)
+}
 
 const imageGenWorker = new Worker('image-gen', processImageGen, {
   connection,
@@ -1789,6 +2026,38 @@ const heartbeatInterval = startHeartbeatLoop({
 })
 const healthPingInterval = startHealthPingLoop()
 
+// CSE7 stays OFF until the preview-tested worker revision is deliberately
+// rolled out. Even when this loop is enabled, each owner has a separate
+// publishing kill switch that defaults OFF in the app.
+const creativeDistributionInterval =
+  process.env.STUDIO_DISTRIBUTION_SCHEDULERS_ENABLED === 'true'
+    ? startCreativeDistributionLoop({
+        appUrl: getAppUrl(),
+        internalToken: getInternalToken(),
+        intervalMs: Number(process.env.STUDIO_DISTRIBUTION_INTERVAL_MS) || 5 * 60_000,
+      })
+    : null
+if (!creativeDistributionInterval) {
+  console.log('[creative-distribution] scheduler OFF — rollout gate not enabled')
+}
+
+// V3 lifecycle execution is independently OFF by default and only admits the
+// built-in zero-cost local manifest adapter. Paid/provider renderers are never
+// selected by this loop.
+let lifecycleWorkerInterval = null
+if (process.env.STUDIO_LIFECYCLE_LOCAL_WORKER_ENABLED === 'true') {
+  const { startLifecycleWorkerLoop } = await import('./lifecycle-worker.mjs')
+  lifecycleWorkerInterval = startLifecycleWorkerLoop({
+    appUrl: getAppUrl(),
+    internalToken: getInternalToken(),
+    supabase,
+    intervalMs: Number(process.env.STUDIO_LIFECYCLE_WORKER_INTERVAL_MS) || 60_000,
+  })
+  console.log('[lifecycle-worker] zero-cost local adapter started')
+} else {
+  console.log('[lifecycle-worker] OFF — rollout gate not enabled')
+}
+
 // Phase 53 — effect-outbox dispatcher (OFF by default; readiness gates flip it).
 // Dispatch posts the run back to the app's assistant surface, where the guard +
 // effect engine own execution; the worker only drives retries/dead-letter.
@@ -1857,6 +2126,8 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  if (creativeDistributionInterval) clearInterval(creativeDistributionInterval)
+  if (lifecycleWorkerInterval) clearInterval(lifecycleWorkerInterval)
   clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)
@@ -1864,6 +2135,9 @@ async function shutdown(signal) {
   await Promise.all([
     imageGenWorker.close(),
     videoGenWorker.close(),
+    videoEditWorker.close(),
+    videoFinishWorker.close(),
+    audioGenWorker.close(),
     longTaskWorker.close(),
     workbenchWorker.close(),
     seoAuditWorker.close(),

@@ -8,12 +8,14 @@ import {
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
   FAMILY_CHAIN_LABEL_BN,
+  FAMILY_CHAIN_VTON_ENGINE_IDS,
   SINGLE_VTON_ENGINE_IDS,
   STUDIO_ENGINES,
   describeEngineAvailability,
   enginesForMode,
   getEngine,
   isAllowedFalEndpoint,
+  isFamilyChainVtonEngine,
   normalizeSingleVtonDefault,
   resolveLegacyProvider,
 } from '../provider-registry'
@@ -58,6 +60,14 @@ describe('provider registry — capability rules', () => {
   it('single try-on offers all VTON engines', () => {
     const ids = enginesForMode('try_on').map((e) => e.id)
     expect(ids).toEqual(expect.arrayContaining(['fashn', 'fal_fashn_v16', 'fal_idm_vton']))
+  })
+
+  it('allows only production/commercial FASHN engines to power an orchestrated family chain', () => {
+    expect([...FAMILY_CHAIN_VTON_ENGINE_IDS]).toEqual(['fashn', 'fal_fashn_v16'])
+    expect(isFamilyChainVtonEngine('fashn')).toBe(true)
+    expect(isFamilyChainVtonEngine('fal_fashn_v16')).toBe(true)
+    expect(isFamilyChainVtonEngine('fal_idm_vton')).toBe(false)
+    expect(isFamilyChainVtonEngine('gemini')).toBe(false)
   })
 
   it('FLUX Fill serves edit mode only', () => {

@@ -172,7 +172,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Owner-only Phase C UI mock — dev preview without full local auth env.
+  // Local Studio preview paths still perform their page-level access checks.
   if (process.env.NODE_ENV !== 'production' && (
     pathname === '/agent/creative-studio-demo'
     || pathname === '/agent/creative-studio'
@@ -245,6 +245,12 @@ export async function middleware(req: NextRequest) {
   }
 
   if (!pathname.startsWith('/api/')) {
+    // Creative Studio performs its owner/creator/reviewer assignment and
+    // rollout checks in the server page. Let any authenticated actor reach
+    // that fail-closed boundary; Legacy remains owner-only there.
+    if (pathname === '/agent/creative-studio') {
+      return NextResponse.next()
+    }
     const role = normalizeAlmaRole(token.role as string)
     const businessId: BusinessId = pathname.startsWith('/trading')
       ? 'ALMA_TRADING'

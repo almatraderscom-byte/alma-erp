@@ -1,0 +1,80 @@
+import { describe, expect, it } from 'vitest'
+import {
+  canonicalStudioProductStoragePath,
+  hydrateLegacyStudioProduct,
+  isLegacyStudioProductPath,
+  studioProductPreviewUrl,
+} from '@/lib/creative-studio/studio-product-source'
+
+const legacyProduct = {
+  code: '133-KIDS',
+  name: '133 Kids',
+  priceBdt: 1_250,
+  sourceImage: '/agent/product-images/133-KIDS',
+  available: 4,
+}
+
+describe('Studio product generation source', () => {
+  it('turns an exact legacy catalog lookup into a stable paid-run path and preview URL', () => {
+    expect(hydrateLegacyStudioProduct(legacyProduct, {
+      storagePath: 'product-images/alma-lifestyle/133-KIDS/2.jpg',
+      url: 'https://signed.example/133-kids',
+    })).toEqual({
+      ...legacyProduct,
+      sourceImage: 'product-images/alma-lifestyle/133-KIDS/2.jpg',
+      previewImage: 'https://signed.example/133-kids',
+    })
+  })
+
+  it('treats a persisted Supabase product signed URL as expiring legacy lineage', () => {
+    const signedLegacy = {
+      ...legacyProduct,
+      sourceImage: 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/133-KIDS/1.jpg?token=expired',
+    }
+    expect(isLegacyStudioProductPath(signedLegacy.sourceImage)).toBe(true)
+    expect(hydrateLegacyStudioProduct(signedLegacy, {
+      storagePath: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
+      url: 'https://fresh.example/133-kids',
+    }).sourceImage).toBe('product-images/alma-lifestyle/133-KIDS/1.jpg')
+  })
+
+  it('recovers the exact stable object path from an expired signed URL without a catalog row', () => {
+    const sourceImage = 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/133-KIDS/1.jpg?token=expired'
+    expect(canonicalStudioProductStoragePath(sourceImage)).toBe(
+      'product-images/alma-lifestyle/133-KIDS/1.jpg',
+    )
+    expect(hydrateLegacyStudioProduct({ ...legacyProduct, sourceImage }, null)).toEqual({
+      ...legacyProduct,
+      sourceImage: 'product-images/alma-lifestyle/133-KIDS/1.jpg',
+      previewImage: null,
+    })
+  })
+
+  it('fails closed when the legacy SKU has no healthy catalog image', () => {
+    expect(hydrateLegacyStudioProduct(legacyProduct, null)).toEqual({
+      ...legacyProduct,
+      sourceImage: null,
+      previewImage: null,
+    })
+  })
+
+  it('does not rewrite a stable project source', () => {
+    const stable = { ...legacyProduct, sourceImage: 'product-images/133-KIDS/2.jpg' }
+    expect(isLegacyStudioProductPath(stable.sourceImage)).toBe(false)
+    expect(hydrateLegacyStudioProduct(stable, {
+      storagePath: 'product-images/other.jpg',
+      url: 'https://signed.example/other',
+    })).toBe(stable)
+  })
+
+  it('prefers a fresh batch-signed preview over a stale cached catalog URL', () => {
+    const product = {
+      ...legacyProduct,
+      sourceImage: 'product-images/alma-lifestyle/133-KIDS/2.jpg',
+      previewImage: 'https://expired.example/133-kids',
+    }
+    expect(studioProductPreviewUrl(product, {
+      [product.sourceImage]: 'https://fresh.example/133-kids',
+    })).toBe('https://fresh.example/133-kids')
+  })
+})

@@ -4,7 +4,14 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildXaiRequest, extractXaiImage, XAI_ALLOWED_MODELS } from '../adapter.mjs'
+import sharp from 'sharp'
+import {
+  buildXaiRequest,
+  extractXaiImage,
+  saveXaiImage,
+  validateXaiReferenceContract,
+  XAI_ALLOWED_MODELS,
+} from '../adapter.mjs'
 
 process.env.XAI_API_KEY = 'test-key'
 
@@ -61,9 +68,130 @@ test('model allowlist enforced; prompt required', () => {
   assert.deepEqual([...XAI_ALLOWED_MODELS].sort(), ['grok-imagine-image', 'grok-imagine-image-quality'])
 })
 
+test('unsupported 4K and 4:5 requests fail at the request builder', () => {
+  assert.throws(
+    () => buildXaiRequest({
+      op: 'generate',
+      model: 'grok-imagine-image-quality',
+      prompt: 'x',
+      aspectRatio: '16:9',
+      resolution: '4k',
+    }),
+    /does not support 4K/,
+  )
+  assert.throws(
+    () => buildXaiRequest({
+      op: 'generate',
+      model: 'grok-imagine-image-quality',
+      prompt: 'x',
+      aspectRatio: '4:5',
+      resolution: '2k',
+    }),
+    /does not support aspect ratio 4:5/,
+  )
+})
+
 test('response parsing: b64_json preferred, url fallback, null when empty', () => {
   assert.deepEqual(extractXaiImage({ data: [{ b64_json: 'abc' }] }), { kind: 'b64', value: 'abc' })
   assert.deepEqual(extractXaiImage({ data: [{ url: 'https://x/img.png' }] }), { kind: 'url', value: 'https://x/img.png' })
   assert.equal(extractXaiImage({ data: [] }), null)
   assert.equal(extractXaiImage({}), null)
+})
+
+test('selected Product→Model product/person order is immutable before transport', () => {
+  const refs = ['products/p.jpg', 'models/m.jpg']
+  const contract = {
+    bindings: [
+      { role: 'product', path: refs[0], required: true },
+      { role: 'person', path: refs[1], required: true },
+    ],
+  }
+  assert.deepEqual(validateXaiReferenceContract(refs, contract), contract.bindings)
+  assert.throws(
+    () => validateXaiReferenceContract([...refs].reverse(), contract),
+    /order mismatch at 1/,
+  )
+  assert.throws(
+    () => validateXaiReferenceContract([refs[0]], contract),
+    /expected 2, queued 1/,
+  )
+})
+
+function fakeSupabase() {
+  const uploaded = new Map()
+  return {
+    uploaded,
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'agent-files')
+        return {
+          upload: async (path, bytes, options) => {
+            uploaded.set(path, { bytes: Buffer.from(bytes), options })
+            return { error: null }
+          },
+        }
+      },
+    },
+  }
+}
+
+test('xAI b64 response is sniffed as JPEG and original bytes are preserved', async () => {
+  const bytes = await sharp({
+    create: {
+      width: 1024,
+      height: 1024,
+      channels: 3,
+      background: { r: 1, g: 2, b: 3 },
+    },
+  }).jpeg().toBuffer()
+  const supabase = fakeSupabase()
+  const artifact = await saveXaiImage(
+    supabase,
+    { kind: 'b64', value: bytes.toString('base64') },
+    'pa-xai-b64',
+    {
+      model: 'grok-imagine-image-quality',
+      requestedTier: '1k',
+      requestedAspectRatio: '1:1',
+      validationContract: { mode: 'tier-long-edge', tier: '1k' },
+    },
+  )
+  assert.equal(artifact.storagePath, 'generated/studio-pa-xai-b64.jpg')
+  assert.equal(artifact.format, 'jpeg')
+  assert.equal(artifact.mimeType, 'image/jpeg')
+  assert.equal(artifact.validation, 'verified')
+  assert.deepEqual(supabase.uploaded.get(artifact.storagePath).bytes, bytes)
+})
+
+test('xAI temporary URL response is sniffed as WebP despite a PNG header', async () => {
+  const bytes = await sharp({
+    create: {
+      width: 2048,
+      height: 1152,
+      channels: 3,
+      background: { r: 4, g: 5, b: 6 },
+    },
+  }).webp().toBuffer()
+  const supabase = fakeSupabase()
+  const artifact = await saveXaiImage(
+    supabase,
+    { kind: 'url', value: 'https://x.invalid/image.png' },
+    'pa-xai-url',
+    {
+      model: 'grok-imagine-image-quality',
+      requestedTier: '2k',
+      requestedAspectRatio: '16:9',
+      validationContract: { mode: 'tier-long-edge', tier: '2k' },
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        arrayBuffer: async () => bytes,
+      }),
+    },
+  )
+  assert.equal(artifact.storagePath, 'generated/studio-pa-xai-url.webp')
+  assert.equal(artifact.format, 'webp')
+  assert.equal(artifact.validation, 'verified')
+  assert.deepEqual(supabase.uploaded.get(artifact.storagePath).bytes, bytes)
 })

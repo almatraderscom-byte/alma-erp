@@ -2,12 +2,18 @@
 // The browser PUTs the file straight to Supabase storage — Vercel never sees
 // the (up to ~500 MB) body.
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { randomUUID } from 'crypto'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { agentStorageSignedUploadUrl } from '@/agent/lib/storage'
 import { VIDEO_UPLOAD_MAX_BYTES, VIDEO_UPLOAD_EXTENSIONS } from '@/lib/creative-studio/video-recipes'
+import {
+  assertStudioCapability,
+  authenticateStudioRequest,
+  studioAccessErrorResponse,
+} from '@/lib/creative-studio/studio-access'
+import {
+  requireStudioResourceContext,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 
@@ -18,15 +24,29 @@ const CONTENT_TYPES: Record<string, string> = {
 }
 
 export async function POST(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
-  let body: { fileName?: string; sizeBytes?: number }
+  let body: {
+    fileName?: string
+    sizeBytes?: number
+    brandProfileId?: string
+    projectId?: string
+  }
   try { body = await req.json() } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+  let scopedProjectId = ''
+  if (body.brandProfileId || body.projectId) {
+    try {
+      const context = await requireStudioResourceContext(actor, body)
+      assertStudioCapability(context.access.role, 'draft')
+      scopedProjectId = context.projectId
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-video-upload-url')
+    }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 
   const fileName = String(body.fileName ?? '').trim()
@@ -40,7 +60,8 @@ export async function POST(req: NextRequest) {
   }
 
   const uploadId = randomUUID()
-  const path = `studio-video/uploads/${uploadId}.${ext === 'm4v' ? 'mp4' : ext}`
+  const scopedFolder = scopedProjectId ? `${scopedProjectId}/` : ''
+  const path = `studio-video/uploads/${scopedFolder}${uploadId}.${ext === 'm4v' ? 'mp4' : ext}`
   try {
     const uploadUrl = await agentStorageSignedUploadUrl(path)
     return Response.json({

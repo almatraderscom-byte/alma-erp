@@ -16,6 +16,7 @@ import {
   type VideoEditOptions,
 } from '@/lib/creative-studio/video-recipes'
 import { getMusicTrack, pickMusicTrackAuto } from '@/lib/creative-studio/music-library'
+import { assertStudioResourceScope } from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
     targets?: number[]
     aspect?: string
     options?: VideoEditOptions
+    uploadId?: string
+    brandProfileId?: string
+    projectId?: string
   }
   try { body = await req.json() } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
@@ -44,6 +48,40 @@ export async function POST(req: NextRequest) {
   const videoPath = String(body.videoPath ?? '').trim()
   if (!videoPath.startsWith('studio-video/uploads/') || videoPath.includes('..')) {
     return Response.json({ error: 'আগে একটি ভিডিও আপলোড করে বেছে নিন।' }, { status: 422 })
+  }
+
+  const uploadId = String(body.uploadId ?? '').trim()
+  const brandProfileId = String(body.brandProfileId ?? '').trim()
+  const projectId = String(body.projectId ?? '').trim()
+  if (uploadId || brandProfileId || projectId) {
+    if (!uploadId || !brandProfileId || !projectId) {
+      return Response.json({ error: 'video_scope_required' }, { status: 422 })
+    }
+    try {
+      const scope = await assertStudioResourceScope('video', uploadId, {
+        ownerId: token.sub,
+        brandProfileId,
+        projectId,
+      })
+      if (scope.sourcePath && scope.sourcePath !== videoPath) {
+        return Response.json({ error: 'video_lineage_scope_mismatch' }, { status: 403 })
+      }
+      const registered = await db.agentKvSetting.findUnique({
+        where: { key: `studio_video_upload:${uploadId}` },
+        select: { value: true },
+      })
+      let registeredPath = ''
+      try {
+        registeredPath = String(JSON.parse(String(registered?.value ?? '{}')).path ?? '')
+      } catch {
+        registeredPath = ''
+      }
+      if (!registeredPath || registeredPath !== videoPath) {
+        return Response.json({ error: 'video_lineage_scope_mismatch' }, { status: 403 })
+      }
+    } catch {
+      return Response.json({ error: 'video_scope_mismatch' }, { status: 403 })
+    }
   }
 
   const recipe = getVideoRecipe(String(body.recipeId ?? ''))

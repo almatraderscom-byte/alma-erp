@@ -10,14 +10,29 @@
  * owner's correction: the same code/hook must not sit on every image.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { applyBrandFrame } from '@/lib/content-engine/brand-frame'
+import {
+  applyBrandFrameArtifact,
+  type BrandFrameArtifact,
+} from '@/lib/content-engine/brand-frame'
 import type { LifestyleLayoutOverrides } from '@/lib/content-engine/lifestyle-layout'
 import { THEME_ACCENT, type BrandTheme } from '@/lib/content-engine/brand-identity'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import {
+  mergeArtifactVersionMetadata,
+  mergeBrandedVariant,
+  type StudioArtifactDescriptor,
+} from '@/lib/creative-studio/artifact-metadata'
+import { sanitizeStudioError } from '@/lib/creative-studio/studio-errors'
+import { studioActionBlockReason } from '@/lib/creative-studio/studio-policy'
+import {
+  authenticateStudioRequest,
+  StudioAccessError,
+} from '@/lib/creative-studio/studio-access'
+import {
+  requireStudioProjectAssetContext,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -30,12 +45,8 @@ function isTheme(v: unknown): v is BrandTheme {
 }
 
 export async function POST(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
   let body: {
     storagePath?: string
@@ -51,6 +62,9 @@ export async function POST(req: NextRequest) {
     fit?: unknown
     layout?: unknown
     pendingActionId?: string
+    brandProfileId?: string
+    projectId?: string
+    projectAssetId?: string
   }
   try {
     body = await req.json()
@@ -67,15 +81,73 @@ export async function POST(req: NextRequest) {
   const hook = (typeof body.hook === 'string' ? body.hook : '').trim()
   if (!hook) return Response.json({ error: 'hook_required', message: 'একটা hook লেখা লাগবে।' }, { status: 400 })
 
+  const hasScopedSelector = Boolean(
+    body.brandProfileId
+    || body.projectId
+    || body.projectAssetId,
+  )
+  let pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
+  if (hasScopedSelector) {
+    try {
+      const scoped = await requireStudioProjectAssetContext(actor, {
+        brandProfileId: body.brandProfileId,
+        projectId: body.projectId,
+        projectAssetId: body.projectAssetId,
+        pendingActionId,
+        storagePath,
+      })
+      if (scoped.access.role !== 'owner') {
+        throw new StudioAccessError('studio_finish_owner_required', 403)
+      }
+      pendingActionId = scoped.pendingActionId
+    } catch (error) {
+      const status = error instanceof StudioAccessError ? error.status : 403
+      const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+      return Response.json({ error: code }, { status })
+    }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    // Legacy callers remain owner-only. Supplying a project/brand selector
+    // never upgrades access and partial scoped selectors fail closed above.
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
+  const source = pendingActionId
+    ? await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
+    : await db.agentPendingAction.findFirst({
+      where: {
+        payload: { path: ['creativeStudio'], equals: true },
+        OR: [
+          { result: { path: ['storagePath'], equals: storagePath } },
+          { result: { path: ['videoPath'], equals: storagePath } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  if (pendingActionId && !source) {
+    return Response.json({ error: 'source_not_found', message: 'Creative-টি খুঁজে পাওয়া যায়নি।' }, { status: 404 })
+  }
+  if (source) {
+    const sourceResult = (source.result ?? {}) as Record<string, unknown>
+    const sourcePath = String(sourceResult.storagePath ?? sourceResult.videoPath ?? '')
+    if (sourcePath && sourcePath !== storagePath) {
+      return Response.json({ error: 'source_mismatch', message: 'Creative এবং file এক নয়। Refresh করুন।' }, { status: 409 })
+    }
+    const blocked = studioActionBlockReason({
+      status: source.status,
+      result: sourceResult,
+      hasArtifact: Boolean(sourcePath),
+    }, 'finish')
+    if (blocked) return Response.json({ error: 'qc_failed_blocked', message: blocked }, { status: 409 })
+  }
+
   const mode =
     body.mode === 'product_card' ? 'product_card'
     : body.mode === 'lifestyle' ? 'lifestyle'
     : 'model_overlay'
   const theme: BrandTheme = isTheme(body.theme) ? body.theme : 'default'
 
-  let framedPath: string
+  let framedArtifact: BrandFrameArtifact
   try {
-    framedPath = await applyBrandFrame(storagePath, {
+    framedArtifact = await applyBrandFrameArtifact(storagePath, {
       mode,
       // For 'lifestyle' the hook is the headline; eyebrow/offer are the other two
       // editable lines (blank → brand defaults). The same hook drives other modes.
@@ -98,13 +170,35 @@ export async function POST(req: NextRequest) {
           : null,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return Response.json({ error: 'finish_failed', message: msg }, { status: 422 })
+    return Response.json({ error: 'finish_failed', message: sanitizeStudioError(err) }, { status: 422 })
+  }
+  const framedPath = framedArtifact.storagePath
+  const brandedVariant: StudioArtifactDescriptor = {
+    kind: 'branded',
+    ...framedArtifact,
+    requestedTier: null,
+    requestedAspectRatio: framedArtifact.width === framedArtifact.height ? '1:1' : '4:5',
+    actualTier: 'social-1080',
+    validation: 'verified',
+    validationErrors: [],
+    expected: {
+      width: framedArtifact.width,
+      height: framedArtifact.height,
+    },
+    provider: 'alma_brand_frame',
+    model: 'deterministic-v1',
+    sourceKind: 'original',
+    transformVersion: 'cse8-brand-frame-v1',
+    transform: {
+      name: 'brand-frame',
+      version: '1',
+      mode,
+      sourceStoragePath: storagePath,
+    },
   }
 
   // Persist the framed copy back onto the gallery item so it shows the "Branded"
   // toggle and survives a reload (best-effort — never fail the finish for this).
-  const pendingActionId = typeof body.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
   if (pendingActionId) {
     try {
       const row = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
@@ -126,10 +220,32 @@ export async function POST(req: NextRequest) {
               ? body.layout
               : null,
         }
+        const mergedResult = {
+          ...mergeBrandedVariant(result, brandedVariant),
+          finishParams,
+        }
         await db.agentPendingAction.update({
           where: { id: pendingActionId },
-          data: { result: { ...result, brandedPath: framedPath, finishParams } },
+          data: { result: mergedResult },
         })
+
+        // CSE3 versions are linked by the immutable job id. Keep their JSON
+        // evidence in sync immediately; do not wait for a future library read.
+        const versions = await db.creativeAssetVersion.findMany({
+          where: { jobId: pendingActionId },
+          select: { id: true, metadata: true },
+        })
+        if (versions.length) {
+          await db.$transaction(versions.map((version: {
+            id: string
+            metadata: unknown
+          }) => db.creativeAssetVersion.update({
+            where: { id: version.id },
+            data: {
+              metadata: mergeArtifactVersionMetadata(version.metadata, mergedResult),
+            },
+          })))
+        }
       }
     } catch (err) {
       console.warn('[finish] persist brandedPath failed:', err instanceof Error ? err.message : err)
@@ -140,8 +256,8 @@ export async function POST(req: NextRequest) {
   try {
     framedUrl = await agentStorageSignedUrl(framedPath, 3600)
   } catch (err) {
-    return Response.json({ error: 'sign_failed', message: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return Response.json({ error: 'sign_failed', message: sanitizeStudioError(err) }, { status: 500 })
   }
 
-  return Response.json({ framedPath, framedUrl })
+  return Response.json({ framedPath, framedUrl, brandedVariant })
 }

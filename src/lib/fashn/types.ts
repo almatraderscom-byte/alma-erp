@@ -22,8 +22,10 @@ export type FashnStatusResponse = {
 }
 
 export type FashnRunOptions = {
+  aspectRatio?: string
   resolution?: FashnResolution
   generationMode?: FashnGenerationMode
+  seed?: number
   prompt?: string
   numImages?: number
   outputFormat?: 'png' | 'jpeg'

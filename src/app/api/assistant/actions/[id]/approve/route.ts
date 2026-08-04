@@ -13,6 +13,7 @@ import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
 import { recordApproval } from '@/agent/lib/trust-engine'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
+import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
 import {
   activeDevice as activeMacDevice,
   awaitResult as awaitMacResult,
@@ -880,17 +881,20 @@ async function runApprove(
   }
 
   if (action.type === 'image_gen') {
+    const queueStatus = creativeStudioImageQueueStatus(action.payload)
     // Mark as approved — the VPS worker polls /api/assistant/internal/pending-jobs
     // and picks this up via BullMQ (worker-side queue). No BullMQ dependency in Next.js.
     await db.agentPendingAction.update({
       where: { id: actionId },
-      data: { status: 'approved', resolvedAt: new Date() },
+      data: { status: queueStatus, resolvedAt: new Date() },
     })
 
     return Response.json({
       success: true,
       queued: true,
-      message: 'Image generation approved. The VPS worker will process it shortly — result will appear in the conversation.',
+      message: queueStatus === 'preview_approved'
+        ? 'Image generation approved for the isolated preview worker.'
+        : 'Image generation approved. The VPS worker will process it shortly — result will appear in the conversation.',
     })
   }
 

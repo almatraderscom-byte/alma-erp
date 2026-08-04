@@ -18,6 +18,16 @@ import {
   storagePathToBuffer,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
+import {
+  makeContractReferenceReceipt,
+  validateOrderedReferenceContract,
+} from '../../image/reference-contract.mjs'
+import { uploadImageArtifact } from '../../image-artifact.mjs'
+import { sourceDimensionsContract } from '../../image-resolution-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../../studio-run-authorize.mjs'
 
 export const FLUX_FILL_ENDPOINT = 'fal-ai/flux-pro/v1/fill'
 
@@ -100,6 +110,13 @@ function bufferToDataUri(buf, mime) {
 export async function processFluxFill({ supabase, pendingActionId, payload, logCost }) {
   const { baseImagePath, maskPath, fillPrompt } = payload
   if (!baseImagePath || !maskPath) throw new Error('flux-fill needs baseImagePath + maskPath')
+  validateOrderedReferenceContract(payload.referenceContract, {
+    actualModel: FLUX_FILL_ENDPOINT,
+    bindings: [
+      { role: 'source', path: baseImagePath },
+      { role: 'mask', path: maskPath },
+    ],
+  })
 
   const [baseBuf, maskBuf] = await Promise.all([
     storagePathToBuffer(supabase, baseImagePath),
@@ -126,6 +143,9 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
     seed: input.seed ?? null,
   })
 
+  if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+    await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
+  }
   const out = await runFalQueueJob({
     supabase,
     pendingActionId,
@@ -146,12 +166,16 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
     fillBuf,
   })
 
-  const storagePath = `generated/studio-${pendingActionId}.png`
-  const { error: upErr } = await supabase.storage.from('agent-files').upload(storagePath, composited, {
-    contentType: 'image/png',
-    upsert: true,
+  const original = await uploadImageArtifact({
+    supabase,
+    buffer: composited,
+    storageBasePath: `generated/studio-${pendingActionId}`,
+    kind: 'original',
+    requestedAspectRatio: 'source',
+    provider: 'fal',
+    model: FLUX_FILL_ENDPOINT,
+    contract: sourceDimensionsContract(width, height),
   })
-  if (upErr) throw new Error(`upload failed: ${upErr.message}`)
   await clearFalRequestState(supabase, pendingActionId)
 
   const { calcFluxFillCostUsd } = await import('../../cost-log.mjs')
@@ -173,8 +197,8 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
   })
 
   return {
-    storagePath,
-    allPaths: [storagePath],
+    storagePath: original.storagePath,
+    allPaths: [original.storagePath],
     provider: 'fal',
     falEngine: 'fal_flux_fill',
     falEndpointId: FLUX_FILL_ENDPOINT,
@@ -186,6 +210,8 @@ export async function processFluxFill({ supabase, pendingActionId, payload, logC
     baseImagePath,
     maskPreset: payload.maskPreset ?? 'custom',
     protectedDiff: { maxKeepDelta, keepChangedPct: Math.round(keepChangedPct * 100) / 100 },
+    referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     qc: null,
+    original,
   }
 }

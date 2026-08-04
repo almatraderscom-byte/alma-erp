@@ -1,0 +1,129 @@
+import {
+  fetchAudioLabStatus,
+  fetchBrandRecipes,
+  fetchCreativeVoices,
+  fetchErpProducts,
+  fetchGallery,
+  fetchModels,
+  fetchMusicTracks,
+  fetchStudioBrands,
+  fetchStudioConfig,
+  fetchStudioHealth,
+  fetchStudioProjects,
+  fetchStudioReviewQueue,
+  fetchStudioReview,
+  fetchStudioRetention,
+  fetchStudioSettings,
+  fetchStudioVideos,
+  fetchVideoEditSource,
+  finishImage,
+  finishVideo,
+  confirmStudioJob,
+  createStudioProject,
+  estimateStudioJob,
+  partiallyFinishVideo,
+  runVideoRecipe,
+  uploadFillMask,
+  uploadStudioReference,
+  uploadStudioFile,
+  uploadStudioVideo,
+} from '@/agent/components/creative-studio/studio-api'
+import type {
+  CreativeStudioV3ProductionPort,
+  StudioV3DataIssue,
+  StudioV3HomeSnapshot,
+} from '@/agent/components/creative-studio-v3/ports'
+import { creativeStudioV3CompositionClient } from '@/agent/components/creative-studio-v3/composition-client'
+import { studioV3LifecycleClient } from '@/agent/components/creative-studio-v3/lifecycle-client'
+import { scopeProjectsToBrand } from '@/agent/components/creative-studio-v3/ui-contract'
+
+function issue(resource: string, reason: unknown): StudioV3DataIssue {
+  return {
+    resource,
+    message: reason instanceof Error ? reason.message : 'The production service did not respond.',
+  }
+}
+
+export async function loadCreativeStudioV3Home(
+  brandProfileId?: string | null,
+  projectId?: string | null,
+): Promise<StudioV3HomeSnapshot> {
+  const resources = await Promise.allSettled([
+    fetchStudioBrands(),
+    fetchStudioProjects(brandProfileId),
+    fetchBrandRecipes(brandProfileId),
+    fetchModels(brandProfileId, projectId),
+    fetchGallery({ limit: 12, brandProfileId, projectId }),
+    fetchStudioConfig(),
+    fetchStudioHealth(),
+    fetchStudioRetention(),
+  ])
+
+  const issues: StudioV3DataIssue[] = []
+  const value = <T,>(index: number, resource: string, fallback: T): T => {
+    const result = resources[index]
+    if (result.status === 'fulfilled') return result.value as T
+    issues.push(issue(resource, result.reason))
+    return fallback
+  }
+
+  return {
+    brands: value(0, 'brands', []),
+    projects: scopeProjectsToBrand(value(1, 'projects', []), brandProfileId),
+    recipes: value(2, 'recipes', []),
+    models: value<{ models: StudioV3HomeSnapshot['models'] }>(3, 'models', { models: [] }).models,
+    recentAssets: value<{ items: StudioV3HomeSnapshot['recentAssets'] }>(4, 'gallery', { items: [] }).items,
+    config: value(5, 'config', null),
+    health: value(6, 'health', null),
+    retention: value(7, 'retention', null),
+    issues,
+  }
+}
+
+export const creativeStudioV3ProductionPort: CreativeStudioV3ProductionPort = {
+  loadHome: loadCreativeStudioV3Home,
+  listBrands: fetchStudioBrands,
+  listProjects: async (brandProfileId) => scopeProjectsToBrand(
+    await fetchStudioProjects(brandProfileId),
+    brandProfileId,
+  ),
+  createProject: createStudioProject,
+  listRecipes: fetchBrandRecipes,
+  listProducts: fetchErpProducts,
+  listCompositions: creativeStudioV3CompositionClient.listCompositions,
+  getReview: fetchStudioReview,
+  transitionReview: studioV3LifecycleClient.transitionReview,
+  // V3 reads require both brand and project. Server routes validate the actor's
+  // assignment; collaborators fail closed, while the owning system account may
+  // reuse its unscoped production model library for legacy parity.
+  listModels: async (brandProfileId, projectId) =>
+    (await fetchModels(brandProfileId, projectId)).models ?? [],
+  listGallery: async (query, brandProfileId, projectId) =>
+    fetchGallery({ ...query, brandProfileId, projectId }),
+  listVoices: fetchCreativeVoices,
+  listVideoUploads: fetchStudioVideos,
+  listMusicTracks: fetchMusicTracks,
+  listReviewQueue: fetchStudioReviewQueue,
+  loadWorkspace: studioV3LifecycleClient.loadWorkspace,
+  resolvePin: studioV3LifecycleClient.resolvePin,
+  previewLocal: studioV3LifecycleClient.previewLocal,
+  queueLocal: studioV3LifecycleClient.queueLocal,
+  controlJob: studioV3LifecycleClient.controlJob,
+  listFlags: studioV3LifecycleClient.listFlags,
+  configureFlag: studioV3LifecycleClient.configureFlag,
+  getConfig: fetchStudioConfig,
+  getSettings: fetchStudioSettings,
+  getHealth: fetchStudioHealth,
+  getAudioStatus: fetchAudioLabStatus,
+  uploadImage: uploadStudioFile,
+  uploadReference: uploadStudioReference,
+  uploadVideo: uploadStudioVideo,
+  runVideoRecipe,
+  estimateRun: estimateStudioJob,
+  confirmRun: confirmStudioJob,
+  getVideoEditSource: fetchVideoEditSource,
+  finishImage,
+  uploadMask: uploadFillMask,
+  finishVideo,
+  partiallyFinishVideo,
+}

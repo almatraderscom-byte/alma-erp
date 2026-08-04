@@ -8,10 +8,18 @@
  * cleanly. Result URLs from xAI are temporary — we download to agent-files
  * storage immediately, or use b64_json when returned.
  */
+import { storagePathToNormalizedDataUri } from '../fal/client.mjs'
 import {
-  downloadFalOutputToStorage,
-  storagePathToNormalizedDataUri,
-} from '../fal/client.mjs'
+  downloadImageArtifactToStorage,
+  uploadImageArtifact,
+} from '../image-artifact.mjs'
+import { resolveXaiImageRequest } from '../image-resolution-contract.mjs'
+import {
+  allowPaidGarmentPrepCleanup,
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+  studioRunProviderMaxAttempts,
+} from '../studio-run-authorize.mjs'
 
 const XAI_BASE = 'https://api.x.ai/v1'
 
@@ -31,6 +39,9 @@ function isTransientStatus(httpStatus) {
 export function buildXaiRequest({ op, model, prompt, referenceDataUris = [], aspectRatio, resolution, n = 1 }) {
   if (!XAI_ALLOWED_MODELS.includes(model)) throw new Error(`xai model not allowlisted: ${model}`)
   if (!prompt?.trim()) throw new Error('xai: prompt required')
+  if (resolution != null || aspectRatio != null) {
+    resolveXaiImageRequest({ resolution, aspectRatio })
+  }
   const base = {
     model,
     prompt,
@@ -61,6 +72,18 @@ export function extractXaiImage(payload) {
   return null
 }
 
+export function validateXaiReferenceContract(refPaths, contract) {
+  const bindings = Array.isArray(contract?.bindings) ? contract.bindings : []
+  if (!bindings.length) return bindings
+  if (bindings.length !== refPaths.length) {
+    throw new Error(`xai reference contract mismatch: expected ${bindings.length}, queued ${refPaths.length}`)
+  }
+  for (let i = 0; i < bindings.length; i++) {
+    if (bindings[i]?.path !== refPaths[i]) throw new Error(`xai reference contract order mismatch at ${i + 1}`)
+  }
+  return bindings
+}
+
 async function callXai(path, body, { fetchImpl = fetch, maxRetries = 3, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   let lastErr
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -89,18 +112,41 @@ async function callXai(path, body, { fetchImpl = fetch, maxRetries = 3, sleep = 
   throw lastErr
 }
 
-async function saveXaiImage(supabase, image, pendingActionId, suffix = '') {
+export async function saveXaiImage(supabase, image, pendingActionId, {
+  suffix = '',
+  model,
+  requestedTier,
+  requestedAspectRatio,
+  validationContract,
+  fetchImpl = fetch,
+} = {}) {
+  const storageBasePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}`
   if (image.kind === 'url') {
-    return downloadFalOutputToStorage(supabase, image.value, pendingActionId, suffix)
+    return downloadImageArtifactToStorage({
+      supabase,
+      outputUrl: image.value,
+      storageBasePath,
+      fetchImpl,
+      kind: 'original',
+      requestedTier,
+      requestedAspectRatio,
+      provider: 'xai',
+      model,
+      contract: validationContract,
+    })
   }
   const buf = Buffer.from(image.value, 'base64')
-  const storagePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}.png`
-  const { error } = await supabase.storage.from('agent-files').upload(storagePath, buf, {
-    contentType: 'image/png',
-    upsert: true,
+  return uploadImageArtifact({
+    supabase,
+    buffer: buf,
+    storageBasePath,
+    kind: 'original',
+    requestedTier,
+    requestedAspectRatio,
+    provider: 'xai',
+    model,
+    contract: validationContract,
   })
-  if (error) throw new Error(`upload failed: ${error.message}`)
-  return storagePath
 }
 
 /**
@@ -113,11 +159,25 @@ async function saveXaiImage(supabase, image, pendingActionId, suffix = '') {
  *  - 'person' → dark-plate cleanup (reseller model photos carry text plates).
  * Both fail OPEN to the raw image — prep must never block a paid run.
  */
-async function prepareReferencePath({ supabase, path, role, isFamilyPair, pendingActionId, logCost }) {
+async function prepareReferencePath({
+  supabase,
+  path,
+  role,
+  isFamilyPair,
+  pendingActionId,
+  logCost,
+  allowPaidCleanup,
+}) {
   try {
     if (role === 'garment' && !isFamilyPair) {
       const { prepSupplierPhoto } = await import('../garment-prep.mjs')
-      const prep = await prepSupplierPhoto({ supabase, imagePath: path, pendingActionId, logCost })
+      const prep = await prepSupplierPhoto({
+        supabase,
+        imagePath: path,
+        pendingActionId,
+        logCost,
+        allowPaidCleanup,
+      })
       if (prep?.adultGarmentPath) return prep.adultGarmentPath
       return path
     }
@@ -132,14 +192,27 @@ async function prepareReferencePath({ supabase, path, role, isFamilyPair, pendin
 }
 
 export async function processXaiImagine({ supabase, pendingActionId, payload, logCost }) {
-  const model = XAI_ALLOWED_MODELS.includes(payload.xaiModel) ? payload.xaiModel : 'grok-imagine-image-quality'
+  const model = payload.xaiModel
+  if (!XAI_ALLOWED_MODELS.includes(model)) throw new Error(`xai model not allowlisted: ${model}`)
+  if (payload.referenceContract?.actualModel && payload.referenceContract.actualModel !== model) {
+    throw new Error(`xai model snapshot mismatch: expected ${payload.referenceContract.actualModel}, queued ${model}`)
+  }
   const op = payload.xaiOp === 'generate' ? 'generate' : 'edit'
-  const refPaths = Array.isArray(payload.referenceImagePaths) ? payload.referenceImagePaths.slice(0, 3) : []
+  // Fail unsupported tier/aspect combinations before reference processing or
+  // the synchronous paid request. There is no silent 4K→2K or 4:5→3:4 clamp.
+  const imageRequest = resolveXaiImageRequest({
+    resolution: payload.resolution,
+    aspectRatio: payload.aspectRatio,
+  })
+  const refPaths = Array.isArray(payload.referenceImagePaths) ? payload.referenceImagePaths.slice() : []
+  if (refPaths.length > 3) throw new Error(`xai edit takes at most 3 reference images; queued ${refPaths.length}`)
   if (op === 'edit' && refPaths.length === 0) throw new Error('xai edit job has no reference images')
   const refRoles = Array.isArray(payload.referenceRoles) ? payload.referenceRoles : []
+  const contractBindings = validateXaiReferenceContract(refPaths, payload.referenceContract)
   const isFamilyPair = refRoles.filter((r) => r === 'person').length >= 2
 
   const referenceDataUris = []
+  const preparedPaths = []
   for (let i = 0; i < refPaths.length; i++) {
     const prepared = await prepareReferencePath({
       supabase,
@@ -148,11 +221,16 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       isFamilyPair,
       pendingActionId,
       logCost,
+      allowPaidCleanup: allowPaidGarmentPrepCleanup(payload),
     })
+    preparedPaths.push(prepared)
     referenceDataUris.push(await storagePathToNormalizedDataUri(supabase, prepared))
   }
+  if (referenceDataUris.length !== refPaths.length) {
+    throw new Error(`xai required reference transport mismatch: expected ${refPaths.length}, sent ${referenceDataUris.length}`)
+  }
 
-  const resolution = payload.resolution === '1k' ? '1k' : '2k'
+  const resolution = imageRequest.providerImageSize
   const costUsd = resolution === '2k' ? 0.07 : 0.05
   let totalCostUsd = 0
 
@@ -165,16 +243,27 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       model,
       prompt,
       referenceDataUris,
-      aspectRatio: payload.aspectRatio,
+      aspectRatio: imageRequest.requestedAspectRatio,
       resolution,
       n: 1,
     })
     const started = Date.now()
-    const result = await callXai(path, body)
+    if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, qcAttempt ?? 1)
+    }
+    const result = await callXai(path, body, {
+      maxRetries: studioRunProviderMaxAttempts(payload, 3),
+    })
     const image = extractXaiImage(result)
     if (!image) throw new Error('xai: no image in response')
     const suffix = qcAttempt && qcAttempt > 1 ? `qc${qcAttempt}` : ''
-    const storagePath = await saveXaiImage(supabase, image, pendingActionId, suffix)
+    const original = await saveXaiImage(supabase, image, pendingActionId, {
+      suffix,
+      model,
+      requestedTier: imageRequest.requestedTier,
+      requestedAspectRatio: imageRequest.requestedAspectRatio,
+      validationContract: imageRequest.validationContract,
+    })
     totalCostUsd += costUsd
     void logCost({
       provider: 'xai',
@@ -184,7 +273,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         model,
         op,
         resolution,
-        aspectRatio: payload.aspectRatio ?? null,
+        aspectRatio: imageRequest.requestedAspectRatio,
         referenceCount: referenceDataUris.length,
         qcAttempt: qcAttempt ?? 1,
       },
@@ -192,18 +281,20 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       jobId: pendingActionId,
       dedupKey: `xai:${pendingActionId}:${qcAttempt ?? 1}`,
     })
-    return { storagePath, latencyMs: Date.now() - started }
+    return { storagePath: original.storagePath, original, latencyMs: Date.now() - started }
   }
 
   const first = await runOnce(1)
   let paths = [first.storagePath]
   let lastMeta = first
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
 
   let qc = null
   try {
-    const { fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
+    const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('../image-qc.mjs')
     const { getAppUrl, getInternalToken } = await import('../env.mjs')
-    const qcLevel = await fetchQcLevel(supabase)
+    const configuredQcLevel = await fetchQcLevel(supabase)
+    const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
     if (qcLevel !== 'off') {
       const qcResult = await runImageQcLoop({
         supabase,
@@ -213,9 +304,17 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
         initialPath: first.storagePath,
         productType: null,
         productImagePath: payload.productImagePath ?? null,
+        personImagePath: payload.referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+          ?? payload.modelImagePath
+          ?? null,
+        surface: payload.studioMode === 'try_on' ? 'single_tryon' : undefined,
+        pipelineMode: payload.pipelineMode,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
+        generationPrompt: payload.prompt,
         regenerate: async (fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum, fixHint)
           paths.push(retry.storagePath)
+          artifactsByPath.set(retry.storagePath, retry.original)
           lastMeta = retry
           return retry.storagePath
         },
@@ -226,6 +325,7 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] xai-imagine ${pendingActionId} — QC skipped: ${err.message}`)
   }
 
@@ -238,6 +338,16 @@ export async function processXaiImagine({ supabase, pendingActionId, payload, lo
     xaiOp: op,
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
+    referenceReceipt: {
+      version: 1,
+      expectedCount: refPaths.length,
+      sentCount: referenceDataUris.length,
+      roles: contractBindings.length ? contractBindings.map((binding) => binding.role) : refRoles,
+      sources: contractBindings.map((binding) => binding.source),
+      prepared: preparedPaths.map((path, index) => path !== refPaths[index]),
+      allRequiredSent: true,
+    },
     qc,
+    original: artifactsByPath.get(paths[0]) ?? lastMeta.original,
   }
 }

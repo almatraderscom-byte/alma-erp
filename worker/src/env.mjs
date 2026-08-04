@@ -9,6 +9,11 @@ export function getInternalToken() {
   return process.env.AGENT_INTERNAL_TOKEN ?? ''
 }
 
+export function getAppProtectionHeaders() {
+  const bypass = String(process.env.WORKER_PREVIEW_E2E_BYPASS_SECRET ?? '').trim()
+  return bypass ? { 'x-vercel-protection-bypass': bypass } : {}
+}
+
 export function getBotToken() {
   return process.env.ASSISTANT_BOT_TOKEN ?? ''
 }

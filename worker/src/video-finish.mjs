@@ -89,6 +89,10 @@ async function downloadToFile(supabase, storagePath, destFile) {
  */
 export async function processVideoFinish(job, { supabase, callJobResult }) {
   const { pendingActionId, payload } = job.data
+  if (payload?.partialRerender === true) {
+    const { processPartialVideoEdit } = await import('./video-edit.mjs')
+    return processPartialVideoEdit(job, { supabase, callJobResult })
+  }
   const { sourceActionId, sourcePath, plan, brandLogoPath } = payload ?? {}
   if (!sourcePath || !plan?.items?.length) {
     await callJobResult(pendingActionId, 'failed', undefined, 'video_finish payload incomplete')

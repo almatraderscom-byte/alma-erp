@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   PRODUCTION_MIN_CORE_AXIS,
+  buildQcPrompt,
   buildQcFlagMessage,
   evaluateProductionCoreAxes,
   evaluateQCScore,
   getQcConfig,
+  parseQcScoreResponse,
   pickWeakestAxis,
+  resolveQcLevel,
   type QCScore,
 } from '../qc-gate'
 
@@ -36,6 +39,12 @@ describe('qc level configs', () => {
     expect(evaluateQCScore(score({ anatomy: 2 }), 'strict')).toBe(false)
     expect(evaluateQCScore(score({ anatomy: 1 }), 'off')).toBe(true)
   })
+
+  it('signed production cannot be disabled by the mutable global level', () => {
+    expect(resolveQcLevel('off', 'production')).toBe('strict')
+    expect(resolveQcLevel('normal', 'production')).toBe('strict')
+    expect(resolveQcLevel('off', 'preview')).toBe('off')
+  })
 })
 
 describe('CS8/CS10 production core-axis gate', () => {
@@ -57,5 +66,31 @@ describe('weakest axis + flag message', () => {
     expect(buildQcFlagMessage(3, s, false)).toContain('best of 3')
     expect(buildQcFlagMessage(2, s, true)).toContain('passed on attempt 2')
     expect(buildQcFlagMessage(1, s, true)).toBeUndefined()
+  })
+})
+
+describe('QC model response integrity', () => {
+  it('makes explicit no-accessory generation requirements hard QC failures', () => {
+    const prompt = buildQcPrompt('brand rules', true, true, 'Do not add a watch, jewelry, wallet, prop, text or logo.')
+    expect(prompt).toContain('ORIGINAL GENERATION REQUIREMENTS (authoritative)')
+    expect(prompt).toContain('forbidden watches')
+    expect(prompt).toContain('handheld objects')
+    expect(prompt).toContain('force model_preserved and composition to at most 2')
+  })
+
+  it('rejects an empty or partial response instead of fabricating neutral 3/5 scores', () => {
+    expect(() => parseQcScoreResponse('{}')).toThrow('qc_invalid_score:garment_fidelity')
+    expect(() => parseQcScoreResponse('{"garment_fidelity":4}')).toThrow('qc_invalid_score:model_preserved')
+  })
+
+  it('accepts and bounds a complete response', () => {
+    expect(parseQcScoreResponse(JSON.stringify(score({ anatomy: 4.4 }))).anatomy).toBe(4)
+  })
+
+  it('treats only omitted no-overlay text legibility as the documented N/A=5', () => {
+    const withoutText = score()
+    delete (withoutText as Partial<QCScore>).text_legibility
+    expect(parseQcScoreResponse(JSON.stringify(withoutText)).text_legibility).toBe(5)
+    expect(parseQcScoreResponse(JSON.stringify({ ...score(), text_legibility: 'N/A' })).text_legibility).toBe(5)
   })
 })

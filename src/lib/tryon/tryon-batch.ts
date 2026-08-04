@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma'
+import { currentStudioRunExecutionContext } from '@/lib/creative-studio/studio-run-context'
+import type { StudioRunFamilyModelPin } from '@/lib/creative-studio/studio-run-authorization'
 import {
   buildFamilyVariantExtra,
   buildTryOnPrompt,
@@ -63,13 +65,14 @@ function modelNoteFor(role: ModelRole, model: SavedModel | null): string {
 async function buildVariantNotes(
   variant: ChatTryOnVariant,
   primary: SavedModel,
+  resolveRole: (role: ModelRole) => Promise<SavedModel | null>,
   fabricNote?: string,
 ): Promise<{ modelNotes: string; familyExtra: string }> {
   let familyExtra = buildFamilyVariantExtra(variant, fabricNote)
   const noteParts = [primary.notes ? `Primary (${primary.name}): ${primary.notes}` : `Primary: ${primary.name}`]
 
   if (variant === 'mother_daughter') {
-    const daughter = await getModelByRole('daughter')
+    const daughter = await resolveRole('daughter')
     if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
     familyExtra = [
       'COMPOSITION: Bangladeshi mother and young daughter (age 5–10) together in ONE scene — family fashion shoot.',
@@ -83,7 +86,7 @@ async function buildVariantNotes(
   }
 
   if (variant === 'father_daughter') {
-    const daughter = await getModelByRole('daughter')
+    const daughter = await resolveRole('daughter')
     if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
     familyExtra = [
       familyExtra,
@@ -93,7 +96,7 @@ async function buildVariantNotes(
   }
 
   if (variant === 'couple') {
-    const mother = await getModelByRole('mother')
+    const mother = await resolveRole('mother')
     if (mother) noteParts.push(modelNoteFor('mother', mother))
     familyExtra = [
       familyExtra,
@@ -103,7 +106,7 @@ async function buildVariantNotes(
   }
 
   if (variant === 'father_son') {
-    const son = await getModelByRole('son')
+    const son = await resolveRole('son')
     if (son) noteParts.push(modelNoteFor('son', son))
     familyExtra = [
       familyExtra,
@@ -113,7 +116,7 @@ async function buildVariantNotes(
   }
 
   if (variant === 'mother_son') {
-    const son = await getModelByRole('son')
+    const son = await resolveRole('son')
     if (son) noteParts.push(modelNoteFor('son', son))
     familyExtra = [
       familyExtra,
@@ -123,9 +126,9 @@ async function buildVariantNotes(
   }
 
   if (variant === 'full_family') {
-    const mother = await getModelByRole('mother')
-    const son = await getModelByRole('son')
-    const daughter = await getModelByRole('daughter')
+    const mother = await resolveRole('mother')
+    const son = await resolveRole('son')
+    const daughter = await resolveRole('daughter')
     if (mother) noteParts.push(modelNoteFor('mother', mother))
     if (son) noteParts.push(modelNoteFor('son', son))
     if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
@@ -137,6 +140,17 @@ async function buildVariantNotes(
   }
 
   return { modelNotes: noteParts.filter(Boolean).join('; '), familyExtra }
+}
+
+function savedModelFromPin(pin: StudioRunFamilyModelPin): SavedModel {
+  return {
+    id: pin.modelId,
+    name: pin.modelName,
+    imagePath: pin.sourceImagePath,
+    isDefault: false,
+    role: pin.role,
+    ...(pin.modelNotes ? { notes: pin.modelNotes } : {}),
+  }
 }
 
 export type TryOnQueueItem = {
@@ -155,7 +169,21 @@ export async function queueTryOnBatch(opts: {
   garmentType?: string
   extra?: string
   conversationId?: string | null
+  /** CSE8 — final generic image contract; defaults preserve non-Studio callers. */
+  aspectRatio?: string
+  resolution?: '1k' | '2k' | '4k'
+  /** Optional server-issued logical prefix for exactly-once paid Studio runs. */
+  dedupePrefix?: string
 }): Promise<{ items: TryOnQueueItem[]; model: SavedModel }> {
+  const execution = currentStudioRunExecutionContext()
+  if (
+    execution
+    && !opts.dedupePrefix?.startsWith(
+      `studio-run:${execution.claims.receiptId}:`,
+    )
+  ) {
+    throw new Error('studio_run_initial_dedupe_required')
+  }
   const productImagePath = opts.productImagePath.trim()
   if (!productImagePath) throw new Error('productImagePath_required')
 
@@ -165,6 +193,18 @@ export async function queueTryOnBatch(opts: {
   const style = opts.style ?? randomOf(RANDOM_STYLES)
   const pose = opts.pose ?? randomOf(RANDOM_POSES)
 
+  const pinnedModels = new Map(
+    (execution?.claims.scope.familyModelPins ?? []).map((pin) => [
+      pin.role,
+      savedModelFromPin(pin),
+    ]),
+  )
+  const resolveRole = async (role: ModelRole): Promise<SavedModel | null> => {
+    if (execution && role !== 'single') {
+      return pinnedModels.get(role) ?? null
+    }
+    return getModelByRole(role)
+  }
   const overrideModel = opts.modelId ? await resolveModel(opts.modelId) : null
   const items: TryOnQueueItem[] = []
 
@@ -173,7 +213,7 @@ export async function queueTryOnBatch(opts: {
     if (variant === 'single' && overrideModel) {
       primary = overrideModel
     } else {
-      primary = await getModelByRole(primaryRoleForVariant(variant))
+      primary = await resolveRole(primaryRoleForVariant(variant))
       if (variant === 'single' && overrideModel) primary = overrideModel
     }
     if (!primary) {
@@ -183,7 +223,12 @@ export async function queueTryOnBatch(opts: {
     let modelNotes = primary.notes ?? ''
     let familyExtra = ''
     if (variant !== 'single') {
-      const multi = await buildVariantNotes(variant, primary, fabricNote)
+      const multi = await buildVariantNotes(
+        variant,
+        primary,
+        resolveRole,
+        fabricNote,
+      )
       modelNotes = multi.modelNotes
       familyExtra = multi.familyExtra
     }
@@ -211,25 +256,37 @@ export async function queueTryOnBatch(opts: {
       `গার্মেন্ট: ${garmentType}\n` +
       `স্টাইল: ${style} | পোজ: ${pose}`
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const action = await (prisma as any).agentPendingAction.create({
-      data: {
+    const actionData = {
+      conversationId: opts.conversationId ?? null,
+      ...(opts.dedupePrefix
+        ? { dedupeKey: `${opts.dedupePrefix}:${variant}`.slice(0, 190) }
+        : {}),
+      type: 'image_gen',
+      payload: {
+        prompt,
+        quality: 'pro',
+        referenceImageId: primary.imagePath,
+        secondReferenceImageId: productImagePath,
+        aspectRatio: opts.aspectRatio ?? '4:5',
+        imageSize: (opts.resolution ?? '2k').toUpperCase(),
+        requestedResolution: opts.resolution ?? '2k',
+        requestedAspectRatio: opts.aspectRatio ?? '4:5',
+        tryOn: true,
+        tryOnVariant: variant,
         conversationId: opts.conversationId ?? null,
-        type: 'image_gen',
-        payload: {
-          prompt,
-          quality: 'pro',
-          referenceImageId: primary.imagePath,
-          secondReferenceImageId: productImagePath,
-          tryOn: true,
-          tryOnVariant: variant,
-          conversationId: opts.conversationId ?? null,
-        },
-        summary,
-        costEstimate: variant === 'full_family' ? 6 : variant === 'single' ? 4.5 : 5.5,
-        status: 'pending',
       },
-    })
+      summary,
+      costEstimate: variant === 'full_family' ? 6 : variant === 'single' ? 4.5 : 5.5,
+      status: 'pending',
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const action = opts.dedupePrefix
+      ? await (prisma as any).agentPendingAction.upsert({
+          where: { dedupeKey: actionData.dedupeKey },
+          create: actionData,
+          update: {},
+        })
+      : await (prisma as any).agentPendingAction.create({ data: actionData })
 
     items.push({
       pendingActionId: action.id as string,

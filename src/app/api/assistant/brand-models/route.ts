@@ -13,6 +13,19 @@ import {
 } from '@/lib/tryon/model-library'
 import { prisma } from '@/lib/prisma'
 import { AVATAR_KV_PREFIX, type ModelAvatar } from '@/lib/tryon/model-avatar'
+import {
+  authenticateStudioRequest,
+  requireStudioBrandAccess,
+  StudioAccessError,
+} from '@/lib/creative-studio/studio-access'
+import {
+  assertStudioResourceScope,
+  deleteStudioResourceScope,
+  readStudioResourceScope,
+  studioModelScopeMatches,
+  studioResourceScopeMatches,
+  writeStudioResourceScope,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -32,10 +45,65 @@ async function requireOwner(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await requireOwner(req)
-  if (denied) return denied
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim() ?? ''
+  const projectId = req.nextUrl.searchParams.get('projectId')?.trim() ?? ''
+  let scopedAccess: {
+    ownerId: string
+    brandProfileId: string
+    projectId: string
+    actor: { userId: string; erpRole: string }
+  } | null = null
+  if (brandProfileId || projectId) {
+    if (!brandProfileId || !projectId) {
+      return Response.json({ error: 'brand_and_project_required' }, { status: 422 })
+    }
+    const actor = await authenticateStudioRequest(req)
+    if (actor instanceof Response) return actor
+    try {
+      const access = await requireStudioBrandAccess(actor, brandProfileId)
+      const project = await db.creativeProject.findFirst({
+        where: {
+          id: projectId,
+          ownerId: access.ownerId,
+          brandProfileId,
+          archivedAt: null,
+        },
+        select: { id: true },
+      })
+      if (!project) throw new StudioAccessError('project_access_forbidden', 403)
+      scopedAccess = {
+        ownerId: access.ownerId,
+        brandProfileId,
+        projectId,
+        actor: { userId: actor.userId, erpRole: actor.erpRole },
+      }
+    } catch (error) {
+      const status = error instanceof StudioAccessError ? error.status : 403
+      const code = error instanceof StudioAccessError ? error.code : 'forbidden'
+      return Response.json({ error: code }, { status })
+    }
+  } else {
+    const denied = await requireOwner(req)
+    if (denied) return denied
+  }
 
-  const [models, byRole] = await Promise.all([getModelLibrary(), listModelsByRole()])
+  const [allModels, allByRole] = await Promise.all([getModelLibrary(), listModelsByRole()])
+  const models = scopedAccess
+    ? (await Promise.all(allModels.map(async (model) => ({
+        model,
+        scope: await readStudioResourceScope('model', model.id),
+      }))))
+        .filter(({ scope }) => studioModelScopeMatches(
+          scope,
+          scopedAccess!,
+          scopedAccess!.actor,
+        ))
+        .map(({ model }) => model)
+    : allModels
+  const visibleIds = new Set(models.map((model) => model.id))
+  const byRole = Object.fromEntries(
+    Object.entries(allByRole).filter(([, model]) => model && visibleIds.has(model.id)),
+  )
 
   // The saved model photos live as PRIVATE objects in the agent-files bucket, so
   // the UI can't render them straight from imagePath. Batch-sign every model's
@@ -88,6 +156,8 @@ export async function POST(req: NextRequest) {
     imagePath?: string
     role?: string
     notes?: string
+    brandProfileId?: string
+    projectId?: string
   }
   try {
     body = await req.json()
@@ -96,6 +166,12 @@ export async function POST(req: NextRequest) {
   }
 
   const action = String(body.action ?? 'add')
+  const brandProfileId = String(body.brandProfileId ?? '').trim()
+  const projectId = String(body.projectId ?? '').trim()
+  if ((brandProfileId || projectId) && (!brandProfileId || !projectId)) {
+    return Response.json({ error: 'brand_and_project_required' }, { status: 422 })
+  }
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
 
   // Wrap all DB work so a real failure returns its actual message as JSON. Without
   // this an exception (e.g. the agent_brand_models table not yet migrated on
@@ -104,12 +180,26 @@ export async function POST(req: NextRequest) {
   try {
     if (action === 'remove') {
       const id = String(body.id ?? '').trim().toLowerCase()
+      if (brandProfileId && projectId) {
+        await assertStudioResourceScope('model', id, {
+          ownerId: String(token?.sub ?? ''),
+          brandProfileId,
+          projectId,
+        })
+      }
       const ok = await removeBrandModel(id)
       if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
+      await deleteStudioResourceScope('model', id)
       return Response.json({ ok: true })
     }
 
     if (action === 'set_default') {
+      if (brandProfileId || projectId) {
+        return Response.json({
+          error: 'scoped_default_model_unsupported',
+          message: 'V3 pins the selected scoped identity per run; the legacy global default is not changed.',
+        }, { status: 409 })
+      }
       const id = String(body.id ?? '').trim().toLowerCase()
       const ok = await setDefaultBrandModel(id)
       if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
@@ -130,6 +220,41 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'invalid_role' }, { status: 400 })
     }
 
+    let scopedOwnerId: string | null = null
+    if (brandProfileId || projectId) {
+      const project = await db.creativeProject.findFirst({
+        where: {
+          id: projectId,
+          ownerId: String(token?.sub ?? ''),
+          brandProfileId,
+          archivedAt: null,
+        },
+        select: { id: true },
+      })
+      if (!project) return Response.json({ error: 'project_access_forbidden' }, { status: 403 })
+      scopedOwnerId = String(token!.sub)
+    }
+
+    if (scopedOwnerId) {
+      const conflicts = await db.agentBrandModel.findMany({
+        where: { OR: [{ id }, { role }] },
+        select: { id: true },
+      })
+      for (const conflict of conflicts as Array<{ id: string }>) {
+        const scope = await readStudioResourceScope('model', conflict.id)
+        if (!studioResourceScopeMatches(scope, {
+          ownerId: scopedOwnerId,
+          brandProfileId,
+          projectId,
+        })) {
+          return Response.json({
+            error: 'model_role_or_id_scoped_elsewhere',
+            message: 'This identity id/role belongs to another brand project and cannot be replaced.',
+          }, { status: 409 })
+        }
+      }
+    }
+
     const saved = await addBrandModel({
       id,
       name,
@@ -138,9 +263,20 @@ export async function POST(req: NextRequest) {
       notes: body.notes ? String(body.notes) : undefined,
       role,
     })
+    if (scopedOwnerId) {
+      await writeStudioResourceScope('model', saved.id, {
+        ownerId: scopedOwnerId,
+        brandProfileId,
+        projectId,
+        createdById: scopedOwnerId,
+      })
+    }
 
     return Response.json({ model: saved }, { status: 201 })
   } catch (err) {
+    if (err instanceof StudioAccessError) {
+      return Response.json({ error: err.code, message: err.message }, { status: err.status })
+    }
     const message = err instanceof Error ? err.message : String(err)
     console.error('[assistant/brand-models] save failed', err)
     const missingTable = /relation .* does not exist/i.test(message)

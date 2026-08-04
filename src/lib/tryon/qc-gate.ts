@@ -31,7 +31,10 @@ export type QCGateConfig = {
 
 const QC_KV_KEY = 'agent_qc_level'
 
-const VISION_MODEL = 'gemini-2.5-flash'
+// Keep QC on the same current multimodal generation as the other Studio
+// vision gates. The previous 2.5 call had no JSON response contract and let
+// partial/empty output collapse every missing axis to a fabricated 3/5.
+export const QC_VISION_MODEL = 'gemini-3.6-flash'
 
 export function getQcConfig(level: QCLevel): QCGateConfig {
   switch (level) {
@@ -53,6 +56,11 @@ export async function getQcLevel(): Promise<QCLevel> {
     console.warn('[qc-gate] KV setting read failed:', err instanceof Error ? err.message : err)
   }
   return 'normal'
+}
+
+/** Signed production policy always wins over the mutable global QC switch. */
+export function resolveQcLevel(configured: QCLevel, pipelineMode?: string): QCLevel {
+  return pipelineMode === 'production' ? 'strict' : configured
 }
 
 export async function setQcLevel(level: QCLevel): Promise<void> {
@@ -130,8 +138,19 @@ async function buildRubricContext(productType?: string | null): Promise<string> 
   return `Brand rules + active taste:\n${brandRules.join('\n')}\n${refBlock}`
 }
 
-function buildQcPrompt(rubricContext: string): string {
-  return `Score this fashion product creative 1-5 on each axis. JSON only:
+export function buildQcPrompt(
+  rubricContext: string,
+  hasProductReference: boolean,
+  hasPersonReference: boolean,
+  generationPrompt?: string | null,
+): string {
+  const requestedConstraints = generationPrompt?.trim()
+    ? `\nORIGINAL GENERATION REQUIREMENTS (authoritative):\n${generationPrompt.trim().slice(0, 6_000)}\nAny visible violation of an explicit "no", "do not add", "without", or preservation requirement above is a hard failure. In particular, forbidden watches, jewelry, tattoos, handheld objects, props, extra cloth/accessories, text or logos force model_preserved and composition to at most 2, and the exact object must be named in fail_reasons.`
+    : ''
+  return `You are comparing ordered fashion images. Score IMAGE 1 (GENERATED OUTPUT) from 1-5 on each axis.
+${hasProductReference ? 'IMAGE 2 is the ORIGINAL PRODUCT REFERENCE. Use it only for garment fidelity.' : 'No product reference is supplied; do not invent a garment-fidelity comparison.'}
+${hasPersonReference ? `IMAGE ${hasProductReference ? '3' : '2'} is the ORIGINAL PERSON REFERENCE. Use it only for identity/model preservation.` : 'No person reference is supplied; do not invent an identity comparison.'}
+Return JSON only with every field present:
 {
   "garment_fidelity": n,
   "model_preserved": n,
@@ -143,27 +162,52 @@ function buildQcPrompt(rubricContext: string): string {
   "fail_reasons": ["specific actionable issues"],
   "fix_hint": "what to change in regeneration prompt"
 }
-Use N/A=5 for text_legibility if no overlay text.
+text_legibility MUST be numeric; use 5 when there is no overlay text (never return the string "N/A").
+Garment fidelity is strict reference matching: color, fabric, cut, length, collar, buttons, embroidery/motif pattern and placement must match the product reference; a redesign is a failure.
+Model preservation is strict reference matching: face, age, skin tone, hair and body must match the person reference. Any newly invented tattoo, body art, scar, jewelry, watch, accessory or skin marking that is absent from the person reference is an automatic model_preserved failure (score at most 2) and must be named in fail_reasons.
+Anatomy includes natural hands/fingers/limbs and appropriate skin coverage; distorted or newly decorated hands/arms fail this axis.
+Do not assign a neutral/default score because an image is difficult to compare. Name the exact visible evidence in fail_reasons and make scores differ when the evidence differs.
+${requestedConstraints}
 ${rubricContext}`
 }
 
-function normalizeScore(raw: Partial<QCScore>): QCScore {
-  const clamp = (n: unknown, fallback = 3) => {
+const QC_NUMERIC_AXES = [
+  'garment_fidelity',
+  'model_preserved',
+  'anatomy',
+  'brand_consistency',
+  'composition',
+  'overall',
+] as const
+
+/** Strict parser: an incomplete model response is unavailable QC, never 3/5. */
+export function parseQcScoreResponse(rawText: string): QCScore {
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error('qc_invalid_json:no_object')
+  const raw = JSON.parse(jsonMatch[0]) as Record<string, unknown>
+  const normalizedTextLegibility = typeof raw.text_legibility === 'string'
+    && /^(n\/?a|not applicable)$/i.test(raw.text_legibility.trim())
+    ? 5
+    : raw.text_legibility
+  const clamp = (n: unknown, axis: string) => {
     const v = Number(n)
-    if (!Number.isFinite(v)) return fallback
+    if (!Number.isFinite(v)) throw new Error(`qc_invalid_score:${axis}`)
     return Math.min(5, Math.max(1, Math.round(v)))
   }
+  for (const axis of QC_NUMERIC_AXES) clamp(raw[axis], axis)
   const fail_reasons = Array.isArray(raw.fail_reasons)
     ? raw.fail_reasons.map(String).slice(0, 6)
     : []
   return {
-    garment_fidelity: clamp(raw.garment_fidelity),
-    model_preserved: clamp(raw.model_preserved),
-    anatomy: clamp(raw.anatomy),
-    brand_consistency: clamp(raw.brand_consistency),
-    text_legibility: clamp(raw.text_legibility, 5),
-    composition: clamp(raw.composition),
-    overall: clamp(raw.overall),
+    garment_fidelity: clamp(raw.garment_fidelity, 'garment_fidelity'),
+    model_preserved: clamp(raw.model_preserved, 'model_preserved'),
+    anatomy: clamp(raw.anatomy, 'anatomy'),
+    brand_consistency: clamp(raw.brand_consistency, 'brand_consistency'),
+    // The rubric defines text as N/A=5 when there is no overlay. Gemini may
+    // omit only this N/A field; core/product/identity axes remain mandatory.
+    text_legibility: clamp(normalizedTextLegibility ?? 5, 'text_legibility'),
+    composition: clamp(raw.composition, 'composition'),
+    overall: clamp(raw.overall, 'overall'),
     fail_reasons,
     fix_hint: String(raw.fix_hint ?? fail_reasons[0] ?? 'Improve garment fidelity and natural anatomy.').slice(0, 400),
   }
@@ -175,18 +219,22 @@ export async function scoreCreativeQC(args: {
   productType?: string | null
   productImageBase64?: string | null
   productMimeType?: string
+  personImageBase64?: string | null
+  personMimeType?: string
+  generationPrompt?: string | null
 }): Promise<QCScore> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 
   const rubricContext = await buildRubricContext(args.productType)
   const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [
-    { text: buildQcPrompt(rubricContext) },
+    { text: buildQcPrompt(rubricContext, Boolean(args.productImageBase64), Boolean(args.personImageBase64), args.generationPrompt) },
+    { text: 'IMAGE 1 — GENERATED OUTPUT TO SCORE:' },
     { inline_data: { mime_type: args.mimeType, data: args.imageBase64 } },
   ]
   if (args.productImageBase64) {
     parts.push({
-      text: 'Reference product garment (compare fidelity to this):',
+      text: 'IMAGE 2 — ORIGINAL PRODUCT REFERENCE (garment comparison only):',
     })
     parts.push({
       inline_data: {
@@ -195,14 +243,30 @@ export async function scoreCreativeQC(args: {
       },
     })
   }
+  if (args.personImageBase64) {
+    parts.push({
+      text: `IMAGE ${args.productImageBase64 ? '3' : '2'} — ORIGINAL PERSON REFERENCE (identity comparison only):`,
+    })
+    parts.push({
+      inline_data: {
+        mime_type: args.personMimeType ?? 'image/jpeg',
+        data: args.personImageBase64,
+      },
+    })
+  }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${key}`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${QC_VISION_MODEL}:generateContent?key=${key}`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts }],
-      generationConfig: { temperature: 0.15, maxOutputTokens: 768 },
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 1_536,
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: 'minimal' },
+      },
     }),
     signal: AbortSignal.timeout(30_000),
   })
@@ -216,16 +280,14 @@ export async function scoreCreativeQC(args: {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
   }
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-  const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-  const parsed = JSON.parse(jsonMatch?.[0] ?? '{}') as Partial<QCScore>
-  const score = normalizeScore(parsed)
+  const rawText = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('') ?? ''
+  const score = parseQcScoreResponse(rawText)
 
   void logCost({
     provider: 'gemini',
     kind: 'qc_vision',
     units: {
-      model: VISION_MODEL,
+      model: QC_VISION_MODEL,
       overall: score.overall,
       garment_fidelity: score.garment_fidelity,
       anatomy: score.anatomy,
@@ -242,6 +304,8 @@ export async function scoreCreativeQCFromPath(args: {
   storagePath: string
   productType?: string | null
   productImagePath?: string | null
+  personImagePath?: string | null
+  generationPrompt?: string | null
 }): Promise<QCScore> {
   const buf = await agentStorageDownload(args.storagePath)
   const mime = args.storagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
@@ -254,7 +318,18 @@ export async function scoreCreativeQCFromPath(args: {
       productImageBase64 = pbuf.toString('base64')
       productMimeType = args.productImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
     } catch (err) {
-      console.warn('[qc-gate] product image download failed:', err instanceof Error ? err.message : err)
+      throw new Error(`qc_product_reference_unavailable:${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  let personImageBase64: string | null = null
+  let personMimeType = 'image/jpeg'
+  if (args.personImagePath) {
+    try {
+      const personBuf = await agentStorageDownload(args.personImagePath)
+      personImageBase64 = personBuf.toString('base64')
+      personMimeType = args.personImagePath.endsWith('.png') ? 'image/png' : 'image/jpeg'
+    } catch (err) {
+      throw new Error(`qc_person_reference_unavailable:${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -264,6 +339,9 @@ export async function scoreCreativeQCFromPath(args: {
     productType: args.productType,
     productImageBase64,
     productMimeType,
+    personImageBase64,
+    personMimeType,
+    generationPrompt: args.generationPrompt,
   })
 }
 
@@ -288,7 +366,7 @@ export async function runQCGateOnAttempts(args: {
 
   for (let i = 0; i < maxGenerations; i++) {
     const score = args.level === 'off'
-      ? normalizeScore({ overall: 5, garment_fidelity: 5, model_preserved: 5, anatomy: 5, brand_consistency: 5, text_legibility: 5, composition: 5, fail_reasons: [], fix_hint: '' })
+      ? parseQcScoreResponse(JSON.stringify({ overall: 5, garment_fidelity: 5, model_preserved: 5, anatomy: 5, brand_consistency: 5, text_legibility: 5, composition: 5, fail_reasons: [], fix_hint: '' }))
       : await args.scoreFn(currentPath)
     const pass = evaluateQCScore(score, args.level)
     attempts.push({ storagePath: currentPath, score, pass, attempt: i + 1 })

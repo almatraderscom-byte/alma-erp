@@ -11,6 +11,7 @@ const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
 const API_KEY = () => process.env.ELEVENLABS_API_KEY ?? ''
 
 const OWNER_VOICE_KV = 'studio_owner_voice_id'
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function elFetch(path, init = {}, timeoutMs = 180_000) {
   const res = await fetch(`${ELEVENLABS_BASE}${path}`, {
@@ -55,10 +56,43 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
   let ext = 'mp3'
   let extraResult = {}
 
+  if (kind === 'voice_delete') {
+    const {
+      deleteElevenLabsVoice,
+      loadOwnerVoiceVersion,
+      markProviderVoiceDeleted,
+    } = await import('./elevenlabs-voices.mjs')
+    const { version } = await loadOwnerVoiceVersion(supabase, payload, { requireActive: false })
+    if (version.provider_voice_id) await deleteElevenLabsVoice(version.provider_voice_id)
+    await markProviderVoiceDeleted(supabase, payload)
+    await callJobResult(pendingActionId, 'success', {
+      kind,
+      voiceVersionId: version.id,
+      providerDeleted: true,
+      mediaType: 'audit',
+    })
+    console.log(`[worker] audio-lab ${pendingActionId} — provider voice deleted`)
+    return
+  }
+
   if (kind === 'voice_clone') {
     // one-time: consented samples → ElevenLabs voice → id saved in kv
+    if (payload.voiceVersionId) {
+      const { activateClonedVoice, loadOwnerVoiceVersion } = await import('./elevenlabs-voices.mjs')
+      const existing = await loadOwnerVoiceVersion(supabase, payload, { requireActive: false })
+      if (existing.version.provider_voice_id) {
+        await activateClonedVoice(supabase, payload, existing.version.provider_voice_id)
+        await callJobResult(pendingActionId, 'success', {
+          voiceVersionId: payload.voiceVersionId,
+          providerVoiceCreated: true,
+          idempotent: true,
+          kind,
+        })
+        return
+      }
+    }
     const form = new FormData()
-    form.append('name', 'ALMA Boss')
+    form.append('name', `ALMA Boss ${String(payload.voiceVersionId ?? '').slice(0, 8)}`.trim())
     form.append('description', 'Owner voice — studio use only')
     const paths = Array.isArray(payload.samplePaths) ? payload.samplePaths.slice(0, 5) : []
     if (paths.length === 0) throw new Error('no voice samples')
@@ -72,7 +106,15 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
     await supabase
       .from('agent_kv_settings')
       .upsert({ key: OWNER_VOICE_KV, value: data.voice_id }, { onConflict: 'key' })
-    await callJobResult(pendingActionId, 'success', { voiceId: data.voice_id, kind })
+    if (payload.voiceVersionId) {
+      const { activateClonedVoice } = await import('./elevenlabs-voices.mjs')
+      await activateClonedVoice(supabase, payload, data.voice_id)
+    }
+    await callJobResult(pendingActionId, 'success', {
+      voiceVersionId: payload.voiceVersionId ?? null,
+      providerVoiceCreated: true,
+      kind,
+    })
     console.log(`[worker] audio-lab ${pendingActionId} — voice cloned`)
     return
   }
@@ -88,10 +130,67 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
     }, 300_000)
     audio = Buffer.from(await res.arrayBuffer())
   } else if (kind === 'owner_voice') {
-    const voiceId = await readKv(supabase, OWNER_VOICE_KV)
+    let voiceId = null
+    if (payload.legacyOwnerVoice === true) {
+      voiceId = await readKv(supabase, OWNER_VOICE_KV)
+    } else {
+      const { loadOwnerVoiceVersion } = await import('./elevenlabs-voices.mjs')
+      const resolved = await loadOwnerVoiceVersion(supabase, payload)
+      voiceId = resolved.version.provider_voice_id
+    }
     if (!voiceId) throw new Error('owner voice not cloned yet')
     const { synthesizeElevenLabs } = await import('./tts-elevenlabs.mjs')
     audio = await synthesizeElevenLabs(String(payload.text ?? ''), { voiceId })
+  } else if (kind === 'voice_change') {
+    const { loadOwnerVoiceVersion } = await import('./elevenlabs-voices.mjs')
+    const { version } = await loadOwnerVoiceVersion(supabase, payload)
+    const buf = await downloadStorage(supabase, String(payload.sourcePath ?? ''))
+    const form = new FormData()
+    form.append('audio', new Blob([buf], { type: 'audio/mpeg' }), 'voice-change.mp3')
+    form.append('model_id', 'eleven_multilingual_sts_v2')
+    form.append('remove_background_noise', 'true')
+    const res = await elFetch(
+      `/speech-to-speech/${encodeURIComponent(version.provider_voice_id)}?output_format=mp3_44100_128`,
+      { method: 'POST', body: form },
+      300_000,
+    )
+    audio = Buffer.from(await res.arrayBuffer())
+    extraResult = { voiceVersionId: version.id }
+  } else if (kind === 'dub') {
+    const targetLanguage = String(payload.targetLanguage ?? 'bn')
+    const buf = await downloadStorage(supabase, String(payload.sourcePath ?? ''))
+    const form = new FormData()
+    form.append('file', new Blob([buf], { type: 'audio/mpeg' }), 'dub-source.mp3')
+    form.append('name', `ALMA Studio ${pendingActionId}`)
+    form.append('source_lang', 'auto')
+    form.append('target_lang', targetLanguage)
+    form.append('num_speakers', '0')
+    form.append('watermark', 'false')
+    // Explicit privacy/safety decision: dubbing never creates or uses the
+    // owner's cloned voice. It selects a library voice instead.
+    form.append('disable_voice_cloning', 'true')
+    const create = await elFetch('/dubbing', { method: 'POST', body: form }, 300_000)
+    const created = await create.json()
+    if (!created.dubbing_id) throw new Error('dubbing_id missing')
+    let dubbed = false
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const statusRes = await elFetch(`/dubbing/${encodeURIComponent(created.dubbing_id)}`, {}, 30_000)
+      const status = await statusRes.json()
+      if (status.status === 'failed') throw new Error(`dubbing failed: ${String(status.error ?? 'provider_failed').slice(0, 160)}`)
+      if (status.status === 'dubbed') {
+        dubbed = true
+        break
+      }
+      await sleep(5_000)
+    }
+    if (!dubbed) throw new Error('dubbing timed out')
+    const audioRes = await elFetch(
+      `/dubbing/${encodeURIComponent(created.dubbing_id)}/audio/${encodeURIComponent(targetLanguage)}`,
+      {},
+      300_000,
+    )
+    audio = Buffer.from(await audioRes.arrayBuffer())
+    extraResult = { dubbingId: created.dubbing_id, targetLanguage, voiceCloningDisabled: true }
   } else if (kind === 'clean_voice') {
     const buf = await downloadStorage(supabase, String(payload.sourcePath ?? ''))
     const form = new FormData()

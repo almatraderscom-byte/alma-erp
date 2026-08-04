@@ -6,12 +6,23 @@
 // Registry lives in agent_kv_settings (`studio_video_upload:<id>`) — the same
 // no-new-tables pattern as the child-garment cache.
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageObjectInfo, agentStorageDelete, agentStorageSignedUrls } from '@/agent/lib/storage'
 import { createHash } from 'crypto'
+import {
+  assertStudioCapability,
+  authenticateStudioRequest,
+  studioAccessErrorResponse,
+  type StudioActor,
+} from '@/lib/creative-studio/studio-access'
+import {
+  assertStudioResourceScope,
+  deleteStudioResourceScope,
+  filterStudioResourcesToScope,
+  requireStudioResourceContext,
+  writeStudioResourceScope,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 
@@ -52,13 +63,13 @@ async function computeContentHash(path: string, sizeBytes: number): Promise<stri
   }
 }
 
-async function auth(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
-  return null
+async function ownerActor(req: NextRequest): Promise<StudioActor | Response> {
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
+  if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
+  return actor
 }
 
 async function listUploads(): Promise<StudioVideoUpload[]> {
@@ -77,18 +88,58 @@ async function listUploads(): Promise<StudioVideoUpload[]> {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = await auth(req)
-  if (denied) return denied
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')
+  const projectId = req.nextUrl.searchParams.get('projectId')
+  if (brandProfileId || projectId) {
+    try {
+      const context = await requireStudioResourceContext(actor, {
+        brandProfileId,
+        projectId,
+      })
+      return Response.json({
+        uploads: await filterStudioResourcesToScope('video', await listUploads(), {
+          ownerId: context.access.ownerId,
+          brandProfileId: context.brandProfileId,
+          projectId: context.projectId,
+        }),
+      })
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-video-list')
+    }
+  }
+  if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
   return Response.json({ uploads: await listUploads() })
 }
 
 export async function POST(req: NextRequest) {
-  const denied = await auth(req)
-  if (denied) return denied
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
-  let body: { uploadId?: string; path?: string; name?: string; sizeBytes?: number }
+  let body: {
+    uploadId?: string
+    path?: string
+    name?: string
+    sizeBytes?: number
+    brandProfileId?: string
+    projectId?: string
+  }
   try { body = await req.json() } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
+  }
+  let resourceContext: Awaited<ReturnType<typeof requireStudioResourceContext>> | null = null
+  if (body.brandProfileId || body.projectId) {
+    try {
+      resourceContext = await requireStudioResourceContext(actor, body)
+      assertStudioCapability(resourceContext.access.role, 'draft')
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-video-register')
+    }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   const uploadId = String(body.uploadId ?? '').trim()
   const path = String(body.path ?? '').trim()
@@ -112,6 +163,17 @@ export async function POST(req: NextRequest) {
     const existing = (await listUploads()).find((u) => u.contentHash === contentHash)
     if (existing && existing.path !== path) {
       await agentStorageDelete([path]).catch(() => { /* best-effort cleanup */ })
+      if (resourceContext) {
+        try {
+          await assertStudioResourceScope('video', existing.id, {
+            ownerId: resourceContext.access.ownerId,
+            brandProfileId: resourceContext.brandProfileId,
+            projectId: resourceContext.projectId,
+          })
+        } catch {
+          return Response.json({ error: 'duplicate_exists_outside_scope' }, { status: 409 })
+        }
+      }
       return Response.json({
         ok: true,
         duplicate: true,
@@ -134,15 +196,40 @@ export async function POST(req: NextRequest) {
     update: { value: JSON.stringify(upload) },
     create: { key: `${KV_PREFIX}${uploadId}`, value: JSON.stringify(upload) },
   })
+  if (resourceContext) {
+    await writeStudioResourceScope('video', uploadId, {
+      ownerId: resourceContext.access.ownerId,
+      brandProfileId: resourceContext.brandProfileId,
+      projectId: resourceContext.projectId,
+      createdById: actor.userId,
+    })
+  }
   return Response.json({ ok: true, upload: { id: uploadId, ...upload } })
 }
 
 export async function DELETE(req: NextRequest) {
-  const denied = await auth(req)
-  if (denied) return denied
+  const actor = await ownerActor(req)
+  if (actor instanceof Response) return actor
 
   const id = req.nextUrl.searchParams.get('id')?.trim()
   if (!id) return Response.json({ error: 'id_required' }, { status: 400 })
+  const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')
+  const projectId = req.nextUrl.searchParams.get('projectId')
+  if (brandProfileId || projectId) {
+    try {
+      const context = await requireStudioResourceContext(actor, {
+        brandProfileId,
+        projectId,
+      })
+      await assertStudioResourceScope('video', id, {
+        ownerId: context.access.ownerId,
+        brandProfileId: context.brandProfileId,
+        projectId: context.projectId,
+      })
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-video-delete')
+    }
+  }
 
   const row = await db.agentKvSetting.findUnique({ where: { key: `${KV_PREFIX}${id}` } })
   if (!row) return Response.json({ error: 'not_found' }, { status: 404 })
@@ -159,5 +246,6 @@ export async function DELETE(req: NextRequest) {
   } catch { /* registry entry still removed below */ }
 
   await db.agentKvSetting.delete({ where: { key: `${KV_PREFIX}${id}` } })
+  await deleteStudioResourceScope('video', id)
   return Response.json({ ok: true })
 }

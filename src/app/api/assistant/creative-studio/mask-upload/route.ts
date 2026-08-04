@@ -2,16 +2,24 @@
 // Contract: white = edit, black = keep; mask dimensions MUST equal the base
 // image's (validated here with sharp so a bad mask never reaches a paid call).
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
-import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
+import { prisma } from '@/lib/prisma'
 import {
   assertMaskDimensionsMatch,
   estimateFluxFillCostUsd,
   maskCoverageRatio,
   validateMaskCoverage,
 } from '@/lib/creative-studio/mask-contract'
+import {
+  assertStudioCapability,
+  authenticateStudioRequest,
+  studioAccessErrorResponse,
+} from '@/lib/creative-studio/studio-access'
+import {
+  requireStudioResourceContext,
+  writeStudioResourceScope,
+} from '@/lib/creative-studio/studio-resource-scope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -19,12 +27,8 @@ export const maxDuration = 30
 const MAX_BYTES = 8 * 1024 * 1024
 
 export async function POST(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
 
   let formData: FormData
   try {
@@ -35,9 +39,49 @@ export async function POST(req: NextRequest) {
 
   const mask = formData.get('mask') as File | null
   const basePath = formData.get('basePath')?.toString() ?? ''
+  const brandProfileId = formData.get('brandProfileId')?.toString() ?? ''
+  const projectId = formData.get('projectId')?.toString() ?? ''
+  const projectAssetId = formData.get('projectAssetId')?.toString() ?? ''
+  const pendingActionId = formData.get('pendingActionId')?.toString() ?? ''
   if (!mask) return Response.json({ error: 'mask_required' }, { status: 400 })
   if (!basePath) return Response.json({ error: 'base_path_required' }, { status: 400 })
   if (mask.size > MAX_BYTES) return Response.json({ error: 'mask_too_large', maxMb: 8 }, { status: 413 })
+
+  let scoped: Awaited<ReturnType<typeof requireStudioResourceContext>> | null = null
+  if (brandProfileId || projectId || projectAssetId || pendingActionId) {
+    if (!brandProfileId || !projectId || !projectAssetId || !pendingActionId) {
+      return Response.json({ error: 'mask_source_scope_required' }, { status: 422 })
+    }
+    try {
+      scoped = await requireStudioResourceContext(actor, { brandProfileId, projectId })
+      assertStudioCapability(scoped.access.role, 'draft')
+      const asset = await (prisma as any).creativeProjectAsset.findFirst({
+        where: {
+          id: projectAssetId,
+          projectId,
+          pendingActionId,
+        },
+        select: {
+          latestStoragePath: true,
+          versions: {
+            select: { storagePath: true },
+          },
+        },
+      })
+      const canonicalPaths = new Set<string>([
+        ...(asset?.latestStoragePath ? [String(asset.latestStoragePath)] : []),
+        ...((asset?.versions ?? []) as Array<{ storagePath: string | null }>)
+          .flatMap((version) => version.storagePath ? [version.storagePath] : []),
+      ])
+      if (!asset || !canonicalPaths.has(basePath)) {
+        return Response.json({ error: 'mask_source_access_forbidden' }, { status: 403 })
+      }
+    } catch (error) {
+      return studioAccessErrorResponse(error, 'creative-mask-upload')
+    }
+  } else if (!isSystemOwner(actor.erpRole)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   try {
     const sharp = (await import('sharp')).default
@@ -75,6 +119,16 @@ export async function POST(req: NextRequest) {
     const pngMask = await sharp(workingMask).grayscale().png().toBuffer()
     const maskPath = `masks/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
     await agentStorageUpload(maskPath, pngMask, 'image/png', { upsert: true })
+    if (scoped) {
+      await writeStudioResourceScope('mask', maskPath, {
+        ownerId: scoped.access.ownerId,
+        brandProfileId: scoped.brandProfileId,
+        projectId: scoped.projectId,
+        createdById: actor.userId,
+        sourceAssetIds: [projectAssetId],
+        sourcePath: basePath,
+      })
+    }
 
     return Response.json({
       maskPath,
