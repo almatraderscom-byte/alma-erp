@@ -67,6 +67,24 @@ final class AgentCallController: NSObject {
         engine?.callKitAudioActivated()
     }
 
+    func audioSessionDeactivated() {
+        engine?.callKitAudioDeactivated()
+    }
+
+    func setMuted(_ muted: Bool) {
+        engine?.setMuted(muted)
+    }
+
+    /// CXProvider reset is terminal for every CallKit-owned call.  Clear the
+    /// agent engine as well as the office coordinator without asking the reset
+    /// provider to perform another end transaction.
+    func systemReset() {
+        guard isActive else { return }
+        engine?.activeAgentCallId = nil
+        engine?.end()
+        teardown()
+    }
+
     /// Live voice could not start on THIS device — record why on the call row so
     /// the failure is diagnosable without a console (owner builds 89/90).
     func reportLiveFailure(_ reason: String) {

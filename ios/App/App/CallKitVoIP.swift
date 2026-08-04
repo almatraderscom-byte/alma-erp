@@ -416,7 +416,10 @@ extension CallKitVoIP: CXProviderDelegate {
     func providerDidReset(_ provider: CXProvider) {
         calls.removeAll()
         requestedEndReasons.removeAll()
-        Task { @MainActor in await OfficeCallCoordinator.shared.systemReset() }
+        Task { @MainActor in
+            AgentCallController.shared.systemReset()
+            await OfficeCallCoordinator.shared.systemReset()
+        }
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
@@ -528,7 +531,13 @@ extension CallKitVoIP: CXProviderDelegate {
     #endif
 
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        Task { @MainActor in OfficeCallCoordinator.shared.setMuted(action.isMuted) }
+        Task { @MainActor in
+            if AgentCallController.shared.isActive {
+                AgentCallController.shared.setMuted(action.isMuted)
+            } else {
+                OfficeCallCoordinator.shared.setMuted(action.isMuted)
+            }
+        }
         action.fulfill()
     }
 
@@ -546,6 +555,13 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        // Nothing to do — the call already tore down on CXEndCallAction.
+        // Deactivation can also be an interruption/route hand-off while the
+        // call is still alive. Pause the matching graph and require the next
+        // didActivate before rendering resumes.
+        Task { @MainActor in
+            if AgentCallController.shared.isActive {
+                AgentCallController.shared.audioSessionDeactivated()
+            }
+        }
     }
 }

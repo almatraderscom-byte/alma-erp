@@ -96,4 +96,25 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('input.isVoiceProcessingEnabled')
     expect(voice).toContain('audioEngine.outputNode.isVoiceProcessingEnabled')
   })
+
+  it('gates CallKit media on real activation and keeps receiver routing possible', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+    const callKit = readFileSync(join(ROOT, 'ios/App/App/CallKitVoIP.swift'), 'utf8')
+    const liveConfigure = voice.slice(
+      voice.indexOf('private func configureAudioOnQueue()'),
+      voice.indexOf('private func capture('),
+    )
+
+    expect(voice).toContain('struct AlmaLiveAudioReadiness')
+    expect(voice).toContain('callKitManaged && socketSetupComplete && !callKitAudioActive')
+    expect(voice).toContain('socketSetupComplete && audioConfigured')
+    expect(voice).toContain('func callKitAudioDeactivated()')
+    expect(voice).toContain('try resumeAudioGraphAfterActivation()')
+    expect(voice).toContain('updateReadiness { $0.audioConfigured = false }')
+    expect(callKit).toContain('AgentCallController.shared.audioSessionDeactivated()')
+    expect(liveConfigure).toContain('options: [.allowBluetoothHFP]')
+    expect(liveConfigure).not.toContain('options: [.allowBluetoothHFP, .defaultToSpeaker]')
+    expect(voice).toContain('overrideOutputAudioPort(enabled ? .speaker : .none)')
+    expect(voice).toContain('isProximityMonitoringEnabled = callConnection == .live && receiver')
+  })
 })

@@ -464,4 +464,52 @@ final class AssistantParityV2Tests: XCTestCase {
         relaunched.opinionOpenIds.remove(cardId)
     }
 
+    func testLiveAudioGateWaitsWhenSocketWinsCallKitRace() {
+        var gate = AlmaLiveAudioReadiness(callKitManaged: true)
+        gate.socketSetupComplete = true
+        gate.audioConfigured = true
+
+        XCTAssertTrue(gate.waitingForCallKit)
+        XCTAssertFalse(gate.canPublishLive,
+                       "a configured graph is not audible proof before CallKit activates it")
+
+        gate.callKitAudioActive = true
+        XCTAssertFalse(gate.waitingForCallKit)
+        XCTAssertTrue(gate.canPublishLive)
+    }
+
+    func testLiveAudioGateHandlesCallKitActivationBeforeSocketSetup() {
+        var gate = AlmaLiveAudioReadiness(callKitManaged: true)
+        gate.callKitAudioActive = true
+        XCTAssertFalse(gate.canPublishLive)
+
+        gate.socketSetupComplete = true
+        XCTAssertFalse(gate.canPublishLive)
+
+        gate.audioConfigured = true
+        XCTAssertTrue(gate.canPublishLive)
+        gate.setupPublished = true
+        XCTAssertFalse(gate.canPublishLive, "one socket generation publishes LIVE exactly once")
+    }
+
+    func testLiveAudioGateDeactivationAndReconnectRequireFreshSignals() {
+        var gate = AlmaLiveAudioReadiness(
+            socketSetupComplete: true,
+            callKitManaged: true,
+            callKitAudioActive: true,
+            audioConfigured: true)
+        XCTAssertTrue(gate.canPublishLive)
+
+        gate.setupPublished = true
+        gate.callKitAudioActive = false
+        XCTAssertTrue(gate.waitingForCallKit)
+        XCTAssertFalse(gate.canPublishLive)
+
+        gate.callKitAudioActive = true
+        gate.beginSocketAttempt()
+        XCTAssertFalse(gate.canPublishLive)
+        gate.socketSetupComplete = true
+        XCTAssertTrue(gate.canPublishLive,
+                      "a resumed socket may publish only after its own setupComplete")
+    }
 }
