@@ -26,4 +26,3 @@ describe('Mac screenshot action marker', () => {
     })).resolves.toBeNull()
   })
 })
-

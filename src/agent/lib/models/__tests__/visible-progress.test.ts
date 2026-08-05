@@ -43,4 +43,3 @@ describe('provider-independent visible progress', () => {
     expect(progress.toolSelected(1, '   ')).toBeNull()
   })
 })
-

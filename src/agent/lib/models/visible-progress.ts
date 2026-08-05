@@ -12,7 +12,6 @@ export interface ProgressUpdateEvent {
   type: 'progress_update'
   label: string
 }
-
 const BN_DIGITS = '০১২৩৪৫৬৭৮৯'
 
 function bn(n: number): string {
@@ -60,4 +59,3 @@ export function createVisibleProgressContract(): {
     },
   }
 }
-
