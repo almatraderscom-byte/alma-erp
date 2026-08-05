@@ -15,6 +15,7 @@
 import {
   awaitResult,
   enqueueCommand,
+  getCommand,
   markUiProofDeferred,
   type CommandOutcome,
 } from '@/agent/lib/mac-agent/bus'
@@ -202,9 +203,12 @@ export async function runUiActionWithVisualProof(input: {
     ? `${verification.verdict.toUpperCase()} — ${verification.reasonBn || 'postcondition checked'}`
     : actionOutcome.status === 'done' ? 'Action returned, postcondition unavailable' : 'Action failed'
   const after = await collectCapture(afterId, 'after', label, Math.min(6_000, left()), afterDetail)
+  let pendingAfterCommandId: string | null = null
   if (!after.image) {
     const transferred = await markUiProofDeferred(afterId)
-    if (!transferred) {
+    if (transferred) {
+      pendingAfterCommandId = afterId
+    } else {
       // The result won the terminal-status race just as our wait expired. It was
       // not handed to the callback, so collect it once more on the synchronous
       // owner and let the approval wrapper enqueue the single continuation.
@@ -229,7 +233,9 @@ export async function runUiActionWithVisualProof(input: {
     images: after.image ? [before.image, after.image] : [before.image],
     proofComplete: Boolean(after.image),
     proofError: after.error,
-    pendingAfterCommandId: after.image ? null : afterId,
+    // A terminal failed/cancelled screenshot is not pending. Only the atomic
+    // ownership handoff above may put the approval wrapper into pending mode.
+    pendingAfterCommandId,
   }
 }
 
@@ -261,12 +267,35 @@ export async function deliverDeferredUiAfterProof(input: {
   const db = prisma as any
   const existing = await db.agentKvSetting.findUnique({ where: { key }, select: { value: true } }).catch(() => null)
   if (existing?.value === 'done_resumed') return true
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { conversationId: true, result: true },
+  }).catch(() => null)
+  const conversationId = action?.conversationId as string | null
+  if (!conversationId) return false
+  const sourceActionCommandId = String(input.params.proofForCommandId ?? '').trim()
+  const sourceAction = sourceActionCommandId ? await getCommand(sourceActionCommandId) : null
+  const actionSucceeded = sourceAction?.status === 'done'
+  const resumeWithOutcome = async () => {
+    if (actionSucceeded) {
+      const { enqueueApprovedActionContinuation } = await import('@/agent/lib/approval-continuation')
+      await enqueueApprovedActionContinuation(pendingActionId)
+      return
+    }
+    const { enqueueAgentContinuation } = await import('@/agent/lib/approval-continuation')
+    const detail = (sourceAction?.error || sourceAction?.stderr || sourceAction?.status || 'action_result_missing').slice(0, 500)
+    await enqueueAgentContinuation({
+      conversationId,
+      ignoreAwaitingOwner: true,
+      message: '[সিস্টেম নোট — approved Mac action ব্যর্থ হয়েছে] AFTER screenshot এসেছে, কিন্তু আসল action সফল হয়নি। ' +
+        `Failure: ${detail}। কাজটি complete দাবি কোরো না; Boss-কে ব্যর্থতার কারণ জানিয়ে নিরাপদ পরের পদক্ষেপ নাও।`,
+    })
+  }
   // `done` was written by the pre-fix implementation after delivering proof
   // but before deferred workflows knew how to resume. Upgrade that durable
   // state exactly once instead of re-posting the screenshot pair.
   if (existing?.value === 'done') {
-    const { enqueueApprovedActionContinuation } = await import('@/agent/lib/approval-continuation')
-    await enqueueApprovedActionContinuation(pendingActionId)
+    await resumeWithOutcome()
     await db.agentKvSetting.upsert({
       where: { key }, create: { key, value: 'done_resumed' }, update: { value: 'done_resumed' },
     })
@@ -279,12 +308,6 @@ export async function deliverDeferredUiAfterProof(input: {
     detail: 'Action finished — deferred visual proof',
   })
   if (!shared.ok) return false
-  const action = await db.agentPendingAction.findUnique({
-    where: { id: pendingActionId },
-    select: { conversationId: true, result: true },
-  }).catch(() => null)
-  const conversationId = action?.conversationId as string | null
-  if (!conversationId) return false
   const beforeUrl = typeof input.params.proofBeforeImageUrl === 'string'
     ? input.params.proofBeforeImageUrl
     : null
@@ -295,7 +318,9 @@ export async function deliverDeferredUiAfterProof(input: {
   const { appendAssistantNote } = await import('@/agent/lib/conversation-note')
   await appendAssistantNote(
     conversationId,
-    `✅ Mac action-এর deferred AFTER proof এসে গেছে — marked pair এখন complete।\n\n${pair}`,
+    actionSucceeded
+      ? `✅ Mac action-এর deferred AFTER proof এসে গেছে — marked pair এখন complete।\n\n${pair}`
+      : `⚠️ Mac action-এর deferred AFTER proof এসেছে, কিন্তু আসল action সফল হয়নি (${sourceAction?.error ?? sourceAction?.status ?? 'unknown'})। কাজটি complete নয়।\n\n${pair}`,
   )
   await db.agentPendingAction.update({
     where: { id: pendingActionId },
@@ -306,6 +331,9 @@ export async function deliverDeferredUiAfterProof(input: {
         beforeImageUrl: beforeUrl,
         afterImageUrl: shared.imageUrl,
         afterCommandId: input.commandId,
+        sourceActionCommandId: sourceActionCommandId || null,
+        sourceActionStatus: sourceAction?.status ?? 'missing',
+        sourceActionSucceeded: actionSucceeded,
       },
     },
   }).catch(() => {})
@@ -313,8 +341,7 @@ export async function deliverDeferredUiAfterProof(input: {
   // queued. Now that the marked pair is durable, continue the same workflow.
   // This call is before the idempotency marker so a transient enqueue failure
   // makes the daemon retry instead of silently stopping the agent.
-  const { enqueueApprovedActionContinuation } = await import('@/agent/lib/approval-continuation')
-  await enqueueApprovedActionContinuation(pendingActionId)
+  await resumeWithOutcome()
   await db.agentKvSetting.upsert({
     where: { key }, create: { key, value: 'done_resumed' }, update: { value: 'done_resumed' },
   })
