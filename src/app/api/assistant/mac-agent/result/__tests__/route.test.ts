@@ -42,7 +42,7 @@ describe('POST /api/assistant/mac-agent/result deferred visual proof', () => {
     mocks.getAction.mockResolvedValue('ui_screenshot')
     mocks.getContext.mockResolvedValue({
       action: 'ui_screenshot',
-      params: { proofPhase: 'after', proofPendingActionId: 'card-1' },
+      params: { proofPhase: 'after', proofPendingActionId: 'card-1', proofDeferred: true },
     })
     mocks.resolve.mockResolvedValue({ ok: true })
     mocks.deliver.mockResolvedValue(true)
@@ -65,5 +65,16 @@ describe('POST /api/assistant/mac-agent/result deferred visual proof', () => {
     expect(mocks.resolve).toHaveBeenCalledWith('mac-1', 'after-command', expect.objectContaining({
       ok: true,
     }))
+  })
+
+  it('does not reconcile a normal synchronous AFTER screenshot', async () => {
+    mocks.getContext.mockResolvedValue({
+      action: 'ui_screenshot',
+      params: { proofPhase: 'after', proofPendingActionId: 'card-1', proofDeferred: false },
+    })
+    const response = await POST(request())
+    expect(response.status).toBe(200)
+    expect(mocks.deliver).not.toHaveBeenCalled()
+    expect(mocks.resolve).toHaveBeenCalledTimes(1)
   })
 })

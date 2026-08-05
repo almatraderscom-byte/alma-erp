@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   awaitResult: vi.fn(),
   share: vi.fn(),
+  markDeferred: vi.fn(),
   kvFind: vi.fn(),
   kvUpsert: vi.fn(),
   pendingFind: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/agent/lib/mac-agent/bus', () => ({
   enqueueCommand: mocks.enqueue,
   awaitResult: mocks.awaitResult,
+  markUiProofDeferred: mocks.markDeferred,
 }))
 
 vi.mock('@/agent/lib/mac-agent/screenshot-share', () => ({
@@ -46,6 +48,7 @@ describe('approved Mac action visual proof', () => {
     mocks.enqueue.mockReset()
     mocks.awaitResult.mockReset()
     mocks.share.mockReset()
+    mocks.markDeferred.mockReset().mockResolvedValue(true)
     mocks.kvFind.mockReset().mockResolvedValue(null)
     mocks.kvUpsert.mockReset().mockResolvedValue({})
     mocks.pendingFind.mockReset().mockResolvedValue({ conversationId: 'conversation-1', result: {} })
@@ -108,6 +111,7 @@ describe('approved Mac action visual proof', () => {
     expect(mocks.enqueue).toHaveBeenCalledTimes(3)
     expect(result.pendingAfterCommandId).toBe('after')
     expect(result.proofComplete).toBe(false)
+    expect(mocks.markDeferred).toHaveBeenCalledWith('after')
   })
 
   it('delivers deferred AFTER proof and resumes the approved workflow', async () => {

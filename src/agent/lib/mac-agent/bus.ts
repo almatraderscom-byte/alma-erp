@@ -562,6 +562,26 @@ export async function getCommandContext(commandId: string): Promise<{
   return { action: row.action, params: (row.params as Record<string, unknown>) ?? {} }
 }
 
+/**
+ * Transfer an AFTER screenshot from the synchronous approval waiter to the
+ * durable result-route reconciler. The status predicate makes the handoff
+ * atomic with respect to a result that already became terminal: count=0 means
+ * the approval route still owns and can collect that completed row itself.
+ */
+export async function markUiProofDeferred(commandId: string): Promise<boolean> {
+  const row = await prisma.macAgentCommand.findUnique({
+    where: { id: commandId },
+    select: { status: true, params: true },
+  })
+  if (!row || (row.status !== 'queued' && row.status !== 'delivered')) return false
+  const params = (row.params as Record<string, unknown>) ?? {}
+  const marked = await prisma.macAgentCommand.updateMany({
+    where: { id: commandId, status: { in: ['queued', 'delivered'] } },
+    data: { params: { ...params, proofDeferred: true } },
+  })
+  return marked.count === 1
+}
+
 export async function getCommand(commandId: string): Promise<CommandOutcome | null> {
   const row = await prisma.macAgentCommand.findUnique({
     where: { id: commandId },

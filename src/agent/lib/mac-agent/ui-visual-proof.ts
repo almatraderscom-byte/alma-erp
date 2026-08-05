@@ -15,6 +15,7 @@
 import {
   awaitResult,
   enqueueCommand,
+  markUiProofDeferred,
   type CommandOutcome,
 } from '@/agent/lib/mac-agent/bus'
 import {
@@ -163,6 +164,10 @@ export async function runUiActionWithVisualProof(input: {
       proofForCommandId: actionCommandId,
       proofPendingActionId: input.approvedBy,
       proofBeforeImageUrl: before.image.imageUrl,
+      // The approval route owns normal results. It flips this only after its
+      // bounded wait ends, preventing the result callback from double-delivering
+      // proof or starting a second continuation on the synchronous path.
+      proofDeferred: false,
     },
     policyLevel: 'green',
   })
@@ -181,6 +186,7 @@ export async function runUiActionWithVisualProof(input: {
   // A still-running action occupies the daemon's serial queue; queueing a
   // screenshot behind it and timing out would manufacture no useful evidence.
   if (actionOutcome.timedOut) {
+    await markUiProofDeferred(afterId)
     return {
       actionCommandId,
       actionOutcome,
@@ -196,6 +202,26 @@ export async function runUiActionWithVisualProof(input: {
     ? `${verification.verdict.toUpperCase()} — ${verification.reasonBn || 'postcondition checked'}`
     : actionOutcome.status === 'done' ? 'Action returned, postcondition unavailable' : 'Action failed'
   const after = await collectCapture(afterId, 'after', label, Math.min(6_000, left()), afterDetail)
+  if (!after.image) {
+    const transferred = await markUiProofDeferred(afterId)
+    if (!transferred) {
+      // The result won the terminal-status race just as our wait expired. It was
+      // not handed to the callback, so collect it once more on the synchronous
+      // owner and let the approval wrapper enqueue the single continuation.
+      const lateAfter = await collectCapture(afterId, 'after', label, 1_000, afterDetail)
+      if (lateAfter.image) {
+        return {
+          actionCommandId,
+          actionOutcome,
+          verification,
+          images: [before.image, lateAfter.image],
+          proofComplete: true,
+          proofError: null,
+          pendingAfterCommandId: null,
+        }
+      }
+    }
+  }
   return {
     actionCommandId,
     actionOutcome,
