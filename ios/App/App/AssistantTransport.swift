@@ -149,6 +149,10 @@ enum AgentTurnEvent: Sendable {
     case modelInfo(label: String, displayName: String)
     case modelSwitchRequired(toLabel: String, fromLabel: String, fallbackModelId: String?)
     case thinkingDelta(String)
+    /// Provider-neutral, truthful work headline. Unlike `thinkingDelta`, this is
+    /// never presented as private model reasoning; it is an explicit progress
+    /// update emitted by the turn runner for every provider.
+    case progressUpdate(String)
     case textDelta(String)
     case toolStart(id: String, name: String, inputPretty: String?)
     case toolEnd(id: String, ok: Bool, resultPreview: String?, screenshot: String?)
@@ -203,6 +207,8 @@ enum AgentTurnEvent: Sendable {
                                         fallbackModelId: ev.fallbackModelId)
         case "thinking_delta":
             self = .thinkingDelta(ev.delta ?? "")
+        case "progress_update":
+            self = .progressUpdate(ev.label ?? "")
         case "text_delta":
             self = .textDelta(ev.delta ?? "")
         case "tool_start":

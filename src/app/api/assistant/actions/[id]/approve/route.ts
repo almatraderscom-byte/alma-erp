@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { enqueueApprovedActionContinuation } from '@/agent/lib/approval-continuation'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
@@ -1172,32 +1172,29 @@ async function runApprove(
       return Response.json({ success: false, error: 'already_resolved' }, { status: 409 })
     }
 
-    let commandId: string
+    const uiParams = {
+      bundleId: p.bundleId ?? null,
+      elementLabel: p.elementLabel ?? null,
+      text: p.text ?? null,
+      key: p.key ?? null,
+      focusedLabel: p.focusedLabel ?? null,
+      // The card the owner read carried the erase warning; without
+      // forwarding this, the approved overwrite re-hits field_not_empty.
+      replace: p.replace === true ? true : null,
+      scrollAmount: p.scrollAmount ?? null,
+      // The chat identity is re-read by the daemon at the last instant.
+      expect: p.expect ?? null,
+      approved: true,
+    }
+    let proofRun: import('@/agent/lib/mac-agent/ui-visual-proof').UiActionVisualProofResult
     try {
-      const enq = await enqueueMacCommand({
+      const { runUiActionWithVisualProof } = await import('@/agent/lib/mac-agent/ui-visual-proof')
+      proofRun = await runUiActionWithVisualProof({
         deviceId: device.id,
-        action: uiAction as Parameters<typeof enqueueMacCommand>[0]['action'],
-        params: {
-          bundleId: p.bundleId ?? null,
-          elementLabel: p.elementLabel ?? null,
-          text: p.text ?? null,
-          key: p.key ?? null,
-          focusedLabel: p.focusedLabel ?? null,
-          // The card the owner read carried the erase warning; without
-          // forwarding this, the approved overwrite re-hits field_not_empty
-          // (Codex P2).
-          replace: p.replace === true ? true : null,
-          scrollAmount: p.scrollAmount ?? null,
-          // P0-3: WITHOUT this the guard was dead on the path that matters —
-          // every act Boss actually approves comes through here, and a card
-          // approved minutes later is exactly when he has switched chats.
-          expect: p.expect ?? null,
-          approved: true,
-        },
-        policyLevel: 'amber',
+        uiAction,
+        params: uiParams,
         approvedBy: actionId,
       })
-      commandId = enq.id
     } catch (err) {
       // A transient failure after the claim would otherwise strand the card as
       // `approved` with nothing queued — a retry then hits already_resolved and
@@ -1213,8 +1210,29 @@ async function runApprove(
       )
     }
 
-    // The daemon may defer on owner_active and retry, so give it headroom.
-    const outcome = await awaitMacResult(commandId, 100_000)
+    // A BEFORE capture is mandatory. If it could not be produced, the helper
+    // failed closed and did not enqueue the act — there is no hidden change.
+    if (!proofRun.actionOutcome || !proofRun.actionCommandId) {
+      // The BEFORE proof failed closed and no UI command was enqueued. Return
+      // ownership of the card to the owner; leaving it approved would make the
+      // next tap hit already_resolved and strand the requested action forever.
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending', resolvedAt: null },
+      })
+      const note = `⚠️ কাজটা করা হয়নি — আগের marked screenshot নেওয়া যায়নি (${proofRun.proofError ?? 'visual_proof_unavailable'})। কিছু বদলানো হয়নি।`
+      await appendConversationNote(db, action, note)
+      return Response.json({
+        success: false,
+        error: 'visual_proof_before_unavailable',
+        message: note,
+        proofComplete: false,
+        proofError: proofRun.proofError,
+      }, { status: 409 })
+    }
+
+    const commandId = proofRun.actionCommandId
+    const outcome = proofRun.actionOutcome
     const uiTail = (outcome.stdout || outcome.stderr || outcome.error || '').slice(-1200)
 
     // P0-5 — "done" has to be SHOWN. The daemon returns the field's real
@@ -1223,10 +1241,7 @@ async function runApprove(
     // and the head narrated success from there (audit C.6). The verdict below
     // separates "I did it and checked" from "I tried and could not confirm" —
     // Boss can act on either, but never on the second dressed as the first.
-    const { verifyUiOutcome, isVerifiableUiAction } = await import('@/agent/lib/mac-agent/ui-postcondition')
-    const check = isVerifiableUiAction(uiAction) && !outcome.timedOut
-      ? verifyUiOutcome({ uiAction, text: p.text, elementLabel: p.elementLabel, stdout: outcome.stdout, status: outcome.status })
-      : null
+    const check = proofRun.verification
     if (check) {
       const { logToolEvent } = await import('@/agent/lib/tool-telemetry')
       void logToolEvent({
@@ -1237,29 +1252,52 @@ async function runApprove(
         verified: check.verdict === 'verified',
         conversationId: resolveConversationId(action),
         errorCode: check.verdict === 'verified' ? null : check.verdict,
-        detail: { uiAction, verdict: check.verdict, evidence: check.evidence, commandId },
+        detail: {
+          uiAction,
+          verdict: check.verdict,
+          evidence: check.evidence,
+          commandId,
+          visualProofComplete: proofRun.proofComplete,
+          visualProofImages: proofRun.images.map((image) => image.imageUrl),
+          visualProofError: proofRun.proofError,
+        },
       })
     }
 
+    const { visualProofMarkdown } = await import('@/agent/lib/mac-agent/ui-visual-proof')
+    const proofBlock = visualProofMarkdown(proofRun)
+    const proofPending = Boolean(proofRun.pendingAfterCommandId)
+    const proofWarning = proofRun.proofComplete
+      ? ''
+      : proofPending
+        ? `\n\n⏳ AFTER proof capture queue-তে আছে (id: ${proofRun.pendingAfterCommandId}) — proof না আসা পর্যন্ত কাজটাকে complete বলা হচ্ছে না।`
+        : `\n\n⚠️ Action-এর পরের marked screenshot পাওয়া যায়নি (${proofRun.proofError ?? 'unknown'}) — কাজটাকে proof-complete বলা হচ্ছে না।`
     await appendConversationNote(
       db,
       action,
-      outcome.timedOut
-        ? `✅ অনুমোদিত — কাজটা এখনো চলছে (id: ${commandId})। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
+      (outcome.timedOut
+        ? `⏳ অনুমোদিত action এখনো চলছে (id: ${commandId}) — সম্পন্ন বলা হচ্ছে না। আপনি কীবোর্ডে থাকলে এজেন্ট আপনার সরে যাওয়া পর্যন্ত অপেক্ষা করছে।`
         : outcome.status === 'done'
           ? check && check.verdict !== 'verified'
             ? `⚠️ কাজটা পাঠানো হয়েছে, কিন্তু ${check.reasonBn}\n\n\`\`\`\n${uiTail}\n\`\`\``
             : `✅ অনুমোদিত ও করা হয়েছে${check?.reasonBn ? ` — ${check.reasonBn}` : ''}\n\n\`\`\`\n${uiTail}\n\`\`\``
-          : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``,
+          : `⚠️ কাজটা করতে গিয়ে সমস্যা হয়েছে:\n\n\`\`\`\n${uiTail}\n\`\`\``)
+        + proofWarning
+        + (proofBlock ? `\n\n${proofBlock}` : ''),
     )
 
     return Response.json({
       // A postcondition that FAILED is not a success, whatever the exit status
-      // said — otherwise the card reports ✅ for a click that changed nothing.
-      success: outcome.status === 'done' && check?.verdict !== 'failed',
+      // said. Completion also requires both real before/after captures.
+      success: outcome.status === 'done' && check?.verdict !== 'failed' && proofRun.proofComplete,
       commandId,
       verified: check?.verdict ?? null,
       verificationNote: check?.reasonBn ?? null,
+      proofComplete: proofRun.proofComplete,
+      proofImages: proofRun.images,
+      proofError: proofRun.proofError,
+      proofState: proofRun.proofComplete ? 'complete' : proofPending ? 'pending' : 'failed',
+      pendingAfterCommandId: proofRun.pendingAfterCommandId ?? null,
       stdout: outcome.stdout,
       stderr: outcome.stderr,
       stillRunning: outcome.timedOut,
@@ -2802,7 +2840,6 @@ async function runApprove(
     const labels = (families_ as string[])
       .map((id: string) => `${known.get(id)?.label ?? id} (${fmt(windows[id])} পর্যন্ত)`)
       .join(', ')
-    const until = fmt(expiresAt)
     // The grant is COMMITTED by now, so a failed chat note must not turn into a
     // failed approval: the card cannot be handed back, and Boss would be told it
     // failed while the permission runs (review bot, #667). Log and carry on.
@@ -3230,6 +3267,13 @@ export async function POST(
 
   const progress = await beginApprovalProgress(ctx.params.id, approveReceivedAt)
   const res = await runApprove(req, ctx)
+  let visualProofPending = false
+  if (res.status >= 200 && res.status < 300) {
+    try {
+      const body = await res.clone().json() as { proofState?: string }
+      visualProofPending = body.proofState === 'pending'
+    } catch { /* most approval responses are not JSON proof envelopes */ }
+  }
   // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
   // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
   // failure never affects the approval response.
@@ -3240,8 +3284,13 @@ export async function POST(
     console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
   }
   try {
-    if (res.status >= 200 && res.status < 300) {
-      await enqueueApprovalContinuation(ctx.params.id, progress?.turnId ?? null)
+    if (res.status >= 200 && res.status < 300 && !visualProofPending) {
+      await enqueueApprovedActionContinuation(ctx.params.id, progress?.turnId ?? null)
+    } else if (visualProofPending && progress?.turnId) {
+      // The action/AFTER capture is still queued; starting the head now would
+      // let it narrate completion before the result-route reconciler delivers
+      // the marked pair. The durable command + chat note own this pending span.
+      await finalizeTurnIfRunning(progress.turnId, 'done')
     } else if (progress?.turnId) {
       await finalizeTurnIfRunning(progress.turnId, 'error')
     }
@@ -3335,60 +3384,3 @@ async function beginApprovalProgress(
  * No infinite loop: a continuation only ever fires from a human approval, and the turn
  * is told not to redo the action.
  */
-async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string | null = null): Promise<void> {
-  // Whatever early-return path we take below, a progress turn opened at approve
-  // time must not stay 'running' forever — except for renders, whose turn is
-  // closed by /internal/job-result once the artifact lands.
-  const settleProgress = async (actionType?: string) => {
-    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen' && actionType !== 'agent_voice_call') {
-      await finalizeTurnIfRunning(reuseTurnId, 'done')
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const action = await db.agentPendingAction.findUnique({
-    where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true, type: true, result: true },
-  })
-  const conversationId: string | null = action?.conversationId ?? null
-  if (!conversationId) { await settleProgress(action?.type); return }
-  // Only continue once the action genuinely resolved (guards against a 2xx that
-  // wasn't an approval, e.g. an idempotent no-op).
-  if (action.status !== 'approved' && action.status !== 'executed') { await settleProgress(action.type); return }
-
-  // Async jobs are not finished at approval time. Their terminal callback owns
-  // the continuation after the artifact/call report is durably in conversation.
-  if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
-
-  const summary = (action.summary ?? '').toString().slice(0, 200)
-
-  // OWNER INCIDENT 2026-07-26: after an approval the head kept answering "card
-  // অনুমোদনের অপেক্ষায় আছি" for work that had ALREADY been applied — it trusted its
-  // own earlier sentence instead of the world. Telling it the card was approved
-  // was not enough; it needs the live FACTS: what this approval changed, and
-  // whether anything is genuinely still pending in this conversation.
-  const applied = (() => {
-    const r = action.result as { applied?: unknown[]; failed?: unknown[] } | null
-    if (!r || !Array.isArray(r.applied)) return ''
-    const failed = Array.isArray(r.failed) ? r.failed.length : 0
-    return ` (${r.applied.length}টি প্রয়োগ হয়েছে${failed ? `, ${failed}টি ব্যর্থ` : ''})`
-  })()
-
-  const stillPending: number = await db.agentPendingAction.count({
-    where: { conversationId, status: 'pending' },
-  }).catch(() => 0)
-
-  const message =
-    '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
-    (summary ? `: "${summary}"` : '') + applied +
-    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
-    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না। ' +
-    (stillPending > 0
-      ? `এই চ্যাটে আরও ${stillPending}টি card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায় আছে।`
-      : 'এই চ্যাটে আর কোনো card অপেক্ষায় নেই — তাই "অনুমোদনের অপেক্ষায় আছি" বোলো না; ' +
-        'বাকি কাজ থাকলে নিজেই এগোও, না থাকলে গুনে ফল জানাও।')
-
-  // Boss tapping Approve is Boss acting — it resumes even if some other card is
-  // still open; the awaiting-answer gate exists for BACKGROUND resumes only.
-  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId, ignoreAwaitingOwner: true })
-}

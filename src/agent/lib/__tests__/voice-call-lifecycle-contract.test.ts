@@ -8,9 +8,10 @@ const ROOT = process.cwd()
 describe('two-way call lifecycle contract', () => {
   it('does not resume the head or mark the action executed when dialing is merely accepted', () => {
     const approve = readFileSync(join(ROOT, 'src/app/api/assistant/actions/[id]/approve/route.ts'), 'utf8')
+    const continuation = readFileSync(join(ROOT, 'src/agent/lib/approval-continuation.ts'), 'utf8')
     expect(approve).toContain("action.type === 'agent_voice_call'")
     expect(approve).toContain("status: 'approved'")
-    expect(approve).toContain("action.type === 'agent_voice_call') return")
+    expect(continuation).toContain("action.type === 'agent_voice_call') return")
     expect(approve).toContain('terminal report')
   })
 

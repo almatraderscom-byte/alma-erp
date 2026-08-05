@@ -171,6 +171,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
             // objects, so it needs no global override.
             window?.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // ~#0e0c14
             window?.makeKeyAndVisible()
+            if #available(iOS 17.0, *) {
+                DispatchQueue.main.async { [weak self] in
+                    LaunchRobotCoordinator.shared.install(in: self?.window)
+                }
+            }
         }
 
         // App-wide floating office chat head (drag anywhere → snaps to edge, tap → group

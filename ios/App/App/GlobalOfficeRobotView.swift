@@ -1127,9 +1127,11 @@ private enum OfficeRobotFrameStore {
         (3, 0..<4),
         (4, 0..<5),
         (5, 0..<8),
+        (6, 0..<8),
         (7, 0..<6),
-        (9, 1..<3),
-        (10, 6..<8),
+        (8, 0..<8),
+        (9, 0..<8),
+        (10, 0..<8),
     ]
 
     // Crop once, then switch small frames. This avoids scaling the full atlas for
@@ -1159,5 +1161,815 @@ private enum OfficeRobotFrameStore {
 
     static func image(row: Int, column: Int) -> UIImage? {
         frames[row * sheetColumns + column]
+    }
+}
+
+// MARK: - Production launch experience (approved Preview v4)
+
+extension Notification.Name {
+    /// Emitted by the native dashboard after its first authoritative data payload.
+    static let almaDashboardContentReady = Notification.Name("alma.dashboard.contentReady")
+    /// Auth/error routes must never leave the user trapped behind decorative motion.
+    static let almaDashboardContentUnavailable = Notification.Name("alma.dashboard.contentUnavailable")
+}
+
+/// Pure, deterministic motion math shared by the production view and focused tests.
+/// Coordinates are authored against the approved 390×844 preview, then mapped into
+/// the live window; the destination is supplied by the canonical FloatingChatHead.
+@available(iOS 17.0, *)
+enum LaunchRobotTimeline {
+    static let duration: TimeInterval = 10.4
+    static let activationHoldTime: TimeInterval = 7.05
+    static let maximumReadinessHold: TimeInterval = 2.5
+    static let fixedHostRevealTime: TimeInterval = 9.1
+
+    enum Phase: String, Equatable {
+        case waiting, drop, landing, awareness, hopOne, hopTwo, dance, spin
+        case activation, reveal, merge, fixedReaction, complete
+    }
+
+    struct State: Equatable {
+        var phase: Phase = .waiting
+        var robotCenter = CGPoint(x: 195, y: -85)
+        var robotSize = CGSize(width: 112, height: 121)
+        var scaleX: CGFloat = 1
+        var scaleY: CGFloat = 1
+        var rotationDegrees: Double = 0
+        var robotOpacity: Double = 1
+        var row = 0
+        var column = 0
+        var beamOpacity: Double = 0
+        var beamScaleX: CGFloat = 0.12
+        var islandGlowOpacity: Double = 0
+        var shadowOpacity: Double = 0.08
+        var shadowScaleX: CGFloat = 0.45
+        var impactOpacity: Double = 0
+        var impactScale: CGFloat = 0.2
+        var particleOpacity: Double = 0
+        var particleScale: CGFloat = 1
+        var coreOpacity: Double = 0
+        var coreScale: CGFloat = 0.25
+        var coreRotationDegrees: Double = 0
+        var scanOpacity: Double = 0
+        var scanProgress: CGFloat = 0
+        var veilOpacity: Double = 1
+        var gridOpacity: Double = 0.15
+        var brandOpacity: Double = 1
+        var brandOffsetY: CGFloat = 0
+        var portalOpacity: Double = 0
+        var portalScale: CGFloat = 1
+        var portalRotationDegrees: Double = 0
+        var shutterOpacity: Double = 0
+        var shutterProgress: CGFloat = 0
+        var hapticFlashOpacity: Double = 0
+        var sceneShakeX: CGFloat = 0
+        var sceneTiltDegrees: Double = 0
+    }
+
+    static func phase(at time: TimeInterval) -> Phase {
+        switch time {
+        case ..<0.5: .waiting
+        case ..<1.2: .drop
+        case ..<1.85: .landing
+        case ..<3.3: .awareness
+        case ..<3.85: .hopOne
+        case ..<4.4: .hopTwo
+        case ..<5.65: .dance
+        case ..<6.35: .spin
+        case ..<7.1: .activation
+        case ..<8.0: .reveal
+        case ..<9.1: .merge
+        case ..<9.9: .fixedReaction
+        case ..<duration: .complete
+        default: .complete
+        }
+    }
+
+    static func state(
+        at rawTime: TimeInterval,
+        canvas: CGSize = CGSize(width: 390, height: 844),
+        destinationCenter: CGPoint = CGPoint(x: 334, y: 380)
+    ) -> State {
+        let time = min(max(0, rawTime), duration)
+        let xRatio = canvas.width / 390
+        let yRatio = canvas.height / 844
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: x * xRatio, y: y * yRatio)
+        }
+        func size(_ width: CGFloat, _ height: CGFloat) -> CGSize {
+            CGSize(width: width * xRatio, height: height * xRatio)
+        }
+        func clamp(_ value: Double, _ lower: Double = 0, _ upper: Double = 1) -> Double {
+            min(upper, max(lower, value))
+        }
+        func segment(_ value: Double, _ start: Double, _ end: Double) -> Double {
+            clamp((value - start) / (end - start))
+        }
+        func smooth(_ value: Double) -> Double {
+            let t = clamp(value)
+            return t * t * (3 - 2 * t)
+        }
+        func easeOut(_ value: Double) -> Double {
+            1 - pow(1 - clamp(value), 3)
+        }
+        func mix(_ start: CGFloat, _ end: CGFloat, _ progress: Double) -> CGFloat {
+            start + (end - start) * progress
+        }
+        func mixD(_ start: Double, _ end: Double, _ progress: Double) -> Double {
+            start + (end - start) * progress
+        }
+
+        var state = State()
+        state.phase = phase(at: time)
+        var x: CGFloat = 139
+        var y: CGFloat = -145
+        var width: CGFloat = 112
+        var height: CGFloat = 121
+
+        if time < 0.5 {
+            state.islandGlowOpacity = 0.12 + 0.10 * sin(time / 0.09)
+            state.brandOpacity = smooth(segment(time, 0.06, 0.42))
+        } else if time < 1.2 {
+            let p = easeOut(segment(time, 0.5, 1.2))
+            y = mix(-132, 342, p)
+            state.rotationDegrees = mixD(-5, 2, p)
+            state.beamOpacity = sin(.pi * segment(time, 0.5, 1.2)) * 0.82
+            state.beamScaleX = mix(0.18, 1, sin(.pi * segment(time, 0.5, 1.2)))
+            state.islandGlowOpacity = 0.9 - p * 0.38
+            state.column = min(7, Int(p * 8)); state.row = 1
+            state.shadowOpacity = mixD(0.03, 0.46, p)
+            state.shadowScaleX = mix(0.26, 1, p)
+        } else if time < 1.85 {
+            let p = segment(time, 1.2, 1.85)
+            y = 342
+            if p < 0.18 {
+                let q = p / 0.18
+                state.scaleX = mix(1, 1.16, q); state.scaleY = mix(1, 0.78, q)
+                y += mix(0, 13, q)
+            } else if p < 0.5 {
+                let q = smooth((p - 0.18) / 0.32)
+                state.scaleX = mix(1.16, 0.95, q); state.scaleY = mix(0.78, 1.07, q)
+                y += mix(13, -14, q)
+            } else {
+                let q = smooth((p - 0.5) / 0.5)
+                state.scaleX = mix(0.95, 1, q); state.scaleY = mix(1.07, 1, q)
+                y += mix(-14, 0, q)
+            }
+            state.impactOpacity = sin(.pi * clamp(p * 1.55))
+            state.impactScale = mix(0.35, 2.5, easeOut(p))
+            state.particleOpacity = sin(.pi * clamp(p * 1.25))
+            state.particleScale = mix(0.4, 1.25, p)
+            state.shadowOpacity = 0.48; state.shadowScaleX = 1.05
+            state.column = min(7, Int(p * 12) % 8); state.row = 2
+            if p < 0.26 {
+                let q = p / 0.26
+                state.sceneShakeX = sin(q * .pi * 4) * (1 - q) * 2.4
+                state.sceneTiltDegrees = sin(q * .pi * 3) * (1 - q) * 0.18
+                state.hapticFlashOpacity = sin(.pi * q) * 0.48
+            }
+        } else if time < 3.3 {
+            let p = segment(time, 1.85, 3.3)
+            y = 342 + sin(p * .pi * 4) * 1.6
+            if p < 0.3 {
+                state.rotationDegrees = mixD(0, -7, smooth(p / 0.3)); x -= 5; state.column = 1
+            } else if p < 0.62 {
+                state.rotationDegrees = mixD(-7, 8, smooth((p - 0.3) / 0.32)); x += 6; state.column = 3
+            } else {
+                state.rotationDegrees = mixD(8, 0, smooth((p - 0.62) / 0.38))
+                state.column = (p > 0.77 && p < 0.86) ? 1 : 0
+            }
+            state.row = p < 0.3 ? 10 : (p < 0.62 ? 9 : 0)
+            state.shadowOpacity = 0.44; state.shadowScaleX = 0.96
+        } else if time < 3.85 {
+            let p = segment(time, 3.3, 3.85)
+            y = 342 - sin(.pi * p) * 62; x = mix(139, 111, smooth(p))
+            state.rotationDegrees = -sin(.pi * p) * 10
+            state.scaleX = 1 + sin(.pi * p) * 0.05
+            state.scaleY = 1 - sin(.pi * p) * 0.03
+            state.shadowOpacity = mixD(0.44, 0.18, sin(.pi * p))
+            state.shadowScaleX = mix(0.96, 0.58, sin(.pi * p))
+            state.column = min(4, Int(p * 10) % 5); state.row = 4
+        } else if time < 4.4 {
+            let p = segment(time, 3.85, 4.4)
+            y = 342 - sin(.pi * p) * 72; x = mix(111, 164, smooth(p))
+            state.rotationDegrees = sin(.pi * p) * 12
+            state.shadowOpacity = mixD(0.44, 0.15, sin(.pi * p))
+            state.shadowScaleX = mix(0.96, 0.52, sin(.pi * p))
+            state.column = min(7, Int(p * 11) % 8); state.row = 5
+        } else if time < 5.65 {
+            let p = segment(time, 4.4, 5.65)
+            let wave = sin(p * .pi * 6)
+            x = 139 + wave * 24; y = 342 - abs(wave) * 17
+            state.rotationDegrees = wave * 14
+            state.scaleX = 1 + abs(wave) * 0.035; state.scaleY = 1 - abs(wave) * 0.025
+            state.shadowOpacity = 0.4; state.shadowScaleX = 0.86 + abs(wave) * 0.12
+            state.column = Int(p * 24) % 8; state.row = 6 + (Int(p * 3) % 2)
+        } else if time < 6.35 {
+            let p = segment(time, 5.65, 6.35)
+            y = 342 - sin(.pi * p) * 24
+            state.rotationDegrees = easeOut(p) * 360
+            state.scaleX = 1 + sin(.pi * p) * 0.08; state.scaleY = 1 - sin(.pi * p) * 0.04
+            state.column = Int(p * 14) % 8; state.row = 8
+            state.shadowOpacity = 0.35; state.shadowScaleX = mix(0.9, 0.6, sin(.pi * p))
+        } else if time < 7.1 {
+            let p = segment(time, 6.35, 7.1)
+            y = 342 - sin(p * .pi) * 8
+            state.column = min(3, Int(p * 8) % 4); state.row = 3
+            state.coreOpacity = smooth(segment(p, 0.06, 0.34)) * (1 - smooth(segment(p, 0.84, 1)) * 0.15)
+            state.coreScale = mix(0.25, 1.12, easeOut(segment(p, 0.02, 0.62)))
+            state.coreRotationDegrees = p * 190
+            state.scanOpacity = smooth(segment(p, 0.2, 0.42)); state.scanProgress = smooth(segment(p, 0.24, 1))
+            state.veilOpacity = mixD(1, 0.76, smooth(segment(p, 0.52, 1)))
+            state.gridOpacity = mixD(0.15, 0.34, smooth(segment(p, 0.08, 0.72)))
+            if p > 0.25 && p < 0.52 {
+                let q = segment(p, 0.25, 0.52)
+                state.sceneShakeX = sin(q * .pi * 3) * (1 - q) * 1.15
+                state.hapticFlashOpacity = sin(.pi * q) * 0.26
+            }
+        } else if time < 8.0 {
+            let p = smooth(segment(time, 7.1, 8.0))
+            y = 342; state.column = min(3, Int(p * 8) % 4); state.row = 3
+            state.coreOpacity = mixD(0.85, 0, p); state.coreScale = mix(1.12, 2.35, p)
+            state.coreRotationDegrees = 190 + p * 160
+            state.scanOpacity = 1 - p; state.scanProgress = 1
+            state.veilOpacity = mixD(0.76, 0, p); state.gridOpacity = mixD(0.34, 0, p)
+            state.brandOpacity = 1 - p; state.brandOffsetY = -14 * p
+            state.shutterOpacity = sin(.pi * p) * 0.85; state.shutterProgress = p
+            state.portalOpacity = smooth(segment(p, 0.22, 0.62))
+            state.portalScale = mix(0.62, 1, smooth(segment(p, 0.22, 0.78)))
+            state.portalRotationDegrees = mixD(-18, 8, p)
+        } else if time < 9.1 {
+            let raw = segment(time, 8.0, 9.1)
+            let p = smooth(segment(raw, 0, 0.72))
+            let startCenter = point(195, 402.5)
+            let arc = sin(.pi * p) * 92 * yRatio
+            let center = CGPoint(
+                x: mix(startCenter.x, destinationCenter.x, p),
+                y: mix(startCenter.y, destinationCenter.y, p) - arc
+            )
+            width = mix(112, 52, p); height = mix(121, 56.34, p)
+            state.robotCenter = center
+            state.robotSize = size(width, height)
+            state.rotationDegrees = sin(.pi * p) * 12
+            state.column = Int(raw * 14) % 8; state.row = 10
+            state.veilOpacity = 0; state.gridOpacity = 0; state.brandOpacity = 0
+            state.portalOpacity = 1; state.portalScale = 1 + sin(.pi * raw) * 0.16
+            state.portalRotationDegrees = raw * 120
+            if raw > 0.72 {
+                let q = smooth(segment(raw, 0.72, 1))
+                state.robotCenter = destinationCenter
+                state.robotSize = size(52, 56.34)
+                state.scaleX = mix(1, 0.12, q); state.scaleY = mix(1, 0.12, q)
+                state.rotationDegrees = q * 88
+                state.robotOpacity = 1 - smooth(segment(q, 0.52, 1))
+                state.hapticFlashOpacity = sin(.pi * segment(q, 0.34, 0.82)) * 0.62
+                state.sceneShakeX = sin(q * .pi * 5) * (1 - q) * 1.9
+            }
+            state.shadowOpacity = 0
+            return state
+        } else {
+            // From 9.1 s the canonical FloatingChatHead is the only visible owner.
+            state.robotCenter = destinationCenter
+            state.robotSize = size(52, 56.34)
+            state.robotOpacity = 0
+            state.row = 0; state.column = 0
+            state.veilOpacity = 0; state.gridOpacity = 0; state.brandOpacity = 0
+            let reaction = segment(time, 9.1, 9.9)
+            state.portalOpacity = 1 - smooth(segment(reaction, 0.05, 0.58))
+            state.portalScale = mix(1.18, 0.74, smooth(segment(reaction, 0, 0.58)))
+            state.portalRotationDegrees = 120 + reaction * 90
+            state.hapticFlashOpacity = sin(.pi * segment(reaction, 0, 0.26)) * 0.70
+            return state
+        }
+
+        state.robotCenter = point(x + width / 2, y + height / 2)
+        state.robotSize = size(width, height)
+        return state
+    }
+}
+
+@available(iOS 17.0, *)
+@MainActor
+final class LaunchRobotAnimationModel: ObservableObject {
+    @Published private(set) var elapsed: TimeInterval = 0
+    @Published var destinationCenter: CGPoint
+
+    var onRevealFixedHost: ((Bool) -> Void)?
+    var onComplete: (() -> Void)?
+
+    private var playbackTask: Task<Void, Never>?
+    private var dashboardResolved = false
+    private var didRevealFixedHost = false
+    private var didComplete = false
+    private var didPrepareLanding = false
+    private var didPrepareActivation = false
+    private var didPrepareMerge = false
+    private var didFireLanding = false
+    private var didFireActivation = false
+    private var didFireMerge = false
+    private let landingFeedback = UIImpactFeedbackGenerator(style: .soft)
+    private let activationFeedback = UIImpactFeedbackGenerator(style: .light)
+    private let mergeFeedback = UIImpactFeedbackGenerator(style: .medium)
+
+    init(destinationCenter: CGPoint) {
+        self.destinationCenter = destinationCenter
+    }
+
+    func start(reduceMotion: Bool) {
+        playbackTask?.cancel()
+        guard !reduceMotion else {
+            elapsed = LaunchRobotTimeline.duration
+            didRevealFixedHost = true
+            onRevealFixedHost?(false)
+            playbackTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(360))
+                self?.finishIfNeeded()
+            }
+            return
+        }
+
+        let start = Date()
+        var accumulatedHold: TimeInterval = 0
+        var holdStarted: Date?
+        playbackTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                let now = Date()
+                var effective = now.timeIntervalSince(start) - accumulatedHold
+                if effective >= LaunchRobotTimeline.activationHoldTime,
+                   !dashboardResolved {
+                    if holdStarted == nil { holdStarted = now }
+                    if let holdStarted,
+                       now.timeIntervalSince(holdStarted) < LaunchRobotTimeline.maximumReadinessHold {
+                        effective = LaunchRobotTimeline.activationHoldTime
+                    } else if let holdStarted {
+                        dashboardResolved = true
+                        accumulatedHold += now.timeIntervalSince(holdStarted)
+                        self.dashboardResolved = true
+                        self.log("launchRobot.readinessTimedOut")
+                        effective = now.timeIntervalSince(start) - accumulatedHold
+                    }
+                } else if dashboardResolved, let holdStarted {
+                    accumulatedHold += now.timeIntervalSince(holdStarted)
+                    effective = now.timeIntervalSince(start) - accumulatedHold
+                }
+                if dashboardResolved { holdStarted = nil }
+
+                elapsed = min(effective, LaunchRobotTimeline.duration)
+                handleOneShotEvents(at: elapsed)
+                if elapsed >= LaunchRobotTimeline.duration {
+                    finishIfNeeded()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    func resolveDashboard() {
+        dashboardResolved = true
+    }
+
+    func cancelAndReveal(reason: String) {
+        guard !didComplete else { return }
+        log("launchRobot.cancelled", reason)
+        playbackTask?.cancel()
+        playbackTask = nil
+        elapsed = LaunchRobotTimeline.duration
+        if !didRevealFixedHost {
+            didRevealFixedHost = true
+            onRevealFixedHost?(false)
+        }
+        finishIfNeeded()
+    }
+
+    private func handleOneShotEvents(at time: TimeInterval) {
+        if time >= 1.0, !didPrepareLanding { didPrepareLanding = true; landingFeedback.prepare() }
+        if time >= 1.2, !didFireLanding {
+            didFireLanding = true; landingFeedback.impactOccurred(intensity: 0.72)
+            log("launchRobot.haptic", "landing.soft")
+        }
+        if time >= 6.15, !didPrepareActivation { didPrepareActivation = true; activationFeedback.prepare() }
+        if time >= 6.45, !didFireActivation {
+            didFireActivation = true; activationFeedback.impactOccurred(intensity: 0.58)
+            log("launchRobot.haptic", "activation.light")
+        }
+        if time >= 8.7, !didPrepareMerge { didPrepareMerge = true; mergeFeedback.prepare() }
+        if time >= 8.95, !didFireMerge {
+            didFireMerge = true; mergeFeedback.impactOccurred(intensity: 0.86)
+            log("launchRobot.haptic", "merge.medium")
+        }
+        if time >= LaunchRobotTimeline.fixedHostRevealTime, !didRevealFixedHost {
+            didRevealFixedHost = true
+            onRevealFixedHost?(true)
+        }
+    }
+
+    private func finishIfNeeded() {
+        guard !didComplete else { return }
+        didComplete = true
+        playbackTask?.cancel()
+        playbackTask = nil
+        onComplete?()
+    }
+
+    private func log(_ name: StaticString, _ detail: String = "") {
+        AlmaPerfLog.event(name, detail)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotExperienceView: View {
+    @ObservedObject var model: LaunchRobotAnimationModel
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        GeometryReader { proxy in
+            let state = LaunchRobotTimeline.state(
+                at: model.elapsed,
+                canvas: proxy.size,
+                destinationCenter: model.destinationCenter
+            )
+            let scaleX = state.robotSize.width / 52
+            let scaleY = state.robotSize.height / 56.34
+
+            ZStack {
+                Group {
+                    if reduceTransparency {
+                        Rectangle()
+                            .fill(Color(red: 0.035, green: 0.045, blue: 0.105))
+                    } else {
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                    }
+                }
+                .opacity(state.veilOpacity)
+
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.035, green: 0.055, blue: 0.14).opacity(0.88),
+                        Color(red: 0.025, green: 0.035, blue: 0.09).opacity(0.70),
+                        Color(red: 0.09, green: 0.025, blue: 0.10).opacity(0.72),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottomTrailing
+                )
+                .opacity(state.veilOpacity)
+
+                LaunchRobotGrid()
+                    .opacity(state.gridOpacity)
+
+                VStack(spacing: 5) {
+                    Text("ALMA")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .tracking(3.0)
+                    Text("OPERATIONS, IN MOTION")
+                        .font(.system(size: 9, weight: .regular, design: .rounded))
+                        .tracking(1.1)
+                        .opacity(0.52)
+                }
+                .foregroundStyle(.white)
+                .offset(y: state.brandOffsetY)
+                .opacity(state.brandOpacity)
+                .position(x: proxy.size.width / 2, y: max(84, proxy.safeAreaInsets.top + 46))
+
+                LaunchRobotBeam()
+                    .fill(LinearGradient(
+                        colors: [.cyan.opacity(0.78), Color(red: 0.26, green: 0.53, blue: 1).opacity(0.16), .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
+                    .frame(width: 78, height: min(430, proxy.size.height * 0.52))
+                    .scaleEffect(x: state.beamScaleX, y: 1, anchor: .top)
+                    .blur(radius: 4)
+                    .opacity(state.beamOpacity)
+                    .position(x: proxy.size.width / 2, y: proxy.safeAreaInsets.top + 205)
+
+                Capsule()
+                    .fill(Color.black)
+                    .frame(width: 119, height: 32)
+                    .overlay(alignment: .bottom) {
+                        Capsule()
+                            .fill(.cyan)
+                            .frame(width: 46, height: 4)
+                            .blur(radius: 4)
+                            .opacity(state.islandGlowOpacity)
+                            .offset(y: 3)
+                    }
+                    .position(x: proxy.size.width / 2, y: max(22, proxy.safeAreaInsets.top - 31))
+
+                LaunchRobotCore(state: state)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height * (405 / 844))
+
+                Rectangle()
+                    .fill(LinearGradient(colors: [.clear, .cyan, .white, .cyan, .clear], startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 2)
+                    .shadow(color: .cyan.opacity(0.55), radius: 8)
+                    .opacity(state.scanOpacity)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height * (0.36 + 0.55 * state.scanProgress))
+
+                Ellipse()
+                    .fill(Color.black.opacity(0.72))
+                    .frame(width: 90, height: 15)
+                    .scaleEffect(x: state.shadowScaleX, y: 1)
+                    .blur(radius: 5)
+                    .opacity(state.shadowOpacity)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height * (476 / 844))
+
+                Ellipse()
+                    .stroke(.cyan.opacity(0.82), lineWidth: 2)
+                    .frame(width: 70, height: 24)
+                    .scaleEffect(state.impactScale)
+                    .shadow(color: .cyan.opacity(0.45), radius: 10)
+                    .opacity(state.impactOpacity)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height * (473 / 844))
+
+                LaunchRobotParticles(state: state, canvas: proxy.size)
+
+                LaunchRobotDestinationPortal(state: state)
+                    .position(model.destinationCenter)
+
+                LaunchRobotShutters(state: state)
+
+                OfficeRobotSpriteFrame(row: state.row, column: state.column)
+                    .frame(width: 52, height: 56.34)
+                    .scaleEffect(
+                        x: scaleX * state.scaleX,
+                        y: scaleY * state.scaleY,
+                        anchor: .bottom
+                    )
+                    .rotationEffect(.degrees(state.rotationDegrees))
+                    .shadow(color: Color(red: 0.26, green: 0.53, blue: 1).opacity(0.48), radius: 9, y: 5)
+                    .opacity(state.robotOpacity)
+                    .position(state.robotCenter)
+
+                RoundedRectangle(cornerRadius: 44, style: .continuous)
+                    .stroke(.cyan.opacity(0.75), lineWidth: 2)
+                    .shadow(color: .cyan.opacity(0.28), radius: 20)
+                    .opacity(state.hapticFlashOpacity)
+                    .padding(3)
+                    .accessibilityHidden(true)
+            }
+            .offset(x: state.sceneShakeX)
+            .rotationEffect(.degrees(state.sceneTiltDegrees))
+            .ignoresSafeArea()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("ALMA প্রস্তুত হচ্ছে")
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotGrid: View {
+    var body: some View {
+        Canvas { context, size in
+            var path = Path()
+            let spacing: CGFloat = 42
+            stride(from: CGFloat(0), through: size.width, by: spacing).forEach { x in
+                path.move(to: CGPoint(x: x, y: size.height * 0.48))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+            }
+            stride(from: size.height * 0.48, through: size.height, by: spacing).forEach { y in
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+            }
+            context.stroke(path, with: .color(.cyan.opacity(0.28)), lineWidth: 0.7)
+        }
+        .mask(LinearGradient(colors: [.clear, .white, .clear], startPoint: .top, endPoint: .bottom))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotBeam: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.midX - rect.width * 0.11, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.midX + rect.width * 0.11, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.closeSubpath()
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotCore: View {
+    let state: LaunchRobotTimeline.State
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(AngularGradient(
+                    colors: [.clear, .cyan, .clear, Color(red: 0.60, green: 0.45, blue: 1), .clear, Color(red: 1, green: 0.56, blue: 0.49), .clear],
+                    center: .center
+                ))
+            Circle().stroke(.white.opacity(0.56), lineWidth: 1).padding(13)
+            Circle().stroke(.cyan.opacity(0.62), lineWidth: 1).padding(31)
+            Circle().fill(.white).frame(width: 7, height: 7).shadow(color: .cyan, radius: 8)
+        }
+        .frame(width: 146, height: 146)
+        .scaleEffect(state.coreScale)
+        .rotationEffect(.degrees(state.coreRotationDegrees))
+        .shadow(color: .cyan.opacity(0.35), radius: 24)
+        .opacity(state.coreOpacity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotParticles: View {
+    let state: LaunchRobotTimeline.State
+    let canvas: CGSize
+    private let offsets: [CGSize] = [
+        .init(width: -52, height: -4), .init(width: -35, height: -23),
+        .init(width: -13, height: -31), .init(width: 15, height: -30),
+        .init(width: 39, height: -20), .init(width: 54, height: -3),
+    ]
+
+    var body: some View {
+        ForEach(Array(offsets.enumerated()), id: \.offset) { _, offset in
+            Circle()
+                .fill(.white)
+                .frame(width: 4, height: 4)
+                .shadow(color: .cyan, radius: 4)
+                .scaleEffect(state.particleScale)
+                .opacity(state.particleOpacity)
+                .position(
+                    x: canvas.width / 2 + offset.width,
+                    y: canvas.height * (459 / 844) + offset.height
+                )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotDestinationPortal: View {
+    let state: LaunchRobotTimeline.State
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(
+                    colors: [.white, .cyan, Color(red: 0.26, green: 0.53, blue: 1), Color(red: 0.13, green: 0.11, blue: 0.36), .clear],
+                    center: .center,
+                    startRadius: 2,
+                    endRadius: 42
+                ))
+            Ellipse().stroke(.cyan.opacity(0.74), lineWidth: 1).padding(-9).rotationEffect(.degrees(28))
+            Ellipse().stroke(Color(red: 0.60, green: 0.45, blue: 1).opacity(0.58), lineWidth: 1).padding(-16).rotationEffect(.degrees(-24))
+        }
+        .frame(width: 84, height: 96)
+        .scaleEffect(state.portalScale)
+        .rotationEffect(.degrees(state.portalRotationDegrees))
+        .shadow(color: .cyan.opacity(0.72), radius: 22)
+        .opacity(state.portalOpacity)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct LaunchRobotShutters: View {
+    let state: LaunchRobotTimeline.State
+
+    var body: some View {
+        GeometryReader { proxy in
+            ForEach(0..<6, id: \.self) { index in
+                LinearGradient(colors: [.clear, .cyan.opacity(0.22), .white.opacity(0.10), .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(height: proxy.size.height * 0.18)
+                    .rotationEffect(.degrees(-3))
+                    .offset(
+                        x: (-proxy.size.width * 1.2) + proxy.size.width * 2.4 * state.shutterProgress,
+                        y: proxy.size.height * CGFloat(index) * 0.16
+                    )
+            }
+        }
+        .opacity(state.shutterOpacity)
+        .blendMode(.screen)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Owns the temporary overlay and no business/data work. Dashboard loading starts
+/// normally underneath; this coordinator only consumes readiness and fail-open signals.
+@available(iOS 17.0, *)
+@MainActor
+final class LaunchRobotCoordinator {
+    static let shared = LaunchRobotCoordinator()
+    static let enabledDefaultsKey = "alma.launchRobot.enabled"
+
+    private var didRun = false
+    private var host: UIHostingController<LaunchRobotExperienceView>?
+    private var model: LaunchRobotAnimationModel?
+    private weak var parentController: UIViewController?
+    private var observers: [NSObjectProtocol] = []
+
+    private init() {}
+
+    static var isEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: enabledDefaultsKey) == nil { return true }
+        return defaults.bool(forKey: enabledDefaultsKey)
+    }
+
+    func install(in window: UIWindow?) {
+        guard !didRun, Self.isEnabled, let parent = window?.rootViewController else { return }
+        didRun = true
+        FloatingChatHead.shared.setSuppressed(true, reason: "launch-animation")
+
+        parent.loadViewIfNeeded()
+        let fallback = CGPoint(
+            x: max(56, parent.view.bounds.width - 56),
+            y: max(160, parent.view.bounds.height * 0.45)
+        )
+        let model = LaunchRobotAnimationModel(destinationCenter: fallback)
+        let host = UIHostingController(rootView: LaunchRobotExperienceView(model: model))
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        parent.addChild(host)
+        parent.view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: parent.view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: parent.view.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: parent.view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: parent.view.trailingAnchor),
+        ])
+        host.didMove(toParent: parent)
+        parent.view.layoutIfNeeded()
+        self.parentController = parent
+        self.host = host
+        self.model = model
+
+        model.onRevealFixedHost = { [weak self] animated in
+            guard let self else { return }
+            self.refreshDestination()
+            FloatingChatHead.shared.completeLaunchMerge(animated: animated)
+        }
+        model.onComplete = { [weak self] in self?.finish() }
+
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .almaDashboardContentReady, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.model?.resolveDashboard()
+                AlmaPerfLog.event("launchRobot.dashboardReady")
+            }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .almaDashboardContentUnavailable, object: nil, queue: .main
+        ) { [weak self] notification in
+            let reason = notification.userInfo?["reason"] as? String ?? "unavailable"
+            Task { @MainActor in self?.model?.cancelAndReveal(reason: reason) }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.model?.cancelAndReveal(reason: "background") }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.model?.cancelAndReveal(reason: "memory-warning") }
+        })
+
+        AlmaPerfLog.event("launchRobot.started", "preview=v4")
+        model.start(
+            reduceMotion: AlmaOverlayCoordinator.shared.reduceMotion
+                || ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(850))
+            self?.refreshDestination()
+        }
+    }
+
+    private func refreshDestination() {
+        guard let hostView = host?.view else { return }
+        if let center = FloatingChatHead.shared.launchDestinationCenter(in: hostView) {
+            model?.destinationCenter = center
+        }
+    }
+
+    private func finish() {
+        guard let host else { return }
+        if model?.elapsed ?? 0 < LaunchRobotTimeline.fixedHostRevealTime {
+            FloatingChatHead.shared.completeLaunchMerge(animated: false)
+        }
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+        self.host = nil
+        self.model = nil
+        self.parentController = nil
+        AlmaPerfLog.event("launchRobot.completed")
     }
 }

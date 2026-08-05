@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/turn_id" },
     { "$ref": "#/$defs/model_info" },
     { "$ref": "#/$defs/model_switch_required" },
+    { "$ref": "#/$defs/progress_update" },
     { "$ref": "#/$defs/thinking_delta" },
     { "$ref": "#/$defs/text_delta" },
     { "$ref": "#/$defs/tool_start" },
@@ -67,6 +68,14 @@
       "type": "object",
       "properties": { "type": { "const": "thinking_delta" }, "delta": { "type": "string" } },
       "required": ["type", "delta"]
+    },
+    "progress_update": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "progress_update" },
+        "label": { "type": "string" }
+      },
+      "required": ["type", "label"]
     },
     "text_delta": {
       "type": "object",

@@ -226,3 +226,69 @@ export async function enqueueAgentContinuation(opts: {
   await traceTurnStage(turnId, 'continuation_enqueued', 'inline')
   await runContinuationInline(opts, turnId)
 }
+
+/**
+ * Resume the conversation after a pending action has genuinely finished.
+ *
+ * Kept beside the generic continuation transport so both the synchronous
+ * approval route and delayed Mac visual-proof reconciliation use the exact
+ * same completion facts and owner-facing instruction. In particular, a Mac
+ * action whose AFTER screenshot arrives after the approval request timed out
+ * must resume here, not stop at the proof note.
+ */
+export async function enqueueApprovedActionContinuation(
+  actionId: string,
+  reuseTurnId: string | null = null,
+): Promise<void> {
+  // Whatever early-return path we take below, a progress turn opened at approve
+  // time must not stay 'running' forever — except for renders/calls, whose
+  // terminal callback owns that turn.
+  const settleProgress = async (actionType?: string) => {
+    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen' && actionType !== 'agent_voice_call') {
+      await finalizeTurnIfRunning(reuseTurnId, 'done')
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: actionId },
+    select: { conversationId: true, status: true, summary: true, type: true, result: true },
+  })
+  const conversationId: string | null = action?.conversationId ?? null
+  if (!conversationId) { await settleProgress(action?.type); return }
+  if (action.status !== 'approved' && action.status !== 'executed') {
+    await settleProgress(action.type)
+    return
+  }
+
+  // These jobs are not complete at approval time. Their own terminal callback
+  // owns the continuation after the artifact/call report is durable.
+  if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
+
+  const summary = (action.summary ?? '').toString().slice(0, 200)
+  const applied = (() => {
+    const r = action.result as { applied?: unknown[]; failed?: unknown[] } | null
+    if (!r || !Array.isArray(r.applied)) return ''
+    const failed = Array.isArray(r.failed) ? r.failed.length : 0
+    return ` (${r.applied.length}টি প্রয়োগ হয়েছে${failed ? `, ${failed}টি ব্যর্থ` : ''})`
+  })()
+  const stillPending: number = await db.agentPendingAction.count({
+    where: { conversationId, status: 'pending' },
+  }).catch(() => 0)
+  const message =
+    '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
+    (summary ? `: "${summary}"` : '') + applied +
+    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
+    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না। ' +
+    (stillPending > 0
+      ? `এই চ্যাটে আরও ${stillPending}টি card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায় আছে।`
+      : 'এই চ্যাটে আর কোনো card অপেক্ষায় নেই — তাই "অনুমোদনের অপেক্ষায় আছি" বোলো না; ' +
+        'বাকি কাজ থাকলে নিজেই এগোও, না থাকলে গুনে ফল জানাও।')
+
+  await enqueueAgentContinuation({
+    conversationId,
+    message,
+    turnId: reuseTurnId,
+    ignoreAwaitingOwner: true,
+  })
+}

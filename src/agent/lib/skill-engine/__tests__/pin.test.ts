@@ -13,7 +13,14 @@ const mockPrisma = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
-import { announcedSkill, announcementLine, resolveSkillPin, setOwnerPin } from '@/agent/lib/skill-engine/pin'
+import {
+  announcedSkill,
+  announcementLine,
+  resolveSkillPin,
+  isExplicitErpRecordRead,
+  setOwnerPin,
+  shouldReleaseRouterPin,
+} from '@/agent/lib/skill-engine/pin'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -40,6 +47,86 @@ describe('the pin sticks', () => {
     })
 
     expect((await resolveSkillPin('c1', 'যা খুশি')).source).toBe('owner')
+  })
+
+  it('releases a router-owned staff pin for an explicit order/approval job', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'alma-staff-dispatch',
+      skillRouteTrace: { source: 'router', layer: 'rule', reason: 'staff', candidates: [], at: '' },
+    })
+
+    const pin = await resolveSkillPin(
+      'c1',
+      "Check today's pending approval count and the three newest orders read-only.",
+    )
+
+    expect(pin.skill).toBeNull()
+    expect(pin.trace?.reason).toContain('scope-exit')
+    expect(mockPrisma.agentConversation.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { pinnedSkill: null, skillRouteTrace: null },
+    })
+  })
+
+  it('releases a router-owned incident pin when the chat moves to ERP orders', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'alma-agent-incident-diagnosis',
+      skillRouteTrace: { source: 'router', layer: 'model', reason: 'incident', candidates: [], at: '' },
+    })
+
+    const pin = await resolveSkillPin(
+      'c1',
+      'PROD-ROUTER-CHECK: Show the three newest orders with order ID and status, read-only.',
+    )
+
+    expect(pin.skill).toBeNull()
+    expect(pin.trace?.reason).toContain('scope-exit')
+    expect(mockPrisma.agentConversation.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { pinnedSkill: null, skillRouteTrace: null },
+    })
+  })
+
+  it('keeps short staff follow-ups and never releases unrelated pins', () => {
+    expect(shouldReleaseRouterPin('alma-staff-dispatch', 'ha koro')).toBe(false)
+    expect(shouldReleaseRouterPin('alma-staff-dispatch', 'Mustahid ke pathao')).toBe(false)
+    expect(shouldReleaseRouterPin('alma-agent-incident-diagnosis', 'run health scan again')).toBe(false)
+    expect(shouldReleaseRouterPin('alma-agent-incident-diagnosis', 'latest orders dekhao')).toBe(true)
+    expect(shouldReleaseRouterPin('seo-auditing-own-site', 'latest orders dekhao')).toBe(false)
+  })
+
+  it('keeps plain ERP record reads out of narrow workflow skills', () => {
+    expect(isExplicitErpRecordRead('Show the three newest orders with order ID and status')).toBe(true)
+    expect(isExplicitErpRecordRead('latest orders dekhao')).toBe(true)
+    expect(isExplicitErpRecordRead('why are the newest orders failing?')).toBe(false)
+    expect(isExplicitErpRecordRead('run health scan again')).toBe(false)
+  })
+
+  it('does not re-pin a narrow skill after an ERP record-read scope exit', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({ pinnedSkill: null, skillRouteTrace: null })
+
+    const pin = await resolveSkillPin(
+      'c1',
+      'Show the three newest orders with order ID and status',
+      { includeDraft: true },
+    )
+
+    expect(pin.skill).toBeNull()
+    expect(pin.source).toBe('none')
+    expect(pin.trace?.reason).toContain('erp-record-read')
+    expect(mockPrisma.agentConversation.update).not.toHaveBeenCalled()
+  })
+
+  it('does not release an owner-selected staff pin', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'alma-staff-dispatch',
+      skillRouteTrace: { source: 'owner', layer: 'owner', reason: '', candidates: [], at: '' },
+    })
+
+    const pin = await resolveSkillPin('c1', 'latest orders dekhao')
+    expect(pin.skill).toBe('alma-staff-dispatch')
+    expect(pin.source).toBe('owner')
+    expect(mockPrisma.agentConversation.update).not.toHaveBeenCalled()
   })
 
   it('routes and stores the trace when nothing is pinned yet', async () => {

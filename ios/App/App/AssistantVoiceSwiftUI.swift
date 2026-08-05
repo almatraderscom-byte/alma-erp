@@ -76,6 +76,40 @@ enum AlmaCallConnectionState: Equatable {
     case idle, connecting, live, reconnecting, failed
 }
 
+/// The live socket and the iOS media session become ready independently.  In
+/// particular, a CallKit answer may deliver Gemini's `setupComplete` before
+/// `CXProviderDelegate.didActivate`, or in the opposite order.  Media is usable
+/// only after both signals have arrived; keeping this as a small value type
+/// makes the ordering contract deterministic and unit-testable.
+struct AlmaLiveAudioReadiness: Equatable {
+    var socketSetupComplete = false
+    var callKitManaged = false
+    var callKitAudioActive = false
+    var audioConfigured = false
+    var setupPublished = false
+
+    var waitingForCallKit: Bool {
+        callKitManaged && socketSetupComplete && !callKitAudioActive
+    }
+
+    var canPublishLive: Bool {
+        socketSetupComplete && audioConfigured
+            && (!callKitManaged || callKitAudioActive)
+            && !setupPublished
+    }
+
+    mutating func beginSocketAttempt() {
+        socketSetupComplete = false
+        setupPublished = false
+    }
+
+    mutating func resetMedia() {
+        socketSetupComplete = false
+        audioConfigured = false
+        setupPublished = false
+    }
+}
+
 // MARK: - Voice engine (recorder + VAD + TTS chunk player + turn runner)
 
 @available(iOS 17.0, *)
@@ -163,6 +197,10 @@ final class AlmaVoiceEngine {
     /// engine (starts, or retries, capture/playback).
     func callKitAudioActivated() {
         live.callKitAudioActivated()
+    }
+
+    func callKitAudioDeactivated() {
+        live.callKitAudioDeactivated()
     }
 
     /// Brief may arrive AFTER the live socket connected (the CallKit answer never
@@ -533,10 +571,14 @@ final class AlmaVoiceEngine {
 
     func toggleMute() {
         guard callConnection == .live else { return }
-        isMuted.toggle()
-        live.setInputMuted(isMuted)
-        if isMuted { micLevel = 0 }
+        setMuted(!isMuted)
         UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        live.setInputMuted(muted)
+        if muted { micLevel = 0 }
     }
 
     func toggleSpeaker() {
@@ -618,6 +660,7 @@ final class AlmaVoiceEngine {
         callStartedAt = nil
         isMuted = false
         speakerOn = true
+        UIDevice.current.isProximityMonitoringEnabled = false
         liveToolTurnPending = false
         state = .idle
         Task { await chatVM?.loadMessages() }   // the voice turn lands in the thread
@@ -1273,6 +1316,14 @@ final class AlmaVoiceEngine {
             agentBriefSent = true
             sendAgentBriefNote(brief.isEmpty ? "Boss-এর সাথে জরুরি কথা আছে" : brief)
         }
+    }
+
+    /// Reflect the hardware route, not merely the last button request.  This is
+    /// what makes the speaker button truthful when iOS selects a receiver,
+    /// Bluetooth HFP device, wired headset, or built-in speaker asynchronously.
+    func liveAudioRouteChanged(speaker: Bool, receiver: Bool) {
+        speakerOn = speaker
+        UIDevice.current.isProximityMonitoringEnabled = callConnection == .live && receiver
     }
 
     func liveWillReconnect() {
@@ -2188,16 +2239,25 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    private let readinessLock = NSLock()
+    private var readiness = AlmaLiveAudioReadiness()
     /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
     /// NOT set the category or activate it — doing so threw on the owner's
     /// device (build 89: "লাইভ অডিও চালু করা যায়নি", agent silent). CallKit has
     /// already configured playAndRecord/voiceChat; if its activation has not
     /// landed yet, audio setup is retried from callKitAudioActivated().
-    var callKitOwnsAudioSession = false
+    var callKitOwnsAudioSession = false {
+        didSet {
+            updateReadiness { state in
+                state.callKitManaged = callKitOwnsAudioSession
+                if !callKitOwnsAudioSession { state.callKitAudioActive = false }
+            }
+        }
+    }
     private var audioConfigPending = false
     /// Engine watchdog peek: socket setup finished but audio is still waiting on
     /// CallKit's didActivate (the retry ladder is running).
-    var isAwaitingCallKitAudio: Bool { audioConfigPending }
+    var isAwaitingCallKitAudio: Bool { readinessSnapshot().waitingForCallKit }
     /// True when hardware echo cancellation could not be enabled (CallKit-owned
     /// session). The barge-in gate compensates with a higher echo floor.
     private(set) var voiceProcessingUnavailable = false
@@ -2205,8 +2265,28 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// dead attempt cannot touch the replacement session.
     private var audioAttemptGeneration = 0
 
+    @discardableResult
+    private func updateReadiness(_ update: (inout AlmaLiveAudioReadiness) -> Void) -> AlmaLiveAudioReadiness {
+        readinessLock.lock()
+        update(&readiness)
+        let snapshot = readiness
+        readinessLock.unlock()
+        return snapshot
+    }
+
+    private func readinessSnapshot() -> AlmaLiveAudioReadiness {
+        readinessLock.lock()
+        let snapshot = readiness
+        readinessLock.unlock()
+        return snapshot
+    }
+
     func start() async throws {
         stopped = false
+        updateReadiness { state in
+            state.callKitManaged = callKitOwnsAudioSession
+            state.beginSocketAttempt()
+        }
         if let warm = Self.takePrewarmed() {
             #if DEBUG
             NSLog("ALMA-VOICE using prewarmed token (age %.1fs)", Date().timeIntervalSince(warm.at))
@@ -2325,6 +2405,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     /// Socket is live AND audio is running — announce the connection once.
     private func finishSetup() {
+        var didClaim = false
+        updateReadiness { state in
+            guard state.canPublishLive else { return }
+            state.setupPublished = true
+            didClaim = true
+        }
+        guard didClaim else { return }
         #if DEBUG
         NSLog("ALMA-VOICE setup finished — session LIVE (audio configured)")
         #endif
@@ -2344,6 +2431,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// Start (or retry) capture/playback now that the session is really ours.
     func callKitAudioActivated() {
         guard !stopped, callKitOwnsAudioSession else { return }
+        let gate = updateReadiness { $0.callKitAudioActive = true }
+        // Activation can arrive before microphone permission and socket setup.
+        // Remember it, but never build/start media early: startLiveConnection()
+        // deliberately resets a previous socket attempt.
+        guard gate.socketSetupComplete else { return }
         if configured {
             // Activation landed AFTER audio setup. CallKit's activation resets
             // the output route (first call ends up on the RECEIVER — near
@@ -2351,7 +2443,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // — previously this path did NOTHING and the only recovery was the
             // app-foreground hook, which is exactly why the call only spoke
             // once the calling screen appeared (owner device 2026-07-31).
-            nudgeSpeakerRoute()
+            do {
+                try resumeAudioGraphAfterActivation()
+                finishSetup()
+                nudgeSpeakerRoute()
+            } catch {
+                // Never publish LIVE when CallKit activated but the render unit
+                // failed to reacquire hardware. Rebuild the graph through the
+                // existing bounded retry path instead of leaving a silent timer.
+                configured = false
+                updateReadiness { $0.audioConfigured = false }
+                scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+                return
+            }
             // Mirror recoverAudio(): a mid-turn activation can stop the PLAYER
             // even when the engine restarts — without play() the queued
             // greeting stays silent until its watchdog expires (Codex P2).
@@ -2360,7 +2464,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             audioLock.unlock()
             audioQueue.async { [weak self] in
                 guard let self, !self.stopped else { return }
-                if !self.audioEngine.isRunning { try? self.audioEngine.start() }
                 if shouldPlay, !self.player.isPlaying { self.player.play() }
             }
             return
@@ -2374,6 +2477,32 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             if audioConfigPending { finishSetup() }
         } catch {
             scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+        }
+    }
+
+    /// CallKit may deactivate an otherwise live call for an interruption or
+    /// route hand-off. Preserve queued audio, but pause hardware rendering until
+    /// the matching didActivate arrives; never self-activate a CallKit session.
+    func callKitAudioDeactivated() {
+        guard callKitOwnsAudioSession else { return }
+        let gate = updateReadiness { $0.callKitAudioActive = false }
+        audioConfigPending = gate.socketSetupComplete
+        audioQueue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            if self.player.isPlaying { self.player.pause() }
+            if self.audioEngine.isRunning { self.audioEngine.pause() }
+        }
+    }
+
+    private func resumeAudioGraphAfterActivation() throws {
+        try audioQueue.sync {
+            guard !stopped, configured else { throw AlmaLiveVoiceError.audioStart }
+            // `isRunning` can remain true across a CallKit hardware hand-off
+            // while the render unit is no longer attached. Pause/start forces a
+            // fresh render-resource acquisition without clearing player buffers.
+            if audioEngine.isRunning { audioEngine.pause() }
+            audioEngine.prepare()
+            try audioEngine.start()
         }
     }
 
@@ -2393,6 +2522,31 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             NSLog("ALMA-VOICE route nudged receiver → speaker")
             #endif
         }
+        publishCurrentAudioRoute()
+    }
+
+    private func handleAudioRouteChange() {
+        guard configured, !stopped else { return }
+        audioLock.lock()
+        let wantSpeaker = speakerEnabled
+        audioLock.unlock()
+        let av = AVAudioSession.sharedInstance()
+        if wantSpeaker,
+           av.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
+            try? av.overrideOutputAudioPort(.speaker)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.publishCurrentAudioRoute()
+        }
+    }
+
+    private func publishCurrentAudioRoute() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let speaker = outputs.contains { $0.portType == .builtInSpeaker }
+        let receiver = outputs.contains { $0.portType == .builtInReceiver }
+        DispatchQueue.main.async { [weak self] in
+            self?.engine?.liveAudioRouteChanged(speaker: speaker, receiver: receiver)
+        }
     }
 
     /// CallKit still owns activation, so never self-activate (that is what broke
@@ -2402,6 +2556,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// work. If audio truly cannot start, fail with the UNDERLYING error so the
     /// device note finally says why (build 91's note was just the generic line).
     private func scheduleCallKitAudioRetry(attempt: Int, lastError: Error? = nil) {
+        let initialGate = readinessSnapshot()
+        guard !initialGate.callKitManaged || initialGate.callKitAudioActive else {
+            audioConfigPending = initialGate.socketSetupComplete
+            return
+        }
         guard attempt <= 8 else {
             let detail = lastError.map { String(String(describing: $0).prefix(140)) } ?? "no didActivate"
             fail("লাইভ অডিও চালু করা যায়নি। [\(detail)]")
@@ -2411,6 +2570,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, !self.stopped, !self.configured,
                   generation == self.audioAttemptGeneration else { return }
+            let gate = self.readinessSnapshot()
+            guard !gate.callKitManaged || gate.callKitAudioActive else {
+                self.audioConfigPending = gate.socketSetupComplete
+                return
+            }
             do {
                 try self.configureAudio()
                 if self.audioConfigPending { self.finishSetup() }
@@ -2436,8 +2600,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // its default category, which makes inputNode unavailable), and only
         // ACTIVATION belongs to CallKit — calling setActive(true) there fought
         // the framework and left the answered call silent (build 89).
+        // Do not use `.defaultToSpeaker`: clearing a temporary speaker override
+        // with `.none` would otherwise route straight back to the default
+        // speaker, making the receiver button impossible to implement.
         try av.setCategory(.playAndRecord, mode: .voiceChat,
-                           options: [.allowBluetoothHFP, .defaultToSpeaker])
+                           options: [.allowBluetoothHFP])
         try? av.setPreferredIOBufferDuration(0.02)
         if !callKitOwnsAudioSession {
             try av.setActive(true)
@@ -2507,6 +2674,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // VP + engine start so call one is as loud as call two.
         try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
+        updateReadiness { $0.audioConfigured = true }
         // On a REAL device the VP route reset can land asynchronously AFTER the
         // line above (owner 2026-07-31: first call silent until a manual
         // speaker toggle, second call fine — sim can't reproduce: no receiver
@@ -2517,11 +2685,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             routeObserver = NotificationCenter.default.addObserver(
                 forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
             ) { [weak self] _ in
-                self?.nudgeSpeakerRoute()
+                self?.handleAudioRouteChange()
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.nudgeSpeakerRoute()
+            self?.handleAudioRouteChange()
         }
     }
 
@@ -2768,6 +2936,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         if root["setupComplete"] != nil {
+            let gate = updateReadiness { $0.socketSetupComplete = true }
+            if gate.waitingForCallKit {
+                audioConfigPending = true
+                #if DEBUG
+                NSLog("ALMA-VOICE socket ready — waiting for CallKit didActivate")
+                #endif
+                return
+            }
             do {
                 try configureAudio()
                 finishSetup()
@@ -2930,6 +3106,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         reconnectAttempts += 1
         reconnecting = true
         socketReady = false
+        updateReadiness { $0.beginSocketAttempt() }
         stopKeepalive()
         #if DEBUG
         NSLog("ALMA-VOICE reconnect attempt %d (forceFreshToken=%d)", reconnectAttempts, forceFreshToken ? 1 : 0)
@@ -3338,6 +3515,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioLock.unlock()
         guard isConfigured else { return }
         try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.publishCurrentAudioRoute()
+        }
     }
 
     func interruptPlayback() {
@@ -3352,7 +3532,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func recoverAudio() {
         guard configured else { return }
-        try? AVAudioSession.sharedInstance().setActive(true)
+        let gate = readinessSnapshot()
+        if gate.callKitManaged {
+            guard gate.callKitAudioActive else { return }
+        } else {
+            try? AVAudioSession.sharedInstance().setActive(true)
+        }
         audioLock.lock()
         let shouldPlay = playbackStarted
         audioLock.unlock()
@@ -3371,18 +3556,27 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             routeObserver = nil
         }
         let hadTap = tapInstalled
+        let appOwnsActivation = !callKitOwnsAudioSession
         tapInstalled = false
         audioQueue.async { [weak self] in
             guard let self else { return }
             if hadTap { self.audioEngine.inputNode.removeTap(onBus: 0) }
             self.player.stop()
             if self.audioEngine.isRunning { self.audioEngine.stop() }
+            if appOwnsActivation {
+                try? AVAudioSession.sharedInstance().setActive(
+                    false, options: [.notifyOthersOnDeactivation])
+            }
         }
         // Deliberately NOT detaching the player: detach with completion callbacks
         // in flight is a CoreAudio crash; the node stays attached for the next call.
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
         configured = false
+        updateReadiness { state in
+            state.callKitManaged = callKitOwnsAudioSession
+            state.resetMedia()
+        }
         // Must reset with the socket: a pending flag surviving into the next
         // connect attempt let a late didActivate finish THAT session before its
         // setupComplete (review-bot P1 #2 on PR #653).

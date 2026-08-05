@@ -15,9 +15,81 @@ import {
   agentStorageListFolder,
   agentStorageUpload,
 } from '@/agent/lib/storage'
+import sharp from 'sharp'
 
 const MAX_BYTES = 9_500_000
 const RETENTION_MS = 24 * 3600 * 1000
+
+export type ScreenshotShareResult =
+  | { ok: true; imageUrl: string; instruction: string }
+  | { ok: false; retryable: true }
+  | { ok: false; retryable: false; boundedText: string }
+
+export interface ScreenshotAnnotation {
+  phase: 'before' | 'after'
+  /** The exact approved act, for example `Click — New chat`. */
+  actionLabel: string
+  /** Optional verified outcome. Never use this field for an unverified claim. */
+  detail?: string | null
+}
+
+const xmlEscape = (value: string): string => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;')
+
+/**
+ * Put a visible, truthful action marker on a screenshot.  This deliberately
+ * marks the ACTION LABEL rather than guessing a pixel coordinate: the AX
+ * driver resolves controls by accessibility label and does not expose a
+ * trustworthy rectangle in every app build.  A guessed circle would be worse
+ * than no circle.  The opaque banner survives chat thumbnailing and makes the
+ * before/after pair self-explanatory outside the live dock too.
+ */
+export async function annotateScreenshot(
+  rawStdout: string,
+  annotation: ScreenshotAnnotation,
+): Promise<string | null> {
+  const uri = String(rawStdout ?? '')
+  const match = uri.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/)
+  if (!match) return null
+  try {
+    const input = Buffer.from(match[2], 'base64')
+    const metadata = await sharp(input).metadata()
+    const width = metadata.width ?? 1200
+    const bannerHeight = Math.max(86, Math.min(126, Math.round(width * 0.075)))
+    const phase = annotation.phase === 'before' ? 'BEFORE' : 'AFTER'
+    const color = annotation.phase === 'before' ? '#F59E0B' : '#22C55E'
+    const title = xmlEscape(annotation.actionLabel.slice(0, 110))
+    const detail = annotation.detail ? xmlEscape(annotation.detail.slice(0, 130)) : ''
+    const titleY = detail ? Math.round(bannerHeight * 0.46) : Math.round(bannerHeight * 0.62)
+    const svg = Buffer.from(
+      `<svg width="${width}" height="${bannerHeight}" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="${width}" height="${bannerHeight}" fill="#08111F" fill-opacity="0.92"/>` +
+      `<rect width="${Math.max(8, Math.round(width * 0.009))}" height="${bannerHeight}" fill="${color}"/>` +
+      `<rect x="${Math.round(width * 0.025)}" y="${Math.round(bannerHeight * 0.21)}" rx="9" ` +
+      `width="${Math.max(92, Math.round(width * 0.105))}" height="${Math.round(bannerHeight * 0.56)}" fill="${color}"/>` +
+      `<text x="${Math.round(width * 0.077)}" y="${Math.round(bannerHeight * 0.59)}" text-anchor="middle" ` +
+      `font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${Math.max(18, Math.round(width * 0.018))}" font-weight="800" fill="#07111F">${phase}</text>` +
+      `<text x="${Math.round(width * 0.15)}" y="${titleY}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" ` +
+      `font-size="${Math.max(20, Math.round(width * 0.021))}" font-weight="700" fill="#FFFFFF">${title}</text>` +
+      (detail
+        ? `<text x="${Math.round(width * 0.15)}" y="${Math.round(bannerHeight * 0.79)}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="${Math.max(16, Math.round(width * 0.016))}" fill="#CBD5E1">${detail}</text>`
+        : '') +
+      '</svg>',
+    )
+    const bytes = await sharp(input)
+      .composite([{ input: svg, top: 0, left: 0 }])
+      .jpeg({ quality: 72, mozjpeg: true })
+      .toBuffer()
+    if (!bytes.length || bytes.length > MAX_BYTES) return null
+    return `data:image/jpeg;base64,${bytes.toString('base64')}`
+  } catch {
+    return null
+  }
+}
 
 /**
  * How should run_mac_command treat a command that involves `screencapture`?
@@ -76,11 +148,7 @@ export async function shareScreenshot(
   rawStdout: string,
   commandId: string,
   label: string,
-): Promise<
-  | { ok: true; imageUrl: string; instruction: string }
-  | { ok: false; retryable: true }
-  | { ok: false; retryable: false; boundedText: string }
-> {
+): Promise<ScreenshotShareResult> {
   const uri = String(rawStdout ?? '')
   const m = uri.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/)
   if (!m) {
@@ -128,4 +196,19 @@ export async function shareScreenshot(
   } catch {
     return { ok: false, retryable: true }
   }
+}
+
+/** Annotate first, then use the one canonical storage/share path. */
+export async function shareAnnotatedScreenshot(
+  rawStdout: string,
+  commandId: string,
+  annotation: ScreenshotAnnotation,
+): Promise<ScreenshotShareResult> {
+  const annotated = await annotateScreenshot(rawStdout, annotation)
+  if (!annotated) return { ok: false, retryable: true }
+  return shareScreenshot(
+    annotated,
+    commandId,
+    `${annotation.phase === 'before' ? 'Before' : 'After'} — ${annotation.actionLabel}`,
+  )
 }

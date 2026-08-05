@@ -57,6 +57,7 @@ import { buildOwnerCorrectionNudge } from '@/agent/lib/owner-correction'
 import { newTurnProgressState, nextTurnProgress } from '@/agent/lib/turn-progress'
 import { insertControlNote } from '@/agent/lib/control-note-order'
 import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/visible-thinking'
+import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -67,7 +68,7 @@ import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
-import { toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels'
+import { toolDisplay, toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -84,6 +85,12 @@ import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import {
+  completionContractFromPlanProgress,
+  completionContinuationNote,
+  decideCompletion,
+  type CompletionDecision,
+} from '@/agent/lib/completion-contract'
 import {
   isRepeatedOpener,
   shouldNudgeAdapterIntent,
@@ -128,7 +135,11 @@ import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } f
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
 import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
 import { resolveConversationContinuity } from '@/agent/lib/continuity-resolver'
-import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import {
+  buildOwnerRequirementNote,
+  deriveOwnerTurnRequirements,
+  requiresLiveToolExecution,
+} from '@/agent/lib/owner-turn-requirements'
 import { isJobDeliveryDirective } from '@/agent/lib/job-delivery'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
@@ -577,6 +588,10 @@ async function* runAlternateProviderTurn(
   // Status-line state for this turn (see turn-progress.ts). Declared here so the
   // speak-first line before the loop also counts as the model having spoken.
   let progressState = newTurnProgressState()
+  // One provider-independent process lane for this turn. It reports only
+  // lifecycle/tool facts; native provider reasoning continues separately as
+  // `thinking_delta` and is never synthesized here.
+  const visibleProgress = createVisibleProgressContract()
   let spokeSinceProgress = false
   let lastPlanSignature = ''
   const turnStartedMs = Date.now()
@@ -585,6 +600,7 @@ async function* runAlternateProviderTurn(
     messages = insertControlNote(messages, { role: 'user', content: ownerCorrectionNudge })
   }
   const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
+  const liveToolExecutionRequired = requiresLiveToolExecution(lastUserText)
   // A derived deliverable requirement (client SEO batch / live-browser walk) is
   // itself an action order — the gate must not mark such a message
   // information_only and disarm the very contract it just built (2026-07-25).
@@ -1749,6 +1765,10 @@ async function* runAlternateProviderTurn(
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
+  // Explicit live operational reads (health scan / order issues / audit
+  // summary) may not finish as prose that merely says no tools ran. Two bounded
+  // retries give the provider a real chance to use its supplied interface.
+  let liveToolExecutionRetries = 0
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
   /** Successful tool count when the last act-now push was sent — a push is only
@@ -2200,6 +2220,12 @@ async function* runAlternateProviderTurn(
         }]
       }
 
+      // The provider work round begins here. Every head (including raw OpenAI
+      // Luna, whose tool-bearing endpoint cannot stream reasoning) therefore
+      // exposes at least the same truthful lifecycle step without pretending
+      // this is its private chain-of-thought.
+      yield visibleProgress.roundStarted(iteration + 1)
+
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
@@ -2223,6 +2249,8 @@ async function* runAlternateProviderTurn(
               : undefined,
       })) {
         if (ev.type === 'text_delta') {
+          const progress = visibleProgress.responseStarted(iteration + 1)
+          if (progress) yield progress
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
             thinkingMs = Date.now() - thinkingStartedAt
           }
@@ -2247,6 +2275,8 @@ async function* runAlternateProviderTurn(
           if (safeThinking) yield { type: 'thinking_delta', delta: safeThinking }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
+          const progress = visibleProgress.toolSelected(iteration + 1, toolDisplay(ev.name).label)
+          if (progress) yield progress
           yield { type: 'tool_start', id: ev.id, name: ev.name }
         } else if (ev.type === 'tool_input') {
           calls.push({ id: ev.id, name: toolNames.get(ev.id) ?? '', input: ev.input, thoughtSignature: ev.thoughtSignature })
@@ -2448,6 +2478,32 @@ async function* runAlternateProviderTurn(
         const successfulToolCount = toolRecords
           .filter((r) => r.status === 'success' && !BOOKKEEPING_TOOLS.has(r.toolName))
           .length
+        const liveToolAttempted = toolRecords.some((record) => !BOOKKEEPING_TOOLS.has(record.toolName))
+        if (
+          !signal?.aborted
+          && !nearDeadline
+          && liveToolExecutionRequired
+          && !liveToolAttempted
+          && liveToolExecutionRetries < 2
+          && iterationText.trim()
+          && iterationTools.length > 0
+        ) {
+          liveToolExecutionRetries++
+          messages = [
+            ...messages,
+            { role: 'assistant', content: iterationText },
+            {
+              role: 'user',
+              content:
+                INTERNAL_NUDGE_MARKER
+                + 'Boss স্পষ্টভাবে live operational read চেয়েছেন, কিন্তু এখনো কোনো real tool attempt নেই। '
+                + '“চালাতে পারিনি” লিখে turn শেষ কোরো না। এখন supplied read tools দিয়ে request-এর named checks চালাও; '
+                + 'tool সত্যিই unavailable/failed হলে সেই real error evidence দিয়ে blocker বলো।',
+            },
+          ]
+          finalText = preambleText
+          continue
+        }
         if (
           !signal?.aborted
           && !deadlineNudgeSent
@@ -3412,10 +3468,38 @@ async function* runAlternateProviderTurn(
     // persist a compact progress footer into replayed history, and auto-write a
     // resume checkpoint + signal the client to auto-continue.
     const deadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
+    // A durable plan does not become complete because the provider stopped
+    // generating. Rebuild the contract from canonical step rows on every hop.
+    // Bind only after execute_plan actually ran (or its remembered long-run
+    // continuation): an old draft plan must never hijack a new conversation.
+    const hasOwnerGate = emittedAskCards.length > 0 || confirmCardsEmitted > 0 || delegationAwaiting
+    let planCompletionDecision: CompletionDecision | null = null
+    let planCompletion: Awaited<ReturnType<typeof loadLatestPlanProgress>> = null
+    const planBoundTurn = rememberedLongRun
+      || toolRecords.some((record) => record.toolName === 'execute_plan' && record.status === 'success')
+    if (planBoundTurn && !hasOwnerGate) {
+      try {
+        planCompletion = await loadLatestPlanProgress(conversationId)
+        if (planCompletion) {
+          const contract = completionContractFromPlanProgress({
+            ...planCompletion,
+            workClass: 'long_run',
+          })
+          if (contract) {
+            planCompletionDecision = decideCompletion(contract)
+            if (planCompletionDecision.action === 'complete') {
+              const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+              await resolveCheckpointByTaskRef(planCompletion.planId)
+            }
+          }
+        }
+      } catch { /* fail open to the proven deadline policy */ }
+    }
     const taskUnfinished = shouldAutoContinueTurn({
       deadlineHit,
-      hasAskCard: emittedAskCards.length > 0,
+      hasAskCard: hasOwnerGate,
       tools: toolRecords,
+      completionDecision: planCompletionDecision?.action ?? null,
     })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')
@@ -3451,7 +3535,7 @@ async function* runAlternateProviderTurn(
         preambleText.trim(),
         lastTexts.length ? lastTexts[lastTexts.length - 1].slice(0, 600) : '',
         endReason,
-        taskUnfinished ? 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।' : '',
+        taskUnfinished ? 'কাজ শেষ হয়নি — নিজে থেকেই পরের hop-এ ঠিক এখান থেকে চালিয়ে যাব; আপনাকে কিছু বলতে হবে না।' : '',
       ].filter(Boolean).join('\n\n')
       yield { type: 'text_delta', delta: finalText }
     }
@@ -3488,6 +3572,31 @@ async function* runAlternateProviderTurn(
     // hop, carry on. Scheduled SERVER-side (worker queue) so it continues whether
     // or not his app is open. Bounded by the hop counter + the cost caps; an
     // unanswered ask card still stops everything (checked inside).
+    if (planCompletionDecision?.action === 'checkpoint' && planCompletion) {
+      const blockerLine = `\n\n⚠️ Plan-টা শেষ বলা যাচ্ছে না — ${planCompletionDecision.reasonBn} Resume checkpoint রাখা হয়েছে।`
+      finalText += blockerLine
+      yield { type: 'text_delta', delta: blockerLine }
+      try {
+        const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+        await writeCheckpoint({
+          taskRef: planCompletion.planId,
+          taskType: 'plan',
+          state: 'failed',
+          goal: planCompletion.goal,
+          summaryBn: planCompletionDecision.reasonBn,
+          doneSteps: planCompletion.rows.filter((row) => row.status === 'done').map((row) => row.action).slice(-10),
+          currentStep: planCompletionDecision.missing[0]?.labelBn ?? 'plan completion gate',
+          artifacts: [],
+          error: planCompletionDecision.blocker,
+          nextActions: planCompletionDecision.missing.map((criterion) => criterion.labelBn).slice(0, 5),
+          resumeHint: completionContinuationNote(planCompletionDecision),
+          conversationId,
+          businessId,
+        })
+      } catch { /* completion truth must survive even if checkpoint storage blips */ }
+    }
+
+    let selfContinueWake: { scheduled: boolean; hops: number; reason?: string } | null = null
     if (taskUnfinished) {
       const doneWork = toolRecords
         .filter((r) => r.status === 'success')
@@ -3499,10 +3608,18 @@ async function* runAlternateProviderTurn(
         summary:
           `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
           + `এই টার্নে যা হয়েছে: ${doneWork.join(' · ') || 'কিছু না'}\n`
-          + `শেষ অবস্থা: ${finalText.slice(-400)}`,
+          + `শেষ অবস্থা: ${finalText.slice(-400)}\n`
+          + (planCompletionDecision?.action === 'continue'
+            ? completionContinuationNote(planCompletionDecision)
+            : ''),
       })
+      selfContinueWake = wake
       if (wake.scheduled) {
         const note = `\n\n_(কাজ শেষ হয়নি — নিজে থেকেই ${Math.round(SELF_CONTINUE_DELAY_MS / 1000)} সেকেন্ড পরে বাকিটা চালিয়ে যাব, hop ${wake.hops}. আপনাকে কিছু বলতে হবে না।)_`
+        finalText += note
+        yield { type: 'text_delta', delta: note }
+      } else {
+        const note = `\n\n⚠️ কাজ এখনো অসম্পূর্ণ, কিন্তু পরের auto-hop schedule হয়নি (${wake.reason ?? 'unknown'})। Resume checkpoint রেখেছি; নিজে থেকে চলছে বলে দাবি করছি না।`
         finalText += note
         yield { type: 'text_delta', delta: note }
       }
@@ -3512,13 +3629,44 @@ async function* runAlternateProviderTurn(
       await clearHops(conversationId).catch(() => {})
     }
 
-    if (taskUnfinished && !toolRecords.some((r) => r.toolName === 'save_task_checkpoint')) {
+    if (
+      taskUnfinished
+      && planCompletionDecision?.action === 'continue'
+      && planCompletion
+      && !toolRecords.some((r) => r.toolName === 'save_task_checkpoint')
+    ) {
+      try {
+        const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+        await writeCheckpoint({
+          taskRef: planCompletion.planId,
+          taskType: 'plan',
+          state: selfContinueWake?.scheduled ? 'continuing' : 'failed',
+          goal: planCompletion.goal,
+          summaryBn: selfContinueWake?.scheduled
+            ? planCompletionDecision.reasonBn
+            : `${planCompletionDecision.reasonBn} Auto-hop schedule হয়নি।`,
+          doneSteps: planCompletion.rows.filter((row) => row.status === 'done').map((row) => row.action).slice(-10),
+          currentStep: planCompletionDecision.missing[0]?.labelBn ?? 'next pending plan step',
+          artifacts: [],
+          error: selfContinueWake?.scheduled ? undefined : (selfContinueWake?.reason ?? 'self_continue_not_scheduled'),
+          nextActions: planCompletionDecision.missing.map((criterion) => criterion.labelBn).slice(0, 5),
+          resumeHint: completionContinuationNote(planCompletionDecision),
+          conversationId,
+          businessId,
+        })
+      } catch { /* self-continue queue + plan rows remain durable */ }
+    } else if (
+      taskUnfinished
+      && deadlineHit
+      && browserSteps.length > 0
+      && !toolRecords.some((r) => r.toolName === 'save_task_checkpoint')
+    ) {
       try {
         const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
         await writeCheckpoint({
           taskRef: `chat-${conversationId}-auto`,
           taskType: 'browser',
-          state: 'waiting_for_owner',
+          state: selfContinueWake?.scheduled ? 'continuing' : 'waiting_for_owner',
           goal: (lastUserText || 'চলমান ব্রাউজার কাজ').slice(0, 120),
           summaryBn: `টার্নটা সার্ভার-সময়সীমায় থেমেছে — ${browserSteps.length}টা ধাপ হয়ে গেছে; continue পেলেই বাকিটা এগোবে।`,
           doneSteps: browserSteps.slice(-8),
@@ -3532,7 +3680,9 @@ async function* runAlternateProviderTurn(
           resumeHint:
             `মূল কাজ: ${(lastUserText || '').slice(0, 300)}। ` +
             `শেষ ধাপগুলো: ${browserSteps.slice(-5).join('; ') || '—'}। একই ট্যাবে state আগের মতোই আছে।`,
-          question: 'কাজ চলমান — continue বললে (বা অটো-continue হলে) ঠিক এখান থেকে শেষ করব।',
+          question: selfContinueWake?.scheduled
+            ? undefined
+            : 'Auto-hop schedule হয়নি — continue বললে ঠিক এখান থেকে শেষ করব।',
           conversationId,
         })
       } catch { /* best-effort — the saved reply already carries the progress */ }

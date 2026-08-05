@@ -51,6 +51,7 @@ export interface ActivityStep {
 function macLabel(action: string, command: string | null): string {
   if (action === 'run_command') return command ? `💻 ${command}` : '💻 কমান্ড চালাচ্ছে'
   if (action === 'screenshot') return '📸 স্ক্রিনশট নিচ্ছে'
+  if (action === 'ui_screenshot') return '📸 App proof screenshot নিচ্ছে'
   if (action === 'power') return '☕ Mac জাগিয়ে রাখছে'
   if (action === 'ping') return '📡 Mac-এর সাথে কথা বলছে'
   if (action === 'session_open') return '🧠 Claude সেশন খুলছে'
@@ -279,17 +280,24 @@ export async function GET(req: NextRequest) {
     const params = (r.params as Record<string, unknown> | null) ?? {}
     const command = typeof params.command === 'string' ? params.command : null
     const action = String(r.action)
+    const proofPhase = params.proofPhase === 'before' || params.proofPhase === 'after'
+      ? String(params.proofPhase)
+      : null
+    const proofActionLabel = typeof params.proofActionLabel === 'string' ? params.proofActionLabel : null
+    const proofLabel = proofPhase
+      ? `📸 ${proofPhase === 'before' ? 'BEFORE' : 'AFTER'} — ${proofActionLabel ?? 'Mac action'}`
+      : null
     steps.push({
       id: String(r.id),
       surface: action.startsWith('session_') ? 'session' : 'mac',
-      labelBn: macLabel(action, command),
-      detail: command,
+      labelBn: proofLabel ?? macLabel(action, command),
+      detail: proofActionLabel ?? command,
       status: normalizeStatus(String(r.status)),
       policy: (r.policyLevel as string) ?? null,
       at: (r.createdAt as Date).toISOString(),
     })
     // The Mac screenshot verb stores its data URI in stdout.
-    if (action === 'screenshot' && typeof r.stdout === 'string') {
+    if ((action === 'screenshot' || action === 'ui_screenshot') && typeof r.stdout === 'string') {
       considerShot(r.stdout, r.createdAt as Date)
     }
   }

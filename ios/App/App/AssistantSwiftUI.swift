@@ -730,7 +730,8 @@ enum AgentModelShortName {
         } else if lower.contains("haiku") {
             compact = ["Haiku", version].compactMap { $0 }.joined(separator: " ")
         } else if lower.contains("gpt") {
-            compact = ["GPT", version].compactMap { $0 }.joined(separator: " ")
+            compact = ["GPT", version, lower.contains("luna") ? "Luna" : nil]
+                .compactMap { $0 }.joined(separator: " ")
         } else if lower.contains("codex") {
             compact = ["Codex", version].compactMap { $0 }.joined(separator: " ")
         } else if lower.contains("grok") {
@@ -866,7 +867,7 @@ struct AgentChatMessage: Identifiable, Equatable {
 
     /// One compact 44pt activity row inside the streaming turn (Claude parity).
     struct ActivityBlock: Identifiable, Equatable {
-        enum Kind: Equatable { case thinking, search, tool }
+        enum Kind: Equatable { case thinking, progress, search, tool }
         let id: String
         var kind: Kind
         var label: String
@@ -884,6 +885,11 @@ struct AgentChatMessage: Identifiable, Equatable {
         case prose(id: String, text: String)
         case activity(ActivityBlock)
         case file(id: String, artifactId: String, name: String)
+        /// Owner-authored steering pinned into the running turn at the instant it
+        /// was sent. Keeping this as a first-class block (while the canonical
+        /// user message remains in `messages`) prevents later assistant growth
+        /// from pushing the bubble to the bottom of the transcript.
+        case ownerMessage(id: String, clientMessageId: String)
         // Cards keep their DATA in message.confirmCards/askCards (status updates flow
         // there); these blocks only pin WHERE in the reply the card appeared, so a
         // question asked mid-turn renders mid-turn — not dumped at the bottom
@@ -895,6 +901,7 @@ struct AgentChatMessage: Identifiable, Equatable {
             case .prose(let id, _): return id
             case .activity(let a): return a.id
             case .file(let id, _, _): return id
+            case .ownerMessage(let id, _): return id
             case .confirmCard(let id, _): return id
             case .askCard(let id, _): return id
             }
@@ -1097,11 +1104,13 @@ struct AgentChatMessage: Identifiable, Equatable {
                 projected.append(.prose(id: block.id, text: block.text ?? ""))
             case "activity":
                 let isTool = block.activityType == "tool"
+                let kind: ActivityBlock.Kind = isTool ? .tool
+                    : block.activityType == "progress" ? .progress : .thinking
                 let toolId = isTool ? block.id : nil
                 let ok = block.status == "failed" ? false : true
                 projected.append(.activity(.init(
                     id: block.id,
-                    kind: isTool ? .tool : .thinking,
+                    kind: kind,
                     label: block.label ?? (isTool ? "টুল" : "যাচাই"),
                     thinkFull: block.detail ?? "",
                     toolId: toolId,
@@ -1382,6 +1391,24 @@ struct AgentChatMessage: Identifiable, Equatable {
             next.append(.activity(.init(id: "ba-\(messageId)-\(next.count)", kind: .thinking,
                                         label: thinkLabel(chunk), thinkFull: chunk, live: true)))
         }
+        return next
+    }
+
+    /// Provider-neutral progress is an explicit headline, not raw reasoning.
+    /// Consecutive repeats are coalesced, while distinct labels remain separate
+    /// chronological steps so Luna/DeepSeek/Qwen all expose the same work lane.
+    static func appendProgressBlock(_ blocks: [TurnBlock], label: String,
+                                    messageId: String) -> [TurnBlock] {
+        let clean = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return blocks }
+        if case .activity(let last)? = blocks.last,
+           last.kind == .progress, last.label == clean {
+            return blocks
+        }
+        var next = blocks
+        next.append(.activity(.init(
+            id: "bg-\(messageId)-\(next.count)", kind: .progress,
+            label: clean, thinkFull: "", live: true)))
         return next
     }
 
@@ -1819,7 +1846,27 @@ final class AssistantVM {
         /// both have a nil conversationId, so nil must never be their identity.
         var sessionIdentity: String? = nil
     }
+
+    /// Durable visual anchor for an owner message sent while a turn was already
+    /// running. The canonical user row remains the data source; this record only
+    /// remembers WHERE it belongs in the assistant event lane across settle,
+    /// reconciliation and process relaunch.
+    struct TurnOwnerAnchor: Codable, Equatable {
+        let clientMessageId: String
+        var conversationId: String?
+        var turnId: String?
+        var assistantServerId: String?
+        var beforeBlockCount: Int
+        /// Stable semantic identities of the assistant events already visible
+        /// when the running turn consumed this owner message. Server settle can
+        /// collapse/reorder presentation blocks, so a raw count is only a legacy
+        /// fallback; the last surviving predecessor key is the factual read point.
+        var precedingBlockKeys: [String]? = nil
+        let createdAt: Date
+        var sessionIdentity: String? = nil
+    }
     private static let queuedOwnerMessagesKey = "alma.assistant.queuedOwnerMessages"
+    private static let turnOwnerAnchorsKey = "alma.assistant.turnOwnerAnchors.v1"
     /// clientMessageId → turnId for steers the SERVER accepted but the turn has
     /// not confirmed reading yet. A 2xx on /steer only means "stored"; if the
     /// turn dies right after, nobody ever reads it. Persisted so a cold start
@@ -1850,6 +1897,15 @@ final class AssistantVM {
         return decoded
     }
     private var steeringSubmissions: Set<String> = []
+    private var turnOwnerAnchors: [TurnOwnerAnchor] = AssistantVM.loadTurnOwnerAnchors() {
+        didSet {
+            if turnOwnerAnchors.isEmpty {
+                UserDefaults.standard.removeObject(forKey: Self.turnOwnerAnchorsKey)
+            } else if let data = try? JSONEncoder().encode(turnOwnerAnchors) {
+                UserDefaults.standard.set(data, forKey: Self.turnOwnerAnchorsKey)
+            }
+        }
+    }
     private(set) var queuedOwnerMessages: [QueuedOwnerMessage] = AssistantVM.loadQueuedOwnerMessages() {
         didSet {
             if queuedOwnerMessages.isEmpty {
@@ -1863,6 +1919,347 @@ final class AssistantVM {
         guard let data = UserDefaults.standard.data(forKey: queuedOwnerMessagesKey) else { return [] }
         return (try? JSONDecoder().decode([QueuedOwnerMessage].self, from: data)) ?? []
     }
+    private static func loadTurnOwnerAnchors() -> [TurnOwnerAnchor] {
+        guard let data = UserDefaults.standard.data(forKey: turnOwnerAnchorsKey) else { return [] }
+        return (try? JSONDecoder().decode([TurnOwnerAnchor].self, from: data)) ?? []
+    }
+
+    /// Pure chronological reducer used by live streaming, reconciliation and
+    /// relaunch restore. `beforeBlockCount` counts assistant blocks only, so an
+    /// existing owner anchor never changes the position of a later one.
+    static func ownerAnchorBoundaryKey(_ block: AgentChatMessage.TurnBlock) -> String? {
+        switch block {
+        case .ownerMessage:
+            return nil
+        case .prose(_, let text):
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { return nil }
+            return "prose:\(String(clean.prefix(180)))"
+        case .activity(let activity):
+            if let toolId = activity.toolId, !toolId.isEmpty { return "tool:\(toolId)" }
+            let kind: String
+            switch activity.kind {
+            case .thinking: kind = "thinking"
+            case .progress: kind = "progress"
+            case .search: kind = "search"
+            case .tool: kind = "tool"
+            }
+            return "activity:\(kind):\(String(activity.label.prefix(180)))"
+        case .file(_, let artifactId, _):
+            return "file:\(artifactId)"
+        case .confirmCard(_, let pendingActionId):
+            return "confirm:\(pendingActionId)"
+        case .askCard(_, let askCardId):
+            return "ask:\(askCardId)"
+        }
+    }
+
+    /// Cross-projection tokens for the same factual event. Live SSE tool ids and
+    /// canonical presentation block ids are not guaranteed to be equal, so each
+    /// tool records both its id and a semantic label occurrence. The occurrence
+    /// suffix disambiguates repeated calls with the same display name.
+    static func ownerAnchorBoundaryKeys(
+        in blocks: [AgentChatMessage.TurnBlock]
+    ) -> [String] {
+        var occurrences: [String: Int] = [:]
+        var tokens: [String] = []
+        for block in blocks {
+            if case .activity(let activity) = block,
+               activity.kind == .tool,
+               let toolId = activity.toolId, !toolId.isEmpty {
+                tokens.append("tool-id:\(toolId)")
+            }
+            guard let base = ownerAnchorSemanticBase(block) else { continue }
+            let occurrence = (occurrences[base] ?? 0) + 1
+            occurrences[base] = occurrence
+            tokens.append("\(base)#\(occurrence)")
+        }
+        return tokens
+    }
+
+    private static func ownerAnchorSemanticBase(
+        _ block: AgentChatMessage.TurnBlock
+    ) -> String? {
+        switch block {
+        case .ownerMessage:
+            return nil
+        case .prose(_, let text):
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : "prose-text:\(String(clean.prefix(180)))"
+        case .activity(let activity):
+            let kind: String
+            switch activity.kind {
+            case .thinking: kind = "thinking"
+            case .progress: kind = "progress"
+            case .search: kind = "search"
+            case .tool: kind = "tool-label"
+            }
+            return "activity:\(kind):\(String(activity.label.prefix(180)))"
+        case .file(_, let artifactId, _): return "file:\(artifactId)"
+        case .confirmCard(_, let pendingActionId): return "confirm:\(pendingActionId)"
+        case .askCard(_, let askCardId): return "ask:\(askCardId)"
+        }
+    }
+
+    private static func ownerAnchorBoundaryIndex(
+        for token: String, in blocks: [AgentChatMessage.TurnBlock]
+    ) -> Int? {
+        var occurrences: [String: Int] = [:]
+        for (index, block) in blocks.enumerated() {
+            // Backward compatibility for anchors persisted by the first v1
+            // implementation, plus the new exact-id fast path.
+            if ownerAnchorBoundaryKey(block) == token { return index }
+            if case .activity(let activity) = block,
+               activity.kind == .tool,
+               let toolId = activity.toolId,
+               token == "tool-id:\(toolId)" { return index }
+            guard let base = ownerAnchorSemanticBase(block) else { continue }
+            let occurrence = (occurrences[base] ?? 0) + 1
+            occurrences[base] = occurrence
+            if token == "\(base)#\(occurrence)" { return index }
+        }
+        return nil
+    }
+
+    static func injectingOwnerAnchors(
+        _ anchors: [TurnOwnerAnchor], into source: [AgentChatMessage.TurnBlock]
+    ) -> [AgentChatMessage.TurnBlock] {
+        guard !anchors.isEmpty else { return source }
+        let ids = Set(anchors.map(\.clientMessageId))
+        var result = source.filter { block in
+            if case .ownerMessage(_, let clientMessageId) = block {
+                return !ids.contains(clientMessageId)
+            }
+            return true
+        }
+        let ordered = anchors.sorted {
+            if $0.beforeBlockCount != $1.beforeBlockCount {
+                return $0.beforeBlockCount < $1.beforeBlockCount
+            }
+            return $0.createdAt < $1.createdAt
+        }
+        for anchor in ordered {
+            func legacyInsertionIndex() -> Int {
+                let target = max(0, anchor.beforeBlockCount)
+                var assistantCount = 0
+                var index = 0
+                while index < result.count {
+                    if case .ownerMessage = result[index] {
+                        index += 1
+                        continue
+                    }
+                    if assistantCount == target { break }
+                    assistantCount += 1
+                    index += 1
+                }
+                return index
+            }
+            var insertion: Int
+            if let keys = anchor.precedingBlockKeys {
+                if keys.isEmpty {
+                    insertion = 0
+                } else {
+                    let keyedBoundary = keys.reversed().compactMap { key in
+                        Self.ownerAnchorBoundaryIndex(for: key, in: result)
+                    }.first
+                    if let keyedBoundary {
+                        insertion = keyedBoundary + 1
+                    } else {
+                        insertion = legacyInsertionIndex()
+                    }
+                }
+            } else {
+                insertion = legacyInsertionIndex()
+            }
+            while insertion < result.count,
+                  case .ownerMessage = result[insertion] {
+                insertion += 1
+            }
+            result.insert(.ownerMessage(
+                id: "bo-\(anchor.clientMessageId)",
+                clientMessageId: anchor.clientMessageId), at: insertion)
+        }
+        return result
+    }
+
+    /// Keep one owner steering marker in the whole transcript. A delivery replay
+    /// can arrive after reconciliation has mounted a newer streaming tail; blindly
+    /// inserting into that tail leaves the original marker behind and draws the
+    /// same owner bubble once per assistant row. The first mounted occurrence is
+    /// the factual read point, so repeated delivery/replay calls retain it and
+    /// remove any later copies.
+    @discardableResult
+    static func pinOwnerAnchorOnce(
+        _ anchor: TurnOwnerAnchor,
+        in rows: inout [AgentChatMessage],
+        preferredAssistantIndex: Int?
+    ) -> Int? {
+        let alreadyMounted = rows.indices.first { index in
+            rows[index].blocks.contains { block in
+                if case .ownerMessage(_, let id) = block {
+                    return id == anchor.clientMessageId
+                }
+                return false
+            }
+        }
+        let durableTarget = anchor.assistantServerId.flatMap { serverId in
+            rows.indices.first {
+                rows[$0].role == .assistant
+                    && (rows[$0].serverId ?? rows[$0].id) == serverId
+            }
+        }
+        let preferredTarget = preferredAssistantIndex.flatMap { index in
+            rows.indices.contains(index) && rows[index].role == .assistant ? index : nil
+        }
+        guard let target = alreadyMounted ?? durableTarget ?? preferredTarget else { return nil }
+
+        for index in rows.indices where index != target {
+            rows[index].blocks.removeAll { block in
+                if case .ownerMessage(_, let id) = block {
+                    return id == anchor.clientMessageId
+                }
+                return false
+            }
+        }
+        rows[target].blocks = injectingOwnerAnchors([anchor], into: rows[target].blocks)
+        return target
+    }
+
+    /// Rows used by the transcript. Anchored owner messages are intentionally
+    /// omitted as top-level rows because their canonical data is rendered by the
+    /// first-class block at the exact in-turn position.
+    var chronologicalMessages: [AgentChatMessage] {
+        let anchored = Set(messages.flatMap { message in
+            message.blocks.compactMap { block -> String? in
+                if case .ownerMessage(_, let clientMessageId) = block { return clientMessageId }
+                return nil
+            }
+        })
+        guard !anchored.isEmpty else { return messages }
+        return messages.filter { message in
+            guard message.role == .user, let clientMessageId = message.clientMessageId else { return true }
+            return !anchored.contains(clientMessageId)
+        }
+    }
+
+    /// Scroll target for the owner's latest send, whether it is a normal row or
+    /// an in-turn block nested inside the active assistant row.
+    var latestOwnerChronologyAnchorId: String? {
+        guard let owner = messages.last(where: { $0.role == .user }) else { return nil }
+        guard let clientMessageId = owner.clientMessageId else { return owner.id }
+        for assistant in messages.reversed() {
+            if let block = assistant.blocks.first(where: {
+                if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+                return false
+            }) { return block.id }
+        }
+        return owner.id
+    }
+
+    private func anchorOwnerMessage(_ clientMessageId: String,
+                                    beforeBlockCount: Int? = nil) {
+        ensureStreamingTail()
+        guard let assistantIndex = messages.lastIndex(where: { $0.isStreaming }) else { return }
+        let precedingKeys = Array(Self.ownerAnchorBoundaryKeys(
+            in: messages[assistantIndex].blocks).suffix(32))
+        let inferredCount = messages[assistantIndex].blocks.reduce(0) { count, block in
+            if case .ownerMessage = block { return count }
+            return count + 1
+        }
+        if let index = turnOwnerAnchors.firstIndex(where: { $0.clientMessageId == clientMessageId }) {
+            if turnOwnerAnchors[index].conversationId == nil {
+                turnOwnerAnchors[index].conversationId = conversationId
+            }
+            if turnOwnerAnchors[index].turnId == nil {
+                turnOwnerAnchors[index].turnId = currentTurnId
+            }
+            if turnOwnerAnchors[index].precedingBlockKeys == nil {
+                turnOwnerAnchors[index].precedingBlockKeys = precedingKeys
+            }
+        } else {
+            turnOwnerAnchors.append(.init(
+                clientMessageId: clientMessageId, conversationId: conversationId,
+                turnId: currentTurnId, assistantServerId: messages[assistantIndex].serverId,
+                beforeBlockCount: beforeBlockCount ?? inferredCount,
+                precedingBlockKeys: precedingKeys, createdAt: Date(),
+                sessionIdentity: selectedSessionIdentity))
+            if turnOwnerAnchors.count > 200 {
+                turnOwnerAnchors.removeFirst(turnOwnerAnchors.count - 200)
+            }
+        }
+        guard let anchor = turnOwnerAnchors.first(where: { $0.clientMessageId == clientMessageId }) else { return }
+        Self.pinOwnerAnchorOnce(
+            anchor, in: &messages, preferredAssistantIndex: assistantIndex)
+    }
+
+    private func removeOwnerAnchor(_ clientMessageId: String) {
+        turnOwnerAnchors.removeAll { $0.clientMessageId == clientMessageId }
+        for index in messages.indices {
+            messages[index].blocks.removeAll { block in
+                if case .ownerMessage(_, let id) = block { return id == clientMessageId }
+                return false
+            }
+        }
+    }
+
+    /// Attach durable anchors to canonical server rows. Exact assistant id wins;
+    /// on the first settle, the assistant following the steered user row becomes
+    /// the durable target and is recorded for every later reload.
+    private func restoreOwnerAnchors(in rows: inout [AgentChatMessage]) {
+        guard !turnOwnerAnchors.isEmpty, !rows.isEmpty else { return }
+        var grouped: [Int: [TurnOwnerAnchor]] = [:]
+        for anchorIndex in turnOwnerAnchors.indices {
+            let anchor = turnOwnerAnchors[anchorIndex]
+            guard anchor.conversationId.map({ $0 == conversationId })
+                    ?? (anchor.sessionIdentity == nil || anchor.sessionIdentity == selectedSessionIdentity)
+            else { continue }
+            var target: Int?
+            if let serverId = anchor.assistantServerId {
+                target = rows.firstIndex { ($0.serverId ?? $0.id) == serverId }
+            }
+            if target == nil,
+               let ownerIndex = rows.firstIndex(where: { $0.clientMessageId == anchor.clientMessageId }) {
+                target = rows.indices.first(where: { $0 > ownerIndex && rows[$0].role == .assistant })
+                // While the turn is still live, "previous assistant" is usually
+                // the prior turn — never steal that row just because the current
+                // assistant has not persisted yet. The reverse fallback is only
+                // for a fully settled cold history whose server timestamp placed
+                // the one assistant row before the steered user row.
+                if target == nil, !isStreaming, recoverableTurn == nil, currentTurnId == nil {
+                    target = rows.indices.reversed().first(where: {
+                        $0 < ownerIndex && rows[$0].role == .assistant
+                    })
+                }
+            }
+            if target == nil, anchor.turnId == currentTurnId {
+                target = rows.lastIndex(where: { $0.isStreaming })
+            }
+            guard let target, rows[target].role == .assistant else { continue }
+            grouped[target, default: []].append(anchor)
+            if let serverId = rows[target].serverId, turnOwnerAnchors[anchorIndex].assistantServerId == nil {
+                turnOwnerAnchors[anchorIndex].assistantServerId = serverId
+            }
+        }
+        for (index, anchors) in grouped {
+            rows[index].blocks = Self.injectingOwnerAnchors(anchors, into: rows[index].blocks)
+        }
+    }
+
+    #if DEBUG
+    func debugRestoreChronologyAnchors(_ anchors: [TurnOwnerAnchor],
+                                       into rows: [AgentChatMessage],
+                                       conversationId: String) {
+        self.conversationId = conversationId
+        turnOwnerAnchors = anchors
+        var restored = rows
+        restoreOwnerAnchors(in: &restored)
+        messages = restored
+    }
+
+    func debugClearChronologyAnchors() {
+        turnOwnerAnchors = []
+    }
+    #endif
     var queuedOwnerMessageCount: Int {
         let activeNewConversationSendId = currentClientMessageId ?? recoverableTurn?.clientMessageId
         return queuedOwnerMessages.filter { queued in
@@ -2416,6 +2813,7 @@ final class AssistantVM {
     /// Text the mic transcription appends — the composer view observes this.
     var dictatedText: String = ""
     private static let dictationFailureKey = "alma.assistant.dictationFailure.v2"
+    private static let durableDictationRecoveryMaxAge: TimeInterval = 24 * 60 * 60
     var dictationFailure: String? = UserDefaults.standard.string(forKey: AssistantVM.dictationFailureKey) {
         didSet {
             if let dictationFailure {
@@ -2558,10 +2956,22 @@ final class AssistantVM {
     /// recovery source of truth.
     private func restoreDurableDictationRecoveryIfNeeded() {
         guard FileManager.default.fileExists(atPath: recordingURL.path) else { return }
+        let modifiedAt = (try? FileManager.default.attributesOfItem(atPath: recordingURL.path)[.modificationDate]) as? Date
+        if let modifiedAt,
+           !Self.shouldKeepDurableDictationRecovery(modifiedAt: modifiedAt) {
+            try? FileManager.default.removeItem(at: recordingURL)
+            dictationFailure = nil
+            AlmaTurnLog.event("dictation.recoveryExpired", "stale-audio-removed")
+            return
+        }
         if dictationFailure == nil {
             dictationFailure = "অসমাপ্ত voice recording রাখা আছে — Retry করুন"
         }
         AlmaTurnLog.event("dictation.recoveryReady", "durable-audio-present")
+    }
+
+    static func shouldKeepDurableDictationRecovery(modifiedAt: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(modifiedAt) <= durableDictationRecoveryMaxAge
     }
 
     private var shouldRestoreProvisionalSession: Bool {
@@ -3066,6 +3476,22 @@ final class AssistantVM {
         }
     }
 
+    /// Older message rows can omit `clientMessageId`. Match those anonymous
+    /// canonical rows by their complete owner payload before using positional
+    /// fallback. This matters when a later mid-turn steer *does* carry identity:
+    /// the newest server user is then already claimed, while the ordinary owner
+    /// send immediately before it would otherwise remain a timestamp-less local
+    /// row and be stable-sorted to the bottom of the completed turn.
+    private static func ownerPayloadMatches(local: AgentChatMessage,
+                                            server: AgentChatMessage) -> Bool {
+        guard local.role == .user, server.role == .user else { return false }
+        let localText = local.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverText = server.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard localText == serverText, local.fileRefs == server.fileRefs else { return false }
+        // An entirely empty row has no safe identity signal.
+        return !localText.isEmpty || !local.fileRefs.isEmpty
+    }
+
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
@@ -3083,14 +3509,43 @@ final class AssistantVM {
                                 activeServerIds: activeServerIds)
         }
 
+
+        // Pair every still-anonymous server owner row, oldest-to-oldest, using
+        // exact payload identity. Do this before the legacy last-row fallback:
+        // a delivered steer later in the same history page may already own the
+        // final server-user slot, but must not prevent its preceding normal send
+        // from converging with server truth.
+        var claimedLocalOwnerIds = Set(localIdByServerId.values)
+        for serverIndex in incoming.indices
+        where incoming[serverIndex].role == .user
+            && incoming[serverIndex].clientMessageId == nil
+            && localIdByServerId[incoming[serverIndex].id] == nil {
+            guard let localUser = messages.first(where: {
+                $0.role == .user && $0.id.hasPrefix("local-")
+                    && $0.outgoingState != .queued
+                    && !claimedLocalOwnerIds.contains($0.id)
+                    && Self.ownerPayloadMatches(local: $0, server: incoming[serverIndex])
+                    && positionalPairIsSafe(local: $0, server: incoming[serverIndex], incoming: incoming)
+            }) else { continue }
+            if claimLocalRowId(serverId: incoming[serverIndex].id, localId: localUser.id,
+                               activeServerIds: activeServerIds) {
+                claimedLocalOwnerIds.insert(localUser.id)
+            }
+        }
+
         // Pair the optimistic user message + streamed assistant tail with their
         // server rows (last user / last assistant AFTER that user message).
         let lastServerUser = incoming.lastIndex(where: { $0.role == .user })
-        if let localUser = messages.last(where: {
+        if let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil,
+           // Do not stop at the newest local owner row. A delivered mid-turn
+           // steer is intentionally unsafe to pair with an anonymous history
+           // row; the ordinary optimistic send immediately before it can still
+           // be the correct match. Pick the newest SAFE candidate instead.
+           let localUser = messages.reversed().first(where: {
                $0.role == .user && $0.id.hasPrefix("local-")
                    && $0.outgoingState != .queued
+                   && positionalPairIsSafe(local: $0, server: incoming[uIdx], incoming: incoming)
            }),
-           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil,
            // Identity must not CONTRADICT the guess. A mid-turn follow-up is a
            // local row with its own clientMessageId and its own server row; if
            // that row has not landed in this history page yet, the positional
@@ -3113,6 +3568,18 @@ final class AssistantVM {
                 }
                 pairedTail = localIdByServerId[incoming[aIdx].id] == localTail.id
                     || localIdByServerId.contains { activeServerIds.contains($0.key) && $0.value == localTail.id }
+                if pairedTail {
+                    let durableAssistantId = incoming[aIdx].serverId ?? incoming[aIdx].id
+                    for index in turnOwnerAnchors.indices {
+                        guard turnOwnerAnchors[index].assistantServerId == nil else { continue }
+                        let belongsToCurrentTurn = currentTurnId.map {
+                            turnOwnerAnchors[index].turnId == $0
+                        } ?? (turnOwnerAnchors[index].turnId == nil
+                              && turnOwnerAnchors[index].conversationId == conversationId)
+                        guard belongsToCurrentTurn else { continue }
+                        turnOwnerAnchors[index].assistantServerId = durableAssistantId
+                    }
+                }
             } else if localIdByServerId.contains(where: {
                 activeServerIds.contains($0.key) && $0.value == localTail.id
             }) {
@@ -3165,6 +3632,11 @@ final class AssistantVM {
             if old.selfCorrected { incoming[i].selfCorrected = true }
             incoming[i].id = lid
         }
+
+        // Canonical presentation may replace the live block array, but it must
+        // not erase the owner's chronological send point. Re-inject from the
+        // durable local ledger after all server/local identity pairing is known.
+        restoreOwnerAnchors(in: &incoming)
 
         // Server hasn't persisted the streamed reply yet → keep the local tail
         // appended (it merges on the next poll). Prose must never disappear.
@@ -4639,6 +5111,9 @@ final class AssistantVM {
         pendingFiles.removeAll {
             sentPendingIds.contains($0.id) || queuedAttachmentIds.contains($0.id)
         }
+        // Freeze the visual send point BEFORE appending the canonical owner row.
+        // All later SSE blocks are appended after this first-class lane marker.
+        anchorOwnerMessage(intentId)
         upsertLocalOwnerIntent(
             clientMessageId: intentId, text: text, files: files,
             attachmentIds: attachmentIds, state: .queued)
@@ -5224,6 +5699,12 @@ final class AssistantVM {
             switch ev {
             case .conversationId(let id):
                 adoptNewConversationId(id)
+                for index in turnOwnerAnchors.indices
+                where turnOwnerAnchors[index].conversationId == nil
+                    && (turnOwnerAnchors[index].sessionIdentity == nil
+                        || turnOwnerAnchors[index].sessionIdentity == selectedSessionIdentity) {
+                    turnOwnerAnchors[index].conversationId = id
+                }
                 if var rt = recoverableTurn {
                     rt.conversationId = id
                     recoverableTurn = rt
@@ -5231,6 +5712,12 @@ final class AssistantVM {
                 }
             case .turnId(let id):
                 currentTurnId = id
+                for index in turnOwnerAnchors.indices
+                where turnOwnerAnchors[index].turnId == nil
+                    && (turnOwnerAnchors[index].conversationId == nil
+                        || turnOwnerAnchors[index].conversationId == conversationId) {
+                    turnOwnerAnchors[index].turnId = id
+                }
                 // PR 5: the turn is now addressable — persist the recovery descriptor
                 // so even process death can find its way back.
                 if let cid = conversationId, let cmid = currentClientMessageId {
@@ -5267,6 +5754,18 @@ final class AssistantVM {
                     messages[i].blocks = AgentChatMessage.appendThinkBlock(
                         messages[i].blocks, chunk: chunk, messageId: messages[i].id)
                     touchedStream = true
+                }
+            case .progressUpdate(let label):
+                guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { break }
+                if reconnecting { reconnecting = false }
+                lastThinkingGrowthAt = Date() // progress also proves active forward motion
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    let previousCount = messages[i].blocks.count
+                    messages[i].blocks = AgentChatMessage.appendProgressBlock(
+                        messages[i].blocks, label: label, messageId: messages[i].id)
+                    if messages[i].blocks.count != previousCount { touchedStream = true }
                 }
             case .textDelta(let chunk):
                 guard !chunk.isEmpty else { break }
@@ -5378,6 +5877,10 @@ final class AssistantVM {
                 // message must never be re-sent by the drain.
                 let delivered = Set(deliveredIds)
                 if !delivered.isEmpty {
+                    // A durable replay after process death reaches this event at
+                    // the exact point the running agent consumed the message.
+                    // Recreate the first-class lane marker before later events.
+                    for id in delivered { anchorOwnerMessage(id) }
                     for i in messages.indices
                     where messages[i].clientMessageId.map(delivered.contains) == true {
                         messages[i].outgoingState = .delivered
@@ -5447,6 +5950,10 @@ final class AssistantVM {
                     for index in queuedOwnerMessages.indices
                     where queuedOwnerMessages[index].conversationId == oldId {
                         queuedOwnerMessages[index].conversationId = newId
+                    }
+                    for index in turnOwnerAnchors.indices
+                    where turnOwnerAnchors[index].conversationId == oldId {
+                        turnOwnerAnchors[index].conversationId = newId
                     }
                     if var rt = recoverableTurn, rt.conversationId == oldId {
                         rt.conversationId = newId
@@ -5552,7 +6059,11 @@ final class AssistantVM {
     }
 
     private func ensureStreamingTail() {
-        if messages.last?.isStreaming != true {
+        // A queued owner steer appends its canonical user row after the active
+        // assistant lane. Looking only at `messages.last` therefore created a
+        // second streaming assistant on the very next progress/tool event and
+        // let the same anchored owner bubble render in both lanes.
+        if !messages.contains(where: { $0.isStreaming }) {
             var m = AgentChatMessage(id: "stream-\(UUID().uuidString)", role: .assistant)
             m.isStreaming = true
             m.streamStartedAt = Date()
@@ -5810,6 +6321,17 @@ final class AssistantVM {
         if let i = messages.lastIndex(where: { $0.isStreaming }) {
             messages[i].thinking = "চলতি কাজ শেষ করছি…"
         }
+    }
+
+    /// Replays the two model operations involved in a delivered mid-turn steer:
+    /// the next event first ensures a tail, then delivery pins the owner read point.
+    func debugReplaySteeringDelivery(_ clientMessageId: String) {
+        ensureStreamingTail()
+        anchorOwnerMessage(clientMessageId)
+    }
+
+    func debugMergeServerMessages(_ wire: [AgentMessageWire]) {
+        mergeServerMessages(wire)
     }
 
     /// Keeps the real parity approval and ask cards at the bottom of the
@@ -6085,6 +6607,9 @@ final class AssistantVM {
     var debugShouldRestoreProvisionalSession: Bool { shouldRestoreProvisionalSession }
     func debugRestoreComposerDraft() { restoreCurrentComposerDraft() }
     func debugRestoreDurableDictationRecovery() { restoreDurableDictationRecoveryIfNeeded() }
+    func debugSetDurableDictationModifiedAt(_ date: Date) {
+        try? FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: recordingURL.path)
+    }
     func debugSetActiveBackgroundConversation(_ id: String) {
         activeBackgroundTurns = [.init(
             id: "debug-background-turn", conversationId: id,
@@ -6332,6 +6857,14 @@ final class AssistantVM {
         if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
+        if case .progressUpdate(let label)? = decode(#"{"type":"progress_update","label":"স্টক যাচাই করছি"}"#) {
+            let block = AgentChatMessage.appendProgressBlock([], label: label, messageId: "unit")
+            let isFactualProgress = block.contains {
+                if case .activity(let activity) = $0 { return activity.kind == .progress }
+                return false
+            }
+            check("progress_update factual lane", label == "স্টক যাচাই করছি" && isFactualProgress)
+        } else { check("progress_update factual lane", false) }
 
         // Presentation parity — persisted wire keeps the raw prose/verify audit
         // entries, while owner-facing blocks contain exactly one settled prose.
@@ -6362,10 +6895,12 @@ final class AssistantVM {
                 case .activity(let a):
                     switch a.kind {
                     case .thinking: return "think"
+                    case .progress: return "progress"
                     case .search: return "search"
                     case .tool: return "tool"
                     }
                 case .file: return "file"
+                case .ownerMessage: return "owner"
                 case .confirmCard: return "confirm"
                 case .askCard: return "ask"
                 }
@@ -7086,6 +7621,7 @@ final class AssistantVM {
             recoverableTurn = nil
         }
         discardActionContinuation(clientMessageId: clientMessageId)
+        removeOwnerAnchor(clientMessageId)
         composerDraft = message.text
         for index in messages.indices where messages[index].clientMessageId == clientMessageId {
             messages[index].outgoingState = .cancelled
@@ -7107,6 +7643,7 @@ final class AssistantVM {
             stopStreaming(cancelServer: true)
         }
         discardActionContinuation(clientMessageId: clientMessageId)
+        removeOwnerAnchor(clientMessageId)
         for index in messages.indices where messages[index].clientMessageId == clientMessageId {
             messages[index].outgoingState = .cancelled
         }
@@ -10305,6 +10842,114 @@ struct AgentCompactActivityRow: View {
     }
 }
 
+/// The owner bubble rendered inside a running assistant event lane. Its data is
+/// still the canonical user `AgentChatMessage`; this view is only a second visual
+/// projection at the durable in-turn anchor.
+@available(iOS 17.0, *)
+private struct AgentInlineOwnerMessage: View {
+    let message: AgentChatMessage
+    let pal: AgentPalette
+    let vm: AssistantVM
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if !message.localImages.isEmpty || !message.imagePaths.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(Array(message.localImages.enumerated()), id: \.offset) { _, image in
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    if message.localImages.isEmpty {
+                        ForEach(message.imagePaths, id: \.self) { path in
+                            AgentChatImage(path: path, vm: vm)
+                        }
+                    }
+                }
+            }
+            ForEach(message.fileRefs.filter { !$0.mediaType.hasPrefix("image/") }, id: \.self) { ref in
+                AgentInlineUploadedFileCard(ref: ref, messageId: message.id, vm: vm)
+            }
+            if !message.text.isEmpty {
+                AlmaSelectableRichText(
+                    plain: message.text,
+                    font: UIFontMetrics(forTextStyle: .body)
+                        .scaledFont(for: .systemFont(ofSize: 15)),
+                    color: .white, lineSpacing: 3.5)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(
+                        LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: UnevenRoundedRectangle(
+                            topLeadingRadius: 20, bottomLeadingRadius: 20,
+                            bottomTrailingRadius: 6, topTrailingRadius: 20,
+                            style: .continuous))
+                    .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
+            }
+            if let state = message.outgoingState, state != .accepted {
+                VStack(alignment: .trailing, spacing: 7) {
+                    HStack(spacing: 5) {
+                        if state == .submitting || state == .checking {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: icon(state))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(label(state))
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(state == .failed ? Color.red : pal.mutedHi)
+                    if state == .waitingForAttachments || state == .queued || state == .failed {
+                        HStack(spacing: 14) {
+                            Button("আবার চেষ্টা") { vm.retryOutgoingMessage(message) }
+                            Button("সম্পাদনা") { vm.editOutgoingMessage(message) }
+                            Button("বাতিল", role: .destructive) { vm.cancelOutgoingMessage(message) }
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(pal.mutedHi)
+                        .buttonStyle(.plain)
+                    } else if state == .checking {
+                        Button("বাতিল", role: .destructive) { vm.cancelOutgoingMessage(message) }
+                            .font(.system(size: 11, weight: .semibold))
+                            .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 44)
+        .padding(.vertical, 10)
+    }
+
+    private func label(_ state: AgentChatMessage.OutgoingState) -> String {
+        switch state {
+        case .waitingForAttachments: return "Attachment প্রস্তুত হচ্ছে"
+        case .queued: return "অপেক্ষায় আছে"
+        case .submitting: return "পাঠানো হচ্ছে"
+        case .checking: return "Server status যাচাই হচ্ছে"
+        case .accepted: return "পাঠানো হয়েছে"
+        case .awaitingAgent: return "এজেন্ট এখনো দেখেনি — অপেক্ষায়"
+        case .delivered: return "এজেন্ট পড়েছে"
+        case .failed: return "পাঠানো যায়নি — লেখা ও ফাইল রাখা আছে"
+        case .cancelled: return "বাতিল — composer-এ রাখা আছে"
+        }
+    }
+
+    private func icon(_ state: AgentChatMessage.OutgoingState) -> String {
+        switch state {
+        case .waitingForAttachments: return "paperclip"
+        case .queued: return "clock.arrow.circlepath"
+        case .submitting, .checking: return "arrow.triangle.2.circlepath"
+        case .accepted: return "checkmark"
+        case .awaitingAgent: return "clock.badge.questionmark"
+        case .delivered: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.circle.fill"
+        case .cancelled: return "xmark.circle"
+        }
+    }
+}
+
 /// Interleaved chronological turn content (Claude iOS): prose ↔ compact activity
 /// rows grow together in SSE order. The durable model keeps every block, while
 /// the chat mounts a bounded tail so a future 100-step autonomous turn cannot
@@ -10325,7 +10970,7 @@ struct AgentTurnBlocksView: View {
         let tailStart = message.blocks.count - Self.maxVisibleBlocks
         let pinned = message.blocks[..<tailStart].filter { block in
             switch block {
-            case .file, .confirmCard, .askCard: return true
+            case .file, .ownerMessage, .confirmCard, .askCard: return true
             case .prose, .activity: return false
             }
         }
@@ -10371,6 +11016,12 @@ struct AgentTurnBlocksView: View {
                     proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
                 case .file(_, let artifactId, let name):
                     AgentArtifactFileCard(artifactId: artifactId, name: name, vm: vm, pal: pal)
+                case .ownerMessage(_, let clientMessageId):
+                    if let owner = vm.messages.first(where: {
+                        $0.role == .user && $0.clientMessageId == clientMessageId
+                    }) {
+                        AgentInlineOwnerMessage(message: owner, pal: pal, vm: vm)
+                    }
                 case .confirmCard(_, let pid):
                     // Rendered HERE, at the exact point of the reply where the head
                     // staged it (owner report build-70 round 4 — cards used to pile
@@ -10424,6 +11075,14 @@ struct AgentTurnBlocksView: View {
                                     labelColor: pal.muted, iconColor: pal.muted,
                                     shimmer: isTail) {
                 onActivitySheet(.thoughtProcess, a.thinkFull)
+            }
+        case .progress:
+            // Factual lifecycle supplied by the runner — never label or open it
+            // as private model reasoning.
+            AgentCompactActivityRow(icon: "checklist", label: a.label,
+                                    labelColor: pal.mutedHi, iconColor: AgentPalette.coral,
+                                    shimmer: isTail) {
+                onActivitySheet(.summary, nil)
             }
         case .search:
             AgentCompactActivityRow(icon: "magnifyingglass", label: a.label,
@@ -12390,6 +13049,25 @@ struct AgentPendingTasksSheet: View {
 
 // MARK: - Background tasks — one reply anchor + native task sheet
 
+enum AgentBackgroundTaskLabel {
+    static func make(running: Int, attention: Int) -> String {
+        let running = max(0, running)
+        let attention = max(0, attention)
+        if running > 0 && attention > 0 {
+            let runningLabel = running == 1 ? "1 Running" : "\(running) Running"
+            let attentionLabel = attention == 1 ? "1 Approval" : "\(attention) Approvals"
+            return "\(runningLabel) · \(attentionLabel)"
+        }
+        if running > 0 {
+            return running == 1 ? "1 Running Task" : "\(running) Running Tasks"
+        }
+        if attention > 0 {
+            return attention == 1 ? "1 Approval Waiting" : "\(attention) Approvals Waiting"
+        }
+        return "Background Tasks"
+    }
+}
+
 /// Claude-Code-style inline task status. The ALMA mark belongs to the parent
 /// reply footer, so this renders no duplicate icon, loader, card, or chat row.
 @available(iOS 17.0, *)
@@ -12427,14 +13105,7 @@ private struct AgentBackgroundTasksAnchor: View {
     private var attentionCount: Int { vm.mergedAttention.count }
 
     private var label: String {
-        let total = runningCount + attentionCount
-        if attentionCount > 0 && runningCount == 0 {
-            return attentionCount == 1 ? "1 Approval Waiting" : "\(attentionCount) Approvals Waiting"
-        }
-        if total > 0 {
-            return total == 1 ? "1 Running Task" : "\(total) Running Tasks"
-        }
-        return "Background Tasks"
+        AgentBackgroundTaskLabel.make(running: runningCount, attention: attentionCount)
     }
 
     var body: some View {
@@ -14622,6 +15293,7 @@ struct AssistantScreen: View {
 
     var body: some View {
         let pal = AgentPalette(scheme)
+        let chronologicalMessages = vm.chronologicalMessages
         // Compute tail ownership once per screen pass. Doing the same reverse
         // scans inside every ForEach row turned each stream update into O(n²).
         let streamingTailId = vm.messages.last(where: { $0.isStreaming })?.id
@@ -14681,7 +15353,7 @@ struct AssistantScreen: View {
                             && !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
                         }
-                        ForEach(vm.messages) { msg in
+                        ForEach(chronologicalMessages) { msg in
                             AgentMessageRow(
                                 message: msg, vm: vm,
                                 showWorkingIndicator: vm.isStreaming && msg.isStreaming
@@ -14736,7 +15408,7 @@ struct AssistantScreen: View {
                     .padding(.top, 10)
                     .background(scrollOffsetReader)
                     // IOSP-5: no spring on message-count change under Reduce Motion.
-                    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
+                    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.8), value: chronologicalMessages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
                 // Hidden pull-to-refresh (spec §3): exactly 0pt at idle, revealed
@@ -14820,7 +15492,7 @@ struct AssistantScreen: View {
                 .onChange(of: vm.ownSendTick) { _, _ in
                     followSuppressedUntil = Date().addingTimeInterval(0.8)
                     nearBottom = true   // sending = explicit intent to follow this turn
-                    if let mine = vm.messages.last(where: { $0.role == .user })?.id {
+                    if let mine = vm.latestOwnerChronologyAnchorId {
                         withAnimation(.easeOut(duration: 0.3)) {
                             proxy.scrollTo(mine, anchor: .top)
                         }

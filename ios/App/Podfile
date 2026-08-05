@@ -28,6 +28,15 @@ target 'App' do
   # Add your Pods here
   # Office Live Intercom — Agora real-time voice (walkie-talkie + 1:1 calls).
   pod 'AgoraRtcEngine_iOS', '~> 4.5'
+
+  # The unit parity suite imports the App module with @testable. With Xcode's
+  # explicit-module build enabled, it must inherit the same Pod framework
+  # search paths as App or Swift cannot resolve App's transitive Capacitor /
+  # OneSignal / Agora module dependencies. The UI suite launches App as a
+  # separate process and intentionally stays Pod-free.
+  target 'AppParityV2Tests' do
+    inherit! :search_paths
+  end
 end
 
 post_install do |installer|

@@ -35,6 +35,53 @@ export interface StoredTrace {
   at: string
 }
 
+/**
+ * A router pin may span short follow-ups, but it must not hide the tools for an
+ * explicit new business-data job.  This is deliberately narrower than running
+ * the keyword router on every message: acknowledgements such as "ha koro" keep
+ * the cached skill, while a staff-dispatch chat that moves to orders/approvals
+ * releases the allowlist that would otherwise make the request impossible.
+ * Owner pins remain sticky and never pass through this gate.
+ */
+export function shouldReleaseRouterPin(pinnedSkill: string, text: string): boolean {
+  const t = (text ?? '').trim()
+  if (!t) return false
+
+  const staleNarrowPins = new Set([
+    'alma-staff-dispatch',
+    'alma-agent-incident-diagnosis',
+  ])
+
+  if (staleNarrowPins.has(pinnedSkill)) {
+    const explicitErpScope =
+      /(orders?|অর্ডার|approval|অনুমোদন|revenue|sales?|বিক্রি|stock|inventory|product|customer|pending\s+approval)/i
+    return explicitErpScope.test(t)
+  }
+
+  return false
+}
+
+/**
+ * Plain ERP record reads belong to the general agent toolset, not to a narrow
+ * workflow skill.  Without this guard a released incident pin was selected
+ * again on the very next identical order query because words such as "status"
+ * scored against incident-diagnosis.  Keep this intentionally read-shaped so
+ * genuine diagnostic requests ("why are orders failing?") can still route.
+ */
+export function isExplicitErpRecordRead(text: string): boolean {
+  const t = (text ?? '').trim()
+  if (!t) return false
+
+  const record =
+    /(orders?|অর্ডার|approval|অনুমোদন|revenue|sales?|বিক্রি|stock|inventory|product|customer|pending\s+approval)/i
+  const readIntent =
+    /(show|list|read|fetch|get|latest|newest|recent|দেখাও|দেখান|লিস্ট|তালিকা|সর্বশেষ|নতুন|কত|status|স্ট্যাটাস|id\b)/i
+  const diagnosticIntent =
+    /(why|কেন|issue|সমস্যা|error|fail(?:ed|ing|ure)?|broken|health\s*scan|diagnos|root\s*cause)/i
+
+  return record.test(t) && readIntent.test(t) && !diagnosticIntent.test(t)
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
@@ -86,11 +133,37 @@ export async function resolveSkillPin(
         return { skill: rule.skill, source: 'router', trace: decision }
       }
 
+      if (source === 'router' && shouldReleaseRouterPin(conv.pinnedSkill, lastUserText)) {
+        const decision: RouteDecision = {
+          skill: null,
+          layer: 'rule',
+          reason: `scope-exit: ${conv.pinnedSkill} এই নতুন ERP/data কাজের tool scope ঢেকে দিচ্ছিল — pin সরালাম`,
+          candidates: [],
+          needsModel: false,
+        }
+        await db.agentConversation.update({
+          where: { id: conversationId },
+          data: { pinnedSkill: null, skillRouteTrace: null },
+        })
+        return { skill: null, source: 'none', trace: decision }
+      }
+
       return { skill: conv.pinnedSkill, source, trace: null }
     }
 
     const index = await discoverSkills(SKILLS_ROOT, { includeDraft: opts.includeDraft })
     if (index.skills.length === 0) return { skill: null, source: 'none', trace: null }
+
+    if (isExplicitErpRecordRead(lastUserText)) {
+      const decision: RouteDecision = {
+        skill: null,
+        layer: 'rule',
+        reason: 'erp-record-read: সাধারণ ERP read tools ব্যবহার হবে; narrow workflow skill pin করা হবে না',
+        candidates: [],
+        needsModel: false,
+      }
+      return { skill: null, source: 'none', trace: decision }
+    }
 
     const decision = routeSkill(index, lastUserText)
     if (!decision.skill) return { skill: null, source: 'none', trace: decision }
