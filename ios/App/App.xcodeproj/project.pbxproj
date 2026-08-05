@@ -30,6 +30,7 @@
 		6C6A27C2A5F92B5F2617B361 /* TradingHrSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */; };
 		747EDB92288CE0950C119E72 /* cs_model_2.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 2B1E7BFF1464C45512B79DB6 /* cs_model_2.jpg */; };
 		75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */; };
+		82578EF670271FFDE3168C6E /* Pods_AppParityV2Tests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */; };
 		8AE5A46CDEF2B132197C6BDD /* cs_sample_4.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */; };
 		8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
@@ -43,8 +44,11 @@
 		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
 		A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
+		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
+		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
 		A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */; };
 		AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */; };
+		AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */; };
 		B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */; };
 		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
 		B1AA2200000000000000B002 /* AlmaWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A004 /* AlmaWidget.swift */; };
@@ -60,7 +64,6 @@
 		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
 		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
-		AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
 		D7AA8800000000000000B001 /* OfficeRobotLiveGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */; };
@@ -139,17 +142,15 @@
 		F2AA7700000000000000B1FE /* StaffMonitorAgentsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */; };
 		F2AA7700000000000000B1FF /* AgentHubSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1FF /* AgentHubSwiftUI.swift */; };
 		F2AA7700000000000000B2AA /* CSLifestyleEditorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */; };
+		F2AA7700000000000000B9C1 /* MacRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9C1 /* MacRemoteControl.swift */; };
 		F2AA7700000000000000B9F1 /* BrowserLiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */; };
 		F2AA7700000000000000B9F2 /* AgentLiveDockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9F2 /* AgentLiveDockView.swift */; };
-		F2AA7700000000000000B9C1 /* MacRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A9C1 /* MacRemoteControl.swift */; };
 		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
 		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
 		F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7703000000000000A0FE /* IntercomUI.swift */; };
 		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
 		F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */; };
 		F2AA7706000000000000B0FE /* AlmaIslandBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */; };
-		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
-		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
 		F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */; };
 		FA22BB00000000000000B901 /* AssistantTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A901 /* AssistantTransport.swift */; };
 		FA22BB00000000000000B902 /* AlmaPerfLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A902 /* AlmaPerfLog.swift */; };
@@ -213,6 +214,7 @@
 		375C8ACD1088EFD6AD6DA71B /* NativeLoginSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NativeLoginSwiftUI.swift; sourceTree = "<group>"; };
 		3E78CDE7CC98B69EE283C2EF /* cs_sample_8.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_8.jpg; sourceTree = "<group>"; };
 		3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingAccountsSwiftUI.swift; sourceTree = "<group>"; };
+		4122613A83768E82A90C0A19 /* Pods-AppParityV2Tests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AppParityV2Tests.release.xcconfig"; path = "Pods/Target Support Files/Pods-AppParityV2Tests/Pods-AppParityV2Tests.release.xcconfig"; sourceTree = "<group>"; };
 		44315869244957F4A1AFE5DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
 		471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalInvoicesSwiftUI.swift; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -223,6 +225,7 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AppParityV2Tests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_0.jpg; sourceTree = "<group>"; };
 		5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingAnalyticsSwiftUI.swift; sourceTree = "<group>"; };
 		5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_4.jpg; sourceTree = "<group>"; };
@@ -240,9 +243,12 @@
 		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
-		A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotTests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
+		A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotStore.swift; sourceTree = "<group>"; };
+		A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotTests.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallUI.swift; sourceTree = "<group>"; };
 		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidgetBundle.swift; sourceTree = "<group>"; };
 		B1AA2200000000000000A004 /* AlmaWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidget.swift; sourceTree = "<group>"; };
@@ -260,10 +266,10 @@
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
-		AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallUI.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeRobotLiveGlyph.swift; sourceTree = "<group>"; };
 		D7AA8800000000000000A002 /* RobotAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = RobotAssets.xcassets; sourceTree = "<group>"; };
+		D84D52B4F3E6C2E898C78FF3 /* Pods-AppParityV2Tests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AppParityV2Tests.debug.xcconfig"; path = "Pods/Target Support Files/Pods-AppParityV2Tests/Pods-AppParityV2Tests.debug.xcconfig"; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E1AA9900000000000000A001 /* alma_approval.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_approval.caf; sourceTree = "<group>"; };
 		E1AA9900000000000000A002 /* alma_urgent.caf */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file; path = alma_urgent.caf; sourceTree = "<group>"; };
@@ -336,17 +342,15 @@
 		F2AA7700000000000000A1FE /* StaffMonitorAgentsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorAgentsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A1FF /* AgentHubSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHubSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A2AA /* CSLifestyleEditorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CSLifestyleEditorSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A9C1 /* MacRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteControl.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9F1 /* BrowserLiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLiveSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A9F2 /* AgentLiveDockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLiveDockView.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A9C1 /* MacRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteControl.swift; sourceTree = "<group>"; };
 		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
 		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
 		F2AA7703000000000000A0FE /* IntercomUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntercomUI.swift; sourceTree = "<group>"; };
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityBeacon.swift; sourceTree = "<group>"; };
 		F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaIslandBanner.swift; sourceTree = "<group>"; };
-		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
-		A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotStore.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A901 /* AssistantTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantTransport.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A902 /* AlmaPerfLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaPerfLog.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A903 /* AlmaNavCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavCoordinator.swift; sourceTree = "<group>"; };
@@ -369,6 +373,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				82578EF670271FFDE3168C6E /* Pods_AppParityV2Tests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -393,6 +398,7 @@
 			isa = PBXGroup;
 			children = (
 				AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */,
+				563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -551,6 +557,8 @@
 			children = (
 				44315869244957F4A1AFE5DD /* Pods-App.debug.xcconfig */,
 				A3092DA775C3DE670025E6B9 /* Pods-App.release.xcconfig */,
+				D84D52B4F3E6C2E898C78FF3 /* Pods-AppParityV2Tests.debug.xcconfig */,
+				4122613A83768E82A90C0A19 /* Pods-AppParityV2Tests.release.xcconfig */,
 			);
 			name = Pods;
 			sourceTree = "<group>";
@@ -651,6 +659,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A9F00000000000000000000B /* Build configuration list for PBXNativeTarget "AppParityV2Tests" */;
 			buildPhases = (
+				527E2AFF58C7CD6C2E76251F /* [CP] Check Pods Manifest.lock */,
 				A9F000000000000000000004 /* Sources */,
 				A9F000000000000000000005 /* Frameworks */,
 				A9F000000000000000000006 /* Resources */,
@@ -809,6 +818,28 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		527E2AFF58C7CD6C2E76251F /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-AppParityV2Tests-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 		6634F4EFEBD30273BCE97C65 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1188,6 +1219,7 @@
 		};
 		A9F000000000000000000009 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = D84D52B4F3E6C2E898C78FF3 /* Pods-AppParityV2Tests.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1206,6 +1238,7 @@
 		};
 		A9F00000000000000000000A /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4122613A83768E82A90C0A19 /* Pods-AppParityV2Tests.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;

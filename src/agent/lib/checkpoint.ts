@@ -18,7 +18,7 @@ import { pushCurrentPulseLiveActivity } from '@/agent/lib/pulse-live-update'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-export type CheckpointState = 'failed' | 'waiting_for_owner'
+export type CheckpointState = 'failed' | 'waiting_for_owner' | 'continuing'
 
 export type TaskCheckpoint = {
   /** stable id for dedupe/updates — usually the pendingActionId or plan id */
@@ -52,10 +52,15 @@ export type WriteCheckpointInput = Omit<TaskCheckpoint, 'savedAt' | 'state'> & {
 const KIND_BY_STATE: Record<CheckpointState, string> = {
   failed: 'checkpoint_failed',
   waiting_for_owner: 'checkpoint_waiting',
+  continuing: 'checkpoint_continuing',
 }
 
 function titleFor(cp: TaskCheckpoint): string {
-  const prefix = cp.state === 'failed' ? '⛔ আটকে গেছে' : '⏸️ আপনার উত্তর দরকার'
+  const prefix = cp.state === 'failed'
+    ? '⛔ আটকে গেছে'
+    : cp.state === 'continuing'
+      ? '🔄 নিজে থেকে চলছে'
+      : '⏸️ আপনার উত্তর দরকার'
   return `${prefix}: ${cp.goal}`.slice(0, 120)
 }
 
@@ -119,7 +124,7 @@ export async function writeCheckpoint(input: WriteCheckpointInput): Promise<stri
     // (never a refresh — the dedupe above returns early) lights up the native
     // app with a tap-through to the agent. Fail-open; Telegram/chat channels
     // are separate and unaffected.
-    try {
+    if (cp.state !== 'continuing') try {
       const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
       await pushNativeToOwner({
         tier: 2,
@@ -143,7 +148,7 @@ export async function resolveCheckpointByTaskRef(taskRef: string): Promise<void>
     await db.agentOpenTask.updateMany({
       where: {
         pendingActionId: taskRef,
-        kind: { in: ['checkpoint_failed', 'checkpoint_waiting'] },
+        kind: { in: ['checkpoint_failed', 'checkpoint_waiting', 'checkpoint_continuing'] },
         status: { in: ['open', 'running'] },
       },
       data: { status: 'done', completedAt: new Date() },
@@ -163,7 +168,7 @@ export async function listUnresolvedCheckpoints(
     const rows = await db.agentOpenTask.findMany({
       where: {
         conversationId,
-        kind: { in: ['checkpoint_failed', 'checkpoint_waiting'] },
+        kind: { in: ['checkpoint_failed', 'checkpoint_waiting', 'checkpoint_continuing'] },
         status: { in: ['open', 'running'] },
       },
       orderBy: { updatedAt: 'desc' },
@@ -247,7 +252,7 @@ export function buildCheckpointSystemNote(cps: CheckpointView[]): string {
   const blocks = cps.map((c, i) => {
     const cp = c.checkpoint
     return [
-      `${i + 1}. [${cp.state === 'failed' ? 'FAILED' : 'WAITING'}] ${cp.goal}`,
+      `${i + 1}. [${cp.state === 'failed' ? 'FAILED' : cp.state === 'continuing' ? 'CONTINUING' : 'WAITING'}] ${cp.goal}`,
       `   হয়েছে: ${cp.doneSteps.join('; ') || '—'}`,
       `   আটকেছে: ${cp.currentStep}${cp.error ? ` (${cp.error})` : ''}`,
       cp.question ? `   প্রশ্ন ছিল: ${cp.question}` : '',

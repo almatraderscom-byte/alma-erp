@@ -24,6 +24,7 @@ import {
 import type { WorkflowStatus } from './workflow-run-types'
 import { TERMINAL_WORKFLOW_STATUSES } from './workflow-run-types'
 import { mirrorWorkflowRunTransition } from '@/agent/lib/graph/workflow-run-graph'
+import { completionContractFromFacts, decideCompletion } from '@/agent/lib/completion-contract'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -143,6 +144,14 @@ export class WorkflowVersionConflictError extends Error {
   }
 }
 
+/** A run carrying an explicit completion contract cannot be marked done early. */
+export class WorkflowCompletionBlockedError extends Error {
+  constructor(runId: string, reason: string) {
+    super(`workflow_completion_blocked: run ${runId} — ${reason}`)
+    this.name = 'WorkflowCompletionBlockedError'
+  }
+}
+
 /**
  * Optimistic transition: succeeds ONLY when the run is still at
  * `expectedVersion` — otherwise throws WorkflowVersionConflictError. Terminal
@@ -169,6 +178,20 @@ export async function transitionWorkflowRun(opts: {
   const toStatus = opts.toStatus ?? (current.status as WorkflowStatus)
   const toState = opts.toState ?? (current.state as string)
   const terminal = TERMINAL_WORKFLOW_STATUSES.includes(toStatus)
+
+  // Deterministic done gate. Old runs without a contract behave exactly as
+  // before; deep/Mac runs that opt in must carry real evidence for every
+  // criterion. Model prose and a normal exit are not evidence.
+  if (toStatus === 'done') {
+    const facts = (opts.facts ?? current.facts ?? null) as Record<string, unknown> | null
+    const contract = completionContractFromFacts(facts)
+    if (contract) {
+      const decision = decideCompletion(contract)
+      if (decision.action !== 'complete') {
+        throw new WorkflowCompletionBlockedError(opts.runId, decision.reasonBn)
+      }
+    }
+  }
 
   const result = await db.workflowRun.updateMany({
     where: { id: opts.runId, stateVersion: opts.expectedVersion },

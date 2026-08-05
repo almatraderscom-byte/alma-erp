@@ -235,13 +235,13 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
         (text !== undefined ? `লেখাটা হুবহু এই:\n\`\`\`\n${text}\n\`\`\`\n` : '') +
         (input.replace === true ? `⚠️ ঘরে আগের যা লেখা আছে সেটা মুছে যাবে।\n` : '') +
         (reason ? `কারণ: ${reason}\n` : '') +
-        `\nApprove করলে তবেই হবে।`
+        `\nApprove করলে তবেই হবে। কাজের ঠিক আগে ও পরে একই app window-এর marked screenshot স্বয়ংক্রিয়ভাবে chat-এ proof হিসেবে আসবে।`
 
       const card = await db.agentPendingAction.create({
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'mac_ui_action',
-          payload: { uiAction: action, ...params, deviceId: targetDeviceId },
+          payload: { uiAction: action, ...params, deviceId: targetDeviceId, visualProof: true },
           summary,
           costEstimate: 0,
           status: 'pending',
@@ -384,7 +384,8 @@ const drive_mac_app: AgentTool = {
     'Actions: "click" (needs elementLabel from the tree), "type" (needs elementLabel + the literal text), "key" ' +
     '(a combo like "enter"; Enter/Space also need focusedLabel — the label of the element that has focus, from the tree). ' +
     'Every action automatically becomes an approval card on his phone showing the app, the element and the exact ' +
-    'text — call the tool directly and tell him a card is waiting, do not ask separately first. ' +
+    'text; approval automatically captures marked BEFORE and AFTER app-window screenshots inline in chat — ' +
+    'call the tool directly and tell him a card is waiting, do not ask separately first. ' +
     'Refused by policy, not approvable: any other app, destructive/payment/permission buttons, typing secrets, ' +
     'typing while he is at the keyboard (comes back as owner_active — wait and retry). ' +
     'After an approval, fetch the outcome with check_mac_command using the returned id. ' +

@@ -161,6 +161,17 @@ describe('writeCheckpoint', () => {
     expect(tasks[0].resumeNote).toContain('কোন অপশন নিবো?')
   })
 
+  it('continuing is durable, visible, and does not falsely ask/push the owner', async () => {
+    await writeCheckpoint({ ...baseInput, taskRef: 'plan:10', state: 'continuing', error: undefined })
+    expect(tasks[0].kind).toBe('checkpoint_continuing')
+    expect(tasks[0].title).toContain('নিজে থেকে চলছে')
+    expect(nativePushes).toHaveLength(0)
+    const note = buildCheckpointSystemNote(await listUnresolvedCheckpoints('conv-1'))
+    expect(note).toContain('[CONTINUING]')
+    await resolveCheckpointByTaskRef('plan:10')
+    expect(tasks[0].status).toBe('done')
+  })
+
   it('never throws even when the store explodes', async () => {
     const bad = { ...baseInput, taskRef: undefined as unknown as string }
     await expect(writeCheckpoint(bad)).resolves.toBeDefined()

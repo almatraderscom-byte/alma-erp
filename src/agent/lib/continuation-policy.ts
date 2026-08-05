@@ -27,8 +27,17 @@ export function shouldAutoContinueTurn(input: {
   deadlineHit: boolean
   hasAskCard: boolean
   tools: ContinuationToolRecord[]
+  /** Durable completion gate, when this turn is bound to an active plan. */
+  completionDecision?: 'complete' | 'continue' | 'checkpoint' | null
 }): boolean {
-  if (!input.deadlineHit || input.hasAskCard) return false
+  // A real owner question or explicit blocker always stops autonomous hops.
+  if (input.hasAskCard || input.completionDecision === 'checkpoint') return false
+  // The plan is canonical control state: when criteria remain, a model ending
+  // its response is not a terminal condition. The bounded self-continue hop cap
+  // is the outer recovery budget.
+  if (input.completionDecision === 'continue') return true
+  if (input.completionDecision === 'complete') return false
+  if (!input.deadlineHit) return false
 
   const terminalProofLanded = input.tools.some(
     (tool) => tool.status === 'success' && TERMINAL_TOOLS.has(tool.toolName),

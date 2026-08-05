@@ -99,6 +99,10 @@ import {
 export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'thinking_delta'; delta: string }
+  // Provider-independent lifecycle fact for the visible process lane. This is
+  // never model-authored reasoning: native reasoning stays `thinking_delta`,
+  // while this event reports only states the harness directly observed.
+  | { type: 'progress_update'; label: string }
   // Emitted once at turn start so the UI can show a per-model loading identity
   // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
     | {

@@ -416,6 +416,18 @@ struct AgentLiveDockView: View {
                     .frame(width: 56, height: 36)
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(pal.borderSubtle, lineWidth: 1))
+                    .overlay(alignment: .topLeading) {
+                        if feed.current?.labelBn.contains("BEFORE") == true || feed.current?.labelBn.contains("AFTER") == true {
+                            Text(feed.current?.labelBn.contains("BEFORE") == true ? "BEFORE" : "AFTER")
+                                .font(.system(size: 7.5, weight: .black))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(feed.current?.labelBn.contains("BEFORE") == true ? Color.orange : Color.green,
+                                            in: RoundedRectangle(cornerRadius: 4))
+                                .padding(3)
+                        }
+                    }
             }
 
             Button {
@@ -553,6 +565,25 @@ struct AgentLiveDockSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                             .overlay(RoundedRectangle(cornerRadius: 14)
                                 .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                            .overlay(alignment: .topLeading) {
+                                if let label = feed.current?.labelBn,
+                                   label.contains("BEFORE") || label.contains("AFTER") {
+                                    Text(label)
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(2)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 9))
+                                        .overlay(alignment: .leading) {
+                                            Rectangle()
+                                                .fill(label.contains("BEFORE") ? Color.orange : Color.green)
+                                                .frame(width: 4)
+                                                .clipShape(Capsule())
+                                        }
+                                        .padding(10)
+                                }
+                            }
                     } else {
                         RoundedRectangle(cornerRadius: 14)
                             .strokeBorder(pal.borderSubtle, style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))

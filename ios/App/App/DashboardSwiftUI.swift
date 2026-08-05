@@ -681,12 +681,23 @@ final class DashboardVM {
             // IOSP-0 baseline: launch.didFinishLaunching → dashboard.contentReady
             // is the launch-to-useful-content metric (first occurrence per launch).
             AlmaPerfLog.event("dashboard.contentReady")
+            NotificationCenter.default.post(name: .almaDashboardContentReady, object: nil)
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
+            NotificationCenter.default.post(
+                name: .almaDashboardContentUnavailable,
+                object: nil,
+                userInfo: ["reason": "not-authenticated"]
+            )
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             self.error = error.localizedDescription
+            NotificationCenter.default.post(
+                name: .almaDashboardContentUnavailable,
+                object: nil,
+                userInfo: ["reason": "dashboard-error"]
+            )
         }
     }
 

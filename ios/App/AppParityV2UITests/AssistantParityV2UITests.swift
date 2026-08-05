@@ -69,11 +69,11 @@ final class AssistantParityV2UITests: XCTestCase {
 
     func testCleanEOFWithoutTerminalRecoversSameTurnWithoutNavigation() {
         relaunch(fixture: "ALMA_ASSISTANT_STREAM_EOF", mock: "streamEOF")
-        let recovered = app.staticTexts.matching(
+        let recovered = app.textViews.matching(
             NSPredicate(format: "label CONTAINS %@", "একই turn recovery থেকে উত্তর এসেছে")
         ).firstMatch
         XCTAssertTrue(recovered.waitForExistence(timeout: 12))
-        XCTAssertTrue(app.staticTexts["আজকের স্টক রিপোর্ট দাও"].exists)
+        XCTAssertTrue(app.textViews["আজকের স্টক রিপোর্ট দাও"].exists)
     }
 
     func testNativeReadingSurfaceUsesSemanticMarkdownAndQuietChrome() {

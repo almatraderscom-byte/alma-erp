@@ -54,7 +54,7 @@ export async function clearHops(conversationId: string): Promise<void> {
 /** The resume instruction the next hop wakes up to. */
 export function buildResumeDirective(hops: number, summary: string): string {
   return (
-    `[SELF-CONTINUE — hop ${hops}] সার্ভারের সময়সীমায় আগের টার্ন থেমেছে, কিন্তু কাজ শেষ হয়নি। ` +
+    `[SELF-CONTINUE — hop ${hops}] আগের টার্ন থেমেছে, কিন্তু durable completion criteria অনুযায়ী কাজ শেষ হয়নি। ` +
     `Boss নতুন কিছু বলেননি; তুমি নিজেই নিজের কাজ চালিয়ে যাচ্ছ।\n\n` +
     (summary ? `আগের টার্নে যেখানে ছিলে:\n${summary}\n\n` : '') +
     `নিয়ম:\n` +

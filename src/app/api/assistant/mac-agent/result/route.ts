@@ -4,7 +4,7 @@
  */
 import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { authenticateDevice, getCommandAction, resolveCommand } from '@/agent/lib/mac-agent/bus'
+import { authenticateDevice, getCommandAction, getCommandContext, resolveCommand } from '@/agent/lib/mac-agent/bus'
 import { capOutput } from '@/agent/lib/mac-agent/policy'
 
 export const runtime = 'nodejs'
@@ -71,6 +71,23 @@ export async function POST(req: NextRequest) {
     error: typeof body.error === 'string' ? body.error.slice(0, 2_000) : null,
   })
   if (!res.ok) return Response.json({ error: 'command_not_found' }, { status: 404 })
+
+  // An AFTER proof may have been queued behind a UI action that outlived the
+  // 25s approval window. The daemon posts it here later; reconcile the marked
+  // pair into chat now, exactly once, instead of leaving a hidden screenshot row.
+  if (action === 'ui_screenshot' && body.ok && typeof body.stdout === 'string') {
+    const context = await getCommandContext(commandId)
+    if (context?.params.proofPhase === 'after') {
+      const { deliverDeferredUiAfterProof } = await import('@/agent/lib/mac-agent/ui-visual-proof')
+      await deliverDeferredUiAfterProof({
+        commandId,
+        rawStdout: body.stdout.slice(0, MAX_SCREENSHOT_CHARS),
+        params: context.params,
+      }).catch((err) => {
+        console.warn('[mac-proof] deferred AFTER delivery failed:', err instanceof Error ? err.message : err)
+      })
+    }
+  }
 
   return Response.json({ ok: true, ignored: res.ignored ?? false })
 }

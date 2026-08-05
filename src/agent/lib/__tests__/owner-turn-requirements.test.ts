@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import {
+  buildOwnerRequirementNote,
+  deriveOwnerTurnRequirements,
+  requiresLiveToolExecution,
+} from '@/agent/lib/owner-turn-requirements'
 
 describe('owner turn requirement contract', () => {
   it('preserves two SEO targets in owner order and requires live browser proof', () => {
@@ -35,6 +39,14 @@ describe('owner turn requirement contract', () => {
   it('marks deep scope words as deep work even without a website target', () => {
     expect(deriveOwnerTurnRequirements('আজকের বিক্রির বিস্তারিত বিশ্লেষণ দাও').deepWork).toBe(true)
     expect(deriveOwnerTurnRequirements('ajker sales koto?').deepWork).toBe(false)
+  })
+
+  it('requires a real tool attempt for explicitly named live operational reads', () => {
+    expect(requiresLiveToolExecution(
+      'Run a full health scan, inspect order issues, and read the audit summary sequentially.',
+    )).toBe(true)
+    expect(requiresLiveToolExecution('Show the three newest orders with order ID and status.')).toBe(true)
+    expect(requiresLiveToolExecution('Explain how health checks generally work.')).toBe(false)
   })
 })
 

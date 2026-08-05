@@ -29,6 +29,32 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(index["local-recovery"]?.text, "settled")
     }
 
+    func testDeliveredSteerDoesNotBlockPairingPriorAnonymousOptimisticSend() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        let first = AgentChatMessage(
+            id: "local-first", role: .user,
+            clientMessageId: "client-first", outgoingState: .accepted,
+            text: "FIRST")
+        let steer = AgentChatMessage(
+            id: "local-steer", role: .user,
+            clientMessageId: "client-steer", outgoingState: .delivered,
+            text: "SECOND")
+        vm.messages = [first, steer]
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [{"id":"server-first","clientMessageId":null,"role":"user","content":[{"type":"text","text":"FIRST"}]}]
+        """#.utf8))
+
+        vm.debugMergeServerMessages(wire)
+
+        XCTAssertEqual(vm.messages.filter { $0.text == "FIRST" }.count, 1)
+        XCTAssertEqual(vm.messages.first { $0.text == "FIRST" }?.id, "local-first",
+                       "anonymous server truth should replace—not duplicate—the ordinary optimistic row")
+        XCTAssertEqual(vm.messages.first { $0.text == "FIRST" }?.clientMessageId, "client-first")
+        XCTAssertEqual(vm.messages.filter { $0.text == "SECOND" }.count, 1,
+                       "the delivered steer remains a separate canonical owner row")
+    }
+
     func testRunningTurnSendClearsComposerAndCreatesOneVisibleQueueEntry() {
         let vm = AssistantVM()
         vm.loadMergeReadinessQueueFixture()
@@ -44,7 +70,141 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(
             vm.messages.first { $0.clientMessageId == clientMessageId }?.outgoingState,
             .queued)
+        XCTAssertEqual(vm.messages.flatMap(\.blocks).filter {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }.count, 1)
+        XCTAssertFalse(vm.chronologicalMessages.contains {
+            $0.role == .user && $0.clientMessageId == clientMessageId
+        }, "anchored owner intent must not render again as a drifting top-level row")
+
+        vm.debugReplaySteeringDelivery(clientMessageId)
+        XCTAssertEqual(vm.messages.filter(\.isStreaming).count, 1,
+                       "a queued canonical user row must not split the active assistant lane")
+        XCTAssertEqual(vm.messages.flatMap(\.blocks).filter {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }.count, 1, "delivery replay must keep one owner bubble globally")
         vm.cancelOutgoingMessage(vm.messages.first { $0.clientMessageId == clientMessageId }!)
+    }
+
+    func testMidTurnOwnerLaneStaysFixedThroughTwentyProgressEventsAndReload() {
+        let clientMessageId = "chronology-\(UUID().uuidString)"
+        let conversationId = "chronology-conversation"
+        let assistantServerId = "chronology-assistant"
+        let anchor = AssistantVM.TurnOwnerAnchor(
+            clientMessageId: clientMessageId,
+            conversationId: conversationId,
+            turnId: "chronology-turn",
+            assistantServerId: assistantServerId,
+            beforeBlockCount: 1,
+            createdAt: Date(timeIntervalSince1970: 1))
+
+        var blocks: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "before", kind: .progress,
+                            label: "আগের ধাপ", live: false))
+        ]
+        blocks = AssistantVM.injectingOwnerAnchors([anchor], into: blocks)
+        let fixedIndex = blocks.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }
+        for step in 1...20 {
+            blocks = AgentChatMessage.appendProgressBlock(
+                blocks, label: "ধাপ \(step)", messageId: assistantServerId)
+        }
+        XCTAssertEqual(blocks.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }, fixedIndex)
+        XCTAssertTrue(blocks.dropFirst((fixedIndex ?? -1) + 1).allSatisfy {
+            if case .activity(let activity) = $0 { return activity.kind == .progress }
+            return false
+        })
+
+        // Simulate a settled canonical fetch in a fresh VM: server rows contain
+        // the durable owner message and one assistant row, while the local anchor
+        // ledger re-injects the bubble into that assistant's event lane.
+        var owner = AgentChatMessage(
+            id: "server-owner", role: .user,
+            clientMessageId: clientMessageId, outgoingState: .delivered,
+            text: "এই নতুন নির্দেশটা এখনই ধরো")
+        owner.serverId = "server-owner"
+        var settled = AgentChatMessage(id: assistantServerId, role: .assistant, text: "শেষ")
+        settled.serverId = assistantServerId
+        settled.blocks = (0..<21).map { index in
+            .activity(.init(id: "settled-\(index)", kind: .progress,
+                            label: "ধাপ \(index)", live: false))
+        }
+
+        let relaunched = AssistantVM()
+        relaunched.debugRestoreChronologyAnchors(
+            [anchor], into: [owner, settled], conversationId: conversationId)
+        XCTAssertFalse(relaunched.chronologicalMessages.contains {
+            $0.role == .user && $0.clientMessageId == clientMessageId
+        })
+        let restoredAssistant = relaunched.chronologicalMessages.first { $0.role == .assistant }
+        XCTAssertEqual(restoredAssistant?.blocks.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }, 1)
+        relaunched.debugClearChronologyAnchors()
+    }
+
+    func testRepeatedSteeringDeliveryKeepsOneOwnerBubbleAtFirstReadPoint() {
+        let clientMessageId = "steer-once-\(UUID().uuidString)"
+        let anchor = AssistantVM.TurnOwnerAnchor(
+            clientMessageId: clientMessageId,
+            conversationId: "conversation",
+            turnId: "turn",
+            assistantServerId: nil,
+            beforeBlockCount: 1,
+            createdAt: Date(timeIntervalSince1970: 1))
+        var first = AgentChatMessage(id: "stream-first", role: .assistant)
+        first.isStreaming = true
+        first.blocks = [
+            .activity(.init(id: "first-step", kind: .search, label: "Find Tool"))
+        ]
+        var later = AgentChatMessage(id: "stream-later", role: .assistant)
+        later.isStreaming = true
+        later.blocks = [
+            .activity(.init(id: "later-step", kind: .tool, label: "Get Audit Summary"))
+        ]
+        var rows = [first, later]
+
+        AssistantVM.pinOwnerAnchorOnce(anchor, in: &rows, preferredAssistantIndex: 0)
+        AssistantVM.pinOwnerAnchorOnce(anchor, in: &rows, preferredAssistantIndex: 1)
+
+        let placements = rows.enumerated().flatMap { rowIndex, row in
+            row.blocks.compactMap { block -> Int? in
+                if case .ownerMessage(_, let id) = block, id == clientMessageId {
+                    return rowIndex
+                }
+                return nil
+            }
+        }
+        XCTAssertEqual(placements, [0])
+        XCTAssertEqual(rows[0].blocks.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }, 1)
+    }
+
+    func testProgressUpdateDecodesAsFactualProgressNotThinking() throws {
+        let dto = try JSONDecoder().decode(
+            AgentSSEEvent.self,
+            from: Data(#"{"type":"progress_update","label":"Inventory যাচাই করছি"}"#.utf8))
+        guard case .progressUpdate(let label) = AgentTurnEvent(dto: dto) else {
+            return XCTFail("progress_update must have its own typed event")
+        }
+        XCTAssertEqual(label, "Inventory যাচাই করছি")
+        let block = AgentChatMessage.appendProgressBlock(
+            [], label: label, messageId: "progress-message").first
+        guard case .activity(let activity)? = block else {
+            return XCTFail("progress_update must render as an activity")
+        }
+        XCTAssertEqual(activity.kind, .progress)
+        XCTAssertNotEqual(activity.kind, .thinking)
     }
 
     func testHugeSessionMountAndSearchIndexStayBounded() {
@@ -110,6 +270,26 @@ final class AssistantParityV2Tests: XCTestCase {
         relaunched.debugRestoreDurableDictationRecovery()
         XCTAssertTrue(relaunched.canRetryDictation)
         XCTAssertNotNil(relaunched.dictationFailure)
+    }
+
+    func testStaleDurableDictationDoesNotClutterComposerForever() {
+        let vm = AssistantVM()
+        vm.loadDictationRecoveryFixture()
+        vm.debugSetDurableDictationModifiedAt(Date(timeIntervalSinceNow: -(25 * 60 * 60)))
+        vm.debugRestoreDurableDictationRecovery()
+        XCTAssertFalse(vm.canRetryDictation)
+        XCTAssertNil(vm.dictationFailure)
+    }
+
+    func testLunaIdentitySurvivesCompactModelLabel() {
+        XCTAssertEqual(AgentModelShortName.display("GPT-5.6 Luna"), "GPT 5.6 Luna")
+        XCTAssertEqual(AgentModelShortName.display("GPT-5.5"), "GPT 5.5")
+    }
+
+    func testBackgroundTaskLabelDoesNotCallApprovalsRunningTasks() {
+        XCTAssertEqual(AgentBackgroundTaskLabel.make(running: 1, attention: 1), "1 Running · 1 Approval")
+        XCTAssertEqual(AgentBackgroundTaskLabel.make(running: 0, attention: 1), "1 Approval Waiting")
+        XCTAssertEqual(AgentBackgroundTaskLabel.make(running: 2, attention: 0), "2 Running Tasks")
     }
 
     func testCanonicalPresentationUsesServerStableBlockIDsAndUsage() throws {
@@ -283,4 +463,5 @@ final class AssistantParityV2Tests: XCTestCase {
         relaunched.opinionDraftText.removeValue(forKey: cardId)
         relaunched.opinionOpenIds.remove(cardId)
     }
+
 }

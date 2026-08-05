@@ -117,4 +117,62 @@ final class GlobalOfficeRobotTests: XCTestCase {
         XCTAssertEqual(OfficeRobotDragDirection.right.horizontalSign, 1)
         XCTAssertEqual(OfficeRobotDragDirection.left.horizontalSign, -1)
     }
+
+    func testLaunchTimelineBeginsFullyOffscreenAndKeepsAwarenessVisible() {
+        let initial = LaunchRobotTimeline.state(at: 0)
+        let awareness = LaunchRobotTimeline.state(at: 2.5)
+
+        XCTAssertLessThan(initial.robotCenter.y + initial.robotSize.height / 2, 0)
+        XCTAssertEqual(awareness.phase, .awareness)
+        XCTAssertEqual(awareness.robotOpacity, 1)
+        XCTAssertGreaterThan(awareness.robotCenter.y, 0)
+        XCTAssertLessThan(awareness.robotCenter.y, 844)
+    }
+
+    func testLaunchTimelineContainsTwoDistinctHopPhases() {
+        XCTAssertEqual(LaunchRobotTimeline.phase(at: 3.55), .hopOne)
+        XCTAssertEqual(LaunchRobotTimeline.phase(at: 4.10), .hopTwo)
+
+        let firstPeak = LaunchRobotTimeline.state(at: 3.575)
+        let secondPeak = LaunchRobotTimeline.state(at: 4.125)
+        XCTAssertNotEqual(firstPeak.robotCenter.x, secondPeak.robotCenter.x)
+        XCTAssertNotEqual(firstPeak.robotCenter.y, secondPeak.robotCenter.y)
+    }
+
+    func testLaunchLandingAndActivationEffectsAreReadable() {
+        let landing = LaunchRobotTimeline.state(at: 1.32)
+        let activation = LaunchRobotTimeline.state(at: 6.72)
+
+        XCTAssertEqual(landing.phase, .landing)
+        XCTAssertGreaterThan(landing.impactOpacity, 0)
+        XCTAssertGreaterThan(landing.particleOpacity, 0)
+        XCTAssertEqual(activation.phase, .activation)
+        XCTAssertGreaterThan(activation.coreOpacity, 0)
+        XCTAssertGreaterThan(activation.scanOpacity, 0)
+    }
+
+    func testLaunchMergeEndsWithCanonicalHostAsOnlyVisibleOwner() {
+        let destination = CGPoint(x: 334, y: 380)
+        let merge = LaunchRobotTimeline.state(
+            at: 9.08,
+            destinationCenter: destination
+        )
+        let fixedReaction = LaunchRobotTimeline.state(
+            at: 9.35,
+            destinationCenter: destination
+        )
+        let final = LaunchRobotTimeline.state(
+            at: LaunchRobotTimeline.duration,
+            destinationCenter: destination
+        )
+
+        XCTAssertEqual(merge.phase, .merge)
+        XCTAssertEqual(merge.robotCenter.x, destination.x, accuracy: 0.5)
+        XCTAssertEqual(merge.robotCenter.y, destination.y, accuracy: 0.5)
+        XCTAssertGreaterThan(merge.portalOpacity, 0.9)
+        XCTAssertEqual(fixedReaction.phase, .fixedReaction)
+        XCTAssertEqual(fixedReaction.robotOpacity, 0)
+        XCTAssertEqual(final.robotOpacity, 0)
+        XCTAssertEqual(final.portalOpacity, 0)
+    }
 }

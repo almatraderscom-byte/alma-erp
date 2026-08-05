@@ -549,6 +549,19 @@ export async function getCommandAction(commandId: string): Promise<string | null
   return row?.action ?? null
 }
 
+/** Result-side metadata for durable proof reconciliation. */
+export async function getCommandContext(commandId: string): Promise<{
+  action: string
+  params: Record<string, unknown>
+} | null> {
+  const row = await prisma.macAgentCommand.findUnique({
+    where: { id: commandId },
+    select: { action: true, params: true },
+  })
+  if (!row) return null
+  return { action: row.action, params: (row.params as Record<string, unknown>) ?? {} }
+}
+
 export async function getCommand(commandId: string): Promise<CommandOutcome | null> {
   const row = await prisma.macAgentCommand.findUnique({
     where: { id: commandId },

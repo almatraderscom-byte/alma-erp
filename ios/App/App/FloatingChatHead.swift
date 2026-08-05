@@ -106,6 +106,8 @@ final class FloatingChatHead {
     private var presentationHidesRobot = false
     private var islandEntryPending = false
     private var islandEntryAnimating = false
+    private var launchMergeAnimating = false
+    private var launchMergeCompleted = false
     private var approvalReactionCancellable: AnyCancellable?
     private var approvalReactionId: UUID?
     private var approvalHomeCenter: CGPoint?
@@ -123,6 +125,115 @@ final class FloatingChatHead {
         if suppressed { suppressionReasons.insert(reason) }
         else { suppressionReasons.remove(reason) }
         applyRobotVisibility()
+    }
+
+    /// Exact center of the canonical 88×88 floating host converted into the
+    /// temporary launch overlay's coordinate space. The launch sprite uses the
+    /// same center, then hands ownership back without an approximate hard-coded
+    /// destination or a second persistent robot.
+    func launchDestinationCenter(in view: UIView) -> CGPoint? {
+        guard let b = button, b.window != nil, view.window != nil else { return nil }
+        return b.convert(
+            CGPoint(x: b.bounds.midX, y: b.bounds.midY),
+            to: view
+        )
+    }
+
+    /// Reveal the one canonical host after the launch representation has been
+    /// absorbed. The approved v4 pop/settle/shake runs on this real host, so its
+    /// live task badge and interaction state never need to be duplicated.
+    func completeLaunchMerge(animated: Bool) {
+        if overlay == nil || button == nil {
+            install()
+            DispatchQueue.main.async { [weak self] in
+                self?.completeLaunchMerge(animated: animated)
+            }
+            return
+        }
+
+        suppressionReasons.remove("launch-animation")
+        presentationHidesRobot = false
+        applyRobotVisibility()
+
+        guard !launchMergeCompleted, let b = button else { return }
+        launchMergeCompleted = true
+        launchMergeAnimating = animated
+        b.layer.removeAllAnimations()
+        b.isUserInteractionEnabled = false
+        robotHostState.isDragging = false
+
+        let home = b.center
+        guard animated,
+              !AlmaOverlayCoordinator.shared.reduceMotion,
+              !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              !b.isHidden
+        else {
+            b.alpha = 1
+            b.center = home
+            b.transform = .identity
+            b.isUserInteractionEnabled = true
+            launchMergeAnimating = false
+            AlmaPerfLog.event("launchRobot.fixedHostRevealed", "reduced=true")
+            return
+        }
+
+        b.alpha = 0
+        b.center = CGPoint(x: home.x, y: home.y + 8)
+        b.transform = CGAffineTransform(scaleX: 0.42, y: 0.42)
+        UIView.animate(
+            withDuration: 0.24,
+            delay: 0,
+            usingSpringWithDamping: 0.58,
+            initialSpringVelocity: 0.82,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            b.alpha = 1
+            b.center = CGPoint(x: home.x, y: home.y - 14)
+            b.transform = CGAffineTransform(scaleX: 1.22, y: 1.22)
+        } completion: { [weak self, weak b] _ in
+            guard let self, let b else { return }
+            UIView.animate(
+                withDuration: 0.22,
+                delay: 0,
+                usingSpringWithDamping: 0.68,
+                initialSpringVelocity: 0.62,
+                options: [.curveEaseInOut, .allowUserInteraction]
+            ) {
+                b.center = CGPoint(x: home.x, y: home.y + 1)
+                b.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
+            } completion: { [weak self, weak b] _ in
+                guard let self, let b else { return }
+                b.center = home
+                b.transform = .identity
+                UIView.animateKeyframes(
+                    withDuration: 0.34,
+                    delay: 0,
+                    options: [.allowUserInteraction]
+                ) {
+                    UIView.addKeyframe(withRelativeStartTime: 0.00, relativeDuration: 0.22) {
+                        b.transform = CGAffineTransform(rotationAngle: -0.12)
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.22, relativeDuration: 0.24) {
+                        b.transform = CGAffineTransform(rotationAngle: 0.12)
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.46, relativeDuration: 0.24) {
+                        b.transform = CGAffineTransform(rotationAngle: -0.075)
+                    }
+                    UIView.addKeyframe(withRelativeStartTime: 0.70, relativeDuration: 0.30) {
+                        b.transform = .identity
+                    }
+                } completion: { [weak self, weak b] _ in
+                    b?.center = home
+                    b?.transform = .identity
+                    b?.alpha = 1
+                    b?.isUserInteractionEnabled = true
+                    AlmaPerfLog.event("launchRobot.fixedHostRevealed", "reduced=false")
+                    Task { @MainActor [weak self] in
+                        self?.launchMergeAnimating = false
+                    }
+                }
+            }
+        }
     }
 
     /// Create the overlay window + head. Safe to call more than once (no-op after first).
@@ -237,6 +348,13 @@ final class FloatingChatHead {
     }
 
     @objc private func appWillResignActiveForRobotEntry() {
+        if launchMergeAnimating, let b = button {
+            b.layer.removeAllAnimations()
+            b.transform = .identity
+            b.alpha = 1
+            b.isUserInteractionEnabled = true
+            launchMergeAnimating = false
+        }
         if approvalReactionId != nil, let b = button {
             b.layer.removeAllAnimations()
             b.center = approvalHomeCenter ?? b.center
@@ -671,7 +789,7 @@ final class FloatingChatHead {
         // magic -70. Keeps the head off the tab bar and above any live keyboard.
         let maxY = AlmaOverlayCoordinator.shared.maxCenterY(
             inWindow: w, overlayHeight: petSize.height)
-        let y = savedY > 0 ? min(max(savedY, minY), max(minY, maxY)) : w.bounds.height * 0.60
+        let y = savedY > 0 ? min(max(savedY, minY), max(minY, maxY)) : w.bounds.height * 0.45
         onRight = true
         robotHostState.isDockedRight = true
         b.center = CGPoint(x: w.bounds.width - margin - petSize.width / 2, y: y)

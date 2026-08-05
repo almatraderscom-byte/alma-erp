@@ -46,6 +46,21 @@ function classifyGroundingRequired(t: string): boolean {
   return DATA_NOUN_RE.test(t) && DATA_QUESTION_RE.test(t)
 }
 
+/**
+ * High-confidence live operations that cannot be satisfied by prose alone.
+ * This remains active even when the broad grounding experiment is shadowed:
+ * the owner explicitly named both the operation and the live system surface.
+ */
+export function requiresLiveToolExecution(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  const explicitOperationalRead =
+    /(?:run|চালাও|করো|perform)\b[^\n।]{0,40}\bhealth\s*scan\b|(?:inspect|check|যাচাই|দেখো)\b[^\n।]{0,40}\border\s+issues?\b|(?:read|get|show|দেখাও|পড়ো)\b[^\n।]{0,40}\baudit\s+summary\b/i
+  const explicitRecordRead =
+    /(?:show|list|read|fetch|get|দেখাও|তালিকা)\b[^\n।]{0,60}\b(?:latest|newest|recent|সর্বশেষ)?\s*(?:orders?|অর্ডার|approvals?|অনুমোদন|inventory|stock|customers?)\b/i
+  return explicitOperationalRead.test(t) || explicitRecordRead.test(t)
+}
+
 const DOMAIN_RE = /(?:https?:\/\/)?(?:www\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z]{2,})+)(?:\/[^\s,;]*)?/gi
 
 function normalizeTarget(host: string): string {

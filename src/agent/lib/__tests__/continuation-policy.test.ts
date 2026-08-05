@@ -51,4 +51,28 @@ describe('shouldAutoContinueTurn', () => {
       tools: [{ toolName: 'live_browser_act', status: 'success' }],
     })).toBe(false)
   })
+
+  it('continues an incomplete durable plan even when the model stopped before the deadline', () => {
+    expect(shouldAutoContinueTurn({
+      deadlineHit: false,
+      hasAskCard: false,
+      tools: [],
+      completionDecision: 'continue',
+    })).toBe(true)
+  })
+
+  it('never continues through an owner gate or explicit plan blocker', () => {
+    expect(shouldAutoContinueTurn({
+      deadlineHit: false,
+      hasAskCard: true,
+      tools: [{ toolName: 'execute_plan', status: 'success' }],
+      completionDecision: 'continue',
+    })).toBe(false)
+    expect(shouldAutoContinueTurn({
+      deadlineHit: true,
+      hasAskCard: false,
+      tools: [{ toolName: 'execute_plan', status: 'success' }],
+      completionDecision: 'checkpoint',
+    })).toBe(false)
+  })
 })
