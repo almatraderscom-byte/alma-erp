@@ -1,164 +1,168 @@
-ALMA iOS Agent Voice / CallKit Handoff
-=====================================
+ALMA iOS Agent Voice / CallKit — Root Fix Handoff
+=================================================
 
 Branch
 ------
-codex/ios-voice-callkit-handoff
+codex/ios-voice-audio-root-fix-v2
 
-Purpose
--------
-This branch contains only the iOS Agent voice/CallKit reliability fix and its
-regression coverage. It intentionally excludes the unrelated Agent Chat work
-that was concurrently present in the original main worktree.
+Base
+----
+codex/ios-integrated-testflight-candidate @ c0857605
 
-What was broken
----------------
-1. Gemini websocket setupComplete and CallKit didActivate could arrive in either
-   order. The app published LIVE and started the timer before CallKit actually
-   owned active audio hardware, producing an answered but silent call. Opening
-   the app or toggling speaker happened to recover the graph later.
-2. AVAudioSession used defaultToSpeaker. Clearing a temporary speaker override
-   with .none therefore still selected the speaker, so speaker OFF could not
-   reliably select the receiver/earpiece.
-3. CallKit didDeactivate, provider reset, and system mute were not fully routed
-   to the Agent voice engine.
-4. Foreground recovery could self-activate a CallKit-owned audio session and
-   race CallKit. Route state reflected the requested button state rather than
-   the actual hardware route.
+Delivery artifact
+-----------------
+The shared repository's .git metadata was read-only in the audit session, so the
+fully committed branch is delivered as a verified complete Git bundle:
 
-What this branch changes
-------------------------
-- Adds AlmaLiveAudioReadiness, a lock-protected two-signal gate. A CallKit call
-  becomes LIVE only after socket setup, audio configuration, CallKit activation,
-  and a successful audio graph start/restart.
-- Handles both activation orderings, deactivation/reactivation, and websocket
-  reconnect generations without reusing stale readiness.
-- Treats audio graph restart failure as a bounded retry instead of publishing a
-  silent LIVE timer.
-- Removes defaultToSpeaker and explicitly routes .speaker / .none, allowing
-  .none to resolve to the receiver when no Bluetooth/wired route is active.
-- Publishes the actual AVAudioSession route back to UI and enables proximity
-  monitoring only for the built-in receiver.
-- Propagates CallKit didDeactivate, mute, and provider reset to agent calls.
-- Prevents foreground recovery from self-activating CallKit-owned audio.
+  /private/tmp/alma-ios-voice-root-fix.bundle
 
-Scoped files
-------------
+Import it under a non-conflicting temporary ref (the same branch name may still
+be attached to the audit worktree), then merge/cherry-pick it:
+
+  git fetch /private/tmp/alma-ios-voice-root-fix.bundle \
+    refs/heads/codex/ios-voice-audio-root-fix-v2:refs/heads/codex/ios-voice-audio-root-fix-v2-committed
+
+The bundle is verified with `git bundle verify` and contains complete history.
+
+Scope
+-----
+This branch contains the follow-up root fix for the still-reproducible Agent
+2-way voice and incoming Agent CallKit silence/routing defects. It is isolated
+from the concurrent Agent Chat work. Merge it into the Agent Chat integration
+branch, keep both sets of changes, then perform one combined TestFlight build
+only after the owner explicitly approves it.
+
+Confirmed root causes
+---------------------
+1. CallKit cold/background answer fulfilled CXAnswerCallAction before the app
+   prepared AVAudioSession as playAndRecord + voiceChat. CallKit therefore
+   activated whichever stale/default category and route existed. Foregrounding
+   the app or toggling speaker later rebuilt/re-routed the graph, explaining the
+   delayed recovery.
+2. A cold in-app 2-way voice start unconditionally called live.stop() before the
+   first live.start(). That queued AVAudioSession.setActive(false) directly in
+   front of the initial configure/start path. Re-entering the page worked because
+   the lifecycle timing was different on the second attempt.
+3. The app treated websocket/model “speaking” state and AVAudioEngine.isRunning
+   as proof of audible playback. A VoiceProcessingIO renderer can claim running
+   while no player samples advance, leaving visible speaking text with silence.
+4. Route repair was one-directional: it corrected receiver -> speaker only.
+   Speaker OFF did not repair speaker -> receiver. Other in-process audio users
+   can also leave defaultToSpeaker on the shared AVAudioSession, making .none a
+   no-op unless the stale option is removed.
+5. The previous TestFlight diagnostics only reported terminal connection failure
+   or a one-time route check. They could not distinguish “PCM received, UI says
+   speaking, render clock stalled,” so the actual device-only failure was hidden.
+
+Implemented changes
+-------------------
+- Prepares the CallKit AVAudioSession category/mode before action.fulfill(), but
+  leaves activation exclusively to CallKit.
+- Fails the CallKit answer if audio preflight fails and does not mark the backend
+  call answered in that case.
+- Pre-activates standalone in-app audio once and skips live.stop() on the first
+  cold start; retry teardown remains intact.
+- Removes defaultToSpeaker from this live voice owner and explicitly enforces
+  both speaker and receiver routes, with bounded actual-route verification.
+- Avoids unnecessary category resets while CallKit audio is active; resets only
+  if category/mode/defaultToSpeaker is stale.
+- Primes the cold playback graph after real model PCM is queued.
+- Verifies that the player render sample clock advances. If it stalls, performs
+  one graph restart, re-enforces the requested route, and verifies recovery.
+- Adds release-safe timing/category/route/input/PCM/render traces containing no
+  transcript, token, URL, credential, or user content. Unrecovered Agent-call
+  failures attach a compact trace tail to the server call note.
+- Adds regression contract assertions for answer ordering, first-start teardown,
+  two-way route enforcement, and render-stall detection/recovery.
+
+Changed tracked files
+---------------------
 - ios/App/App/AssistantVoiceSwiftUI.swift
 - ios/App/App/AgentCallUI.swift
 - ios/App/App/CallKitVoIP.swift
-- ios/App/AppParityV2Tests/AssistantParityV2Tests.swift
 - src/agent/lib/__tests__/native-voice-upload-contract.test.ts
+- handoff.doc
 
-Integration instructions for the Agent Chat session
----------------------------------------------------
-1. Preserve/commit the Agent Chat session's own work first.
-2. Merge this branch, or cherry-pick its single scoped commit.
-3. If AssistantParityV2Tests.swift conflicts, keep BOTH the Agent Chat tests and
-   the three testLiveAudioGate... methods from this branch. Do not accept either
-   whole-file side.
-4. If any production voice file conflicts, preserve these invariants:
-   - no LIVE before socketSetupComplete + audioConfigured + CallKit audio active;
-   - no defaultToSpeaker in AlmaGeminiLiveSession live configuration;
-   - speaker OFF calls overrideOutputAudioPort(.none);
-   - didDeactivate reaches AgentCallController.audioSessionDeactivated();
-   - CallKit-owned recoverAudio never calls setActive(true) while inactive.
-5. Run the combined Agent Chat tests as well as every verification below.
-
-Important test-target integration dependency
---------------------------------------------
-Clean main at 06624dfa has the AppParityV2Tests target, but that target does not
-inherit the CocoaPods framework/module search paths needed to import the App
-module (AgoraRtcKit, Capacitor, OneSignal, and related dependencies). The active
-Agent Chat worktree already contains pending project.pbxproj + Podfile test-target
-wiring; that is why the combined worktree can run the suite. This handoff branch
-deliberately does NOT duplicate those files, because doing so would create the
-exact conflict this branch is designed to avoid.
-
-Therefore, retain the Agent Chat session's project/Podfile test wiring during the
-merge, run pod install, and then run the full suite. If the combined suite cannot
-resolve those modules, the merge dropped that test wiring; do not work around it
-by deleting the voice tests.
-
-Required simulator verification
--------------------------------
-Use the dedicated simulator, not the Pro Max used by another session:
-
-  Device: Alma Voice Verify iPhone 17 Pro
-  Model:  iPhone 17 Pro
-  OS:     iOS 26.5
-  UDID:   83770047-A463-4F0F-8DB6-F9DA1191B3B4
-
-Commands (adjust DerivedData path if needed):
-
-  npm test -- --run src/agent/lib/__tests__/native-voice-upload-contract.test.ts
-
-  cd ios/App
-  xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug \
-    -destination 'platform=iOS Simulator,id=83770047-A463-4F0F-8DB6-F9DA1191B3B4' \
-    -derivedDataPath /tmp/alma-voice-handoff-derived \
-    -only-testing:AppParityV2Tests/AssistantParityV2Tests \
-    CODE_SIGNING_ALLOWED=NO test
-
-  xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug \
-    -destination 'generic/platform=iOS' \
-    -derivedDataPath /tmp/alma-voice-handoff-device-derived \
-    CODE_SIGNING_ALLOWED=NO build
-
-Prior verification evidence
----------------------------
-- Dedicated fresh iPhone 17 Pro simulator boot/install/launch: passed.
-- AssistantParityV2Tests: 26/26 passed on that simulator in the active combined
-  worktree containing the same five voice changes plus Agent Chat test wiring.
-- Native voice contract Vitest file: 7/7 passed.
-- Isolated handoff branch Simulator Debug app build: passed.
-- Generic physical-iPhone arm64 build, including the non-simulator voice
-  processing branch: passed.
+Verification completed in this isolated worktree
+------------------------------------------------
+- Native voice contract Vitest: 7/7 passed.
+- swiftc frontend parse of all three changed Swift production files: passed.
 - git diff --check: passed.
+- Generic iPhone arm64 app compile: passed with xcodebuild exit 0.
+  The compiler sandbox was disabled using the supported -disable-sandbox flag;
+  UI storyboards/assets were excluded only because CoreSimulator/Interface
+  Builder services are not exposed inside this Codex sandbox. All production
+  Swift sources compiled, and AssistantVoiceSwiftUI.o, AgentCallUI.o, and
+  CallKitVoIP.o were generated.
+- CocoaPods generic-device build: passed earlier in the same isolated audit.
 
-Standalone clean-main note: attempting the test action before Agent Chat's test
-wiring is merged reaches and successfully builds the App target, then stops only
-at AppParityV2Tests module resolution. This is a base test-infrastructure issue,
-not a production voice compile error. The combined branch MUST still achieve a
-green full suite before requesting TestFlight approval.
+Dedicated simulator
+-------------------
+Use only this simulator; the Pro Max belongs to another session:
 
-Hard verification before TestFlight
------------------------------------
-Simulator cannot reproduce PushKit delivery, genuine CallKit activation,
-built-in receiver acoustics, or proximity behavior. After merging the Agent Chat
-work, a signed build must be tested on a real iPhone with these cases:
+  Alma Voice Verify iPhone 17 Pro
+  iOS 26.5
+  UDID 83770047-A463-4F0F-8DB6-F9DA1191B3B4
 
-[ ] Cold-launch Agent 2-way voice: first attempt speaks without exiting/retrying.
-[ ] In-app voice after app relaunch: first greeting is audible.
-[ ] Incoming agent call answered while app foregrounded: immediate audible speech.
-[ ] Incoming agent call answered while app backgrounded: immediate audible speech.
-[ ] Incoming agent call answered from locked screen: immediate audible speech.
-[ ] Speaker ON: loud built-in speaker and UI reports speaker route.
-[ ] Speaker OFF: built-in receiver/earpiece, lower private-call volume.
-[ ] Receiver route: proximity sensor blanks/restores screen near/far from ear.
-[ ] CallKit/system mute: microphone actually mutes and unmutes.
-[ ] Audio interruption/deactivate/reactivate: speech resumes without opening app
-    or manually toggling speaker.
-[ ] Network reconnect during a call: conversation resumes without a stale LIVE
-    state or permanently silent audio.
-[ ] End/reset: no orphan timer, audio graph, proximity state, or active call UI.
+This Codex sandbox can list the simulator but CoreSimulatorService rejects all
+simctl connections, so the NEW root-fix delta has not been runtime-launched in
+that simulator in this session. Do not represent it as runtime-verified. The
+integration session, which has normal simulator access, must run it.
 
-TestFlight approval gate
+Physical-device boundary
 ------------------------
-DO NOT archive, upload, submit, or distribute a TestFlight build automatically.
-After the combined branch passes the simulator suite, generic device build, and
-the merge-conflict invariant review, report the exact results and ask the owner:
+The registered physical iPhone was offline during verification:
 
-  "Agent Chat + Agent voice fixes একসাথে hard-verified। এখন কি TestFlight
-   archive/upload শুরু করব?"
+  iPhone, iOS 26.5.2, UDID 00008150-00097C390A40401C — OFFLINE
 
-Proceed only after an explicit YES. If approved, create one combined TestFlight
-build from the Agent Chat session's final integration branch; do not publish a
-separate build from this handoff branch.
+A simulator cannot prove PushKit delivery, genuine CallKit activation, receiver
+acoustics, loudspeaker acoustics, or proximity behavior. These checks remain
+mandatory on a signed real-device/TestFlight build.
 
-Known boundary
---------------
-The fresh simulator had no authenticated owner session, and simulator hardware
-cannot prove true CallKit/receiver behavior. The source-level race, routing,
-lifecycle, regression, simulator, and arm64 compilation gates are complete; the
-real-iPhone checklist above is the final acceptance gate.
+Integration instructions
+------------------------
+1. Preserve/commit the Agent Chat session's own work.
+2. Merge branch codex/ios-voice-audio-root-fix-v2. Resolve conflicts by retaining
+   both Chat changes and every audio invariant below.
+3. Run the combined Agent Chat suite plus:
+
+     npm test -- --run src/agent/lib/__tests__/native-voice-upload-contract.test.ts
+
+4. Build and launch on the dedicated iPhone 17 Pro simulator. Verify first-entry
+   2-way voice starts without leaving/re-entering and inspect Audio trace events.
+5. Before TestFlight, review these invariants:
+   - prepareCallKitAudioSession occurs before CXAnswerCallAction.fulfill;
+   - CallKit-owned code never calls setActive(true);
+   - cold first start does not call live.stop();
+   - no defaultToSpeaker in Gemini live audio ownership;
+   - speaker and receiver routes are both enforced and verified;
+   - speaking UI is not accepted without advancing rendered samples.
+6. Ask the owner before any archive/upload/distribution.
+
+Hard real-iPhone acceptance checklist
+-------------------------------------
+[ ] Fresh app launch -> Agent 2-way voice -> first attempt is immediately audible.
+[ ] User microphone input works on that same first attempt.
+[ ] Incoming Agent call answered in foreground -> immediate two-way audio.
+[ ] Incoming Agent call answered in background -> immediate two-way audio.
+[ ] Incoming Agent call answered from lock screen -> immediate two-way audio.
+[ ] Speaker ON -> loud built-in speaker; reported route matches.
+[ ] Speaker OFF -> quiet built-in receiver/earpiece; reported route matches.
+[ ] Receiver proximity blanks/restores screen near/far from ear.
+[ ] Repeated speaker ON/OFF does not start audio accidentally; audio was already live.
+[ ] CallKit mute/unmute controls the actual microphone.
+[ ] Deactivate/reactivate or interruption resumes without foregrounding/toggling.
+[ ] Network reconnect does not leave a silent LIVE timer.
+[ ] End/reset leaves no timer, graph, proximity state, or call UI behind.
+
+TestFlight gate
+---------------
+DO NOT archive, upload, submit, or distribute automatically. After the combined
+branch passes simulator tests, compile, invariant review, and any available
+signed-device checks, ask exactly:
+
+  “Agent Chat + Agent voice fixes একসাথে hard-verified। এখন কি TestFlight
+   archive/upload শুরু করব?”
+
+Proceed only after an explicit YES. Produce one combined TestFlight build from
+the Agent Chat integration branch, not a separate build from this handoff branch.

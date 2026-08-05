@@ -37,6 +37,7 @@ import AVFoundation
 import MetalKit
 import Speech
 import PhotosUI
+import os
 
 // MARK: - State + strings (web STATUS dict parity)
 
@@ -107,6 +108,33 @@ struct AlmaLiveAudioReadiness: Equatable {
         socketSetupComplete = false
         audioConfigured = false
         setupPublished = false
+    }
+}
+
+/// Release-safe audio evidence. Contains state/route/timing only — never
+/// transcripts, credentials, URLs, or user content. The previous TestFlight
+/// instrumentation was blind whenever the graph claimed to be running but the
+/// hardware render path was silent.
+enum AlmaVoiceAudioTrace {
+    private static let logger = Logger(subsystem: "com.almatraders.erp.voice", category: "Audio")
+    private static let lock = NSLock()
+    private static var rows: [String] = []
+    private static let startedAt = Date()
+
+    static func event(_ name: String, _ detail: String = "") {
+        let row = String(format: "+%.3f %@ %@", Date().timeIntervalSince(startedAt), name, detail)
+        logger.info("\(row, privacy: .public)")
+        lock.lock()
+        rows.append(row)
+        if rows.count > 120 { rows.removeFirst(rows.count - 120) }
+        lock.unlock()
+    }
+
+    static func tail(_ count: Int = 14) -> String {
+        lock.lock()
+        let value = rows.suffix(count).joined(separator: " | ")
+        lock.unlock()
+        return value
     }
 }
 
@@ -201,6 +229,13 @@ final class AlmaVoiceEngine {
 
     func callKitAudioDeactivated() {
         live.callKitAudioDeactivated()
+    }
+
+    /// CallKit activates the category that exists when CXAnswerCallAction is
+    /// fulfilled. Preparing it afterwards leaves cold/background answers on the
+    /// previous/default output unit until foregrounding or a route toggle.
+    func prepareCallKitAudioSession() throws {
+        try live.prepareCallKitAudioSession()
     }
 
     /// Brief may arrive AFTER the live socket connected (the CallKit answer never
@@ -303,6 +338,7 @@ final class AlmaVoiceEngine {
     private var liveConnectAttempt = 0
     private var connectionGeneration = 0
     private var hasEverConnected = false
+    private var liveSessionHasStarted = false
     private var liveToolTurnPending = false
 
     /// Never advertise realtime until the Gemini socket has actually completed its
@@ -409,6 +445,8 @@ final class AlmaVoiceEngine {
         callStartedAt = nil
         isMuted = false
         speakerOn = true
+        liveSessionHasStarted = false
+        AlmaVoiceAudioTrace.event("engine.begin", callKitManaged ? "callkit=1" : "callkit=0")
         tts.engine = self
         // Island up for the whole session; the island's End button posts
         // almaVoiceEndRequested (AlmaVoiceEndIntent runs in this process).
@@ -458,6 +496,15 @@ final class AlmaVoiceEngine {
                 }
                 self.wake.engine = self
                 self.live.engine = self
+                if !self.callKitManaged {
+                    do {
+                        try self.live.prepareStandaloneAudioSession()
+                    } catch {
+                        AlmaVoiceAudioTrace.event("session.prepare.failed", String(describing: error))
+                        self.liveConnectionFailed(error: error, message: "লাইভ অডিও প্রস্তুত করা যায়নি।")
+                        return
+                    }
+                }
                 self.startLiveConnection(resetAttempts: true)
             }
         }
@@ -471,7 +518,11 @@ final class AlmaVoiceEngine {
         liveConnectTask?.cancel()
         connectionGeneration += 1
         let generation = connectionGeneration
-        live.stop()
+        // A cold session has no graph/socket to tear down. The old unconditional
+        // stop queued AVAudioSession.setActive(false) directly ahead of the very
+        // first configure/start sequence.
+        if liveSessionHasStarted { live.stop() }
+        liveSessionHasStarted = true
         liveActive = false
         sessionReady = false
         micLevel = 0
@@ -557,8 +608,9 @@ final class AlmaVoiceEngine {
         // diagnosable without a console (TestFlight builds log nowhere).
         if activeAgentCallId != nil {
             let detail = String((error.map { String(describing: $0) } ?? message ?? "unknown").prefix(200))
+            let trace = String(AlmaVoiceAudioTrace.tail(5).prefix(230))
             AgentCallController.shared.reportLiveFailure(
-                "live failed: \(detail) | vpUnavailable=\(live.voiceProcessingUnavailable)")
+                "live failed: \(detail) | vpUnavailable=\(live.voiceProcessingUnavailable) | \(trace)")
         }
     }
 
@@ -637,6 +689,7 @@ final class AlmaVoiceEngine {
             }
         }
         liveConnectTask?.cancel(); liveConnectTask = nil
+        liveSessionHasStarted = false
         connectionGeneration += 1
         keepAliveStop()
         for ob in recoveryObservers { NotificationCenter.default.removeObserver(ob) }
@@ -2106,6 +2159,7 @@ enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, au
 @available(iOS 17.0, *)
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
+    private let traceID = String(UUID().uuidString.prefix(8))
 
     struct SessionResponse: Decodable {
         let token: String
@@ -2206,6 +2260,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var modelGenerationCompleteReceived = false
     private var modelTurnCompleteReceived = false
     private var playbackStarted = false
+    private var firstInputFrameTraced = false
+    private var firstModelPCMTraced = false
+    private var firstPlaybackPrimed = false
+    private var playbackRecoveryGeneration = 0
 
     // Natural barge-in without self-interruption. While model audio is active, the
     // post-VoiceProcessingIO microphone is held locally. Only sustained speech well
@@ -2265,6 +2323,33 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// dead attempt cannot touch the replacement session.
     private var audioAttemptGeneration = 0
 
+    private func trace(_ name: String, _ detail: String = "") {
+        AlmaVoiceAudioTrace.event(name, "id=\(traceID) \(detail)")
+    }
+
+    private func audioSessionDescription(_ session: AVAudioSession = .sharedInstance()) -> String {
+        let outputs = session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: "+")
+        return "category=\(session.category.rawValue) mode=\(session.mode.rawValue) "
+            + "options=\(session.categoryOptions.rawValue) route=\(outputs.isEmpty ? "none" : outputs)"
+    }
+
+    private func prepareAudioSession(activate: Bool) throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        try? session.setPreferredIOBufferDuration(0.02)
+        if activate { try session.setActive(true) }
+        trace(activate ? "session.prepared.standalone" : "session.prepared.callkit",
+              audioSessionDescription(session))
+    }
+
+    func prepareCallKitAudioSession() throws {
+        try prepareAudioSession(activate: false)
+    }
+
+    func prepareStandaloneAudioSession() throws {
+        try prepareAudioSession(activate: true)
+    }
+
     @discardableResult
     private func updateReadiness(_ update: (inout AlmaLiveAudioReadiness) -> Void) -> AlmaLiveAudioReadiness {
         readinessLock.lock()
@@ -2283,6 +2368,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func start() async throws {
         stopped = false
+        firstInputFrameTraced = false
+        firstModelPCMTraced = false
+        firstPlaybackPrimed = false
+        playbackRecoveryGeneration += 1
+        trace("transport.start", callKitOwnsAudioSession ? "callkit=1" : "callkit=0")
         updateReadiness { state in
             state.callKitManaged = callKitOwnsAudioSession
             state.beginSocketAttempt()
@@ -2412,6 +2502,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             didClaim = true
         }
         guard didClaim else { return }
+        trace("setup.live", audioSessionDescription())
         #if DEBUG
         NSLog("ALMA-VOICE setup finished — session LIVE (audio configured)")
         #endif
@@ -2431,6 +2522,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// Start (or retry) capture/playback now that the session is really ours.
     func callKitAudioActivated() {
         guard !stopped, callKitOwnsAudioSession else { return }
+        trace("media.callkitActivated", audioSessionDescription())
         let gate = updateReadiness { $0.callKitAudioActive = true }
         // Activation can arrive before microphone permission and socket setup.
         // Remember it, but never build/start media early: startLiveConnection()
@@ -2485,6 +2577,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// the matching didActivate arrives; never self-activate a CallKit session.
     func callKitAudioDeactivated() {
         guard callKitOwnsAudioSession else { return }
+        trace("media.callkitDeactivated")
         let gate = updateReadiness { $0.callKitAudioActive = false }
         audioConfigPending = gate.socketSetupComplete
         audioQueue.async { [weak self] in
@@ -2511,32 +2604,67 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// time; no-op when the owner deliberately turned the speaker off.
     func nudgeSpeakerRoute() {
         guard configured, !stopped else { return }
-        audioLock.lock()
-        let wantSpeaker = speakerEnabled
-        audioLock.unlock()
-        guard wantSpeaker else { return }
-        let av = AVAudioSession.sharedInstance()
-        if av.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
-            try? av.overrideOutputAudioPort(.speaker)
-            #if DEBUG
-            NSLog("ALMA-VOICE route nudged receiver → speaker")
-            #endif
-        }
-        publishCurrentAudioRoute()
+        enforceRequestedRoute(reason: "nudge")
     }
 
     private func handleAudioRouteChange() {
+        guard configured, !stopped else { return }
+        enforceRequestedRoute(reason: "routeChange")
+    }
+
+    private func enforceRequestedRoute(reason: String) {
+        audioLock.lock()
+        let wantSpeaker = speakerEnabled
+        audioLock.unlock()
+        let av = AVAudioSession.sharedInstance()
+        let outputs = av.currentRoute.outputs
+        let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+        let onReceiver = outputs.contains { $0.portType == .builtInReceiver }
+        if (wantSpeaker && onReceiver) || (!wantSpeaker && onSpeaker) {
+            try? av.overrideOutputAudioPort(wantSpeaker ? .speaker : .none)
+        }
+        trace("route.enforce", "reason=\(reason) want=\(wantSpeaker ? "speaker" : "receiver") "
+              + audioSessionDescription(av))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            self?.verifyRequestedRoute(attempt: 1)
+        }
+    }
+
+    private func verifyRequestedRoute(attempt: Int) {
         guard configured, !stopped else { return }
         audioLock.lock()
         let wantSpeaker = speakerEnabled
         audioLock.unlock()
         let av = AVAudioSession.sharedInstance()
-        if wantSpeaker,
-           av.currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) {
-            try? av.overrideOutputAudioPort(.speaker)
+        let outputs = av.currentRoute.outputs
+        let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+        let onReceiver = outputs.contains { $0.portType == .builtInReceiver }
+        // Bluetooth/wired/AirPlay routes are legitimate and must not be replaced
+        // with a built-in route merely because neither built-in port is present.
+        let usingBuiltIn = onSpeaker || onReceiver
+        let matched = !usingBuiltIn || (wantSpeaker ? onSpeaker : onReceiver)
+        if matched {
+            trace("route.verified", "attempt=\(attempt) want=\(wantSpeaker ? "speaker" : "receiver") "
+                  + audioSessionDescription(av))
+            publishCurrentAudioRoute()
+            return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            self?.publishCurrentAudioRoute()
+        trace("route.mismatch", "attempt=\(attempt) want=\(wantSpeaker ? "speaker" : "receiver") "
+              + audioSessionDescription(av))
+        guard attempt < 4 else {
+            publishCurrentAudioRoute()
+            return
+        }
+        // Remove any defaultToSpeaker category left by dictation/intercom, then
+        // re-apply the explicit temporary override. `.none` now resolves to the
+        // receiver for a built-in route.
+        if av.category != .playAndRecord || av.mode != .voiceChat
+            || av.categoryOptions.contains(.defaultToSpeaker) {
+            try? av.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        }
+        try? av.overrideOutputAudioPort(wantSpeaker ? .speaker : .none)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt) * 0.16) { [weak self] in
+            self?.verifyRequestedRoute(attempt: attempt + 1)
         }
     }
 
@@ -2544,6 +2672,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
         let speaker = outputs.contains { $0.portType == .builtInSpeaker }
         let receiver = outputs.contains { $0.portType == .builtInReceiver }
+        trace("route.publish", "speaker=\(speaker ? 1 : 0) receiver=\(receiver ? 1 : 0) "
+              + audioSessionDescription())
         DispatchQueue.main.async { [weak self] in
             self?.engine?.liveAudioRouteChanged(speaker: speaker, receiver: receiver)
         }
@@ -2586,6 +2716,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func configureAudioOnQueue() throws {
         guard !configured else { return }
+        trace("graph.configure.begin", audioSessionDescription())
         // A previous PARTIAL attempt (engine.start threw after the tap went in)
         // must not leave its tap behind: AVAudioEngine allows one tap per bus,
         // so retrying with a stale tap raises an Objective-C exception and
@@ -2656,6 +2787,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // crash (device finding, build 82: app crashed after voice call cycles).
         if player.engine == nil { audioEngine.attach(player) }
         audioEngine.connect(player, to: audioEngine.mainMixerNode, format: playback)
+        player.volume = 1
+        audioEngine.mainMixerNode.outputVolume = 1
         input.installTap(onBus: 0, bufferSize: 960, format: native) { [weak self] buffer, _ in
             self?.capture(buffer, nativeFormat: native)
         }
@@ -2675,6 +2808,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try? av.overrideOutputAudioPort(useSpeaker ? .speaker : .none)
         configured = true
         updateReadiness { $0.audioConfigured = true }
+        trace("graph.configure.ready", "running=\(audioEngine.isRunning ? 1 : 0) vp=\(voiceProcessingUnavailable ? 0 : 1) "
+              + audioSessionDescription(av))
         // On a REAL device the VP route reset can land asynchronously AFTER the
         // line above (owner 2026-07-31: first call silent until a manual
         // speaker toggle, second call fine — sim can't reproduce: no receiver
@@ -2706,6 +2841,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             var sum = 0.0
             for i in 0..<frames { let x = Double(samples[i]); sum += x * x }
             rms = (sum / Double(frames)).squareRoot()
+        }
+        if !firstInputFrameTraced {
+            firstInputFrameTraced = true
+            trace("input.firstFrame", "frames=\(frames) rms=\(String(format: "%.5f", rms))")
         }
         DispatchQueue.main.async { [weak self] in self?.engine?.micLevel = min(1, rms * 7) }
         #if DEBUG
@@ -3187,6 +3326,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                             frameCapacity: AVAudioFrameCount(pcm.count / 2)),
               let destination = buffer.floatChannelData?[0] else { return }
+        if !firstModelPCMTraced {
+            firstModelPCMTraced = true
+            trace("output.firstPCM", "bytes=\(pcm.count) running=\(audioEngine.isRunning ? 1 : 0)")
+        }
         buffer.frameLength = buffer.frameCapacity
         pcm.withUnsafeBytes { raw in
             for index in 0..<Int(buffer.frameLength) {
@@ -3281,7 +3424,53 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
+            if !self.firstPlaybackPrimed {
+                self.firstPlaybackPrimed = true
+                // A cold VoiceProcessingIO graph can report isRunning while its
+                // render resource still belongs to the pre-activation/default
+                // session. Reacquire it once, after real PCM is queued, without
+                // discarding the scheduled player buffers.
+                if self.audioEngine.isRunning { self.audioEngine.pause() }
+                self.audioEngine.prepare()
+                do {
+                    try self.audioEngine.start()
+                    self.trace("output.graphPrimed", "running=1")
+                } catch {
+                    self.trace("output.graphPrimeFailed", String(describing: error))
+                }
+            }
             if !self.player.isPlaying { self.player.play() }
+            let recoveryGeneration = self.playbackRecoveryGeneration
+            self.audioQueue.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                guard let self, !self.stopped,
+                      recoveryGeneration == self.playbackRecoveryGeneration else { return }
+                self.audioLock.lock()
+                let stillPlayingTurn = self.playbackStarted
+                self.audioLock.unlock()
+                guard stillPlayingTurn else { return }
+                let renderedSamples: AVAudioFramePosition = self.player.lastRenderTime
+                    .flatMap { self.player.playerTime(forNodeTime: $0)?.sampleTime } ?? 0
+                let healthy = self.audioEngine.isRunning && self.player.isPlaying && renderedSamples > 0
+                self.trace(healthy ? "output.renderHealthy" : "output.renderStalled",
+                           "engine=\(self.audioEngine.isRunning ? 1 : 0) player=\(self.player.isPlaying ? 1 : 0) samples=\(renderedSamples)")
+                guard !healthy else { return }
+                if self.audioEngine.isRunning { self.audioEngine.pause() }
+                self.audioEngine.prepare()
+                do {
+                    try self.audioEngine.start()
+                    self.player.play()
+                    self.trace("output.renderRecovered", "engine=1 player=\(self.player.isPlaying ? 1 : 0)")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.enforceRequestedRoute(reason: "renderRecovery")
+                    }
+                    self.verifyRenderRecovery(after: 0.45,
+                                              generation: recoveryGeneration,
+                                              baselineSamples: renderedSamples)
+                } catch {
+                    self.trace("output.renderRecoveryFailed", String(describing: error))
+                    self.reportRenderRecoveryFailure("engine restart failed")
+                }
+            }
         }
         // Belt+suspenders (same fix the legacy TTS path needed): anything can
         // flip the route to the receiver between turns — force the loud speaker
@@ -3299,6 +3488,35 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             self?.engine?.livePlaybackChanged(active: true, level: 0.65)
         }
         armPlaybackDrainFallback(generation: generation, deadline: deadline)
+    }
+
+    private func verifyRenderRecovery(after delay: TimeInterval,
+                                      generation: Int,
+                                      baselineSamples: AVAudioFramePosition) {
+        audioQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.stopped,
+                  generation == self.playbackRecoveryGeneration else { return }
+            self.audioLock.lock()
+            let stillPlayingTurn = self.playbackStarted
+            self.audioLock.unlock()
+            guard stillPlayingTurn else { return }
+            let renderedSamples: AVAudioFramePosition = self.player.lastRenderTime
+                .flatMap { self.player.playerTime(forNodeTime: $0)?.sampleTime } ?? 0
+            let healthy = self.audioEngine.isRunning && self.player.isPlaying
+                && renderedSamples > baselineSamples
+            self.trace(healthy ? "output.renderRecoveryHealthy" : "output.renderRecoveryUnhealthy",
+                       "engine=\(self.audioEngine.isRunning ? 1 : 0) player=\(self.player.isPlaying ? 1 : 0) "
+                        + "samples=\(renderedSamples) baseline=\(baselineSamples)")
+            if !healthy { self.reportRenderRecoveryFailure("renderer remained stalled") }
+        }
+    }
+
+    private func reportRenderRecoveryFailure(_ reason: String) {
+        let evidence = String(AlmaVoiceAudioTrace.tail(6).prefix(360))
+        DispatchQueue.main.async { [weak self] in
+            guard self?.engine?.activeAgentCallId != nil else { return }
+            AgentCallController.shared.reportLiveFailure("audio \(reason) | \(evidence)")
+        }
     }
 
     private func playbackBufferFinished(id: Int, generation: Int) {
@@ -3513,10 +3731,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         speakerEnabled = enabled
         let isConfigured = configured
         audioLock.unlock()
+        trace("route.request", "want=\(enabled ? "speaker" : "receiver") configured=\(isConfigured ? 1 : 0)")
         guard isConfigured else { return }
-        try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+        let session = AVAudioSession.sharedInstance()
+        // Another in-process audio feature may have left defaultToSpeaker on the
+        // shared session. Remove it before `.none`, otherwise speaker OFF is a
+        // no-op and the route immediately returns to loudspeaker.
+        if session.category != .playAndRecord || session.mode != .voiceChat
+            || session.categoryOptions.contains(.defaultToSpeaker) {
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
+        }
+        try session.overrideOutputAudioPort(enabled ? .speaker : .none)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            self?.publishCurrentAudioRoute()
+            self?.verifyRequestedRoute(attempt: 1)
         }
     }
 
