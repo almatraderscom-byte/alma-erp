@@ -4,6 +4,12 @@ const mocks = vi.hoisted(() => ({
   enqueue: vi.fn(),
   awaitResult: vi.fn(),
   share: vi.fn(),
+  kvFind: vi.fn(),
+  kvUpsert: vi.fn(),
+  pendingFind: vi.fn(),
+  pendingUpdate: vi.fn(),
+  appendNote: vi.fn(),
+  continueAction: vi.fn(),
 }))
 
 vi.mock('@/agent/lib/mac-agent/bus', () => ({
@@ -14,8 +20,22 @@ vi.mock('@/agent/lib/mac-agent/bus', () => ({
 vi.mock('@/agent/lib/mac-agent/screenshot-share', () => ({
   shareAnnotatedScreenshot: mocks.share,
 }))
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
+    agentKvSetting: { findUnique: mocks.kvFind, upsert: mocks.kvUpsert },
+    agentPendingAction: { findUnique: mocks.pendingFind, update: mocks.pendingUpdate },
+  },
+}))
+vi.mock('@/agent/lib/conversation-note', () => ({ appendAssistantNote: mocks.appendNote }))
+vi.mock('@/agent/lib/approval-continuation', () => ({
+  enqueueApprovedActionContinuation: mocks.continueAction,
+}))
 
-import { runUiActionWithVisualProof, visualProofMarkdown } from '@/agent/lib/mac-agent/ui-visual-proof'
+import {
+  deliverDeferredUiAfterProof,
+  runUiActionWithVisualProof,
+  visualProofMarkdown,
+} from '@/agent/lib/mac-agent/ui-visual-proof'
 
 const outcome = (id: string, stdout: string) => ({
   id, status: 'done', exitCode: 0, stdout, stderr: '', error: null, timedOut: false,
@@ -26,6 +46,12 @@ describe('approved Mac action visual proof', () => {
     mocks.enqueue.mockReset()
     mocks.awaitResult.mockReset()
     mocks.share.mockReset()
+    mocks.kvFind.mockReset().mockResolvedValue(null)
+    mocks.kvUpsert.mockReset().mockResolvedValue({})
+    mocks.pendingFind.mockReset().mockResolvedValue({ conversationId: 'conversation-1', result: {} })
+    mocks.pendingUpdate.mockReset().mockResolvedValue({})
+    mocks.appendNote.mockReset().mockResolvedValue(undefined)
+    mocks.continueAction.mockReset().mockResolvedValue(undefined)
     mocks.enqueue
       .mockResolvedValueOnce({ id: 'before' })
       .mockResolvedValueOnce({ id: 'action' })
@@ -82,5 +108,57 @@ describe('approved Mac action visual proof', () => {
     expect(mocks.enqueue).toHaveBeenCalledTimes(3)
     expect(result.pendingAfterCommandId).toBe('after')
     expect(result.proofComplete).toBe(false)
+  })
+
+  it('delivers deferred AFTER proof and resumes the approved workflow', async () => {
+    mocks.share.mockReset().mockResolvedValue({
+      ok: true,
+      imageUrl: 'https://proof/after',
+      instruction: '',
+    })
+    const delivered = await deliverDeferredUiAfterProof({
+      commandId: 'after-1',
+      rawStdout: 'data:image/jpeg;base64,BBBB',
+      params: {
+        proofPhase: 'after',
+        proofPendingActionId: 'card-1',
+        proofActionLabel: 'Click Send',
+        proofBeforeImageUrl: 'https://proof/before',
+      },
+    })
+    expect(delivered).toBe(true)
+    expect(mocks.appendNote).toHaveBeenCalledWith(
+      'conversation-1',
+      expect.stringContaining('https://proof/after'),
+    )
+    expect(mocks.continueAction).toHaveBeenCalledWith('card-1')
+    expect(mocks.kvUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { value: 'done_resumed' },
+    }))
+  })
+
+  it('keeps deferred proof retryable when screenshot sharing fails', async () => {
+    mocks.share.mockReset().mockResolvedValue({ ok: false, error: 'storage_down' })
+    const delivered = await deliverDeferredUiAfterProof({
+      commandId: 'after-2',
+      rawStdout: 'data:image/jpeg;base64,BBBB',
+      params: { proofPhase: 'after', proofPendingActionId: 'card-1' },
+    })
+    expect(delivered).toBe(false)
+    expect(mocks.continueAction).not.toHaveBeenCalled()
+    expect(mocks.kvUpsert).not.toHaveBeenCalled()
+  })
+
+  it('upgrades already-delivered legacy proof by resuming without reposting it', async () => {
+    mocks.kvFind.mockResolvedValue({ value: 'done' })
+    const delivered = await deliverDeferredUiAfterProof({
+      commandId: 'after-legacy',
+      rawStdout: 'data:image/jpeg;base64,BBBB',
+      params: { proofPhase: 'after', proofPendingActionId: 'card-legacy' },
+    })
+    expect(delivered).toBe(true)
+    expect(mocks.share).not.toHaveBeenCalled()
+    expect(mocks.appendNote).not.toHaveBeenCalled()
+    expect(mocks.continueAction).toHaveBeenCalledWith('card-legacy')
   })
 })

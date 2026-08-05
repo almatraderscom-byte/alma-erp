@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
+import agentEventSchema from '@/agent/protocol/agent-event.schema.json'
 
 describe('provider-independent visible progress', () => {
+  it('keeps progress_update in the canonical SSE schema', () => {
+    const refs = agentEventSchema.oneOf.map((entry) => entry.$ref)
+    expect(refs).toContain('#/$defs/progress_update')
+    expect(agentEventSchema.$defs.progress_update).toMatchObject({
+      properties: {
+        type: { const: 'progress_update' },
+        label: { type: 'string' },
+      },
+      required: ['type', 'label'],
+    })
+  })
+
   it('uses the canonical SSE shape and reports only observable lifecycle facts', () => {
     const progress = createVisibleProgressContract()
 

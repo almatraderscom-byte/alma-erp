@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { enqueueApprovedActionContinuation } from '@/agent/lib/approval-continuation'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
@@ -1213,6 +1213,13 @@ async function runApprove(
     // A BEFORE capture is mandatory. If it could not be produced, the helper
     // failed closed and did not enqueue the act — there is no hidden change.
     if (!proofRun.actionOutcome || !proofRun.actionCommandId) {
+      // The BEFORE proof failed closed and no UI command was enqueued. Return
+      // ownership of the card to the owner; leaving it approved would make the
+      // next tap hit already_resolved and strand the requested action forever.
+      await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'approved' },
+        data: { status: 'pending', resolvedAt: null },
+      })
       const note = `⚠️ কাজটা করা হয়নি — আগের marked screenshot নেওয়া যায়নি (${proofRun.proofError ?? 'visual_proof_unavailable'})। কিছু বদলানো হয়নি।`
       await appendConversationNote(db, action, note)
       return Response.json({
@@ -3278,7 +3285,7 @@ export async function POST(
   }
   try {
     if (res.status >= 200 && res.status < 300 && !visualProofPending) {
-      await enqueueApprovalContinuation(ctx.params.id, progress?.turnId ?? null)
+      await enqueueApprovedActionContinuation(ctx.params.id, progress?.turnId ?? null)
     } else if (visualProofPending && progress?.turnId) {
       // The action/AFTER capture is still queued; starting the head now would
       // let it narrate completion before the result-route reconciler delivers
@@ -3377,60 +3384,3 @@ async function beginApprovalProgress(
  * No infinite loop: a continuation only ever fires from a human approval, and the turn
  * is told not to redo the action.
  */
-async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string | null = null): Promise<void> {
-  // Whatever early-return path we take below, a progress turn opened at approve
-  // time must not stay 'running' forever — except for renders, whose turn is
-  // closed by /internal/job-result once the artifact lands.
-  const settleProgress = async (actionType?: string) => {
-    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen' && actionType !== 'agent_voice_call') {
-      await finalizeTurnIfRunning(reuseTurnId, 'done')
-    }
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const action = await db.agentPendingAction.findUnique({
-    where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true, type: true, result: true },
-  })
-  const conversationId: string | null = action?.conversationId ?? null
-  if (!conversationId) { await settleProgress(action?.type); return }
-  // Only continue once the action genuinely resolved (guards against a 2xx that
-  // wasn't an approval, e.g. an idempotent no-op).
-  if (action.status !== 'approved' && action.status !== 'executed') { await settleProgress(action.type); return }
-
-  // Async jobs are not finished at approval time. Their terminal callback owns
-  // the continuation after the artifact/call report is durably in conversation.
-  if (action.type === 'image_gen' || action.type === 'video_gen' || action.type === 'agent_voice_call') return
-
-  const summary = (action.summary ?? '').toString().slice(0, 200)
-
-  // OWNER INCIDENT 2026-07-26: after an approval the head kept answering "card
-  // অনুমোদনের অপেক্ষায় আছি" for work that had ALREADY been applied — it trusted its
-  // own earlier sentence instead of the world. Telling it the card was approved
-  // was not enough; it needs the live FACTS: what this approval changed, and
-  // whether anything is genuinely still pending in this conversation.
-  const applied = (() => {
-    const r = action.result as { applied?: unknown[]; failed?: unknown[] } | null
-    if (!r || !Array.isArray(r.applied)) return ''
-    const failed = Array.isArray(r.failed) ? r.failed.length : 0
-    return ` (${r.applied.length}টি প্রয়োগ হয়েছে${failed ? `, ${failed}টি ব্যর্থ` : ''})`
-  })()
-
-  const stillPending: number = await db.agentPendingAction.count({
-    where: { conversationId, status: 'pending' },
-  }).catch(() => 0)
-
-  const message =
-    '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
-    (summary ? `: "${summary}"` : '') + applied +
-    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
-    'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না। ' +
-    (stillPending > 0
-      ? `এই চ্যাটে আরও ${stillPending}টি card এখনো Boss-এর সিদ্ধান্তের অপেক্ষায় আছে।`
-      : 'এই চ্যাটে আর কোনো card অপেক্ষায় নেই — তাই "অনুমোদনের অপেক্ষায় আছি" বোলো না; ' +
-        'বাকি কাজ থাকলে নিজেই এগোও, না থাকলে গুনে ফল জানাও।')
-
-  // Boss tapping Approve is Boss acting — it resumes even if some other card is
-  // still open; the awaiting-answer gate exists for BACKGROUND resumes only.
-  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId, ignoreAwaitingOwner: true })
-}

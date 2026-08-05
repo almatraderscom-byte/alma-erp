@@ -234,7 +234,18 @@ export async function deliverDeferredUiAfterProof(input: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const existing = await db.agentKvSetting.findUnique({ where: { key }, select: { value: true } }).catch(() => null)
-  if (existing?.value === 'done') return true
+  if (existing?.value === 'done_resumed') return true
+  // `done` was written by the pre-fix implementation after delivering proof
+  // but before deferred workflows knew how to resume. Upgrade that durable
+  // state exactly once instead of re-posting the screenshot pair.
+  if (existing?.value === 'done') {
+    const { enqueueApprovedActionContinuation } = await import('@/agent/lib/approval-continuation')
+    await enqueueApprovedActionContinuation(pendingActionId)
+    await db.agentKvSetting.upsert({
+      where: { key }, create: { key, value: 'done_resumed' }, update: { value: 'done_resumed' },
+    })
+    return true
+  }
 
   const shared = await shareAnnotatedScreenshot(input.rawStdout, input.commandId, {
     phase: 'after',
@@ -272,8 +283,14 @@ export async function deliverDeferredUiAfterProof(input: {
       },
     },
   }).catch(() => {})
+  // The approval route deliberately did not resume while AFTER proof was still
+  // queued. Now that the marked pair is durable, continue the same workflow.
+  // This call is before the idempotency marker so a transient enqueue failure
+  // makes the daemon retry instead of silently stopping the agent.
+  const { enqueueApprovedActionContinuation } = await import('@/agent/lib/approval-continuation')
+  await enqueueApprovedActionContinuation(pendingActionId)
   await db.agentKvSetting.upsert({
-    where: { key }, create: { key, value: 'done' }, update: { value: 'done' },
+    where: { key }, create: { key, value: 'done_resumed' }, update: { value: 'done_resumed' },
   })
   return true
 }
