@@ -620,33 +620,65 @@ final class FloatingChatHead {
             )
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            AlmaPerfLog.event("robotSelfTest.longPress")
-            self?.openQuickActions {
-                RobotSelfTestTrace.mark("robotSelfTest.longPress")
+            self?.debugOpenQuickActionsWhenReady()
+        }
+    }
+
+    /// The launch-v4 handoff intentionally suppresses the canonical Robot until
+    /// its merge completes. Fresh CI Simulators can still be inside that handoff
+    /// at the self-test's five-second mark, so presenting against the hidden
+    /// overlay never calls UIKit's presentation completion. Retry only inside
+    /// the DEBUG harness; real long-press handling remains immediate.
+    private func debugOpenQuickActionsWhenReady(remainingAttempts: Int = 80) {
+        guard remainingAttempts > 0 else {
+            AlmaPerfLog.event("robotSelfTest.longPressTimeout")
+            return
+        }
+
+        guard suppressionReasons.isEmpty,
+              overlay?.isHidden == false,
+              button?.isHidden == false,
+              button?.isUserInteractionEnabled == true,
+              overlay?.rootViewController?.presentedViewController == nil
+        else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.debugOpenQuickActionsWhenReady(
+                    remainingAttempts: remainingAttempts - 1
+                )
+            }
+            return
+        }
+
+        AlmaPerfLog.event("robotSelfTest.longPress")
+        openQuickActions { [weak self] in
+            RobotSelfTestTrace.mark("robotSelfTest.longPress")
+            self?.debugScheduleRemainingInteractions()
+        }
+    }
+
+    private func debugScheduleRemainingInteractions() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.debugDismissRobotPresentation()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            AlmaPerfLog.event("robotSelfTest.tapChat")
+            self?.openChat {
+                RobotSelfTestTrace.mark("robotSelfTest.tapChat")
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
             self?.debugDismissRobotPresentation()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            AlmaPerfLog.event("robotSelfTest.tapChat")
-            self?.openChat {
-                RobotSelfTestTrace.mark("robotSelfTest.tapChat")
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
-            self?.debugDismissRobotPresentation()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
             AlmaPerfLog.event("robotSelfTest.openCall")
             self?.openIntercom {
                 RobotSelfTestTrace.mark("robotSelfTest.openCall")
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 19) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
             self?.debugDismissRobotPresentation()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 21) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 16) { [weak self] in
             self?.debugAnimateDirectionalDrag()
         }
     }
