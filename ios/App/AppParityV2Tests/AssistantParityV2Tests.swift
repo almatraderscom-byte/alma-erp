@@ -55,6 +55,37 @@ final class AssistantParityV2Tests: XCTestCase {
                        "the delivered steer remains a separate canonical owner row")
     }
 
+    func testExactSteerAfterAnonymousInitialSendDoesNotMoveInitialBubbleToBottom() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        let initial = AgentChatMessage(
+            id: "local-initial", role: .user,
+            clientMessageId: "client-initial", outgoingState: .accepted,
+            text: "এই draft-টি voice retry-এর পরও থাকবে")
+        let steer = AgentChatMessage(
+            id: "local-steer", role: .user,
+            clientMessageId: "client-steer", outgoingState: .delivered,
+            text: "Sales report")
+        vm.messages = [initial, steer]
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-initial","clientMessageId":null,"role":"user","createdAt":"2026-08-05T02:20:00.000Z","content":[{"type":"text","text":"এই draft-টি voice retry-এর পরও থাকবে"}]},
+          {"id":"server-answer","role":"assistant","createdAt":"2026-08-05T02:20:01.000Z","content":[{"type":"text","text":"উত্তর"}]},
+          {"id":"server-steer","clientMessageId":"client-steer","role":"user","createdAt":"2026-08-05T02:20:02.000Z","content":[{"type":"text","text":"Sales report"}]}
+        ]
+        """#.utf8))
+
+        vm.debugMergeServerMessages(wire)
+
+        XCTAssertEqual(vm.messages.filter { $0.text.contains("draft-টি") }.count, 1,
+                       "the anonymous server copy must replace—not duplicate—the initial local row")
+        XCTAssertEqual(vm.messages.first?.id, "local-initial",
+                       "the first owner bubble must retain its SwiftUI identity and original position")
+        XCTAssertEqual(vm.messages.first?.serverId, "server-initial")
+        XCTAssertEqual(vm.messages.map(\.text),
+                       ["এই draft-টি voice retry-এর পরও থাকবে", "উত্তর", "Sales report"])
+    }
+
     func testRunningTurnSendClearsComposerAndCreatesOneVisibleQueueEntry() {
         let vm = AssistantVM()
         vm.loadMergeReadinessQueueFixture()
@@ -149,6 +180,74 @@ final class AssistantParityV2Tests: XCTestCase {
             return false
         }, 1)
         relaunched.debugClearChronologyAnchors()
+    }
+
+    func testOwnerAnchorUsesStableToolBoundaryWhenCanonicalBlockCountsShift() {
+        let clientMessageId = "semantic-boundary-\(UUID().uuidString)"
+        let toolId = "tool-before-steer"
+        let liveTool = AgentChatMessage.ActivityBlock(
+            id: "live-tool-row", kind: .tool, label: "Get Sales Summary",
+            toolId: "live-\(toolId)", ok: true)
+        let liveBlocks: [AgentChatMessage.TurnBlock] = [
+            .prose(id: "live-preamble", text: "বস, রিপোর্ট দেখছি।"),
+            .activity(liveTool),
+        ]
+        let anchor = AssistantVM.TurnOwnerAnchor(
+            clientMessageId: clientMessageId,
+            conversationId: "semantic-conversation",
+            turnId: "semantic-turn",
+            assistantServerId: "semantic-assistant",
+            beforeBlockCount: 3,
+            precedingBlockKeys: AssistantVM.ownerAnchorBoundaryKeys(in: liveBlocks),
+            createdAt: Date(timeIntervalSince1970: 1))
+
+        // Canonical projection dropped the live preamble and inserted a second
+        // tool before final prose. Count-based restore would place the owner at
+        // the bottom; the durable tool identity keeps the original read point.
+        let canonical: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "canonical-tool-one", kind: .tool,
+                            label: "Get Sales Summary", toolId: toolId, ok: true)),
+            .activity(.init(id: "canonical-tool-two", kind: .tool,
+                            label: "Get Pending Approvals", toolId: "tool-after-steer", ok: true)),
+            .prose(id: "canonical-final", text: "শেষ উত্তর"),
+        ]
+
+        let restored = AssistantVM.injectingOwnerAnchors([anchor], into: canonical)
+
+        XCTAssertEqual(restored.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == clientMessageId }
+            return false
+        }, 1)
+        XCTAssertEqual(AssistantVM.ownerAnchorBoundaryKey(restored[0]), "tool:\(toolId)")
+        XCTAssertEqual(AssistantVM.ownerAnchorBoundaryKey(restored[2]), "tool:tool-after-steer")
+    }
+
+    func testSemanticToolBoundaryKeepsFirstOccurrenceWhenLabelsRepeat() {
+        let live: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "live-one", kind: .tool, label: "Get Product",
+                            toolId: "live-call-one", ok: true)),
+        ]
+        let anchor = AssistantVM.TurnOwnerAnchor(
+            clientMessageId: "repeat-label-owner",
+            conversationId: "repeat-label-conversation",
+            turnId: "repeat-label-turn",
+            assistantServerId: "repeat-label-assistant",
+            beforeBlockCount: 1,
+            precedingBlockKeys: AssistantVM.ownerAnchorBoundaryKeys(in: live),
+            createdAt: Date(timeIntervalSince1970: 1))
+        let canonical: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "canonical-one", kind: .tool, label: "Get Product",
+                            toolId: "canonical-call-one", ok: true)),
+            .activity(.init(id: "canonical-two", kind: .tool, label: "Get Product",
+                            toolId: "canonical-call-two", ok: true)),
+        ]
+
+        let restored = AssistantVM.injectingOwnerAnchors([anchor], into: canonical)
+
+        XCTAssertEqual(restored.firstIndex {
+            if case .ownerMessage(_, let id) = $0 { return id == anchor.clientMessageId }
+            return false
+        }, 1)
     }
 
     func testRepeatedSteeringDeliveryKeepsOneOwnerBubbleAtFirstReadPoint() {

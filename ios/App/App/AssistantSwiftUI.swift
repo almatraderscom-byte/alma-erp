@@ -1857,6 +1857,11 @@ final class AssistantVM {
         var turnId: String?
         var assistantServerId: String?
         var beforeBlockCount: Int
+        /// Stable semantic identities of the assistant events already visible
+        /// when the running turn consumed this owner message. Server settle can
+        /// collapse/reorder presentation blocks, so a raw count is only a legacy
+        /// fallback; the last surviving predecessor key is the factual read point.
+        var precedingBlockKeys: [String]? = nil
         let createdAt: Date
         var sessionIdentity: String? = nil
     }
@@ -1922,6 +1927,100 @@ final class AssistantVM {
     /// Pure chronological reducer used by live streaming, reconciliation and
     /// relaunch restore. `beforeBlockCount` counts assistant blocks only, so an
     /// existing owner anchor never changes the position of a later one.
+    static func ownerAnchorBoundaryKey(_ block: AgentChatMessage.TurnBlock) -> String? {
+        switch block {
+        case .ownerMessage:
+            return nil
+        case .prose(_, let text):
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { return nil }
+            return "prose:\(String(clean.prefix(180)))"
+        case .activity(let activity):
+            if let toolId = activity.toolId, !toolId.isEmpty { return "tool:\(toolId)" }
+            let kind: String
+            switch activity.kind {
+            case .thinking: kind = "thinking"
+            case .progress: kind = "progress"
+            case .search: kind = "search"
+            case .tool: kind = "tool"
+            }
+            return "activity:\(kind):\(String(activity.label.prefix(180)))"
+        case .file(_, let artifactId, _):
+            return "file:\(artifactId)"
+        case .confirmCard(_, let pendingActionId):
+            return "confirm:\(pendingActionId)"
+        case .askCard(_, let askCardId):
+            return "ask:\(askCardId)"
+        }
+    }
+
+    /// Cross-projection tokens for the same factual event. Live SSE tool ids and
+    /// canonical presentation block ids are not guaranteed to be equal, so each
+    /// tool records both its id and a semantic label occurrence. The occurrence
+    /// suffix disambiguates repeated calls with the same display name.
+    static func ownerAnchorBoundaryKeys(
+        in blocks: [AgentChatMessage.TurnBlock]
+    ) -> [String] {
+        var occurrences: [String: Int] = [:]
+        var tokens: [String] = []
+        for block in blocks {
+            if case .activity(let activity) = block,
+               activity.kind == .tool,
+               let toolId = activity.toolId, !toolId.isEmpty {
+                tokens.append("tool-id:\(toolId)")
+            }
+            guard let base = ownerAnchorSemanticBase(block) else { continue }
+            let occurrence = (occurrences[base] ?? 0) + 1
+            occurrences[base] = occurrence
+            tokens.append("\(base)#\(occurrence)")
+        }
+        return tokens
+    }
+
+    private static func ownerAnchorSemanticBase(
+        _ block: AgentChatMessage.TurnBlock
+    ) -> String? {
+        switch block {
+        case .ownerMessage:
+            return nil
+        case .prose(_, let text):
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : "prose-text:\(String(clean.prefix(180)))"
+        case .activity(let activity):
+            let kind: String
+            switch activity.kind {
+            case .thinking: kind = "thinking"
+            case .progress: kind = "progress"
+            case .search: kind = "search"
+            case .tool: kind = "tool-label"
+            }
+            return "activity:\(kind):\(String(activity.label.prefix(180)))"
+        case .file(_, let artifactId, _): return "file:\(artifactId)"
+        case .confirmCard(_, let pendingActionId): return "confirm:\(pendingActionId)"
+        case .askCard(_, let askCardId): return "ask:\(askCardId)"
+        }
+    }
+
+    private static func ownerAnchorBoundaryIndex(
+        for token: String, in blocks: [AgentChatMessage.TurnBlock]
+    ) -> Int? {
+        var occurrences: [String: Int] = [:]
+        for (index, block) in blocks.enumerated() {
+            // Backward compatibility for anchors persisted by the first v1
+            // implementation, plus the new exact-id fast path.
+            if ownerAnchorBoundaryKey(block) == token { return index }
+            if case .activity(let activity) = block,
+               activity.kind == .tool,
+               let toolId = activity.toolId,
+               token == "tool-id:\(toolId)" { return index }
+            guard let base = ownerAnchorSemanticBase(block) else { continue }
+            let occurrence = (occurrences[base] ?? 0) + 1
+            occurrences[base] = occurrence
+            if token == "\(base)#\(occurrence)" { return index }
+        }
+        return nil
+    }
+
     static func injectingOwnerAnchors(
         _ anchors: [TurnOwnerAnchor], into source: [AgentChatMessage.TurnBlock]
     ) -> [AgentChatMessage.TurnBlock] {
@@ -1940,17 +2039,37 @@ final class AssistantVM {
             return $0.createdAt < $1.createdAt
         }
         for anchor in ordered {
-            let target = max(0, anchor.beforeBlockCount)
-            var assistantCount = 0
-            var insertion = 0
-            while insertion < result.count {
-                if case .ownerMessage = result[insertion] {
-                    insertion += 1
-                    continue
+            func legacyInsertionIndex() -> Int {
+                let target = max(0, anchor.beforeBlockCount)
+                var assistantCount = 0
+                var index = 0
+                while index < result.count {
+                    if case .ownerMessage = result[index] {
+                        index += 1
+                        continue
+                    }
+                    if assistantCount == target { break }
+                    assistantCount += 1
+                    index += 1
                 }
-                if assistantCount == target { break }
-                assistantCount += 1
-                insertion += 1
+                return index
+            }
+            var insertion: Int
+            if let keys = anchor.precedingBlockKeys {
+                if keys.isEmpty {
+                    insertion = 0
+                } else {
+                    let keyedBoundary = keys.reversed().compactMap { key in
+                        Self.ownerAnchorBoundaryIndex(for: key, in: result)
+                    }.first
+                    if let keyedBoundary {
+                        insertion = keyedBoundary + 1
+                    } else {
+                        insertion = legacyInsertionIndex()
+                    }
+                }
+            } else {
+                insertion = legacyInsertionIndex()
             }
             while insertion < result.count,
                   case .ownerMessage = result[insertion] {
@@ -2041,6 +2160,8 @@ final class AssistantVM {
                                     beforeBlockCount: Int? = nil) {
         ensureStreamingTail()
         guard let assistantIndex = messages.lastIndex(where: { $0.isStreaming }) else { return }
+        let precedingKeys = Array(Self.ownerAnchorBoundaryKeys(
+            in: messages[assistantIndex].blocks).suffix(32))
         let inferredCount = messages[assistantIndex].blocks.reduce(0) { count, block in
             if case .ownerMessage = block { return count }
             return count + 1
@@ -2052,11 +2173,15 @@ final class AssistantVM {
             if turnOwnerAnchors[index].turnId == nil {
                 turnOwnerAnchors[index].turnId = currentTurnId
             }
+            if turnOwnerAnchors[index].precedingBlockKeys == nil {
+                turnOwnerAnchors[index].precedingBlockKeys = precedingKeys
+            }
         } else {
             turnOwnerAnchors.append(.init(
                 clientMessageId: clientMessageId, conversationId: conversationId,
                 turnId: currentTurnId, assistantServerId: messages[assistantIndex].serverId,
-                beforeBlockCount: beforeBlockCount ?? inferredCount, createdAt: Date(),
+                beforeBlockCount: beforeBlockCount ?? inferredCount,
+                precedingBlockKeys: precedingKeys, createdAt: Date(),
                 sessionIdentity: selectedSessionIdentity))
             if turnOwnerAnchors.count > 200 {
                 turnOwnerAnchors.removeFirst(turnOwnerAnchors.count - 200)
@@ -3351,6 +3476,22 @@ final class AssistantVM {
         }
     }
 
+    /// Older message rows can omit `clientMessageId`. Match those anonymous
+    /// canonical rows by their complete owner payload before using positional
+    /// fallback. This matters when a later mid-turn steer *does* carry identity:
+    /// the newest server user is then already claimed, while the ordinary owner
+    /// send immediately before it would otherwise remain a timestamp-less local
+    /// row and be stable-sorted to the bottom of the completed turn.
+    private static func ownerPayloadMatches(local: AgentChatMessage,
+                                            server: AgentChatMessage) -> Bool {
+        guard local.role == .user, server.role == .user else { return false }
+        let localText = local.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverText = server.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard localText == serverText, local.fileRefs == server.fileRefs else { return false }
+        // An entirely empty row has no safe identity signal.
+        return !localText.isEmpty || !local.fileRefs.isEmpty
+    }
+
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
@@ -3366,6 +3507,30 @@ final class AssistantVM {
                   }) else { continue }
             _ = claimLocalRowId(serverId: serverUser.id, localId: localUser.id,
                                 activeServerIds: activeServerIds)
+        }
+
+
+        // Pair every still-anonymous server owner row, oldest-to-oldest, using
+        // exact payload identity. Do this before the legacy last-row fallback:
+        // a delivered steer later in the same history page may already own the
+        // final server-user slot, but must not prevent its preceding normal send
+        // from converging with server truth.
+        var claimedLocalOwnerIds = Set(localIdByServerId.values)
+        for serverIndex in incoming.indices
+        where incoming[serverIndex].role == .user
+            && incoming[serverIndex].clientMessageId == nil
+            && localIdByServerId[incoming[serverIndex].id] == nil {
+            guard let localUser = messages.first(where: {
+                $0.role == .user && $0.id.hasPrefix("local-")
+                    && $0.outgoingState != .queued
+                    && !claimedLocalOwnerIds.contains($0.id)
+                    && Self.ownerPayloadMatches(local: $0, server: incoming[serverIndex])
+                    && positionalPairIsSafe(local: $0, server: incoming[serverIndex], incoming: incoming)
+            }) else { continue }
+            if claimLocalRowId(serverId: incoming[serverIndex].id, localId: localUser.id,
+                               activeServerIds: activeServerIds) {
+                claimedLocalOwnerIds.insert(localUser.id)
+            }
         }
 
         // Pair the optimistic user message + streamed assistant tail with their
