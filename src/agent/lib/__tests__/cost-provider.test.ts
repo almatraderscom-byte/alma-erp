@@ -3,6 +3,7 @@ import {
   effectiveCostProvider,
   modelProviderToCostProvider,
 } from '@/agent/lib/cost-provider'
+import { COST_PROVIDERS, isCostProvider } from '@/agent/lib/pricing'
 
 describe('cost provider attribution', () => {
   it('records new direct xAI model spend in its own provider bucket', () => {
@@ -15,5 +16,12 @@ describe('cost provider attribution', () => {
 
   it('keeps legacy fallback behavior when units do not identify a provider', () => {
     expect(effectiveCostProvider(undefined, 'twilio')).toBe('twilio')
+  })
+
+  it('accepts every paid Creative Studio image provider at the cost-event boundary', () => {
+    expect(COST_PROVIDERS).toEqual(expect.arrayContaining(['fal', 'fashn']))
+    expect(isCostProvider('fal')).toBe(true)
+    expect(isCostProvider('fashn')).toBe(true)
+    expect(isCostProvider('unknown-provider')).toBe(false)
   })
 })

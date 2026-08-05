@@ -200,6 +200,22 @@ export async function detectPersonBoxes(imageBuf, onDebug) {
   return geminiBox2d(imageBuf, PERSON_BOX_INSTRUCTION, onDebug)
 }
 
+/**
+ * Signed Studio plans price garment prep as local/free. Keep their overlapping
+ * person fallback local as well: the remote Gemini detector is reachable only
+ * through the explicitly legacy compatibility option.
+ */
+export async function detectPersonBoxesForPrep(
+  imageBuf,
+  { allowPaidCleanup, onDebug } = {},
+) {
+  if (!allowPaidCleanup) {
+    onDebug?.({ reason: 'signed_run_uses_local_person_split_only' })
+    return []
+  }
+  return detectPersonBoxes(imageBuf, onDebug)
+}
+
 async function geminiBox2d(imageBuf, instruction, onDebug) {
   const key = process.env.GEMINI_API_KEY
   if (!key) { onDebug?.({ reason: 'no_key' }); return [] }
@@ -387,7 +403,13 @@ async function writeCache(supabase, imagePath, result) {
  * @returns {Promise<{multiPerson:boolean, persons:Array<{path:string,heightPx:number}>,
  *   adultGarmentPath:string|null, childGarmentPath:string|null}>}
  */
-export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, logCost }) {
+export async function prepSupplierPhoto({
+  supabase,
+  imagePath,
+  pendingActionId,
+  logCost,
+  allowPaidCleanup = true,
+}) {
   const cached = await readCache(supabase, imagePath)
   if (cached?.persons) return cached
 
@@ -452,7 +474,9 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     // claims the overlap pixels first
     if (!personMasks.length) {
       const detPng = await sharp(basePng).resize(512, null).png().toBuffer()
-      const pboxes = await detectPersonBoxes(detPng)
+      const pboxes = await detectPersonBoxesForPrep(detPng, {
+        allowPaidCleanup,
+      })
       if (pboxes.length >= 2) {
         const claimed = new Uint8Array(smallW * smallH)
         const px = pboxes.map((b) => ({
@@ -537,7 +561,9 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
     // is boxed by a narrow mechanical Gemini call and repainted by FLUX Fill
     // under a protected composite
     const debug = { crop: i + 1, boxes: 0, inpainted: false, reason: null, det: [] }
-    const boxes = await detectOverlayTextBoxes(crop, (d) => debug.det.push(d))
+    const boxes = allowPaidCleanup
+      ? await detectOverlayTextBoxes(crop, (d) => debug.det.push(d))
+      : []
     debug.boxes = boxes.length
     if (boxes.length) {
       const before = crop
@@ -547,7 +573,9 @@ export async function prepSupplierPhoto({ supabase, imagePath, pendingActionId, 
       })
       debug.inpainted = crop !== before
     } else {
-      debug.reason = 'no_boxes_detected'
+      debug.reason = allowPaidCleanup
+        ? 'no_boxes_detected'
+        : 'signed_run_uses_local_cleanup_only'
     }
     textScrubDebug.push(debug)
     console.log(`[garment-prep] crop ${i + 1} text-scrub debug: ${JSON.stringify(debug)}`)

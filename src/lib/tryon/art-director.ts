@@ -1,8 +1,16 @@
 import { agentStorageDownload } from '@/agent/lib/storage'
 import { logCost } from '@/agent/lib/cost-events'
 
-const VISION_MODEL = 'gemini-2.0-flash'
-const CACHE_PREFIX = 'tryon_garment_attrs:'
+// Gemini 2.0 Flash was shut down on 2026-06-01. Keep preflight vision on a
+// current GA multimodal model so a retired endpoint cannot silently turn every
+// clean product reference into `unknown` and block Auto before confirmation.
+export const GARMENT_VISION_MODEL = 'gemini-3.6-flash'
+// v3 includes visual presentation plus dominant-garment safety. The old cache
+// could call a one-child crop a family poster after seeing a stray adult hand,
+// then block the clean replacement forever under the same object path.
+const CACHE_PREFIX = 'tryon_garment_attrs_v3:'
+const GARMENT_VISION_INPUT_USD_PER_M = 1.5
+const GARMENT_VISION_OUTPUT_USD_PER_M = 7.5
 
 export type TryOnStyle = 'studio' | 'outdoor_bd' | 'festival' | 'lifestyle'
 export type TryOnPose = 'front' | 'three_quarter' | 'walking' | 'sitting' | 'detail'
@@ -54,6 +62,11 @@ export type GarmentAttrs = {
   hasContrastBottom: boolean
   suggestedRole: GarmentRole
   notes: string
+  /** Number of distinct torsos visibly wearing a garment (a stray hand is not a wearer). */
+  visibleWearers?: number
+  photoType?: 'on_model' | 'flat_lay' | 'mannequin' | 'multi_person' | 'unknown'
+  /** True only when one foreground garment is unambiguous despite incidental people/limbs. */
+  singleGarmentDominant?: boolean
 }
 
 interface GarmentSpec {
@@ -127,6 +140,7 @@ const VALID_ROLES = new Set<string>(['father', 'son', 'single', 'family'])
 export const NEGATIVE_DIRECTIVES =
   "STRICTLY AVOID: changing the garment's color, pattern, embroidery, cut or length; " +
   'adding any motif, logo, text, or jewelry not present in the product; ' +
+  'adding tattoos, body art, scars, watches, jewelry, accessories, skin markings or exposed skin not present in the model reference; ' +
   'redesigning or "improving" the outfit; westernizing the garment or the model\'s face; ' +
   'plastic/over-smoothed AI skin, waxy highlights, or beauty-filter slimming of the model; ' +
   'warped or extra fingers/hands, distorted limbs, asymmetric eyes; ' +
@@ -140,8 +154,11 @@ const CLASSIFY_PROMPT = `Analyze this clothing PRODUCT photo for a Bangladeshi m
   "embroideryZones": ["collar","placket","chest","cuff","hem"],
   "hasContrastBottom": false,
   "suggestedRole": one of [father,son,single,family],
+  "visibleWearers": 1,
+  "photoType": one of [on_model,flat_lay,mannequin,multi_person,unknown],
+  "singleGarmentDominant": true,
   "notes": "any distinctive detail to preserve (specific motif, unusual collar, etc.)" }
-Only describe what is visibly present. If unsure, use "unknown". No prose, JSON only.`
+Count distinct visible TORSOS wearing garments; an isolated hand/arm entering the frame is NOT another wearer. singleGarmentDominant is true only when ONE foreground garment is clearly the intended product and can be extracted unambiguously; blurred/transparent background silhouettes or a partial arm do not make it false. It is false for a balanced family poster where two or more complete outfits compete equally. Use family_matching_set only when TWO OR MORE distinct garments/wearers are visibly present; one child wearing one panjabi is kids_panjabi even if an adult hand touches the child's shoulder. Only describe what is visibly present. If unsure, use "unknown". No prose, JSON only.`
 
 const UNKNOWN_ATTRS: GarmentAttrs = {
   garmentType: 'unknown',
@@ -151,6 +168,36 @@ const UNKNOWN_ATTRS: GarmentAttrs = {
   hasContrastBottom: false,
   suggestedRole: 'single',
   notes: '',
+  visibleWearers: 0,
+  photoType: 'unknown',
+  singleGarmentDominant: false,
+}
+
+/** Never let a transient vision failure poison a product path indefinitely. */
+export function isUsableGarmentClassification(attrs: GarmentAttrs): boolean {
+  return attrs.garmentType !== 'unknown'
+    || attrs.dominantColors.length > 0
+    || Boolean(attrs.fabricGuess || attrs.notes)
+    || attrs.embroideryZones.length > 0
+}
+
+/** Paid Auto runs fail closed when the reference cannot identify one garment. */
+export function autoProductReferenceError(
+  attrs: GarmentAttrs,
+  includeFamily = false,
+): 'product_reference_unclassified' | 'family_product_requires_role_crop' | null {
+  if (!isUsableGarmentClassification(attrs)) return 'product_reference_unclassified'
+  // A narrow one-person crop from a matching collection is a valid single
+  // product reference. Block only actual/unknown multi-garment presentations.
+  if (
+    !includeFamily
+    && attrs.garmentType === 'family_matching_set'
+    && attrs.visibleWearers !== 1
+    && attrs.singleGarmentDominant !== true
+  ) {
+    return 'family_product_requires_role_crop'
+  }
+  return null
 }
 
 export function normalizeGarmentType(value?: string | null, fallback?: GarmentType): GarmentType {
@@ -189,6 +236,13 @@ function parseGarmentAttrs(raw: unknown): GarmentAttrs {
     hasContrastBottom: o.hasContrastBottom === true,
     suggestedRole,
     notes: typeof o.notes === 'string' ? o.notes : '',
+    visibleWearers: Number.isFinite(Number(o.visibleWearers))
+      ? Math.max(0, Math.min(8, Math.trunc(Number(o.visibleWearers))))
+      : undefined,
+    photoType: ['on_model', 'flat_lay', 'mannequin', 'multi_person', 'unknown'].includes(String(o.photoType))
+      ? o.photoType as GarmentAttrs['photoType']
+      : 'unknown',
+    singleGarmentDominant: o.singleGarmentDominant === true,
   }
 }
 
@@ -207,6 +261,7 @@ async function readGarmentCache(cacheKey: string): Promise<GarmentAttrs | null> 
 }
 
 async function writeGarmentCache(cacheKey: string, attrs: GarmentAttrs): Promise<void> {
+  if (!isUsableGarmentClassification(attrs)) return
   try {
     const { prisma } = await import('@/lib/prisma')
     await prisma.agentKvSetting.upsert({
@@ -240,7 +295,7 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
 
   const mimeType = mimeFromPath(productImagePath)
   const base64 = buffer.toString('base64')
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${key}`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GARMENT_VISION_MODEL}:generateContent?key=${key}`
 
   try {
     const res = await fetch(url, {
@@ -253,12 +308,22 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
             { inline_data: { mime_type: mimeType, data: base64 } },
           ],
         }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
+        generationConfig: {
+          maxOutputTokens: 512,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingLevel: 'minimal' },
+        },
       }),
       signal: AbortSignal.timeout(30_000),
     })
 
-    if (!res.ok) return { ...UNKNOWN_ATTRS }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.warn(
+        `[art-director] garment attrs HTTP ${res.status} (${GARMENT_VISION_MODEL}): ${body.slice(0, 240)}`,
+      )
+      return { ...UNKNOWN_ATTRS }
+    }
 
     const data = await res.json() as {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
@@ -273,8 +338,11 @@ export async function classifyGarment(productImagePath: string): Promise<Garment
     void logCost({
       provider: 'gemini',
       kind: 'cs_vision',
-      units: { model: VISION_MODEL, tokens_in: tokensIn, tokens_out: tokensOut, purpose: 'garment_classify' },
-      costUsd: 0.0001,
+      units: { model: GARMENT_VISION_MODEL, tokens_in: tokensIn, tokens_out: tokensOut, purpose: 'garment_classify' },
+      costUsd: (
+        tokensIn * GARMENT_VISION_INPUT_USD_PER_M
+        + tokensOut * GARMENT_VISION_OUTPUT_USD_PER_M
+      ) / 1_000_000,
       dedupKey: `garment_classify:${productImagePath}`,
     })
 
@@ -297,7 +365,7 @@ export async function getOrClassifyGarment(
 
   for (const key of keys) {
     const cached = await readGarmentCache(key)
-    if (cached) return cached
+    if (cached && isUsableGarmentClassification(cached)) return cached
   }
 
   const attrs = await classifyGarment(productImagePath)

@@ -7,4 +7,8 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
-dotenv.config({ path: join(__dir, '../.env'), override: true })
+const configuredEnvFile = String(process.env.WORKER_ENV_FILE ?? '').trim()
+dotenv.config({
+  path: configuredEnvFile || join(__dir, '../.env'),
+  override: true,
+})

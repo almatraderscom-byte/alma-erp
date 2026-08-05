@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 type ActionRow = {
   id: string
+  dedupeKey?: string
   conversationId: string | null
   type: string
   payload: Record<string, unknown>
@@ -25,6 +26,7 @@ type ActionRow = {
 const actions: ActionRow[] = []
 const kv = new Map<string, string>()
 let idCounter = 0
+const recoveryState = vi.hoisted(() => ({ gateCalls: 0 }))
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -40,8 +42,32 @@ vi.mock('@/lib/prisma', () => ({
         return row
       },
       findMany: async () => [...actions].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
-      findUnique: async ({ where }: { where: { id: string } }) =>
-        actions.find((a) => a.id === where.id) ?? null,
+      findUnique: async ({
+        where,
+      }: {
+        where: { id?: string; dedupeKey?: string }
+      }) => actions.find((a) =>
+        (where.id && a.id === where.id)
+        || (where.dedupeKey && a.dedupeKey === where.dedupeKey),
+      ) ?? null,
+      upsert: async ({
+        where,
+        create,
+      }: {
+        where: { dedupeKey: string }
+        create: Omit<ActionRow, 'id' | 'createdAt' | 'result'>
+      }) => {
+        const existing = actions.find((a) => a.dedupeKey === where.dedupeKey)
+        if (existing) return existing
+        const row: ActionRow = {
+          ...create,
+          id: `action-${++idCounter}`,
+          result: null,
+          createdAt: new Date(Date.now() + idCounter),
+        }
+        actions.push(row)
+        return row
+      },
     },
     agentKvSetting: {
       findUnique: async ({ where }: { where: { key: string } }) =>
@@ -56,6 +82,12 @@ vi.mock('@/lib/prisma', () => ({
         return data
       },
     },
+  },
+}))
+
+vi.mock('@/lib/creative-studio/studio-run-execution-gate', () => ({
+  assertStudioRunExecutionGate: async () => {
+    recoveryState.gateCalls += 1
   },
 }))
 
@@ -79,14 +111,74 @@ vi.mock('@/lib/tryon/model-library', () => ({
 }))
 
 import {
-  startFamilyChain,
-  startSingleRescueChain,
+  startFamilyChain as startFamilyChainAuthorized,
+  startSingleRescueChain as startSingleRescueChainAuthorized,
   advanceFamilyChain,
   getChainProgress,
-  FamilyChainModelError,
   type FamilyChainState,
 } from '@/lib/tryon/family-chain'
-import { BD_SCENES, pickScene } from '@/lib/tryon/scene-pool'
+import { BD_SCENES, PAIR_POSES, pickScene } from '@/lib/tryon/scene-pool'
+import {
+  issueStudioRunEstimate,
+  verifyStudioRunEstimateReceipt,
+} from '@/lib/creative-studio/studio-run-authorization'
+import { withStudioRunExecutionContext } from '@/lib/creative-studio/studio-run-context'
+import type { StudioReferenceContract } from '@/lib/creative-studio/advanced-image-capabilities'
+
+function issueAuthorizedRun() {
+  const estimate = issueStudioRunEstimate({
+    scope: {
+      actorUserId: 'owner-1',
+      ownerId: 'owner-1',
+      role: 'owner',
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+      productId: 'product-1',
+      sourceAssetIds: ['asset-1'],
+      familyModelPins: Object.values(modelLibrary).map((model) => ({
+        role: model.role as 'father' | 'mother' | 'son' | 'daughter',
+        modelId: model.id,
+        modelImagePath: model.imagePath,
+        sourceImagePath: model.imagePath,
+        modelName: model.name,
+      })),
+    },
+    request: { mode: 'product_to_model' },
+    selection: {
+      mode: 'product_to_model',
+      architecture: 'advanced',
+      provider: 'gemini',
+      model: 'gemini-2.5-flash-image',
+      providers: ['google', 'fashn', 'fal'],
+      models: ['gemini-2.5-flash-image', 'tryon-max'],
+      plan: ['family_chain'],
+      paidAttemptLimit: 3,
+    },
+    estimateBdt: 500,
+    requestedCapBdt: 500,
+  })
+  const claims = verifyStudioRunEstimateReceipt(estimate.receipt, {
+    phase: 'execute',
+  })
+  return { claims, receipt: estimate.receipt }
+}
+
+async function withAuthorizedRun<T>(run: () => Promise<T>): Promise<T> {
+  const authorized = issueAuthorizedRun()
+  return withStudioRunExecutionContext({
+    claims: authorized.claims,
+    receipt: authorized.receipt,
+    idempotencyKey: `family-chain-test:${authorized.claims.receiptId}`,
+  }, run)
+}
+
+const startFamilyChain = (
+  input: Parameters<typeof startFamilyChainAuthorized>[0],
+) => withAuthorizedRun(() => startFamilyChainAuthorized(input))
+
+const startSingleRescueChain = (
+  input: Parameters<typeof startSingleRescueChainAuthorized>[0],
+) => withAuthorizedRun(() => startSingleRescueChainAuthorized(input))
 
 function seedModels(roles: string[]) {
   for (const role of roles) {
@@ -125,9 +217,12 @@ async function passPrep(): Promise<ActionRow> {
 }
 
 beforeEach(() => {
+  process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET =
+    'test-only-studio-run-confirmation-secret'
   actions.length = 0
   kv.clear()
   idCounter = 0
+  recoveryState.gateCalls = 0
   for (const k of Object.keys(modelLibrary)) delete modelLibrary[k]
 })
 
@@ -140,9 +235,63 @@ describe('scene pool', () => {
     expect(p.childPose).toBeTruthy()
     expect(p.pairPose).toBeTruthy()
   })
+
+  it('keeps child-family poses non-contact so the merge cannot fuse hands', () => {
+    for (const pose of PAIR_POSES) {
+      expect(pose.toLowerCase()).not.toMatch(/hand in hand|hand resting|touching|physical contact/)
+    }
+  })
 })
 
 describe('startFamilyChain', () => {
+  it('consumes the signed family paths even if the global role rows change before construction', async () => {
+    seedModels(['father', 'son'])
+    const authorized = issueAuthorizedRun()
+    modelLibrary.father.imagePath = 'models/reassigned-father.jpg'
+    modelLibrary.son.imagePath = 'models/reassigned-son.jpg'
+
+    await withStudioRunExecutionContext({
+      claims: authorized.claims,
+      receipt: authorized.receipt,
+      idempotencyKey: `family-pins:${authorized.claims.receiptId}`,
+    }, () => startFamilyChainAuthorized({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+    }))
+
+    const state = chainState(lastAction())
+    expect(state.adultModelPath).toBe('models/father.jpg')
+    expect(state.childModelPath).toBe('models/son.jpg')
+  })
+
+  it('recovers the exact first family step after a crash even when the retry picks another scene', async () => {
+    seedModels(['father', 'son'])
+    const authorized = issueAuthorizedRun()
+    const run = () => withStudioRunExecutionContext({
+      claims: authorized.claims,
+      receipt: authorized.receipt,
+      idempotencyKey: `family-recovery:${authorized.claims.receiptId}`,
+    }, () => startFamilyChainAuthorized({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+    }))
+    const random = vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.999999)
+    try {
+      const first = await run()
+      const originalScene = chainState(actions[0]).scene
+      const recovered = await run()
+
+      expect(recovered.jobs[0].pendingActionId).toBe(first.jobs[0].pendingActionId)
+      expect(actions).toHaveLength(1)
+      expect(chainState(actions[0]).scene).toEqual(originalScene)
+      expect(recoveryState.gateCalls).toBe(1)
+    } finally {
+      random.mockRestore()
+    }
+  })
+
   it('throws FamilyChainModelError naming missing roles instead of silently using an adult', async () => {
     seedModels(['father'])
     await expect(
@@ -164,6 +313,10 @@ describe('startFamilyChain', () => {
     expect(row.payload.fashnInputs).toEqual({
       model_image: 'models/father.jpg',
       product_image: 'uploads/panjabi.jpg',
+    })
+    expect((row.payload.referenceContract as StudioReferenceContract).bindings[0]).toMatchObject({
+      source: 'saved_model',
+      sourceId: 'model-father',
     })
     const state = chainState(row)
     expect(state.plan).toEqual(['garment_prep', 'adult_tryon', 'child_tryon', 'pair_merge'])
@@ -202,6 +355,10 @@ describe('chain advance — father_son end to end', () => {
       model_image: 'models/son.jpg',
       product_image: 'uploads/panjabi.jpg',
     })
+    expect((row.payload.referenceContract as StudioReferenceContract).bindings[0]).toMatchObject({
+      source: 'saved_model',
+      sourceId: 'model-son',
+    })
 
     // Step 2: child shot done
     nextId = await completeStep(row, 'generated/son-shot.png')
@@ -212,6 +369,9 @@ describe('chain advance — father_son end to end', () => {
     expect(row.payload.referenceImageId).toBe('generated/father-shot.png')
     expect(row.payload.secondReferenceImageId).toBe('generated/son-shot.png')
     expect(String(row.payload.prompt)).toContain('SCENE')
+    expect(String(row.payload.prompt)).toContain('no physical contact')
+    expect(String(row.payload.prompt)).toContain('visible gap')
+    expect(String(row.payload.prompt)).toContain('Do not add a watch')
 
     // Step 4: merge done → chain complete, no further action
     nextId = await completeStep(row, 'generated/family.png')
@@ -268,17 +428,82 @@ describe('single rescene chain', () => {
     const { pendingActionId } = await startSingleRescueChain({
       productImagePath: 'uploads/panjabi.jpg',
       modelImagePath: 'models/owner.jpg',
+      modelRole: 'son',
+      backgroundPrompt: 'clean owner-selected warm studio',
     })
-    const first = actions.find((a) => a.id === pendingActionId)!
+    const prep = actions.find((a) => a.id === pendingActionId)!
+    expect(prep.payload.provider).toBe('garment_prep')
+    const first = await passPrep()
     expect(first.payload.provider).toBe('fashn')
 
     const nextId = await completeStep(first, 'generated/tryon.png')
     const rescene = actions.find((a) => a.id === nextId)!
     expect(rescene.payload.referenceImageId).toBe('generated/tryon.png')
-    expect(String(rescene.payload.prompt)).toContain('background')
+    expect(rescene.payload.referenceImageIds).toEqual([
+      'generated/tryon.png',
+      'models/owner.jpg',
+      'uploads/panjabi.jpg',
+    ])
+    expect(rescene.payload.qcSurface).toBe('single_tryon')
+    expect(String(rescene.payload.prompt)).toMatch(/background/i)
+    expect(String(rescene.payload.prompt)).toContain('clean owner-selected warm studio')
+    expect(String(rescene.payload.prompt)).toContain('selected person role is son')
+    expect(String(rescene.payload.prompt)).not.toContain('mosque')
 
     const done = await completeStep(rescene, 'generated/final.png')
     expect(done).toBeNull()
+  })
+
+  it('keeps every signed chain image in the isolated preview lane', async () => {
+    const previous = process.env.VERCEL_ENV
+    process.env.VERCEL_ENV = 'preview'
+    try {
+      const { pendingActionId } = await startSingleRescueChain({
+        productImagePath: 'uploads/panjabi.jpg',
+        modelImagePath: 'models/owner.jpg',
+      })
+      const prep = actions.find((a) => a.id === pendingActionId)!
+      expect(prep.status).toBe('preview_approved')
+      const first = await passPrep()
+      expect(first.status).toBe('preview_approved')
+      const nextId = await completeStep(first, 'generated/tryon.png')
+      const rescene = actions.find((a) => a.id === nextId)!
+      expect(rescene.status).toBe('preview_approved')
+    } finally {
+      if (previous === undefined) delete process.env.VERCEL_ENV
+      else process.env.VERCEL_ENV = previous
+    }
+  })
+
+  it('carries the selected tier and aspect into the final rescene instead of hard-coding 2K', async () => {
+    const { pendingActionId } = await startSingleRescueChain({
+      productImagePath: 'uploads/panjabi.jpg',
+      modelImagePath: 'models/owner.jpg',
+      aspectRatio: '16:9',
+      resolution: '4k',
+      imageModel: 'gpt-image-2',
+    })
+    const prep = actions.find((a) => a.id === pendingActionId)!
+    expect(prep.payload.provider).toBe('garment_prep')
+    const first = await passPrep()
+    expect((first.payload.referenceContract as Record<string, unknown>).actualModel).toBe('tryon-max')
+    const nextId = await completeStep(first, 'generated/tryon.png')
+    const rescene = actions.find((a) => a.id === nextId)!
+
+    expect(rescene.payload.provider).toBe('generic_image')
+    expect(rescene.payload.imageModel).toBe('gpt-image-2')
+    expect(rescene.payload.aspectRatio).toBe('16:9')
+    expect(rescene.payload.imageSize).toBe('4K')
+    expect(rescene.payload.requestedResolution).toBe('4k')
+    expect(rescene.payload.requestedAspectRatio).toBe('16:9')
+    expect((rescene.payload.referenceContract as Record<string, unknown>).actualModel).toBe('gpt-image-2')
+    expect((rescene.payload.controlContract as {
+      applied: Record<string, unknown>
+    }).applied).toMatchObject({
+      model: 'gpt-image-2',
+      aspectRatio: '16:9',
+      resolution: '4k',
+    })
   })
 })
 
@@ -406,7 +631,7 @@ describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
     expect(row.payload.modelImagePath).toBe('models/father.jpg')
     expect(row.payload.productImagePath).toBe('uploads/panjabi.jpg')
 
-    let nextId = await completeStep(row, 'generated/adult.png')
+    const nextId = await completeStep(row, 'generated/adult.png')
     row = actions.find((a) => a.id === nextId)!
     // child tryon = fal with the SAME adult garment (no AI child garment)
     expect(row.payload.provider).toBe('fal')
@@ -426,6 +651,27 @@ describe('owner directive 2026-07-17 — chain VTON on Fal', () => {
 // ── supplier-photo garment prep (owner 2026-07-17) ───────────────────────────
 
 describe('garment_prep step — reseller photos, never garment-only', () => {
+  it('single on-model supplier reference is normalized and tagged for FAL extraction', async () => {
+    await startSingleRescueChain({
+      productImagePath: 'uploads/worn-kids-panjabi.jpg',
+      modelImagePath: 'models/son.jpg',
+      modelRole: 'son',
+      vtonEngine: 'fal_fashn_v16',
+    })
+    const prep = lastAction()
+    expect(prep.payload.provider).toBe('garment_prep')
+
+    const nextId = await completeStep(prep, '', {
+      garmentPrep: true,
+      adultGarmentPath: 'prepped/worn-kids-panjabi-p1.png',
+      childGarmentPath: null,
+    })
+    const tryon = actions.find((a) => a.id === nextId)!
+    expect(tryon.payload.productImagePath).toBe('prepped/worn-kids-panjabi-p1.png')
+    expect(tryon.payload.garmentPhotoType).toBe('model')
+    expect(tryon.payload.falEndpointId).toBe('fal-ai/fashn/tryon/v1.6')
+  })
+
   it('prep runs FIRST and real child crop drops the AI child_garment step', async () => {
     seedModels(['father', 'son'])
     await startFamilyChain({

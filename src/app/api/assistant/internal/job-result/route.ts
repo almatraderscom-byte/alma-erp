@@ -96,6 +96,45 @@ export async function POST(req: NextRequest) {
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
   if (action.status === 'executed' || action.status === 'failed') {
+    // A callback may have committed the step result before chain advancement or
+    // project-asset rebinding completed. Reconcile executed chain steps on
+    // replay; constructors are receipt-deduped, so this cannot double-spend.
+    const replayPayload = action.payload as Record<string, unknown> | null
+    if (action.status === 'executed' && replayPayload?.familyChain) {
+      try {
+        const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
+        const replayResult = action.result as Record<string, unknown> | null
+        await advanceFamilyChain(
+          action,
+          typeof replayResult?.storagePath === 'string' ? replayResult.storagePath : undefined,
+        )
+      } catch (chainError) {
+        console.error('[job-result] family-chain replay reconcile failed:', chainError)
+        return Response.json({ error: 'family_chain_reconcile_failed' }, { status: 503 })
+      }
+    }
+    if (replayPayload?.creativeStudio) {
+      try {
+        const { reconcileStudioResultProjectAsset } = await import('@/lib/creative-studio/project-service')
+        await reconcileStudioResultProjectAsset(pendingActionId)
+      } catch (assetError) {
+        console.error('[job-result] studio project-asset replay reconcile failed:', assetError)
+        return Response.json({ error: 'studio_project_asset_reconcile_failed' }, { status: 503 })
+      }
+    }
+    // CSE4 callback replay may mean the stage row committed but the pack
+    // reconciliation/lineage write did not. Re-run that idempotent hook before
+    // acknowledging the duplicate so a restart cannot leave the pack stale.
+    const campaignPack = (action.payload as Record<string, unknown> | null)?.campaignPack
+    if (campaignPack && typeof campaignPack === 'object') {
+      try {
+        const { reconcileCampaignPackStageResult } = await import('@/lib/creative-studio/campaign-pack-service')
+        await reconcileCampaignPackStageResult(action.id)
+      } catch (campaignError) {
+        console.error('[job-result] campaign-pack replay reconcile failed:', campaignError)
+        return Response.json({ error: 'campaign_pack_reconcile_failed' }, { status: 503 })
+      }
+    }
     return Response.json({ ok: true, idempotent: true, status: action.status })
   }
 
@@ -107,6 +146,21 @@ export async function POST(req: NextRequest) {
       resolvedAt: new Date(),
     },
   })
+
+  // CSE4 stages own their completion UX inside CampaignPackProgress. Reconcile
+  // the root pack + CSE3 asset lineage here, then stop before generic chat,
+  // workflow, Telegram, or video approval-card side effects can fire.
+  const campaignPack = (action.payload as Record<string, unknown> | null)?.campaignPack
+  if (campaignPack && typeof campaignPack === 'object') {
+    try {
+      const { reconcileCampaignPackStageResult } = await import('@/lib/creative-studio/campaign-pack-service')
+      await reconcileCampaignPackStageResult(action.id)
+      return Response.json({ ok: true, campaignPack: true })
+    } catch (campaignError) {
+      console.error('[job-result] campaign-pack reconcile failed:', campaignError)
+      return Response.json({ error: 'campaign_pack_reconcile_failed' }, { status: 503 })
+    }
+  }
 
   // Phase 5: the worker reported — free the execution lease and sync the
   // canonical WorkflowRun to the card's final status right away (turn-start
@@ -164,6 +218,19 @@ export async function POST(req: NextRequest) {
       if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
     } catch (chainErr) {
       console.error('[job-result] family chain advance failed:', chainErr)
+    }
+  }
+
+  // The final artifact belongs in its signed project even if the browser tab
+  // closed before the old client-side catalog POST. Await and retry through the
+  // idempotent callback path so Gallery can never silently lose a paid result.
+  if (payload.creativeStudio) {
+    try {
+      const { reconcileStudioResultProjectAsset } = await import('@/lib/creative-studio/project-service')
+      await reconcileStudioResultProjectAsset(pendingActionId)
+    } catch (assetError) {
+      console.error('[job-result] studio project-asset reconcile failed:', assetError)
+      return Response.json({ error: 'studio_project_asset_reconcile_failed' }, { status: 503 })
     }
   }
 

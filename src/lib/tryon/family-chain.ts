@@ -23,11 +23,27 @@
  * callback) queues the next step when one finishes. No new job types, no new
  * tables — caches live in agent_kv_settings like the garment classifier's.
  */
-import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { getOrClassifyGarment, normalizeGarmentType, type GarmentAttrs } from '@/lib/tryon/art-director'
-import { listModelsByRole, type SavedModel } from '@/lib/tryon/model-library'
+import type { SavedModel } from '@/lib/tryon/model-library'
 import { pickScene, pickSceneWeighted, toSceneRef, type SceneRef } from '@/lib/tryon/scene-pool'
+import type {
+  GenericImageModel,
+  StudioReferenceBinding,
+  StudioReferenceContract,
+} from '@/lib/creative-studio/advanced-image-capabilities'
+import type { StudioModeId } from '@/lib/creative-studio/constants'
+import {
+  currentStudioRunExecutionContext,
+  recoveredStudioRunJobId,
+  studioRunAuthorizedJobFields,
+} from '@/lib/creative-studio/studio-run-context'
+import type {
+  StudioRunEstimateReceiptClaims,
+  StudioRunFamilyModelPin,
+} from '@/lib/creative-studio/studio-run-authorization'
+import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
+import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -83,6 +99,8 @@ export type FamilyChainState = {
   garmentType: string
   fabricNote?: string
   adultRole: 'father' | 'mother'
+  /** Exact saved-model role for a single-person chain. */
+  singleModelRole?: 'father' | 'mother' | 'son' | 'daughter' | 'single'
   childRole?: 'son' | 'daughter' | 'mother'
   adultModelPath: string
   childModelPath?: string
@@ -99,8 +117,12 @@ export type FamilyChainState = {
   aspectRatio: string
   resolution: string
   generationMode: string
+  /** Immutable model for every generic image step in this chain. */
+  imageModel?: GenericImageModel
   /** owner's optional free-text direction, carried into generation prompts */
   extraPrompt?: string
+  /** Receipt-pinned quality policy for every paid step and QC retry. */
+  pipelineMode?: 'preview' | 'production'
   /** CS9 — owner opted into protected compositing (no face/garment regen) */
   protectedComposite?: boolean
   /**
@@ -110,6 +132,10 @@ export type FamilyChainState = {
    */
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
+  runAuthorization: {
+    claims: StudioRunEstimateReceiptClaims
+    receipt: string
+  }
 }
 
 export type ChainJobRef = { pendingActionId: string; label: string; type: 'image_gen' }
@@ -126,6 +152,7 @@ const WHITE_PAJAMA_SHORT =
 const IDENTITY_GUARD =
   "Preserve each person's face, age, skin tone, hair and body EXACTLY as in their reference image — no beautification, no face changes. " +
   'Keep every garment pixel-faithful: color, fabric, embroidery pattern, motif placement, collar, buttons and length must not change. ' +
+  'Do not invent tattoos, body art, scars, jewelry, watches, accessories or skin markings that are absent from the person reference. ' +
   'AVOID: plastic AI skin, warped hands or fingers, distorted faces, redesigned or simplified embroidery, text artifacts.'
 
 function chainSummary(state: FamilyChainState, step: ChainStepKind): string {
@@ -178,23 +205,101 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
   const base = {
     familyChain: state,
     creativeStudio: true,
+    chainInternal: state.stepIndex < state.plan.length - 1,
     skipTelegramCard: true,
     studioMode: state.variant === 'single' ? 'try_on' : 'product_to_model',
     familyPreset: state.variant,
     conversationId: state.conversationId ?? null,
+    pipelineMode: state.pipelineMode,
   }
   const pajama = isPanjabiTop(state.garmentType) ? WHITE_PAJAMA_SHORT : ''
+  const genericLineage = state.imageModel
+    ? { provider: 'generic_image', imageModel: state.imageModel }
+    : {}
+  const genericControlContract = (resolution: string, aspectRatio: string) => state.imageModel
+    ? {
+        version: 1,
+        requested: {
+          aspectRatio,
+          resolution,
+          generationMode: 'pro',
+          numImages: 1,
+        },
+        applied: {
+          model: state.imageModel,
+          aspectRatio,
+          resolution,
+          generationMode: 'pro',
+          numImagesPerAction: 1,
+        },
+      }
+    : undefined
+  const genericReferenceContract = (
+    mode: StudioModeId,
+    bindings: StudioReferenceBinding[],
+  ): StudioReferenceContract | undefined => state.imageModel
+    ? {
+        version: 1,
+        mode,
+        requestedEngine: 'gemini',
+        actualModel: state.imageModel,
+        bindings,
+      }
+    : undefined
+  const tryOnReferenceContract = (
+    requestedEngine: 'fashn' | 'fal_fashn_v16',
+    actualModel: string,
+    personPath: string | undefined,
+    productPath: string | undefined,
+    personRole?: 'father' | 'mother' | 'son' | 'daughter',
+  ): StudioReferenceContract => ({
+    version: 1,
+    mode: 'try_on',
+    requestedEngine,
+    actualModel,
+    bindings: [
+      {
+        role: 'person',
+        path: personPath ?? '',
+        source: 'saved_model',
+        ...(personRole
+          ? {
+              sourceId: state.runAuthorization.claims.scope.familyModelPins
+                ?.find((pin) => pin.role === personRole)?.modelId,
+            }
+          : {}),
+        required: true,
+      },
+      {
+        role: 'product',
+        path: productPath ?? '',
+        source: productPath && productPath !== state.productImagePath ? 'derived' : 'uploaded',
+        required: true,
+      },
+    ],
+  })
 
   // Owner directive 2026-07-17: VTON steps honour the chosen engine. The Fal
   // FASHN v1.6 payload rides the CS6 durable adapter (provider:'fal').
   const useFalVton = state.vtonEngine === 'fal_fashn_v16'
-  const falVtonPayload = (personPath: string | undefined, garmentPath: string | undefined) => ({
+  const falVtonPayload = (
+    personPath: string | undefined,
+    garmentPath: string | undefined,
+    personRole?: 'father' | 'mother' | 'son' | 'daughter',
+  ) => ({
     ...base,
     provider: 'fal',
     falEngine: 'fal_fashn_v16',
     falEndpointId: 'fal-ai/fashn/tryon/v1.6',
     productImagePath: garmentPath,
     modelImagePath: personPath,
+    referenceContract: tryOnReferenceContract(
+      'fal_fashn_v16',
+      'fal-ai/fashn/tryon/v1.6',
+      personPath,
+      garmentPath,
+      personRole,
+    ),
     clothType: isPanjabiTop(state.garmentType) ? 'overall' : undefined,
     fashnCategory: 'one-pieces',
     generationMode: state.generationMode,
@@ -221,7 +326,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       if (useFalVton) {
         return {
           payload: {
-            ...falVtonPayload(state.adultModelPath, adultGarment),
+            ...falVtonPayload(state.adultModelPath, adultGarment, state.adultRole),
             // supplier photos are always worn (model/mannequin)
             garmentPhotoType: state.preppedAdultGarmentPath ? 'model' : undefined,
           },
@@ -235,6 +340,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           provider: 'fashn',
           fashnModel: 'tryon-max',
           fashnInputs: { model_image: state.adultModelPath, product_image: adultGarment },
+          referenceContract: tryOnReferenceContract(
+            'fashn',
+            'tryon-max',
+            state.adultModelPath,
+            adultGarment,
+            state.adultRole,
+          ),
           fashnOptions: {
             prompt: fashnPosePrompt(state.scene.adultPose, state.scene, [pajama, state.extraPrompt].filter(Boolean).join(' ')),
             resolution: state.resolution,
@@ -253,6 +365,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       return {
         payload: {
           ...base,
+          ...genericLineage,
           creativeStudio: false, // internal artifact — keep the gallery clean
           chainInternal: true,
           prompt: [
@@ -265,6 +378,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           ].filter(Boolean).join(' '),
           quality: 'pro',
           referenceImageId: state.productImagePath,
+          referenceContract: genericReferenceContract('product_to_model', [{
+            role: 'product',
+            path: state.productImagePath,
+            source: 'uploaded',
+            required: true,
+          }]),
+          controlContract: genericControlContract('2k', '4:5'),
           aspectRatio: '4:5',
           imageSize: '2K',
         },
@@ -283,7 +403,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       if (useFalVton) {
         return {
           payload: {
-            ...falVtonPayload(state.childModelPath, childGarment),
+            ...falVtonPayload(state.childModelPath, childGarment, state.childRole),
             // supplier references are worn (model/mannequin) shots
             garmentPhotoType: state.preppedChildGarmentPath || state.preppedAdultGarmentPath ? 'model' : undefined,
           },
@@ -297,6 +417,13 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           provider: 'fashn',
           fashnModel: 'tryon-max',
           fashnInputs: { model_image: state.childModelPath, product_image: childGarment },
+          referenceContract: tryOnReferenceContract(
+            'fashn',
+            'tryon-max',
+            state.childModelPath,
+            childGarment,
+            state.childRole,
+          ),
           fashnOptions: {
             prompt: fashnPosePrompt(
               state.scene.childPose,
@@ -321,6 +448,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       return {
         payload: {
           ...base,
+          ...genericLineage,
           prompt: [
             'TASK: combine two finished fashion photos into ONE cohesive photograph.',
             state.childRole === 'mother'
@@ -332,15 +460,28 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
             state.childRole === 'mother'
               ? 'One consistent light source and color grade across both people, natural contact shadows, natural relative heights for a couple.'
               : 'One consistent light source and color grade across both people, natural contact shadows, correct relative height between the adult and the child.',
+            state.childRole === 'mother'
+              ? ''
+              : 'SAFETY COMPOSITION RULE: no physical contact and no overlapping hands, fingers, arms, or bodies. Keep a visible gap between adult and child; show both sets of hands clearly separated, complete, and anatomically natural.',
             'They wear the SAME matching family collection — the shared motif/color must read clearly as a coordinated set.',
+            state.childRole === 'mother'
+              ? ''
+              : 'Do not add a watch, jewelry, tattoo, prop, or accessory that is absent from the two finished reference photos.',
             'Photorealistic professional Bangladeshi family fashion photograph, e-commerce ready.',
             state.extraPrompt ?? '',
           ].filter(Boolean).join(' '),
           quality: 'pro',
           referenceImageId: state.adultImagePath,
           secondReferenceImageId: state.childImagePath,
+          referenceContract: genericReferenceContract('edit', [
+            { role: 'source', path: state.adultImagePath ?? '', source: 'derived', required: true },
+            { role: 'source', path: state.childImagePath ?? '', source: 'derived', required: true },
+          ]),
+          controlContract: genericControlContract(state.resolution, state.aspectRatio),
           aspectRatio: state.aspectRatio,
-          imageSize: '2K',
+          imageSize: state.resolution.toUpperCase(),
+          requestedResolution: state.resolution,
+          requestedAspectRatio: state.aspectRatio,
           familyMerge: true,
         },
         summary: chainSummary(state, step),
@@ -352,6 +493,7 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       return {
         payload: {
           ...base,
+          ...genericLineage,
           prompt: [
             'TASK: combine two finished family photos into ONE full-family photograph.',
             'Image 1 shows a father and son; Image 2 shows a mother and daughter. Recreate ALL FOUR people together in a single scene.',
@@ -364,8 +506,15 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
             state.extraPrompt ?? '',
           ].filter(Boolean).join(' '),
           quality: 'pro',
+          referenceContract: genericReferenceContract('edit', [
+            { role: 'source', path: state.adultImagePath ?? '', source: 'derived', required: true },
+            { role: 'source', path: state.childImagePath ?? '', source: 'derived', required: true },
+          ]),
+          controlContract: genericControlContract(state.resolution, state.aspectRatio),
           aspectRatio: state.aspectRatio,
-          imageSize: '2K',
+          imageSize: state.resolution.toUpperCase(),
+          requestedResolution: state.resolution,
+          requestedAspectRatio: state.aspectRatio,
           familyMerge: true,
         },
         summary: chainSummary(state, step),
@@ -417,17 +566,49 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
       return {
         payload: {
           ...base,
+          ...genericLineage,
           prompt: [
-            'TASK: replace ONLY the background of this finished fashion photo.',
-            'Keep the person and the garment EXACTLY as shown — face, pose, body, fabric, embroidery, colors all pixel-faithful. Do not re-render or "improve" the person.',
+            'TASK: create the final production fashion image from THREE ordered references.',
+            'Image 1 is the completed virtual try-on. Image 2 is the ORIGINAL selected person. Image 3 is the ORIGINAL product garment.',
+            'Keep the garment pixel-faithful to Image 3: exact color, fabric, embroidery, motif placement, collar, buttons, sleeve and length. Do not redesign it.',
+            'Keep the person faithful to Image 2: same face, age, skin tone, hair, body and hands. Remove any tattoo, body art, scar, jewelry, watch, accessory or skin marking that is not present in Image 2.',
+            state.variant === 'single' && state.singleModelRole
+              ? `The selected person role is ${state.singleModelRole}. From Image 3 use ONLY the matching ${state.singleModelRole} garment; never replace it with another family member's outfit or put an adult cut on a child.`
+              : '',
             `NEW BACKGROUND — ${state.scene.scenePrompt}`,
             'Re-light globally so the person sits naturally in the new scene (matching light direction and warmth), with believable ground contact/shadow.',
+            state.extraPrompt ?? '',
             'Photorealistic, e-commerce ready.',
-          ].join(' '),
+          ].filter(Boolean).join(' '),
           quality: 'pro',
+          // Keep the historical primary field for older readers; the ordered
+          // array is authoritative and transports all three references.
           referenceImageId: state.adultImagePath,
+          referenceImageIds: [state.adultImagePath, state.adultModelPath, state.productImagePath],
+          referenceContract: genericReferenceContract('edit', [{
+            role: 'source',
+            path: state.adultImagePath ?? '',
+            source: 'derived',
+            required: true,
+          }, {
+            role: 'person',
+            path: state.adultModelPath,
+            source: 'saved_model',
+            required: true,
+          }, {
+            role: 'product',
+            path: state.productImagePath,
+            source: 'uploaded',
+            required: true,
+          }]),
+          qcProductImagePath: state.productImagePath,
+          qcPersonImagePath: state.adultModelPath,
+          qcSurface: 'single_tryon',
+          controlContract: genericControlContract(state.resolution, state.aspectRatio),
           aspectRatio: state.aspectRatio,
-          imageSize: '2K',
+          imageSize: state.resolution.toUpperCase(),
+          requestedResolution: state.resolution,
+          requestedAspectRatio: state.aspectRatio,
         },
         summary: chainSummary(state, step),
         costEstimate: 0.2,
@@ -437,17 +618,72 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
 
 async function createStepAction(state: FamilyChainState, step: ChainStepKind): Promise<string> {
   const { payload, summary, costEstimate } = buildStepAction(state, step)
-  const row = await db.agentPendingAction.create({
-    data: {
-      conversationId: state.conversationId ?? null,
-      type: 'image_gen',
-      payload,
-      summary,
-      costEstimate,
-      status: 'approved',
+  const authorized = studioRunAuthorizedJobFields(payload, {
+    claims: state.runAuthorization.claims,
+    receipt: state.runAuthorization.receipt,
+    dedupePart: `family:${state.chainId}:${state.stepIndex}`,
+  })
+  const existing = await db.agentPendingAction.findUnique({
+    where: { dedupeKey: authorized.dedupeKey },
+    select: {
+      id: true,
+      status: true,
+      dedupeKey: true,
+      payload: true,
     },
   })
+  const recoveredId = recoveredStudioRunJobId({
+    existing,
+    dedupeKey: authorized.dedupeKey,
+    payload: authorized.payload,
+  })
+  if (recoveredId) return recoveredId
+  await assertStudioRunExecutionGate({
+    receipt: state.runAuthorization.receipt,
+    payload: authorized.payload,
+    expectedClaims: state.runAuthorization.claims,
+    checkProviderAvailability: payload.provider !== 'family_composite',
+  })
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: {
+      conversationId: state.conversationId ?? null,
+      dedupeKey: authorized.dedupeKey,
+      type: 'image_gen',
+      payload: authorized.payload,
+      summary,
+      costEstimate,
+      status: creativeStudioImageQueueStatus(authorized.payload),
+    },
+    update: {},
+  })
   return row.id as string
+}
+
+/** Keep the canonical project asset pointed at the current chain head. */
+async function rebindProjectAssetsToChainHead(fromActionId: string, toActionId: string): Promise<void> {
+  if (!fromActionId || !toActionId || fromActionId === toActionId || !db.creativeProjectAsset) return
+  const assets = await db.creativeProjectAsset.findMany({
+    where: { pendingActionId: fromActionId },
+    select: { id: true, projectId: true },
+  }) as Array<{ id: string; projectId: string }>
+  for (const asset of assets) {
+    const conflict = await db.creativeProjectAsset.findFirst({
+      where: { projectId: asset.projectId, pendingActionId: toActionId },
+      select: { id: true },
+    })
+    if (conflict && conflict.id !== asset.id) continue
+    await db.$transaction([
+      db.creativeProjectAsset.update({
+        where: { id: asset.id },
+        data: { pendingActionId: toActionId },
+      }),
+      db.creativeAssetVersion.updateMany({
+        where: { assetId: asset.id, jobId: fromActionId },
+        data: { jobId: toActionId },
+      }),
+    ])
+  }
 }
 
 // ── Chain start ───────────────────────────────────────────────────────────────
@@ -469,7 +705,9 @@ export type StartFamilyChainInput = {
   aspectRatio?: string
   resolution?: string
   generationMode?: string
+  imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   /** CS9 — protected compositing: no face/garment regeneration in the merge */
   protectedComposite?: boolean
   /** VTON engine for the chain's try-on steps ('fal_fashn_v16' = no direct-FASHN credits needed) */
@@ -495,6 +733,22 @@ function requiredRoles(variant: FamilyChainVariant): Array<'father' | 'mother' |
   return ['father', 'mother', 'son', 'daughter']
 }
 
+function savedModelsFromPins(
+  pins: StudioRunFamilyModelPin[],
+): Partial<Record<'father' | 'mother' | 'son' | 'daughter', SavedModel>> {
+  return Object.fromEntries(pins.map((pin) => [
+    pin.role,
+    {
+      id: pin.modelId,
+      name: pin.modelName,
+      imagePath: pin.sourceImagePath,
+      isDefault: false,
+      role: pin.role,
+      ...(pin.modelNotes ? { notes: pin.modelNotes } : {}),
+    },
+  ]))
+}
+
 async function startPairChain(opts: {
   variant: Exclude<FamilyChainVariant, 'full_family'>
   productImagePath: string
@@ -505,11 +759,15 @@ async function startPairChain(opts: {
   aspectRatio: string
   resolution: string
   generationMode: string
+  imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   protectedComposite?: boolean
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const roles = VARIANT_ROLES[opts.variant]
   const adult = opts.models[roles.adult]!
   const child = opts.models[roles.child]!
@@ -526,7 +784,7 @@ async function startPairChain(opts: {
   const plan: ChainStepKind[] = ['garment_prep', 'adult_tryon', 'child_tryon', finalStep]
 
   const state: FamilyChainState = {
-    chainId: randomUUID(),
+    chainId: `${execution.claims.receiptId}:${opts.variant}`,
     groupId: opts.groupId,
     variant: opts.variant,
     scene: opts.scene,
@@ -541,12 +799,18 @@ async function startPairChain(opts: {
     plan,
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    pipelineMode: opts.pipelineMode,
     protectedComposite: opts.protectedComposite,
     vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio,
     resolution: opts.resolution,
     generationMode: opts.generationMode,
+    imageModel: opts.imageModel,
     conversationId: opts.conversationId ?? null,
+    runAuthorization: {
+      claims: execution.claims,
+      receipt: execution.receipt,
+    },
   }
 
   const id = await createStepAction(state, plan[0])
@@ -564,10 +828,14 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   jobs: ChainJobRef[]
   sceneLabel: string
 }> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const productImagePath = input.productImagePath?.trim()
   if (!productImagePath) throw new Error('product_image_required')
 
-  const models = await listModelsByRole()
+  const models = savedModelsFromPins(
+    execution.claims.scope.familyModelPins ?? [],
+  )
   const missing = requiredRoles(input.variant).filter((r) => !models[r])
   if (missing.length) throw new FamilyChainModelError(missing)
 
@@ -584,14 +852,16 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
     aspectRatio: input.aspectRatio ?? '4:5',
     resolution: input.resolution ?? '2k',
     generationMode: input.generationMode ?? 'quality',
+    imageModel: input.imageModel,
     extraPrompt: input.extraPrompt,
+    pipelineMode: input.pipelineMode,
     protectedComposite: input.protectedComposite,
     vtonEngine: input.vtonEngine,
     conversationId: input.conversationId ?? null,
   }
 
   if (input.variant === 'full_family') {
-    const groupId = randomUUID()
+    const groupId = `${execution.claims.receiptId}:full-family`
     const [a, b] = await Promise.all([
       startPairChain({ ...common, variant: 'father_son', groupId }),
       startPairChain({ ...common, variant: 'mother_daughter', groupId }),
@@ -603,41 +873,66 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   return { jobs: [job], sceneLabel: picked.scene.label }
 }
 
-/** 2-step chain for a single FASHN try-on: accurate garment first, then a
- * Bangladeshi background swap so no two runs look the same. */
+/** Single-person production chain: normalize the supplier reference first,
+ * then run the dedicated VTON engine and finally the requested re-scene.
+ *
+ * ALMA's catalogue references are commonly on-model reseller photos rather
+ * than flat garment packshots. Skipping garment_prep for a photo merely
+ * classified as `kids_panjabi`/`panjabi` made FASHN interpret the visible
+ * wearer (and even a hand resting on their shoulder) as garment pixels. The
+ * resulting embroidery/body corruption could not be repaired safely later.
+ * garment_prep is local/free for signed runs and also marks a successful crop
+ * as garmentPhotoType:model; flat-lay inputs simply fall back to the original.
+ */
 export async function startSingleRescueChain(opts: {
   productImagePath: string
   modelImagePath: string
+  modelRole?: 'father' | 'mother' | 'son' | 'daughter' | 'single' | null
+  /** Owner-selected background. When present it replaces scene-pool randomness. */
+  backgroundPrompt?: string
   aspectRatio?: string
   resolution?: string
   generationMode?: string
+  imageModel?: GenericImageModel
   extraPrompt?: string
+  pipelineMode?: 'preview' | 'production'
   vtonEngine?: 'fashn' | 'fal_fashn_v16'
   conversationId?: string | null
 }): Promise<ChainJobRef> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const picked = pickScene()
-  const scene = toSceneRef(picked)
+  const pickedScene = toSceneRef(picked)
+  const ownerBackground = opts.backgroundPrompt?.trim()
+  const scene = ownerBackground
+    ? { ...pickedScene, sceneId: 'owner_selected', scenePrompt: ownerBackground }
+    : pickedScene
   const attrs = await getOrClassifyGarment(opts.productImagePath)
 
   const state: FamilyChainState = {
-    chainId: randomUUID(),
+    chainId: `${execution.claims.receiptId}:single`,
     variant: 'single',
     scene,
     productImagePath: opts.productImagePath,
     garmentType: attrs.garmentType,
     fabricNote: attrs.fabricGuess ? `Garment fabric: ${attrs.fabricGuess}.` : undefined,
     adultRole: 'father',
+    singleModelRole: opts.modelRole ?? undefined,
     adultModelPath: opts.modelImagePath,
-    plan: attrs.garmentType === 'family_matching_set'
-      ? ['garment_prep', 'adult_tryon', 'rescene']
-      : ['adult_tryon', 'rescene'],
+    plan: ['garment_prep', 'adult_tryon', 'rescene'],
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    pipelineMode: opts.pipelineMode,
     vtonEngine: opts.vtonEngine,
     aspectRatio: opts.aspectRatio ?? '4:5',
     resolution: opts.resolution ?? '2k',
     generationMode: opts.generationMode ?? 'balanced',
+    imageModel: opts.imageModel,
     conversationId: opts.conversationId ?? null,
+    runAuthorization: {
+      claims: execution.claims,
+      receipt: execution.receipt,
+    },
   }
 
   const id = await createStepAction(state, state.plan[0])
@@ -689,7 +984,7 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
   const useComposite = Boolean(state.protectedComposite)
   const mergeState: FamilyChainState = {
     ...state,
-    chainId: randomUUID(),
+    chainId: `${state.groupId}:merge`,
     variant: 'full_family',
     plan: [useComposite ? 'group_composite' : 'group_merge'],
     stepIndex: 0,
@@ -702,16 +997,57 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
   } else {
     payload.referenceImageId = pair1
     payload.secondReferenceImageId = pair2
+    if (state.imageModel) {
+      payload.referenceContract = {
+        version: 1,
+        mode: 'edit',
+        requestedEngine: 'gemini',
+        actualModel: state.imageModel,
+        bindings: [
+          { role: 'source', path: pair1, source: 'derived', required: true },
+          { role: 'source', path: pair2, source: 'derived', required: true },
+        ],
+      } satisfies StudioReferenceContract
+    }
   }
-  const row = await db.agentPendingAction.create({
-    data: {
+  const authorized = studioRunAuthorizedJobFields(payload, {
+    claims: mergeState.runAuthorization.claims,
+    receipt: mergeState.runAuthorization.receipt,
+    dedupePart: `family:${mergeState.chainId}:${mergeState.stepIndex}`,
+  })
+  const existing = await db.agentPendingAction.findUnique({
+    where: { dedupeKey: authorized.dedupeKey },
+    select: {
+      id: true,
+      status: true,
+      dedupeKey: true,
+      payload: true,
+    },
+  })
+  const recoveredId = recoveredStudioRunJobId({
+    existing,
+    dedupeKey: authorized.dedupeKey,
+    payload: authorized.payload,
+  })
+  if (recoveredId) return recoveredId
+  await assertStudioRunExecutionGate({
+    receipt: mergeState.runAuthorization.receipt,
+    payload: authorized.payload,
+    expectedClaims: mergeState.runAuthorization.claims,
+    checkProviderAvailability: payload.provider !== 'family_composite',
+  })
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: {
       conversationId: state.conversationId ?? null,
+      dedupeKey: authorized.dedupeKey,
       type: 'image_gen',
-      payload,
+      payload: authorized.payload,
       summary,
       costEstimate,
-      status: 'approved',
+      status: creativeStudioImageQueueStatus(authorized.payload),
     },
+    update: {},
   })
   return row.id as string
 }
@@ -740,7 +1076,10 @@ export async function advanceFamilyChain(
       const res = (action as { result?: Record<string, unknown> }).result ?? {}
       const adult = typeof res.adultGarmentPath === 'string' ? res.adultGarmentPath : null
       const child = typeof res.childGarmentPath === 'string' ? res.childGarmentPath : null
-      if (adult) next.preppedAdultGarmentPath = adult
+      const singleChildRole = state.variant === 'single'
+        && (state.singleModelRole === 'son' || state.singleModelRole === 'daughter')
+      const singleGarment = singleChildRole ? (child ?? adult) : adult
+      if (singleGarment) next.preppedAdultGarmentPath = singleGarment
       if (child && state.childRole && state.childRole !== 'mother') {
         // real supplier child piece — skip the AI child_garment generation
         next.preppedChildGarmentPath = child
@@ -801,7 +1140,9 @@ export async function advanceFamilyChain(
     const nextStep = state.plan[nextIndex]
     if (!nextStep) return null
     next.stepIndex = nextIndex
-    return await createStepAction(next, nextStep)
+    const nextId = await createStepAction(next, nextStep)
+    await rebindProjectAssetsToChainHead(String(action.id ?? ''), nextId)
+    return nextId
   } catch (err) {
     console.error('[family-chain] advance failed:', err instanceof Error ? err.message : err)
     return null

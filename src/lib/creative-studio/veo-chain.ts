@@ -6,10 +6,16 @@
  * assembly-line pattern as the family chain: each finished clip queues the
  * next via the job-result hook; the last one queues a veoConcat video_edit.
  */
-import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { buildVideoBrief, estimateReelCostUsd } from '@/lib/content-engine/video-brief'
 import { pickScene } from '@/lib/tryon/scene-pool'
+import {
+  currentStudioRunExecutionContext,
+  recoveredStudioRunJobId,
+  studioRunAuthorizedJobFields,
+} from '@/lib/creative-studio/studio-run-context'
+import type { StudioRunEstimateReceiptClaims } from '@/lib/creative-studio/studio-run-authorization'
+import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -27,6 +33,10 @@ export type VeoChainState = {
   productImagePath: string
   vibe: 'premium' | 'festival' | 'offer' | 'lifestyle'
   clipPaths: string[]
+  runAuthorization: {
+    claims: StudioRunEstimateReceiptClaims
+    receipt: string
+  }
 }
 
 export function multiReelCostUsd(clips: number): number {
@@ -58,15 +68,36 @@ function clipAction(state: VeoChainState) {
   }
 }
 
+async function recoverAuthorizedAction(
+  authorized: { dedupeKey: string; payload: Record<string, unknown> },
+): Promise<string | null> {
+  const existing = await db.agentPendingAction.findUnique({
+    where: { dedupeKey: authorized.dedupeKey },
+    select: {
+      id: true,
+      status: true,
+      dedupeKey: true,
+      payload: true,
+    },
+  })
+  return recoveredStudioRunJobId({
+    existing,
+    dedupeKey: authorized.dedupeKey,
+    payload: authorized.payload,
+  })
+}
+
 export async function startVeoReelChain(input: {
   productImagePath: string
   totalClips: number
   aspect: '9:16' | '16:9'
   vibe?: VeoChainState['vibe']
 }): Promise<{ pendingActionId: string; costUsd: number }> {
+  const execution = currentStudioRunExecutionContext()
+  if (!execution) throw new Error('studio_run_authorization_required')
   const state: VeoChainState = {
     veoChain: true,
-    chainId: randomUUID(),
+    chainId: `${execution.claims.receiptId}:veo`,
     index: 0,
     totalClips: Math.min(3, Math.max(2, input.totalClips)),
     clipSec: VEO_CLIP_SEC,
@@ -74,8 +105,34 @@ export async function startVeoReelChain(input: {
     productImagePath: input.productImagePath,
     vibe: input.vibe ?? 'premium',
     clipPaths: [],
+    runAuthorization: {
+      claims: execution.claims,
+      receipt: execution.receipt,
+    },
   }
-  const row = await db.agentPendingAction.create({ data: clipAction(state) })
+  const action = clipAction(state)
+  const authorized = studioRunAuthorizedJobFields(action.payload, {
+    claims: state.runAuthorization.claims,
+    receipt: state.runAuthorization.receipt,
+    dedupePart: `veo:${state.chainId}:${state.index}`,
+  })
+  const recoveredId = await recoverAuthorizedAction(authorized)
+  if (recoveredId) {
+    return {
+      pendingActionId: recoveredId,
+      costUsd: multiReelCostUsd(state.totalClips),
+    }
+  }
+  await assertStudioRunExecutionGate({
+    receipt: state.runAuthorization.receipt,
+    payload: authorized.payload,
+    expectedClaims: state.runAuthorization.claims,
+  })
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: { ...action, dedupeKey: authorized.dedupeKey, payload: authorized.payload },
+    update: {},
+  })
   return { pendingActionId: row.id as string, costUsd: multiReelCostUsd(state.totalClips) }
 }
 
@@ -90,33 +147,61 @@ export async function advanceVeoChain(
 
   if (clipPaths.length < p.totalClips) {
     const next: VeoChainState = { ...p, index: clipPaths.length, clipPaths }
-    const row = await db.agentPendingAction.create({ data: clipAction(next) })
+    const action = clipAction(next)
+    const authorized = studioRunAuthorizedJobFields(action.payload, {
+      claims: next.runAuthorization.claims,
+      receipt: next.runAuthorization.receipt,
+      dedupePart: `veo:${next.chainId}:${next.index}`,
+    })
+    const recoveredId = await recoverAuthorizedAction(authorized)
+    if (recoveredId) return recoveredId
+    await assertStudioRunExecutionGate({
+      receipt: next.runAuthorization.receipt,
+      payload: authorized.payload,
+      expectedClaims: next.runAuthorization.claims,
+    })
+    const row = await db.agentPendingAction.upsert({
+      where: { dedupeKey: authorized.dedupeKey },
+      create: { ...action, dedupeKey: authorized.dedupeKey, payload: authorized.payload },
+      update: {},
+    })
     return row.id as string
   }
 
   // all clips done → one ffmpeg crossfade-concat job on the worker
-  const row = await db.agentPendingAction.create({
-    data: {
+  const concatPayload = {
+    videoEdit: true,
+    creativeStudio: true,
+    skipTelegramCard: true,
+    studioMode: 'video_edit',
+    provider: 'ffmpeg',
+    veoConcat: true,
+    concatPaths: clipPaths,
+    fadeSec: VEO_FADE_SEC,
+    aspect: p.aspect,
+    videoName: 'veo-multi-reel',
+    recipeId: 'veo_concat',
+    targetSec: p.totalClips * p.clipSec,
+  }
+  const authorized = studioRunAuthorizedJobFields(concatPayload, {
+    claims: p.runAuthorization.claims,
+    receipt: p.runAuthorization.receipt,
+    dedupePart: `veo:${p.chainId}:concat`,
+  })
+  const recoveredId = await recoverAuthorizedAction(authorized)
+  if (recoveredId) return recoveredId
+  const row = await db.agentPendingAction.upsert({
+    where: { dedupeKey: authorized.dedupeKey },
+    create: {
       conversationId: null,
+      dedupeKey: authorized.dedupeKey,
       type: 'video_edit',
-      payload: {
-        videoEdit: true,
-        creativeStudio: true,
-        skipTelegramCard: true,
-        studioMode: 'video_edit',
-        provider: 'ffmpeg',
-        veoConcat: true,
-        concatPaths: clipPaths,
-        fadeSec: VEO_FADE_SEC,
-        aspect: p.aspect,
-        videoName: 'veo-multi-reel',
-        recipeId: 'veo_concat',
-        targetSec: p.totalClips * p.clipSec,
-      },
+      payload: authorized.payload,
       summary: `🎬 লম্বা রিল — ${p.totalClips} ক্লিপ জোড়া লাগছে`,
       costEstimate: 0,
       status: 'approved',
     },
+    update: {},
   })
   return row.id as string
 }

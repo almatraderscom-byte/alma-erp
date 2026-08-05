@@ -43,7 +43,7 @@ export type StudioEngine = {
   label: string
   labelBn: string
   /** upstream vendor bucket for cost attribution ('fashn' | 'google' | 'fal' | 'xai') */
-  vendor: 'fashn' | 'google' | 'fal' | 'xai'
+  vendor: 'fashn' | 'google' | 'fal' | 'xai' | 'dynamic'
   /** exact Fal queue endpoint id — only for Fal-backed engines */
   falEndpointId?: string
   status: EngineCommercialStatus
@@ -75,9 +75,9 @@ export const STUDIO_ENGINES: StudioEngine[] = [
   },
   {
     id: 'gemini',
-    label: 'Gemini (draft/fallback)',
-    labelBn: 'Gemini (ড্রাফট)',
-    vendor: 'google',
+    label: 'Guided image (owner-selected)',
+    labelBn: 'Guided image (Gemini/GPT/Seedream)',
+    vendor: 'dynamic',
     status: 'production',
     modes: ['product_to_model', 'try_on', 'image_to_video'],
     singlePersonOnly: false,
@@ -198,6 +198,23 @@ export const FAL_VTON_ENGINE_IDS: readonly StudioEngineId[] = ['fal_fashn_v16', 
 
 export function isFalVtonEngine(id: string | null | undefined): id is 'fal_fashn_v16' | 'fal_idm_vton' {
   return FAL_VTON_ENGINE_IDS.includes(id as StudioEngineId)
+}
+
+/**
+ * Dedicated VTON engines that can be orchestrated one person at a time inside
+ * a multi-person family chain. They remain `singlePersonOnly` for a single
+ * provider call; the chain is what makes the final composition multi-person.
+ * IDM stays excluded because family execution deliberately has no research-only
+ * fallback.
+ */
+export const FAMILY_CHAIN_VTON_ENGINE_IDS = ['fashn', 'fal_fashn_v16'] as const
+
+export function isFamilyChainVtonEngine(
+  id: string | null | undefined,
+): id is (typeof FAMILY_CHAIN_VTON_ENGINE_IDS)[number] {
+  return FAMILY_CHAIN_VTON_ENGINE_IDS.includes(
+    id as (typeof FAMILY_CHAIN_VTON_ENGINE_IDS)[number],
+  )
 }
 
 /**

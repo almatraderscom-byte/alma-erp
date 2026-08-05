@@ -4,18 +4,28 @@
  * verified: true when confirmed on official docs; false = estimate, use with caution.
  */
 
-export type CostProvider =
-  | 'anthropic'
-  | 'openai'
-  | 'xai'
-  | 'openrouter'
-  | 'gemini'
-  | 'xai'
-  | 'veo'
-  | 'google_tts'
-  | 'twilio'
-  | 'elevenlabs'
-  | 'oxylabs'
+export const COST_PROVIDERS = [
+  'anthropic',
+  'openai',
+  'xai',
+  'openrouter',
+  'gemini',
+  'veo',
+  'google_tts',
+  'twilio',
+  'elevenlabs',
+  'oxylabs',
+  'fal',
+  'fashn',
+] as const
+
+export type CostProvider = (typeof COST_PROVIDERS)[number]
+
+const COST_PROVIDER_SET: ReadonlySet<string> = new Set(COST_PROVIDERS)
+
+export function isCostProvider(value: unknown): value is CostProvider {
+  return typeof value === 'string' && COST_PROVIDER_SET.has(value)
+}
 
 export type CostKind =
   | 'chat'

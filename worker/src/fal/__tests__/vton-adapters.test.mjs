@@ -4,12 +4,36 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import sharp from 'sharp'
 import { buildCatVtonInput, processCatVton, CAT_VTON_ENDPOINT } from '../adapters/cat-vton.mjs'
-import { buildFashnV16Input, resolveFashnCategory, FASHN_V16_ENDPOINT } from '../adapters/fashn-v16.mjs'
+import {
+  buildFashnV16Input,
+  processFashnV16,
+  resolveFashnCategory,
+  FASHN_V16_ENDPOINT,
+} from '../adapters/fashn-v16.mjs'
 
 process.env.FAL_KEY = 'test-key'
 process.env.APP_URL = 'https://app.test'
 process.env.AGENT_INTERNAL_TOKEN = 'tok'
+
+const INPUT_JPEG = await sharp({
+  create: {
+    width: 64,
+    height: 96,
+    channels: 3,
+    background: { r: 90, g: 80, b: 70 },
+  },
+}).jpeg().toBuffer()
+
+const CAT_OUTPUT_PNG = await sharp({
+  create: {
+    width: 864,
+    height: 1296,
+    channels: 3,
+    background: { r: 20, g: 40, b: 60 },
+  },
+}).png().toBuffer()
 
 // ── pure input builders ──────────────────────────────────────────────────────
 
@@ -75,7 +99,7 @@ function fakeSupabase() {
       from(bucket) {
         assert.equal(bucket, 'agent-files')
         return {
-          download: async () => ({ data: new Blob([Buffer.from('img-bytes')], { type: 'image/jpeg' }), error: null }),
+          download: async () => ({ data: new Blob([INPUT_JPEG], { type: 'image/jpeg' }), error: null }),
           upload: async (path, buf) => { uploaded.set(path, buf); return { error: null } },
         }
       },
@@ -125,7 +149,7 @@ test('processCatVton end to end: submit → poll → download → truthful metad
         ok: true,
         status: 200,
         headers: { get: () => 'image/png' },
-        arrayBuffer: async () => Buffer.from('png-bytes').buffer,
+        arrayBuffer: async () => CAT_OUTPUT_PNG,
       }
     }
     throw new Error(`unscripted fetch: ${u}`)
@@ -155,10 +179,73 @@ test('processCatVton end to end: submit → poll → download → truthful metad
   assert.equal(result.researchOnly, true)
   assert.ok(result.storagePath.startsWith('generated/studio-pa-cat-1'))
   assert.ok(supabase.uploaded.has(result.storagePath), 'artifact landed in agent-files')
+  assert.equal(result.original.width, 864)
+  assert.equal(result.original.height, 1296)
+  assert.equal(result.original.mimeType, 'image/png')
+  assert.equal(result.original.validation, 'verified')
+  assert.deepEqual(Buffer.from(supabase.uploaded.get(result.storagePath)), CAT_OUTPUT_PNG, 'provider bytes preserved')
   assert.equal(await supabase.kv.has('fal_request:pa-cat-1'), false, 'durable state cleared after upload')
   assert.equal(costs.length, 1)
   assert.equal(costs[0].costUsd, 0.04, 'kv-configured research cost used')
   assert.equal(fetchCalls.filter((c) => c.method === 'POST' && c.url.endsWith('cat-vton')).length, 1, 'exactly one paid submit')
+})
+
+test('processFashnV16 verifies the fixed native 864x1296 contract', async (t) => {
+  const supabase = fakeSupabase()
+  supabase.kv.set('agent_qc_level', 'off')
+
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url)
+    if (u === 'https://queue.fal.run/fal-ai/fashn/tryon/v1.6' && init.method === 'POST') {
+      const body = JSON.parse(init.body)
+      assert.equal(body.output_format, 'png')
+      assert.equal(body.num_samples, 1)
+      return { ok: true, status: 200, json: async () => ({ request_id: 'rq-fashn-v16' }) }
+    }
+    if (u.includes('/requests/rq-fashn-v16/status')) {
+      return { ok: true, status: 200, json: async () => ({ status: 'COMPLETED' }) }
+    }
+    if (u.includes('/requests/rq-fashn-v16')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ image: { url: 'https://cdn.fal/fashn-v16.png' }, seed: 42 }),
+      }
+    }
+    if (u === 'https://cdn.fal/fashn-v16.png') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'image/png' },
+        arrayBuffer: async () => CAT_OUTPUT_PNG,
+      }
+    }
+    throw new Error(`unscripted fetch: ${u}`)
+  }
+  t.after(() => { globalThis.fetch = realFetch })
+
+  const costs = []
+  const result = await processFashnV16({
+    supabase,
+    pendingActionId: 'pa-fashn-v16',
+    payload: {
+      productImagePath: 'uploads/product.jpg',
+      modelImagePath: 'uploads/model.jpg',
+      clothType: 'overall',
+      generationMode: 'quality',
+      seed: 42,
+    },
+    logCost: (entry) => costs.push(entry),
+  })
+
+  assert.equal(result.falEngine, 'fal_fashn_v16')
+  assert.equal(result.original.width, 864)
+  assert.equal(result.original.height, 1296)
+  assert.equal(result.original.validation, 'verified')
+  assert.deepEqual(Buffer.from(supabase.uploaded.get(result.storagePath)), CAT_OUTPUT_PNG)
+  assert.equal(costs.length, 1)
+  assert.equal(costs[0].costUsd, 0.075)
 })
 
 test('processCatVton: fal output download failure keeps durable state (resume, no re-pay)', async (t) => {

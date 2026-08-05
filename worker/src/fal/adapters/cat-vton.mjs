@@ -9,12 +9,20 @@
  */
 import {
   clearFalRequestState,
-  downloadFalOutputToStorage,
+  downloadFalOutputArtifactToStorage,
   extractFalImageUrl,
   runFalQueueJob,
   storagePathToNormalizedDataUri,
 } from '../client.mjs'
 import { falInputFingerprint } from '../fingerprint.mjs'
+import {
+  makeContractReferenceReceipt,
+  validateOrderedReferenceContract,
+} from '../../image/reference-contract.mjs'
+import {
+  assertStudioRunPaidAttempt,
+  requiresStudioRunPaidAttemptAuthorization,
+} from '../../studio-run-authorize.mjs'
 
 export const CAT_VTON_ENDPOINT = 'fal-ai/cat-vton'
 
@@ -51,6 +59,13 @@ async function readIdmCostUsd(supabase) {
 export async function processCatVton({ supabase, pendingActionId, payload, logCost }) {
   const { productImagePath, modelImagePath: rawModelImagePath, clothType } = payload
   if (!productImagePath || !rawModelImagePath) throw new Error('cat-vton needs productImagePath + modelImagePath')
+  validateOrderedReferenceContract(payload.referenceContract, {
+    actualModel: CAT_VTON_ENDPOINT,
+    bindings: [
+      { role: 'person', path: rawModelImagePath },
+      { role: 'product', path: productImagePath },
+    ],
+  })
 
   // scrub dark marketing plates from reseller model photos (free, kv-cached)
   const { cleanModelPhoto } = await import('../../photo-cleanup.mjs')
@@ -84,6 +99,9 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
       seed: input.seed ?? null,
       qcAttempt: qcAttempt ?? 1,
     })
+    if (requiresStudioRunPaidAttemptAuthorization(payload)) {
+      await assertStudioRunPaidAttempt(pendingActionId, payload, qcAttempt ?? 1)
+    }
     const out = await runFalQueueJob({
       supabase,
       pendingActionId,
@@ -94,7 +112,17 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
     const url = extractFalImageUrl(out.payload)
     if (!url) throw new Error('cat-vton: no image in fal result')
     const suffix = qcAttempt && qcAttempt > 1 ? `qc${qcAttempt}` : ''
-    const storagePath = await downloadFalOutputToStorage(supabase, url, pendingActionId, suffix)
+    const original = await downloadFalOutputArtifactToStorage(
+      supabase,
+      url,
+      pendingActionId,
+      suffix,
+      {
+        kind: 'original',
+        provider: 'fal',
+        model: CAT_VTON_ENDPOINT,
+      },
+    )
     // Artifact landed — safe to clear the durable request row now.
     await clearFalRequestState(supabase, pendingActionId)
     totalCostUsd += costUsd
@@ -115,7 +143,8 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
       dedupKey: `fal:${pendingActionId}:${qcAttempt ?? 1}`,
     })
     return {
-      storagePath,
+      storagePath: original.storagePath,
+      original,
       requestId: out.requestId,
       latencyMs: out.latencyMs,
       seed: out.payload?.seed ?? payload.seed ?? null,
@@ -125,13 +154,15 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
   const first = await runOnce(1)
   let paths = [first.storagePath]
   let lastMeta = first
+  const artifactsByPath = new Map([[first.storagePath, first.original]])
 
   // Best-effort bounded QC (same designer gate as the other engines).
   let qc = null
   try {
-    const { fetchQcLevel, runImageQcLoop } = await import('../../image-qc.mjs')
+    const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('../../image-qc.mjs')
     const { getAppUrl, getInternalToken } = await import('../../env.mjs')
-    const qcLevel = await fetchQcLevel(supabase)
+    const configuredQcLevel = await fetchQcLevel(supabase)
+    const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
     if (qcLevel !== 'off') {
       const qcResult = await runImageQcLoop({
         supabase,
@@ -141,9 +172,15 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
         initialPath: first.storagePath,
         productType: null,
         productImagePath,
+        personImagePath: rawModelImagePath,
+        surface: 'single_tryon',
+        pipelineMode: payload.pipelineMode,
+        maxPaidGenerations: payload.studioPaidAttemptLimit,
+        generationPrompt: payload.familyChain?.extraPrompt ?? payload.prompt ?? null,
         regenerate: async (_fixHint, attemptNum) => {
           const retry = await runOnce(attemptNum)
           paths.push(retry.storagePath)
+          artifactsByPath.set(retry.storagePath, retry.original)
           lastMeta = retry
           return retry.storagePath
         },
@@ -154,6 +191,7 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
       }
     }
   } catch (err) {
+    if (payload.pipelineMode === 'production') throw err
     console.warn(`[worker] cat-vton ${pendingActionId} — QC skipped: ${err.message}`)
   }
 
@@ -167,7 +205,9 @@ export async function processCatVton({ supabase, pendingActionId, payload, logCo
     seed: lastMeta.seed,
     latencyMs: lastMeta.latencyMs,
     costUsd: totalCostUsd,
+    referenceReceipt: makeContractReferenceReceipt(payload.referenceContract, 2, 2),
     researchOnly: true,
     qc,
+    original: artifactsByPath.get(paths[0]) ?? lastMeta.original,
   }
 }

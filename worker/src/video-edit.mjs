@@ -270,6 +270,254 @@ async function renderOutput({ inputFile, outFile, plan, output, hasAudio, isHdr 
   }
 }
 
+const CROP_SIZES = {
+  '9:16': [1080, 1920],
+  '4:5': [1080, 1350],
+  '1:1': [1080, 1080],
+  '16:9': [1920, 1080],
+}
+
+const srtTime = (seconds) => {
+  const millis = Math.max(0, Math.round(Number(seconds) * 1000))
+  const hh = Math.floor(millis / 3_600_000)
+  const mm = Math.floor((millis % 3_600_000) / 60_000)
+  const ss = Math.floor((millis % 60_000) / 1000)
+  const ms = millis % 1000
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')},${String(ms).padStart(3, '0')}`
+}
+
+function buildCaptionSrt(contract) {
+  return (contract.transcript ?? [])
+    .filter((cue) => cue.track === 'caption' && cue.text)
+    .map((cue, index) => [
+      index + 1,
+      `${srtTime(cue.startSec)} --> ${srtTime(cue.endSec)}`,
+      String(cue.text).replace(/\r?\n/g, ' ').trim(),
+      '',
+    ].join('\n'))
+    .join('\n')
+}
+
+const escapeSubtitlePath = (path) => String(path).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'")
+
+/** Exported for the worker contract test/debug surface; contains no I/O. */
+export function buildPartialEditFfmpegArgs({
+  inputFile,
+  outFile,
+  contract,
+  hasAudio,
+  subtitleFile = null,
+  musicFile = null,
+  voiceoverFile = null,
+}) {
+  const visual = contract.rerender.includes('visual')
+  const captions = contract.rerender.includes('captions') && Boolean(subtitleFile)
+  const audio = contract.rerender.includes('audio')
+  const parts = []
+  let videoTail = '[0:v]'
+  let audioTail = hasAudio ? '[0:a]' : null
+
+  if (visual) {
+    contract.segments.forEach((segment, index) => {
+      parts.push(`[0:v]trim=start=${segment.startSec}:end=${segment.endSec},setpts=PTS-STARTPTS[v${index}]`)
+      if (hasAudio) parts.push(`[0:a]atrim=start=${segment.startSec}:end=${segment.endSec},asetpts=PTS-STARTPTS[a${index}]`)
+    })
+    if (contract.segments.length === 1) {
+      videoTail = '[v0]'
+      audioTail = hasAudio ? '[a0]' : null
+    } else {
+      const inputs = contract.segments.map((_, index) => hasAudio ? `[v${index}][a${index}]` : `[v${index}]`).join('')
+      parts.push(`${inputs}concat=n=${contract.segments.length}:v=1:a=${hasAudio ? 1 : 0}[vconcat]${hasAudio ? '[aconcat]' : ''}`)
+      videoTail = '[vconcat]'
+      audioTail = hasAudio ? '[aconcat]' : null
+    }
+  }
+
+  const videoFilters = []
+  const size = CROP_SIZES[contract.crop.aspect]
+  if (visual && size) {
+    const [width, height] = size
+    const focusX = Number(contract.crop.focusX ?? 0.5)
+    const focusY = Number(contract.crop.focusY ?? 0.5)
+    videoFilters.push(
+      `crop=w='min(iw,ih*${width}/${height})':h='min(ih,iw*${height}/${width})':x='(iw-ow)*${focusX}':y='(ih-oh)*${focusY}'`,
+      `scale=${width}:${height}`,
+    )
+  }
+  videoFilters.push('setsar=1', 'format=yuv420p')
+  if (captions) {
+    const alignment = contract.captionPlacement === 'top' ? 8 : contract.captionPlacement === 'center' ? 5 : 2
+    videoFilters.push(
+      `subtitles='${escapeSubtitlePath(subtitleFile)}':force_style='FontName=Noto Sans Bengali,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00111111,BorderStyle=1,Outline=2,Shadow=0,Alignment=${alignment},MarginV=120'`,
+    )
+  }
+  parts.push(`${videoTail}${videoFilters.join(',')}[vout]`)
+
+  const args = ['-y', '-i', inputFile]
+  let nextInput = 1
+  const musicInput = musicFile ? nextInput++ : -1
+  const voiceInput = voiceoverFile ? nextInput++ : -1
+  if (musicFile) args.push('-i', musicFile)
+  if (voiceoverFile) args.push('-i', voiceoverFile)
+
+  let mappedAudio = audioTail
+  if (audio) {
+    const mixLabels = []
+    if (audioTail) {
+      parts.push(`${audioTail}volume=${Number(contract.volumes.original ?? 1)}[aoriginal]`)
+      mixLabels.push('[aoriginal]')
+    }
+    const duration = contract.segments.reduce((sum, segment) => sum + segment.endSec - segment.startSec, 0)
+    if (musicInput >= 0) {
+      parts.push(
+        `[${musicInput}:a]aloop=loop=-1:size=2e9,atrim=0:${duration},aformat=sample_rates=48000:channel_layouts=stereo,volume=${Number(contract.volumes.music ?? 0.35)}[amusic]`,
+      )
+      mixLabels.push('[amusic]')
+    }
+    if (voiceInput >= 0) {
+      parts.push(
+        `[${voiceInput}:a]atrim=0:${duration},aformat=sample_rates=48000:channel_layouts=stereo,volume=${Number(contract.volumes.voiceover ?? 1)}[avoice]`,
+      )
+      mixLabels.push('[avoice]')
+    }
+    if (mixLabels.length > 1) {
+      parts.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0[aout]`)
+      mappedAudio = '[aout]'
+    } else if (mixLabels.length === 1) {
+      mappedAudio = mixLabels[0]
+    } else {
+      mappedAudio = null
+    }
+  }
+  return [
+    ...args,
+    '-filter_complex', parts.join(';'),
+    '-map', '[vout]',
+    ...(mappedAudio ? ['-map', mappedAudio, '-c:a', 'aac', '-b:a', '128k'] : ['-an']),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+    '-movflags', '+faststart',
+    outFile,
+  ]
+}
+
+/**
+ * CSE5 partial rerender. The visual source path is never regenerated or
+ * replaced: ffmpeg derives a new local version only for requested tracks.
+ */
+export async function processPartialVideoEdit(job, { supabase, callJobResult }) {
+  const { pendingActionId, payload } = job.data
+  const { sourceActionId, sourcePath, editContract: contract } = payload ?? {}
+  if (!sourcePath || !contract?.segments?.length || contract.preserveVisualSource !== true) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'partial video edit payload incomplete')
+    return
+  }
+  await ensureFfmpeg()
+  const workDir = join(tmpdir(), `alma-video-partial-${pendingActionId}`)
+  await mkdir(workDir, { recursive: true })
+  const inputFile = join(workDir, 'source.mp4')
+  const outFile = join(workDir, 'edited.mp4')
+  const coverFile = join(workDir, 'cover.jpg')
+  const subtitleFile = join(workDir, 'captions.srt')
+  const musicFile = join(workDir, 'music-track')
+  const voiceoverFile = join(workDir, 'voiceover-track.mp3')
+
+  try {
+    await reportProgress(supabase, pendingActionId, 1)
+    await downloadToFile(supabase, sourcePath, inputFile)
+    await reportProgress(supabase, pendingActionId, 2)
+    const { hasAudio } = await probeVideo(inputFile)
+    const captionSrt = buildCaptionSrt(contract)
+    if (captionSrt) {
+      const { writeFile } = await import('node:fs/promises')
+      await writeFile(subtitleFile, captionSrt, 'utf8')
+    }
+
+    const onlyCover = contract.rerender.length === 1 && contract.rerender[0] === 'cover'
+    let finalPath = sourcePath
+    if (!onlyCover) {
+      let downloadedMusic = null
+      let downloadedVoiceover = null
+      if (contract.rerender.includes('audio') && payload.audioTrackPaths?.music) {
+        await downloadToFile(supabase, payload.audioTrackPaths.music, musicFile)
+        downloadedMusic = musicFile
+      }
+      if (contract.rerender.includes('audio') && payload.audioTrackPaths?.voiceover) {
+        await downloadToFile(supabase, payload.audioTrackPaths.voiceover, voiceoverFile)
+        downloadedVoiceover = voiceoverFile
+      }
+      await reportProgress(supabase, pendingActionId, 4)
+      const args = buildPartialEditFfmpegArgs({
+        inputFile,
+        outFile,
+        contract,
+        hasAudio,
+        subtitleFile: captionSrt ? subtitleFile : null,
+        musicFile: downloadedMusic,
+        voiceoverFile: downloadedVoiceover,
+      })
+      await execFileAsync('ffmpeg', args, { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 })
+      await reportProgress(supabase, pendingActionId, 5)
+      finalPath = `generated/${pendingActionId}-partial.mp4`
+      const { error } = await supabase.storage
+        .from('agent-files')
+        .upload(finalPath, await readFile(outFile), { contentType: 'video/mp4', upsert: true })
+      if (error) throw new Error(`partial upload failed: ${error.message}`)
+    }
+
+    let coverPath = null
+    if (contract.rerender.includes('cover')) {
+      const coverSource = onlyCover ? inputFile : outFile
+      await execFileAsync('ffmpeg', [
+        '-y', '-ss', String(contract.cover.atSec), '-i', coverSource,
+        '-frames:v', '1', '-vf', 'scale=480:-2', coverFile,
+      ], { timeout: PROBE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 })
+      coverPath = `generated/${pendingActionId}-cover.jpg`
+      const { error } = await supabase.storage
+        .from('agent-files')
+        .upload(coverPath, await readFile(coverFile), { contentType: 'image/jpeg', upsert: true })
+      if (error) throw new Error(`cover upload failed: ${error.message}`)
+    }
+
+    await reportProgress(supabase, pendingActionId, 6)
+    if (sourceActionId) {
+      const { data: source } = await supabase
+        .from('agent_pending_actions')
+        .select('result')
+        .eq('id', sourceActionId)
+        .maybeSingle()
+      const sourceResult = source?.result ?? {}
+      const { error } = await supabase
+        .from('agent_pending_actions')
+        .update({
+          result: {
+            ...sourceResult,
+            ...(onlyCover ? {} : { editedPath: finalPath, brandedPath: finalPath }),
+            ...(coverPath ? { editedThumbPath: coverPath, brandedThumbPath: coverPath } : {}),
+            editContract: contract,
+            editSourcePath: sourcePath,
+            editedAt: new Date().toISOString(),
+          },
+        })
+        .eq('id', sourceActionId)
+      if (error) throw new Error(`source edit record failed: ${error.message}`)
+    }
+    await callJobResult(pendingActionId, 'success', {
+      storagePath: finalPath,
+      sourcePath,
+      sourceActionId,
+      mediaType: 'video',
+      editContract: contract,
+      rerenderedTracks: contract.rerender,
+      visualSourceRegenerated: false,
+      costUsd: 0,
+      ...(coverPath ? { coverPath } : {}),
+    })
+    console.log(`[worker] video-edit ${pendingActionId} — partial ${contract.rerender.join(',')} → ${finalPath}`)
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 /**
  * @param {import('bullmq').Job} job
  * @param {{ supabase: import('@supabase/supabase-js').SupabaseClient,
@@ -388,6 +636,25 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
       if (thumbErr) thumbPath = null
     } catch { thumbPath = null }
 
+    // Persist the already-generated voiceover stem so CSE5 can change its
+    // volume later without calling TTS again. Music already has a durable
+    // owner-approved source path in the job payload.
+    let voiceoverPath = null
+    if (payload.voiceoverText) {
+      try {
+        voiceoverPath = `generated/${pendingActionId}-voiceover.mp3`
+        const { error: voiceErr } = await supabase.storage
+          .from('agent-files')
+          .upload(voiceoverPath, await readFile(join(workDir, 'voiceover.mp3')), {
+            contentType: 'audio/mpeg',
+            upsert: true,
+          })
+        if (voiceErr) voiceoverPath = null
+      } catch {
+        voiceoverPath = null
+      }
+    }
+
     // cover candidates for the Gallery picker (best-effort)
     const coverCandidates = []
     for (let i = 0; i < coverFiles.length; i++) {
@@ -411,6 +678,8 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
       segments: plan.segments.length,
       sourcePath: videoPath,
       postApplied: post.applied,
+      ...(typeof payload.musicPath === 'string' ? { musicPath: payload.musicPath } : {}),
+      ...(voiceoverPath ? { voiceoverPath } : {}),
       ...(post.warnings.length ? { postWarnings: post.warnings } : {}),
       // CS11 — QC metrics + loudness; ffmpeg-only edits carry zero API cost
       ...(videoQc ? { videoQc: { pass: videoQc.pass, warnings: videoQc.warnings, metrics: videoQc.metrics } } : {}),

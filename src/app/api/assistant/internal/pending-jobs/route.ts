@@ -4,6 +4,11 @@ import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
+import {
+  CREATIVE_STUDIO_PREVIEW_STATUS,
+  isAuthorizedPreviewWorkerRequest,
+  isSignedCreativeStudioImagePayload,
+} from '@/lib/creative-studio/preview-worker-scope'
 
 export const runtime = 'nodejs'
 
@@ -32,17 +37,33 @@ export async function GET(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
+  const previewWorker = isAuthorizedPreviewWorkerRequest(req)
   const jobs = await db.agentPendingAction.findMany({
-    where: {
-      status: 'approved',
+    where: previewWorker ? {
+      status: CREATIVE_STUDIO_PREVIEW_STATUS,
+      type: 'image_gen',
+    } : {
       // NOTE: this list is the single gate between "queued" and "the worker ever
       // sees it" — a job type missing here hangs at approved until the watchdog
       // checkpoints it (exactly how workbench_run was caught missing in the P2 e2e).
-      type: { in: ['image_gen', 'video_gen', 'video_edit', 'video_finish', 'audio_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit', 'agent_graph_run', 'voice_instruction_turn'] },
+      OR: [
+        {
+          status: 'approved',
+          type: { in: ['image_gen', 'video_gen', 'video_edit', 'video_finish', 'audio_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit', 'agent_graph_run', 'voice_instruction_turn'] },
+        },
+        {
+          status: 'campaign_approved',
+          type: 'image_gen',
+          payload: { path: ['provider'], equals: 'campaign_pack_local' },
+        },
+      ],
     },
     orderBy: { createdAt: 'asc' },
     take: 20,
   })
+  const dispatchableJobs = previewWorker
+    ? jobs.filter((job: { payload?: unknown }) => isSignedCreativeStudioImagePayload(job.payload))
+    : jobs
 
   // Phase 5 execution lease (roadmap §A leaseUntil): handing a job to the worker
   // takes the lease on its WorkflowRun, so overlapping polls / a second worker
@@ -51,6 +72,10 @@ export async function GET(req: NextRequest) {
   // (cron/legacy rows) pass through untouched — the lease narrows duplicates,
   // it never blocks delivery.
   const LEASE_TTL_MS: Record<string, number> = {
+    // CSE4 local layouts use a dedicated queued status but retain image_gen
+    // lineage. Keep one lease across either lane so a second poller cannot start
+    // the same stage.
+    image_gen: 15 * 60_000,
     video_gen: 15 * 60_000, video_edit: 15 * 60_000, video_finish: 15 * 60_000,
     long_agent_task: 15 * 60_000, browser_action: 15 * 60_000, workbench_run: 15 * 60_000, agent_graph_run: 30 * 60_000,
     seo_audit: 15 * 60_000,
@@ -58,18 +83,18 @@ export async function GET(req: NextRequest) {
   // Phase 7 kill switch: AGENT_WORKFLOW_LEASES=false hands every job out
   // unleased (pre-Phase-5 behavior) without a deploy.
   if (process.env.AGENT_WORKFLOW_LEASES === 'false') {
-    return Response.json({ jobs })
+    return Response.json({ jobs: dispatchableJobs })
   }
   try {
     const { acquireWorkflowLease } = await import('@/agent/lib/workflow-run')
     const handout: unknown[] = []
-    for (const job of jobs as Array<{ id: string; type: string }>) {
+    for (const job of dispatchableJobs as Array<{ id: string; type: string }>) {
       const lease = await acquireWorkflowLease(job.id, LEASE_TTL_MS[job.type] ?? 5 * 60_000)
         .catch(() => 'no_run' as const)
       if (lease !== 'held') handout.push(job)
     }
     return Response.json({ jobs: handout })
   } catch {
-    return Response.json({ jobs }) // lease layer down → behave exactly as before
+    return Response.json({ jobs: dispatchableJobs }) // lease layer down → behave exactly as before
   }
 }

@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   ])
   const pipelineMode = normalizePipelineMode(await readKv(CS_PIPELINE_MODE_KEY))
 
-  // Image engine — which model family the worker's Gemini-path renders use.
+  // Image engine — which model family newly queued generic-image renders use.
   // 'gpt' when the kv points the pro tier at a gpt-image model, else 'gemini'.
   let imageEngine: 'gemini' | 'gpt' | 'seedream' = 'gemini'
   try {
@@ -120,9 +120,10 @@ export async function POST(req: NextRequest) {
   if (typeof body.notifyOnDone === 'boolean') {
     await writeKv(NOTIFY_KEY, body.notifyOnDone ? '1' : '0')
   }
-  // Image engine switch (owner request 2026-07-12): the worker re-reads the
-  // cs_image_models kv before every render, so this applies to the NEXT job —
-  // no redeploy. 'gpt' → GPT Image 2 both tiers (worker maps standard→medium,
+  // Image engine switch (owner request 2026-07-12): orchestration snapshots
+  // cs_image_models into each new action, so this applies to the NEXT queued
+  // job — no redeploy and no mutation of in-flight work.
+  // 'gpt' → GPT Image 2 both tiers (worker maps standard→medium,
   // pro→high quality); 'gemini' → delete the kv, back to Nano Banana defaults.
   // FASHN try-on renders are engine-independent and unaffected.
   if (body.imageEngine === 'gpt') {

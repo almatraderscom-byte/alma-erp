@@ -13,6 +13,12 @@
  * Best-effort: any failure returns what it has and never blocks the job result — a
  * missing thumbnail must never lose the real image.
  */
+import {
+  inspectImageArtifact,
+  inspectStoredImageArtifact,
+  resolutionIntegrityFromArtifact,
+  uploadImageArtifact,
+} from '../image-artifact.mjs'
 
 const THUMB_WIDTH = 480
 
@@ -26,7 +32,7 @@ async function downloadFromStorage(supabase, path) {
   return Buffer.from(await data.arrayBuffer())
 }
 
-/** Build a compact webp thumbnail. Returns its storage path or null. */
+/** Build a compact webp thumbnail. Returns its traceable descriptor or null. */
 export async function makeThumbnail(supabase, pendingActionId, sourceBuffer, suffix = '') {
   try {
     const sharp = await getSharp()
@@ -34,12 +40,15 @@ export async function makeThumbnail(supabase, pendingActionId, sourceBuffer, suf
       .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
       .webp({ quality: 72 })
       .toBuffer()
-    const thumbPath = `generated/thumbs/${pendingActionId}${suffix ? `-${suffix}` : ''}.webp`
-    const { error } = await supabase.storage
-      .from('agent-files')
-      .upload(thumbPath, thumb, { contentType: 'image/webp', upsert: true })
-    if (error) return null
-    return thumbPath
+    return uploadImageArtifact({
+      supabase,
+      buffer: thumb,
+      storageBasePath: `generated/thumbs/${pendingActionId}${suffix ? `-${suffix}` : ''}`,
+      kind: 'thumbnail',
+      contract: { mode: 'maximum-long-edge', maxLongEdge: THUMB_WIDTH },
+      sourceKind: 'original',
+      transformVersion: 'cse8-thumbnail-v1',
+    })
   } catch (err) {
     console.warn(`[branding] thumbnail failed for ${pendingActionId}:`, err.message)
     return null
@@ -48,13 +57,27 @@ export async function makeThumbnail(supabase, pendingActionId, sourceBuffer, suf
 
 /**
  * One-shot post-process: download the final image once and produce a thumbnail.
- * Best-effort — returns {} on any problem.
+ * Best-effort thumbnail generation. Original inspection is mandatory: callers
+ * must never publish an image whose real bytes cannot be described.
  */
-export async function postProcessImage(supabase, pendingActionId, storagePath) {
-  const out = {}
+export async function postProcessImage(supabase, pendingActionId, storagePath, {
+  original: suppliedOriginal,
+  inspectOptions = {},
+} = {}) {
   const buf = await downloadFromStorage(supabase, storagePath)
-  if (!buf) return out
-  const thumbPath = await makeThumbnail(supabase, pendingActionId, buf)
-  if (thumbPath) out.thumbPath = thumbPath
-  return out
+  let original = suppliedOriginal
+  if (!original) {
+    original = buf
+      ? await inspectImageArtifact(buf, { ...inspectOptions, kind: 'original', storagePath })
+      : await inspectStoredImageArtifact(supabase, storagePath, { ...inspectOptions, kind: 'original' })
+  }
+  const thumbnail = buf ? await makeThumbnail(supabase, pendingActionId, buf) : null
+  return {
+    ...(thumbnail ? { thumbPath: thumbnail.storagePath } : {}),
+    resolutionIntegrity: resolutionIntegrityFromArtifact(original),
+    variants: {
+      original,
+      ...(thumbnail ? { thumbnail } : {}),
+    },
+  }
 }

@@ -20,9 +20,8 @@ export const XAI_MAX_EDIT_REFERENCES = 3
 
 export type XaiImagineOp = 'generate' | 'edit'
 
-/** Studio aspect values the UI offers → nearest xAI-supported ratio. */
+/** Studio aspect values that xAI supports without changing the owner's choice. */
 const XAI_ASPECT_MAP: Record<string, string> = {
-  '4:5': '3:4', // studio portrait default — xAI has no 4:5; 3:4 is the closest portrait
   '1:1': '1:1',
   '9:16': '9:16',
   '16:9': '16:9',
@@ -33,12 +32,19 @@ const XAI_ASPECT_MAP: Record<string, string> = {
 }
 
 export function toXaiAspectRatio(studioAspect: string | undefined): string {
-  return XAI_ASPECT_MAP[studioAspect ?? ''] ?? 'auto'
+  const requested = studioAspect ?? '3:4'
+  const mapped = XAI_ASPECT_MAP[requested]
+  if (!mapped) throw new Error(`aspect_ratio_unsupported:xai_imagine:${requested}`)
+  return mapped
 }
 
-/** xAI tops out at 2k — the studio's 4k choice degrades honestly to 2k. */
+/** xAI tops out at 2K. Never relabel a 2K request as a successful 4K render. */
 export function toXaiResolution(studioResolution: string | undefined): '1k' | '2k' {
-  return studioResolution === '1k' ? '1k' : '2k'
+  const requested = studioResolution ?? '2k'
+  if (requested !== '1k' && requested !== '2k') {
+    throw new Error(`resolution_unsupported:xai_imagine:${requested}`)
+  }
+  return requested
 }
 
 export function estimateXaiImageCostUsd(resolution: '1k' | '2k', n = 1): number {
@@ -55,7 +61,7 @@ const GARMENT_EXACTNESS =
 
 const MODE_SCAFFOLDS: Record<Exclude<StudioModeId, 'generate' | 'image_to_video'>, string> = {
   product_to_model:
-    `Reference image 1 is a clothing product photo. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product. ${GARMENT_EXACTNESS} Natural pose, modest styling, clean commercial lighting.`,
+    `Reference image 1 is the clothing PRODUCT being sold. Create a professional fashion photoshoot of a Bangladeshi model wearing EXACTLY this product. ${GARMENT_EXACTNESS} Natural pose, modest styling, clean commercial lighting.`,
   try_on:
     `Reference image 1 shows a person; reference image 2 is the clothing product photo. Dress the person from image 1 in EXACTLY the outfit from image 2 — keep the person's face, body and identity unchanged. ${GARMENT_EXACTNESS} Photorealistic virtual try-on.`,
   model_swap:
@@ -160,7 +166,7 @@ export function buildXaiRunBrief(input: {
     case 'product_to_model': {
       if (!input.productImagePath) throw new Error('product_image_required')
       refs.push(input.productImagePath); roles.push('garment')
-      // optional model reference: scaffold stays valid — extra image only helps
+      // A selected person is a contract, not an anonymous "extra image".
       if (input.modelImagePath) { refs.push(input.modelImagePath); roles.push('person') }
       break
     }
@@ -193,7 +199,9 @@ export function buildXaiRunBrief(input: {
       break
     }
   }
-  if (refs.length > XAI_MAX_EDIT_REFERENCES) { refs.length = XAI_MAX_EDIT_REFERENCES; roles.length = XAI_MAX_EDIT_REFERENCES }
+  if (refs.length > XAI_MAX_EDIT_REFERENCES) {
+    throw new Error(`reference_limit_exceeded:xai_imagine:${XAI_MAX_EDIT_REFERENCES}`)
+  }
 
   // CS14 — attach the avatar identity sheet on the person-carrying modes when
   // a reference slot is free (never displaces a functional reference).
@@ -209,11 +217,15 @@ export function buildXaiRunBrief(input: {
   }
 
   const scaffold = MODE_SCAFFOLDS[input.mode]
+  const selectedPersonLine =
+    input.mode === 'product_to_model' && input.modelImagePath
+      ? " Reference image 2 is the OWNER-SELECTED PERSON for this shoot. Preserve that person's face, age, skin tone, hair and identity faithfully in the newly composed shot; do not substitute a different model."
+      : ''
   return {
     op: 'edit',
     referenceImagePaths: refs,
     referenceRoles: roles,
-    prompt: [scaffold, ownerText].filter(Boolean).join(' ') + sheetLine,
+    prompt: [scaffold + selectedPersonLine, ownerText].filter(Boolean).join(' ') + sheetLine,
   }
 }
 
@@ -268,7 +280,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     mode: 'generate',
     prompt:
       'Premium product launch campaign visual for a Bangladeshi clothing brand: elegant fabric draping, soft studio light, festive yet modest aesthetic, no people, space for headline text.',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {
@@ -297,7 +309,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     hintBn: 'মডেল + পোশাক → পরানো ছবি (২ রেফারেন্স)',
     mode: 'try_on',
     prompt: '',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {
@@ -306,7 +318,7 @@ export const XAI_TEMPLATES: XaiTemplate[] = [
     hintBn: 'পোশাকের ছবি → মডেলের গায়ে ফটোশুট',
     mode: 'product_to_model',
     prompt: '',
-    aspectRatio: '4:5',
+    aspectRatio: '3:4',
     resolution: '2k',
   },
   {
