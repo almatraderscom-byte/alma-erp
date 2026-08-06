@@ -7,3 +7,10 @@ backups
 tmp
 *.log
 tsconfig.tsbuildinfo
+
+# Local agent/Xcode/Swift build artifacts are not web-deploy inputs.  They can
+# exceed Vercel's source-upload request limit even though the app source is
+# small.
+.claude/worktrees
+ios/App/build
+mac-agent/ScreenBroadcaster/.build

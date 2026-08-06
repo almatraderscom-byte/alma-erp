@@ -444,7 +444,12 @@ final class AlmaVoiceEngine {
         hasEverConnected = false
         callStartedAt = nil
         isMuted = false
-        speakerOn = true
+        // A CallKit incoming call must start on the receiver. Explicitly pinning
+        // it to `.speaker` prevents the locked system call screen from clearing
+        // our app-level override, so its Speaker OFF button appears to do
+        // nothing. Foreground, app-owned voice sessions keep their speaker-first
+        // behaviour; CallKit can then own receiver/speaker changes normally.
+        speakerOn = !callKitManaged
         liveSessionHasStarted = false
         AlmaVoiceAudioTrace.event("engine.begin", callKitManaged ? "callkit=1" : "callkit=0")
         tts.engine = self
@@ -1346,16 +1351,15 @@ final class AlmaVoiceEngine {
         wake.stop()
         state = .listening
         keepAliveStart()
-        // Agent call route diagnostics (owner device 2026-07-31): if the OS has
-        // parked the audio on the receiver 2s after connect, nudge it back AND
-        // record it on the call row so the next silent call is readable from
-        // the DB instead of guessed at.
+        // Agent call route diagnostics. Do not force a CallKit-managed receiver
+        // back to speaker: receiver-first is intentional and leaves the locked
+        // system Speaker button in control of the route.
         if let callId = activeAgentCallId {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 guard let self, self.liveActive else { return }
                 let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
                     .map { $0.portType.rawValue }.joined(separator: "+")
-                if outputs.contains("Receiver") {
+                if self.speakerOn && outputs.contains("Receiver") {
                     self.live.nudgeSpeakerRoute()
                     if #available(iOS 17.0, *) {
                         Task { await CallKitVoIP.postAgentCallStatus(callId, status: nil,
@@ -2085,17 +2089,23 @@ final class AlmaVoiceEngine {
         ttsActive = true                 // MIC GATE closes: agent is speaking
         tr("TTS first chunk — gate CLOSED")
         refreshWake()                    // ...so the wake mic can't hear the agent
-        // Recording can flip the route to the receiver; force the loud speaker back
-        // for the spoken reply (owner: replies were near-silent on device).
-        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+        // Recording can flip the route to the receiver. Restore loudspeaker only
+        // while it is still the owner's selected route; a CallKit/app speaker-OFF
+        // choice must survive the next TTS chunk.
+        if speakerOn {
+            try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+        }
         if state == .thinking || state == .transcribing { state = .speaking }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     func ttsDidStartChunk(_ text: String) {
         ttsActive = true                 // stays closed for every chunk of the reply
-        // Keep every spoken chunk on the loud speaker.
-        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+        // Keep every spoken chunk on the selected output. Never turn a deliberate
+        // receiver route back into loudspeaker just because a new chunk began.
+        if speakerOn {
+            try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+        }
         lastAudioAt = Date()
         if !nowLine.isEmpty { saidLines.append(nowLine) }
         if saidLines.count > 2 { saidLines.removeFirst(saidLines.count - 2) }
@@ -2297,6 +2307,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    /// VoiceProcessingIO can emit one last asynchronous receiver reset while the
+    /// graph is coming up. During this short window we defend the requested route;
+    /// afterwards CallKit owns all built-in route changes. The locked system call
+    /// screen does not reliably label its speaker selection as `.override`, so we
+    /// must adopt the actual route for every route-change reason.
+    private var bootstrapRouteProtectionUntil = Date.distantPast
     private let readinessLock = NSLock()
     private var readiness = AlmaLiveAudioReadiness()
     /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
@@ -2607,8 +2623,34 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         enforceRequestedRoute(reason: "nudge")
     }
 
-    private func handleAudioRouteChange() {
+    private func handleAudioRouteChange(_ notification: Notification? = nil) {
         guard configured, !stopped else { return }
+        let av = AVAudioSession.sharedInstance()
+        let reasonRaw = notification?.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+        let outputs = av.currentRoute.outputs
+        let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+        let onReceiver = outputs.contains { $0.portType == .builtInReceiver }
+
+        audioLock.lock()
+        let bootstrapProtected = Date() < bootstrapRouteProtectionUntil
+        let nativeCallKitSelection = callKitOwnsAudioSession
+            && !bootstrapProtected
+            && (onSpeaker || onReceiver)
+        if nativeCallKitSelection { speakerEnabled = onSpeaker }
+        audioLock.unlock()
+
+        if nativeCallKitSelection {
+            // The system CallKit screen has no CXProvider speaker callback. Its
+            // only public signal is the actual AVAudioSession route. iOS does not
+            // reliably report the locked-screen button as reason `.override`, so
+            // adopt every post-bootstrap built-in route instead of fighting it.
+            trace("route.callkitSelection", "want=\(onSpeaker ? "speaker" : "receiver") "
+                  + "reason=\(reasonRaw ?? 0) " + audioSessionDescription(av))
+            publishCurrentAudioRoute()
+            return
+        }
+        trace("route.changed", "reason=\(reasonRaw ?? 0) protected=\(bootstrapProtected ? 1 : 0) "
+              + audioSessionDescription(av))
         enforceRequestedRoute(reason: "routeChange")
     }
 
@@ -2816,11 +2858,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // port and VP is skipped there). Two guards: a watchdog that re-asserts
         // the speaker whenever the OS re-routes to the receiver, plus one
         // delayed belt-and-braces nudge.
+        bootstrapRouteProtectionUntil = Date().addingTimeInterval(1.2)
         if routeObserver == nil {
             routeObserver = NotificationCenter.default.addObserver(
                 forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                self?.handleAudioRouteChange()
+            ) { [weak self] notification in
+                self?.handleAudioRouteChange(notification)
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in

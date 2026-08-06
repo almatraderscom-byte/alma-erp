@@ -19,6 +19,7 @@ import { prisma } from '@/lib/prisma'
 import { getCallPushTargets } from '@/agent/lib/call-push'
 import { sendVoipCall, type VoipCallPayload } from '@/agent/lib/apns-voip'
 import { sendFcmCall, fcmCallConfigured } from '@/agent/lib/fcm-call'
+import { getOfficeCallDeliveryDevicesForUsers } from '@/agent/lib/office-call-devices'
 
 /** CallKit rings ~60s; small buffer so a just-answered call is not swept. */
 export const RING_WINDOW_MS = 75_000
@@ -56,6 +57,67 @@ function ringPayload(callId: string, event: 'ring' | 'cancel'): VoipCallPayload 
   }
 }
 
+type AgentCallPushTargets = {
+  sandboxVoip: string[]
+  productionVoip: string[]
+  fcm: string[]
+}
+
+async function getAgentCallPushTargets(userIds: string[]): Promise<AgentCallPushTargets> {
+  const [devices, legacy] = await Promise.all([
+    getOfficeCallDeliveryDevicesForUsers(userIds),
+    // Compatibility only: builds predating the encrypted installation registry
+    // wrote PushKit tokens to PushSubscription.
+    getCallPushTargets(userIds).catch(() => ({ voip: [], fcm: [] })),
+  ])
+  const sandboxVoip = new Set<string>()
+  const productionVoip = new Set<string>()
+  const fcm = new Set<string>()
+  const currentVoip = new Set<string>()
+
+  for (const device of devices) {
+    if (device.provider === 'apns_voip') {
+      currentVoip.add(device.token)
+      ;(device.environment === 'production' ? productionVoip : sandboxVoip).add(device.token)
+    } else if (device.provider === 'fcm') {
+      fcm.add(device.token)
+    }
+  }
+  // A legacy row has no APNs environment. Preserve the old deployment-level
+  // contract, but never duplicate a token already classified by the new row.
+  const legacyVoip = process.env.APNS_PRODUCTION === 'true' ? productionVoip : sandboxVoip
+  for (const token of legacy.voip) {
+    if (!currentVoip.has(token)) legacyVoip.add(token)
+  }
+  for (const token of legacy.fcm) fcm.add(token)
+
+  return {
+    sandboxVoip: [...sandboxVoip],
+    productionVoip: [...productionVoip],
+    fcm: [...fcm],
+  }
+}
+
+async function sendAgentCallPush(targets: AgentCallPushTargets, payload: VoipCallPayload) {
+  const [sandbox, production, fcm] = await Promise.all([
+    targets.sandboxVoip.length
+      ? sendVoipCall(targets.sandboxVoip, payload, { environment: 'sandbox' })
+      : Promise.resolve([]),
+    targets.productionVoip.length
+      ? sendVoipCall(targets.productionVoip, payload, { environment: 'production' })
+      : Promise.resolve([]),
+    targets.fcm.length && fcmCallConfigured()
+      ? sendFcmCall(targets.fcm, payload)
+      : Promise.resolve([]),
+  ])
+  return {
+    voipAttempted: targets.sandboxVoip.length + targets.productionVoip.length,
+    voipSent: [...sandbox, ...production].filter((result) => result.ok).length,
+    fcmAttempted: targets.fcm.length,
+    fcmSent: fcm.filter((result) => result.ok).length,
+  }
+}
+
 /**
  * Ring the owner's app. Creates the call row first (the app fetches the brief by
  * id on answer), then fires VoIP + FCM pushes. Best-effort on the push layer but
@@ -71,8 +133,12 @@ export async function ringOwnerApp(args: {
   const owners = await ownerUserIds().catch(() => [])
   if (owners.length === 0) return { ok: false, error: 'no_owner' }
 
-  const { voip, fcm } = await getCallPushTargets(owners).catch(() => ({ voip: [], fcm: [] }))
-  if (voip.length === 0 && fcm.length === 0) return { ok: false, error: 'no_devices' }
+  const targets = await getAgentCallPushTargets(owners).catch(() => ({
+    sandboxVoip: [], productionVoip: [], fcm: [],
+  }))
+  if (targets.sandboxVoip.length === 0 && targets.productionVoip.length === 0 && targets.fcm.length === 0) {
+    return { ok: false, error: 'no_devices' }
+  }
 
   // One call at a time (review-bot P2s on PR #653): CallKit is configured for a
   // single call group, so a second ring while ANY call is live/ringing would be
@@ -122,12 +188,8 @@ export async function ringOwnerApp(args: {
   }
 
   const payload = ringPayload(callId, 'ring')
-  const [voipResults, fcmResults] = await Promise.all([
-    voip.length ? sendVoipCall(voip, payload) : Promise.resolve([]),
-    fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, payload) : Promise.resolve([]),
-  ])
-  const voipSent = voipResults.filter((r) => r.ok).length
-  const fcmSent = fcmResults.filter((r) => r.ok).length
+  const delivery = await sendAgentCallPush(targets, payload)
+  const { voipSent, fcmSent } = delivery
 
   // Only iOS VoIP counts as a RING today: the Android service ignores
   // 'agent_call' payloads until C5, so an FCM delivery must not make the
@@ -138,8 +200,8 @@ export async function ringOwnerApp(args: {
     where: { id: callId },
     data: {
       pushResult: {
-        voip: { attempted: voip.length, delivered: voipSent },
-        fcm: { attempted: fcm.length, delivered: fcmSent, countsAsRing: false },
+        voip: { attempted: delivery.voipAttempted, delivered: voipSent },
+        fcm: { attempted: delivery.fcmAttempted, delivered: fcmSent, countsAsRing: false },
       },
       ...(rang ? {} : { status: 'failed', endedAt: new Date() }),
     },
@@ -201,12 +263,9 @@ export async function getAgentAppCallStatus(id: string): Promise<AgentAppCallSta
     void (async () => {
       try {
         const owners = await ownerUserIds()
-        const { voip, fcm } = await getCallPushTargets(owners)
         const cancel = ringPayload(id, 'cancel')
-        await Promise.all([
-          voip.length ? sendVoipCall(voip, cancel) : Promise.resolve([]),
-          fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, cancel) : Promise.resolve([]),
-        ])
+        const targets = await getAgentCallPushTargets(owners)
+        await sendAgentCallPush(targets, cancel)
       } catch { /* cancel is best-effort */ }
       // Missed-call notification (owner request 2026-07-29) — WhatsApp parity.
       // Salah rings are excluded: the salah ladder already notifies on its own
@@ -259,12 +318,9 @@ export async function markAgentAppCall(
     void (async () => {
       try {
         const owners = await ownerUserIds()
-        const { voip, fcm } = await getCallPushTargets(owners)
         const cancel = ringPayload(id, 'cancel')
-        await Promise.all([
-          voip.length ? sendVoipCall(voip, cancel) : Promise.resolve([]),
-          fcm.length && fcmCallConfigured() ? sendFcmCall(fcm, cancel) : Promise.resolve([]),
-        ])
+        const targets = await getAgentCallPushTargets(owners)
+        await sendAgentCallPush(targets, cancel)
       } catch { /* best-effort */ }
     })()
   }

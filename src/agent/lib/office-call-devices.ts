@@ -170,3 +170,48 @@ export async function getOfficeCallDeliveryDevices(args: {
     }
   })
 }
+
+/**
+ * Resolve every active call-capable installation for a set of users.
+ *
+ * Agent → owner calls are account-wide rather than tied to one currently
+ * selected business, so their sender must not guess a business id.  Keep this
+ * alongside the business-scoped office-call lookup so both paths read the
+ * same encrypted, environment-aware device registry.
+ */
+export async function getOfficeCallDeliveryDevicesForUsers(userIds: string[]) {
+  const ids = [...new Set(userIds.filter(Boolean))]
+  if (ids.length === 0) return []
+  const rows = await prisma.officeCallDevice.findMany({
+    where: {
+      userId: { in: ids },
+      active: true,
+      invalidatedAt: null,
+      providerTokenEnc: { not: null },
+    },
+    select: {
+      id: true,
+      platform: true,
+      environment: true,
+      provider: true,
+      providerTokenEnc: true,
+      appBuild: true,
+      buildSha: true,
+    },
+  })
+  return rows.flatMap((row) => {
+    try {
+      return [{
+        id: row.id,
+        platform: row.platform as OfficeCallDevicePlatform,
+        environment: row.environment as OfficeCallDeviceEnvironment,
+        provider: row.provider as OfficeCallDeviceProvider,
+        token: decryptOfficeCallDeviceToken(row.providerTokenEnc!),
+        appBuild: row.appBuild,
+        buildSha: row.buildSha,
+      }]
+    } catch {
+      return []
+    }
+  })
+}
