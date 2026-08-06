@@ -83,36 +83,59 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('liveToolTurnPending ? .thinking : .listening')
     expect(voice).toContain('playbackPrebufferSeconds = 0.16')
     expect(voice).not.toContain('private var queuedAudio')
+    expect(voice).toContain('debugInjectUserTurnWhenReady')
+    expect(voice).toContain('launchValue("ALMA_LIVE_SAY")')
+    expect(voice).toContain('#if DEBUG')
   })
 
   it('keeps native voice delivery human, emotionally appropriate, and naturally finite', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
-    expect(voice).toContain('supportsAffectiveDialog(model:')
-    expect(voice).toContain('gemini-2.5-flash-native-audio')
+    expect(voice).toContain('private var allowAffective = false')
     expect(voice).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
     expect(voice).toContain('“আর কিছু জানতে চান?”')
     expect(voice).toContain('স্বাভাবিকভাবে থামবে')
     expect(voice).toContain('দুঃখ বা খারাপ খবরে')
     expect(voice).toContain('চাপ, রাগ বা হতাশায়')
     expect(voice).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
-    expect(voice).toContain('"temperature": 0.55')
+    expect(voice).toContain('"temperature": 0.4')
   })
 
   it('discriminates loudspeaker echo while preserving natural barge-in', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+    const probeStart = voice.indexOf('let echoExposedLoudspeaker')
+    const directGateStart = voice.indexOf('let threshold = max(bargeInMinimumRMS', probeStart)
+    const probeFlow = voice.slice(probeStart, directGateStart)
+    const finishPlayback = voice.slice(
+      voice.indexOf('private func finishModelPlayback('),
+      voice.indexOf('private func beginLocalBargeIn('),
+    )
+    const stopPlayback = voice.slice(
+      voice.indexOf('private func stopModelPlayback('),
+      voice.indexOf('func sendToolResponse('),
+    )
 
     expect(voice).toContain('receiverBargeInRequiredFrames = 7')
     expect(voice).toContain('loudspeakerProbeCandidateRMS = 0.034')
     expect(voice).toContain('loudspeakerProbeSettleSeconds = 0.045')
     expect(voice).toContain('loudspeakerProbeWindowSeconds = 0.20')
-    expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 1')
-    expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.18')
+    expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 2')
+    expect(voice).toContain('loudspeakerProbeRetainedEnergyRatio = 0.60')
+    expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.35')
     expect(voice).toContain('bargeInPreRollChunks = 14')
     expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
     expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
     expect(voice).toContain('setLoudspeakerProbeMuted(true)')
+    expect(voice).toContain('loudspeakerProbeDuckAppliedAt = Date()')
+    expect(voice).toContain('duckAppliedAt != .distantPast')
     expect(voice).toContain('self.player.volume = muted ? self.loudspeakerProbeDuckVolume : 1')
+    expect(probeFlow.indexOf('duckAppliedAt != .distantPast'))
+      .toBeLessThan(probeFlow.indexOf('loudspeakerProbeVoiceFrames += 1'))
+    expect(probeFlow).toContain('loudspeakerProbeCandidatePeakRMS')
+    expect(probeFlow).toContain('* loudspeakerProbeRetainedEnergyRatio')
+    expect(finishPlayback).toContain('pendingPlaybackBuffers.isEmpty')
+    expect(finishPlayback).toContain('self?.player.volume = 1')
+    expect(stopPlayback).toContain('self?.player.volume = 1')
     expect(voice).toContain('bargeSpeechFrames >= receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')

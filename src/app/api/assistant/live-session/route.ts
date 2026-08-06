@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const newSessionExpiresAt = new Date(Date.now() + 120_000).toISOString()
 
   try {
-    const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1beta' } })
+    const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } })
     const token = await client.authTokens.create({
       config: {
         uses: 1,
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         // Lock the fields present above, but allow the client to add only the
         // sessionResumption.handle required for Google's ~10-minute socket rotation.
         lockAdditionalFields: [],
-        httpOptions: { apiVersion: 'v1beta' },
+        httpOptions: { apiVersion: 'v1alpha' },
       },
     })
     if (!token.name) return Response.json({ error: 'no_ephemeral_token' }, { status: 502 })
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       model,
       voice,
       expiresAt,
-      websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained',
+      websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

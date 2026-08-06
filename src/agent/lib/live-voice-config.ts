@@ -8,9 +8,7 @@ import {
   type LiveConnectConfig,
 } from '@google/genai'
 
-// Gemini 2.5 native audio is the current Live model that supports affective
-// dialogue. Keep this server-overridable for a no-code rollback/A-B test.
-export const DEFAULT_LIVE_VOICE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025'
+export const DEFAULT_LIVE_VOICE_MODEL = 'gemini-3.1-flash-live-preview'
 export const DEFAULT_LIVE_VOICE_NAME = 'Charon'
 
 export const LIVE_VOICE_SYSTEM_INSTRUCTION = `তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
@@ -28,14 +26,14 @@ Boss-এর মেজাজ ও পরিস্থিতির সঙ্গে d
 export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveConnectConfig {
   return {
     responseModalities: [Modality.AUDIO],
-    temperature: 0.55,
+    temperature: 0.4,
     speechConfig: {
       languageCode: 'bn-IN',
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
     },
     systemInstruction: LIVE_VOICE_SYSTEM_INSTRUCTION,
-    // Gemini 2.5 native audio adapts tone/pace/emotion to the conversation.
-    // The corresponding ephemeral-token and websocket endpoints use v1beta.
+    // Native-audio affect remains token-unlocked and client-optional. The iOS
+    // client deliberately leaves it off on the production 3.1 transport.
     enableAffectiveDialog: true,
     inputAudioTranscription: {},
     outputAudioTranscription: {},

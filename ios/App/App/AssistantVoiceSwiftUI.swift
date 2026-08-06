@@ -1406,6 +1406,26 @@ final class AlmaVoiceEngine {
         feedFinalizeUser()
         live.sendTextTurn(text)
     }
+
+    /// Deterministic Simulator regression harness. Wait for the real Live socket
+    /// and audio graph, then inject one typed user turn. This exercises Gemini
+    /// audio generation, transcripts, player draining and echo/barge-in logic;
+    /// only the microphone-originating prompt is replaced. DEBUG never ships in
+    /// TestFlight/Release.
+    func debugInjectUserTurnWhenReady(_ text: String, attemptsLeft: Int = 24) {
+        guard attemptsLeft > 0 else {
+            NSLog("ALMA-VOICE debug live injection timed out")
+            return
+        }
+        if liveActive {
+            NSLog("ALMA-VOICE debug live injection sent")
+            debugInjectUserTurn(text)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.debugInjectUserTurnWhenReady(text, attemptsLeft: attemptsLeft - 1)
+        }
+    }
     #endif
 
     func liveInputTranscript(_ text: String) {
@@ -2242,9 +2262,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
     private var reconnectAttempts = 0
-    /// Enabled only for Gemini 2.5 native audio, where affective dialogue is
-    /// supported. The transparent downgrade still protects a call if Google or
-    /// an older token constraint rejects the optional setup field.
+    /// Affective dialog is OFF on the production 3.1 transport. Requesting an
+    /// unsupported setup field made calls burn their first connection on a 1007
+    /// close and retry; keep the downgrade path for a future isolated migration.
     private var allowAffective = false
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
@@ -2290,7 +2310,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var loudspeakerProbeActive = false
     private var loudspeakerProbeCandidateFrames = 0
     private var loudspeakerProbeCandidatePeakRMS = 0.0
-    private var loudspeakerProbeStartedAt = Date.distantPast
+    private var loudspeakerProbeDuckAppliedAt = Date.distantPast
     private var loudspeakerProbeVoiceFrames = 0
     private var loudspeakerProbeCooldownFrames = 0
     // Listening-path noise gate (protected by audioLock, see capture()).
@@ -2311,8 +2331,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     // so the old 9-frame probe muted speech for ~0.9s despite its 180ms comment.
     private let loudspeakerProbeSettleSeconds = 0.045
     private let loudspeakerProbeWindowSeconds = 0.20
-    private let loudspeakerProbeVoiceRequiredFrames = 1
-    private let loudspeakerProbeDuckVolume: Float = 0.18
+    private let loudspeakerProbeVoiceRequiredFrames = 2
+    private let loudspeakerProbeRetainedEnergyRatio = 0.60
+    private let loudspeakerProbeDuckVolume: Float = 0.35
     private let loudspeakerProbeCooldownRequiredFrames = 60
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
@@ -2416,7 +2437,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             #endif
             mintedSession = warm.session
             mintedAt = warm.at
-            allowAffective = Self.supportsAffectiveDialog(model: warm.session.model)
             try connect(warm.session, resumptionHandle: nil)
             return
         }
@@ -2433,12 +2453,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
         mintedAt = Date()
-        allowAffective = Self.supportsAffectiveDialog(model: minted.model)
         try connect(minted, resumptionHandle: nil)
-    }
-
-    private static func supportsAffectiveDialog(model: String) -> Bool {
-        model.contains("gemini-2.5-flash-native-audio")
     }
 
     private func connect(_ minted: SessionResponse, resumptionHandle: String?) throws {
@@ -2479,7 +2494,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": [
                 "responseModalities": ["AUDIO"],
-                "temperature": 0.55,
+                "temperature": 0.4,
                 "speechConfig": [
                     "languageCode": "bn-IN",
                     "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
@@ -2752,7 +2767,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         loudspeakerProbeActive = false
         loudspeakerProbeCandidateFrames = 0
         loudspeakerProbeCandidatePeakRMS = 0
-        loudspeakerProbeStartedAt = .distantPast
+        loudspeakerProbeDuckAppliedAt = .distantPast
         loudspeakerProbeVoiceFrames = 0
         loudspeakerProbeCooldownFrames = cooldown
             ? loudspeakerProbeCooldownRequiredFrames
@@ -2761,11 +2776,25 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     /// Short, soft volume-only duck: enough attenuation to distinguish echo,
     /// without the audible full-silence gaps caused by the old frame-based probe.
-    /// It never pauses/stops the graph or touches CallKit's audio route.
+    /// Measurement is armed only AFTER audioQueue confirms the duck was applied;
+    /// otherwise the next mic frame can still contain full-volume echo and falsely
+    /// confirm ALMA's own voice as human speech. It never pauses/stops the graph,
+    /// blocks the real-time capture callback, or touches CallKit's audio route.
     private func setLoudspeakerProbeMuted(_ muted: Bool) {
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
             self.player.volume = muted ? self.loudspeakerProbeDuckVolume : 1
+            self.audioLock.lock()
+            if muted, self.loudspeakerProbeActive {
+                self.loudspeakerProbeDuckAppliedAt = Date()
+            } else {
+                self.loudspeakerProbeDuckAppliedAt = .distantPast
+            }
+            self.audioLock.unlock()
+            #if DEBUG
+            NSLog("ALMA-VOICE loudspeaker probe volume %@ level=%.2f",
+                  muted ? "ducked" : "restored", self.player.volume)
+            #endif
         }
     }
 
@@ -2997,29 +3026,40 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
                 if echoExposedLoudspeaker {
                     if loudspeakerProbeActive {
-                        let elapsed = Date().timeIntervalSince(loudspeakerProbeStartedAt)
-                        if elapsed >= loudspeakerProbeSettleSeconds {
-                            // ALMA is softly ducked, so her echo should fall with
-                            // it. A nearby human stays close to the pre-duck peak.
-                            let voiceThreshold = max(
-                                0.010,
-                                listenNoiseFloorRMS * 2.5,
-                                loudspeakerProbeCandidatePeakRMS * 0.42
-                            )
-                            if rms >= voiceThreshold {
-                                loudspeakerProbeVoiceFrames += 1
-                            }
-                            if loudspeakerProbeVoiceFrames >= loudspeakerProbeVoiceRequiredFrames {
-                                bargeInPending = true
-                                preRoll = micPreRoll
-                                micPreRoll.removeAll(keepingCapacity: true)
-                                bargeSpeechFrames = 0
-                                startBargeIn = true
-                            } else if elapsed >= loudspeakerProbeWindowSeconds {
-                                probeLogRMS = rms
-                                probeLogFloor = echoFloorRMS
-                                resetLoudspeakerProbeLocked(cooldown: true)
-                                endLoudspeakerProbe = true
+                        let duckAppliedAt = loudspeakerProbeDuckAppliedAt
+                        if duckAppliedAt != .distantPast {
+                            let elapsed = Date().timeIntervalSince(duckAppliedAt)
+                            if elapsed < loudspeakerProbeSettleSeconds {
+                                // The duck is active but the acoustic echo tail
+                                // has not had enough wall-clock time to decay.
+                            } else {
+                                // ALMA is softly ducked, so her echo should fall
+                                // with it. A nearby human stays close to the
+                                // pre-duck peak.
+                                let voiceThreshold = max(
+                                    0.010,
+                                    listenNoiseFloorRMS * 2.5,
+                                    loudspeakerProbeCandidatePeakRMS
+                                        * loudspeakerProbeRetainedEnergyRatio
+                                )
+                                if rms >= voiceThreshold {
+                                    loudspeakerProbeVoiceFrames += 1
+                                }
+                                if loudspeakerProbeVoiceFrames
+                                    >= loudspeakerProbeVoiceRequiredFrames {
+                                    bargeInPending = true
+                                    preRoll = micPreRoll
+                                    micPreRoll.removeAll(keepingCapacity: true)
+                                    bargeSpeechFrames = 0
+                                    probeLogRMS = rms
+                                    probeLogFloor = echoFloorRMS
+                                    startBargeIn = true
+                                } else if elapsed >= loudspeakerProbeWindowSeconds {
+                                    probeLogRMS = rms
+                                    probeLogFloor = echoFloorRMS
+                                    resetLoudspeakerProbeLocked(cooldown: true)
+                                    endLoudspeakerProbe = true
+                                }
                             }
                         }
                     } else if loudspeakerProbeCooldownFrames > 0 {
@@ -3048,7 +3088,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                             >= loudspeakerProbeCandidateRequiredFrames {
                             loudspeakerProbeActive = true
                             loudspeakerProbeCandidateFrames = 0
-                            loudspeakerProbeStartedAt = Date()
+                            loudspeakerProbeDuckAppliedAt = .distantPast
                             loudspeakerProbeVoiceFrames = 0
                             probeLogRMS = rms
                             probeLogFloor = echoFloorRMS
@@ -3181,7 +3221,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if startBargeIn {
             #if DEBUG
-            NSLog("ALMA-VOICE local barge-in confirmed human speech")
+            NSLog("ALMA-VOICE local barge-in confirmed human speech rms=%.4f floor=%.4f",
+                  probeLogRMS, probeLogFloor)
             #endif
             beginLocalBargeIn()
             for chunk in preRoll { sendRealtimeAudio(chunk) }
@@ -5171,6 +5212,11 @@ struct AlmaVoiceConsoleView: View {
         .onAppear {
             engine.chatVM = vm
             engine.begin()
+            #if DEBUG
+            if let liveSay = Self.launchValue("ALMA_LIVE_SAY") {
+                engine.debugInjectUserTurnWhenReady(liveSay)
+            }
+            #endif
             if let say = Self.launchValue("ALMA_VOICE_SAY") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { engine.debugInjectUtterance(say) }
             }

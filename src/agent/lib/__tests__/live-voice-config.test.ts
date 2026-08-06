@@ -48,10 +48,10 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
 
-  it('uses the affective native-audio model and avoids robotic conversation habits', () => {
-    expect(DEFAULT_LIVE_VOICE_MODEL).toBe('gemini-2.5-flash-native-audio-preview-12-2025')
+  it('keeps the proven production model while avoiding robotic conversation habits', () => {
+    expect(DEFAULT_LIVE_VOICE_MODEL).toBe('gemini-3.1-flash-live-preview')
     expect(buildLiveVoiceConfig().enableAffectiveDialog).toBe(true)
-    expect(buildLiveVoiceConfig().temperature).toBe(0.55)
+    expect(buildLiveVoiceConfig().temperature).toBe(0.4)
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“আর কিছু জানতে চান?”')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('স্বাভাবিকভাবে থামবে')
@@ -61,11 +61,11 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss তালিকা চাইলে তবেই numbered list')
   })
 
-  it('uses the v1beta ephemeral-token and constrained websocket endpoints', () => {
+  it('keeps the proven v1alpha ephemeral-token and websocket transport', () => {
     const route = readFileSync(join(process.cwd(), 'src/app/api/assistant/live-session/route.ts'), 'utf8')
 
-    expect(route).toContain("apiVersion: 'v1beta'")
-    expect(route).toContain('google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained')
-    expect(route).not.toContain("apiVersion: 'v1alpha'")
+    expect(route).toContain("apiVersion: 'v1alpha'")
+    expect(route).toContain('google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained')
+    expect(route).not.toContain("apiVersion: 'v1beta'")
   })
 })
