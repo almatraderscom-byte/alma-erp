@@ -2289,8 +2289,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     // disappears, while a real nearby voice remains and can be confirmed.
     private var loudspeakerProbeActive = false
     private var loudspeakerProbeCandidateFrames = 0
-    private var loudspeakerProbeSettleFrames = 0
-    private var loudspeakerProbeObservedFrames = 0
+    private var loudspeakerProbeCandidatePeakRMS = 0.0
+    private var loudspeakerProbeStartedAt = Date.distantPast
     private var loudspeakerProbeVoiceFrames = 0
     private var loudspeakerProbeCooldownFrames = 0
     // Listening-path noise gate (protected by audioLock, see capture()).
@@ -2307,10 +2307,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let receiverBargeInRequiredFrames = 7 // ≈140ms on receiver/AEC routes
     private let loudspeakerProbeCandidateRMS = 0.034
     private let loudspeakerProbeCandidateRequiredFrames = 2 // ≈40ms before ducking
-    private let loudspeakerProbeSettleRequiredFrames = 3    // ≈60ms echo decay
-    private let loudspeakerProbeWindowFrames = 6            // ≈120ms observation
-    private let loudspeakerProbeVoiceRequiredFrames = 3
-    private let loudspeakerProbeCooldownRequiredFrames = 20 // ≈400ms after echo-only probe
+    // Wall-clock bounds are intentional. Simulator/route callbacks can be 100ms,
+    // so the old 9-frame probe muted speech for ~0.9s despite its 180ms comment.
+    private let loudspeakerProbeSettleSeconds = 0.045
+    private let loudspeakerProbeWindowSeconds = 0.20
+    private let loudspeakerProbeVoiceRequiredFrames = 1
+    private let loudspeakerProbeDuckVolume: Float = 0.18
+    private let loudspeakerProbeCooldownRequiredFrames = 60
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
     /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
@@ -2748,20 +2751,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private func resetLoudspeakerProbeLocked(cooldown: Bool = false) {
         loudspeakerProbeActive = false
         loudspeakerProbeCandidateFrames = 0
-        loudspeakerProbeSettleFrames = 0
-        loudspeakerProbeObservedFrames = 0
+        loudspeakerProbeCandidatePeakRMS = 0
+        loudspeakerProbeStartedAt = .distantPast
         loudspeakerProbeVoiceFrames = 0
         loudspeakerProbeCooldownFrames = cooldown
             ? loudspeakerProbeCooldownRequiredFrames
             : 0
     }
 
-    /// Volume-only duck: it does not pause/stop the graph, alter CallKit's audio
-    /// session, or touch the requested receiver/speaker route.
+    /// Short, soft volume-only duck: enough attenuation to distinguish echo,
+    /// without the audible full-silence gaps caused by the old frame-based probe.
+    /// It never pauses/stops the graph or touches CallKit's audio route.
     private func setLoudspeakerProbeMuted(_ muted: Bool) {
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
-            self.player.volume = muted ? 0 : 1
+            self.player.volume = muted ? self.loudspeakerProbeDuckVolume : 1
         }
     }
 
@@ -2993,13 +2997,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
                 if echoExposedLoudspeaker {
                     if loudspeakerProbeActive {
-                        if loudspeakerProbeSettleFrames < loudspeakerProbeSettleRequiredFrames {
-                            loudspeakerProbeSettleFrames += 1
-                        } else {
-                            loudspeakerProbeObservedFrames += 1
-                            // The player is silent during this window, so compare
-                            // against the real room floor, not the learned echo.
-                            let voiceThreshold = max(0.010, listenNoiseFloorRMS * 2.5)
+                        let elapsed = Date().timeIntervalSince(loudspeakerProbeStartedAt)
+                        if elapsed >= loudspeakerProbeSettleSeconds {
+                            // ALMA is softly ducked, so her echo should fall with
+                            // it. A nearby human stays close to the pre-duck peak.
+                            let voiceThreshold = max(
+                                0.010,
+                                listenNoiseFloorRMS * 2.5,
+                                loudspeakerProbeCandidatePeakRMS * 0.42
+                            )
                             if rms >= voiceThreshold {
                                 loudspeakerProbeVoiceFrames += 1
                             }
@@ -3009,7 +3015,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                                 micPreRoll.removeAll(keepingCapacity: true)
                                 bargeSpeechFrames = 0
                                 startBargeIn = true
-                            } else if loudspeakerProbeObservedFrames >= loudspeakerProbeWindowFrames {
+                            } else if elapsed >= loudspeakerProbeWindowSeconds {
                                 probeLogRMS = rms
                                 probeLogFloor = echoFloorRMS
                                 resetLoudspeakerProbeLocked(cooldown: true)
@@ -3028,17 +3034,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                         )
                         if rms >= candidateThreshold {
                             loudspeakerProbeCandidateFrames += 1
+                            loudspeakerProbeCandidatePeakRMS = max(
+                                loudspeakerProbeCandidatePeakRMS, rms)
                         } else {
                             loudspeakerProbeCandidateFrames = max(
                                 0, loudspeakerProbeCandidateFrames - 1)
+                            if loudspeakerProbeCandidateFrames == 0 {
+                                loudspeakerProbeCandidatePeakRMS = 0
+                            }
                             echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
                         }
                         if loudspeakerProbeCandidateFrames
                             >= loudspeakerProbeCandidateRequiredFrames {
                             loudspeakerProbeActive = true
                             loudspeakerProbeCandidateFrames = 0
-                            loudspeakerProbeSettleFrames = 0
-                            loudspeakerProbeObservedFrames = 0
+                            loudspeakerProbeStartedAt = Date()
                             loudspeakerProbeVoiceFrames = 0
                             probeLogRMS = rms
                             probeLogFloor = echoFloorRMS
