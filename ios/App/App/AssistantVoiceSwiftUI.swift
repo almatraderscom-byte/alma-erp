@@ -2296,7 +2296,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var listenContinuousLoudFrames = 0
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
-    private let bargeInRequiredFrames = 12       // ≈240ms at the 20ms input tap
+    private let bargeInRequiredFrames = 12       // ≈240ms on echo-exposed loudspeaker
+    private let receiverBargeInRequiredFrames = 7 // ≈140ms on receiver/AEC routes
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
     /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
@@ -2447,7 +2448,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
         মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
-        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। Boss কথা শুরু করলেই সাথে সাথে থেমে শুনবে।
+        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না—একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে একটু পূর্ণ বিরতি। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। কৃত্রিম “হুম”, শ্বাসের শব্দ বা নাটকীয়তা যোগ করবে না। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
         var setup: [String: Any] = [
@@ -2934,13 +2935,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 echoFloorRMS = max(echoFloorRMS, rms * 0.85)
                 bargeSpeechFrames = 0
             } else {
-                // LOCKED tuning for the normal (hardware-AEC) path — kept
-                // literally, contract-tested. Without AEC (CallKit-owned
-                // session) the speaker bleeds into the mic, so that path alone
-                // uses a higher gate or the agent interrupts itself.
-                let threshold = voiceProcessingUnavailable
+                // A CallKit receiver route has little acoustic feedback even
+                // when AVAudioEngine could not enable VoiceProcessingIO. Treating
+                // every no-AEC route like loudspeaker required RMS >= 0.081,
+                // above the owner's measured speech (~0.047), so talking over
+                // ALMA never stopped her. Keep the conservative gate only when
+                // the actual requested route is the echo-exposed loudspeaker.
+                let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+                let threshold = echoExposedLoudspeaker
                     ? max(bargeInMinimumRMS * 1.8, echoFloorRMS * 3.2 + 0.02)
                     : max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                let requiredFrames = echoExposedLoudspeaker
+                    ? bargeInRequiredFrames
+                    : receiverBargeInRequiredFrames
                 if rms >= threshold {
                     bargeSpeechFrames += 1
                 } else {
@@ -2949,7 +2956,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     // never let actual speech immediately raise its own threshold.
                     echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
                 }
-                if bargeSpeechFrames >= bargeInRequiredFrames {
+                if bargeSpeechFrames >= requiredFrames {
                     bargeInPending = true
                     preRoll = micPreRoll
                     micPreRoll.removeAll(keepingCapacity: true)

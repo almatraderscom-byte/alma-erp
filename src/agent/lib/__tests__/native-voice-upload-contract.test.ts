@@ -89,8 +89,12 @@ describe('native voice upload contract', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
     expect(voice).toContain('bargeInRequiredFrames = 12')
+    expect(voice).toContain('receiverBargeInRequiredFrames = 7')
     expect(voice).toContain('bargeInPreRollChunks = 14')
     expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
+    expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('? bargeInRequiredFrames')
+    expect(voice).toContain(': receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
     expect(voice).toContain('input.isVoiceProcessingEnabled')

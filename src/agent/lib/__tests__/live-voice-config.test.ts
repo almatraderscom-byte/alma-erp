@@ -36,6 +36,8 @@ describe('live voice configuration', () => {
     // Read-only fast lane exists but is scoped to lookups only.
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('quick_erp_lookup')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('completed/reportReady')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('বাক্য শেষ করার চেষ্টা না করে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
 })
