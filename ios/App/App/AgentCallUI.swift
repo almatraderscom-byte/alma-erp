@@ -43,14 +43,29 @@ final class AgentCallController: NSObject {
     /// `callKitManaged` = a real CallKit call owns the audio session (device
     /// path). The sim harness has no CallKit, so it must configure the session
     /// itself — passing true there would wait forever for didActivate.
-    func start(callId: String, purpose: String, callKitManaged: Bool = true) {
-        guard activeCallId == nil else { return }
+    @discardableResult
+    func start(callId: String, purpose: String, callKitManaged: Bool = true) -> Bool {
+        guard activeCallId == nil else { return false }
         activeCallId = callId
         startedAt = Date()
         let eng = AlmaVoiceEngine()
         engine = eng
         eng.callKitManaged = callKitManaged
         eng.activeAgentCallId = callId
+        if callKitManaged {
+            do {
+                // This must precede CXAnswerCallAction.fulfill(): CallKit
+                // activates the category/route that is configured at fulfil.
+                try eng.prepareCallKitAudioSession()
+            } catch {
+                AlmaVoiceAudioTrace.event("callkit.preflight.failed", String(describing: error))
+                eng.activeAgentCallId = nil
+                engine = nil
+                activeCallId = nil
+                startedAt = nil
+                return false
+            }
+        }
         // Empty purpose = brief still in flight (deliverBrief will inject it,
         // pre- or post-connect). Never seed an empty note.
         if !purpose.isEmpty { eng.pendingAgentCallBrief = purpose }
@@ -59,6 +74,7 @@ final class AgentCallController: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
+        return true
     }
 
     /// CallKit activated the shared audio session — the live engine can start

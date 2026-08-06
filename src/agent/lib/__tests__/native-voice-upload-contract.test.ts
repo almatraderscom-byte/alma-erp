@@ -100,6 +100,7 @@ describe('native voice upload contract', () => {
   it('gates CallKit media on real activation and keeps receiver routing possible', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
     const callKit = readFileSync(join(ROOT, 'ios/App/App/CallKitVoIP.swift'), 'utf8')
+    const callUI = readFileSync(join(ROOT, 'ios/App/App/AgentCallUI.swift'), 'utf8')
     const liveConfigure = voice.slice(
       voice.indexOf('private func configureAudioOnQueue()'),
       voice.indexOf('private func capture('),
@@ -116,5 +117,30 @@ describe('native voice upload contract', () => {
     expect(liveConfigure).not.toContain('options: [.allowBluetoothHFP, .defaultToSpeaker]')
     expect(voice).toContain('overrideOutputAudioPort(enabled ? .speaker : .none)')
     expect(voice).toContain('isProximityMonitoringEnabled = callConnection == .live && receiver')
+    // The category must exist BEFORE CXAnswerCallAction.fulfill() causes CallKit
+    // to activate hardware; doing this after didActivate recreates the cold/
+    // background silent call.
+    expect(callUI).toContain('try eng.prepareCallKitAudioSession()')
+    expect(callUI.indexOf('try eng.prepareCallKitAudioSession()')).toBeLessThan(
+      callUI.indexOf('eng.begin()'),
+    )
+    expect(callKit).toContain('guard AgentCallController.shared.start(callId: call.broadcastId, purpose: "") else')
+    expect(callKit.indexOf('AgentCallController.shared.start(callId: call.broadcastId')).toBeLessThan(
+      callKit.indexOf('action.fulfill()', callKit.indexOf('AgentCallController.shared.start(callId: call.broadcastId')),
+    )
+    // A cold in-app call pre-activates once and does not immediately queue a
+    // teardown; retries still stop the previous attempt.
+    expect(voice).toContain('try self.live.prepareStandaloneAudioSession()')
+    expect(voice).toContain('if liveSessionHasStarted { live.stop() }')
+    // Speaker and receiver are both enforced. The old handler only repaired a
+    // receiver->speaker change, so another subsystem could pin speaker OFF calls
+    // back to loudspeaker forever.
+    expect(voice).toContain('(!wantSpeaker && onSpeaker)')
+    expect(voice).toContain('verifyRequestedRoute(attempt: 1)')
+    expect(voice).toContain('options: [.allowBluetoothHFP]')
+    // "speaking" UI is not treated as render proof anymore.
+    expect(voice).toContain('output.renderStalled')
+    expect(voice).toContain('renderedSamples > 0')
+    expect(voice).toContain('output.renderRecovered')
   })
 })

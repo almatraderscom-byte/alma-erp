@@ -449,10 +449,15 @@ extension CallKitVoIP: CXProviderDelegate {
             // and the server 'answered' mark arrive in the background; the brief
             // is injected even if the live socket connects first.
             Task { @MainActor in
-                AgentCallController.shared.start(callId: call.broadcastId, purpose: "")
+                guard AgentCallController.shared.start(callId: call.broadcastId, purpose: "") else {
+                    self.calls[action.callUUID] = nil
+                    action.fail()
+                    return
+                }
                 action.fulfill()
-            }
-            Task { @MainActor in
+                // Never mark the backend answered when local audio preflight or
+                // engine startup failed. Keeping this in the same actor task also
+                // preserves answer ordering.
                 await Self.postAgentCallStatus(call.broadcastId, status: "answered")
                 let purpose = await Self.fetchAgentCallPurpose(call.broadcastId)
                 if !purpose.isEmpty {
@@ -542,6 +547,11 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        AlmaVoiceAudioTrace.event(
+            "callkit.didActivate",
+            "category=\(audioSession.category.rawValue) mode=\(audioSession.mode.rawValue) "
+                + "route=\(audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: "+"))"
+        )
         // CallKit activated the shared session — hand it to whoever owns the call
         // (Agora for office calls, the live voice engine for agent calls). Neither
         // may activate the session itself.
@@ -555,6 +565,7 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        AlmaVoiceAudioTrace.event("callkit.didDeactivate")
         // Deactivation can also be an interruption/route hand-off while the
         // call is still alive. Pause the matching graph and require the next
         // didActivate before rendering resumes.
