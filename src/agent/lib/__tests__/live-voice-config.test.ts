@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildLiveVoiceConfig, buildLiveVoiceTokenConfig, LIVE_VOICE_SYSTEM_INSTRUCTION } from '@/agent/lib/live-voice-config'
+import {
+  buildLiveVoiceConfig,
+  buildLiveVoiceTokenConfig,
+  DEFAULT_LIVE_VOICE_MODEL,
+  LIVE_VOICE_SYSTEM_INSTRUCTION,
+} from '@/agent/lib/live-voice-config'
 
 describe('live voice configuration', () => {
   it('uses native audio, server VAD, interruption, transcripts, and session resumption', () => {
@@ -39,5 +46,26 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('বাক্য শেষ করার চেষ্টা না করে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
+  })
+
+  it('uses the affective native-audio model and avoids robotic conversation habits', () => {
+    expect(DEFAULT_LIVE_VOICE_MODEL).toBe('gemini-2.5-flash-native-audio-preview-12-2025')
+    expect(buildLiveVoiceConfig().enableAffectiveDialog).toBe(true)
+    expect(buildLiveVoiceConfig().temperature).toBe(0.55)
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“আর কিছু জানতে চান?”')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('স্বাভাবিকভাবে থামবে')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('দুঃখ বা খারাপ খবরে')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('চাপ, রাগ বা হতাশায়')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss তালিকা চাইলে তবেই numbered list')
+  })
+
+  it('uses the v1beta ephemeral-token and constrained websocket endpoints', () => {
+    const route = readFileSync(join(process.cwd(), 'src/app/api/assistant/live-session/route.ts'), 'utf8')
+
+    expect(route).toContain("apiVersion: 'v1beta'")
+    expect(route).toContain('google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained')
+    expect(route).not.toContain("apiVersion: 'v1alpha'")
   })
 })

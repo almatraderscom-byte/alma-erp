@@ -85,6 +85,20 @@ describe('native voice upload contract', () => {
     expect(voice).not.toContain('private var queuedAudio')
   })
 
+  it('keeps native voice delivery human, emotionally appropriate, and naturally finite', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('supportsAffectiveDialog(model:')
+    expect(voice).toContain('gemini-2.5-flash-native-audio')
+    expect(voice).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
+    expect(voice).toContain('“আর কিছু জানতে চান?”')
+    expect(voice).toContain('স্বাভাবিকভাবে থামবে')
+    expect(voice).toContain('দুঃখ বা খারাপ খবরে')
+    expect(voice).toContain('চাপ, রাগ বা হতাশায়')
+    expect(voice).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
+    expect(voice).toContain('"temperature": 0.55')
+  })
+
   it('discriminates loudspeaker echo while preserving natural barge-in', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 

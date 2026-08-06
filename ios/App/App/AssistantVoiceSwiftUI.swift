@@ -2242,11 +2242,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
     private var reconnectAttempts = 0
-    /// Affective dialog is OFF by default: our ephemeral-token constraints reject
-    /// the field, so requesting it made EVERY call burn its first connect on a
-    /// guaranteed 1007 close + retry (sim-proven 2026-07-30 — +1.4s on fast wifi,
-    /// several seconds + one reconnect attempt on a weak abroad network). The
-    /// downgrade path below stays for the day the token starts allowing it.
+    /// Enabled only for Gemini 2.5 native audio, where affective dialogue is
+    /// supported. The transparent downgrade still protects a call if Google or
+    /// an older token constraint rejects the optional setup field.
     private var allowAffective = false
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
@@ -2415,6 +2413,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             #endif
             mintedSession = warm.session
             mintedAt = warm.at
+            allowAffective = Self.supportsAffectiveDialog(model: warm.session.model)
             try connect(warm.session, resumptionHandle: nil)
             return
         }
@@ -2431,7 +2430,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
         mintedAt = Date()
+        allowAffective = Self.supportsAffectiveDialog(model: minted.model)
         try connect(minted, resumptionHandle: nil)
+    }
+
+    private static func supportsAffectiveDialog(model: String) -> Bool {
+        model.contains("gemini-2.5-flash-native-audio")
     }
 
     private func connect(_ minted: SessionResponse, resumptionHandle: String?) throws {
@@ -2463,14 +2467,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
         মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
-        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; Boss-এর মেজাজ বুঝে উষ্ণ বা গম্ভীর টোন; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না—একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে একটু পূর্ণ বিরতি। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। কৃত্রিম “হুম”, শ্বাসের শব্দ বা নাটকীয়তা যোগ করবে না। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।
+        স্বাভাবিক কথোপকথনের নিয়ম: Boss-এর কথা বা অনুরোধ উত্তর দেওয়ার আগে প্রশ্নের মতো করে পুনরাবৃত্তি করবে না। “ঠিক আছে, বলছি”, “অবশ্যই, বলছি” ধরনের ফাঁকা ভূমিকা বাদ দিয়ে সরাসরি দরকারি কথায় যাবে। প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “আরো কিছু বলব?”, “কেমন হলো?”, “ঠিক আছে?” বা একই ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য বা উত্তর শেষ হলে স্বাভাবিকভাবে থামবে এবং নীরবে Boss-এর কথা শুনবে। কেবল সত্যিই তথ্য কম থাকলে একটি clarification প্রশ্ন করবে; অথবা Boss-কে বাস্তব একটি সিদ্ধান্ত নিতেই হলে নির্দিষ্ট দুটি পথের ছোট প্রশ্ন করবে।
+        Boss-এর মেজাজ ও পরিস্থিতির সঙ্গে delivery মিলাবে: দুঃখ বা খারাপ খবরে আগে এক বাক্যে অনুভূতিটা স্বীকার করবে, তারপর ধীর-নরম ও আন্তরিকভাবে বলবে—জোর করে আশাবাদ, উপদেশ বা হাসি নয়। সুখবর বা মজায় কণ্ঠ একটু উজ্জ্বল ও উষ্ণ হবে; Boss রসিকতা করলে তবেই হালকা হাসির অনুভূতি থাকবে, মুখে কৃত্রিম “হা হা” নয়। চাপ, রাগ বা হতাশায় শান্ত, স্থির, ছোট বাক্য—আত্মপক্ষসমর্থন বা অতিরিক্ত cheerful টোন নয়। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার, সংযত ও পেশাদার থাকবে। “Boss” সম্বোধনটি প্রতি বাক্যে নয়—শুধু স্বাভাবিক শুরু বা বিশেষ আন্তরিক মুহূর্তে।
+        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না, তালিকাও আবৃত্তি করবে না—Boss তালিকা চাইলে তবেই numbered list; অন্যথায় সম্পর্কিত বিষয়গুলো গুছিয়ে conversationalভাবে বলবে। একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে পূর্ণ বিরতি। কমা, দাড়ি ও ছোট thought-group দিয়ে শ্বাস নেওয়ার জায়গার মতো rhythm বানাবে; কৃত্রিম “হুম”, শ্বাসের শব্দ, দীর্ঘশ্বাস বা নাটকীয়তা তৈরি করবে না। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। এক turn-এ যতটুকু দরকার ততটুকুই বলবে; দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
         var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": [
                 "responseModalities": ["AUDIO"],
-                "temperature": 0.4,
+                "temperature": 0.55,
                 "speechConfig": [
                     "languageCode": "bn-IN",
                     "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
