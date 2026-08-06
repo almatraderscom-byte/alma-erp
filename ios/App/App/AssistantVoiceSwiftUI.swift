@@ -2285,6 +2285,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var echoCalibrationFrames = 0
     private var echoFloorRMS = 0.008
     private var micPreRoll: [Data] = []
+    // When hardware echo cancellation is unavailable on loudspeaker, RMS alone
+    // cannot tell ALMA's own voice from Boss speaking over it. A short side-chain
+    // probe ducks only ALMA's player (never the microphone): acoustic echo then
+    // disappears, while a real nearby voice remains and can be confirmed.
+    private var loudspeakerProbeActive = false
+    private var loudspeakerProbeCandidateFrames = 0
+    private var loudspeakerProbeSettleFrames = 0
+    private var loudspeakerProbeObservedFrames = 0
+    private var loudspeakerProbeVoiceFrames = 0
+    private var loudspeakerProbeCooldownFrames = 0
     // Listening-path noise gate (protected by audioLock, see capture()).
     private var listenPreRoll: [Data] = []
     private var listenGateOpen = false
@@ -2296,8 +2306,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var listenContinuousLoudFrames = 0
     private let playbackPrebufferSeconds = 0.16
     private let bargeInMinimumRMS = 0.045
-    private let bargeInRequiredFrames = 12       // ≈240ms on echo-exposed loudspeaker
     private let receiverBargeInRequiredFrames = 7 // ≈140ms on receiver/AEC routes
+    private let loudspeakerProbeCandidateRMS = 0.034
+    private let loudspeakerProbeCandidateRequiredFrames = 2 // ≈40ms before ducking
+    private let loudspeakerProbeSettleRequiredFrames = 3    // ≈60ms echo decay
+    private let loudspeakerProbeWindowFrames = 6            // ≈120ms observation
+    private let loudspeakerProbeVoiceRequiredFrames = 3
+    private let loudspeakerProbeCooldownRequiredFrames = 20 // ≈400ms after echo-only probe
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
     private let audioLock = NSLock()
     /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
@@ -2722,6 +2737,28 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Caller holds `audioLock`. This resets detector state only; restoring the
+    /// player's volume is deliberately queued after the lock is released.
+    private func resetLoudspeakerProbeLocked(cooldown: Bool = false) {
+        loudspeakerProbeActive = false
+        loudspeakerProbeCandidateFrames = 0
+        loudspeakerProbeSettleFrames = 0
+        loudspeakerProbeObservedFrames = 0
+        loudspeakerProbeVoiceFrames = 0
+        loudspeakerProbeCooldownFrames = cooldown
+            ? loudspeakerProbeCooldownRequiredFrames
+            : 0
+    }
+
+    /// Volume-only duck: it does not pause/stop the graph, alter CallKit's audio
+    /// session, or touch the requested receiver/speaker route.
+    private func setLoudspeakerProbeMuted(_ muted: Bool) {
+        audioQueue.async { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.player.volume = muted ? 0 : 1
+        }
+    }
+
     /// CallKit still owns activation, so never self-activate (that is what broke
     /// build 89). Re-attempt the category + engine start for ~10 s — a locked-
     /// screen answer can deliver didActivate several seconds late, and giving up
@@ -2914,6 +2951,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         var sendNormally = false
         var startBargeIn = false
+        var startLoudspeakerProbe = false
+        var endLoudspeakerProbe = false
+        var probeLogRMS = 0.0
+        var probeLogFloor = 0.0
         var preRoll: [Data] = []
         audioLock.lock()
         if modelAudioTurnOpen && !bargeInPending {
@@ -2934,37 +2975,94 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 echoCalibrationFrames += 1
                 echoFloorRMS = max(echoFloorRMS, rms * 0.85)
                 bargeSpeechFrames = 0
+                resetLoudspeakerProbeLocked()
             } else {
                 // A CallKit receiver route has little acoustic feedback even
                 // when AVAudioEngine could not enable VoiceProcessingIO. Treating
                 // every no-AEC route like loudspeaker required RMS >= 0.081,
                 // above the owner's measured speech (~0.047), so talking over
-                // ALMA never stopped her. Keep the conservative gate only when
-                // the actual requested route is the echo-exposed loudspeaker.
+                // ALMA never stopped her. Receiver/AEC keeps the direct gate.
+                // Echo-exposed loudspeaker instead ducks ALMA briefly and only
+                // confirms speech that remains after her own echo has decayed.
                 let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
-                let threshold = echoExposedLoudspeaker
-                    ? max(bargeInMinimumRMS * 1.8, echoFloorRMS * 3.2 + 0.02)
-                    : max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
-                let requiredFrames = echoExposedLoudspeaker
-                    ? bargeInRequiredFrames
-                    : receiverBargeInRequiredFrames
-                if rms >= threshold {
-                    bargeSpeechFrames += 1
+                if echoExposedLoudspeaker {
+                    if loudspeakerProbeActive {
+                        if loudspeakerProbeSettleFrames < loudspeakerProbeSettleRequiredFrames {
+                            loudspeakerProbeSettleFrames += 1
+                        } else {
+                            loudspeakerProbeObservedFrames += 1
+                            // The player is silent during this window, so compare
+                            // against the real room floor, not the learned echo.
+                            let voiceThreshold = max(0.010, listenNoiseFloorRMS * 2.5)
+                            if rms >= voiceThreshold {
+                                loudspeakerProbeVoiceFrames += 1
+                            }
+                            if loudspeakerProbeVoiceFrames >= loudspeakerProbeVoiceRequiredFrames {
+                                bargeInPending = true
+                                preRoll = micPreRoll
+                                micPreRoll.removeAll(keepingCapacity: true)
+                                bargeSpeechFrames = 0
+                                startBargeIn = true
+                            } else if loudspeakerProbeObservedFrames >= loudspeakerProbeWindowFrames {
+                                probeLogRMS = rms
+                                probeLogFloor = echoFloorRMS
+                                resetLoudspeakerProbeLocked(cooldown: true)
+                                endLoudspeakerProbe = true
+                            }
+                        }
+                    } else if loudspeakerProbeCooldownFrames > 0 {
+                        loudspeakerProbeCooldownFrames -= 1
+                    } else {
+                        // Low-cost trigger only starts the discriminator; it can
+                        // never interrupt on RMS alone. The floor-relative term
+                        // prevents constant probes on ordinary playback echo.
+                        let candidateThreshold = max(
+                            loudspeakerProbeCandidateRMS,
+                            echoFloorRMS * 1.12 + 0.003
+                        )
+                        if rms >= candidateThreshold {
+                            loudspeakerProbeCandidateFrames += 1
+                        } else {
+                            loudspeakerProbeCandidateFrames = max(
+                                0, loudspeakerProbeCandidateFrames - 1)
+                            echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
+                        }
+                        if loudspeakerProbeCandidateFrames
+                            >= loudspeakerProbeCandidateRequiredFrames {
+                            loudspeakerProbeActive = true
+                            loudspeakerProbeCandidateFrames = 0
+                            loudspeakerProbeSettleFrames = 0
+                            loudspeakerProbeObservedFrames = 0
+                            loudspeakerProbeVoiceFrames = 0
+                            probeLogRMS = rms
+                            probeLogFloor = echoFloorRMS
+                            startLoudspeakerProbe = true
+                        }
+                    }
                 } else {
-                    bargeSpeechFrames = max(0, bargeSpeechFrames - 2)
-                    // Adapt slowly only to samples classified as echo/room noise;
-                    // never let actual speech immediately raise its own threshold.
-                    echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
-                }
-                if bargeSpeechFrames >= requiredFrames {
-                    bargeInPending = true
-                    preRoll = micPreRoll
-                    micPreRoll.removeAll(keepingCapacity: true)
-                    bargeSpeechFrames = 0
-                    startBargeIn = true
+                    if loudspeakerProbeActive { endLoudspeakerProbe = true }
+                    resetLoudspeakerProbeLocked()
+                    let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                    if rms >= threshold {
+                        bargeSpeechFrames += 1
+                    } else {
+                        bargeSpeechFrames = max(0, bargeSpeechFrames - 2)
+                        // Adapt slowly only to samples classified as echo/room
+                        // noise; never let speech raise its own threshold.
+                        echoFloorRMS = echoFloorRMS * 0.96 + rms * 0.04
+                    }
+                    if bargeSpeechFrames >= receiverBargeInRequiredFrames {
+                        bargeInPending = true
+                        preRoll = micPreRoll
+                        micPreRoll.removeAll(keepingCapacity: true)
+                        bargeSpeechFrames = 0
+                        startBargeIn = true
+                    }
                 }
             }
         } else {
+            if loudspeakerProbeActive { endLoudspeakerProbe = true }
+            resetLoudspeakerProbeLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             bargeSpeechFrames = 0
             // LISTENING noise gate (sim-proven 2026-07-30): streaming every idle
@@ -3052,9 +3150,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         audioLock.unlock()
 
+        if startLoudspeakerProbe {
+            #if DEBUG
+            NSLog("ALMA-VOICE loudspeaker probe started rms=%.4f floor=%.4f",
+                  probeLogRMS, probeLogFloor)
+            #endif
+            setLoudspeakerProbeMuted(true)
+        } else if endLoudspeakerProbe {
+            #if DEBUG
+            NSLog("ALMA-VOICE loudspeaker probe dismissed rms=%.4f floor=%.4f",
+                  probeLogRMS, probeLogFloor)
+            #endif
+            setLoudspeakerProbeMuted(false)
+        }
         if startBargeIn {
             #if DEBUG
-            NSLog("ALMA-VOICE local barge-in opened after sustained speech")
+            NSLog("ALMA-VOICE local barge-in confirmed human speech")
             #endif
             beginLocalBargeIn()
             for chunk in preRoll { sendRealtimeAudio(chunk) }
@@ -3415,6 +3526,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             echoCalibrationFrames = 0
             echoFloorRMS = 0.008
             bargeSpeechFrames = 0
+            resetLoudspeakerProbeLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             newTurn = true
         }
@@ -3466,6 +3578,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
+        resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         estimatedPlaybackEnd = Date().addingTimeInterval(bufferedPlaybackDuration)
         let deadline = estimatedPlaybackEnd
@@ -3474,6 +3587,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
+            self.player.volume = 1
             if !self.firstPlaybackPrimed {
                 self.firstPlaybackPrimed = true
                 // A cold VoiceProcessingIO graph can report isRunning while its
@@ -3671,10 +3785,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
+        resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
 
-        audioQueue.async { [weak self] in self?.player.stop() }
+        audioQueue.async { [weak self] in
+            self?.player.stop()
+            self?.player.volume = 1
+        }
         #if DEBUG
         NSLog("ALMA-VOICE playback turn finished")
         #endif
@@ -3702,10 +3820,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
+        resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
 
-        audioQueue.async { [weak self] in self?.player.stop() }
+        audioQueue.async { [weak self] in
+            self?.player.stop()
+            self?.player.volume = 1
+        }
         #if DEBUG
         if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
         #endif
@@ -3757,6 +3879,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func setInputMuted(_ muted: Bool) {
         audioLock.lock()
         inputMuted = muted
+        let restoreProbeVolume = loudspeakerProbeActive
+        resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         bargeSpeechFrames = 0
         echoCalibrationFrames = 0
@@ -3774,13 +3898,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenCalibMinRMS = .greatestFiniteMagnitude
         listenContinuousLoudFrames = 0
         audioLock.unlock()
+        if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
     }
 
     func setSpeakerEnabled(_ enabled: Bool) throws {
         audioLock.lock()
         speakerEnabled = enabled
         let isConfigured = configured
+        let restoreProbeVolume = loudspeakerProbeActive
+        resetLoudspeakerProbeLocked()
         audioLock.unlock()
+        if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
         trace("route.request", "want=\(enabled ? "speaker" : "receiver") configured=\(isConfigured ? 1 : 0)")
         guard isConfigured else { return }
         let session = AVAudioSession.sharedInstance()
@@ -3839,6 +3967,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             guard let self else { return }
             if hadTap { self.audioEngine.inputNode.removeTap(onBus: 0) }
             self.player.stop()
+            self.player.volume = 1
             if self.audioEngine.isRunning { self.audioEngine.stop() }
             if appOwnsActivation {
                 try? AVAudioSession.sharedInstance().setActive(
@@ -3882,6 +4011,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeSpeechFrames = 0
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
+        resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         // Listening-gate state must not leak into the next session (Codex P2):
         // an open gate would stream background audio at call start, stale

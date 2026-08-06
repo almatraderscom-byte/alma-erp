@@ -85,16 +85,19 @@ describe('native voice upload contract', () => {
     expect(voice).not.toContain('private var queuedAudio')
   })
 
-  it('holds model echo locally while preserving sustained natural barge-in', () => {
+  it('discriminates loudspeaker echo while preserving natural barge-in', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
-    expect(voice).toContain('bargeInRequiredFrames = 12')
     expect(voice).toContain('receiverBargeInRequiredFrames = 7')
+    expect(voice).toContain('loudspeakerProbeCandidateRMS = 0.034')
+    expect(voice).toContain('loudspeakerProbeSettleRequiredFrames = 3')
+    expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 3')
     expect(voice).toContain('bargeInPreRollChunks = 14')
     expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
     expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
-    expect(voice).toContain('? bargeInRequiredFrames')
-    expect(voice).toContain(': receiverBargeInRequiredFrames')
+    expect(voice).toContain('setLoudspeakerProbeMuted(true)')
+    expect(voice).toContain('self.player.volume = muted ? 0 : 1')
+    expect(voice).toContain('bargeSpeechFrames >= receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
     expect(voice).toContain('input.isVoiceProcessingEnabled')
