@@ -5,13 +5,16 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import {
   buildLiveVoiceTokenConfig,
-  DEFAULT_LIVE_VOICE_MODEL,
-  DEFAULT_LIVE_VOICE_NAME,
+  GEMINI_31_LIVE_MODEL,
+  isSupportedLiveVoiceModel,
+  isSupportedLiveVoiceName,
 } from '@/agent/lib/live-voice-config'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 15
+
+type LiveSessionSelection = { model?: unknown; voice?: unknown }
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -27,8 +30,21 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.GEMINI_API_KEY?.trim()
   if (!apiKey) return Response.json({ error: 'GEMINI_API_KEY সেট করা নেই।' }, { status: 503 })
 
-  const model = process.env.GEMINI_LIVE_APP_MODEL?.trim() || DEFAULT_LIVE_VOICE_MODEL
-  const voice = process.env.GEMINI_LIVE_APP_VOICE?.trim() || DEFAULT_LIVE_VOICE_NAME
+  const requested = await req.json().catch(() => ({})) as LiveSessionSelection
+  const configuredModel = process.env.GEMINI_LIVE_APP_MODEL?.trim()
+  const configuredVoice = process.env.GEMINI_LIVE_APP_VOICE?.trim()
+  const requestedModel = typeof requested.model === 'string' ? requested.model.trim() : ''
+  const requestedVoice = typeof requested.voice === 'string' ? requested.voice.trim() : ''
+  // Old iOS builds post an empty body. Keep their proven 3.1/Charon baseline;
+  // only the new native selector opts into 2.5/Aoede or another preset.
+  const model = requestedModel || configuredModel || GEMINI_31_LIVE_MODEL
+  const voice = requestedVoice || configuredVoice || 'Charon'
+  if (!isSupportedLiveVoiceModel(model)) {
+    return Response.json({ error: 'unsupported_live_model' }, { status: 400 })
+  }
+  if (!isSupportedLiveVoiceName(voice)) {
+    return Response.json({ error: 'unsupported_live_voice' }, { status: 400 })
+  }
   const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString()
   // 120s (was 60s): the native app now prewarms this token when an agent call
   // RINGS (ring window 75s) — the new-session window must outlive the whole
@@ -44,7 +60,7 @@ export async function POST(req: NextRequest) {
         uses: 1,
         expireTime: expiresAt,
         newSessionExpireTime: newSessionExpiresAt,
-        liveConnectConstraints: { model, config: buildLiveVoiceTokenConfig(voice) },
+        liveConnectConstraints: { model, config: buildLiveVoiceTokenConfig(voice, model) },
         // Lock the fields present above, but allow the client to add only the
         // sessionResumption.handle required for Google's ~10-minute socket rotation.
         lockAdditionalFields: [],
@@ -57,6 +73,7 @@ export async function POST(req: NextRequest) {
       token: token.name,
       model,
       voice,
+      affectiveDialog: model === 'gemini-2.5-flash-native-audio-preview-12-2025',
       expiresAt,
       websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
     })

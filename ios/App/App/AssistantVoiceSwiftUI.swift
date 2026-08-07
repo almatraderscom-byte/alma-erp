@@ -39,6 +39,73 @@ import Speech
 import PhotosUI
 import os
 
+// MARK: - Gemini Live models + Bengali voice presets
+
+struct AlmaLiveModelChoice: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let detail: String
+    let badge: String
+}
+
+struct AlmaLiveVoiceChoice: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let detail: String
+    let symbol: String
+}
+
+enum AlmaLiveVoicePreferences {
+    static let modelKey = "alma-live-model"
+    static let voiceKey = "alma-live-voice"
+    static let gemini25 = "gemini-2.5-flash-native-audio-preview-12-2025"
+    static let gemini31 = "gemini-3.1-flash-live-preview"
+
+    static let models: [AlmaLiveModelChoice] = [
+        .init(id: gemini25, title: "Gemini 2.5 Live",
+              detail: "বাংলা কথোপকথন ও আবেগের টোনে বেশি স্বাভাবিক",
+              badge: "Natural"),
+        .init(id: gemini31, title: "Gemini 3.1 Live",
+              detail: "নতুন, দ্রুত ও নির্ভুল রিয়েলটাইম কথোপকথন",
+              badge: "Fast"),
+    ]
+
+    // The display names are ALMA personas; `id` is Google's official voice name.
+    static let voices: [AlmaLiveVoiceChoice] = [
+        .init(id: "Aoede", name: "মায়া", detail: "হালকা · স্বাভাবিক", symbol: "wind"),
+        .init(id: "Achernar", name: "নীলা", detail: "কোমল · শান্ত", symbol: "moon.stars.fill"),
+        .init(id: "Kore", name: "তারা", detail: "দৃঢ় · পরিষ্কার", symbol: "sparkles"),
+        .init(id: "Charon", name: "আরিফ", detail: "তথ্যপূর্ণ · স্থির", symbol: "waveform"),
+        .init(id: "Orus", name: "অর্ক", detail: "গভীর · পেশাদার", symbol: "briefcase.fill"),
+        .init(id: "Sulafat", name: "সামি", detail: "উষ্ণ · বন্ধুসুলভ", symbol: "sun.max.fill"),
+    ]
+
+    static var modelID: String {
+        if let saved = UserDefaults.standard.string(forKey: modelKey),
+           models.contains(where: { $0.id == saved }) {
+            return saved
+        }
+        return gemini25
+    }
+
+    static var voiceID: String {
+        if let saved = UserDefaults.standard.string(forKey: voiceKey),
+           voices.contains(where: { $0.id == saved }) {
+            return saved
+        }
+        return "Aoede"
+    }
+
+    static var requestBody: [String: String] { ["model": modelID, "voice": voiceID] }
+
+    static func save(modelID: String, voiceID: String) {
+        guard models.contains(where: { $0.id == modelID }),
+              voices.contains(where: { $0.id == voiceID }) else { return }
+        UserDefaults.standard.set(modelID, forKey: modelKey)
+        UserDefaults.standard.set(voiceID, forKey: voiceKey)
+    }
+}
+
 // MARK: - State + strings (web STATUS dict parity)
 
 enum AlmaVoiceState: String {
@@ -205,7 +272,39 @@ final class AlmaVoiceEngine {
     var connectionFailureText = ""
     var isMuted = false
     var speakerOn = true
+    private(set) var selectedLiveModelID = AlmaLiveVoicePreferences.modelID
+    private(set) var selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
     private(set) var callStartedAt: Date?
+
+    var selectedLiveModel: AlmaLiveModelChoice {
+        AlmaLiveVoicePreferences.models.first(where: { $0.id == selectedLiveModelID })
+            ?? AlmaLiveVoicePreferences.models[0]
+    }
+
+    var selectedLiveVoice: AlmaLiveVoiceChoice {
+        AlmaLiveVoicePreferences.voices.first(where: { $0.id == selectedLiveVoiceID })
+            ?? AlmaLiveVoicePreferences.voices[0]
+    }
+
+    func selectLiveModel(_ id: String) {
+        guard AlmaLiveVoicePreferences.models.contains(where: { $0.id == id }) else { return }
+        selectedLiveModelID = id
+        AlmaLiveVoicePreferences.save(modelID: selectedLiveModelID, voiceID: selectedLiveVoiceID)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func selectLiveVoice(_ id: String) {
+        guard AlmaLiveVoicePreferences.voices.contains(where: { $0.id == id }) else { return }
+        selectedLiveVoiceID = id
+        AlmaLiveVoicePreferences.save(modelID: selectedLiveModelID, voiceID: selectedLiveVoiceID)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    func applySelectedLiveProfileNow() {
+        guard callConnection == .live || callConnection == .failed else { return }
+        feedStatus("নতুন মডেল ও কণ্ঠ চালু করা হচ্ছে…")
+        startLiveConnection(resetAttempts: true)
+    }
 
     // ── Agent → owner in-app call (plan C2) ──
     // Set by the CallKit answer hand-off BEFORE begin(). On live connect the brief
@@ -444,6 +543,8 @@ final class AlmaVoiceEngine {
         hasEverConnected = false
         callStartedAt = nil
         isMuted = false
+        selectedLiveModelID = AlmaLiveVoicePreferences.modelID
+        selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
         // A CallKit incoming call must start on the receiver. Explicitly pinning
         // it to `.speaker` prevents the locked system call screen from clearing
         // our app-level override, so its Speaker OFF button appears to do
@@ -2230,6 +2331,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let token: String
         let model: String
         let voice: String
+        let affectiveDialog: Bool?
         let expiresAt: String
         let websocketUrl: String
     }
@@ -2248,7 +2350,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     static func prewarm() {
         Task.detached(priority: .userInitiated) {
             await AlmaAPI.shared.syncCookies()
-            guard let raw = try? await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:]),
+            let selection = AlmaLiveVoicePreferences.requestBody
+            guard let raw = try? await AssistantNet.postJSONForData(
+                    path: "/api/assistant/live-session", body: selection),
                   let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
                   !minted.token.isEmpty else { return }
             prewarmLock.lock()
@@ -2454,6 +2558,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func prepareCallKitAudioSession() throws {
         try prepareAudioSession(activate: false)
+        #if !targetEnvironment(simulator)
+        // CallKit activates the session immediately after the answer action is
+        // fulfilled. VoiceProcessingIO cannot reliably be swapped in after that
+        // activation, so prepare it while the graph is still cold. This is the
+        // real-device path that gives Gemini clean continuous mic audio during
+        // playback instead of forcing Boss through a local RMS gate.
+        audioQueue.sync {
+            voiceProcessingUnavailable = false
+            do {
+                try audioEngine.inputNode.setVoiceProcessingEnabled(true)
+                voiceProcessingUnavailable = !audioEngine.inputNode.isVoiceProcessingEnabled
+            } catch {
+                voiceProcessingUnavailable = true
+                trace("voiceProcessing.preflight.failed", String(describing: error))
+            }
+        }
+        #endif
     }
 
     func prepareStandaloneAudioSession() throws {
@@ -2487,12 +2608,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             state.callKitManaged = callKitOwnsAudioSession
             state.beginSocketAttempt()
         }
-        if let warm = Self.takePrewarmed() {
+        let desiredModel = AlmaLiveVoicePreferences.modelID
+        let desiredVoice = AlmaLiveVoicePreferences.voiceID
+        if let warm = Self.takePrewarmed(),
+           warm.session.model == desiredModel, warm.session.voice == desiredVoice {
             #if DEBUG
             NSLog("ALMA-VOICE using prewarmed token (age %.1fs)", Date().timeIntervalSince(warm.at))
             #endif
             mintedSession = warm.session
             mintedAt = warm.at
+            allowAffective = warm.session.affectiveDialog ?? (warm.session.model == AlmaLiveVoicePreferences.gemini25)
             try connect(warm.session, resumptionHandle: nil)
             return
         }
@@ -2501,7 +2626,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let mintStart = Date()
         NSLog("ALMA-VOICE mint begin")
         #endif
-        let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+        let raw = try await AssistantNet.postJSONForData(
+            path: "/api/assistant/live-session",
+            body: ["model": desiredModel, "voice": desiredVoice])
         #if DEBUG
         NSLog("ALMA-VOICE mint done in %.2fs", Date().timeIntervalSince(mintStart))
         #endif
@@ -2509,6 +2636,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
         mintedSession = minted
         mintedAt = Date()
+        allowAffective = minted.affectiveDialog ?? (minted.model == AlmaLiveVoicePreferences.gemini25)
         try connect(minted, resumptionHandle: nil)
     }
 
@@ -2541,21 +2669,25 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
         মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
+        উচ্চারণ ও ভাষা: প্রমিত বাংলাদেশি বাংলা ব্যবহার করবে। বাংলা বাক্যে স্বাভাবিক বাংলাদেশি টান, পরিষ্কার স্বরধ্বনি ও আরামদায়ক গতি রাখবে; অকারণে হিন্দি/ভারতীয় বাংলা টান বা ইংরেজি accent অনুকরণ করবে না। প্রচলিত technical শব্দ ইংরেজিতেই বলা স্বাভাবিক হলে সেগুলো সহজভাবে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে।
         স্বাভাবিক কথোপকথনের নিয়ম: Boss-এর কথা বা অনুরোধ উত্তর দেওয়ার আগে প্রশ্নের মতো করে পুনরাবৃত্তি করবে না। “ঠিক আছে, বলছি”, “অবশ্যই, বলছি” ধরনের ফাঁকা ভূমিকা বাদ দিয়ে সরাসরি দরকারি কথায় যাবে। প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “আরো কিছু বলব?”, “কেমন হলো?”, “ঠিক আছে?” বা একই ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য বা উত্তর শেষ হলে স্বাভাবিকভাবে থামবে এবং নীরবে Boss-এর কথা শুনবে। কেবল সত্যিই তথ্য কম থাকলে একটি clarification প্রশ্ন করবে; অথবা Boss-কে বাস্তব একটি সিদ্ধান্ত নিতেই হলে নির্দিষ্ট দুটি পথের ছোট প্রশ্ন করবে।
         Boss-এর মেজাজ ও পরিস্থিতির সঙ্গে delivery মিলাবে: দুঃখ বা খারাপ খবরে আগে এক বাক্যে অনুভূতিটা স্বীকার করবে, তারপর ধীর-নরম ও আন্তরিকভাবে বলবে—জোর করে আশাবাদ, উপদেশ বা হাসি নয়। সুখবর বা মজায় কণ্ঠ একটু উজ্জ্বল ও উষ্ণ হবে; Boss রসিকতা করলে তবেই হালকা হাসির অনুভূতি থাকবে, মুখে কৃত্রিম “হা হা” নয়। চাপ, রাগ বা হতাশায় শান্ত, স্থির, ছোট বাক্য—আত্মপক্ষসমর্থন বা অতিরিক্ত cheerful টোন নয়। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার, সংযত ও পেশাদার থাকবে। “Boss” সম্বোধনটি প্রতি বাক্যে নয়—শুধু স্বাভাবিক শুরু বা বিশেষ আন্তরিক মুহূর্তে।
         বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না, তালিকাও আবৃত্তি করবে না—Boss তালিকা চাইলে তবেই numbered list; অন্যথায় সম্পর্কিত বিষয়গুলো গুছিয়ে conversationalভাবে বলবে। একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে পূর্ণ বিরতি। কমা, দাড়ি ও ছোট thought-group দিয়ে শ্বাস নেওয়ার জায়গার মতো rhythm বানাবে; কৃত্রিম “হুম”, শ্বাসের শব্দ, দীর্ঘশ্বাস বা নাটকীয়তা তৈরি করবে না। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। এক turn-এ যতটুকু দরকার ততটুকুই বলবে; দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
+        var generationConfig: [String: Any] = [
+            "responseModalities": ["AUDIO"],
+            "temperature": 0.4,
+            "speechConfig": [
+                "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
+            ],
+        ]
+        generationConfig["thinkingConfig"] = model == AlmaLiveVoicePreferences.gemini25
+            ? ["thinkingBudget": 0]
+            : ["thinkingLevel": "MINIMAL"]
         var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
-            "generationConfig": [
-                "responseModalities": ["AUDIO"],
-                "temperature": 0.4,
-                "speechConfig": [
-                    "languageCode": "bn-IN",
-                    "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
-                ],
-            ],
+            "generationConfig": generationConfig,
             "systemInstruction": ["parts": [["text": instruction]]],
             "inputAudioTranscription": [:],
             "outputAudioTranscription": [:],
@@ -2933,6 +3065,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // the sim only — the barge-in gate already has the no-AEC compensation.
         voiceProcessingUnavailable = true
         #else
+        voiceProcessingUnavailable = false
         do { try input.setVoiceProcessingEnabled(true) } catch {
             if !callKitOwnsAudioSession { throw AlmaLiveVoiceError.audioStart }
             voiceProcessingUnavailable = true
@@ -3058,20 +3191,32 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             listenSpeechFrames = 0
             listenSilenceFrames = 0
             listenPreRoll.removeAll(keepingCapacity: true)
-            micPreRoll.append(bytes)
-            if micPreRoll.count > bargeInPreRollChunks {
-                micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
-            }
-
-            // Give VPIO a short window to settle and learn this route's residual
-            // speaker echo. Afterwards only a sustained signal materially above
-            // that floor can be Boss speaking over the model.
-            if echoCalibrationFrames < 10 {
-                echoCalibrationFrames += 1
-                echoFloorRMS = max(echoFloorRMS, rms * 0.85)
-                bargeSpeechFrames = 0
+            // Official Gemini Live automatic VAD expects a continuous audio
+            // stream and owns interruption. On VPIO/AEC or receiver routes the
+            // microphone is safe to forward even while ALMA speaks; withholding
+            // it behind the old local RMS threshold made short Bengali barge-ins
+            // (especially "থামো") invisible to the model on real iPhones.
+            let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled
+            if serverCanOwnBargeIn {
                 resetLoudspeakerProbeLocked()
+                micPreRoll.removeAll(keepingCapacity: true)
+                bargeSpeechFrames = 0
+                sendNormally = true
             } else {
+                micPreRoll.append(bytes)
+                if micPreRoll.count > bargeInPreRollChunks {
+                    micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
+                }
+
+                // Give a no-AEC loudspeaker route a short window to learn its
+                // residual echo. That route keeps the side-chain discriminator;
+                // directly streaming speaker echo would self-interrupt every turn.
+                if echoCalibrationFrames < 10 {
+                    echoCalibrationFrames += 1
+                    echoFloorRMS = max(echoFloorRMS, rms * 0.85)
+                    bargeSpeechFrames = 0
+                    resetLoudspeakerProbeLocked()
+                } else {
                 // A CallKit receiver route has little acoustic feedback even
                 // when AVAudioEngine could not enable VoiceProcessingIO. Treating
                 // every no-AEC route like loudspeaker required RMS >= 0.081,
@@ -3170,6 +3315,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                         bargeSpeechFrames = 0
                         startBargeIn = true
                     }
+                }
                 }
             }
         } else {
@@ -3561,11 +3707,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         Task { [weak self] in
             guard let self, !self.stopped else { return }
             do {
-                let raw = try await AssistantNet.postJSONForData(path: "/api/assistant/live-session", body: [:])
+                let prior = self.mintedSession
+                let body: [String: String] = [
+                    "model": prior?.model ?? AlmaLiveVoicePreferences.modelID,
+                    "voice": prior?.voice ?? AlmaLiveVoicePreferences.voiceID,
+                ]
+                let raw = try await AssistantNet.postJSONForData(
+                    path: "/api/assistant/live-session", body: body)
                 guard let minted = try? JSONDecoder().decode(SessionResponse.self, from: raw),
                       !minted.token.isEmpty else { throw AlmaLiveVoiceError.badSession }
                 self.mintedSession = minted
                 self.mintedAt = Date()
+                self.allowAffective = minted.affectiveDialog
+                    ?? (minted.model == AlmaLiveVoicePreferences.gemini25)
                 try self.connect(minted, resumptionHandle: self.latestResumptionHandle)
             } catch {
                 self.reconnecting = false
@@ -5219,6 +5373,7 @@ struct AlmaVoiceConsoleView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var minimizing = false
     @State private var endingCall = false
+    @State private var showLiveSettings = false
 
     init(vm: AssistantVM) {
         self.vm = vm
@@ -5297,6 +5452,9 @@ struct AlmaVoiceConsoleView: View {
                 .allowsHitTesting(false)
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showLiveSettings) {
+            AlmaLiveSettingsSheet(engine: engine)
+        }
         .onAppear {
             engine.chatVM = vm
             engine.begin()
@@ -5460,6 +5618,15 @@ struct AlmaVoiceConsoleView: View {
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(connectionColor.opacity(0.08), in: Capsule())
                 .overlay(Capsule().strokeBorder(connectionColor.opacity(0.25), lineWidth: 1))
+                Button { showLiveSettings = true } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(muted)
+                        .frame(width: 38, height: 38)
+                        .background(glass.opacity(0.06), in: Circle())
+                        .overlay(Circle().strokeBorder(line, lineWidth: 1))
+                }
+                .accessibilityLabel("লাইভ মডেল ও কণ্ঠ নির্বাচন")
             }
         }
         .padding(.horizontal, 16)
@@ -5836,6 +6003,145 @@ struct AlmaVoiceConsoleView: View {
         .opacity(enabled ? 1 : 0.45)
     }
 
+}
+
+@available(iOS 17.0, *)
+struct AlmaLiveSettingsSheet: View {
+    let engine: AlmaVoiceEngine
+    @Environment(\.dismiss) private var dismiss
+
+    private let ink = Color(red: 0.918, green: 0.949, blue: 0.984)
+    private let muted = Color(red: 0.486, green: 0.573, blue: 0.663)
+    private let gold = Color(red: 0.886, green: 0.702, blue: 0.400)
+    private let good = Color(red: 0.231, green: 0.878, blue: 0.561)
+    private let bg = Color(red: 0.016, green: 0.027, blue: 0.051)
+    private let panel = Color(red: 0.055, green: 0.082, blue: 0.118)
+    private let line = Color(red: 0.627, green: 0.784, blue: 0.941).opacity(0.16)
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("বাংলা লাইভ ভয়েস")
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundStyle(ink)
+                        Text("শুধু Gemini Native Audio। মডেল ও কণ্ঠের পছন্দ নিরাপদে এই ডিভাইসে সেভ থাকবে।")
+                            .font(.system(size: 14))
+                            .foregroundStyle(muted)
+                    }
+
+                    settingsSection(title: "মডেল", subtitle: "কথার ধরন ও response speed") {
+                        VStack(spacing: 10) {
+                            ForEach(AlmaLiveVoicePreferences.models) { model in
+                                choiceButton(selected: engine.selectedLiveModelID == model.id) {
+                                    engine.selectLiveModel(model.id)
+                                } content: {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack {
+                                            Text(model.title).font(.system(size: 16, weight: .semibold))
+                                            Spacer()
+                                            Text(model.badge)
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(gold)
+                                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                                .background(gold.opacity(0.10), in: Capsule())
+                                            if engine.selectedLiveModelID == model.id {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundStyle(good)
+                                            }
+                                        }
+                                        Text(model.detail).font(.system(size: 12.5)).foregroundStyle(muted)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    settingsSection(title: "কণ্ঠ", subtitle: "Google-এর official voice থেকে বাংলা-friendly presets") {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            ForEach(AlmaLiveVoicePreferences.voices) { voice in
+                                choiceButton(selected: engine.selectedLiveVoiceID == voice.id) {
+                                    engine.selectLiveVoice(voice.id)
+                                } content: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack {
+                                            Image(systemName: voice.symbol)
+                                                .foregroundStyle(engine.selectedLiveVoiceID == voice.id ? good : gold)
+                                            Spacer()
+                                            if engine.selectedLiveVoiceID == voice.id {
+                                                Image(systemName: "checkmark.circle.fill").foregroundStyle(good)
+                                            }
+                                        }
+                                        Text(voice.name).font(.system(size: 16, weight: .semibold))
+                                        Text(voice.detail).font(.system(size: 11.5)).foregroundStyle(muted)
+                                        Text(voice.id).font(.system(size: 10, design: .monospaced)).foregroundStyle(muted.opacity(0.72))
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(spacing: 9) {
+                        Button {
+                            engine.applySelectedLiveProfileNow()
+                            dismiss()
+                        } label: {
+                            Label("এই কলেই প্রয়োগ করুন", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(bg)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(good, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        }
+                        .disabled(engine.callConnection != .live && engine.callConnection != .failed)
+                        .opacity(engine.callConnection == .live || engine.callConnection == .failed ? 1 : 0.45)
+                        Text("প্রয়োগ করলে বর্তমান Gemini session নতুন করে সংযুক্ত হবে। না করলে পরের কল থেকে পছন্দটি চালু হবে।")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(muted)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding(20)
+            }
+            .background(bg.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("সম্পন্ন") { dismiss() }.foregroundStyle(gold)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .preferredColorScheme(.dark)
+    }
+
+    private func settingsSection<Content: View>(
+        title: String, subtitle: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(ink)
+            Text(subtitle).font(.system(size: 12)).foregroundStyle(muted)
+            content()
+        }
+    }
+
+    private func choiceButton<Content: View>(
+        selected: Bool, action: @escaping () -> Void, @ViewBuilder content: () -> Content
+    ) -> some View {
+        Button(action: action) {
+            content()
+                .foregroundStyle(ink)
+                .padding(14)
+                .background(selected ? good.opacity(0.09) : panel,
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(selected ? good.opacity(0.75) : line, lineWidth: selected ? 1.4 : 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 /// Compact, persistent call surface shown over chat after the full-screen call is

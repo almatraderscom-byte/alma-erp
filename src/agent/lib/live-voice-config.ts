@@ -3,13 +3,34 @@ import {
   EndSensitivity,
   Modality,
   StartSensitivity,
+  ThinkingLevel,
   TurnCoverage,
   Type,
   type LiveConnectConfig,
 } from '@google/genai'
 
-export const DEFAULT_LIVE_VOICE_MODEL = 'gemini-3.1-flash-live-preview'
-export const DEFAULT_LIVE_VOICE_NAME = 'Charon'
+export const GEMINI_25_LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025'
+export const GEMINI_31_LIVE_MODEL = 'gemini-3.1-flash-live-preview'
+export const LIVE_VOICE_MODEL_IDS = [GEMINI_25_LIVE_MODEL, GEMINI_31_LIVE_MODEL] as const
+export const LIVE_VOICE_NAMES = [
+  'Aoede',
+  'Achernar',
+  'Kore',
+  'Charon',
+  'Orus',
+  'Sulafat',
+] as const
+
+export const DEFAULT_LIVE_VOICE_MODEL = GEMINI_25_LIVE_MODEL
+export const DEFAULT_LIVE_VOICE_NAME = 'Aoede'
+
+export function isSupportedLiveVoiceModel(value: string): boolean {
+  return (LIVE_VOICE_MODEL_IDS as readonly string[]).includes(value)
+}
+
+export function isSupportedLiveVoiceName(value: string): boolean {
+  return (LIVE_VOICE_NAMES as readonly string[]).includes(value)
+}
 
 export const LIVE_VOICE_SYSTEM_INSTRUCTION = `তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
 কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
@@ -19,22 +40,22 @@ STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর �
 Boss-এর কথা অস্পষ্ট হলে সাথে সাথে ছোট প্রশ্নে পরিষ্কার করে নেবে; চুপ করে থাকবে না।
 Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
 মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
+উচ্চারণ ও ভাষা: প্রমিত বাংলাদেশি বাংলা ব্যবহার করবে। বাংলা বাক্যে স্বাভাবিক বাংলাদেশি টান, পরিষ্কার স্বরধ্বনি ও আরামদায়ক গতি রাখবে; অকারণে হিন্দি/ভারতীয় বাংলা টান বা ইংরেজি accent অনুকরণ করবে না। প্রচলিত technical শব্দ ইংরেজিতেই বলা স্বাভাবিক হলে সেগুলো সহজভাবে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে।
 স্বাভাবিক কথোপকথনের নিয়ম: Boss-এর কথা বা অনুরোধ উত্তর দেওয়ার আগে প্রশ্নের মতো করে পুনরাবৃত্তি করবে না। “ঠিক আছে, বলছি”, “অবশ্যই, বলছি” ধরনের ফাঁকা ভূমিকা বাদ দিয়ে সরাসরি দরকারি কথায় যাবে। প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “আরো কিছু বলব?”, “কেমন হলো?”, “ঠিক আছে?” বা একই ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য বা উত্তর শেষ হলে স্বাভাবিকভাবে থামবে এবং নীরবে Boss-এর কথা শুনবে। কেবল সত্যিই তথ্য কম থাকলে একটি clarification প্রশ্ন করবে; অথবা Boss-কে বাস্তব একটি সিদ্ধান্ত নিতেই হলে নির্দিষ্ট দুটি পথের ছোট প্রশ্ন করবে।
 Boss-এর মেজাজ ও পরিস্থিতির সঙ্গে delivery মিলাবে: দুঃখ বা খারাপ খবরে আগে এক বাক্যে অনুভূতিটা স্বীকার করবে, তারপর ধীর-নরম ও আন্তরিকভাবে বলবে—জোর করে আশাবাদ, উপদেশ বা হাসি নয়। সুখবর বা মজায় কণ্ঠ একটু উজ্জ্বল ও উষ্ণ হবে; Boss রসিকতা করলে তবেই হালকা হাসির অনুভূতি থাকবে, মুখে কৃত্রিম “হা হা” নয়। চাপ, রাগ বা হতাশায় শান্ত, স্থির, ছোট বাক্য—আত্মপক্ষসমর্থন বা অতিরিক্ত cheerful টোন নয়। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার, সংযত ও পেশাদার থাকবে। “Boss” সম্বোধনটি প্রতি বাক্যে নয়—শুধু স্বাভাবিক শুরু বা বিশেষ আন্তরিক মুহূর্তে।
 বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না, তালিকাও আবৃত্তি করবে না—Boss তালিকা চাইলে তবেই numbered list; অন্যথায় সম্পর্কিত বিষয়গুলো গুছিয়ে conversationalভাবে বলবে। একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে পূর্ণ বিরতি। কমা, দাড়ি ও ছোট thought-group দিয়ে শ্বাস নেওয়ার জায়গার মতো rhythm বানাবে; কৃত্রিম “হুম”, শ্বাসের শব্দ, দীর্ঘশ্বাস বা নাটকীয়তা তৈরি করবে না। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। এক turn-এ যতটুকু দরকার ততটুকুই বলবে; দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।`
 
-export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveConnectConfig {
-  return {
+export function buildLiveVoiceConfig(
+  voiceName = DEFAULT_LIVE_VOICE_NAME,
+  model = DEFAULT_LIVE_VOICE_MODEL,
+): LiveConnectConfig {
+  const config: LiveConnectConfig = {
     responseModalities: [Modality.AUDIO],
     temperature: 0.4,
     speechConfig: {
-      languageCode: 'bn-IN',
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
     },
     systemInstruction: LIVE_VOICE_SYSTEM_INSTRUCTION,
-    // Native-audio affect remains token-unlocked and client-optional. The iOS
-    // client deliberately leaves it off on the production 3.1 transport.
-    enableAffectiveDialog: true,
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     sessionResumption: {},
@@ -64,6 +85,14 @@ export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveC
       }],
     }],
   }
+
+  if (model === GEMINI_25_LIVE_MODEL) {
+    config.enableAffectiveDialog = true
+    config.thinkingConfig = { thinkingBudget: 0 }
+  } else {
+    config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL }
+  }
+  return config
 }
 
 /** Token constraints leave the resumption handle and function declaration in the
@@ -71,8 +100,11 @@ export function buildLiveVoiceConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveC
  * as the invalid mask `tools.0`; the short-lived single-use token still locks the
  * model, voice, system instruction, VAD, modality and transcription policy. Tool
  * execution remains protected by ALMA's authenticated head route on the server. */
-export function buildLiveVoiceTokenConfig(voiceName = DEFAULT_LIVE_VOICE_NAME): LiveConnectConfig {
-  const config = buildLiveVoiceConfig(voiceName)
+export function buildLiveVoiceTokenConfig(
+  voiceName = DEFAULT_LIVE_VOICE_NAME,
+  model = DEFAULT_LIVE_VOICE_MODEL,
+): LiveConnectConfig {
+  const config = buildLiveVoiceConfig(voiceName, model)
   const {
     sessionResumption: _clientHandle,
     tools: _clientFunctionDeclaration,

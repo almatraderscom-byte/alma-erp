@@ -116,6 +116,22 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('"temperature": 0.4')
   })
 
+  it('offers only the approved Gemini Live models and Bengali voice personas', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('struct AlmaLiveSettingsSheet: View')
+    expect(voice).toContain('gemini-2.5-flash-native-audio-preview-12-2025')
+    expect(voice).toContain('gemini-3.1-flash-live-preview')
+    expect(voice).toContain('.init(id: "Aoede", name: "মায়া"')
+    expect(voice).toContain('.init(id: "Achernar", name: "নীলা"')
+    expect(voice).toContain('.init(id: "Kore", name: "তারা"')
+    expect(voice).toContain('.init(id: "Charon", name: "আরিফ"')
+    expect(voice).toContain('.init(id: "Orus", name: "অর্ক"')
+    expect(voice).toContain('.init(id: "Sulafat", name: "সামি"')
+    expect(voice).toContain('func applySelectedLiveProfileNow()')
+    expect(voice).not.toContain('gpt-realtime')
+  })
+
   it('discriminates loudspeaker echo while preserving natural barge-in', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
     const probeStart = voice.indexOf('let echoExposedLoudspeaker')
@@ -155,6 +171,9 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('bargeSpeechFrames >= receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
+    expect(voice).toContain('let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled')
+    expect(voice).toContain('if serverCanOwnBargeIn {')
+    expect(voice).toContain('sendNormally = true')
     expect(voice).toContain('input.isVoiceProcessingEnabled')
     expect(voice).toContain('audioEngine.outputNode.isVoiceProcessingEnabled')
     expect(voice).toContain('listenSuppressedUntil = Date().addingTimeInterval(')
@@ -194,6 +213,8 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('socketSetupComplete && audioConfigured')
     expect(voice).toContain('func callKitAudioDeactivated()')
     expect(voice).toContain('try resumeAudioGraphAfterActivation()')
+    expect(voice).toContain('try audioEngine.inputNode.setVoiceProcessingEnabled(true)')
+    expect(voice).toContain('voiceProcessingUnavailable = !audioEngine.inputNode.isVoiceProcessingEnabled')
     expect(voice).toContain('updateReadiness { $0.audioConfigured = false }')
     expect(callKit).toContain('AgentCallController.shared.audioSessionDeactivated()')
     expect(liveConfigure).toContain('options: [.allowBluetoothHFP]')

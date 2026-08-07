@@ -5,6 +5,13 @@ import {
   buildLiveVoiceConfig,
   buildLiveVoiceTokenConfig,
   DEFAULT_LIVE_VOICE_MODEL,
+  DEFAULT_LIVE_VOICE_NAME,
+  GEMINI_25_LIVE_MODEL,
+  GEMINI_31_LIVE_MODEL,
+  isSupportedLiveVoiceModel,
+  isSupportedLiveVoiceName,
+  LIVE_VOICE_MODEL_IDS,
+  LIVE_VOICE_NAMES,
   LIVE_VOICE_SYSTEM_INSTRUCTION,
 } from '@/agent/lib/live-voice-config'
 
@@ -48,9 +55,28 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
 
-  it('keeps the proven production model while avoiding robotic conversation habits', () => {
-    expect(DEFAULT_LIVE_VOICE_MODEL).toBe('gemini-3.1-flash-live-preview')
-    expect(buildLiveVoiceConfig().enableAffectiveDialog).toBe(true)
+  it('offers exactly two Gemini Native Audio models and a validated voice catalog', () => {
+    expect(DEFAULT_LIVE_VOICE_MODEL).toBe(GEMINI_25_LIVE_MODEL)
+    expect(DEFAULT_LIVE_VOICE_NAME).toBe('Aoede')
+    expect(LIVE_VOICE_MODEL_IDS).toEqual([GEMINI_25_LIVE_MODEL, GEMINI_31_LIVE_MODEL])
+    expect(LIVE_VOICE_NAMES).toEqual(['Aoede', 'Achernar', 'Kore', 'Charon', 'Orus', 'Sulafat'])
+    expect(isSupportedLiveVoiceModel(GEMINI_25_LIVE_MODEL)).toBe(true)
+    expect(isSupportedLiveVoiceModel('gpt-realtime')).toBe(false)
+    expect(isSupportedLiveVoiceName('Sulafat')).toBe(true)
+    expect(isSupportedLiveVoiceName('unknown')).toBe(false)
+  })
+
+  it('uses model-specific low-latency and affective settings', () => {
+    const natural = buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL)
+    const fast = buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL)
+    expect(natural.enableAffectiveDialog).toBe(true)
+    expect(natural.thinkingConfig?.thinkingBudget).toBe(0)
+    expect(fast.enableAffectiveDialog).toBeUndefined()
+    expect(fast.thinkingConfig?.thinkingLevel).toBe('MINIMAL')
+    expect(natural.speechConfig?.languageCode).toBeUndefined()
+  })
+
+  it('avoids robotic conversation habits and asks for Bangladeshi pronunciation', () => {
     expect(buildLiveVoiceConfig().temperature).toBe(0.4)
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“আর কিছু জানতে চান?”')
@@ -59,6 +85,7 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('চাপ, রাগ বা হতাশায়')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss তালিকা চাইলে তবেই numbered list')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রমিত বাংলাদেশি বাংলা')
   })
 
   it('keeps the proven v1alpha ephemeral-token and websocket transport', () => {
@@ -66,6 +93,9 @@ describe('live voice configuration', () => {
 
     expect(route).toContain("apiVersion: 'v1alpha'")
     expect(route).toContain('google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained')
+    expect(route).toContain('unsupported_live_model')
+    expect(route).toContain('unsupported_live_voice')
+    expect(route).toContain('buildLiveVoiceTokenConfig(voice, model)')
     expect(route).not.toContain("apiVersion: 'v1beta'")
   })
 })
