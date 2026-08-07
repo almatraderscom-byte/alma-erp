@@ -5,6 +5,18 @@ import { join } from 'node:path'
 const ROOT = process.cwd()
 
 describe('native voice upload contract', () => {
+  it('keeps the TestFlight workflow input aligned with the committed iOS build', () => {
+    const project = readFileSync(join(ROOT, 'ios/App/App.xcodeproj/project.pbxproj'), 'utf8')
+    const workflow = readFileSync(join(ROOT, '.github/workflows/ios-testflight.yml'), 'utf8')
+    const builds = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)]
+      .map((match) => match[1])
+    const expectedBuild = workflow.match(/expected_build:[\s\S]*?default: '(\d+)'/)?.[1]
+
+    expect([...new Set(builds)]).toHaveLength(1)
+    expect(expectedBuild).toBe(builds[0])
+    expect(workflow).toContain(`this release: ${builds[0]}`)
+  })
+
   it('uses the same multipart field name on every iOS transcribe path and the server', () => {
     const chat = readFileSync(join(ROOT, 'ios/App/App/AssistantSwiftUI.swift'), 'utf8')
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
