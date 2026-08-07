@@ -1394,6 +1394,8 @@ final class AlmaVoiceEngine {
     }
 
     #if DEBUG
+    private var debugQueuedUserTurns: [String] = []
+
     /// Simulator-only conversation harness: inject a typed sentence as if Boss
     /// spoke it — exercises the full Gemini turn (direct answer vs run_agent_turn,
     /// audio, transcripts, nudges) without a microphone.
@@ -1424,6 +1426,36 @@ final class AlmaVoiceEngine {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.debugInjectUserTurnWhenReady(text, attemptsLeft: attemptsLeft - 1)
+        }
+    }
+
+    /// Run multiple deterministic prompts through one real Live session. This
+    /// catches second-turn regressions that a fresh call cannot expose (stale
+    /// transcript state, undrained PCM, or a mic gate that never rearms).
+    func debugInjectUserTurnsWhenReady(_ turns: [String]) {
+        let normalized = turns.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard let first = normalized.first else { return }
+        debugQueuedUserTurns = Array(normalized.dropFirst())
+        debugInjectUserTurnWhenReady(first)
+    }
+
+    private func debugInjectNextQueuedTurnAfterPlayback(attemptsLeft: Int = 20) {
+        guard !debugQueuedUserTurns.isEmpty else { return }
+        guard attemptsLeft > 0 else {
+            NSLog("ALMA-VOICE debug queued injection timed out")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.liveActive else { return }
+            guard self.state == .listening else {
+                self.debugInjectNextQueuedTurnAfterPlayback(attemptsLeft: attemptsLeft - 1)
+                return
+            }
+            let next = self.debugQueuedUserTurns.removeFirst()
+            NSLog("ALMA-VOICE debug queued injection sent remaining=%d",
+                  self.debugQueuedUserTurns.count)
+            self.debugInjectUserTurn(next)
         }
     }
     #endif
@@ -1529,6 +1561,9 @@ final class AlmaVoiceEngine {
                 sendLiveToolResultNow(callId: held.callId, text: held.text)
             }
             armAckWithoutToolWatch()
+            #if DEBUG
+            debugInjectNextQueuedTurnAfterPlayback()
+            #endif
         }
     }
 
@@ -3570,6 +3605,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             completeModelGeneration()
         }
         if content["turnComplete"] as? Bool == true {
+            #if DEBUG
+            NSLog("ALMA-VOICE model turn complete transcriptChars=%d", outputTranscript.count)
+            #endif
             outputTranscript = ""
             completeModelTurn()
         }
@@ -5264,7 +5302,8 @@ struct AlmaVoiceConsoleView: View {
             engine.begin()
             #if DEBUG
             if let liveSay = Self.launchValue("ALMA_LIVE_SAY") {
-                engine.debugInjectUserTurnWhenReady(liveSay)
+                engine.debugInjectUserTurnsWhenReady(
+                    liveSay.components(separatedBy: "|||"))
             }
             #endif
             if let say = Self.launchValue("ALMA_VOICE_SAY") {
