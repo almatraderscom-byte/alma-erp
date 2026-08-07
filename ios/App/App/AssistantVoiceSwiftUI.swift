@@ -2322,16 +2322,37 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var listenCalibrationFrames = 0
     private var listenCalibMinRMS = Double.greatestFiniteMagnitude
     private var listenContinuousLoudFrames = 0
+    // Natural playback can leave an acoustic/AGC tail after the queue reports
+    // drained. Do not reopen the normal listening gate until that tail expires;
+    // otherwise ALMA's last words are transcribed as a new (often garbled) user
+    // turn. Local/server barge-in explicitly clears this guard so a real owner
+    // interruption continues streaming without delay.
+    private var listenSuppressedUntil = Date.distantPast
+    private var listenTailSuppressionLogged = false
     private let playbackPrebufferSeconds = 0.16
-    private let bargeInMinimumRMS = 0.045
+    // Owner speech measured around 0.047 only at its PEAK. A 0.045 floor meant
+    // ordinary syllables never accumulated enough frames to interrupt. AEC/
+    // receiver routes can safely use the calibrated residual-echo floor with a
+    // low absolute guard; the sustained-frame requirement still rejects clicks.
+    private let bargeInMinimumRMS = 0.014
     private let receiverBargeInRequiredFrames = 7 // ≈140ms on receiver/AEC routes
-    private let loudspeakerProbeCandidateRMS = 0.034
+    // This threshold starts a discriminator; it never stops playback by itself.
+    // Keep it below normal conversational RMS so a quiet "একটু থামো" reaches
+    // the duck probe instead of being discarded before echo discrimination.
+    private let loudspeakerProbeCandidateRMS = 0.014
     private let loudspeakerProbeCandidateRequiredFrames = 2 // ≈40ms before ducking
-    // Wall-clock bounds are intentional. Simulator/route callbacks can be 100ms,
-    // so the old 9-frame probe muted speech for ~0.9s despite its 180ms comment.
-    private let loudspeakerProbeSettleSeconds = 0.045
-    private let loudspeakerProbeWindowSeconds = 0.20
+    // Wall-clock bounds are intentional. The Bluetooth/Simulator acoustic path
+    // still delivered pre-duck energy 184ms after player.volume changed in the
+    // owner run. Wait beyond that measured tail before classifying retained
+    // energy; a continuous human remains, while stale loudspeaker echo decays.
+    private let loudspeakerProbeSettleSeconds = 0.22
+    private let loudspeakerProbeWindowSeconds = 0.42
     private let loudspeakerProbeVoiceRequiredFrames = 2
+    // Instrumented owner run: a false greeting-echo probe retained 54.7% after
+    // the duck, while the owner's real barge-in retained 75.2% and produced a
+    // server INTERRUPTED event. A 60% boundary separates those measured cases.
+    // The lowered candidate threshold above lets quiet speech ENTER the probe;
+    // this ratio decides whether retained energy is human, not mere echo.
     private let loudspeakerProbeRetainedEnergyRatio = 0.60
     private let loudspeakerProbeDuckVolume: Float = 0.35
     private let loudspeakerProbeCooldownRequiredFrames = 60
@@ -3098,7 +3119,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 } else {
                     if loudspeakerProbeActive { endLoudspeakerProbe = true }
                     resetLoudspeakerProbeLocked()
-                    let threshold = max(bargeInMinimumRMS, echoFloorRMS * 2.35 + 0.008)
+                    let threshold = max(bargeInMinimumRMS, echoFloorRMS * 1.9 + 0.003)
                     if rms >= threshold {
                         bargeSpeechFrames += 1
                     } else {
@@ -3121,6 +3142,21 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             resetLoudspeakerProbeLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             bargeSpeechFrames = 0
+            if Date() < listenSuppressedUntil {
+                listenPreRoll.removeAll(keepingCapacity: true)
+                listenGateOpen = false
+                listenSpeechFrames = 0
+                listenSilenceFrames = 0
+                listenContinuousLoudFrames = 0
+                #if DEBUG
+                if !listenTailSuppressionLogged {
+                    listenTailSuppressionLogged = true
+                    NSLog("ALMA-VOICE listening suppressed for playback echo tail")
+                }
+                #endif
+                audioLock.unlock()
+                return
+            }
             // LISTENING noise gate (sim-proven 2026-07-30): streaming every idle
             // frame let ambient noise trip the server VAD the instant a model
             // turn opened — START_OF_ACTIVITY_INTERRUPTS then killed the turn
@@ -3844,6 +3880,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeSpeechFrames = 0
         resetLoudspeakerProbeLocked()
         micPreRoll.removeAll(keepingCapacity: true)
+        // Simulator / speaker fallback has no VPIO cancellation and showed a
+        // real 650ms post-playback echo re-opening the gate. Give that route a
+        // full 1.2s; AEC/receiver routes need only a short render-tail guard.
+        let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+        listenSuppressedUntil = Date().addingTimeInterval(
+            echoExposedLoudspeaker ? 1.2 : 0.25)
+        listenTailSuppressionLogged = false
         audioLock.unlock()
 
         audioQueue.async { [weak self] in
@@ -3874,6 +3917,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         estimatedPlaybackEnd = .distantPast
         playbackGeneration += 1
         if interrupted { bargeInPending = false }
+        // This path is a real interruption (local pre-roll is sent immediately,
+        // then the server confirms it). Never apply the natural-finish echo tail
+        // guard here or the rest of the owner's utterance would be clipped.
+        listenSuppressedUntil = .distantPast
+        listenTailSuppressionLogged = false
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
@@ -3954,6 +4002,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenCalibrationFrames = 0
         listenCalibMinRMS = .greatestFiniteMagnitude
         listenContinuousLoudFrames = 0
+        listenSuppressedUntil = .distantPast
+        listenTailSuppressionLogged = false
         audioLock.unlock()
         if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
     }

@@ -116,14 +116,15 @@ describe('native voice upload contract', () => {
     )
 
     expect(voice).toContain('receiverBargeInRequiredFrames = 7')
-    expect(voice).toContain('loudspeakerProbeCandidateRMS = 0.034')
-    expect(voice).toContain('loudspeakerProbeSettleSeconds = 0.045')
-    expect(voice).toContain('loudspeakerProbeWindowSeconds = 0.20')
+    expect(voice).toContain('bargeInMinimumRMS = 0.014')
+    expect(voice).toContain('loudspeakerProbeCandidateRMS = 0.014')
+    expect(voice).toContain('loudspeakerProbeSettleSeconds = 0.22')
+    expect(voice).toContain('loudspeakerProbeWindowSeconds = 0.42')
     expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 2')
     expect(voice).toContain('loudspeakerProbeRetainedEnergyRatio = 0.60')
     expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.35')
     expect(voice).toContain('bargeInPreRollChunks = 14')
-    expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
+    expect(voice).toContain('echoFloorRMS * 1.9 + 0.003')
     expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
     expect(voice).toContain('setLoudspeakerProbeMuted(true)')
     expect(voice).toContain('loudspeakerProbeDuckAppliedAt = Date()')
@@ -141,6 +142,27 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
     expect(voice).toContain('input.isVoiceProcessingEnabled')
     expect(voice).toContain('audioEngine.outputNode.isVoiceProcessingEnabled')
+    expect(voice).toContain('listenSuppressedUntil = Date().addingTimeInterval(')
+    expect(voice).toContain('echoExposedLoudspeaker ? 1.2 : 0.25')
+    expect(voice).toContain('if Date() < listenSuppressedUntil')
+    expect(voice).toContain('listenSuppressedUntil = .distantPast')
+
+    // Acoustic discriminator invariant: a pure loudspeaker echo that follows
+    // the player duck must stay below the retained-energy threshold, while a
+    // modest nearby voice mixed with that echo must cross it. This guards both
+    // regressions the owner observed: self-cutting and an uninterruptible agent.
+    const candidateRms = 0.014
+    const duckRatio = 0.35
+    const retainedRatio = 0.60
+    const preDuckEcho = 0.08
+    const pureEchoAfterDuck = preDuckEcho * duckRatio
+    const retainedThreshold = preDuckEcho * retainedRatio
+    const quietHumanRms = 0.045
+    const humanPlusEcho = Math.hypot(pureEchoAfterDuck, quietHumanRms)
+
+    expect(candidateRms).toBeLessThan(0.025)
+    expect(pureEchoAfterDuck).toBeLessThan(retainedThreshold)
+    expect(humanPlusEcho).toBeGreaterThan(retainedThreshold)
   })
 
   it('gates CallKit media on real activation and keeps receiver routing possible', () => {
