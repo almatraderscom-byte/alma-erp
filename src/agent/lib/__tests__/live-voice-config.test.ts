@@ -52,7 +52,7 @@ describe('live voice configuration', () => {
     // Read-only fast lane exists but is scoped to lookups only.
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('quick_erp_lookup')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('completed/reportReady')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('লিখিত রিপোর্ট বা তালিকা আবৃত্তি করবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('বাক্য শেষ করার চেষ্টা না করে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
@@ -81,14 +81,24 @@ describe('live voice configuration', () => {
   })
 
   it('avoids robotic conversation habits and asks for Bangladeshi pronunciation', () => {
-    expect(buildLiveVoiceConfig().temperature).toBe(0.4)
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
+    expect(buildLiveVoiceConfig().temperature).toBe(0.7)
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Persona**')).toBeLessThan(
+      LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Conversation**'),
+    )
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Conversation**')).toBeLessThan(
+      LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Tool flow**'),
+    )
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Tool flow**')).toBeLessThan(
+      LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Guardrails**'),
+    )
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“আর কিছু জানতে চান?”')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('স্বাভাবিকভাবে থামবে')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('স্বাভাবিকভাবে থেমে শুনবে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('দুঃখ বা খারাপ খবরে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('চাপ, রাগ বা হতাশায়')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
-    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss তালিকা চাইলে তবেই numbered list')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('scripted announcer')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('জোর করে হাসি')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss চাইলে তবেই তালিকা')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রমিত বাংলাদেশি বাংলা')
   })
 

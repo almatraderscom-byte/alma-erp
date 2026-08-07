@@ -2385,6 +2385,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var inputFormat: AVAudioFormat?
     private var playbackFormat: AVAudioFormat?
     private var tapInstalled = false
+    private var playbackReferenceTapInstalled = false
     private var configured = false
     private var stopped = false
     private var socketReady = false
@@ -2452,6 +2453,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var loudspeakerProbeDuckAppliedAt = Date.distantPast
     private var loudspeakerProbeVoiceFrames = 0
     private var loudspeakerProbeCooldownFrames = 0
+    // The simulator has no reliable VoiceProcessingIO echo cancellation. Observe
+    // the main mixer's real rendered output and subtract its conservatively
+    // predicted acoustic energy from the microphone. This lets a short owner
+    // interjection interrupt within ~80ms without teaching ALMA to cut herself
+    // off. The volume-duck probe below remains only as a no-reference fallback.
+    private var playbackReferenceHistory: [(capturedAt: TimeInterval, rms: Double)] = []
+    private var playbackReferenceEchoGain = 0.0
+    private var playbackReferenceReadyFrames = 0
+    private var playbackReferenceSpeechFrames = 0
     // Listening-path noise gate (protected by audioLock, see capture()).
     private var listenPreRoll: [Data] = []
     private var listenGateOpen = false
@@ -2496,6 +2506,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let loudspeakerProbeDuckVolume: Float = 0.35
     private let loudspeakerProbeCooldownRequiredFrames = 60
     private let bargeInPreRollChunks = 14        // ≈280ms, including first syllable
+    private let playbackReferenceHistorySeconds = 0.32
+    private let playbackReferenceMinimumRMS = 0.004
+    private let playbackReferenceReadyRequiredFrames = 4
+    private let playbackReferenceSpeechRequiredFrames = 4 // ≈80ms
+    private let playbackReferenceEchoSafetyRatio = 1.35
+    private let playbackReferenceMinimumResidualRMS = 0.012
     private let audioLock = NSLock()
     /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
     /// serial queue. Build 82 device crash reports (0x8BADF00D watchdog): main
@@ -2660,7 +2676,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
         let instruction = """
-        তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। একজন স্বাভাবিক, উষ্ণ মানুষের মতো ঝরঝরে বাংলায় কথা বলবে।
+        **Persona**
+        তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। unmistakably প্রমিত বাংলাদেশি বাংলা ও বাংলাদেশি উচ্চারণে একজন মনোযোগী, উষ্ণ, স্বাভাবিক মানুষের মতো কথা বলবে; হিন্দি বা ভারতীয় বাংলা টান আনবে না। কণ্ঠকে scripted announcer বা customer-service bot-এর মতো শোনাবে না।
+
+        **Conversation**
+        Boss কী বলছে এবং যে আবেগে বলছে—দুটোই শুনে delivery স্বাভাবিকভাবে মিলাবে। দুঃখ বা খারাপ খবরে আন্তরিক ও নরম হবে; চাপ, রাগ বা হতাশায় শান্ত ও স্থির হবে; সুখবর বা রসিকতায় স্বতঃস্ফূর্ত উষ্ণতা থাকবে। জোর করে হাসি, আশাবাদ, উপদেশ, “হুম”, দীর্ঘশ্বাস বা অভিনয় করবে না।
+        একবারে একটি সম্পূর্ণ ভাব conversationalভাবে বলবে, তারপর স্বাভাবিকভাবে থেমে শুনবে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সঙ্গে সঙ্গে চুপ করবে। Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না, ফাঁকা ভূমিকা দেবে না, এবং প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “কেমন হলো?”, “ঠিক আছে?” ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য কম থাকলেই শুধু একটি ছোট clarification প্রশ্ন করবে।
+
+        **Tool flow**
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
         কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
         Boss স্পষ্টভাবে কলটি শেষ করতে চাইলে ("ফোন রাখো", "কল কাটো", "এখন রাখি", বিদায়ী সালাম "আল্লাহ হাফেজ"): এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে — শুধু মুখে বিদায় বললে কল কাটে না। সাবধান: কিছু মনে রাখতে বা সেভ করতে বলা (যেমন "এই কথাটা মনে রেখে দাও") কল রাখার অনুরোধ নয় — তখন end_call একদম নয়।
@@ -2668,16 +2691,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
-        মালিককে শুধু "Boss" বলবে; অন্য যেকোনো সম্বোধন নিষিদ্ধ। ভয়েসে emoji পড়বে না। ইসলামি আদব বজায় রাখবে।
-        উচ্চারণ ও ভাষা: প্রমিত বাংলাদেশি বাংলা ব্যবহার করবে। বাংলা বাক্যে স্বাভাবিক বাংলাদেশি টান, পরিষ্কার স্বরধ্বনি ও আরামদায়ক গতি রাখবে; অকারণে হিন্দি/ভারতীয় বাংলা টান বা ইংরেজি accent অনুকরণ করবে না। প্রচলিত technical শব্দ ইংরেজিতেই বলা স্বাভাবিক হলে সেগুলো সহজভাবে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে।
-        স্বাভাবিক কথোপকথনের নিয়ম: Boss-এর কথা বা অনুরোধ উত্তর দেওয়ার আগে প্রশ্নের মতো করে পুনরাবৃত্তি করবে না। “ঠিক আছে, বলছি”, “অবশ্যই, বলছি” ধরনের ফাঁকা ভূমিকা বাদ দিয়ে সরাসরি দরকারি কথায় যাবে। প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “আরো কিছু বলব?”, “কেমন হলো?”, “ঠিক আছে?” বা একই ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য বা উত্তর শেষ হলে স্বাভাবিকভাবে থামবে এবং নীরবে Boss-এর কথা শুনবে। কেবল সত্যিই তথ্য কম থাকলে একটি clarification প্রশ্ন করবে; অথবা Boss-কে বাস্তব একটি সিদ্ধান্ত নিতেই হলে নির্দিষ্ট দুটি পথের ছোট প্রশ্ন করবে।
-        Boss-এর মেজাজ ও পরিস্থিতির সঙ্গে delivery মিলাবে: দুঃখ বা খারাপ খবরে আগে এক বাক্যে অনুভূতিটা স্বীকার করবে, তারপর ধীর-নরম ও আন্তরিকভাবে বলবে—জোর করে আশাবাদ, উপদেশ বা হাসি নয়। সুখবর বা মজায় কণ্ঠ একটু উজ্জ্বল ও উষ্ণ হবে; Boss রসিকতা করলে তবেই হালকা হাসির অনুভূতি থাকবে, মুখে কৃত্রিম “হা হা” নয়। চাপ, রাগ বা হতাশায় শান্ত, স্থির, ছোট বাক্য—আত্মপক্ষসমর্থন বা অতিরিক্ত cheerful টোন নয়। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার, সংযত ও পেশাদার থাকবে। “Boss” সম্বোধনটি প্রতি বাক্যে নয়—শুধু স্বাভাবিক শুরু বা বিশেষ আন্তরিক মুহূর্তে।
-        বলবে ছোট ছোট বাক্যে, মাপা গতিতে, স্বাভাবিক বিরতিতে; সংখ্যা ও টাকার অংক ধীরে-স্পষ্ট। লিখিত রিপোর্ট পড়ার মতো একটানা বলবে না, তালিকাও আবৃত্তি করবে না—Boss তালিকা চাইলে তবেই numbered list; অন্যথায় সম্পর্কিত বিষয়গুলো গুছিয়ে conversationalভাবে বলবে। একবারে একটি ভাব, ভাব বদলালে ছোট বিরতি, বাক্যের শেষে পূর্ণ বিরতি। কমা, দাড়ি ও ছোট thought-group দিয়ে শ্বাস নেওয়ার জায়গার মতো rhythm বানাবে; কৃত্রিম “হুম”, শ্বাসের শব্দ, দীর্ঘশ্বাস বা নাটকীয়তা তৈরি করবে না। একই গতি বা সুর ধরে রাখবে না; স্বাভাবিক ওঠানামা ও দরকারমতো নরম জোর দেবে। এক turn-এ যতটুকু দরকার ততটুকুই বলবে; দীর্ঘ উত্তর ১–২ বাক্যের ছোট অংশে বলবে, যাতে Boss-এর কথা বলার জায়গা থাকে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সাথে সাথে চুপ করে শুনবে।
+        **Guardrails**
+        মালিককে শুধু "Boss" বলবে, তবে প্রতি বাক্যে নয়। ভয়েসে emoji পড়বে না; ইসলামি আদব বজায় রাখবে। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার ও পেশাদার থাকবে। প্রচলিত technical শব্দ ইংরেজিতে বলা স্বাভাবিক হলে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে। লিখিত রিপোর্ট বা তালিকা আবৃত্তি করবে না—Boss চাইলে তবেই তালিকা দেবে।
         """
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
         var generationConfig: [String: Any] = [
             "responseModalities": ["AUDIO"],
-            "temperature": 0.4,
+            "temperature": 0.7,
             "speechConfig": [
                 "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
             ],
@@ -2965,6 +2985,55 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             : 0
     }
 
+    /// Caller holds `audioLock`.
+    private func resetPlaybackReferenceLocked(clearHistory: Bool = true) {
+        if clearHistory { playbackReferenceHistory.removeAll(keepingCapacity: true) }
+        playbackReferenceEchoGain = 0
+        playbackReferenceReadyFrames = 0
+        playbackReferenceSpeechFrames = 0
+    }
+
+    /// Caller holds `audioLock`. Use the strongest recently rendered frame so
+    /// callback jitter and the physical speaker-to-microphone delay cannot make
+    /// ALMA's own syllable look like unexplained human energy.
+    private func recentPlaybackReferenceRMSLocked(now: TimeInterval) -> Double {
+        let cutoff = now - playbackReferenceHistorySeconds
+        while let first = playbackReferenceHistory.first,
+              first.capturedAt < cutoff {
+            playbackReferenceHistory.removeFirst()
+        }
+        return playbackReferenceHistory.reduce(0) { max($0, $1.rms) }
+    }
+
+    private func capturePlaybackReference(_ buffer: AVAudioPCMBuffer) {
+        guard !stopped else { return }
+        let frames = Int(buffer.frameLength)
+        guard frames > 0, let channels = buffer.floatChannelData else { return }
+        let channelCount = max(1, Int(buffer.format.channelCount))
+        var sum = 0.0
+        for channel in 0..<channelCount {
+            for frame in 0..<frames {
+                let sample = Double(channels[channel][frame])
+                sum += sample * sample
+            }
+        }
+        let rms = (sum / Double(frames * channelCount)).squareRoot()
+        let capturedAt = ProcessInfo.processInfo.systemUptime
+        audioLock.lock()
+        playbackReferenceHistory.append((capturedAt: capturedAt, rms: rms))
+        let cutoff = capturedAt - playbackReferenceHistorySeconds
+        while let first = playbackReferenceHistory.first,
+              first.capturedAt < cutoff {
+            playbackReferenceHistory.removeFirst()
+        }
+        if rms >= playbackReferenceMinimumRMS {
+            playbackReferenceReadyFrames = min(
+                playbackReferenceReadyRequiredFrames,
+                playbackReferenceReadyFrames + 1)
+        }
+        audioLock.unlock()
+    }
+
     /// Short, soft volume-only duck: enough attenuation to distinguish echo,
     /// without the audible full-silence gaps caused by the old frame-based probe.
     /// Measurement is armed only AFTER audioQueue confirms the duck was applied;
@@ -3035,6 +3104,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             audioEngine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
+        if playbackReferenceTapInstalled {
+            audioEngine.mainMixerNode.removeTap(onBus: 0)
+            playbackReferenceTapInstalled = false
+        }
         let av = AVAudioSession.sharedInstance()
         // Ownership split mirrors AgoraIntercom.configureAudioSession: the APP
         // always owns the CATEGORY (a cold-launch answer leaves the session on
@@ -3104,11 +3177,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             self?.capture(buffer, nativeFormat: native)
         }
         tapInstalled = true
+        audioEngine.mainMixerNode.installTap(onBus: 0, bufferSize: 960, format: nil) {
+            [weak self] buffer, _ in
+            self?.capturePlaybackReference(buffer)
+        }
+        playbackReferenceTapInstalled = true
         audioEngine.prepare()
         do { try audioEngine.start() } catch {
             // Unwind the partial setup so the retry starts clean.
             input.removeTap(onBus: 0)
             tapInstalled = false
+            audioEngine.mainMixerNode.removeTap(onBus: 0)
+            playbackReferenceTapInstalled = false
             throw AlmaLiveVoiceError.audioStart
         }
         // setVoiceProcessingEnabled RESETS the output route to the receiver, so
@@ -3179,6 +3259,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard conversionError == nil, output.frameLength > 0,
               let samples = output.int16ChannelData?[0] else { return }
         let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
+        let captureUptime = ProcessInfo.processInfo.systemUptime
 
         var sendNormally = false
         var startBargeIn = false
@@ -3187,6 +3268,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var flushAutomaticVADStream = false
         var probeLogRMS = 0.0
         var probeLogFloor = 0.0
+        var referenceLogRMS = 0.0
+        var referenceLogPredictedEchoRMS = 0.0
+        var referenceLogResidualRMS = 0.0
         var preRoll: [Data] = []
         audioLock.lock()
         if modelAudioTurnOpen && !bargeInPending {
@@ -3215,10 +3299,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // Give a no-AEC loudspeaker route a short window to learn its
                 // residual echo. That route keeps the side-chain discriminator;
                 // directly streaming speaker echo would self-interrupt every turn.
+                let playbackReferenceRMS = recentPlaybackReferenceRMSLocked(
+                    now: captureUptime)
                 if echoCalibrationFrames < 10 {
                     echoCalibrationFrames += 1
                     echoFloorRMS = max(echoFloorRMS, rms * 0.85)
+                    if playbackReferenceRMS >= playbackReferenceMinimumRMS {
+                        let observedGain = rms / playbackReferenceRMS
+                        playbackReferenceEchoGain = max(
+                            playbackReferenceEchoGain,
+                            observedGain * playbackReferenceEchoSafetyRatio)
+                    }
                     bargeSpeechFrames = 0
+                    playbackReferenceSpeechFrames = 0
                     resetLoudspeakerProbeLocked()
                 } else {
                 // A CallKit receiver route has little acoustic feedback even
@@ -3230,7 +3323,51 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // confirms speech that remains after her own echo has decayed.
                 let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
                 if echoExposedLoudspeaker {
-                    if loudspeakerProbeActive {
+                    // The player starts on `audioQueue`, so its first non-silent
+                    // mixer frame can arrive just after the fixed mic calibration
+                    // window. Learn the missing transfer ratio once here instead
+                    // of falling back to the slow duck probe for the whole turn.
+                    if playbackReferenceEchoGain == 0,
+                       playbackReferenceRMS >= playbackReferenceMinimumRMS {
+                        playbackReferenceEchoGain = (rms / playbackReferenceRMS)
+                            * playbackReferenceEchoSafetyRatio
+                    }
+                    let playbackReferenceReady = playbackReferenceReadyFrames
+                        >= playbackReferenceReadyRequiredFrames
+                        && playbackReferenceEchoGain > 0
+                        && playbackReferenceRMS >= playbackReferenceMinimumRMS
+                    if playbackReferenceReady {
+                        if loudspeakerProbeActive { endLoudspeakerProbe = true }
+                        resetLoudspeakerProbeLocked()
+                        let predictedEchoRMS = max(
+                            echoFloorRMS,
+                            playbackReferenceRMS * playbackReferenceEchoGain)
+                        let residualRMS = sqrt(max(
+                            0,
+                            rms * rms - predictedEchoRMS * predictedEchoRMS))
+                        let residualThreshold = max(
+                            playbackReferenceMinimumResidualRMS,
+                            listenNoiseFloorRMS * 2.2)
+                        if residualRMS >= residualThreshold {
+                            playbackReferenceSpeechFrames += 1
+                        } else {
+                            playbackReferenceSpeechFrames = max(
+                                0, playbackReferenceSpeechFrames - 1)
+                        }
+                        if playbackReferenceSpeechFrames
+                            >= playbackReferenceSpeechRequiredFrames {
+                            bargeInPending = true
+                            preRoll = micPreRoll
+                            micPreRoll.removeAll(keepingCapacity: true)
+                            bargeSpeechFrames = 0
+                            referenceLogRMS = playbackReferenceRMS
+                            referenceLogPredictedEchoRMS = predictedEchoRMS
+                            referenceLogResidualRMS = residualRMS
+                            probeLogRMS = rms
+                            probeLogFloor = echoFloorRMS
+                            startBargeIn = true
+                        }
+                    } else if loudspeakerProbeActive {
                         let duckAppliedAt = loudspeakerProbeDuckAppliedAt
                         if duckAppliedAt != .distantPast {
                             let elapsed = Date().timeIntervalSince(duckAppliedAt)
@@ -3464,8 +3601,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if startBargeIn {
             #if DEBUG
-            NSLog("ALMA-VOICE local barge-in confirmed human speech rms=%.4f floor=%.4f",
-                  probeLogRMS, probeLogFloor)
+            if referenceLogRMS > 0 {
+                NSLog("ALMA-VOICE local barge-in confirmed by playback reference mic=%.4f reference=%.4f predictedEcho=%.4f residual=%.4f",
+                      probeLogRMS, referenceLogRMS,
+                      referenceLogPredictedEchoRMS, referenceLogResidualRMS)
+            } else {
+                NSLog("ALMA-VOICE local barge-in confirmed human speech rms=%.4f floor=%.4f",
+                      probeLogRMS, probeLogFloor)
+            }
             #endif
             beginLocalBargeIn()
             for chunk in preRoll { sendRealtimeAudio(chunk) }
@@ -3838,6 +3981,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             echoFloorRMS = 0.008
             bargeSpeechFrames = 0
             resetLoudspeakerProbeLocked()
+            resetPlaybackReferenceLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             newTurn = true
         }
@@ -3890,6 +4034,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
         resetLoudspeakerProbeLocked()
+        resetPlaybackReferenceLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         estimatedPlaybackEnd = Date().addingTimeInterval(bufferedPlaybackDuration)
         let deadline = estimatedPlaybackEnd
@@ -4097,6 +4242,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
         resetLoudspeakerProbeLocked()
+        resetPlaybackReferenceLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         // Simulator / speaker fallback has no VPIO cancellation and showed a
         // real 650ms post-playback echo re-opening the gate. Give that route a
@@ -4144,6 +4290,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoFloorRMS = 0.008
         bargeSpeechFrames = 0
         resetLoudspeakerProbeLocked()
+        resetPlaybackReferenceLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         audioLock.unlock()
 
@@ -4209,6 +4356,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         bargeSpeechFrames = 0
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
+        resetPlaybackReferenceLocked()
         // The listening gate must not carry audio or detector state across the
         // mute boundary (Codex P2): retained pre-roll chunks would otherwise be
         // flushed ahead of the first post-unmute utterance, and an open gate
@@ -4236,6 +4384,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let isConfigured = configured
         let restoreProbeVolume = loudspeakerProbeActive
         resetLoudspeakerProbeLocked()
+        resetPlaybackReferenceLocked()
         audioLock.unlock()
         if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
         trace("route.request", "want=\(enabled ? "speaker" : "receiver") configured=\(isConfigured ? 1 : 0)")
@@ -4290,11 +4439,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             routeObserver = nil
         }
         let hadTap = tapInstalled
+        let hadPlaybackReferenceTap = playbackReferenceTapInstalled
         let appOwnsActivation = !callKitOwnsAudioSession
         tapInstalled = false
+        playbackReferenceTapInstalled = false
         audioQueue.async { [weak self] in
             guard let self else { return }
             if hadTap { self.audioEngine.inputNode.removeTap(onBus: 0) }
+            if hadPlaybackReferenceTap {
+                self.audioEngine.mainMixerNode.removeTap(onBus: 0)
+            }
             self.player.stop()
             self.player.volume = 1
             if self.audioEngine.isRunning { self.audioEngine.stop() }
@@ -4341,6 +4495,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         echoCalibrationFrames = 0
         echoFloorRMS = 0.008
         resetLoudspeakerProbeLocked()
+        resetPlaybackReferenceLocked()
         micPreRoll.removeAll(keepingCapacity: true)
         // Listening-gate state must not leak into the next session (Codex P2):
         // an open gate would stream background audio at call start, stale

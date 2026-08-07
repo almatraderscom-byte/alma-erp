@@ -107,13 +107,17 @@ describe('native voice upload contract', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
     expect(voice).toContain('private var allowAffective = false')
-    expect(voice).toContain('প্রশ্নের মতো করে পুনরাবৃত্তি করবে না')
+    expect(voice).toContain('**Persona**')
+    expect(voice).toContain('**Conversation**')
+    expect(voice).toContain('**Tool flow**')
+    expect(voice).toContain('**Guardrails**')
+    expect(voice).toContain('Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না')
     expect(voice).toContain('“আর কিছু জানতে চান?”')
-    expect(voice).toContain('স্বাভাবিকভাবে থামবে')
+    expect(voice).toContain('স্বাভাবিকভাবে থেমে শুনবে')
     expect(voice).toContain('দুঃখ বা খারাপ খবরে')
     expect(voice).toContain('চাপ, রাগ বা হতাশায়')
-    expect(voice).toContain('শ্বাসের শব্দ, দীর্ঘশ্বাস')
-    expect(voice).toContain('"temperature": 0.4')
+    expect(voice).toContain('scripted announcer')
+    expect(voice).toContain('"temperature": 0.7')
   })
 
   it('offers only the approved Gemini Live models and Bengali voice personas', () => {
@@ -155,6 +159,14 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('loudspeakerProbeRetainedEnergyRatio = 0.60')
     expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.35')
     expect(voice).toContain('bargeInPreRollChunks = 14')
+    expect(voice).toContain('playbackReferenceSpeechRequiredFrames = 4')
+    expect(voice).toContain('playbackReferenceEchoSafetyRatio = 1.35')
+    expect(voice).toContain('playbackReferenceMinimumResidualRMS = 0.012')
+    expect(voice).toContain('capturePlaybackReference')
+    expect(voice).toContain('audioEngine.mainMixerNode.installTap')
+    expect(voice).toContain('audioEngine.mainMixerNode.removeTap')
+    expect(voice).toContain('rms * rms - predictedEchoRMS * predictedEchoRMS')
+    expect(voice).toContain('local barge-in confirmed by playback reference')
     expect(voice).toContain('echoFloorRMS * 1.9 + 0.003')
     expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
     expect(voice).toContain('setLoudspeakerProbeMuted(true)')
@@ -207,6 +219,28 @@ describe('native voice upload contract', () => {
     expect(candidateRms).toBeLessThan(0.025)
     expect(pureEchoAfterDuck).toBeLessThan(retainedThreshold)
     expect(humanPlusEcho).toBeGreaterThan(retainedThreshold)
+
+    // Temporal regression: the old 220ms settle discarded a short word that had
+    // already ended. The playback-reference path must classify four 20ms frames
+    // without ducking, while conservatively padded pure echo remains residual-free.
+    const renderedRms = 0.1
+    const acousticEchoRms = 0.04
+    const loudspeakerProbeSettleMs = 220
+    const predictedEchoRms = renderedRms
+      * (acousticEchoRms / renderedRms)
+      * 1.35
+    const residual = (micRms: number) => Math.sqrt(Math.max(
+      0,
+      micRms ** 2 - predictedEchoRms ** 2,
+    ))
+    const pureEchoResidual = residual(acousticEchoRms)
+    const shortHumanMicRms = Math.hypot(acousticEchoRms, 0.045)
+    const shortWordFrames = Array.from({ length: 4 }, () => residual(shortHumanMicRms))
+
+    expect(pureEchoResidual).toBe(0)
+    expect(shortWordFrames).toHaveLength(4)
+    expect(shortWordFrames.every((frame) => frame >= 0.012)).toBe(true)
+    expect(shortWordFrames.length * 20).toBeLessThan(loudspeakerProbeSettleMs)
   })
 
   it('gates CallKit media on real activation and keeps receiver routing possible', () => {
