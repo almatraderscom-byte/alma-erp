@@ -657,31 +657,27 @@ final class AlmaVoiceEngine {
             AlmaCallBarBridge.shared.engine = nil
             AlmaCallBarBridge.shared.consoleVisible = false
         }
-        // Cost visibility + cost-gated compaction (owner 2026-07-24): report the
-        // call's duration so voice spend shows on the cost dashboard, then let
-        // the server fold this conversation ONLY if it crossed the compaction
-        // cost threshold (AGENT_COMPACT_THRESHOLD_USD) — cheap no-op otherwise.
+        // Cost visibility + cost-gated compaction (owner 2026-07-24): close out the
+        // call's usage, then let the server fold this conversation ONLY if it
+        // crossed the compaction cost threshold (AGENT_COMPACT_THRESHOLD_USD) —
+        // cheap no-op otherwise. The usage report is no longer the ONLY record of
+        // this call's spend (reportLiveUsage has been filing deltas throughout);
+        // this is just the final interval.
+        reportLiveUsage(final: true)
         if let startedAt = callStartedAt {
             let secs = Int(Date().timeIntervalSince(startedAt))
             let convId = chatVM?.conversationId
-            if secs >= 5 {
+            if secs >= 5, let convId, !convId.isEmpty {
                 Task {
-                    struct UsageBody: Encodable { let seconds: Int; let conversationId: String? }
-                    struct UsageResp: Decodable { let ok: Bool? }
-                    let _: UsageResp? = try? await AlmaAPI.shared.send(
-                        "POST", "/api/assistant/live-session/usage",
-                        body: UsageBody(seconds: secs, conversationId: convId))
-                    if let convId, !convId.isEmpty {
-                        struct CompactBody: Encodable { let conversationId: String; let ifNeeded: Bool }
-                        struct CompactResp: Decodable { let compacted: Bool? }
-                        let resp: CompactResp? = try? await AlmaAPI.shared.send(
-                            "POST", "/api/assistant/internal/compact-conversation",
-                            body: CompactBody(conversationId: convId, ifNeeded: true))
-                        #if DEBUG
-                        NSLog("ALMA-VOICE call end: usage %ds logged, compacted=%@",
-                              secs, (resp?.compacted ?? false) ? "yes" : "no")
-                        #endif
-                    }
+                    struct CompactBody: Encodable { let conversationId: String; let ifNeeded: Bool }
+                    struct CompactResp: Decodable { let compacted: Bool? }
+                    let resp: CompactResp? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/internal/compact-conversation",
+                        body: CompactBody(conversationId: convId, ifNeeded: true))
+                    #if DEBUG
+                    NSLog("ALMA-VOICE call end: %ds, compacted=%@",
+                          secs, (resp?.compacted ?? false) ? "yes" : "no")
+                    #endif
                 }
             }
         }
@@ -796,6 +792,71 @@ final class AlmaVoiceEngine {
     private var lastVoiceActivityAt = Date.distantPast
     private var idleWarningShown = false
 
+    // ── Usage reporting during the call (owner incident 2026-08-07) ───────────
+    //
+    // Spend used to be written once, at hang-up. For the 5h27m overnight session
+    // that meant the server saw $0 the entire time it was burning: the budget
+    // guard, the kill switch and the dashboard were all blind, and an app crash
+    // would have lost the row outright. Now the measured usage is drained and
+    // filed every `usageReportIntervalSeconds`, so the money appears while it is
+    // being spent and the most a failure can lose is one interval.
+    //
+    // Each report is a DELTA keyed `{sessionId}:{seq}`; the server upserts on that
+    // key, so a retried report cannot double-count.
+    private static let usageReportIntervalSeconds: TimeInterval = 120
+
+    private var liveUsageSessionId = UUID().uuidString
+    private var liveUsageSeq = 0
+    private var lastUsageReportAt = Date.distantPast
+
+    /// Drain whatever audio has actually moved since the last report and file it.
+    /// Sends nothing when nothing moved — a silent interval must not create a row,
+    /// which is the whole difference between this and billing wall clock.
+    private func reportLiveUsage(final: Bool) {
+        guard let startedAt = callStartedAt else { return }
+        let delta = live.takeUsageDelta()
+        guard !delta.isEmpty else {
+            lastUsageReportAt = Date()
+            return
+        }
+        let seq = liveUsageSeq
+        liveUsageSeq += 1
+        lastUsageReportAt = Date()
+
+        let sessionId = liveUsageSessionId
+        let wallSeconds = Int(Date().timeIntervalSince(startedAt))
+        let convId = chatVM?.conversationId
+        let audioIn = delta.audioInSeconds
+        let audioOut = delta.audioOutSeconds
+        let obsPrompt = delta.promptTokens
+        let obsResponse = delta.responseTokens
+
+        Task {
+            struct UsageBody: Encodable {
+                let sessionId: String
+                let seq: Int
+                let final: Bool
+                let audioInSeconds: Double
+                let audioOutSeconds: Double
+                let observedPromptTokens: Int
+                let observedResponseTokens: Int
+                let seconds: Int
+                let conversationId: String?
+            }
+            struct UsageResp: Decodable { let ok: Bool?; let method: String? }
+            let _: UsageResp? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/live-session/usage",
+                body: UsageBody(sessionId: sessionId, seq: seq, final: final,
+                                audioInSeconds: audioIn, audioOutSeconds: audioOut,
+                                observedPromptTokens: obsPrompt,
+                                observedResponseTokens: obsResponse,
+                                seconds: wallSeconds, conversationId: convId))
+        }
+        AlmaVoiceAudioTrace.event(
+            "usage.report",
+            String(format: "seq=%d in=%.1fs out=%.1fs final=%d", seq, audioIn, audioOut, final ? 1 : 0))
+    }
+
     /// Someone is demonstrably still on this call — speech in either direction, or
     /// a deliberate control tap. Resets both idle fuses.
     private func noteVoiceActivity() {
@@ -806,6 +867,11 @@ final class AlmaVoiceEngine {
     private func sessionGuardStart() {
         noteVoiceActivity()
         guard sessionGuardTask == nil else { return }
+        // One id per call; a reconnect inside the same call keeps reporting under it.
+        liveUsageSessionId = UUID().uuidString
+        liveUsageSeq = 0
+        lastUsageReportAt = Date()
+        _ = live.takeUsageDelta()   // discard anything left over from a previous call
         sessionGuardTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(Self.guardTickSeconds * 1_000_000_000))
@@ -826,6 +892,13 @@ final class AlmaVoiceEngine {
     private func sessionGuardTick() {
         guard !closed, let startedAt = callStartedAt else { return }
         let now = Date()
+
+        // File what has been used so far. Runs BEFORE the cut checks so a call the
+        // guard is about to end still reports its last interval from here rather
+        // than relying on the teardown path.
+        if now.timeIntervalSince(lastUsageReportAt) >= Self.usageReportIntervalSeconds {
+            reportLiveUsage(final: false)
+        }
 
         // 3 — hard ceiling first: it outranks everything, including a live talker.
         if now.timeIntervalSince(startedAt) >= Self.maxCallSeconds {
@@ -3180,10 +3253,67 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func sendRealtimeAudio(_ bytes: Data) {
+        // Every uplinked byte passes through here and nowhere else, so this is the
+        // honest measure of what we actually sent Google — silence stopped by the
+        // noise gate upstream never reaches this line, and therefore never gets
+        // billed. PCM16 mono @ 16 kHz = 32,000 bytes per second.
+        noteAudioIn(seconds: Double(bytes.count) / 32_000)
         sendJSON(["realtimeInput": ["audio": [
             "mimeType": "audio/pcm;rate=16000",
             "data": bytes.base64EncodedString(),
         ]]])
+    }
+
+    // ── Measured usage (owner incident 2026-08-07) ────────────────────────────
+    //
+    // Voice spend used to be `wall-clock minutes × a flat rate`, so a session left
+    // open overnight was billed as 5.5 hours of conversation. These counters price
+    // what actually moved instead: audio uplinked (above) and audio played back
+    // (playPCM). The engine drains them periodically DURING the call, so spend is
+    // visible while it happens rather than only at hang-up.
+    private let usageLock = NSLock()
+    private var pendingAudioInSeconds: Double = 0
+    private var pendingAudioOutSeconds: Double = 0
+    private var pendingPromptTokens: Int = 0
+    private var pendingResponseTokens: Int = 0
+
+    private func noteAudioIn(seconds: Double) {
+        guard seconds > 0 else { return }
+        usageLock.lock(); pendingAudioInSeconds += seconds; usageLock.unlock()
+    }
+
+    private func noteAudioOut(seconds: Double) {
+        guard seconds > 0 else { return }
+        usageLock.lock(); pendingAudioOutSeconds += seconds; usageLock.unlock()
+    }
+
+    struct UsageDelta {
+        let audioInSeconds: Double
+        let audioOutSeconds: Double
+        let promptTokens: Int
+        let responseTokens: Int
+        var isEmpty: Bool {
+            audioInSeconds <= 0.05 && audioOutSeconds <= 0.05
+                && promptTokens == 0 && responseTokens == 0
+        }
+    }
+
+    /// Hand the accumulated usage to the reporter and reset. Draining (rather than
+    /// reading a running total) is what makes each report a delta, so a dropped
+    /// report costs one interval instead of corrupting the running sum.
+    func takeUsageDelta() -> UsageDelta {
+        usageLock.lock()
+        defer {
+            pendingAudioInSeconds = 0
+            pendingAudioOutSeconds = 0
+            pendingPromptTokens = 0
+            pendingResponseTokens = 0
+            usageLock.unlock()
+        }
+        return UsageDelta(audioInSeconds: pendingAudioInSeconds,
+                          audioOutSeconds: pendingAudioOutSeconds,
+                          promptTokens: pendingPromptTokens,
+                          responseTokens: pendingResponseTokens)
     }
 
     private func receiveLoop(_ socket: URLSessionWebSocketTask) {
@@ -3262,6 +3392,24 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
            update["resumable"] as? Bool == true,
            let handle = update["newHandle"] as? String, !handle.isEmpty {
             latestResumptionHandle = handle
+        }
+        // Google's own token meter, if it rides along on the server message. It is
+        // RECORDED, never priced: the Live API reference is unreachable from our
+        // network, so whether these counts are per-message or cumulative for the
+        // session is unverified, and assuming the wrong one would silently mis-bill
+        // by orders of magnitude. Both spellings are accepted because the streaming
+        // and REST APIs disagree on the response field's name. Once a real call is
+        // compared against Google's console, pricing can move onto these with proof.
+        if let usage = root["usageMetadata"] as? [String: Any] {
+            let prompt = (usage["promptTokenCount"] as? Int) ?? 0
+            let response = (usage["responseTokenCount"] as? Int)
+                ?? (usage["candidatesTokenCount"] as? Int) ?? 0
+            if prompt > 0 || response > 0 {
+                usageLock.lock()
+                pendingPromptTokens += max(0, prompt)
+                pendingResponseTokens += max(0, response)
+                usageLock.unlock()
+            }
         }
         if let content = root["serverContent"] as? [String: Any] { handleServerContent(content) }
         if let tool = root["toolCall"] as? [String: Any],
@@ -3482,6 +3630,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func playPCM(_ pcm: Data) {
+        // Downlink meter, counted before the playability guard: Google billed us
+        // for this audio whether or not our engine managed to play it.
+        // PCM16 mono @ 24 kHz = 48,000 bytes per second.
+        noteAudioOut(seconds: Double(pcm.count) / 48_000)
         guard configured, let format = playbackFormat,
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                             frameCapacity: AVAudioFrameCount(pcm.count / 2)),

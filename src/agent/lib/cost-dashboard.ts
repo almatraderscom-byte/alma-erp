@@ -384,16 +384,36 @@ export async function getCostDashboardData() {
   const todayByModel = new Map<string, number>()
   for (const r of modelTodayRows) todayByModel.set(r.model, parseFloat(r.total) || 0)
 
-  const byModel = modelMonthRows.map((r) => {
+  // The month query groups by (model, provider), so every non-chat row — TTS,
+  // images, calls, embeddings — comes back once PER PROVIDER under the same
+  // `_other` key and rendered as several identical "Other (TTS / image / calls)"
+  // lines (owner screenshot 2026-08-07). Fold the `_other` rows into one; real
+  // models stay one row each, as they already were.
+  const byModelRows = new Map<string, { modelId: string; label: string; provider: string; monthUsd: number }>()
+  for (const r of modelMonthRows) {
     const meta = modelLabelMap.get(r.model)
-    return {
+    // Real models keep their provider split; `_other` collapses to a single line.
+    const key = r.model === '_other' ? '_other' : `${r.model}::${meta?.provider ?? r.provider}`
+    const usd = parseFloat(r.total) || 0
+    const existing = byModelRows.get(key)
+    if (existing) {
+      existing.monthUsd += usd
+      continue
+    }
+    byModelRows.set(key, {
       modelId: r.model,
       label: meta?.label ?? (r.model === '_other' ? 'Other (TTS / image / calls)' : r.model),
       provider: meta?.provider ?? r.provider,
-      monthUsd: parseFloat(r.total) || 0,
-      todayUsd: Math.round((todayByModel.get(r.model) ?? 0) * 1_000_000) / 1_000_000,
-    }
-  })
+      monthUsd: usd,
+    })
+  }
+  const byModel = [...byModelRows.values()]
+    .map((r) => ({
+      ...r,
+      monthUsd: Math.round(r.monthUsd * 1_000_000) / 1_000_000,
+      todayUsd: Math.round((todayByModel.get(r.modelId) ?? 0) * 1_000_000) / 1_000_000,
+    }))
+    .sort((a, b) => b.monthUsd - a.monthUsd)
 
   const modelDailyMap = new Map<string, Record<string, number>>()
   for (const r of modelDailyRows) {

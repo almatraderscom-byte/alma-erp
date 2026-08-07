@@ -24,6 +24,7 @@ export type SpendCategoryId =
   | 'video'
   | 'customer_service'
   | 'quality_check'
+  | 'camera'
   | 'research'
   | 'memory'
   | 'other'
@@ -59,6 +60,7 @@ export const SPEND_CATEGORY_META: readonly SpendCategoryMeta[] = [
   { id: 'voice_input', label: 'ভয়েস ইনপুট', icon: '🎧', hint: 'ভয়েস শুনে টেক্সট (transcribe)' },
   { id: 'customer_service', label: 'কাস্টমার সার্ভিস', icon: '🛎️', hint: 'CS চ্যাট + ছবি বোঝা + কমেন্ট classify' },
   { id: 'quality_check', label: 'কোয়ালিটি চেক', icon: '✅', hint: 'প্রোডাক্ট ছবি QC (vision)' },
+  { id: 'camera', label: 'ক্যামেরা নজরদারি', icon: '📹', hint: 'এন্ট্রান্স ওয়াচ, আইডল ডিটেকশন, মুখ শনাক্ত (vision)' },
   { id: 'research', label: 'রিসার্চ / স্ক্র্যাপ', icon: '🔎', hint: 'ওয়েব রিসার্চ + স্ক্র্যাপিং (Oxylabs)' },
   { id: 'memory', label: 'মেমরি / এম্বেডিং', icon: '🧠', hint: 'RAG এম্বেডিং + মেমরি ইনডেক্স' },
   { id: 'other', label: 'অন্যান্য', icon: '•', hint: 'বাকি সব — যাতে মোট মিলে যায়' },
@@ -97,12 +99,32 @@ export function classifySpend(input: SpendClassifierInput): SpendCategoryId {
       return 'image'
     case 'video':
       return 'video'
+    // The vision emitters do NOT write the kinds this switch was originally
+    // built around: `vision-analyze.ts` and `face-match.ts` pass their own
+    // `costKind` straight through with a `as 'cs_vision'` cast that lies to the
+    // compiler, so what actually lands in the column is `vision_entrance_presence`,
+    // `vision_idle_detection`, `vision_auto_qc` and friends. None of them matched
+    // here, so every camera and vision rupee was silently absorbed by `other`
+    // (owner 2026-08-07: "ড্যাশবোর্ডে খুঁজে পাচ্ছি না"). The real kinds are listed
+    // below; `cs_vision` / `qc_vision` stay for historical rows.
     case 'cs_chat':
     case 'cs_vision':
     case 'cs_comment_classify':
+    case 'cs_inbox_image':
+    case 'cs_vision_pick':
       return 'customer_service'
     case 'qc_vision':
+    case 'vision_auto_qc':
       return 'quality_check'
+    case 'vision_entrance_presence':
+    case 'vision_idle_detection':
+    case 'vision_idle_detection_confirm':
+    case 'vision_office_snapshot':
+    case 'vision_face_match':
+    case 'vision_face_match_confirm':
+      return 'camera'
+    case 'task_proof_assess':
+      return 'background_agent'
     case 'web_research':
       return 'research'
     case 'embedding':

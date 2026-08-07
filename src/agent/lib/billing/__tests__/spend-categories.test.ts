@@ -35,6 +35,23 @@ describe('classifySpend', () => {
     expect(classifySpend({ kind: 'embedding', provider: 'openai' })).toBe('memory')
   })
 
+  it('maps the kinds the vision emitters ACTUALLY write, not the cast ones', () => {
+    // vision-analyze.ts / face-match.ts pass their own costKind through a
+    // `as 'cs_vision'` cast, so these are the strings in the column. Before
+    // 2026-08-07 every one of them fell through to `other` and the owner could
+    // not find his camera spend on the dashboard.
+    expect(classifySpend({ kind: 'vision_entrance_presence', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_idle_detection', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_idle_detection_confirm', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_office_snapshot', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_face_match', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_face_match_confirm', provider: 'gemini' })).toBe('camera')
+    expect(classifySpend({ kind: 'vision_auto_qc', provider: 'gemini' })).toBe('quality_check')
+    expect(classifySpend({ kind: 'cs_inbox_image', provider: 'gemini' })).toBe('customer_service')
+    expect(classifySpend({ kind: 'cs_vision_pick', provider: 'gemini' })).toBe('customer_service')
+    expect(classifySpend({ kind: 'task_proof_assess', provider: 'gemini' })).toBe('background_agent')
+  })
+
   it('routes any unknown kind to other (reconciliation catch-all)', () => {
     expect(classifySpend({ kind: 'weird_new_kind', provider: 'x' })).toBe('other')
     expect(classifySpend({ kind: '', provider: '' })).toBe('other')
