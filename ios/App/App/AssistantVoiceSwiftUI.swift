@@ -628,6 +628,7 @@ final class AlmaVoiceEngine {
 
     func toggleMute() {
         guard callConnection == .live else { return }
+        noteVoiceActivity()          // a deliberate tap proves someone is here
         setMuted(!isMuted)
         UISelectionFeedbackGenerator().selectionChanged()
     }
@@ -640,6 +641,7 @@ final class AlmaVoiceEngine {
 
     func toggleSpeaker() {
         guard callConnection == .live else { return }
+        noteVoiceActivity()          // a deliberate tap proves someone is here
         let requested = !speakerOn
         do {
             try live.setSpeakerEnabled(requested)
@@ -694,6 +696,7 @@ final class AlmaVoiceEngine {
             }
         }
         liveConnectTask?.cancel(); liveConnectTask = nil
+        sessionGuardStop()
         liveSessionHasStarted = false
         connectionGeneration += 1
         keepAliveStop()
@@ -757,6 +760,115 @@ final class AlmaVoiceEngine {
         guard keepAlive != nil else { return }
         keepAlive?.stop(); keepAlive = nil
         tr("keepAlive off")
+    }
+
+    // ── Runaway-session guard (owner incident 2026-08-07) ─────────────────────
+    //
+    // A live call opened at 02:35 and was still open at 08:02 — 5h 27m — because
+    // the owner fell asleep with the session running. Nothing stopped it: the
+    // keep-alive above is DESIGNED to survive backgrounding, no ceiling existed on
+    // a session, and the cost is only logged at hang-up, so the budget guard and
+    // the kill switch were both blind while it burned. That one call was 90% of
+    // the day's AI spend and 59% of the month's.
+    //
+    // Three deterministic stops, re-checked every `guardTickSeconds` for as long as
+    // a call is open (open, not connected — a socket stuck reconnecting must die
+    // the same way):
+    //
+    //   1. idle, foreground  — no speech either way for `idleCutForegroundSeconds`
+    //   2. idle, background  — same, on a much shorter fuse: the owner is not
+    //      looking at the screen, so a forgotten call has to die fast
+    //   3. hard ceiling      — no call outlives `maxCallSeconds`, however chatty
+    //
+    // "Activity" means SPEECH (or a deliberate tap), never mere connection: an open
+    // socket with silence on both sides is precisely the failure being stopped.
+    // A foreground warning fires `idleWarnLeadSeconds` before an idle cut, so an
+    // owner who is just thinking can say anything and keep the call alive.
+    //
+    // These four numbers are the whole policy — change them here, one line each.
+    private static let guardTickSeconds: TimeInterval = 10
+    private static let idleCutForegroundSeconds: TimeInterval = 180   // 3 min
+    private static let idleCutBackgroundSeconds: TimeInterval = 60    // 1 min
+    private static let maxCallSeconds: TimeInterval = 60 * 60         // 1 hour
+    private static let idleWarnLeadSeconds: TimeInterval = 30
+
+    private var sessionGuardTask: Task<Void, Never>?
+    private var lastVoiceActivityAt = Date.distantPast
+    private var idleWarningShown = false
+
+    /// Someone is demonstrably still on this call — speech in either direction, or
+    /// a deliberate control tap. Resets both idle fuses.
+    private func noteVoiceActivity() {
+        lastVoiceActivityAt = Date()
+        idleWarningShown = false
+    }
+
+    private func sessionGuardStart() {
+        noteVoiceActivity()
+        guard sessionGuardTask == nil else { return }
+        sessionGuardTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.guardTickSeconds * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                self.sessionGuardTick()
+            }
+        }
+        tr("sessionGuard ON")
+    }
+
+    private func sessionGuardStop() {
+        guard sessionGuardTask != nil else { return }
+        sessionGuardTask?.cancel(); sessionGuardTask = nil
+        idleWarningShown = false
+        tr("sessionGuard off")
+    }
+
+    private func sessionGuardTick() {
+        guard !closed, let startedAt = callStartedAt else { return }
+        let now = Date()
+
+        // 3 — hard ceiling first: it outranks everything, including a live talker.
+        if now.timeIntervalSince(startedAt) >= Self.maxCallSeconds {
+            sessionGuardCut(
+                "max_duration",
+                "কল অনেকক্ষণ চলছে — খরচ বাঁচাতে রেখে দিলাম। আবার শুরু করতে পারেন, Boss।")
+            return
+        }
+
+        // 1 & 2 — idle. A pocketed / locked phone gets the short fuse. A CallKit
+        // call is exempt from that: it legitimately runs with our app backgrounded
+        // (the system call screen is up, a human answered it), so a "hold on, let
+        // me check something" pause must not hang up on the owner. It still dies
+        // on the foreground fuse — 3 minutes of total silence, not 5 hours.
+        let backgrounded = UIApplication.shared.applicationState != .active
+        let unattended = backgrounded && !callKitManaged
+        let cutAfter = unattended ? Self.idleCutBackgroundSeconds : Self.idleCutForegroundSeconds
+        let idleFor = now.timeIntervalSince(lastVoiceActivityAt)
+        guard idleFor >= cutAfter else {
+            // Courtesy warning only where it can actually be read.
+            if !backgrounded, !idleWarningShown, idleFor >= cutAfter - Self.idleWarnLeadSeconds {
+                idleWarningShown = true
+                errorToast = "কেউ কথা বলছে না — \(Int(Self.idleWarnLeadSeconds)) সেকেন্ড পর কল কেটে যাবে।"
+            }
+            return
+        }
+        sessionGuardCut(
+            unattended ? "idle_background" : "idle_foreground",
+            "অনেকক্ষণ কোনো কথা হয়নি — কল রেখে দিলাম, Boss।")
+    }
+
+    /// End the call the same way the model's own `end_call` does, so an agent call
+    /// tears its window and CallKit call down too instead of orphaning them.
+    private func sessionGuardCut(_ reason: String, _ toast: String) {
+        let secs = callStartedAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+        AlmaVoiceAudioTrace.event("guard.cut", "\(reason) after \(secs)s")
+        tr("sessionGuard CUT \(reason) after \(secs)s")
+        errorToast = toast
+        if AgentCallController.shared.isActive, AgentCallController.shared.engine === self {
+            AgentCallController.shared.endFromUI()
+        } else {
+            end()
+        }
     }
 
     /// Post-background / post-interruption self-heal: reactivate the session and
@@ -1346,6 +1458,7 @@ final class AlmaVoiceEngine {
         liveToolTurnPending = false
         liveConnectAttempt = 0
         if callStartedAt == nil { callStartedAt = Date() }
+        sessionGuardStart()
         live.setInputMuted(isMuted)
         try? live.setSpeakerEnabled(speakerOn)
         wake.stop()
@@ -1401,6 +1514,7 @@ final class AlmaVoiceEngine {
         guard liveActive else { return }
         lastUserTurnAt = Date()
         ackNudgesThisUserTurn = 0
+        noteVoiceActivity()
         lastUserText = text
         _ = feedUpsert(id: nil, kind: .user, text: text)
         feedFinalizeUser()
@@ -1413,6 +1527,7 @@ final class AlmaVoiceEngine {
         // full sentence for the live feed line (and the legacy MIC strip).
         lastUserTurnAt = Date()
         ackNudgesThisUserTurn = 0
+        noteVoiceActivity()
         if let id = feedUserLineId, let i = liveFeed.firstIndex(where: { $0.id == id }) {
             let joined = (liveFeed[i].text + text)
             transcript = joined
@@ -1480,6 +1595,7 @@ final class AlmaVoiceEngine {
     }
 
     func liveOutputTranscript(_ text: String) {
+        noteVoiceActivity()
         replyText = text
         nowLine = text
         feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: text)
@@ -1489,6 +1605,7 @@ final class AlmaVoiceEngine {
         ttsLevel = level
         if active {
             lastPlaybackStartAt = Date()
+            noteVoiceActivity()
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
