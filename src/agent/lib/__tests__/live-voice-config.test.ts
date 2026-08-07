@@ -27,7 +27,9 @@ describe('live voice configuration', () => {
     expect(config.realtimeInputConfig?.automaticActivityDetection?.startOfSpeechSensitivity)
       .toBe('START_SENSITIVITY_LOW')
     expect(config.realtimeInputConfig?.automaticActivityDetection?.prefixPaddingMs).toBe(250)
-    expect(config.realtimeInputConfig?.automaticActivityDetection?.silenceDurationMs).toBe(650)
+    expect(config.realtimeInputConfig?.automaticActivityDetection?.endOfSpeechSensitivity)
+      .toBe('END_SENSITIVITY_LOW')
+    expect(config.realtimeInputConfig?.automaticActivityDetection?.silenceDurationMs).toBe(1200)
   })
 
   it('server-locks transport policy while leaving resumption and the SDK-broken repeated tool mask client-settable', () => {
@@ -88,14 +90,14 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রমিত বাংলাদেশি বাংলা')
   })
 
-  it('keeps the proven v1alpha ephemeral-token and websocket transport', () => {
+  it('uses the documented v1beta ephemeral-token transport required for affective dialog', () => {
     const route = readFileSync(join(process.cwd(), 'src/app/api/assistant/live-session/route.ts'), 'utf8')
 
-    expect(route).toContain("apiVersion: 'v1alpha'")
-    expect(route).toContain('google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained')
+    expect(route).toContain("apiVersion: 'v1beta'")
+    expect(route).toContain('google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained')
     expect(route).toContain('unsupported_live_model')
     expect(route).toContain('unsupported_live_voice')
     expect(route).toContain('buildLiveVoiceTokenConfig(voice, model)')
-    expect(route).not.toContain("apiVersion: 'v1beta'")
+    expect(route).not.toContain("apiVersion: 'v1alpha'")
   })
 })

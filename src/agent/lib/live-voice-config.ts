@@ -64,9 +64,12 @@ export function buildLiveVoiceConfig(
       automaticActivityDetection: {
         disabled: false,
         startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
-        endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+        // Bengali long-form speech naturally contains short thinking/breathing
+        // pauses. LOW + 1.2s keeps one thought together without making a normal
+        // short reply feel sluggish.
+        endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
         prefixPaddingMs: 250,
-        silenceDurationMs: 650,
+        silenceDurationMs: 1200,
       },
       activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
       turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,

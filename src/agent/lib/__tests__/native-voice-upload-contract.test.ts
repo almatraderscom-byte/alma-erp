@@ -180,6 +180,14 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('echoExposedLoudspeaker ? 1.2 : 0.25')
     expect(voice).toContain('if Date() < listenSuppressedUntil')
     expect(voice).toContain('listenSuppressedUntil = .distantPast')
+    expect(voice).toContain('"endOfSpeechSensitivity": "END_SENSITIVITY_LOW"')
+    expect(voice).toContain('"silenceDurationMs": 1200')
+    expect(voice).toContain('listenNoiseFloorRMS * 1.8 + 0.001')
+    expect(voice).toContain('listenNoiseFloorRMS * 1.25 + 0.001')
+    expect(voice).toContain('listenContinuousLoudFrames >= 9000')
+    expect(voice).not.toContain('listenContinuousLoudFrames >= 1500')
+    expect(voice).toContain('["audioStreamEnd": true]')
+    expect(voice).toContain('input stream flushed after listen gate close')
 
     // Acoustic discriminator invariant: a pure loudspeaker echo that follows
     // the player duck must stay below the retained-energy threshold, while a

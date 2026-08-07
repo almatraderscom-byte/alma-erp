@@ -54,7 +54,10 @@ export async function POST(req: NextRequest) {
   const newSessionExpiresAt = new Date(Date.now() + 120_000).toISOString()
 
   try {
-    const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } })
+    // Current Gemini Live ephemeral-token transport is v1beta. Besides being
+    // the documented endpoint, this is required for Gemini 2.5 affective dialog;
+    // v1alpha rejected the setup and forced the iOS client to downgrade it.
+    const client = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1beta' } })
     const token = await client.authTokens.create({
       config: {
         uses: 1,
@@ -64,7 +67,7 @@ export async function POST(req: NextRequest) {
         // Lock the fields present above, but allow the client to add only the
         // sessionResumption.handle required for Google's ~10-minute socket rotation.
         lockAdditionalFields: [],
-        httpOptions: { apiVersion: 'v1alpha' },
+        httpOptions: { apiVersion: 'v1beta' },
       },
     })
     if (!token.name) return Response.json({ error: 'no_ephemeral_token' }, { status: 502 })
@@ -75,7 +78,7 @@ export async function POST(req: NextRequest) {
       voice,
       affectiveDialog: model === 'gemini-2.5-flash-native-audio-preview-12-2025',
       expiresAt,
-      websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
+      websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained',
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

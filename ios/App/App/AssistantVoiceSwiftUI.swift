@@ -2697,9 +2697,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 "automaticActivityDetection": [
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
-                    "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
                     "prefixPaddingMs": 250,
-                    "silenceDurationMs": 650,
+                    "silenceDurationMs": 1200,
                 ],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
@@ -3181,6 +3181,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var startBargeIn = false
         var startLoudspeakerProbe = false
         var endLoudspeakerProbe = false
+        var flushAutomaticVADStream = false
         var probeLogRMS = 0.0
         var probeLogFloor = 0.0
         var preRoll: [Data] = []
@@ -3344,7 +3345,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // ~90 ms in ("এজেন্ট একটু কথা বলেই থেমে যায়"). Only sustained
             // above-floor signal opens the gate; a ~300 ms pre-roll preserves
             // the speech onset, and the ~1.1 s hangover (55 frames) exceeds the
-            // server's 650 ms silenceDuration so endpointing still belongs to
+            // server's 1200 ms silenceDuration so endpointing still belongs to
             // the server VAD, never to this gate. Bonus on weak abroad
             // networks: idle uplink drops to zero.
             listenPreRoll.append(bytes)
@@ -3355,9 +3356,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // that starts immediately still dips between syllables and only
             // those dips become the floor (P2 round 5). No always-on tracker:
             // that EMA overtook a steady utterance in ~1.8s and truncated it
-            // (P1 round 5) — mid-speech gaps already adapt the floor via the
-            // below-threshold EMA, and the gapless-noise failsafe below covers
-            // sound with no dips at all.
+            // (P1 round 5). Closed-gate frames adapt the floor, and the
+            // gapless-noise failsafe below covers sound with no dips at all.
             if listenCalibrationFrames < 10 {
                 listenCalibrationFrames += 1
                 listenCalibMinRMS = min(listenCalibMinRMS, rms)
@@ -3372,22 +3372,30 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // Calibrated threshold, no hard 0.010 floor (Codex P2): a quiet or
             // distant speaker can sit below a fixed bound, and a closed gate
             // means their speech would never reach the server at all. The floor
-            // EMA tracks the room, so 3× floor adapts down in quiet rooms; the
-            // tiny epsilon only guards digital-silence jitter.
-            let gateThreshold = max(0.003, listenNoiseFloorRMS * 3)
-            if rms >= gateThreshold {
+            // EMA tracks the room, so the adaptive floor follows quiet rooms;
+            // the tiny epsilon only guards digital-silence jitter.
+            // Use hysteresis: opening needs a clear rise above the learned room,
+            // but once speech begins a quieter clause or sentence ending must
+            // remain in the same utterance. The previous 3x threshold measured
+            // 0.0225 in the owner's run while ordinary long-form syllables were
+            // quieter, so only short/near-mic phrases survived.
+            let openThreshold = max(0.003, listenNoiseFloorRMS * 1.8 + 0.001)
+            let keepOpenThreshold = max(0.003, listenNoiseFloorRMS * 1.25 + 0.001)
+            let speechThreshold = listenGateOpen ? keepOpenThreshold : openThreshold
+            if rms >= speechThreshold {
                 listenSpeechFrames += 1
                 listenSilenceFrames = 0
-                // Gapless-noise failsafe: human speech always dips between
-                // words; 30s of continuously above-threshold signal is a noise
-                // source that started mid-call (road, fan) — promote it to the
-                // floor and close the gate instead of streaming it forever.
+                // Gapless-noise failsafe: do not classify a legitimate long
+                // monologue as noise. The old 30s cap was shorter than a normal
+                // detailed request and could drop everything after that point.
+                // Three minutes still bounds a truly stuck/noisy input.
                 listenContinuousLoudFrames += 1
-                if listenContinuousLoudFrames >= 1500 {
+                if listenContinuousLoudFrames >= 9000 {
                     listenNoiseFloorRMS = max(listenNoiseFloorRMS, rms * 0.85)
                     listenGateOpen = false
                     listenSpeechFrames = 0
                     listenContinuousLoudFrames = 0
+                    flushAutomaticVADStream = true
                     #if DEBUG
                     NSLog("ALMA-VOICE listen gate closed — gapless noise promoted to floor")
                     #endif
@@ -3396,9 +3404,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 listenSpeechFrames = max(0, listenSpeechFrames - 1)
                 listenSilenceFrames += 1
                 listenContinuousLoudFrames = 0
-                // Adapt the floor only on frames classified as background, so
-                // speech never raises its own threshold.
-                listenNoiseFloorRMS = listenNoiseFloorRMS * 0.97 + rms * 0.03
+                // Never learn the room floor from a quiet tail inside an open
+                // utterance. That feedback loop used to raise the threshold
+                // until the rest of a long sentence could no longer reopen it.
+                if !listenGateOpen {
+                    listenNoiseFloorRMS = listenNoiseFloorRMS * 0.97 + rms * 0.03
+                }
             }
             if !listenGateOpen, listenSpeechFrames >= 3 {
                 listenGateOpen = true
@@ -3415,6 +3426,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             } else if listenGateOpen, listenSilenceFrames >= 55 {
                 listenGateOpen = false
                 listenSpeechFrames = 0
+                // Automatic Gemini VAD expects continuous audio. Because this
+                // local acoustic gate intentionally pauses the stream, explicitly
+                // flush cached audio at the boundary; the API allows audio to
+                // resume with the next chunk.
+                flushAutomaticVADStream = true
                 #if DEBUG
                 NSLog("ALMA-VOICE listen gate closed")
                 #endif
@@ -3422,6 +3438,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             sendNormally = listenGateOpen
         }
         audioLock.unlock()
+
+        if flushAutomaticVADStream {
+            sendJSON(["realtimeInput": ["audioStreamEnd": true]])
+            #if DEBUG
+            NSLog("ALMA-VOICE input stream flushed after listen gate close")
+            #endif
+        }
 
         if startLoudspeakerProbe {
             #if DEBUG
@@ -4175,6 +4198,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func setInputMuted(_ muted: Bool) {
         audioLock.lock()
+        let flushAutomaticVADStream = muted && listenGateOpen
         inputMuted = muted
         let restoreProbeVolume = loudspeakerProbeActive
         resetLoudspeakerProbeLocked()
@@ -4197,6 +4221,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenSuppressedUntil = .distantPast
         listenTailSuppressionLogged = false
         audioLock.unlock()
+        if flushAutomaticVADStream {
+            sendJSON(["realtimeInput": ["audioStreamEnd": true]])
+        }
         if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
     }
 
