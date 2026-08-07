@@ -101,8 +101,8 @@ export function buildLiveVoiceConfig(
 /** Token constraints leave the resumption handle and function declaration in the
  * client setup. @google/genai 2.8's token-mask generator serializes repeated tools
  * as the invalid mask `tools.0`; the short-lived single-use token still locks the
- * model, voice, system instruction, VAD, modality and transcription policy. Tool
- * execution remains protected by ALMA's authenticated head route on the server. */
+ * model, voice, affective mode, system instruction, VAD, modality and transcription
+ * policy. Tool execution remains protected by ALMA's authenticated head route. */
 export function buildLiveVoiceTokenConfig(
   voiceName = DEFAULT_LIVE_VOICE_NAME,
   model = DEFAULT_LIVE_VOICE_MODEL,
@@ -111,7 +111,6 @@ export function buildLiveVoiceTokenConfig(
   const {
     sessionResumption: _clientHandle,
     tools: _clientFunctionDeclaration,
-    enableAffectiveDialog: _clientAffective,
     ...locked
   } = config
   return locked

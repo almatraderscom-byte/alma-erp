@@ -182,6 +182,8 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('listenSuppressedUntil = .distantPast')
     expect(voice).toContain('"endOfSpeechSensitivity": "END_SENSITIVITY_LOW"')
     expect(voice).toContain('"silenceDurationMs": 1200')
+    expect(voice).toContain('generationConfig["enableAffectiveDialog"] = true')
+    expect(voice).not.toContain('setup["enableAffectiveDialog"] = true')
     expect(voice).toContain('listenNoiseFloorRMS * 1.8 + 0.001')
     expect(voice).toContain('listenNoiseFloorRMS * 1.25 + 0.001')
     expect(voice).toContain('listenContinuousLoudFrames >= 9000')

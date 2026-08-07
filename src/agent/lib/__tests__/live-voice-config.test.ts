@@ -71,7 +71,9 @@ describe('live voice configuration', () => {
   it('uses model-specific low-latency and affective settings', () => {
     const natural = buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL)
     const fast = buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL)
+    const naturalToken = buildLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL)
     expect(natural.enableAffectiveDialog).toBe(true)
+    expect(naturalToken.enableAffectiveDialog).toBe(true)
     expect(natural.thinkingConfig?.thinkingBudget).toBe(0)
     expect(fast.enableAffectiveDialog).toBeUndefined()
     expect(fast.thinkingConfig?.thinkingLevel).toBe('MINIMAL')

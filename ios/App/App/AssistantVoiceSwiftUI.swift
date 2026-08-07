@@ -2685,6 +2685,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         generationConfig["thinkingConfig"] = model == AlmaLiveVoicePreferences.gemini25
             ? ["thinkingBudget": 0]
             : ["thinkingLevel": "MINIMAL"]
+        // Gemini's raw Live websocket schema nests this under generationConfig.
+        // Sending it at the setup root closes the socket with 1007 and silently
+        // downgrades the whole call to non-affective speech.
+        if allowAffective { generationConfig["enableAffectiveDialog"] = true }
         var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": generationConfig,
@@ -2729,7 +2733,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 ],
             ]]]],
         ]
-        if allowAffective { setup["enableAffectiveDialog"] = true }
         return ["setup": setup]
     }
 
