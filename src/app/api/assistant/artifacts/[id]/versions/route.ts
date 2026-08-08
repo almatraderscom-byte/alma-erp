@@ -26,7 +26,8 @@ async function requireOwner(req: NextRequest) {
   return null
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = await requireOwner(req)
   if (denied) return denied
 
@@ -55,7 +56,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return Response.json({ current: artifact, versions, requested })
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = await requireOwner(req)
   if (denied) return denied
 

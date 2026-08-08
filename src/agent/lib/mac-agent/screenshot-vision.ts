@@ -43,7 +43,7 @@ export async function describeScreenshot(dataUri: string): Promise<string | null
   if (!screenshotVisionEnabled()) return null
   const key = process.env.GEMINI_API_KEY
   if (!key) return null
-  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUri.trim())
+  const m = /^data:([^;,]+);base64,([\s\S]+)$/.exec(dataUri.trim())
   if (!m) return null
   const [, mimeType, base64] = m
   try {

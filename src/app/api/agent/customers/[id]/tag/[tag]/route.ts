@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic'
 
 import * as svc from '@/lib/agent-api/services/customers.service'
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string; tag: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string; tag: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   try {

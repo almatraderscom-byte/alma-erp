@@ -15,7 +15,8 @@ export const runtime = 'nodejs'
  * Guarded to creative-studio rows only — this endpoint can never delete an
  * approval or any other pending action.
  */
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
@@ -54,7 +55,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   return Response.json({ ok: true })
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

@@ -6,10 +6,8 @@ import type { CditInvoice, CditPayment } from '@/types/cdit'
 import type { BusinessBranding } from '@/types/branding'
 import { prisma } from '@/lib/prisma'
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { slug: string } },
-) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params;
   const parsed = parseShareSlug(params.slug)
   if (!parsed) return NextResponse.json({ error: 'invalid slug' }, { status: 400 })
 

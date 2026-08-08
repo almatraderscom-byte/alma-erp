@@ -150,7 +150,7 @@ export async function sendTelegramPhotoBuffer(
     form.append('chat_id', String(chatId))
     form.append('caption', caption.slice(0, 1024))
     form.append('parse_mode', 'HTML')
-    const blob = new Blob([buffer], { type: mimeType || 'image/webp' })
+    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType || 'image/webp' })
     form.append('photo', blob, fileName || 'screenshot.webp')
 
     const res = await fetchTelegramWithTimeout(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
@@ -203,7 +203,7 @@ export async function sendTelegramMediaGroup(
     })
     form.append('media', JSON.stringify(media))
     items.forEach((item, index) => {
-      const blob = new Blob([item.buffer], { type: item.mimeType || 'image/webp' })
+      const blob = new Blob([new Uint8Array(item.buffer)], { type: item.mimeType || 'image/webp' })
       form.append(`file${index}`, blob, item.fileName || `photo-${index}.webp`)
     })
 

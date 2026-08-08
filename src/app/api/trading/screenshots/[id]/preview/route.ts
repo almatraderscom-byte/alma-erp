@@ -6,9 +6,10 @@ import { TRADING_BUSINESS_ID, canAccessTradingAccount, getTradingContext } from 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
 
@@ -35,5 +36,5 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 }
 
 function sanitizeHeaderFileName(name: string) {
-  return name.replace(/[^\w.\- ]+/g, '').slice(0, 120) || 'screenshot.webp'
+  return name.replace(/[^\w.\- ]+/g, '').slice(0, 120) || 'screenshot.webp';
 }

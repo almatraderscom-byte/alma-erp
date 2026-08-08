@@ -12,10 +12,8 @@ function canAssignRole(actor: AlmaRole, target: UserRole): boolean {
   return false
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = await requireRoles(req, ['SUPER_ADMIN', 'ADMIN'])
   if (denied) return denied
 

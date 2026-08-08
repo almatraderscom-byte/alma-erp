@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic'
 
 import * as svc from '@/lib/agent-api/services/customers.service'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(_req)
   if (denied) return denied
   const data = await svc.getCustomerOrders(params.id)

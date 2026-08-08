@@ -231,7 +231,7 @@ describe('V3 Lifecycle Review authenticated route', () => {
       lifecycleReviewHarness.actor.erpRole = 'STAFF'
       const response = await patchLifecycleReview(
         request(ownerCommand),
-        { params: { id: 'asset-1' } },
+        { params: Promise.resolve({ id: 'asset-1' }) },
       )
       expect(response.status).toBe(403)
       await expect(response.json()).resolves.toMatchObject({
@@ -247,7 +247,7 @@ describe('V3 Lifecycle Review authenticated route', () => {
     lifecycleReviewHarness.actor.erpRole = 'STAFF'
     const response = await patchLifecycleReview(
       request({ ...ownerCommand, actorRole: 'owner' }),
-      { params: { id: 'asset-1' } },
+      { params: Promise.resolve({ id: 'asset-1' }) },
     )
     expect(response.status).toBe(403)
     expect(lifecycleReviewHarness.requireAccess).toHaveBeenCalledWith(
@@ -295,7 +295,7 @@ describe('V3 Lifecycle Review authenticated route', () => {
   }) => {
     const response = await patchLifecycleReview(
       request(command),
-      { params: { id: 'asset-1' } },
+      { params: Promise.resolve({ id: 'asset-1' }) },
     )
     expect(response.status).toBe(422)
     await expect(response.json()).resolves.toMatchObject({ error: code })
@@ -316,7 +316,7 @@ describe('V3 Lifecycle Review authenticated route', () => {
   ) => {
     const response = await patchLifecycleReview(
       request({ ...ownerCommand, targetState }),
-      { params: { id: 'asset-1' } },
+      { params: Promise.resolve({ id: 'asset-1' }) },
     )
     expect(response.status).toBe(422)
     await expect(response.json()).resolves.toMatchObject({
@@ -328,7 +328,7 @@ describe('V3 Lifecycle Review authenticated route', () => {
   it('allows authenticated Owner delegation without serializing caller role authority', async () => {
     const response = await patchLifecycleReview(
       request({ ...ownerCommand, actorRole: 'reviewer' }),
-      { params: { id: 'asset-1' } },
+      { params: Promise.resolve({ id: 'asset-1' }) },
     )
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({

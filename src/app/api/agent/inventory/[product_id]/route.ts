@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic'
 
 import * as svc from '@/lib/agent-api/services/inventory.service'
 
-export async function GET(_req: NextRequest, { params }: { params: { product_id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ product_id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(_req)
   if (denied) return denied
   const data = await svc.getInventoryProduct(params.product_id)

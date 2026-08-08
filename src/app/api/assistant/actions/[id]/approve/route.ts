@@ -78,7 +78,7 @@ async function appendConversationNote(
 
 async function runApprove(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -91,7 +91,7 @@ async function runApprove(
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 
-  const actionId = params.id
+  const actionId = (await params).id
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
@@ -3245,7 +3245,7 @@ async function runApprove(
  */
 export async function POST(
   req: NextRequest,
-  ctx: { params: { id: string } },
+  ctx: { params: Promise<{ id: string }> },
 ) {
   // P0-2: the clock Boss experiences starts at his TAP, not after the workflow
   // guard and the note. Captured first thing, carried into the trace.
@@ -3259,13 +3259,13 @@ export async function POST(
   // on lookup errors — blocks only on a positive terminal finding.
   try {
     const { workflowBlocksApproval } = await import('@/agent/lib/workflow-run')
-    const guard = await workflowBlocksApproval(ctx.params.id)
+    const guard = await workflowBlocksApproval((await ctx.params).id)
     if (guard.blocked) {
       return Response.json({ error: 'workflow_outdated', message: guard.reason }, { status: 409 })
     }
   } catch { /* fail-open */ }
 
-  const progress = await beginApprovalProgress(ctx.params.id, approveReceivedAt)
+  const progress = await beginApprovalProgress((await ctx.params).id, approveReceivedAt)
   const res = await runApprove(req, ctx)
   let visualProofPending = false
   if (res.status >= 200 && res.status < 300) {
@@ -3279,13 +3279,13 @@ export async function POST(
   // failure never affects the approval response.
   try {
     const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
-    await syncWorkflowWithPendingAction(ctx.params.id, 'approval')
+    await syncWorkflowWithPendingAction((await ctx.params).id, 'approval')
   } catch (err) {
     console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
   }
   try {
     if (res.status >= 200 && res.status < 300 && !visualProofPending) {
-      await enqueueApprovedActionContinuation(ctx.params.id, progress?.turnId ?? null)
+      await enqueueApprovedActionContinuation((await ctx.params).id, progress?.turnId ?? null)
     } else if (visualProofPending && progress?.turnId) {
       // The action/AFTER capture is still queued; starting the head now would
       // let it narrate completion before the result-route reconciler delivers

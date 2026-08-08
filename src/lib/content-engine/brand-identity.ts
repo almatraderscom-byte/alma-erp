@@ -117,7 +117,7 @@ export function ensureBrandFonts(): void {
     const dirs = [
       join(process.cwd(), 'public/fonts/brand'),
       join(process.cwd(), 'public/fonts'),
-    ].filter((d) => existsSync(d))
+    ].filter((d) => existsSync(/* turbopackIgnore: true */ d))
     if (!dirs.length) return
     const cacheDir = join(tmpdir(), 'alma-fontconfig')
     mkdirSync(cacheDir, { recursive: true })

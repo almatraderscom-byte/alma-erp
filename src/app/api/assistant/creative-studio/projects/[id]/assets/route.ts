@@ -2,7 +2,15 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
+import { prisma } from '@/lib/prisma'
 import { isSystemOwner } from '@/lib/roles'
+import {
+  authenticateStudioRequest,
+  requireStudioBrandAccess,
+  StudioAccessError,
+  studioAccessErrorResponse,
+  type StudioActor,
+} from '@/lib/creative-studio/studio-access'
 import {
   ContentOsServiceError,
   attachProjectAsset,
@@ -17,6 +25,11 @@ import {
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+// Structural boundary keeps this route compatible while additive Prisma
+// migrations and generated clients are deployed together.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
 
 async function ownerId(req: NextRequest): Promise<string | Response> {
   const disabled = requireAgentEnabled()
@@ -33,6 +46,27 @@ function errorResponse(error: unknown) {
   }
   console.error('[creative-project-assets] request failed', error)
   return Response.json({ error: 'content_os_failed' }, { status: 500 })
+}
+
+async function readableProjectOwnerId(
+  actor: StudioActor,
+  projectId: string,
+): Promise<string> {
+  const project = await db.creativeProject.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true, brandProfileId: true, archivedAt: true },
+  })
+  if (!project || project.archivedAt) {
+    throw new StudioAccessError('project_access_forbidden', 403)
+  }
+  if (!project.brandProfileId) {
+    throw new StudioAccessError('asset_brand_missing', 409)
+  }
+  const access = await requireStudioBrandAccess(actor, String(project.brandProfileId))
+  if (String(project.ownerId) !== access.ownerId) {
+    throw new StudioAccessError('project_access_forbidden', 403)
+  }
+  return access.ownerId
 }
 
 async function withSignedPreviews(assets: StudioProjectAsset[]) {
@@ -72,26 +106,30 @@ async function withSignedPreviews(assets: StudioProjectAsset[]) {
   })
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
-  const owner = await ownerId(req)
-  if (owner instanceof Response) return owner
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const actor = await authenticateStudioRequest(req)
+  if (actor instanceof Response) return actor
   try {
-    const assets = isLegacyProjectId(params.id)
-      ? await listLegacyAssets(owner)
-      : await listProjectAssets(owner, params.id)
+    let assets: StudioProjectAsset[]
+    if (isLegacyProjectId(params.id)) {
+      if (!isSystemOwner(actor.erpRole)) {
+        throw new StudioAccessError('legacy_owner_only', 403)
+      }
+      assets = await listLegacyAssets(actor.userId)
+    } else {
+      const owner = await readableProjectOwnerId(actor, params.id)
+      assets = await listProjectAssets(owner, params.id)
+    }
     return Response.json({ assets: await withSignedPreviews(assets) })
   } catch (error) {
-    return errorResponse(error)
+    if (error instanceof ContentOsServiceError) return errorResponse(error)
+    return studioAccessErrorResponse(error, 'creative-project-assets-list')
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   if (isLegacyProjectId(params.id)) {
@@ -112,10 +150,8 @@ export async function POST(
   }
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   if (isLegacyProjectId(params.id)) {

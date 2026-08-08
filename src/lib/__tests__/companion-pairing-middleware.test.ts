@@ -22,7 +22,7 @@ import { join } from 'node:path'
  */
 
 const ROOT = process.cwd()
-const MIDDLEWARE = readFileSync(join(ROOT, 'src/middleware.ts'), 'utf8')
+const MIDDLEWARE = readFileSync(join(ROOT, 'src/proxy.ts'), 'utf8')
 
 const EXTENSION_PATHS = [
   '/api/assistant/live-browser/pair',

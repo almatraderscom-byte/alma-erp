@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID, getTradingContext, requireTradingSuperAdmin, usdtDecimal } from '@/lib/trading'
 import { refreshTargetActualVolume, volumeTargetDto, writeVolumeTargetAudit } from '@/lib/trading-volume-target'
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const denied = requireTradingSuperAdmin(ctx)
@@ -43,7 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ ok: true, target: volumeTargetDto(fresh!) })
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const denied = requireTradingSuperAdmin(ctx)

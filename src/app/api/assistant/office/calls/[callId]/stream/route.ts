@@ -10,7 +10,8 @@ export const maxDuration = 60
 const POLL_MS = 2_000
 const STREAM_MS = 50_000
 
-export async function GET(req: NextRequest, { params }: { params: { callId: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ callId: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const identity = await identifyOfficeCallRequest(req)

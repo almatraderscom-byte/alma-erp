@@ -97,18 +97,27 @@ export function resolveCreativeStudioV3RouteDecision(input: {
       ? [requestedBrand]
       : input.accessibleBrands
 
-  const admitted = candidates.find((brand) =>
-    resolveCreativeStudioV3Rollout(input.environment, {
-      ownerId: brand.ownerId,
-      brandId: brand.brandProfileId,
-      projectId: requestedProject?.id ?? null,
+  const admitted = candidates
+    .map((brand) => ({
+      brand,
+      projectId: selectCreativeStudioV3InitialProjectId({
+        accessibleProjects: input.accessibleProjects,
+        brandProfileId: brand.brandProfileId,
+        requestedProjectId: requestedProject?.id ?? null,
+      }),
     }))
+    .find((candidate) =>
+      resolveCreativeStudioV3Rollout(input.environment, {
+        ownerId: candidate.brand.ownerId,
+        brandId: candidate.brand.brandProfileId,
+        projectId: candidate.projectId,
+      }))
 
   if (admitted) {
     return {
       kind: 'v3',
-      brand: admitted,
-      projectId: requestedProject?.id ?? null,
+      brand: admitted.brand,
+      projectId: admitted.projectId,
     }
   }
 

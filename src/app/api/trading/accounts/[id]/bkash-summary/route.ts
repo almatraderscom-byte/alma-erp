@@ -14,9 +14,10 @@ import {
 } from '@/lib/trading'
 import { logEvent } from '@/lib/logger'
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
-export async function POST(req: NextRequest, { params }: RouteContext) {
+export async function POST(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const writeDenied = requireTradingWrite(ctx)

@@ -413,7 +413,7 @@ describe('Creative composition direct API security and commands', () => {
       expectedConcurrencyToken: seedProjection().concurrencyToken,
       idempotencyKey: 'auth-history-001',
     }
-    const params = { params: { id: 'composition-1' } }
+    const params = { params: Promise.resolve({ id: 'composition-1' }) }
     const responses = await Promise.all([
       listCompositions(request('/api/assistant/creative-studio/compositions')),
       createComposition(request('/api/assistant/creative-studio/compositions', {
@@ -507,7 +507,7 @@ describe('Creative composition direct API security and commands', () => {
       request('/api/assistant/creative-studio/compositions/composition-1/plan', {
         ...applyBody('reviewer-plan-001'),
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(plan.status).toBe(403)
     await expect(plan.json()).resolves.toMatchObject({ error: 'studio_draft_forbidden' })
@@ -518,7 +518,7 @@ describe('Creative composition direct API security and commands', () => {
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply', {
         ...applyBody('reviewer-apply-001'),
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(apply.status).toBe(403)
     expect(compositionHarness.state.batches).toHaveLength(0)
@@ -529,7 +529,7 @@ describe('Creative composition direct API security and commands', () => {
     process.env[CREATIVE_STUDIO_V3_FOUNDATION_MODE_ENV] = 'shadow'
     process.env[CREATIVE_STUDIO_V3_COMPOSITION_WRITES_ENV] = 'false'
     const body = applyBody('plan-validate-001')
-    const params = { params: { id: 'composition-1' } }
+    const params = { params: Promise.resolve({ id: 'composition-1' }) }
     const plannedResponse = await planOperations(
       request('/api/assistant/creative-studio/compositions/composition-1/plan', body),
       params,
@@ -565,7 +565,7 @@ describe('Creative composition direct API security and commands', () => {
         ...applyBody('cross-brand-001'),
         brandProfileId: 'brand-trading',
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(crossBrand.status).toBe(403)
     await expect(crossBrand.json()).resolves.toMatchObject({ error: 'brand_scope_mismatch' })
@@ -576,7 +576,7 @@ describe('Creative composition direct API security and commands', () => {
         actorRole: 'OWNER',
         requestFingerprint: 'forged',
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(forged.status).toBe(422)
     await expect(forged.json()).resolves.toMatchObject({
@@ -591,7 +591,7 @@ describe('Creative composition direct API security and commands', () => {
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply', {
         padding: 'x'.repeat(CREATIVE_COMPOSITION_API_REQUEST_MAX_BYTES),
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
 
     expect(response.status).toBe(413)
@@ -609,7 +609,7 @@ describe('Creative composition direct API security and commands', () => {
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply', {
         ...applyBody('stale-version-001', 'Stale', 2),
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
 
     expect(response.status).toBe(409)
@@ -634,7 +634,7 @@ describe('Creative composition direct API security and commands', () => {
         idempotencyKey: 'future-undo-001',
         brandProfileId: 'brand-alma',
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
 
     expect(response.status).toBe(409)
@@ -651,7 +651,7 @@ describe('Creative composition direct API security and commands', () => {
     const body = applyBody('idempotent-apply-001')
     const first = await applyOperations(
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply', body),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(first.status).toBe(201)
     const firstReceipt = await first.json()
@@ -676,7 +676,7 @@ describe('Creative composition direct API security and commands', () => {
 
     const replay = await applyOperations(
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply', body),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(replay.status).toBe(200)
     const replayReceipt = await replay.json()
@@ -692,7 +692,7 @@ describe('Creative composition direct API security and commands', () => {
         ...body,
         operations: [operation('Changed request')],
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(changed.status).toBe(409)
     await expect(changed.json()).resolves.toMatchObject({ error: 'idempotency_conflict' })
@@ -705,7 +705,7 @@ describe('Creative composition direct API security and commands', () => {
     const appliedResponse = await applyOperations(
       request('/api/assistant/creative-studio/compositions/composition-1/operations/apply',
         applyBody('history-apply-001', 'Changed hero')),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     const applied = await appliedResponse.json()
 
@@ -716,7 +716,7 @@ describe('Creative composition direct API security and commands', () => {
         idempotencyKey: 'history-undo-001',
         brandProfileId: 'brand-alma',
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(undoneResponse.status).toBe(201)
     const undone = await undoneResponse.json()
@@ -733,7 +733,7 @@ describe('Creative composition direct API security and commands', () => {
         idempotencyKey: 'history-redo-001',
         brandProfileId: 'brand-alma',
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(redoResponse.status).toBe(201)
     const redone = await redoResponse.json()
@@ -747,7 +747,7 @@ describe('Creative composition direct API security and commands', () => {
         brandProfileId: 'brand-alma',
         rollbackPointId: applied.rollbackPointId,
       }),
-      { params: { id: 'composition-1' } },
+      { params: Promise.resolve({ id: 'composition-1' }) },
     )
     expect(rollbackResponse.status).toBe(201)
     const rolledBack = await rollbackResponse.json()
@@ -759,7 +759,7 @@ describe('Creative composition direct API security and commands', () => {
 
   it('supports durable multi-level undo/redo and clears redo after a new edit', async () => {
     compositionHarness.useActor('creator-1')
-    const params = { params: { id: 'composition-1' } }
+    const params = { params: Promise.resolve({ id: 'composition-1' }) }
     const originalName = compositionHarness.state.versions[0].document.nodes[0].name
     const runApply = async (key: string, name: string) => {
       const current = compositionHarness.state.compositions[0]

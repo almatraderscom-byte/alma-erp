@@ -30,28 +30,29 @@ function csvCell(v: string) {
 }
 
 export async function payrollWalletsToWorkbook(wallets: PayrollWallet[]) {
-  const XLSX = await import('xlsx')
-  const sheetRows = wallets.map(w => ({
-    Business: w.businessId,
-    'Employee ID': w.employeeId,
-    Name: w.name,
-    Email: w.email || '',
-    'Monthly Salary': w.monthlySalary || 0,
-    'Salary Earned': w.summary.totalAccrued,
-    Commission: w.summary.totalCommissions,
-    Bonuses: w.summary.totalBonuses,
-    Overtime: w.summary.totalOvertime,
-    Reimbursements: w.summary.totalReimbursements,
-    'Meal Deductions': w.summary.totalMealDeductions,
-    Penalties: w.summary.totalPenalties,
-    'Lifetime Earned': w.summary.lifetimeEarned,
-    'Lifetime Withdrawn': w.summary.lifetimeWithdrawn,
-    'Current Balance': w.summary.currentBalance,
-    'Company Liability': w.summary.companyLiability,
-  }))
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows), 'Payroll Wallets')
-  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as Uint8Array
+  const { default: writeExcelFile } = await import('write-excel-file/browser')
+  const rows = [
+    ['Business', 'Employee ID', 'Name', 'Email', 'Monthly Salary', 'Salary Earned', 'Commission', 'Bonuses', 'Overtime', 'Reimbursements', 'Meal Deductions', 'Penalties', 'Lifetime Earned', 'Lifetime Withdrawn', 'Current Balance', 'Company Liability'],
+    ...wallets.map(w => [
+      w.businessId,
+      w.employeeId,
+      w.name,
+      w.email || '',
+      w.monthlySalary || 0,
+      w.summary.totalAccrued,
+      w.summary.totalCommissions,
+      w.summary.totalBonuses,
+      w.summary.totalOvertime,
+      w.summary.totalReimbursements,
+      w.summary.totalMealDeductions,
+      w.summary.totalPenalties,
+      w.summary.lifetimeEarned,
+      w.summary.lifetimeWithdrawn,
+      w.summary.currentBalance,
+      w.summary.companyLiability,
+    ]),
+  ]
+  return writeExcelFile(rows, { sheet: 'Payroll Wallets' }).toBlob()
 }
 
 export function downloadBlob(name: string, blob: Blob) {

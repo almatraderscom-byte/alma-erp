@@ -21,10 +21,8 @@ function contentType(path: string): string {
   return 'image/jpeg'
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
   const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim()
@@ -43,7 +41,7 @@ export async function GET(
       return Response.json({ error: 'product_source_unavailable' }, { status: 404 })
     }
     const bytes = await agentStorageDownload(source)
-    return new Response(bytes, {
+    return new Response(new Uint8Array(bytes), {
       headers: {
         'Cache-Control': 'private, no-store, max-age=0',
         'Content-Length': String(bytes.byteLength),

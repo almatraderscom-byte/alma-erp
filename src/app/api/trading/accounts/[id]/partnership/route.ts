@@ -4,9 +4,10 @@ import { prisma } from '@/lib/prisma'
 import { computePartnershipPreview, listPartnershipSettlements } from '@/lib/trading-partnership'
 import { TRADING_BUSINESS_ID, canAccessTradingAccount, getTradingContext } from '@/lib/trading'
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
 

@@ -1720,16 +1720,27 @@ export async function getLifecycleOperations(
   input: { brandProfileId: string; projectId: string },
 ) {
   assertLifecycleRuntimeEnabled()
-  const jobs = await listLifecycleJobs(actor, input)
+  const [jobs, queueHeartbeat] = await Promise.all([
+    listLifecycleJobs(actor, input),
+    db.agentHeartbeat.findUnique({
+      where: { service: 'queue-consumer' },
+      select: { lastBeatAt: true },
+    }).catch(() => null),
+  ])
   const now = Date.now()
   const queued = jobs.filter((job) => job.status === 'queued')
+  const heartbeatAt = queueHeartbeat?.lastBeatAt
+    ? new Date(queueHeartbeat.lastBeatAt).getTime()
+    : Number.NaN
   return toStudioLifecycleOperationsView({
     queuedJobs: queued.length,
     oldestJobAgeMinutes: queued.length
       ? Math.max(...queued.map((job) => Math.floor((now - new Date(job.createdAt).getTime()) / 60_000)))
       : 0,
     providerBalanceBdt: null,
-    workerHeartbeatAgeMinutes: null,
+    workerHeartbeatAgeMinutes: Number.isFinite(heartbeatAt)
+      ? Math.max(0, Math.floor((now - heartbeatAt) / 60_000))
+      : null,
     artifactsPendingVerification: jobs.filter((job) => job.status === 'running').length,
   })
 }

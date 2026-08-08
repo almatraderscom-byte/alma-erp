@@ -18,9 +18,10 @@ import { TRADING_BUSINESS_ID, canAccessTradingAccount } from '@/lib/trading'
 import { commitTradeDeletion } from '@/lib/trading-delete'
 import { queueTradingDeleteRequestAlert } from '@/lib/telegram-notification/trading-ops-alerts'
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   if (!canUseTelegramDraftReview(ctx)) {
@@ -43,7 +44,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+export async function PATCH(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const writeDenied = requireTradingWrite(ctx)

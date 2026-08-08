@@ -28,6 +28,7 @@ const lifecycleHarness = vi.hoisted(() => {
     flagRows: [] as Row[],
     flagAudits: [] as Row[],
     nextJob: 1,
+    queueHeartbeatAt: new Date(Date.now() - 90_000),
     transactionTail: Promise.resolve() as Promise<unknown>,
   }
   const composition = () => ({
@@ -106,6 +107,9 @@ const lifecycleHarness = vi.hoisted(() => {
         id: 'brand-1',
         ownerId: state.brandOwnerId,
       })),
+    },
+    agentHeartbeat: {
+      findUnique: vi.fn(async () => ({ lastBeatAt: state.queueHeartbeatAt })),
     },
     creativeStudioRoleAssignment: {
       findUnique: vi.fn(async () => ({
@@ -341,6 +345,7 @@ const lifecycleHarness = vi.hoisted(() => {
       state.flagRows.splice(0)
       state.flagAudits.splice(0)
       state.nextJob = 1
+      state.queueHeartbeatAt = new Date(Date.now() - 90_000)
       state.transactionTail = Promise.resolve()
       vi.clearAllMocks()
       process.env.AGENT_ENABLED = 'true'
@@ -422,6 +427,7 @@ import {
   configureLifecycleFeatureFlag,
   controlLifecycleJob,
   createLifecycleJob,
+  getLifecycleOperations,
   listLifecycleFeatureFlags,
   listLifecycleJobs,
   previewLifecycleJob,
@@ -469,6 +475,19 @@ function request(overrides: Record<string, unknown> = {}) {
 beforeEach(() => lifecycleHarness.reset())
 
 describe('V3 lifecycle production service', () => {
+  it('reports the canonical queue-consumer heartbeat in operations', async () => {
+    const operations = await getLifecycleOperations(owner, {
+      brandProfileId: 'brand-1',
+      projectId: 'project-1',
+    })
+
+    expect(operations).toMatchObject({
+      workerHealth: 'healthy',
+      workerHeartbeatAgeMinutes: 1,
+    })
+    expect(operations.missingSignals).not.toContain('workerHeartbeatAgeMinutes')
+  })
+
   it('resolves an exact access-scoped Foundation pin without trusting caller scope', async () => {
     await expect(resolveLifecycleCompositionPin(owner, {
       brandProfileId: 'brand-1',

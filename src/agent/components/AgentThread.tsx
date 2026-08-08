@@ -892,7 +892,7 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
               <motion.span
                 className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
                 animate={{ opacity: [1, 0, 1] }}
-                transition={{ duration: 0.8, repeat: Infinity, ease: 'steps(2)' }}
+                transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
                 aria-hidden
               />
             )}
@@ -1726,7 +1726,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                           <motion.span
                             className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
                             animate={{ opacity: [1, 0, 1] }}
-                            transition={{ duration: 0.8, repeat: Infinity, ease: 'steps(2)' }}
+                            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
                             aria-hidden
                           />
                         </div>

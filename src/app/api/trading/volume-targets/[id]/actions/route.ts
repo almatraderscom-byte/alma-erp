@@ -10,7 +10,8 @@ import {
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID } from '@/lib/trading'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const denied = requireTradingSuperAdmin(ctx)

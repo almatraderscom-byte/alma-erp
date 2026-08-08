@@ -50,10 +50,8 @@ async function withPreviewUrls(pack: CampaignPackView): Promise<CampaignPackView
     })),
   }
 }
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   try {
@@ -63,10 +61,8 @@ export async function GET(
   }
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   let body: unknown

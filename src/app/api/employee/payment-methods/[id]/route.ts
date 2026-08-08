@@ -14,9 +14,10 @@ import {
 import { prisma } from '@/lib/prisma'
 import { apiFailure, apiSuccess } from '@/lib/safe-api-response'
 
-type Ctx = { params: { id: string } }
+type Ctx = { params: Promise<{ id: string }> }
 
-export async function PATCH(req: NextRequest, { params }: Ctx) {
+export async function PATCH(req: NextRequest, props: Ctx) {
+  const params = await props.params;
   try {
     const token = await getJwt(req)
     if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
@@ -79,7 +80,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: Ctx) {
+export async function DELETE(req: NextRequest, props: Ctx) {
+  const params = await props.params;
   try {
     const token = await getJwt(req)
     if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })

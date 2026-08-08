@@ -24,7 +24,8 @@ export const maxDuration = 300
  * seq-deduped because replay and tail overlap by design. Closes after a terminal
  * event; replay is page-capped with cursor continuation for pathological turns.
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

@@ -86,7 +86,7 @@ export function EditorWorkbench({
   onTabChange: (tab: EditorWorkbenchTab) => void
   proposal: EditorOperationProposal | null
   readOnly: boolean
-  regionRef: RefObject<HTMLElement>
+  regionRef: RefObject<HTMLElement | null>
   selectedAssetId: string | null
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot

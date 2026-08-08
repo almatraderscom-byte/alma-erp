@@ -6,10 +6,8 @@ import { normalizeAlmaRole } from '@/lib/roles'
 import { resolveApprovalRequest } from '@/lib/approvals'
 import { mirrorSalaryAdvanceToSheets } from '@/lib/payroll-sheets-mirror'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = await forbidViewerWrite(req)
   if (denied) return denied
 

@@ -18,10 +18,8 @@ function errorResponse(error: unknown): Response {
   return studioAccessErrorResponse(error, 'creative-lifecycle-control')
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const actor = await authenticateStudioRequest(req)

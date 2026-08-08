@@ -4,10 +4,8 @@ import { requireWalletContext } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const url = new URL(req.url)
   const auth = await requireWalletContext(req, url.searchParams.get('business_id'))
   if (!auth.ok) return auth.response

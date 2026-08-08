@@ -7,11 +7,12 @@ import AgentApp from '@/agent/components/AgentApp'
 
 export const metadata = { title: 'ALMA Agent' }
 
-export default async function AgentPage({
-  searchParams,
-}: {
-  searchParams?: { monitor?: string }
-}) {
+export default async function AgentPage(
+  props: {
+    searchParams?: Promise<{ monitor?: string }>
+  }
+) {
+  const searchParams = await props.searchParams;
   if (!isAgentEnabled()) notFound()
 
   const session = await getServerSession(authOptions)

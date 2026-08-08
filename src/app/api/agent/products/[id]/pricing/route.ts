@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { PatchProductPricingBodySchema } from '@/lib/agent-api/schemas/products.schema'
 import * as svc from '@/lib/agent-api/services/products.service'
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = PatchProductPricingBodySchema.safeParse(await req.json())

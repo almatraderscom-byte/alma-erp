@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { PatchProductBodySchema } from '@/lib/agent-api/schemas/products.schema'
 import * as svc from '@/lib/agent-api/services/products.service'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(_req)
   if (denied) return denied
   const data = await svc.getProduct(params.id)
@@ -15,7 +16,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ data })
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = PatchProductBodySchema.safeParse(await req.json())
@@ -26,7 +28,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   } catch (e) { return agentErrorResponse(e) }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   try {

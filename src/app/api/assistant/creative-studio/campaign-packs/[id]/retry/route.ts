@@ -18,10 +18,8 @@ async function ownerId(req: NextRequest): Promise<string | Response> {
   return token.sub
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   let body: unknown

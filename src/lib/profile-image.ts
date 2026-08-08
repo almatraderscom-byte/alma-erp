@@ -74,7 +74,7 @@ async function uploadStorageObjectUpsert(objectPath: string, body: Buffer, conte
       'Content-Type': contentType,
       'x-upsert': 'true',
     },
-    body,
+    body: new Uint8Array(body),
   })
   if (!res.ok) {
     throw new Error(`Profile upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`)

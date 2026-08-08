@@ -87,7 +87,7 @@ export async function agentStorageUpload(
       'Content-Type': contentType,
       'x-upsert': opts?.upsert ? 'true' : 'false',
     },
-    body: data,
+    body: new Uint8Array(data),
     signal: AbortSignal.timeout(30_000),
   })
   if (!res.ok) {

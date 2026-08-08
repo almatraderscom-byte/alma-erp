@@ -15,7 +15,8 @@ import { buildReportHtml } from '@/lib/pdf/report-html'
 
 export const runtime = 'nodejs'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

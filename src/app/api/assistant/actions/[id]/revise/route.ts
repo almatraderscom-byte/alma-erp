@@ -40,10 +40,8 @@ function verifyInternalToken(provided: string): boolean {
  * place with its own edit tools and confirms. The card stays pending for a final
  * Approve. See `revise-pending.ts` for why the rewrite is not done here.
  */
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

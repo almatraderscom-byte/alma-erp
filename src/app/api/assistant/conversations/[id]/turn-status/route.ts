@@ -11,10 +11,8 @@ export const runtime = 'nodejs'
  * turn keeps running server-side after backgrounding, so the app waits for the
  * status to leave `running`, then re-fetches messages to render the reply.
  */
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

@@ -24,7 +24,7 @@ export function expensesToCsv(rows: ERPFinanceExpense[]): string {
 }
 
 export async function expensesToWorkbook(rows: ERPFinanceExpense[]) {
-  const XLSX = await import('xlsx')
+  const { default: writeExcelFile } = await import('write-excel-file/browser')
   const header = [['date', 'title', 'category', 'amount', 'payment_status', 'payment_method', 'recurring', 'notes', 'receipt']]
   const data = rows.map(r => [
     r.date,
@@ -37,10 +37,7 @@ export async function expensesToWorkbook(rows: ERPFinanceExpense[]) {
     r.notes || '',
     r.receipt_ref || '',
   ])
-  const wb = XLSX.utils.book_new()
-  const ws = XLSX.utils.aoa_to_sheet(header.concat(data))
-  XLSX.utils.book_append_sheet(wb, ws, 'Expenses')
-  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as Uint8Array
+  return writeExcelFile(header.concat(data), { sheet: 'Expenses' }).toBlob()
 }
 
 export function downloadBlob(name: string, blob: Blob) {

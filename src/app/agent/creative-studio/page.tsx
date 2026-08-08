@@ -35,11 +35,12 @@ function first(value: string | string[] | undefined): string | null {
   return typeof item === 'string' && item.trim() ? item.trim().slice(0, 160) : null
 }
 
-export default async function CreativeStudioPage({
-  searchParams,
-}: {
-  searchParams?: CreativeStudioSearchParams
-}) {
+export default async function CreativeStudioPage(
+  props: {
+    searchParams?: Promise<CreativeStudioSearchParams>
+  }
+) {
+  const searchParams = await props.searchParams;
   if (!isAgentEnabled()) notFound()
 
   const session = await getServerSession(authOptions)

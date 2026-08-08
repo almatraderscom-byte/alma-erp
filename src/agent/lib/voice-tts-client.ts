@@ -34,7 +34,7 @@ function getElement(): HTMLAudioElement {
  * orb falls back to the envelope. */
 let _ttsCtx: AudioContext | null = null
 let _ttsAnalyser: AnalyserNode | null = null
-let _ttsBuf: Uint8Array | null = null
+let _ttsBuf: Uint8Array<ArrayBuffer> | null = null
 let _routeAttempted = false
 
 function ensureTtsAnalyser(): void {
