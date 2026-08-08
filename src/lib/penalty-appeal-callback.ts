@@ -45,6 +45,10 @@ export async function handlePenaltyAppealTelegramCallback(
     await answerTelegramCallbackQuery(callbackQueryId, 'Open ERP → Attendance to enter partial amount')
     return true
   }
+  if (action === 'reject') {
+    await answerTelegramCallbackQuery(callbackQueryId, 'Open ERP → Attendance to reject with a reason')
+    return true
+  }
 
   const actor = await resolveTelegramApprovalActor(telegramUserId, waiver.businessId)
   if (!actor) {
@@ -59,9 +63,8 @@ export async function handlePenaltyAppealTelegramCallback(
     waiverId: waiver.id,
     businessId: waiver.businessId,
     actorUserId: actor.userId,
-    action: action === 'reject' ? 'REJECT' : 'APPROVE',
-    approvedReductionAmount: action === 'approve' ? requested : undefined,
-    adminNote: action === 'approve' ? 'Approved via Telegram' : 'Rejected via Telegram',
+    action: 'APPROVE',
+    approvedReductionAmount: requested,
     source: 'telegram',
   })
 
@@ -77,7 +80,7 @@ export async function handlePenaltyAppealTelegramCallback(
 
   await answerTelegramCallbackQuery(
     callbackQueryId,
-    action === 'approve' ? `Approved · final ৳${result.waiver.finalAppliedPenalty}` : 'Rejected',
+    `Approved · final ৳${result.waiver.finalAppliedPenalty}`,
   )
   return true
 }

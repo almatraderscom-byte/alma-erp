@@ -8,7 +8,7 @@
 //         → entries (labelBn + per-fine `appeal` info) · fineSummaries
 //           (last30Days / thisMonth / sinceJoining / customRange) · summary
 //    POST /api/attendance/waivers   → staff files a penalty appeal
-//         { attendance_record_id, business_id, reason, request_type }
+//         { attendance_record_id, penalty_ledger_entry_id, business_id, reason, request_type }
 //
 //  Owner rules surfaced here:
 //   • every fine shows WHY + its appeal state forever (none/pending/approved/
@@ -327,13 +327,14 @@ private class WalletStatementState(val employeeId: String, val businessId: Strin
     }
 
     /** POST /api/attendance/waivers — exact web body. Returns true on success. */
-    suspend fun submitAppeal(recordId: String, reason: String): Boolean {
+    suspend fun submitAppeal(recordId: String, penaltyLedgerEntryId: String, reason: String): Boolean {
         appealBusy = true
         return try {
             AlmaApi.send(
                 "POST", "/api/attendance/waivers",
                 JSONObject()
                     .put("attendance_record_id", recordId)
+                    .put("penalty_ledger_entry_id", penaltyLedgerEntryId)
                     .put("business_id", businessId)
                     .put("reason", reason)
                     .put("request_type", "FULL_WAIVE"),
@@ -470,7 +471,7 @@ fun WalletStatementScreen(
             WsAppealSheet(entry, dark, busy = vm.appealBusy) { reason ->
                 val rid = entry.appeal?.attendanceRecordId ?: return@WsAppealSheet
                 scope.launch {
-                    if (vm.submitAppeal(rid, reason)) appealTarget = null
+                    if (vm.submitAppeal(rid, entry.id, reason)) appealTarget = null
                 }
             }
         }

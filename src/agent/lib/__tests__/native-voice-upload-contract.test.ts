@@ -5,6 +5,18 @@ import { join } from 'node:path'
 const ROOT = process.cwd()
 
 describe('native voice upload contract', () => {
+  it('keeps the TestFlight workflow input aligned with the committed iOS build', () => {
+    const project = readFileSync(join(ROOT, 'ios/App/App.xcodeproj/project.pbxproj'), 'utf8')
+    const workflow = readFileSync(join(ROOT, '.github/workflows/ios-testflight.yml'), 'utf8')
+    const builds = [...project.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)]
+      .map((match) => match[1])
+    const expectedBuild = workflow.match(/expected_build:[\s\S]*?default: '(\d+)'/)?.[1]
+
+    expect([...new Set(builds)]).toHaveLength(1)
+    expect(expectedBuild).toBe(builds[0])
+    expect(workflow).toContain(`this release: ${builds[0]}`)
+  })
+
   it('uses the same multipart field name on every iOS transcribe path and the server', () => {
     const chat = readFileSync(join(ROOT, 'ios/App/App/AssistantSwiftUI.swift'), 'utf8')
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
@@ -83,18 +95,157 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('liveToolTurnPending ? .thinking : .listening')
     expect(voice).toContain('playbackPrebufferSeconds = 0.16')
     expect(voice).not.toContain('private var queuedAudio')
+    expect(voice).toContain('debugInjectUserTurnsWhenReady')
+    expect(voice).toContain('debugInjectNextQueuedTurnAfterPlayback')
+    expect(voice).toContain('components(separatedBy: "|||")')
+    expect(voice).toContain('model turn complete transcriptChars=')
+    expect(voice).toContain('launchValue("ALMA_LIVE_SAY")')
+    expect(voice).toContain('#if DEBUG')
   })
 
-  it('holds model echo locally while preserving sustained natural barge-in', () => {
+  it('keeps native voice delivery human, emotionally appropriate, and naturally finite', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
-    expect(voice).toContain('bargeInRequiredFrames = 12')
-    expect(voice).toContain('bargeInPreRollChunks = 14')
-    expect(voice).toContain('echoFloorRMS * 2.35 + 0.008')
+    expect(voice).toContain('private var allowAffective = false')
+    expect(voice).toContain('**Persona**')
+    expect(voice).toContain('**Conversation**')
+    expect(voice).toContain('**Tool flow**')
+    expect(voice).toContain('**Guardrails**')
+    expect(voice).toContain('Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না')
+    expect(voice).toContain('“আর কিছু জানতে চান?”')
+    expect(voice).toContain('স্বাভাবিকভাবে থেমে শুনবে')
+    expect(voice).toContain('দুঃখ বা খারাপ খবরে')
+    expect(voice).toContain('চাপ, রাগ বা হতাশায়')
+    expect(voice).toContain('scripted announcer')
+    expect(voice).toContain('"temperature": 0.7')
+  })
+
+  it('offers only the approved Gemini Live models and Bengali voice personas', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+
+    expect(voice).toContain('struct AlmaLiveSettingsSheet: View')
+    expect(voice).toContain('gemini-2.5-flash-native-audio-preview-12-2025')
+    expect(voice).toContain('gemini-3.1-flash-live-preview')
+    expect(voice).toContain('.init(id: "Aoede", name: "মায়া"')
+    expect(voice).toContain('.init(id: "Achernar", name: "নীলা"')
+    expect(voice).toContain('.init(id: "Kore", name: "তারা"')
+    expect(voice).toContain('.init(id: "Charon", name: "আরিফ"')
+    expect(voice).toContain('.init(id: "Orus", name: "অর্ক"')
+    expect(voice).toContain('.init(id: "Sulafat", name: "সামি"')
+    expect(voice).toContain('func applySelectedLiveProfileNow()')
+    expect(voice).not.toContain('gpt-realtime')
+  })
+
+  it('discriminates loudspeaker echo while preserving natural barge-in', () => {
+    const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
+    const probeStart = voice.indexOf('let echoExposedLoudspeaker')
+    const directGateStart = voice.indexOf('let threshold = max(bargeInMinimumRMS', probeStart)
+    const probeFlow = voice.slice(probeStart, directGateStart)
+    const finishPlayback = voice.slice(
+      voice.indexOf('private func finishModelPlayback('),
+      voice.indexOf('private func beginLocalBargeIn('),
+    )
+    const stopPlayback = voice.slice(
+      voice.indexOf('private func stopModelPlayback('),
+      voice.indexOf('func sendToolResponse('),
+    )
+
+    expect(voice).toContain('receiverBargeInRequiredFrames = 7')
+    expect(voice).toContain('bargeInMinimumRMS = 0.014')
+    expect(voice).toContain('loudspeakerProbeCandidateRMS = 0.014')
+    expect(voice).toContain('loudspeakerProbeSettleSeconds = 0.22')
+    expect(voice).toContain('loudspeakerProbeWindowSeconds = 0.42')
+    expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 2')
+    expect(voice).toContain('loudspeakerProbeRetainedEnergyRatio = 0.60')
+    expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.35')
+    expect(voice).toContain('bargeInPreRollChunks = 60')
+    expect(voice).toContain('playbackReferenceSpeechRequiredFrames = 4')
+    expect(voice).toContain('import SoundAnalysis')
+    expect(voice).toContain('SNClassifySoundRequest(classifierIdentifier: .version1)')
+    expect(voice).toContain('request.windowDuration = CMTime(seconds: 0.5')
+    expect(voice).toContain('request.overlapFactor = 0.8')
+    expect(voice).toContain('classification(forIdentifier: "speech")')
+    expect(voice).toContain('let musicIDs = ["music", "singing", "choir_singing"')
+    expect(voice).toContain('item.identifier.contains("noise")')
+    expect(voice).toContain('capturePlaybackReference')
+    expect(voice).toContain('audioEngine.mainMixerNode.installTap')
+    expect(voice).toContain('audioEngine.mainMixerNode.removeTap')
+    expect(voice).toContain('recentPlaybackCorrelationLocked')
+    expect(voice).toContain('AlmaLiveBargeInEvidence.isHumanSpeech')
+    expect(voice).toContain('local barge-in confirmed speech')
+    expect(voice).toContain('let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('if needsNoAECDetector, let analyzer = soundAnalyzer')
+    expect(voice).toContain('echoFloorRMS * 1.9 + 0.003')
+    expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('setLoudspeakerProbeMuted(true)')
+    expect(voice).toContain('loudspeakerProbeDuckAppliedAt = Date()')
+    expect(voice).toContain('duckAppliedAt != .distantPast')
+    expect(voice).toContain('self.player.volume = muted ? self.loudspeakerProbeDuckVolume : 1')
+    expect(probeFlow.indexOf('duckAppliedAt != .distantPast'))
+      .toBeLessThan(probeFlow.indexOf('loudspeakerProbeVoiceFrames += 1'))
+    expect(probeFlow).toContain('loudspeakerProbeCandidatePeakRMS')
+    expect(probeFlow).toContain('* loudspeakerProbeRetainedEnergyRatio')
+    expect(finishPlayback).toContain('pendingPlaybackBuffers.isEmpty')
+    expect(finishPlayback).toContain('self?.player.volume = 1')
+    expect(stopPlayback).toContain('self?.player.volume = 1')
+    expect(voice).toContain('bargeSpeechFrames >= receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
     expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
+    expect(voice).toContain('let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled')
+    expect(voice).toContain('if serverCanOwnBargeIn {')
+    expect(voice).toContain('sendNormally = true')
     expect(voice).toContain('input.isVoiceProcessingEnabled')
     expect(voice).toContain('audioEngine.outputNode.isVoiceProcessingEnabled')
+    expect(voice).toContain('listenSuppressedUntil = Date().addingTimeInterval(')
+    expect(voice).toContain('echoExposedLoudspeaker ? 1.2 : 0.25')
+    expect(voice).toContain('if Date() < listenSuppressedUntil')
+    expect(voice).toContain('listenSuppressedUntil = .distantPast')
+    expect(voice).toContain('"endOfSpeechSensitivity": "END_SENSITIVITY_LOW"')
+    expect(voice).toContain('"silenceDurationMs": 1200')
+    expect(voice).toContain('generationConfig["enableAffectiveDialog"] = true')
+    expect(voice).not.toContain('setup["enableAffectiveDialog"] = true')
+    expect(voice).toContain('listenNoiseFloorRMS * 1.8 + 0.001')
+    expect(voice).toContain('listenNoiseFloorRMS * 1.25 + 0.001')
+    expect(voice).toContain('listenContinuousLoudFrames >= 9000')
+    expect(voice).not.toContain('listenContinuousLoudFrames >= 1500')
+    expect(voice).toContain('["audioStreamEnd": true]')
+    expect(voice).toContain('input stream flushed after listen gate close')
+
+    // Acoustic discriminator invariant: a pure loudspeaker echo that follows
+    // the player duck must stay below the retained-energy threshold, while a
+    // modest nearby voice mixed with that echo must cross it. This guards both
+    // regressions the owner observed: self-cutting and an uninterruptible agent.
+    const candidateRms = 0.014
+    const duckRatio = 0.35
+    const retainedRatio = 0.60
+    const preDuckEcho = 0.08
+    const pureEchoAfterDuck = preDuckEcho * duckRatio
+    const retainedThreshold = preDuckEcho * retainedRatio
+    const quietHumanRms = 0.045
+    const humanPlusEcho = Math.hypot(pureEchoAfterDuck, quietHumanRms)
+
+    expect(candidateRms).toBeLessThan(0.025)
+    expect(pureEchoAfterDuck).toBeLessThan(retainedThreshold)
+    expect(humanPlusEcho).toBeGreaterThan(retainedThreshold)
+
+    // Temporal regression: after the classifier's rolling window is warm, four
+    // 20ms speech frames must interrupt before the old 220ms duck settle. Pure
+    // echo, music, and noise each fail one independent evidence requirement.
+    const loudspeakerProbeSettleMs = 220
+    const accepts = (correlation: number, speech: number, music: number, noise: number) => (
+      correlation <= Math.max(0.14, 0.78 * 0.62)
+      && speech >= 0.34
+      && speech >= music + 0.12
+      && speech >= noise + 0.06
+    )
+    const shortWordFrames = Array.from({ length: 4 }, () => accepts(0.18, 0.79, 0.06, 0.03))
+
+    expect(accepts(0.76, 0.82, 0.03, 0.02)).toBe(false) // rendered echo
+    expect(accepts(0.16, 0.31, 0.72, 0.04)).toBe(false) // music
+    expect(accepts(0.14, 0.20, 0.04, 0.61)).toBe(false) // ambient noise
+    expect(shortWordFrames).toHaveLength(4)
+    expect(shortWordFrames.every(Boolean)).toBe(true)
+    expect(shortWordFrames.length * 20).toBeLessThan(loudspeakerProbeSettleMs)
   })
 
   it('gates CallKit media on real activation and keeps receiver routing possible', () => {
@@ -111,6 +262,8 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('socketSetupComplete && audioConfigured')
     expect(voice).toContain('func callKitAudioDeactivated()')
     expect(voice).toContain('try resumeAudioGraphAfterActivation()')
+    expect(voice).toContain('try audioEngine.inputNode.setVoiceProcessingEnabled(true)')
+    expect(voice).toContain('voiceProcessingUnavailable = !audioEngine.inputNode.isVoiceProcessingEnabled')
     expect(voice).toContain('updateReadiness { $0.audioConfigured = false }')
     expect(callKit).toContain('AgentCallController.shared.audioSessionDeactivated()')
     expect(liveConfigure).toContain('options: [.allowBluetoothHFP]')

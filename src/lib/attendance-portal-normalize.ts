@@ -5,7 +5,7 @@ import type {
 } from '@/lib/attendance-client'
 
 /** Bump when client payload shape changes — clears stale localStorage caches. */
-export const ATTENDANCE_PAYLOAD_VERSION = 3
+export const ATTENDANCE_PAYLOAD_VERSION = 6
 
 export function attendanceCacheKey(businessId: string, employeeId: string) {
   return `alma_attendance_me_v${ATTENDANCE_PAYLOAD_VERSION}_${businessId}_${employeeId}`
@@ -54,6 +54,8 @@ export function normalizeAttendanceWaiver(raw: unknown): AttendanceWaiverClient 
   if (typeof r.id !== 'string' || !r.id) return null
   return {
     id: r.id,
+    penaltyLedgerEntryId:
+      typeof r.penaltyLedgerEntryId === 'string' ? r.penaltyLedgerEntryId : null,
     status: typeof r.status === 'string' ? r.status : 'PENDING',
     statusLabel: typeof r.statusLabel === 'string' ? r.statusLabel : undefined,
     requestType: typeof r.requestType === 'string' ? r.requestType : undefined,
@@ -65,8 +67,13 @@ export function normalizeAttendanceWaiver(raw: unknown): AttendanceWaiverClient 
       r.approvedReductionAmount == null ? null : asNumber(r.approvedReductionAmount),
     finalAppliedPenalty:
       r.finalAppliedPenalty == null ? undefined : asNumber(r.finalAppliedPenalty),
+    refundedAmount: r.refundedAmount == null ? undefined : asNumber(r.refundedAmount),
+    refundReconciled:
+      r.refundReconciled == null ? undefined : asBool(r.refundReconciled),
+    refundIssue: typeof r.refundIssue === 'string' ? r.refundIssue : null,
     hasAttachment: asBool(r.hasAttachment, false),
     adminNote: typeof r.adminNote === 'string' ? r.adminNote : null,
+    reviewedAt: typeof r.reviewedAt === 'string' ? r.reviewedAt : null,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
   }
 }
@@ -95,6 +102,15 @@ export function normalizeAttendanceRecord(raw: unknown): AttendanceRecordClient 
     totalWorkMinutes: asNumber(r.totalWorkMinutes),
     lateMinutes: asNumber(r.lateMinutes),
     penaltyAmount: asNumber(r.penaltyAmount),
+    penaltyLedgerEntryId:
+      typeof r.penaltyLedgerEntryId === 'string' ? r.penaltyLedgerEntryId : null,
+    earlyLeaveMinutes: asNumber(r.earlyLeaveMinutes),
+    earlyLeavePenaltyAmount: asNumber(r.earlyLeavePenaltyAmount),
+    earlyLeavePenaltyLedgerEntryId:
+      typeof r.earlyLeavePenaltyLedgerEntryId === 'string' ? r.earlyLeavePenaltyLedgerEntryId : null,
+    noCheckoutFineAmount: asNumber(r.noCheckoutFineAmount),
+    noCheckoutFineLedgerEntryId:
+      typeof r.noCheckoutFineLedgerEntryId === 'string' ? r.noCheckoutFineLedgerEntryId : null,
     trustStatus: typeof r.trustStatus === 'string' ? r.trustStatus : 'TRUSTED',
     suspiciousReasons: asStringArray(r.suspiciousReasons),
     verificationRequired: asBool(r.verificationRequired, false),

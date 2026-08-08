@@ -1124,9 +1124,34 @@ html.cap-native .alma-glass-portal {
   backface-visibility: hidden;
 }
 
+/* My Desk contains dense attendance and wallet data. Keep the ambient motion,
+   but lower its luminance/contrast so moving light cannot wash out text through
+   translucent cards (especially Safari's stronger glass compositing). */
+.ambient-bg-root--my-desk {
+  background:
+    radial-gradient(ellipse 110% 70% at 50% -10%, rgba(99, 102, 241, 0.06), transparent 62%),
+    radial-gradient(ellipse 110% 80% at 50% 115%, rgba(236, 72, 153, 0.07), transparent 65%);
+}
+
+:root[data-theme='dark'] .ambient-bg-root--my-desk {
+  background:
+    radial-gradient(ellipse 110% 70% at 50% -10%, rgba(37, 99, 235, 0.10), transparent 62%),
+    radial-gradient(ellipse 115% 85% at 50% 115%, rgba(236, 72, 153, 0.11), transparent 66%);
+}
+
+.ambient-bg-root--my-desk .ambient-canvas {
+  opacity: 0.24;
+  filter: blur(30px) brightness(0.62) saturate(0.72);
+}
+
 @media (max-width: 640px) {
   .ambient-canvas {
     filter: blur(18px);
+  }
+
+  .ambient-bg-root--my-desk .ambient-canvas {
+    opacity: 0.18;
+    filter: blur(26px) brightness(0.58) saturate(0.68);
   }
 }
 

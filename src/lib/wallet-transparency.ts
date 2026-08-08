@@ -1,6 +1,8 @@
 import type { AttendanceWaiverRequest, EmployeeLedgerEntry } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { APPEAL_WINDOW_DAYS, appealDeadline, finalAppliedPenalty } from '@/lib/penalty-appeal'
+import { isFineAppealable } from '@/lib/penalty-appeal-policy'
+import { resolveAttendancePenaltyTarget } from '@/lib/attendance-penalty-target'
 
 /**
  * Staff wallet transparency: per-fine appeal status + fine totals for any window.
@@ -15,7 +17,7 @@ export type FineAppealStatus = 'NONE' | 'PENDING' | 'APPROVED' | 'PARTIALLY_APPR
 
 export type FineAppealInfo = {
   status: FineAppealStatus
-  /** True while staff may still file (no completed appeal, within 30 days). */
+  /** True only before this exact fine has ever been appealed, within 30 days. */
   appealable: boolean
   deadline: string
   daysLeft: number
@@ -23,15 +25,72 @@ export type FineAppealInfo = {
   attendanceRecordId: string | null
   refundEntryId: string | null
   refundedAmount: number
+  requestedReductionAmount: number | null
+  approvedReductionAmount: number | null
+  finalPenaltyAmount: number
+  requestType: string | null
+  reason: string | null
   adminNote: string | null
+  reviewerName: string | null
   reviewedAt: string | null
+  refundReconciled: boolean
+  refundIssue: string | null
 }
 
-const REFUND_SOURCES = new Set([
-  'attendance_late_penalty_reversal',
+const APPEAL_REFUND_SOURCES = new Set(['attendance_late_penalty_reversal'])
+const FINE_REVERSAL_SOURCES = new Set([
+  ...APPEAL_REFUND_SOURCES,
   'attendance_exception_refund',
   'attendance_reset_reversal',
 ])
+
+type PenaltyRefundWaiver = Pick<
+  AttendanceWaiverRequest,
+  'status' | 'approvedReductionAmount' | 'reversalLedgerEntryId'
+>
+type PenaltyRefundEntry = Pick<EmployeeLedgerEntry, 'id' | 'type' | 'amount' | 'source' | 'relatedEntryId'>
+
+export type PenaltyRefundReconciliation = {
+  refundedAmount: number
+  refundReconciled: boolean
+  refundIssue: string | null
+}
+
+/**
+ * Treat the wallet ledger as the source of truth for a completed appeal. The
+ * decision amount is an expectation; it is not presented as paid until the
+ * exact linked adjustment exists for the exact fine and amount.
+ */
+export function reconcilePenaltyAppealRefund(
+  waiver: PenaltyRefundWaiver,
+  penaltyLedgerEntryId: string | null | undefined,
+  entryById: ReadonlyMap<string, PenaltyRefundEntry>,
+): PenaltyRefundReconciliation {
+  const approved = waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED'
+  if (!approved) return { refundedAmount: 0, refundReconciled: true, refundIssue: null }
+
+  const expectedRefund = Number(waiver.approvedReductionAmount || 0)
+  const refundEntry = waiver.reversalLedgerEntryId
+    ? entryById.get(waiver.reversalLedgerEntryId)
+    : null
+  const refundLinked = Boolean(
+    penaltyLedgerEntryId
+    && refundEntry
+    && refundEntry.type === 'ADJUSTMENT'
+    && Boolean(refundEntry.source && APPEAL_REFUND_SOURCES.has(refundEntry.source))
+    && refundEntry.relatedEntryId === penaltyLedgerEntryId
+  )
+  const actualRefund = refundLinked ? Math.max(0, Number(refundEntry?.amount || 0)) : 0
+  const refundReconciled = refundLinked && Math.abs(actualRefund - expectedRefund) < 0.01
+  const refundIssue = !refundEntry
+    ? 'Approved refund ledger entry is missing.'
+    : !refundLinked
+      ? 'Refund ledger entry is not linked to this exact penalty.'
+      : Math.abs(actualRefund - expectedRefund) >= 0.01
+        ? `Decision amount and wallet credit differ (৳${expectedRefund} vs ৳${actualRefund}).`
+        : null
+  return { refundedAmount: actualRefund, refundReconciled, refundIssue }
+}
 
 function daysLeftInWindow(fineDate: Date, now: Date): number {
   const ms = appealDeadline(fineDate).getTime() - now.getTime()
@@ -40,16 +99,16 @@ function daysLeftInWindow(fineDate: Date, now: Date): number {
 
 type WaiverLite = Pick<
   AttendanceWaiverRequest,
-  'id' | 'status' | 'adminNote' | 'reviewedAt' | 'reversalLedgerEntryId' | 'penaltyLedgerEntryId' | 'attendanceRecordId' | 'approvedReductionAmount' | 'originalPenaltyAmount'
->
+  'id' | 'status' | 'requestType' | 'reason' | 'adminNote' | 'reviewedAt' | 'reversalLedgerEntryId' | 'penaltyLedgerEntryId' | 'attendanceRecordId' | 'requestedReductionAmount' | 'approvedReductionAmount' | 'originalPenaltyAmount'
+> & { reviewer: { name: string } | null }
 
 /**
  * Builds entryId → appeal info for every PENALTY entry. Joins by the new
- * waiver.penaltyLedgerEntryId link, with a fallback join through
- * AttendanceRecord.penaltyLedgerEntryId for waivers created before the link.
+ * waiver.penaltyLedgerEntryId link. Legacy unlinked rows are inferred only
+ * when their amount uniquely matches one posted fine on the attendance record.
  */
 export async function mapFineAppeals(
-  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'date' | 'employeeId' | 'businessId'>[],
+  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'date' | 'employeeId' | 'businessId' | 'amount' | 'source' | 'relatedEntryId'>[],
   now = new Date(),
 ): Promise<Record<string, FineAppealInfo>> {
   const fines = entries.filter(e => e.type === 'PENALTY')
@@ -61,9 +120,11 @@ export async function mapFineAppeals(
     prisma.attendanceWaiverRequest.findMany({
       where: { employeeId, businessId, isArchived: false },
       select: {
-        id: true, status: true, adminNote: true, reviewedAt: true,
+        id: true, status: true, requestType: true, reason: true, adminNote: true, reviewedAt: true,
         reversalLedgerEntryId: true, penaltyLedgerEntryId: true,
-        attendanceRecordId: true, approvedReductionAmount: true, originalPenaltyAmount: true,
+        attendanceRecordId: true, requestedReductionAmount: true,
+        approvedReductionAmount: true, originalPenaltyAmount: true,
+        reviewer: { select: { name: true } },
       },
       orderBy: { createdAt: 'desc' },
     }),
@@ -83,41 +144,39 @@ export async function mapFineAppeals(
       },
       select: {
         id: true,
+        penaltyAmount: true,
         penaltyLedgerEntryId: true,
+        earlyLeavePenaltyAmount: true,
         earlyLeavePenaltyLedgerEntryId: true,
+        noCheckoutFineAmount: true,
         noCheckoutFineLedgerEntryId: true,
       },
     }),
   ])
 
-  // entryId → attendanceRecordId across every fine-link column, and the reverse
-  // (record → all its fine entryIds) for the waiver fallback join.
+  // entryId → attendanceRecordId across every independent fine-link column.
   const entryToRecord = new Map<string, string>()
-  const recordToEntries = new Map<string, string[]>()
+  const recordById = new Map(records.map(record => [record.id, record]))
   for (const r of records) {
     for (const eid of [r.penaltyLedgerEntryId, r.earlyLeavePenaltyLedgerEntryId, r.noCheckoutFineLedgerEntryId]) {
       if (!eid) continue
       entryToRecord.set(eid, r.id)
-      const arr = recordToEntries.get(r.id) ?? []
-      arr.push(eid)
-      recordToEntries.set(r.id, arr)
     }
   }
 
   const byEntry = new Map<string, WaiverLite>()
   for (const w of waivers) {
-    // One waiver covers the whole attendance record (the server sums every fine
-    // on that day), so surface it on all of the record's fine entries — not just
-    // the late check-in one — when the waiver has no direct penalty-entry link.
-    const targetEntries = w.penaltyLedgerEntryId
-      ? [w.penaltyLedgerEntryId]
-      : (w.attendanceRecordId ? recordToEntries.get(w.attendanceRecordId) ?? [] : [])
-    for (const eid of targetEntries) {
-      if (eid && !byEntry.has(eid)) byEntry.set(eid, w)
-    }
+    const record = w.attendanceRecordId ? recordById.get(w.attendanceRecordId) : null
+    const target = w.penaltyLedgerEntryId
+      ? w.penaltyLedgerEntryId
+      : record
+        ? resolveAttendancePenaltyTarget(record, null, w.originalPenaltyAmount)?.ledgerEntryId
+        : null
+    if (target && !byEntry.has(target)) byEntry.set(target, w)
   }
 
   const result: Record<string, FineAppealInfo> = {}
+  const entryById = new Map(entries.map(entry => [entry.id, entry]))
   for (const fine of fines) {
     const w = byEntry.get(fine.id) || null
     const withinWindow = now.getTime() <= appealDeadline(fine.date).getTime()
@@ -126,9 +185,15 @@ export async function mapFineAppeals(
     else if (!withinWindow) status = 'EXPIRED'
     else status = w ? 'CANCELLED' : 'NONE'
 
-    // Staff may (re-)file while inside the window unless an appeal is pending
-    // or already granted; REJECTED/CANCELLED reopen (matches submitPenaltyAppeal).
-    const appealable = withinWindow && (!w || w.status === 'REJECTED' || w.status === 'CANCELLED')
+    // One exact wallet penalty can be appealed once. A rejected or requester-
+    // cancelled appeal remains part of the immutable decision history.
+    const appealable = isFineAppealable(withinWindow, Boolean(w))
+
+    const reconciliation = w
+      ? reconcilePenaltyAppealRefund(w, fine.id, entryById)
+      : { refundedAmount: 0, refundReconciled: true, refundIssue: null }
+    const original = Number(w?.originalPenaltyAmount ?? fine.amount ?? 0)
+    const approved = w?.status === 'APPROVED' || w?.status === 'PARTIALLY_APPROVED'
 
     result[fine.id] = {
       status,
@@ -138,11 +203,19 @@ export async function mapFineAppeals(
       waiverId: w?.id || null,
       attendanceRecordId: entryToRecord.get(fine.id) || w?.attendanceRecordId || null,
       refundEntryId: w?.reversalLedgerEntryId || null,
-      refundedAmount: w && (w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED')
-        ? Number(w.originalPenaltyAmount || 0) - finalAppliedPenalty(Number(w.originalPenaltyAmount || 0), w.status, w.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount))
-        : 0,
+      refundedAmount: reconciliation.refundedAmount,
+      requestedReductionAmount: w?.requestedReductionAmount == null ? null : Number(w.requestedReductionAmount),
+      approvedReductionAmount: w?.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount),
+      finalPenaltyAmount: approved
+        ? Math.max(0, original - reconciliation.refundedAmount)
+        : finalAppliedPenalty(original, w?.status ?? 'PENDING', null),
+      requestType: w?.requestType || null,
+      reason: w?.reason || null,
       adminNote: w?.adminNote || null,
+      reviewerName: w?.reviewer?.name || null,
       reviewedAt: w?.reviewedAt?.toISOString() || null,
+      refundReconciled: reconciliation.refundReconciled,
+      refundIssue: reconciliation.refundIssue,
     }
   }
   return result
@@ -166,27 +239,56 @@ function inWindow(d: Date, from: Date | null, to: Date | null) {
   return true
 }
 
-/**
- * Fine totals for a window. Refunds counted by entry `source` (all three
- * historical refund kinds) so legacy data stays visible.
- */
+/** Fine totals for a window, attributing an appeal credit to its original fine
+ * date. Permission/reset refunds are separate corrections and never inflate the
+ * "appeal refund" metric. */
 export function fineWindowSummary(
-  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'source' | 'amount' | 'date'>[],
+  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'source' | 'amount' | 'date' | 'relatedEntryId'>[],
   appeals: Record<string, FineAppealInfo>,
   from: Date | null,
   to: Date | null,
 ): FineWindowSummary {
-  let fineCount = 0, fineTotal = 0, refundCount = 0, refundTotal = 0, pendingAppeals = 0
+  // Attribute every exact, ledger-linked fine reversal to the original fine's
+  // date. Appeal refund metrics stay appeal-only, while net cost reflects all
+  // actual wallet credits (appeal, approved exception, and attendance reset).
+  const reversalByFineId = new Map<string, number>()
+  let legacyUnlinkedResetTotal = 0
+  for (const entry of entries) {
+    if (
+      entry.type !== 'ADJUSTMENT'
+      || !entry.source
+      || !FINE_REVERSAL_SOURCES.has(entry.source)
+    ) continue
+    if (!entry.relatedEntryId) {
+      // Older reset rows were posted before the writer stored the exact fine
+      // link. They cannot be attributed to the deleted attendance record, but
+      // remain real wallet credits and must reduce net cost in their posted
+      // window (especially the since-joining statement).
+      if (entry.source === 'attendance_reset_reversal' && !from && !to) {
+        legacyUnlinkedResetTotal += Math.max(0, Number(entry.amount || 0))
+      }
+      continue
+    }
+    reversalByFineId.set(
+      entry.relatedEntryId,
+      (reversalByFineId.get(entry.relatedEntryId) || 0) + Math.max(0, Number(entry.amount || 0)),
+    )
+  }
+
+  let fineCount = 0, fineTotal = 0, fineReversalTotal = 0, refundCount = 0, refundTotal = 0, pendingAppeals = 0
   for (const e of entries) {
     const d = new Date(e.date)
     if (!inWindow(d, from, to)) continue
     if (e.type === 'PENALTY') {
       fineCount += 1
-      fineTotal += Number(e.amount || 0)
+      fineTotal += Math.abs(Number(e.amount || 0))
+      fineReversalTotal += reversalByFineId.get(e.id) || 0
       if (appeals[e.id]?.status === 'PENDING') pendingAppeals += 1
-    } else if (e.type === 'ADJUSTMENT' && e.source && REFUND_SOURCES.has(e.source)) {
-      refundCount += 1
-      refundTotal += Number(e.amount || 0)
+      const appeal = appeals[e.id]
+      if (appeal?.refundReconciled && appeal.refundedAmount > 0) {
+        refundCount += 1
+        refundTotal += appeal.refundedAmount
+      }
     }
   }
   return {
@@ -197,12 +299,12 @@ export function fineWindowSummary(
     refundCount,
     refundTotal,
     pendingAppeals,
-    netFineCost: fineTotal - refundTotal,
+    netFineCost: Math.max(0, fineTotal - fineReversalTotal - legacyUnlinkedResetTotal),
   }
 }
 
 export function buildFineSummaries(
-  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'source' | 'amount' | 'date'>[],
+  entries: Pick<EmployeeLedgerEntry, 'id' | 'type' | 'source' | 'amount' | 'date' | 'relatedEntryId'>[],
   appeals: Record<string, FineAppealInfo>,
   range: { from: Date | null; to: Date | null },
   now = new Date(),

@@ -14,12 +14,14 @@ export type PenaltyWaiverView = {
   reason: string
   hasAttachment?: boolean
   adminNote?: string | null
+  reviewedAt?: string | null
   createdAt: string
 }
 
 type Props = {
   penaltyAmount: number
-  lateMinutes: number
+  penaltyKind: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT'
+  penaltyMinutes: number
   waivers: PenaltyWaiverView[]
   onRequestReview: () => void
   onCancelPending?: (waiverId: string) => void
@@ -37,7 +39,8 @@ const STATUS_STYLE: Record<string, string> = {
 
 export function PenaltyAppealStatus({
   penaltyAmount,
-  lateMinutes,
+  penaltyKind,
+  penaltyMinutes,
   waivers,
   onRequestReview,
   onCancelPending,
@@ -47,15 +50,15 @@ export function PenaltyAppealStatus({
 
   const list = Array.isArray(waivers) ? waivers : []
   const active = list.find(w => w.status === 'PENDING') || list[0]
-  const canRequest = !list.some(w => w.status === 'PENDING')
+  const canRequest = list.length === 0
 
   return (
     <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/5 p-4 space-y-3">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-red-300">Late penalty</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-red-300">{penaltyKindLabel(penaltyKind)}</p>
           <p className="mt-1 text-lg font-bold text-cream">{money(penaltyAmount)}</p>
-          <p className="text-[11px] text-muted">Late by {lateMinutes} minutes · deducted from wallet</p>
+          <p className="text-[11px] text-muted">{penaltyContext(penaltyKind, penaltyMinutes)} · deducted from wallet</p>
         </div>
         {canRequest && (
           <Button variant="gold" size="sm" className="min-h-[44px] touch-manipulation shrink-0" onClick={onRequestReview}>
@@ -75,13 +78,16 @@ export function PenaltyAppealStatus({
           )}
           {(active.status === 'APPROVED' || active.status === 'PARTIALLY_APPROVED') && (
             <p className="mt-1 opacity-90">
-              Approved reduction {money(active.approvedReductionAmount)} · final penalty {money(active.finalAppliedPenalty ?? 0)}
+              You requested {money(active.requestedReductionAmount ?? active.originalPenaltyAmount)} · wallet credit {money(active.approvedReductionAmount)} · remaining penalty {money(active.finalAppliedPenalty ?? 0)}
             </p>
           )}
           {active.status === 'REJECTED' && (
-            <p className="mt-1 opacity-90">Request rejected — full penalty remains.</p>
+            <p className="mt-1 opacity-90">
+              Request rejected — full penalty remains. Reason: {active.adminNote || 'not recorded for this legacy decision'}.
+              {active.reviewedAt ? ` Reviewed ${new Date(active.reviewedAt).toLocaleDateString()}.` : ''}
+            </p>
           )}
-          {active.adminNote && <p className="mt-1 text-muted">Admin: {active.adminNote}</p>}
+          {active.adminNote && active.status !== 'REJECTED' && <p className="mt-1 text-muted">Admin: {active.adminNote}</p>}
           {active.status === 'PENDING' && onCancelPending && (
             <Button
               size="xs"
@@ -111,4 +117,16 @@ function labelStatus(s: string) {
 
 function labelRequestType(t: string) {
   return t.replace(/_/g, ' ').toLowerCase()
+}
+
+function penaltyKindLabel(kind: Props['penaltyKind']) {
+  if (kind === 'EARLY_LEAVE') return 'Early check-out penalty'
+  if (kind === 'NO_CHECKOUT') return 'No check-out penalty'
+  return 'Late check-in penalty'
+}
+
+function penaltyContext(kind: Props['penaltyKind'], minutes: number) {
+  if (kind === 'EARLY_LEAVE') return `Checked out ${minutes} minutes early`
+  if (kind === 'NO_CHECKOUT') return 'No check-out was recorded'
+  return `Late by ${minutes} minutes`
 }

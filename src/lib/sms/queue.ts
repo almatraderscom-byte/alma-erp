@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { normalizeSmsPhone } from '@/lib/sms/phone'
 import { fetchSmsReport, sendSmsViaProvider, smsProviderConfigured } from '@/lib/sms/provider'
 import type { QueueSmsInput, SmsStatus, SmsType } from '@/lib/sms/types'
@@ -32,6 +33,7 @@ async function recordSmsSkip(input: QueueSmsInput, reason: string, detail: strin
         errorCode: reason,
         errorMessage: detail,
         metadataJson: input.metadata ? JSON.stringify(input.metadata).slice(0, 8000) : null,
+        contentId: input.contentId || null,
       },
     })
   } catch (err) {
@@ -76,6 +78,14 @@ export async function queueSms(input: QueueSmsInput) {
     return { ok: false, skipped: true, reason: 'TYPE_DISABLED' }
   }
 
+  if (input.contentId) {
+    const durableDuplicate = await prisma.smsLog.findUnique({
+      where: { contentId: input.contentId },
+      select: { id: true },
+    })
+    if (durableDuplicate) return { ok: true, duplicate: true, id: durableDuplicate.id }
+  }
+
   const cooldownSince = new Date(Date.now() - (input.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000)
   const duplicate = await prisma.smsLog.findFirst({
     where: {
@@ -90,18 +100,30 @@ export async function queueSms(input: QueueSmsInput) {
   })
   if (duplicate) return { ok: true, duplicate: true, id: duplicate.id }
 
-  const log = await prisma.smsLog.create({
-    data: {
-      businessId: input.businessId || null,
-      phone,
-      message: input.message.slice(0, 918),
-      type: input.type,
-      provider: PROVIDER,
-      status: 'QUEUED',
-      metadataJson: input.metadata ? JSON.stringify(input.metadata).slice(0, 8000) : null,
-    },
-  })
-  return { ok: true, id: log.id }
+  try {
+    const log = await prisma.smsLog.create({
+      data: {
+        businessId: input.businessId || null,
+        phone,
+        message: input.message.slice(0, 918),
+        type: input.type,
+        provider: PROVIDER,
+        status: 'QUEUED',
+        metadataJson: input.metadata ? JSON.stringify(input.metadata).slice(0, 8000) : null,
+        contentId: input.contentId || null,
+      },
+    })
+    return { ok: true, id: log.id }
+  } catch (error) {
+    if (input.contentId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const winner = await prisma.smsLog.findUnique({
+        where: { contentId: input.contentId },
+        select: { id: true },
+      })
+      if (winner) return { ok: true, duplicate: true, id: winner.id }
+    }
+    throw error
+  }
 }
 
 /** Queue SMS and send immediately — await from API routes before responding. */
@@ -152,7 +174,7 @@ export async function processSmsQueue(options: { limit?: number } = {}) {
     })
     if (!claimed.count) continue
 
-    const result = await sendSmsViaProvider({ to: row.phone, message: row.message })
+    const result = await sendSmsViaProvider({ to: row.phone, message: row.message, contentId: row.contentId })
     if (result.ok) {
       results.push(await prisma.smsLog.update({
         where: { id: row.id },

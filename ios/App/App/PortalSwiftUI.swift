@@ -133,11 +133,19 @@ struct PortalAttendanceToday: Decodable {
     let totalWorkMinutes: Int?
     let lateMinutes: Int?
     let penaltyAmount: Int?
+    let penaltyLedgerEntryId: String?
+    let earlyLeaveMinutes: Int?
+    let earlyLeavePenaltyAmount: Int?
+    let earlyLeavePenaltyLedgerEntryId: String?
+    let noCheckoutFineAmount: Int?
+    let noCheckoutFineLedgerEntryId: String?
     let waiverRequests: [PortalWaiver]
 
     private enum Keys: String, CodingKey {
         case id, attendanceDate, checkInAt, checkOutAt, totalWorkMinutes, lateMinutes
-        case penaltyAmount, waiverRequests
+        case penaltyAmount, penaltyLedgerEntryId, earlyLeaveMinutes, earlyLeavePenaltyAmount
+        case earlyLeavePenaltyLedgerEntryId, noCheckoutFineAmount, noCheckoutFineLedgerEntryId
+        case waiverRequests
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -148,13 +156,68 @@ struct PortalAttendanceToday: Decodable {
         totalWorkMinutes = portalFlexInt(c, .totalWorkMinutes)
         lateMinutes = portalFlexInt(c, .lateMinutes)
         penaltyAmount = portalFlexInt(c, .penaltyAmount)
+        penaltyLedgerEntryId = try? c.decodeIfPresent(String.self, forKey: .penaltyLedgerEntryId)
+        earlyLeaveMinutes = portalFlexInt(c, .earlyLeaveMinutes)
+        earlyLeavePenaltyAmount = portalFlexInt(c, .earlyLeavePenaltyAmount)
+        earlyLeavePenaltyLedgerEntryId = try? c.decodeIfPresent(String.self, forKey: .earlyLeavePenaltyLedgerEntryId)
+        noCheckoutFineAmount = portalFlexInt(c, .noCheckoutFineAmount)
+        noCheckoutFineLedgerEntryId = try? c.decodeIfPresent(String.self, forKey: .noCheckoutFineLedgerEntryId)
         waiverRequests = (try? c.decodeIfPresent([PortalWaiver].self, forKey: .waiverRequests)) ?? []
+    }
+
+    var penaltyTargets: [PortalPenaltyTarget] {
+        guard let attendanceRecordId = id else { return [] }
+        return [
+            PortalPenaltyTarget(attendanceRecordId: attendanceRecordId, ledgerEntryId: penaltyLedgerEntryId,
+                                kind: "LATE", amount: penaltyAmount ?? 0, minutes: lateMinutes ?? 0,
+                                attendanceDate: attendanceDate),
+            PortalPenaltyTarget(attendanceRecordId: attendanceRecordId, ledgerEntryId: earlyLeavePenaltyLedgerEntryId,
+                                kind: "EARLY_LEAVE", amount: earlyLeavePenaltyAmount ?? 0,
+                                minutes: earlyLeaveMinutes ?? 0, attendanceDate: attendanceDate),
+            PortalPenaltyTarget(attendanceRecordId: attendanceRecordId, ledgerEntryId: noCheckoutFineLedgerEntryId,
+                                kind: "NO_CHECKOUT", amount: noCheckoutFineAmount ?? 0, minutes: 0,
+                                attendanceDate: attendanceDate),
+        ].compactMap { $0 }
+    }
+}
+
+struct PortalPenaltyTarget: Identifiable {
+    let attendanceRecordId: String
+    let ledgerEntryId: String
+    let kind: String
+    let amount: Int
+    let minutes: Int
+    let attendanceDate: String?
+    var id: String { ledgerEntryId }
+
+    init?(attendanceRecordId: String, ledgerEntryId: String?, kind: String,
+          amount: Int, minutes: Int, attendanceDate: String?) {
+        guard let ledgerEntryId, !ledgerEntryId.isEmpty, amount > 0 else { return nil }
+        self.attendanceRecordId = attendanceRecordId
+        self.ledgerEntryId = ledgerEntryId
+        self.kind = kind
+        self.amount = amount
+        self.minutes = minutes
+        self.attendanceDate = attendanceDate
+    }
+
+    var title: String {
+        if kind == "EARLY_LEAVE" { return "EARLY CHECK-OUT PENALTY" }
+        if kind == "NO_CHECKOUT" { return "NO CHECK-OUT PENALTY" }
+        return "LATE CHECK-IN PENALTY"
+    }
+
+    var context: String {
+        if kind == "EARLY_LEAVE" { return "Checked out \(minutes) minutes early" }
+        if kind == "NO_CHECKOUT" { return "No check-out was recorded" }
+        return "Late by \(minutes) minutes"
     }
 }
 
 /// One penalty-appeal waiver (web AttendanceWaiverDto slice the desk shows).
 struct PortalWaiver: Decodable, Identifiable {
     let id: String
+    let penaltyLedgerEntryId: String?
     let status: String
     let statusLabel: String?
     let requestType: String?
@@ -162,15 +225,24 @@ struct PortalWaiver: Decodable, Identifiable {
     let requestedReductionAmount: Int?
     let approvedReductionAmount: Int?
     let finalAppliedPenalty: Int?
+    let refundedAmount: Int?
+    let refundReconciled: Bool?
+    let refundIssue: String?
     let adminNote: String?
+    let reason: String?
+    let reviewedAt: String?
+    let createdAt: String?
 
     private enum Keys: String, CodingKey {
-        case id, status, statusLabel, requestType, originalPenaltyAmount
-        case requestedReductionAmount, approvedReductionAmount, finalAppliedPenalty, adminNote
+        case id, penaltyLedgerEntryId, status, statusLabel, requestType, originalPenaltyAmount
+        case requestedReductionAmount, approvedReductionAmount, finalAppliedPenalty
+        case refundedAmount, refundReconciled, refundIssue, adminNote
+        case reason, reviewedAt, createdAt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        penaltyLedgerEntryId = try? c.decodeIfPresent(String.self, forKey: .penaltyLedgerEntryId)
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "PENDING"
         statusLabel = try? c.decodeIfPresent(String.self, forKey: .statusLabel)
         requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
@@ -178,7 +250,13 @@ struct PortalWaiver: Decodable, Identifiable {
         requestedReductionAmount = portalFlexInt(c, .requestedReductionAmount)
         approvedReductionAmount = portalFlexInt(c, .approvedReductionAmount)
         finalAppliedPenalty = portalFlexInt(c, .finalAppliedPenalty)
+        refundedAmount = portalFlexInt(c, .refundedAmount)
+        refundReconciled = try? c.decodeIfPresent(Bool.self, forKey: .refundReconciled)
+        refundIssue = try? c.decodeIfPresent(String.self, forKey: .refundIssue)
         adminNote = try? c.decodeIfPresent(String.self, forKey: .adminNote)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        reviewedAt = try? c.decodeIfPresent(String.self, forKey: .reviewedAt)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
     }
 
     /// Web PenaltyAppealStatus: statusLabel wins over raw status for display.
@@ -213,14 +291,16 @@ struct PortalAttendanceResponse: Decodable {
     let today: PortalAttendanceToday?
     let summary: PortalAttendanceSummary?
     let needsEmployeeLink: Bool?
+    let waivers: [PortalWaiver]
 
-    private enum Keys: String, CodingKey { case ok, data, today, summary, needsEmployeeLink }
+    private enum Keys: String, CodingKey { case ok, data, today, summary, needsEmployeeLink, waivers }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         today = try? c.decodeIfPresent(PortalAttendanceToday.self, forKey: .today)
         summary = try? c.decodeIfPresent(PortalAttendanceSummary.self, forKey: .summary)
         needsEmployeeLink = try? c.decodeIfPresent(Bool.self, forKey: .needsEmployeeLink)
+        waivers = (try? c.decodeIfPresent([PortalWaiver].self, forKey: .waivers)) ?? []
     }
 }
 
@@ -695,14 +775,15 @@ final class PortalVM {
     }
 
     /// Web PenaltyAppealModal submit: POST /api/attendance/waivers
-    /// { business_id, attendance_record_id, reason, request_type,
+    /// { business_id, attendance_record_id, penalty_ledger_entry_id, reason, request_type,
     ///   requested_reduction_amount?, attachment_data_url? } — NP-7: attachment is native too.
-    func submitPenaltyAppeal(recordId: String, requestType: String,
+    func submitPenaltyAppeal(recordId: String, penaltyLedgerEntryId: String, requestType: String,
                              reason: String, partialAmount: Int?,
                              attachmentDataUrl: String? = nil) async {
         var body: [String: AnyEncodable] = [
             "business_id": AnyEncodable(Self.businessId),
             "attendance_record_id": AnyEncodable(recordId),
+            "penalty_ledger_entry_id": AnyEncodable(penaltyLedgerEntryId),
             "reason": AnyEncodable(reason),
             "request_type": AnyEncodable(requestType),
         ]
@@ -789,7 +870,7 @@ struct PortalScreen: View {
     @State private var statementOpen = false
     @State private var leaveSheet = false
     @State private var exceptionSheet = false
-    @State private var appealSheet = false
+    @State private var appealTarget: PortalPenaltyTarget? = nil
     @State private var mealReason = ""
     @State private var confirmMeal = false
     @State private var drivingReason = ""
@@ -897,15 +978,15 @@ struct PortalScreen: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $appealSheet) {
+        .sheet(item: $appealTarget) { target in
             PortalAppealSheet(
-                penaltyAmount: vm.attendance?.today?.penaltyAmount ?? 0,
-                lateMinutes: vm.attendance?.today?.lateMinutes ?? 0,
-                attendanceDate: vm.attendance?.today?.attendanceDate
+                penaltyAmount: target.amount,
+                penaltyKind: target.kind,
+                penaltyMinutes: target.minutes,
+                attendanceDate: target.attendanceDate
             ) { requestType, reason, partialAmount, attachmentDataUrl in
-                guard let recordId = vm.attendance?.today?.id else { return }
                 Task {
-                    await vm.submitPenaltyAppeal(recordId: recordId, requestType: requestType,
+                    await vm.submitPenaltyAppeal(recordId: target.attendanceRecordId, penaltyLedgerEntryId: target.ledgerEntryId, requestType: requestType,
                                                  reason: reason, partialAmount: partialAmount,
                                                  attachmentDataUrl: attachmentDataUrl)
                 }
@@ -1054,8 +1135,11 @@ struct PortalScreen: View {
                         statTile("Worked", PortalFormat.minutes(today?.totalWorkMinutes ?? 0))
                         statTile("Late", PortalFormat.minutes(today?.lateMinutes ?? 0),
                                  tone: (today?.lateMinutes ?? 0) > 0 ? PortalPalette.red500 : PortalPalette.green400)
-                        statTile("Penalty", PortalFormat.money(today?.penaltyAmount ?? 0),
-                                 tone: (today?.penaltyAmount ?? 0) > 0 ? PortalPalette.red500 : PortalPalette.green400)
+                        let todayFineTotal = (today?.penaltyAmount ?? 0)
+                            + (today?.earlyLeavePenaltyAmount ?? 0)
+                            + (today?.noCheckoutFineAmount ?? 0)
+                        statTile("Today fines", PortalFormat.money(todayFineTotal),
+                                 tone: todayFineTotal > 0 ? PortalPalette.red500 : PortalPalette.green400)
                     }
                     .padding(.vertical, 1)
                 }
@@ -1067,9 +1151,16 @@ struct PortalScreen: View {
                         statTile("Waived", PortalFormat.money(s.waivedPenalties), tone: PortalPalette.green400)
                     }
                 }
-                // Web PenaltyAppealStatus — shown when today carries a penalty.
-                if let today, (today.penaltyAmount ?? 0) > 0 {
-                    penaltyAppealBlock(today)
+                // Each posted wallet fine is an independent appeal target.
+                if let today {
+                    ForEach(today.penaltyTargets) { target in
+                        penaltyAppealBlock(target, waivers: today.waiverRequests.filter {
+                            $0.penaltyLedgerEntryId == target.ledgerEntryId
+                        })
+                    }
+                }
+                if let history = vm.attendance?.waivers, !history.isEmpty {
+                    appealHistory(history)
                 }
             }
 
@@ -1132,6 +1223,50 @@ struct PortalScreen: View {
         .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
+    private func appealHistory(_ waivers: [PortalWaiver]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("APPEAL HISTORY")
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(.secondary)
+            ForEach(Array(waivers.prefix(8))) { waiver in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("\(PortalFormat.money(waiver.originalPenaltyAmount ?? 0)) · \(PortalFormat.dateTime(waiver.createdAt) ?? "—")")
+                            .font(.caption.weight(.bold))
+                        Spacer()
+                        Text(waiver.statusText)
+                            .font(.caption2.weight(.heavy))
+                            .foregroundStyle(waiver.status == "REJECTED" ? PortalPalette.red500 : waiver.status == "PENDING" ? PortalPalette.amber500 : PortalPalette.green400)
+                    }
+                    Text("Your reason: \(waiver.reason?.isEmpty == false ? waiver.reason! : "Not recorded")")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if waiver.status == "REJECTED" {
+                        Text("Rejection reason: \(waiver.adminNote?.isEmpty == false ? waiver.adminNote! : "No reason was stored on this historical decision.")")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.red500)
+                    }
+                    if waiver.status == "APPROVED" || waiver.status == "PARTIALLY_APPROVED" {
+                        if waiver.refundReconciled == true {
+                            Text("Wallet credit posted: \(PortalFormat.money(waiver.refundedAmount ?? 0)) · Final penalty: \(PortalFormat.money(max(0, (waiver.originalPenaltyAmount ?? 0) - (waiver.refundedAmount ?? 0))))")
+                                .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.green400)
+                        } else {
+                            let issue = waiver.refundIssue ?? "Wallet adjustment is awaiting verification."
+                            Text("Wallet credit not reconciled: posted \(PortalFormat.money(waiver.refundedAmount ?? 0)) of approved \(PortalFormat.money(waiver.approvedReductionAmount ?? 0)). Effective ledger penalty: \(PortalFormat.money(max(0, (waiver.originalPenaltyAmount ?? 0) - (waiver.refundedAmount ?? 0)))). \(issue)")
+                                .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.amber500)
+                        }
+                    }
+                    if waiver.penaltyLedgerEntryId == nil {
+                        Text("Historical record: exact fine type is awaiting ledger verification.")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.amber500)
+                    }
+                }
+                .padding(9)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+    }
+
     /// Web exception banner verbatim: APPROVED / PENDING states, else the ask-button.
     private var exceptionBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1176,17 +1311,16 @@ struct PortalScreen: View {
 
     // ── Penalty appeal (web PenaltyAppealStatus — status + request/cancel) ──
 
-    private func penaltyAppealBlock(_ today: PortalAttendanceToday) -> some View {
-        let waivers = today.waiverRequests
+    private func penaltyAppealBlock(_ target: PortalPenaltyTarget, waivers: [PortalWaiver]) -> some View {
         let active = waivers.first(where: { $0.status == "PENDING" }) ?? waivers.first
-        let canRequest = !waivers.contains(where: { $0.status == "PENDING" })
+        let canRequest = waivers.isEmpty
         return VStack(alignment: .leading, spacing: 6) {
-            Text("LATE PENALTY")
+            Text(target.title)
                 .font(.caption2.weight(.heavy))
                 .foregroundStyle(PortalPalette.red500)
-            Text(PortalFormat.money(today.penaltyAmount ?? 0))
+            Text(PortalFormat.money(target.amount))
                 .font(.subheadline.monospaced().weight(.black))
-            Text("Late by \(today.lateMinutes ?? 0) minutes · deducted from wallet")
+            Text("\(target.context) · deducted from wallet")
                 .font(.caption2).foregroundStyle(.secondary)
 
             if let active {
@@ -1199,13 +1333,19 @@ struct PortalScreen: View {
                         Text("Waiting for admin review. You asked to reduce \(PortalFormat.money(active.requestedReductionAmount ?? active.originalPenaltyAmount ?? 0)).")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else if active.status == "APPROVED" || active.status == "PARTIALLY_APPROVED" {
-                        Text("Approved reduction \(PortalFormat.money(active.approvedReductionAmount ?? 0)) · final penalty \(PortalFormat.money(active.finalAppliedPenalty ?? 0))")
-                            .font(.caption2).foregroundStyle(.secondary)
+                        if active.refundReconciled == true {
+                            Text("Wallet credit posted \(PortalFormat.money(active.refundedAmount ?? 0)) · final penalty \(PortalFormat.money(max(0, (active.originalPenaltyAmount ?? 0) - (active.refundedAmount ?? 0))))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            let issue = active.refundIssue ?? "Wallet adjustment is awaiting verification."
+                            Text("Approved \(PortalFormat.money(active.approvedReductionAmount ?? 0)), but wallet credit is not reconciled (posted \(PortalFormat.money(active.refundedAmount ?? 0))). \(issue)")
+                                .font(.caption2).foregroundStyle(PortalPalette.amber500)
+                        }
                     } else if active.status == "REJECTED" {
-                        Text("Request rejected — full penalty remains.")
+                        Text("Request rejected — full penalty remains. Reason: \(active.adminNote?.isEmpty == false ? active.adminNote! : "not recorded for this legacy decision").")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
-                    if let note = active.adminNote, !note.isEmpty {
+                    if active.status != "REJECTED", let note = active.adminNote, !note.isEmpty {
                         Text("Admin: \(note)").font(.caption2).foregroundStyle(.secondary)
                     }
                     if active.status == "PENDING" {
@@ -1234,10 +1374,10 @@ struct PortalScreen: View {
                             in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             }
 
-            if canRequest, today.id != nil {
+            if canRequest {
                 Button {
                     UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    appealSheet = true
+                    appealTarget = target
                 } label: {
                     HStack(spacing: 6) {
                         if vm.busyActions.contains("appeal") { ProgressView().controlSize(.mini) }
@@ -1259,7 +1399,7 @@ struct PortalScreen: View {
         .background(PortalPalette.red500.opacity(0.06), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalPalette.red500.opacity(0.25), lineWidth: 1))
-        .confirmationDialog("রিভিউ অনুরোধ বাতিল করবেন?",
+        .confirmationDialog("এই আপিল বাতিল করলে একই জরিমানার জন্য আবার আপিল করা যাবে না। তবুও বাতিল করবেন?",
                             isPresented: $confirmCancelWaiver, titleVisibility: .visible) {
             Button("হ্যাঁ, বাতিল করুন", role: .destructive) {
                 if let id = cancelWaiverId {
@@ -2211,7 +2351,8 @@ private struct PortalExceptionSheet: View {
 @available(iOS 17.0, *)
 private struct PortalAppealSheet: View {
     let penaltyAmount: Int
-    let lateMinutes: Int
+    let penaltyKind: String
+    let penaltyMinutes: Int
     let attendanceDate: String?
     let onSubmit: (_ requestType: String, _ reason: String, _ partialAmount: Int?,
                    _ attachmentDataUrl: String?) -> Void
@@ -2238,12 +2379,17 @@ private struct PortalAppealSheet: View {
         requestType == "PARTIAL_REDUCE" && (partialValue <= 0 || partialValue > penaltyAmount)
     }
     private var valid: Bool { reasonTrimmed.count >= 3 && !partialInvalid }
+    private var penaltyStory: String {
+        if penaltyKind == "EARLY_LEAVE" { return "Early check-out \(penaltyMinutes)m" }
+        if penaltyKind == "NO_CHECKOUT" { return "No check-out penalty" }
+        return "Late check-in \(penaltyMinutes)m"
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Penalty appeal").font(.headline)
-                Text("Late \(lateMinutes)m · penalty \(PortalFormat.money(penaltyAmount))"
+                Text("\(penaltyStory) · penalty \(PortalFormat.money(penaltyAmount))"
                      + (attendanceDate.map { " · \(String($0.prefix(10)))" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
 

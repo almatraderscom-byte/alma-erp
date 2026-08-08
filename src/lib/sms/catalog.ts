@@ -8,6 +8,7 @@ export const ALL_SMS_TYPES: SmsType[] = [
   'TRADING_DAILY_SUMMARY',
   'SALARY_RECEIVED',
   'WALLET_WITHDRAWAL_APPROVED',
+  'PENALTY_APPEAL_REVIEWED',
   'PAYROLL_ADVANCE_ALERT',
   'LOW_STOCK_ALERT',
   'TEST',
@@ -17,6 +18,7 @@ export const DEFAULT_SMS_ENABLED_TYPES: SmsType[] = [
   'ORDER_CONFIRMATION',
   'SALARY_RECEIVED',
   'WALLET_WITHDRAWAL_APPROVED',
+  'PENALTY_APPEAL_REVIEWED',
 ]
 
 export type SmsTypeCatalogItem = {
@@ -54,6 +56,15 @@ export const SMS_TYPE_CATALOG: SmsTypeCatalogItem[] = [
     label: 'Wallet withdrawal approved',
     labelBn: 'উইথড্র অনুমোদিত',
     description: 'Staff wallet withdrawal approve হলে transaction id সহ employee-কে',
+    audience: 'Employee phone',
+    suggestedBusiness: 'ANY',
+    defaultEnabled: true,
+  },
+  {
+    type: 'PENALTY_APPEAL_REVIEWED',
+    label: 'Penalty appeal result',
+    labelBn: 'পেনাল্টি আপিলের ফলাফল',
+    description: 'Appeal full/partial approve বা reject হলে exact wallet credit ও remaining penalty সহ employee-কে',
     audience: 'Employee phone',
     suggestedBusiness: 'ANY',
     defaultEnabled: true,

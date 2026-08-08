@@ -9,9 +9,11 @@ import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 
 export type PenaltyAppealTarget = {
   attendanceRecordId: string
+  penaltyLedgerEntryId: string
   penaltyAmount: number
   lateMinutes: number
   attendanceDate?: string
+  penaltyKind?: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT'
 }
 
 type Props = {
@@ -49,6 +51,13 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
   if (!open || !target) return null
 
   const penalty = target.penaltyAmount
+  const penaltyStory = target.penaltyKind === 'NO_CHECKOUT'
+    ? 'No check-out penalty'
+    : target.penaltyKind === 'EARLY_LEAVE'
+      ? 'Early check-out penalty'
+      : target.lateMinutes > 0
+        ? `Late ${target.lateMinutes}m`
+        : 'Attendance penalty'
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -61,6 +70,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
       const body: Record<string, unknown> = {
         business_id: businessId,
         attendance_record_id: target!.attendanceRecordId,
+        penalty_ledger_entry_id: target!.penaltyLedgerEntryId,
         reason: reason.trim(),
         request_type: requestType,
         attachment_data_url: attachment || undefined,
@@ -108,7 +118,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gold">Request review</p>
               <h3 className="mt-1 text-lg font-bold text-cream">Penalty appeal</h3>
               <p className="mt-1 text-xs text-muted">
-                Late {target.lateMinutes}m · penalty {money(penalty)}
+                {penaltyStory} · {money(penalty)}
                 {target.attendanceDate ? ` · ${target.attendanceDate.slice(0, 10)}` : ''}
               </p>
             </div>

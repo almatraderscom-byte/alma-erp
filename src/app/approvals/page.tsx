@@ -65,6 +65,8 @@ type ApprovalRow = {
   penaltyAppeal?: {
     fineDate?: string
     fineKind?: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT' | 'UNKNOWN'
+    fineIdentityResolved?: boolean
+    penaltyLedgerEntryId?: string | null
     lateMinutes?: number | null
     earlyLeaveMinutes?: number | null
     checkInAt?: string | null
@@ -73,6 +75,7 @@ type ApprovalRow = {
     requestedReductionAmount?: number | null
     requestType?: string
     appealSubmittedAt?: string
+    attachmentUrl?: string | null
   } | null
 }
 
@@ -111,6 +114,7 @@ function ApprovalsPageInner() {
   // Reimbursement approvals pause for a payout choice: wallet credit vs already-paid-instantly.
   const [reimburseApprove, setReimburseApprove] = useState<ApprovalRow | null>(null)
   const [note, setNote] = useState('')
+  const [decisionAmount, setDecisionAmount] = useState('')
   const [integrity, setIntegrity] = useState<IntegrityReport | null>(null)
   const [integrityLoading, setIntegrityLoading] = useState(false)
   const [repairing, setRepairing] = useState(false)
@@ -194,7 +198,7 @@ function ApprovalsPageInner() {
   const priorityCounts = useMemo(() => Object.fromEntries((data?.byPriority || []).map(row => [row.priority, row.count])), [data])
   const orphanCount = integrity?.orphans?.length ?? 0
 
-  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '', transactionId?: string, payoutMode?: 'wallet' | 'instant') {
+  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '', transactionId?: string, payoutMode?: 'wallet' | 'instant', approvedAmount?: number) {
     if (isRowProcessing(row.id)) return
     if (action === 'REJECT' && actionNote.trim().length < 5) {
       toast.error('Rejection reason must be at least 5 characters')
@@ -207,6 +211,7 @@ function ApprovalsPageInner() {
       rowLabel: row.type.replace(/_/g, ' '),
       transactionId,
       payoutMode,
+      approvedAmount,
     })
     if (result.ok) {
       const pending = readBkashSendPending()
@@ -216,6 +221,7 @@ function ApprovalsPageInner() {
       setWithdrawApprove(null)
       setReimburseApprove(null)
       setNote('')
+      setDecisionAmount('')
     }
   }
 
@@ -312,6 +318,17 @@ function ApprovalsPageInner() {
 
   // Wallet withdrawals need a transaction id (sent to staff via SMS) — collect it first.
   function handleApproveClick(row: ApprovalRow) {
+    if (row.type === 'PENALTY_APPEAL') {
+      if (row.penaltyAppeal?.fineIdentityResolved !== true) {
+        toast.error('Exact wallet fine is ambiguous. Repair the ledger link or reject with a clear reason.')
+        return
+      }
+      const requested = row.penaltyAppeal?.requestedReductionAmount ?? row.penaltyAppeal?.originalPenaltyAmount ?? 0
+      setDecisionAmount(String(requested))
+      setNote('')
+      setActionTarget({ row, action: 'APPROVE' })
+      return
+    }
     if (row.type === 'WALLET_WITHDRAWAL') {
       setWithdrawApprove({ row, transactionId: '' })
       return
@@ -321,6 +338,15 @@ function ApprovalsPageInner() {
       return
     }
     void processApproval(row, 'APPROVE')
+  }
+
+  function retryApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT') {
+    if (action === 'APPROVE') {
+      handleApproveClick(row)
+      return
+    }
+    setNote('')
+    setActionTarget({ row, action: 'REJECT' })
   }
 
   const actionsGloballyDisabled = hasProcessing
@@ -559,7 +585,7 @@ function ApprovalsPageInner() {
                         size="xs"
                         variant="ghost"
                         disabled={actionDisabled}
-                        onClick={() => void processApproval(row, ui.action || 'APPROVE')}
+                        onClick={() => retryApproval(row, ui.action || 'APPROVE')}
                       >
                         Retry
                       </Button>
@@ -647,7 +673,7 @@ function ApprovalsPageInner() {
                   </Button>
                 )}
                 {(selectedUi.state === 'failed' || selectedUi.state === 'rolled_back') && (
-                  <Button variant="ghost" disabled={selectedActionDisabled} onClick={() => void processApproval(selected, selectedUi.action || 'APPROVE')}>
+                  <Button variant="ghost" disabled={selectedActionDisabled} onClick={() => retryApproval(selected, selectedUi.action || 'APPROVE')}>
                     Retry safely
                   </Button>
                 )}
@@ -662,13 +688,24 @@ function ApprovalsPageInner() {
         const rejectUi = getRowUi(actionTarget.row.id)
         const rejectBusy = isRowProcessing(actionTarget.row.id)
         const rejectActionDisabled = rejectBusy || actionsGloballyDisabled
+        const appeal = actionTarget.row.penaltyAppeal
+        const originalPenalty = Number(appeal?.originalPenaltyAmount || 0)
+        const requestedReduction = Number(appeal?.requestedReductionAmount ?? originalPenalty)
+        const approvedReduction = Number(decisionAmount)
+        const approvalAmountValid = Number.isFinite(approvedReduction)
+          && approvedReduction > 0
+          && approvedReduction <= requestedReduction
+          && approvedReduction <= originalPenalty
+        const remainingPenalty = approvalAmountValid ? Math.max(0, originalPenalty - approvedReduction) : originalPenalty
+        const isPartialDecision = approvalAmountValid && remainingPenalty > 0
+        const halfPenalty = Math.min(requestedReduction, Math.max(1, Math.round((originalPenalty * 0.5) * 100) / 100))
         return (
         <MobileModalPortal open zIndex={10001} onBackdropClick={() => setActionTarget(null)}>
           <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-cream">Reject Approval</p>
+                  <p className="text-sm font-black text-cream">{actionTarget.action === 'APPROVE' ? 'Approve penalty appeal' : 'Reject Approval'}</p>
                   <p className="mt-1 text-xs text-muted">{actionTarget.row.type.replace(/_/g, ' ')} · {actionTarget.row.requester?.name || actionTarget.row.requestedBy}</p>
                 </div>
                 <Button size="xs" variant="ghost" disabled={rejectBusy} onClick={() => setActionTarget(null)}>Close</Button>
@@ -681,28 +718,97 @@ function ApprovalsPageInner() {
               )}
             </div>
             <div className="mobile-modal-body px-5 space-y-2">
+              {actionTarget.action === 'APPROVE' && actionTarget.row.type === 'PENALTY_APPEAL' && (
+                <div className="space-y-3 rounded-2xl border border-gold/20 bg-gold/[0.05] p-3">
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded-xl border border-border bg-card/70 p-2.5">
+                      <p className="text-muted">Original penalty</p>
+                      <p className="mt-1 font-mono text-sm font-black text-cream">৳ {originalPenalty.toLocaleString('en-BD')}</p>
+                    </div>
+                    <div className="rounded-xl border border-border bg-card/70 p-2.5">
+                      <p className="text-muted">Staff requested</p>
+                      <p className="mt-1 font-mono text-sm font-black text-cream">৳ {requestedReduction.toLocaleString('en-BD')}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">Quick amount</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Button size="xs" variant={approvedReduction === requestedReduction ? 'gold' : 'secondary'} disabled={rejectActionDisabled} onClick={() => setDecisionAmount(String(requestedReduction))}>
+                        Full requested · ৳{requestedReduction.toLocaleString('en-BD')}
+                      </Button>
+                      <Button size="xs" variant={approvedReduction === halfPenalty && halfPenalty !== requestedReduction ? 'gold' : 'secondary'} disabled={rejectActionDisabled} onClick={() => setDecisionAmount(String(halfPenalty))}>
+                        Half penalty · ৳{halfPenalty.toLocaleString('en-BD')}
+                      </Button>
+                    </div>
+                  </div>
+                  <label className="block text-[11px] font-black uppercase tracking-[0.14em] text-muted">
+                    Exact wallet credit
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min={0.01}
+                      step={0.01}
+                      max={requestedReduction || undefined}
+                      value={decisionAmount}
+                      onChange={e => setDecisionAmount(e.target.value)}
+                      disabled={rejectActionDisabled}
+                      className="mt-2 w-full rounded-xl border border-border bg-card px-4 py-3 font-mono text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
+                    />
+                  </label>
+                  <div className={`rounded-xl border p-3 text-xs ${approvalAmountValid ? isPartialDecision ? 'border-amber-500/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                    {approvalAmountValid ? (
+                      <>
+                        <p className={`font-black ${isPartialDecision ? 'text-amber-300' : 'text-emerald-300'}`}>
+                          {isPartialDecision ? 'Partial approval' : 'Full approval'}
+                        </p>
+                        <p className="mt-1 text-muted-hi">Wallet credit ৳ {approvedReduction.toLocaleString('en-BD')} · Remaining penalty ৳ {remainingPenalty.toLocaleString('en-BD')}</p>
+                        <p className="mt-1 text-muted">The staff notification and SMS will show this exact result.</p>
+                      </>
+                    ) : (
+                      <p className="font-bold text-red-300">Enter an amount from ৳0.01 to the requested maximum of ৳{requestedReduction.toLocaleString('en-BD')}.</p>
+                    )}
+                  </div>
+                </div>
+              )}
               <textarea
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 disabled={rejectActionDisabled}
-                minLength={5}
+                minLength={actionTarget.action === 'REJECT' ? 5 : undefined}
                 className="min-h-28 w-full rounded-xl border border-border bg-card px-4 py-3 text-sm text-cream outline-none focus:border-gold-dim/60 disabled:opacity-60"
-                placeholder="Rejection reason required (min. 5 characters)"
+                placeholder={actionTarget.action === 'REJECT' ? 'Rejection reason required (min. 5 characters)' : 'Approval note (optional)'}
               />
-              <p className={`text-[11px] ${note.trim().length < 5 ? 'text-amber-600' : 'text-muted'}`}>
-                {note.trim().length < 5
+              <p className={`text-[11px] ${actionTarget.action === 'REJECT' && note.trim().length < 5 ? 'text-amber-600' : 'text-muted'}`}>
+                {actionTarget.action === 'REJECT' && note.trim().length < 5
                   ? `${5 - note.trim().length} more character(s) required`
-                  : 'Reason will be stored on the approval record.'}
+                  : actionTarget.action === 'APPROVE'
+                    ? 'Optional note will be stored and shown to the staff member.'
+                    : 'Rejection reason will be stored and shown to the staff member.'}
               </p>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
               <Button
-                variant="danger"
+                variant={actionTarget.action === 'APPROVE' ? 'gold' : 'danger'}
                 className="w-full justify-center"
-                disabled={rejectActionDisabled || note.trim().length < 5}
-                onClick={() => void processApproval(actionTarget.row, 'REJECT', note)}
+                disabled={
+                  rejectActionDisabled
+                  || (actionTarget.action === 'REJECT' && note.trim().length < 5)
+                  || (actionTarget.action === 'APPROVE' && !approvalAmountValid)
+                }
+                onClick={() => void processApproval(
+                  actionTarget.row,
+                  actionTarget.action,
+                  note,
+                  undefined,
+                  undefined,
+                  actionTarget.action === 'APPROVE' ? Number(decisionAmount) : undefined,
+                )}
               >
-                {rejectUi.state === 'processing' ? <><Spinner /> Processing rejection…</> : 'Reject request'}
+                {rejectUi.state === 'processing'
+                  ? <><Spinner /> Processing decision…</>
+                  : actionTarget.action === 'APPROVE'
+                    ? `${isPartialDecision ? 'Approve partial' : 'Approve full'} · credit ৳${approvalAmountValid ? approvedReduction.toLocaleString('en-BD') : '—'}`
+                    : 'Reject request'}
               </Button>
             </div>
           </Card>
@@ -996,8 +1102,18 @@ function PenaltyAppealInfo({ appeal }: { appeal: ApprovalRow['penaltyAppeal'] })
       <p className="font-semibold text-cream">
         জরিমানা ৳{(appeal.originalPenaltyAmount ?? 0).toLocaleString('en-BD')} · চাওয়া: {relief}
       </p>
+      {appeal.fineIdentityResolved !== true && (
+        <p className="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-[11px] font-bold text-red-400">
+          Exact wallet fine is ambiguous. Approve is blocked until its ledger link is repaired; reject remains available with a clear reason.
+        </p>
+      )}
       {appeal.appealSubmittedAt && (
         <p className="text-[11px] text-muted">আপিল জমা: {new Date(appeal.appealSubmittedAt).toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}</p>
+      )}
+      {appeal.attachmentUrl && (
+        <a href={appeal.attachmentUrl} target="_blank" rel="noreferrer" className="inline-flex pt-1 text-[11px] font-bold text-blue-400">
+          জমা দেওয়া প্রমাণ দেখুন ↗
+        </a>
       )}
     </div>
   )

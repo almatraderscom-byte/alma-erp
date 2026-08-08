@@ -91,6 +91,8 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
     struct PenaltyAppeal: Decodable, Equatable {
         let fineDate: String?
         let fineKind: String?
+        let fineIdentityResolved: Bool?
+        let penaltyLedgerEntryId: String?
         let lateMinutes: Int?
         let earlyLeaveMinutes: Int?
         let checkInAt: String?
@@ -99,15 +101,18 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
         let requestedReductionAmount: Int?
         let requestType: String?
         let appealSubmittedAt: String?
+        let attachmentUrl: String?
 
         private enum Keys: String, CodingKey {
-            case fineDate, fineKind, lateMinutes, earlyLeaveMinutes, checkInAt, checkOutAt
-            case originalPenaltyAmount, requestedReductionAmount, requestType, appealSubmittedAt
+            case fineDate, fineKind, fineIdentityResolved, penaltyLedgerEntryId, lateMinutes, earlyLeaveMinutes, checkInAt, checkOutAt
+            case originalPenaltyAmount, requestedReductionAmount, requestType, appealSubmittedAt, attachmentUrl
         }
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: Keys.self)
             fineDate = try? c.decodeIfPresent(String.self, forKey: .fineDate)
             fineKind = try? c.decodeIfPresent(String.self, forKey: .fineKind)
+            fineIdentityResolved = try? c.decodeIfPresent(Bool.self, forKey: .fineIdentityResolved)
+            penaltyLedgerEntryId = try? c.decodeIfPresent(String.self, forKey: .penaltyLedgerEntryId)
             lateMinutes = Self.flexInt(c, .lateMinutes)
             earlyLeaveMinutes = Self.flexInt(c, .earlyLeaveMinutes)
             checkInAt = try? c.decodeIfPresent(String.self, forKey: .checkInAt)
@@ -116,6 +121,7 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
             requestedReductionAmount = Self.flexInt(c, .requestedReductionAmount)
             requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
             appealSubmittedAt = try? c.decodeIfPresent(String.self, forKey: .appealSubmittedAt)
+            attachmentUrl = try? c.decodeIfPresent(String.self, forKey: .attachmentUrl)
         }
         private static func flexInt(_ c: KeyedDecodingContainer<Keys>, _ k: Keys) -> Int? {
             if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i }
@@ -456,7 +462,8 @@ final class ApprovalsVM {
     /// APPROVE/REJECT one item — same PATCH body the web tracker sends
     /// ({action, note, operation_id, transactionId?}); row animates out on success.
     func act(_ approval: AlmaApproval, action: String, note: String = "",
-             transactionId: String? = nil, payoutMode: String? = nil) async {
+             transactionId: String? = nil, payoutMode: String? = nil,
+             approvedAmount: Int? = nil) async {
         guard !busyIds.contains(approval.id) else { return }
         busyIds.insert(approval.id)
         notice = nil
@@ -470,6 +477,7 @@ final class ApprovalsVM {
             if let transactionId, !transactionId.isEmpty { body["transactionId"] = transactionId }
             // EXPENSE_REIMBURSEMENT only: 'wallet' (credit staff wallet) | 'instant' (owner paid cash/bKash).
             if let payoutMode, !payoutMode.isEmpty { body["payoutMode"] = payoutMode }
+            if let approvedAmount { body["approvedAmount"] = String(approvedAmount) }
             let _: ApprovalActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/approvals/\(approval.id)", body: body)
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
@@ -667,6 +675,7 @@ struct ApprovalsScreen: View {
     @State private var rejecting: AlmaApproval? = nil
     @State private var withdrawing: AlmaApproval? = nil  // WALLET_WITHDRAWAL → txn id first
     @State private var reimbursing: AlmaApproval? = nil  // EXPENSE_REIMBURSEMENT → payout choice
+    @State private var penaltyApproving: AlmaApproval? = nil
     @State private var revising: AlmaAgentAction? = nil  // agent card → "আমার মত" opinion
     @State private var pendingAgentActionScrollId: String?
     @State private var highlightedAgentActionId: String?
@@ -765,6 +774,12 @@ struct ApprovalsScreen: View {
             }
             .presentationDetents([.height(340)])
         }
+        .sheet(item: $penaltyApproving) { ap in
+            PenaltyApprovalDecisionSheet(approval: ap) { amount, note in
+                Task { await vm.act(ap, action: "APPROVE", note: note, approvedAmount: amount) }
+            }
+            .presentationDetents([.height(430)])
+        }
         .sheet(item: $revising) { ac in
             ReviseNoteSheet(action: ac) { feedback in
                 Task { await vm.agentRevise(ac, feedback: feedback) }
@@ -793,6 +808,8 @@ struct ApprovalsScreen: View {
             withdrawing = ap
         } else if ap.type == "EXPENSE_REIMBURSEMENT" {
             reimbursing = ap
+        } else if ap.type == "PENALTY_APPEAL" {
+            penaltyApproving = ap
         } else {
             Task { await vm.act(ap, action: "APPROVE") }
         }
@@ -1153,7 +1170,9 @@ private struct ApprovalCard: View {
                     LeaveInfoBox(payload: p)
                 }
                 if approval.type == "PENALTY_APPEAL", let pa = approval.penaltyAppeal {
-                    PenaltyAppealInfoBox(appeal: pa)
+                    PenaltyAppealInfoBox(appeal: pa, onOpenEvidence: pa.attachmentUrl.map { path in
+                        { openWeb(path, "Appeal evidence") }
+                    })
                 }
                 if let reason = approval.reason, !reason.isEmpty {
                     Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -1349,6 +1368,7 @@ private struct LeaveInfoBox: View {
 @available(iOS 17.0, *)
 private struct PenaltyAppealInfoBox: View {
     let appeal: AlmaApproval.PenaltyAppeal
+    var onOpenEvidence: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1361,11 +1381,21 @@ private struct PenaltyAppealInfoBox: View {
             Text(fineStory)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(ApprovalPalette.amber500)
+            if appeal.fineIdentityResolved != true {
+                Text("Exact wallet fine is ambiguous — approve is blocked until the ledger link is repaired. Reject remains available with a reason.")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ApprovalPalette.red500)
+            }
             Text("জরিমানা \(ApprovalFormat.taka(appeal.originalPenaltyAmount ?? 0)) · চাওয়া: \(reliefLabel)")
                 .font(.caption.weight(.semibold))
             if let submitted = ApprovalFormat.dateTime(appeal.appealSubmittedAt) {
                 Text("আপিল জমা: \(submitted)")
                     .font(.caption2).foregroundStyle(.secondary)
+            }
+            if let onOpenEvidence {
+                Button("জমা দেওয়া প্রমাণ দেখুন ↗", action: onOpenEvidence)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1793,7 +1823,9 @@ private struct ApprovalDetailSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("কোন জরিমানার আপিল").font(.caption2.weight(.heavy))
                             .textCase(.uppercase).foregroundStyle(.secondary)
-                        PenaltyAppealInfoBox(appeal: pa)
+                        PenaltyAppealInfoBox(appeal: pa, onOpenEvidence: pa.attachmentUrl.map { path in
+                            { openWeb(path, "Appeal evidence") }
+                        })
                     }
                 }
                 infoRow("Reason", approval.reason ?? "—")
@@ -1915,6 +1947,114 @@ private struct RejectNoteSheet: View {
         .padding(18)
         .presentationBackground { ApprovalsAurora() }
         .onAppear { focused = true }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct PenaltyApprovalDecisionSheet: View {
+    let approval: AlmaApproval
+    let onConfirm: (_ amount: Int, _ note: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var amount = ""
+    @State private var note = ""
+
+    private var original: Int {
+        approval.penaltyAppeal?.originalPenaltyAmount ?? requested
+    }
+    private var requested: Int {
+        approval.penaltyAppeal?.requestedReductionAmount
+            ?? approval.penaltyAppeal?.originalPenaltyAmount
+            ?? 0
+    }
+    private var amountValue: Int { Int(amount) ?? 0 }
+    private var halfPenalty: Int {
+        min(requested, max(1, Int((Double(original) * 0.5).rounded())))
+    }
+    private var remainingPenalty: Int { max(0, original - amountValue) }
+    private var isPartial: Bool { valid && remainingPenalty > 0 }
+    private var valid: Bool {
+        amountValue > 0 && amountValue <= requested && amountValue <= original
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Penalty appeal approval").font(.headline)
+            if let appeal = approval.penaltyAppeal { PenaltyAppealInfoBox(appeal: appeal) }
+            HStack(spacing: 8) {
+                decisionStat("Original penalty", value: original)
+                decisionStat("Staff requested", value: requested)
+            }
+            Text("Quick amount").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                quickAmountButton("Full requested", value: requested)
+                quickAmountButton("Half penalty", value: halfPenalty)
+            }
+            Text("Exact wallet credit (maximum \(ApprovalFormat.taka(requested)))")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            TextField("৳", text: $amount)
+                .keyboardType(.numberPad)
+                .padding(12)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(valid ? (isPartial ? "Partial approval" : "Full approval") : "Enter a valid amount")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.green400) : ApprovalPalette.red400)
+                if valid {
+                    Text("Wallet credit \(ApprovalFormat.taka(amountValue)) · Remaining penalty \(ApprovalFormat.taka(remainingPenalty))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Text("Staff notification and SMS will show this exact result.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Text("Choose between ৳1 and the requested maximum \(ApprovalFormat.taka(requested)).")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background((valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.emerald600) : ApprovalPalette.red500).opacity(0.09),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            TextField("অনুমোদনের নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
+                .lineLimit(2...4)
+                .padding(12)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            Button("\(isPartial ? "Approve partial" : "Approve full") · credit \(valid ? ApprovalFormat.taka(amountValue) : "—")") {
+                let rationale = note.trimmingCharacters(in: .whitespacesAndNewlines)
+                dismiss()
+                onConfirm(amountValue, rationale)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ApprovalPalette.coral)
+            .frame(maxWidth: .infinity)
+            .disabled(!valid)
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .onAppear { amount = String(requested) }
+    }
+
+    private func quickAmountButton(_ label: String, value: Int) -> some View {
+        Button {
+            amount = String(value)
+        } label: {
+            VStack(spacing: 2) {
+                Text(label).font(.caption2.weight(.semibold))
+                Text(ApprovalFormat.taka(value)).font(.caption2.monospacedDigit())
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(amountValue == value ? ApprovalPalette.coral : .secondary)
+    }
+
+    private func decisionStat(_ label: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(ApprovalFormat.taka(value)).font(.subheadline.monospacedDigit().weight(.bold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 

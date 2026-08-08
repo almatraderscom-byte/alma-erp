@@ -12,12 +12,14 @@ import { roundMoney } from '@/lib/money'
 import type { EmployeeWalletResponse, WalletRequestDto } from '@/types/payroll-wallet'
 import { FaceVerificationCheckIn } from '@/components/attendance/FaceVerificationCheckIn'
 import { needsSelfieVerification, SelfieVerificationModal } from '@/components/attendance/SelfieVerificationModal'
-import { PenaltyAppealModal } from '@/components/attendance/PenaltyAppealModal'
+import { PenaltyAppealModal, type PenaltyAppealTarget } from '@/components/attendance/PenaltyAppealModal'
+import { attendancePenaltyTargets } from '@/lib/attendance-penalty-target'
 import { PenaltyAppealStatus } from '@/components/attendance/PenaltyAppealStatus'
 import { ProfilePhotoSection } from '@/components/profile/ProfilePhotoSection'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { useMyDeskProfile } from '@/hooks/useMyDeskProfile'
 import { useMyAttendance } from '@/hooks/useMyAttendance'
@@ -75,6 +77,12 @@ type AttendanceRecordDto = {
   totalWorkMinutes: number
   lateMinutes: number
   penaltyAmount: number
+  penaltyLedgerEntryId: string | null
+  earlyLeaveMinutes: number
+  earlyLeavePenaltyAmount: number
+  earlyLeavePenaltyLedgerEntryId: string | null
+  noCheckoutFineAmount: number
+  noCheckoutFineLedgerEntryId: string | null
   trustStatus: string
   suspiciousReasons: string[]
   verificationRequired: boolean
@@ -102,6 +110,7 @@ type DrivingStatus = {
 
 type AttendanceWaiverDto = {
   id: string
+  penaltyLedgerEntryId?: string | null
   status: string
   statusLabel?: string
   requestType?: string
@@ -110,8 +119,12 @@ type AttendanceWaiverDto = {
   requestedReductionAmount: number | null
   approvedReductionAmount: number | null
   finalAppliedPenalty?: number
+  refundedAmount?: number
+  refundReconciled?: boolean
+  refundIssue?: string | null
   hasAttachment?: boolean
   adminNote?: string | null
+  reviewedAt?: string | null
   createdAt: string
 }
 
@@ -638,7 +651,7 @@ function AttendanceCard({
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState<'out' | 'cancel' | 'exception' | 'leave' | null>(null)
-  const [appealOpen, setAppealOpen] = useState(false)
+  const [appealTarget, setAppealTarget] = useState<PenaltyAppealTarget | null>(null)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
   const [exceptionOpen, setExceptionOpen] = useState(false)
@@ -665,9 +678,17 @@ function AttendanceCard({
     waivedPenalties: 0,
     averageWorkMinutes: 0,
   }
-  const waiverList = Array.isArray(today?.waiverRequests) ? today.waiverRequests : []
   const securityReasons = asStringArray(today?.suspiciousReasons)
-  const penaltyAmount = Number(today?.penaltyAmount ?? 0)
+  const penaltyTargets: PenaltyAppealTarget[] = today
+    ? attendancePenaltyTargets(today).map(target => ({
+        attendanceRecordId: today.id,
+        penaltyLedgerEntryId: target.ledgerEntryId,
+        penaltyAmount: target.amount,
+        lateMinutes: target.minutes,
+        attendanceDate: today.attendanceDate,
+        penaltyKind: target.kind,
+      }))
+    : []
   const selfieActionRequired = needsSelfieVerification(today)
   const selfieSubmitted = Boolean(today && today.selfieCount > 0 && !today.verificationRequired)
 
@@ -831,6 +852,12 @@ function AttendanceCard({
   }
 
   async function cancelAppeal(waiverId: string) {
+    const confirmed = await confirmDialog({
+      message: 'এই আপিল বাতিল করলে একই জরিমানার জন্য আবার আপিল করা যাবে না। তবুও বাতিল করবেন?',
+      confirmLabel: 'স্থায়ীভাবে বাতিল করুন',
+      danger: true,
+    })
+    if (!confirmed) return
     setBusy('cancel')
     try {
       const result = await safeFetchJsonWithToast(
@@ -898,7 +925,15 @@ function AttendanceCard({
             <WalletStat label="Check out" value={formatAttendanceTime(today?.checkOutAt)} />
             <WalletStat label="Worked" value={minutesText(today?.totalWorkMinutes || 0)} />
             <WalletStat label="Late" value={minutesText(today?.lateMinutes || 0)} tone={today?.lateMinutes ? 'text-red-400' : 'text-green-400'} />
-            <WalletStat label="Penalty" value={money(today?.penaltyAmount || 0)} tone={today?.penaltyAmount ? 'text-red-400' : 'text-green-400'} />
+            <WalletStat
+              label="Today fines"
+              value={money(
+                Number(today?.penaltyAmount || 0)
+                + Number(today?.earlyLeavePenaltyAmount || 0)
+                + Number(today?.noCheckoutFineAmount || 0),
+              )}
+              tone={penaltyTargets.length ? 'text-red-400' : 'text-green-400'}
+            />
           </div>
         )}
       </AttendanceSubsectionBoundary>
@@ -1169,33 +1204,60 @@ function AttendanceCard({
       </AttendanceSubsectionBoundary>
 
       <AttendanceSubsectionBoundary name="Penalty appeals">
-        {penaltyAmount > 0 && today && (
+        {today && penaltyTargets.map(target => (
           <PenaltyAppealStatus
-            penaltyAmount={penaltyAmount}
-            lateMinutes={Number(today.lateMinutes || 0)}
-            waivers={waiverList}
-            onRequestReview={() => setAppealOpen(true)}
+            key={target.penaltyLedgerEntryId}
+            penaltyAmount={target.penaltyAmount}
+            penaltyKind={target.penaltyKind || 'LATE'}
+            penaltyMinutes={target.lateMinutes}
+            waivers={today.waiverRequests.filter(w => w.penaltyLedgerEntryId === target.penaltyLedgerEntryId)}
+            onRequestReview={() => setAppealTarget(target)}
             onCancelPending={id => void cancelAppeal(id)}
             cancelling={busy === 'cancel'}
           />
+        ))}
+        {desk && desk.waivers.length > 0 && (
+          <div className="mt-3 rounded-2xl border border-border bg-white/[0.04] p-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-muted">Appeal history</p>
+            <div className="mt-2 space-y-2">
+              {desk.waivers.slice(0, 8).map(waiver => (
+                <div key={waiver.id} className="rounded-xl border border-border/70 bg-black/10 px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-bold text-cream">৳{waiver.originalPenaltyAmount.toLocaleString('en-BD')} · {new Date(waiver.createdAt).toLocaleDateString('en-GB', { timeZone: 'Asia/Dhaka' })}</span>
+                    <span className={waiver.status === 'REJECTED' ? 'font-black text-red-400' : waiver.status === 'PENDING' ? 'font-black text-amber-500' : 'font-black text-emerald-500'}>
+                      {waiver.statusLabel || waiver.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-muted">Your reason: {waiver.reason || 'Not recorded'}</p>
+                  {waiver.status === 'REJECTED' && (
+                    <p className="mt-1 font-semibold text-red-300">Rejection reason: {waiver.adminNote || 'No reason was stored on this historical decision.'}</p>
+                  )}
+                  {(waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED') && (
+                    waiver.refundReconciled === true ? (
+                      <p className="mt-1 font-semibold text-emerald-400">Wallet credit posted: ৳{Number(waiver.refundedAmount || 0).toLocaleString('en-BD')} · Final penalty: ৳{Math.max(0, waiver.originalPenaltyAmount - Number(waiver.refundedAmount || 0)).toLocaleString('en-BD')}</p>
+                    ) : (
+                      <div className="mt-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-amber-300">
+                        <p className="font-bold">Wallet credit not reconciled: posted ৳{Number(waiver.refundedAmount || 0).toLocaleString('en-BD')} of approved ৳{Number(waiver.approvedReductionAmount || 0).toLocaleString('en-BD')}.</p>
+                        <p className="mt-0.5 text-[10px]">Effective penalty in ledger: ৳{Math.max(0, waiver.originalPenaltyAmount - Number(waiver.refundedAmount || 0)).toLocaleString('en-BD')} · {waiver.refundIssue || 'Wallet adjustment is awaiting verification.'}</p>
+                      </div>
+                    )
+                  )}
+                  {!waiver.penaltyLedgerEntryId && (
+                    <p className="mt-1 text-[10px] font-bold text-amber-500">Historical record: exact fine type is awaiting ledger verification.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </AttendanceSubsectionBoundary>
 
-      {appealOpen && (
+      {appealTarget && (
         <PenaltyAppealModal
-          open={appealOpen}
+          open
           businessId={businessId}
-          target={
-            today && penaltyAmount > 0
-              ? {
-                  attendanceRecordId: today.id,
-                  penaltyAmount,
-                  lateMinutes: Number(today.lateMinutes || 0),
-                  attendanceDate: today.attendanceDate,
-                }
-              : null
-          }
-          onClose={() => setAppealOpen(false)}
+          target={appealTarget}
+          onClose={() => setAppealTarget(null)}
           onSubmitted={onRefresh}
         />
       )}

@@ -639,7 +639,10 @@ model AttendanceWaiverRequest {
   createdAt                DateTime                    @default(now())
   updatedAt                DateTime                    @updatedAt
 
-  @@unique([attendanceRecordId, userId])
+  // A staff member may appeal a specific posted penalty only once. The partial
+  // unique index is created in SQL because legacy rows can have a null ledger
+  // link; new submissions always require the exact PENALTY ledger entry.
+  @@index([attendanceRecordId, userId])
   @@index([businessId, isArchived, createdAt])
   @@index([businessId, status, createdAt])
   @@index([businessId, employeeId, createdAt])
@@ -1113,6 +1116,8 @@ model SmsLog {
   sentAt        DateTime?
   deliveredAt   DateTime?
   metadataJson  String?   @db.Text
+  /// Durable event idempotency key (for example one result SMS per appeal).
+  contentId     String?   @unique
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

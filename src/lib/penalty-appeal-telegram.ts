@@ -15,11 +15,14 @@ export function formatPenaltyAppealTelegramMessage(input: {
   requestedReduction: number
   requestType: AttendanceWaiverRequestType
   reason: string
+  fineLabel?: string
+  fineDate?: string
 }) {
   return [
     '⚠️ <b>Penalty Review Request</b>',
     '',
     `<b>Employee:</b> ${escapeHtml(input.employeeName)} (${escapeHtml(input.employeeId)})`,
+    `<b>Fine:</b> ${escapeHtml(input.fineLabel || 'Attendance penalty')}${input.fineDate ? ` · ${escapeHtml(input.fineDate)}` : ''}`,
     `<b>Penalty:</b> ৳ ${input.penaltyAmount.toLocaleString('en-BD')}`,
     `<b>Request:</b> ${escapeHtml(REQUEST_TYPE_LABEL[input.requestType] || input.requestType)}`,
     `<b>Asked reduction:</b> ৳ ${input.requestedReduction.toLocaleString('en-BD')}`,
@@ -35,9 +38,8 @@ export function penaltyAppealTelegramKeyboard(waiverId: string, erpUrl: string) 
       [
         { text: '✅ Approve full', callback_data: `penalty:approve:${waiverId}` },
         { text: '✂️ Partial', callback_data: `penalty:partial:${waiverId}` },
-        { text: '❌ Reject', callback_data: `penalty:reject:${waiverId}` },
       ],
-      [{ text: 'Open ERP', url: erpUrl }],
+      [{ text: '❌ Reject with reason in ERP', url: erpUrl }],
     ] as TelegramInlineButton[][],
   }
 }

@@ -35,6 +35,12 @@ export type AttendanceRecordClient = {
   totalWorkMinutes: number
   lateMinutes: number
   penaltyAmount: number
+  penaltyLedgerEntryId: string | null
+  earlyLeaveMinutes: number
+  earlyLeavePenaltyAmount: number
+  earlyLeavePenaltyLedgerEntryId: string | null
+  noCheckoutFineAmount: number
+  noCheckoutFineLedgerEntryId: string | null
   trustStatus: string
   suspiciousReasons: string[]
   verificationRequired: boolean
@@ -46,6 +52,7 @@ export type AttendanceRecordClient = {
 
 export type AttendanceWaiverClient = {
   id: string
+  penaltyLedgerEntryId?: string | null
   status: string
   statusLabel?: string
   requestType?: string
@@ -54,8 +61,12 @@ export type AttendanceWaiverClient = {
   requestedReductionAmount: number | null
   approvedReductionAmount: number | null
   finalAppliedPenalty?: number
+  refundedAmount?: number
+  refundReconciled?: boolean
+  refundIssue?: string | null
   hasAttachment?: boolean
   adminNote?: string | null
+  reviewedAt?: string | null
   createdAt: string
 }
 

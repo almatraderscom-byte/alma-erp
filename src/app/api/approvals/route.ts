@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 import { prisma } from '@/lib/prisma'
@@ -16,10 +16,10 @@ import {
 import { parseArchiveVisibility, resolveArchiveVisibilityWhere } from '@/lib/business-archive/query'
 import { apiFailure, apiDataSuccess } from '@/lib/safe-api-response'
 import { withApiRoute } from '@/lib/core/safe-route-helpers'
-import { logEvent } from '@/lib/logger'
 import { resolvePayoutSummariesForUsers } from '@/lib/employee-payment-method'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import type { SalaryCorrectionPayload } from '@/types/salary-correction'
+import { resolveAttendancePenaltyTarget } from '@/lib/attendance-penalty-target'
 
 export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const token = await getJwt(req)
@@ -93,7 +93,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const penaltyEntityIds = approvalsRaw
     .filter(row => isPenaltyApprovalType(row.module, row.type))
     .map(row => row.entityId)
-  const [walletRows, penaltyRows] = await Promise.all([
+  const [walletRows, penaltyRows, penaltyAttachmentRows] = await Promise.all([
     walletEntityIds.length
       ? prisma.walletRequest.findMany({
           where: { id: { in: walletEntityIds } },
@@ -110,6 +110,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
             originalPenaltyAmount: true,
             requestedReductionAmount: true,
             penaltyLedgerEntryId: true,
+            businessId: true,
             createdAt: true,
             attendanceRecord: {
               select: {
@@ -118,18 +119,36 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
                 earlyLeaveMinutes: true,
                 checkInAt: true,
                 checkOutAt: true,
+                penaltyAmount: true,
                 penaltyLedgerEntryId: true,
+                earlyLeavePenaltyAmount: true,
                 earlyLeavePenaltyLedgerEntryId: true,
+                noCheckoutFineAmount: true,
                 noCheckoutFineLedgerEntryId: true,
               },
             },
           },
         })
       : [],
+    penaltyEntityIds.length
+      ? prisma.attendanceWaiverRequest.findMany({
+          where: {
+            id: { in: penaltyEntityIds },
+            attachmentDataUrl: { not: null },
+          },
+          select: { id: true },
+        })
+      : [],
   ])
   const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
   const penaltyStatusMap = new Map(penaltyRows.map(w => [w.id, w.status]))
-  const penaltyWaiverMap = new Map(penaltyRows.map(w => [w.id, w]))
+  const penaltyAttachmentIds = new Set(penaltyAttachmentRows.map(row => row.id))
+  const penaltyWaiverMap = new Map(
+    penaltyRows.map(waiver => [
+      waiver.id,
+      { ...waiver, hasAttachment: penaltyAttachmentIds.has(waiver.id) },
+    ]),
+  )
 
   const payoutByUser = new Map<string, Awaited<ReturnType<typeof resolvePayoutSummariesForUsers>> extends Map<string, infer V> ? V : never>()
   if (role === 'SUPER_ADMIN') {
@@ -167,6 +186,9 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
             id: row.entityId,
           })
         : 'linked_pending'
+    const penaltyAppeal = isPenaltyApprovalType(row.module, row.type)
+      ? penaltyAppealContext(penaltyWaiverMap.get(row.entityId))
+      : undefined
     return {
       ...row,
       requester: (() => {
@@ -179,12 +201,11 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
       })(),
       businessName: row.businessId && BUSINESSES[row.businessId as BusinessId] ? BUSINESSES[row.businessId as BusinessId].name : 'Global',
       entityLabel: entityLabel(row.payloadSnapshot, row.entityId, row.type),
-      executable: isExecutable(row.module, row.type),
+      executable: isExecutable(row.module, row.type)
+        && (!isPenaltyApprovalType(row.module, row.type) || penaltyAppeal?.fineIdentityResolved === true),
       linkageStatus,
       sourceStatus: walletStatus ?? penaltyStatus,
-      penaltyAppeal: isPenaltyApprovalType(row.module, row.type)
-        ? penaltyAppealContext(penaltyWaiverMap.get(row.entityId))
-        : undefined,
+      penaltyAppeal,
       payoutSummary:
         isWalletApprovalType(row.module, row.type) || row.type === 'SALARY_ADVANCE'
           ? payoutByUser.get(`${row.businessId || 'ALMA_LIFESTYLE'}:${row.requestedBy}`)
@@ -207,11 +228,14 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
 })
 
 type PenaltyWaiverSlice = {
+  id: string
   status: string
   requestType: string
   originalPenaltyAmount: unknown
   requestedReductionAmount: unknown
   penaltyLedgerEntryId: string | null
+  hasAttachment: boolean
+  businessId: string
   createdAt: Date
   attendanceRecord: {
     attendanceDate: Date
@@ -219,8 +243,11 @@ type PenaltyWaiverSlice = {
     earlyLeaveMinutes: number | null
     checkInAt: Date
     checkOutAt: Date | null
+    penaltyAmount: unknown
     penaltyLedgerEntryId: string | null
+    earlyLeavePenaltyAmount: unknown
     earlyLeavePenaltyLedgerEntryId: string | null
+    noCheckoutFineAmount: unknown
     noCheckoutFineLedgerEntryId: string | null
   } | null
 }
@@ -234,20 +261,17 @@ type PenaltyWaiverSlice = {
 function penaltyAppealContext(waiver: PenaltyWaiverSlice | undefined) {
   const record = waiver?.attendanceRecord
   if (!waiver || !record) return undefined
-  // The waiver pins the exact contested ledger entry; match it to name the fine.
-  const fineKind = (() => {
-    const led = waiver.penaltyLedgerEntryId
-    if (led && led === record.earlyLeavePenaltyLedgerEntryId) return 'EARLY_LEAVE'
-    if (led && led === record.noCheckoutFineLedgerEntryId) return 'NO_CHECKOUT'
-    if (led && led === record.penaltyLedgerEntryId) return 'LATE'
-    if (record.lateMinutes > 0) return 'LATE'
-    if ((record.earlyLeaveMinutes ?? 0) > 0) return 'EARLY_LEAVE'
-    if (!record.checkOutAt) return 'NO_CHECKOUT'
-    return 'UNKNOWN'
-  })()
+  const target = resolveAttendancePenaltyTarget(
+    record,
+    waiver.penaltyLedgerEntryId,
+    waiver.originalPenaltyAmount,
+  )
+  const fineKind = target?.kind ?? 'UNKNOWN'
   return {
     fineDate: record.attendanceDate.toISOString(),
     fineKind,
+    fineIdentityResolved: Boolean(target),
+    penaltyLedgerEntryId: target?.ledgerEntryId ?? null,
     lateMinutes: record.lateMinutes,
     earlyLeaveMinutes: record.earlyLeaveMinutes ?? null,
     checkInAt: record.checkInAt.toISOString(),
@@ -257,6 +281,9 @@ function penaltyAppealContext(waiver: PenaltyWaiverSlice | undefined) {
       waiver.requestedReductionAmount == null ? null : Number(waiver.requestedReductionAmount),
     requestType: waiver.requestType,
     appealSubmittedAt: waiver.createdAt.toISOString(),
+    attachmentUrl: waiver.hasAttachment
+      ? `/api/attendance/waivers/${waiver.id}/attachment?business_id=${encodeURIComponent(waiver.businessId)}`
+      : null,
   }
 }
 
