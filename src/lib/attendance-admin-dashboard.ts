@@ -7,6 +7,7 @@ import { resolveProfileImageForUser } from '@/lib/user-display'
 import { scanAttendanceIntegrity } from '@/lib/attendance-integrity'
 import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
 import { resolveAttendancePenaltyTarget } from '@/lib/attendance-penalty-target'
+import { reconcilePenaltyAppealRefund } from '@/lib/wallet-transparency'
 
 function minutesLabel(minutes: number) {
   const h = Math.floor(minutes / 60)
@@ -262,16 +263,10 @@ export async function buildAdminAttendanceDashboard(input: {
         w.penaltyLedgerEntryId,
         w.originalPenaltyAmount,
       )
-      const refund = w.reversalLedgerEntryId ? recentRefundMap.get(w.reversalLedgerEntryId) : null
-      const approved = w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED'
-      const expected = approved ? Number(w.approvedReductionAmount || 0) : 0
-      const refundAmount = refund ? Number(refund.amount || 0) : 0
-      const refundReconciled = !approved || Boolean(
-        refund
-        && refund.type === 'ADJUSTMENT'
-        && refund.source === 'attendance_late_penalty_reversal'
-        && (!refund.relatedEntryId || refund.relatedEntryId === resolvedPenalty?.ledgerEntryId)
-        && Math.abs(refundAmount - expected) < 0.01
+      const reconciliation = reconcilePenaltyAppealRefund(
+        w,
+        resolvedPenalty?.ledgerEntryId,
+        recentRefundMap,
       )
       return {
         ...attendanceWaiverDto(w),
@@ -282,13 +277,9 @@ export async function buildAdminAttendanceDashboard(input: {
         reviewerName: w.reviewer?.name || null,
         attendanceDate: w.attendanceRecord.attendanceDate.toISOString(),
         penaltyKind: resolvedPenalty?.kind || 'UNKNOWN',
-        refundAmount,
-        refundReconciled,
-        refundIssue: !approved || refundReconciled
-          ? null
-          : !refund
-            ? 'Approved decision has no wallet credit row.'
-            : 'Wallet credit amount/link does not match the decision.',
+        refundAmount: reconciliation.refundedAmount,
+        refundReconciled: reconciliation.refundReconciled,
+        refundIssue: reconciliation.refundIssue,
         attachmentUrl: w.attachmentDataUrl
           ? `/api/attendance/waivers/${w.id}/attachment?business_id=${encodeURIComponent(w.businessId)}`
           : null,
