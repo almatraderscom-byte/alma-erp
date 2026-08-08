@@ -184,8 +184,9 @@ export function enqueuePenaltyAppealReviewedSms(input: {
       remainingPenalty: input.remainingPenalty,
     },
     // Each fine is independent; two same-day appeal decisions must each send.
-    // Transaction/idempotency guards already prevent the same review re-firing.
+    // The exact waiver id durably prevents concurrent/conflicting re-sends.
     cooldownMinutes: 0,
+    contentId: `penalty-appeal-reviewed:${input.waiverId}`,
   })
 }
 

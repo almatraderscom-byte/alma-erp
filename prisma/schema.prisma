@@ -1116,6 +1116,8 @@ model SmsLog {
   sentAt        DateTime?
   deliveredAt   DateTime?
   metadataJson  String?   @db.Text
+  /// Durable event idempotency key (for example one result SMS per appeal).
+  contentId     String?   @unique
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

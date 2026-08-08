@@ -523,10 +523,24 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
 
   try {
     const txResult = await runApprovalTransaction('penalty_appeal.review', async tx => {
-      const locked = await tx.attendanceWaiverRequest.findFirst({
+      // Atomically claim this pending decision. A read-then-update flow under
+      // READ COMMITTED lets two reviewers both observe PENDING and emit
+      // conflicting side effects; the conditional update allows one winner.
+      const claimed = await tx.attendanceWaiverRequest.updateMany({
         where: { id: waiver.id, businessId: input.businessId, status: 'PENDING' },
+        data: {
+          status: waiverStatus,
+          penaltyLedgerEntryId,
+          originalPenaltyAmount: new Prisma.Decimal(originalPenalty.toFixed(2)),
+          requestedReductionAmount: new Prisma.Decimal(requestedReduction.toFixed(2)),
+          approvedReductionAmount: action === 'APPROVE' ? new Prisma.Decimal(approvedReduction.toFixed(2)) : null,
+          adminNote,
+          reviewedById: actorUserId,
+          reviewedAt: new Date(),
+        },
       })
-      if (!locked) throw new Error('ALREADY_REVIEWED')
+      if (!claimed.count) throw new Error('ALREADY_REVIEWED')
+      const locked = await tx.attendanceWaiverRequest.findUniqueOrThrow({ where: { id: waiver.id } })
 
       let approval = await tx.approvalRequest.findFirst({
         where: {
@@ -578,19 +592,7 @@ export async function reviewPenaltyAppeal(input: ReviewPenaltyAppealInput) {
         })
       }
 
-      const row = await tx.attendanceWaiverRequest.update({
-        where: { id: waiver.id },
-        data: {
-          status: waiverStatus,
-          penaltyLedgerEntryId,
-          originalPenaltyAmount: new Prisma.Decimal(originalPenalty.toFixed(2)),
-          requestedReductionAmount: new Prisma.Decimal(requestedReduction.toFixed(2)),
-          approvedReductionAmount: action === 'APPROVE' ? new Prisma.Decimal(approvedReduction.toFixed(2)) : null,
-          adminNote,
-          reviewedById: actorUserId,
-          reviewedAt: new Date(),
-        },
-      })
+      const row = locked
 
       if (action === 'APPROVE') {
         await applyPenaltyReversalInTx(
