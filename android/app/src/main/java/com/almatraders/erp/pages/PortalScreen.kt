@@ -174,6 +174,7 @@ private data class PortalProfile(
 /** One penalty-appeal waiver (web AttendanceWaiverDto slice the desk shows). */
 private data class PortalWaiver(
     val id: String,
+    val penaltyLedgerEntryId: String?,
     val status: String,
     val statusLabel: String?,
     val requestType: String?,
@@ -201,6 +202,7 @@ private data class PortalWaiver(
             val id = o.str("id") ?: return null
             return PortalWaiver(
                 id = id,
+                penaltyLedgerEntryId = o.str("penaltyLedgerEntryId"),
                 status = o.str("status") ?: "PENDING",
                 statusLabel = o.str("statusLabel"),
                 requestType = o.str("requestType"),
@@ -223,8 +225,28 @@ private data class PortalAttendanceToday(
     val totalWorkMinutes: Int?,
     val lateMinutes: Int?,
     val penaltyAmount: Int?,
+    val earlyLeaveMinutes: Int?,
+    val earlyLeavePenaltyAmount: Int?,
+    val earlyLeavePenaltyLedgerEntryId: String?,
+    val noCheckoutFineAmount: Int?,
+    val noCheckoutFineLedgerEntryId: String?,
     val waiverRequests: List<PortalWaiver>,
 ) {
+    val penaltyTargets: List<PortalPenaltyTarget>
+        get() = listOfNotNull(
+            penaltyLedgerEntryId?.takeIf { (penaltyAmount ?: 0) > 0 }?.let {
+                PortalPenaltyTarget(it, penaltyAmount ?: 0, lateMinutes ?: 0, "LATE PENALTY", "Late by ${lateMinutes ?: 0} minutes")
+            },
+            earlyLeavePenaltyLedgerEntryId?.takeIf { (earlyLeavePenaltyAmount ?: 0) > 0 }?.let {
+                PortalPenaltyTarget(it, earlyLeavePenaltyAmount ?: 0, earlyLeaveMinutes ?: 0, "EARLY LEAVE PENALTY", "Left ${earlyLeaveMinutes ?: 0} minutes early")
+            },
+            noCheckoutFineLedgerEntryId?.takeIf { (noCheckoutFineAmount ?: 0) > 0 }?.let {
+                PortalPenaltyTarget(it, noCheckoutFineAmount ?: 0, 0, "NO CHECK-OUT PENALTY", "Check-out was not recorded")
+            },
+        )
+
+    val totalPenalty: Int get() = penaltyTargets.sumOf { it.amount }
+
     companion object {
         fun from(o: JSONObject): PortalAttendanceToday = PortalAttendanceToday(
             id = o.str("id"),
@@ -235,10 +257,23 @@ private data class PortalAttendanceToday(
             totalWorkMinutes = o.flexInt("totalWorkMinutes"),
             lateMinutes = o.flexInt("lateMinutes"),
             penaltyAmount = o.flexInt("penaltyAmount"),
+            earlyLeaveMinutes = o.flexInt("earlyLeaveMinutes"),
+            earlyLeavePenaltyAmount = o.flexInt("earlyLeavePenaltyAmount"),
+            earlyLeavePenaltyLedgerEntryId = o.str("earlyLeavePenaltyLedgerEntryId"),
+            noCheckoutFineAmount = o.flexInt("noCheckoutFineAmount"),
+            noCheckoutFineLedgerEntryId = o.str("noCheckoutFineLedgerEntryId"),
             waiverRequests = o.optJSONArray("waiverRequests")?.mapObjects { PortalWaiver.from(it) } ?: emptyList(),
         )
     }
 }
+
+private data class PortalPenaltyTarget(
+    val ledgerEntryId: String,
+    val amount: Int,
+    val minutes: Int,
+    val label: String,
+    val detail: String,
+)
 
 private data class PortalAttendanceSummary(
     val presentDays: Int,
@@ -745,7 +780,7 @@ fun PortalScreen(ctx: PushCtx) {
     var walletSheet by remember { mutableStateOf(false) }
     var leaveSheet by remember { mutableStateOf(false) }
     var exceptionSheet by remember { mutableStateOf(false) }
-    var appealSheet by remember { mutableStateOf(false) }
+    var appealTarget by remember { mutableStateOf<PortalPenaltyTarget?>(null) }
     var mealReason by remember { mutableStateOf("") }
     var confirmMeal by remember { mutableStateOf(false) }
     var drivingReason by remember { mutableStateOf("") }
@@ -808,7 +843,7 @@ fun PortalScreen(ctx: PushCtx) {
                         vm, dark,
                         onOpenWeb = { p, t -> ctx.openWebForced(p, t) },
                         onAskException = { exceptionSheet = true },
-                        onAppeal = { appealSheet = true },
+                        onAppeal = { appealTarget = it },
                         onCancelWaiver = { id -> cancelWaiverId = id },
                     )
                 }
@@ -913,20 +948,20 @@ fun PortalScreen(ctx: PushCtx) {
             }
         }
     }
-    if (appealSheet) {
-        ModalBottomSheet(onDismissRequest = { appealSheet = false }, containerColor = AlmaTheme.rootBg(dark)) {
+    appealTarget?.let { target ->
+        ModalBottomSheet(onDismissRequest = { appealTarget = null }, containerColor = AlmaTheme.rootBg(dark)) {
             PortalAppealSheet(
-                penaltyAmount = vm.attendanceToday?.penaltyAmount ?: 0,
-                lateMinutes = vm.attendanceToday?.lateMinutes ?: 0,
+                fineLabel = target.label,
+                fineDetail = target.detail,
+                penaltyAmount = target.amount,
                 attendanceDate = vm.attendanceToday?.attendanceDate,
                 dark = dark,
             ) { requestType, reason, partialAmount ->
-                appealSheet = false
+                appealTarget = null
                 val today = vm.attendanceToday
                 val recordId = today?.id
-                val penaltyLedgerEntryId = today?.penaltyLedgerEntryId
-                if (recordId != null && penaltyLedgerEntryId != null) {
-                    scope.launch { vm.submitPenaltyAppeal(recordId, penaltyLedgerEntryId, requestType, reason, partialAmount) }
+                if (recordId != null) {
+                    scope.launch { vm.submitPenaltyAppeal(recordId, target.ledgerEntryId, requestType, reason, partialAmount) }
                 }
             }
         }
@@ -1137,7 +1172,7 @@ private fun AttendanceCard(
     dark: Boolean,
     onOpenWeb: (String, String) -> Unit,
     onAskException: () -> Unit,
-    onAppeal: () -> Unit,
+    onAppeal: (PortalPenaltyTarget) -> Unit,
     onCancelWaiver: (String) -> Unit,
 ) {
     val today = vm.attendanceToday
@@ -1188,8 +1223,8 @@ private fun AttendanceCard(
                     tone = if ((today?.lateMinutes ?: 0) > 0) PortalPalette.red500 else PortalPalette.green400,
                 )
                 StatTile(
-                    "Penalty", PortalFormat.money(today?.penaltyAmount ?: 0), dark,
-                    tone = if ((today?.penaltyAmount ?: 0) > 0) PortalPalette.red500 else PortalPalette.green400,
+                    "Penalty", PortalFormat.money(today?.totalPenalty ?: 0), dark,
+                    tone = if ((today?.totalPenalty ?: 0) > 0) PortalPalette.red500 else PortalPalette.green400,
                 )
             }
             summary?.let { s ->
@@ -1204,8 +1239,8 @@ private fun AttendanceCard(
                 }
             }
             // Web PenaltyAppealStatus — shown when today carries a penalty.
-            if (today != null && (today.penaltyAmount ?: 0) > 0) {
-                PenaltyAppealBlock(today, vm, dark, onAppeal, onCancelWaiver)
+            today?.penaltyTargets?.forEach { target ->
+                PenaltyAppealBlock(today, target, vm, dark, onAppeal, onCancelWaiver)
             }
         }
 
@@ -1323,14 +1358,15 @@ private fun ExceptionBlock(vm: PortalState, dark: Boolean, onAsk: () -> Unit) {
 @Composable
 private fun PenaltyAppealBlock(
     today: PortalAttendanceToday,
+    target: PortalPenaltyTarget,
     vm: PortalState,
     dark: Boolean,
-    onAppeal: () -> Unit,
+    onAppeal: (PortalPenaltyTarget) -> Unit,
     onCancelWaiver: (String) -> Unit,
 ) {
-    val waivers = today.waiverRequests
+    val waivers = today.waiverRequests.filter { it.penaltyLedgerEntryId == target.ledgerEntryId }
     val active = waivers.firstOrNull { it.status == "PENDING" } ?: waivers.firstOrNull()
-    val canRequest = waivers.none { it.status == "PENDING" }
+    val canRequest = waivers.isEmpty()
     val shape = RoundedCornerShape(AlmaTheme.R_CONTROL.dp)
 
     Column(
@@ -1341,14 +1377,14 @@ private fun PenaltyAppealBlock(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("LATE PENALTY", color = PortalPalette.red500, fontSize = 10.sp, fontWeight = FontWeight.Black)
+        Text(target.label, color = PortalPalette.red500, fontSize = 10.sp, fontWeight = FontWeight.Black)
         Text(
-            PortalFormat.money(today.penaltyAmount ?: 0),
+            PortalFormat.money(target.amount),
             color = AlmaTheme.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.Black,
             fontFamily = FontFamily.Monospace,
         )
         Text(
-            "Late by ${today.lateMinutes ?: 0} minutes · deducted from wallet",
+            "${target.detail} · deducted from wallet",
             color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp,
         )
 
@@ -1415,7 +1451,7 @@ private fun PenaltyAppealBlock(
                 Modifier
                     .background(PortalPalette.coral.copy(alpha = 0.13f), CircleShape)
                     .border(1.dp, PortalPalette.coral.copy(alpha = 0.35f), CircleShape)
-                    .plainClick { if (!busy) onAppeal() }
+                    .plainClick { if (!busy) onAppeal(target) }
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2429,8 +2465,9 @@ private fun PortalExceptionSheet(dark: Boolean, onSubmit: (scope: String, reason
 
 @Composable
 private fun PortalAppealSheet(
+    fineLabel: String,
+    fineDetail: String,
     penaltyAmount: Int,
-    lateMinutes: Int,
     attendanceDate: String?,
     dark: Boolean,
     onSubmit: (requestType: String, reason: String, partialAmount: Int?) -> Unit,
@@ -2457,7 +2494,7 @@ private fun PortalAppealSheet(
     ) {
         Text("Penalty appeal", color = AlmaTheme.ink(dark), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         Text(
-            "Late ${lateMinutes}m · penalty ${PortalFormat.money(penaltyAmount)}" +
+            "$fineLabel · $fineDetail · ${PortalFormat.money(penaltyAmount)}" +
                 (attendanceDate?.let { " · ${it.take(10)}" } ?: ""),
             color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp,
         )

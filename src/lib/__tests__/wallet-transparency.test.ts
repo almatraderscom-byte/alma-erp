@@ -207,4 +207,24 @@ describe('mapFineAppeals — same-day fine isolation', () => {
     expect(result['early-50'].waiverId).toBeNull()
     expect(result['no-checkout-500'].waiverId).toBeNull()
   })
+
+  it('derives the final penalty from the actual posted credit, not the decision amount', async () => {
+    waiverFindMany.mockResolvedValue([{
+      id: 'waiver-partial-ledger', status: 'APPROVED', requestType: 'FULL_WAIVE', reason: 'Approved',
+      adminNote: null, reviewedAt: new Date('2026-08-02T00:00:00Z'), reversalLedgerEntryId: 'refund-250',
+      penaltyLedgerEntryId: 'no-checkout-500', attendanceRecordId: 'attendance-1',
+      requestedReductionAmount: 500, approvedReductionAmount: 500, originalPenaltyAmount: 500,
+      reviewer: { name: 'Admin' },
+    }])
+    const result = await mapFineAppeals([
+      ...fineRows,
+      { id: 'refund-250', type: 'ADJUSTMENT', date: new Date('2026-08-02T00:00:00Z'), employeeId: 'EMP-1', businessId: 'ALMA_LIFESTYLE', amount: 250, source: 'attendance_late_penalty_reversal', relatedEntryId: 'no-checkout-500' },
+    ] as never, new Date('2026-08-02T00:00:00Z'))
+    expect(result['no-checkout-500']).toMatchObject({
+      approvedReductionAmount: 500,
+      refundedAmount: 250,
+      refundReconciled: false,
+      finalPenaltyAmount: 250,
+    })
+  })
 })

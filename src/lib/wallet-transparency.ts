@@ -193,6 +193,7 @@ export async function mapFineAppeals(
       ? reconcilePenaltyAppealRefund(w, fine.id, entryById)
       : { refundedAmount: 0, refundReconciled: true, refundIssue: null }
     const original = Number(w?.originalPenaltyAmount ?? fine.amount ?? 0)
+    const approved = w?.status === 'APPROVED' || w?.status === 'PARTIALLY_APPROVED'
 
     result[fine.id] = {
       status,
@@ -205,7 +206,9 @@ export async function mapFineAppeals(
       refundedAmount: reconciliation.refundedAmount,
       requestedReductionAmount: w?.requestedReductionAmount == null ? null : Number(w.requestedReductionAmount),
       approvedReductionAmount: w?.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount),
-      finalPenaltyAmount: finalAppliedPenalty(original, w?.status ?? 'PENDING', w?.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount)),
+      finalPenaltyAmount: approved
+        ? Math.max(0, original - reconciliation.refundedAmount)
+        : finalAppliedPenalty(original, w?.status ?? 'PENDING', null),
       requestType: w?.requestType || null,
       reason: w?.reason || null,
       adminNote: w?.adminNote || null,
