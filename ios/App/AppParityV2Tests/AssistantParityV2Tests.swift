@@ -3,6 +3,42 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testLiveBargeInCorrelationRecognizesRenderedEchoWithSmallDelay() {
+        let rendered: [Float] = (0..<160).map {
+            let x = Double($0)
+            return Float(sin(x * 0.19) * 0.7 + sin(x * 0.047) * 0.3)
+        }
+        let delayed = Array(repeating: Float.zero, count: 11) + rendered.dropLast(11)
+
+        XCTAssertGreaterThan(
+            AlmaLiveBargeInEvidence.normalizedCorrelation(rendered, Array(delayed)),
+            0.90,
+            "a delayed copy of ALMA's own waveform must remain classified as echo")
+    }
+
+    func testLiveBargeInRejectsEchoMusicAndNoiseButAcceptsDoubleTalk() {
+        XCTAssertFalse(AlmaLiveBargeInEvidence.isHumanSpeech(
+            micRMS: 0.040, echoFloorRMS: 0.030,
+            echoCorrelation: 0.76, calibratedEchoCorrelation: 0.78,
+            speechConfidence: 0.82, musicConfidence: 0.03, noiseConfidence: 0.02),
+            "ALMA's own speech has high reference correlation and must not stop playback")
+        XCTAssertFalse(AlmaLiveBargeInEvidence.isHumanSpeech(
+            micRMS: 0.052, echoFloorRMS: 0.030,
+            echoCorrelation: 0.16, calibratedEchoCorrelation: 0.78,
+            speechConfidence: 0.31, musicConfidence: 0.72, noiseConfidence: 0.04),
+            "music may break correlation but must not count as owner speech")
+        XCTAssertFalse(AlmaLiveBargeInEvidence.isHumanSpeech(
+            micRMS: 0.052, echoFloorRMS: 0.030,
+            echoCorrelation: 0.14, calibratedEchoCorrelation: 0.78,
+            speechConfidence: 0.20, musicConfidence: 0.04, noiseConfidence: 0.61),
+            "ambient noise may break correlation but must not count as owner speech")
+        XCTAssertTrue(AlmaLiveBargeInEvidence.isHumanSpeech(
+            micRMS: 0.052, echoFloorRMS: 0.030,
+            echoCorrelation: 0.18, calibratedEchoCorrelation: 0.78,
+            speechConfidence: 0.79, musicConfidence: 0.06, noiseConfidence: 0.03),
+            "nearby speech that no longer matches ALMA's waveform must interrupt")
+    }
+
     func testTopModelMenuPreservesAutoAndProviderGrouping() {
         let models = [
             AgentModelInfo(id: "claude", label: "Claude", provider: "anthropic", enabled: true, isDefault: false),

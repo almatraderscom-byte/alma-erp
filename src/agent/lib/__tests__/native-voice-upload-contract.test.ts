@@ -158,15 +158,23 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('loudspeakerProbeVoiceRequiredFrames = 2')
     expect(voice).toContain('loudspeakerProbeRetainedEnergyRatio = 0.60')
     expect(voice).toContain('loudspeakerProbeDuckVolume: Float = 0.35')
-    expect(voice).toContain('bargeInPreRollChunks = 14')
+    expect(voice).toContain('bargeInPreRollChunks = 60')
     expect(voice).toContain('playbackReferenceSpeechRequiredFrames = 4')
-    expect(voice).toContain('playbackReferenceEchoSafetyRatio = 1.35')
-    expect(voice).toContain('playbackReferenceMinimumResidualRMS = 0.012')
+    expect(voice).toContain('import SoundAnalysis')
+    expect(voice).toContain('SNClassifySoundRequest(classifierIdentifier: .version1)')
+    expect(voice).toContain('request.windowDuration = CMTime(seconds: 0.5')
+    expect(voice).toContain('request.overlapFactor = 0.8')
+    expect(voice).toContain('classification(forIdentifier: "speech")')
+    expect(voice).toContain('let musicIDs = ["music", "singing", "choir_singing"')
+    expect(voice).toContain('item.identifier.contains("noise")')
     expect(voice).toContain('capturePlaybackReference')
     expect(voice).toContain('audioEngine.mainMixerNode.installTap')
     expect(voice).toContain('audioEngine.mainMixerNode.removeTap')
-    expect(voice).toContain('rms * rms - predictedEchoRMS * predictedEchoRMS')
-    expect(voice).toContain('local barge-in confirmed by playback reference')
+    expect(voice).toContain('recentPlaybackCorrelationLocked')
+    expect(voice).toContain('AlmaLiveBargeInEvidence.isHumanSpeech')
+    expect(voice).toContain('local barge-in confirmed speech')
+    expect(voice).toContain('let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('if needsNoAECDetector, let analyzer = soundAnalyzer')
     expect(voice).toContain('echoFloorRMS * 1.9 + 0.003')
     expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
     expect(voice).toContain('setLoudspeakerProbeMuted(true)')
@@ -220,26 +228,23 @@ describe('native voice upload contract', () => {
     expect(pureEchoAfterDuck).toBeLessThan(retainedThreshold)
     expect(humanPlusEcho).toBeGreaterThan(retainedThreshold)
 
-    // Temporal regression: the old 220ms settle discarded a short word that had
-    // already ended. The playback-reference path must classify four 20ms frames
-    // without ducking, while conservatively padded pure echo remains residual-free.
-    const renderedRms = 0.1
-    const acousticEchoRms = 0.04
+    // Temporal regression: after the classifier's rolling window is warm, four
+    // 20ms speech frames must interrupt before the old 220ms duck settle. Pure
+    // echo, music, and noise each fail one independent evidence requirement.
     const loudspeakerProbeSettleMs = 220
-    const predictedEchoRms = renderedRms
-      * (acousticEchoRms / renderedRms)
-      * 1.35
-    const residual = (micRms: number) => Math.sqrt(Math.max(
-      0,
-      micRms ** 2 - predictedEchoRms ** 2,
-    ))
-    const pureEchoResidual = residual(acousticEchoRms)
-    const shortHumanMicRms = Math.hypot(acousticEchoRms, 0.045)
-    const shortWordFrames = Array.from({ length: 4 }, () => residual(shortHumanMicRms))
+    const accepts = (correlation: number, speech: number, music: number, noise: number) => (
+      correlation <= Math.max(0.14, 0.78 * 0.62)
+      && speech >= 0.34
+      && speech >= music + 0.12
+      && speech >= noise + 0.06
+    )
+    const shortWordFrames = Array.from({ length: 4 }, () => accepts(0.18, 0.79, 0.06, 0.03))
 
-    expect(pureEchoResidual).toBe(0)
+    expect(accepts(0.76, 0.82, 0.03, 0.02)).toBe(false) // rendered echo
+    expect(accepts(0.16, 0.31, 0.72, 0.04)).toBe(false) // music
+    expect(accepts(0.14, 0.20, 0.04, 0.61)).toBe(false) // ambient noise
     expect(shortWordFrames).toHaveLength(4)
-    expect(shortWordFrames.every((frame) => frame >= 0.012)).toBe(true)
+    expect(shortWordFrames.every(Boolean)).toBe(true)
     expect(shortWordFrames.length * 20).toBeLessThan(loudspeakerProbeSettleMs)
   })
 
