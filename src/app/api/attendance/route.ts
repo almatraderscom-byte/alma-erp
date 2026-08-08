@@ -10,6 +10,7 @@ import {
   withApiRoute,
 } from '@/lib/core/safe-api'
 import { classifyAttendanceDbError, safeAttendanceQuery } from '@/lib/core/safe-attendance'
+import { reconcilePenaltyAppealRefund } from '@/lib/wallet-transparency'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 25
@@ -111,10 +112,51 @@ export const GET = withApiRoute(
           + Number(r.noCheckoutFineAmount || 0),
         0,
       )
-      const waivedPenalties = waivers
-        .filter(w => w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED')
-        .reduce((sum, w) => sum + Number(w.approvedReductionAmount || 0), 0)
       const todayRow = records.find(r => r.attendanceDate.getTime() === q.date.getTime()) || null
+
+      const ledgerIds = Array.from(new Set(waivers.flatMap(w => [
+        w.penaltyLedgerEntryId,
+        w.reversalLedgerEntryId,
+      ]).filter((id): id is string => Boolean(id))))
+      const ledgerEntries = ledgerIds.length
+        ? await prisma.employeeLedgerEntry.findMany({
+            where: {
+              id: { in: ledgerIds },
+              employeeId: targetEmployeeId,
+              businessId: q.selectedBusinessId,
+              isArchived: false,
+            },
+            select: {
+              id: true,
+              type: true,
+              amount: true,
+              source: true,
+              relatedEntryId: true,
+            },
+          })
+        : []
+      const ledgerById = new Map(ledgerEntries.map(entry => [entry.id, entry]))
+      const refundByWaiverId = new Map(waivers.map(waiver => [
+        waiver.id,
+        reconcilePenaltyAppealRefund(waiver, waiver.penaltyLedgerEntryId, ledgerById),
+      ]))
+      const waivedPenalties = Array.from(refundByWaiverId.values())
+        .filter(refund => refund.refundReconciled)
+        .reduce((sum, refund) => sum + refund.refundedAmount, 0)
+      const waiverDtoWithRefund = (waiver: (typeof waivers)[number]) => ({
+        ...attendanceWaiverDto(waiver),
+        ...refundByWaiverId.get(waiver.id),
+      })
+      const recordDtoWithRefund = (record: (typeof records)[number]) => {
+        const dto = attendanceRecordDto(record)
+        return {
+          ...dto,
+          waiverRequests: dto.waiverRequests.map(waiver => ({
+            ...waiver,
+            ...refundByWaiverId.get(waiver.id),
+          })),
+        }
+      }
 
       logEvent('info', 'attendance.get.me_ok', {
         userId: ctx.userId,
@@ -127,9 +169,9 @@ export const GET = withApiRoute(
       return apiDataSuccess({
         businessId: q.selectedBusinessId,
         employeeId: targetEmployeeId,
-        today: todayRow ? attendanceRecordDto(todayRow) : null,
-        records: records.map(attendanceRecordDto),
-        waivers: waivers.map(attendanceWaiverDto),
+        today: todayRow ? recordDtoWithRefund(todayRow) : null,
+        records: records.map(recordDtoWithRefund),
+        waivers: waivers.map(waiverDtoWithRefund),
         summary: {
           presentDays: records.length,
           lateCount,

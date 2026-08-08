@@ -45,6 +45,30 @@ function moneyValue(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+export type RequestedPenaltyReductionResult =
+  | { ok: true; amount: number }
+  | { ok: false; reason: 'INVALID_AMOUNT' | 'AMOUNT_REQUIRED' | 'EXCEEDS_ORIGINAL_PENALTY' }
+
+/**
+ * Validate the staff request before immutable once-only appeal history is
+ * created. In particular, a blank partial-reduction field must not consume the
+ * one appeal allowed for that exact fine.
+ */
+export function resolveRequestedPenaltyReduction(
+  originalPenalty: number,
+  rawRequestedAmount: number,
+): RequestedPenaltyReductionResult {
+  const original = moneyValue(Number(originalPenalty))
+  const input = Number(rawRequestedAmount)
+  if (!Number.isFinite(original) || original <= 0 || !Number.isFinite(input)) {
+    return { ok: false, reason: 'INVALID_AMOUNT' }
+  }
+  if (input <= 0) return { ok: false, reason: 'AMOUNT_REQUIRED' }
+  const amount = moneyValue(input)
+  if (amount > original) return { ok: false, reason: 'EXCEEDS_ORIGINAL_PENALTY' }
+  return { ok: true, amount }
+}
+
 /**
  * Resolve the reviewer's exact wallet credit. The reviewer may reduce a full
  * request to half or any custom amount, but may never credit more than the

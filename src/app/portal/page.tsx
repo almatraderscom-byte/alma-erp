@@ -119,6 +119,9 @@ type AttendanceWaiverDto = {
   requestedReductionAmount: number | null
   approvedReductionAmount: number | null
   finalAppliedPenalty?: number
+  refundedAmount?: number
+  refundReconciled?: boolean
+  refundIssue?: string | null
   hasAttachment?: boolean
   adminNote?: string | null
   reviewedAt?: string | null
@@ -1230,7 +1233,14 @@ function AttendanceCard({
                     <p className="mt-1 font-semibold text-red-300">Rejection reason: {waiver.adminNote || 'No reason was stored on this historical decision.'}</p>
                   )}
                   {(waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED') && (
-                    <p className="mt-1 font-semibold text-emerald-400">Wallet refund: ৳{Number(waiver.approvedReductionAmount || 0).toLocaleString('en-BD')} · Final penalty: ৳{Number(waiver.finalAppliedPenalty || 0).toLocaleString('en-BD')}</p>
+                    waiver.refundReconciled === true ? (
+                      <p className="mt-1 font-semibold text-emerald-400">Wallet credit posted: ৳{Number(waiver.refundedAmount || 0).toLocaleString('en-BD')} · Final penalty: ৳{Math.max(0, waiver.originalPenaltyAmount - Number(waiver.refundedAmount || 0)).toLocaleString('en-BD')}</p>
+                    ) : (
+                      <div className="mt-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-amber-300">
+                        <p className="font-bold">Wallet credit not reconciled: posted ৳{Number(waiver.refundedAmount || 0).toLocaleString('en-BD')} of approved ৳{Number(waiver.approvedReductionAmount || 0).toLocaleString('en-BD')}.</p>
+                        <p className="mt-0.5 text-[10px]">Effective penalty in ledger: ৳{Math.max(0, waiver.originalPenaltyAmount - Number(waiver.refundedAmount || 0)).toLocaleString('en-BD')} · {waiver.refundIssue || 'Wallet adjustment is awaiting verification.'}</p>
+                      </div>
+                    )
                   )}
                   {!waiver.penaltyLedgerEntryId && (
                     <p className="mt-1 text-[10px] font-bold text-amber-500">Historical record: exact fine type is awaiting ledger verification.</p>

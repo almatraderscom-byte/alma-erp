@@ -5,6 +5,7 @@ import {
   normalizePenaltyReviewNote,
   resolveApprovedPenaltyReduction,
   resolvePenaltyTarget,
+  resolveRequestedPenaltyReduction,
 } from '@/lib/penalty-appeal-policy'
 
 describe('penalty appeal policy', () => {
@@ -25,6 +26,17 @@ describe('penalty appeal policy', () => {
   it('keeps rejected and cancelled penalties non-appealable', () => {
     expect(isFineAppealable(true, true)).toBe(false)
     expect(isFineAppealable(true, false)).toBe(true)
+  })
+
+  it('rejects a blank partial amount before it can consume the once-only appeal', () => {
+    expect(resolveRequestedPenaltyReduction(500, 0)).toEqual({
+      ok: false,
+      reason: 'AMOUNT_REQUIRED',
+    })
+  })
+
+  it('accepts a valid partial staff request within the exact fine', () => {
+    expect(resolveRequestedPenaltyReduction(500, 250)).toEqual({ ok: true, amount: 250 })
   })
 
   it('formats the selected amount without substituting the late fine', () => {

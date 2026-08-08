@@ -5,7 +5,7 @@ import type {
 } from '@/lib/attendance-client'
 
 /** Bump when client payload shape changes — clears stale localStorage caches. */
-export const ATTENDANCE_PAYLOAD_VERSION = 5
+export const ATTENDANCE_PAYLOAD_VERSION = 6
 
 export function attendanceCacheKey(businessId: string, employeeId: string) {
   return `alma_attendance_me_v${ATTENDANCE_PAYLOAD_VERSION}_${businessId}_${employeeId}`
@@ -67,6 +67,10 @@ export function normalizeAttendanceWaiver(raw: unknown): AttendanceWaiverClient 
       r.approvedReductionAmount == null ? null : asNumber(r.approvedReductionAmount),
     finalAppliedPenalty:
       r.finalAppliedPenalty == null ? undefined : asNumber(r.finalAppliedPenalty),
+    refundedAmount: r.refundedAmount == null ? undefined : asNumber(r.refundedAmount),
+    refundReconciled:
+      r.refundReconciled == null ? undefined : asBool(r.refundReconciled),
+    refundIssue: typeof r.refundIssue === 'string' ? r.refundIssue : null,
     hasAttachment: asBool(r.hasAttachment, false),
     adminNote: typeof r.adminNote === 'string' ? r.adminNote : null,
     reviewedAt: typeof r.reviewedAt === 'string' ? r.reviewedAt : null,

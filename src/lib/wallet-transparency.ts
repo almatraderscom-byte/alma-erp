@@ -39,6 +39,54 @@ export type FineAppealInfo = {
 
 const APPEAL_REFUND_SOURCES = new Set(['attendance_late_penalty_reversal'])
 
+type PenaltyRefundWaiver = Pick<
+  AttendanceWaiverRequest,
+  'status' | 'approvedReductionAmount' | 'reversalLedgerEntryId'
+>
+type PenaltyRefundEntry = Pick<EmployeeLedgerEntry, 'id' | 'type' | 'amount' | 'source' | 'relatedEntryId'>
+
+export type PenaltyRefundReconciliation = {
+  refundedAmount: number
+  refundReconciled: boolean
+  refundIssue: string | null
+}
+
+/**
+ * Treat the wallet ledger as the source of truth for a completed appeal. The
+ * decision amount is an expectation; it is not presented as paid until the
+ * exact linked adjustment exists for the exact fine and amount.
+ */
+export function reconcilePenaltyAppealRefund(
+  waiver: PenaltyRefundWaiver,
+  penaltyLedgerEntryId: string | null | undefined,
+  entryById: ReadonlyMap<string, PenaltyRefundEntry>,
+): PenaltyRefundReconciliation {
+  const approved = waiver.status === 'APPROVED' || waiver.status === 'PARTIALLY_APPROVED'
+  if (!approved) return { refundedAmount: 0, refundReconciled: true, refundIssue: null }
+
+  const expectedRefund = Number(waiver.approvedReductionAmount || 0)
+  const refundEntry = waiver.reversalLedgerEntryId
+    ? entryById.get(waiver.reversalLedgerEntryId)
+    : null
+  const refundLinked = Boolean(
+    penaltyLedgerEntryId
+    && refundEntry
+    && refundEntry.type === 'ADJUSTMENT'
+    && Boolean(refundEntry.source && APPEAL_REFUND_SOURCES.has(refundEntry.source))
+    && refundEntry.relatedEntryId === penaltyLedgerEntryId
+  )
+  const actualRefund = refundLinked ? Math.max(0, Number(refundEntry?.amount || 0)) : 0
+  const refundReconciled = refundLinked && Math.abs(actualRefund - expectedRefund) < 0.01
+  const refundIssue = !refundEntry
+    ? 'Approved refund ledger entry is missing.'
+    : !refundLinked
+      ? 'Refund ledger entry is not linked to this exact penalty.'
+      : Math.abs(actualRefund - expectedRefund) >= 0.01
+        ? `Decision amount and wallet credit differ (৳${expectedRefund} vs ৳${actualRefund}).`
+        : null
+  return { refundedAmount: actualRefund, refundReconciled, refundIssue }
+}
+
 function daysLeftInWindow(fineDate: Date, now: Date): number {
   const ms = appealDeadline(fineDate).getTime() - now.getTime()
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
@@ -136,26 +184,9 @@ export async function mapFineAppeals(
     // cancelled appeal remains part of the immutable decision history.
     const appealable = isFineAppealable(withinWindow, Boolean(w))
 
-    const approved = Boolean(w && (w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED'))
-    const expectedRefund = approved ? Number(w?.approvedReductionAmount || 0) : 0
-    const refundEntry = w?.reversalLedgerEntryId ? entryById.get(w.reversalLedgerEntryId) : null
-    const refundLinked = Boolean(
-      refundEntry
-      && refundEntry.type === 'ADJUSTMENT'
-      && Boolean(refundEntry.source && APPEAL_REFUND_SOURCES.has(refundEntry.source))
-      && refundEntry.relatedEntryId === fine.id
-    )
-    const actualRefund = refundLinked ? Math.max(0, Number(refundEntry?.amount || 0)) : 0
-    const refundReconciled = !approved || (refundLinked && Math.abs(actualRefund - expectedRefund) < 0.01)
-    const refundIssue = !approved
-      ? null
-      : !refundEntry
-        ? 'Approved refund ledger entry is missing.'
-        : !refundLinked
-          ? 'Refund ledger entry is not linked to this exact penalty.'
-          : Math.abs(actualRefund - expectedRefund) >= 0.01
-            ? `Decision amount and wallet credit differ (৳${expectedRefund} vs ৳${actualRefund}).`
-            : null
+    const reconciliation = w
+      ? reconcilePenaltyAppealRefund(w, fine.id, entryById)
+      : { refundedAmount: 0, refundReconciled: true, refundIssue: null }
     const original = Number(w?.originalPenaltyAmount ?? fine.amount ?? 0)
 
     result[fine.id] = {
@@ -166,7 +197,7 @@ export async function mapFineAppeals(
       waiverId: w?.id || null,
       attendanceRecordId: entryToRecord.get(fine.id) || w?.attendanceRecordId || null,
       refundEntryId: w?.reversalLedgerEntryId || null,
-      refundedAmount: actualRefund,
+      refundedAmount: reconciliation.refundedAmount,
       requestedReductionAmount: w?.requestedReductionAmount == null ? null : Number(w.requestedReductionAmount),
       approvedReductionAmount: w?.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount),
       finalPenaltyAmount: finalAppliedPenalty(original, w?.status ?? 'PENDING', w?.approvedReductionAmount == null ? null : Number(w.approvedReductionAmount)),
@@ -175,8 +206,8 @@ export async function mapFineAppeals(
       adminNote: w?.adminNote || null,
       reviewerName: w?.reviewer?.name || null,
       reviewedAt: w?.reviewedAt?.toISOString() || null,
-      refundReconciled,
-      refundIssue,
+      refundReconciled: reconciliation.refundReconciled,
+      refundIssue: reconciliation.refundIssue,
     }
   }
   return result

@@ -33,6 +33,7 @@ import {
   normalizePenaltyReviewNote,
   PENALTY_REJECTION_REASON_MIN_LENGTH,
   resolveApprovedPenaltyReduction,
+  resolveRequestedPenaltyReduction,
 } from '@/lib/penalty-appeal-policy'
 import { attendancePenaltyKindLabel, resolveAttendancePenaltyTarget } from '@/lib/attendance-penalty-target'
 import { enqueuePenaltyAppealReviewedSms } from '@/services/sms/events'
@@ -243,6 +244,20 @@ export type SubmitPenaltyAppealResult =
 /** Atomic, once-only appeal submit for one exact wallet penalty row. */
 export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Promise<SubmitPenaltyAppealResult> {
   const ctx = { employeeId: input.employeeId, userId: input.userId, userName: input.userName }
+
+  // Validate before the duplicate lookup and, critically, before creating the
+  // immutable once-only row. A blank partial amount arrives as zero from older
+  // clients and must leave the fine available for a corrected submission.
+  const requested = resolveRequestedPenaltyReduction(input.originalPenalty, input.requestedReduction)
+  if (!requested.ok) {
+    const error = requested.reason === 'AMOUNT_REQUIRED'
+      ? 'আংশিক মওকুফের টাকার পরিমাণ লিখুন। শূন্য টাকার আপিল জমা দেওয়া যাবে না।'
+      : requested.reason === 'EXCEEDS_ORIGINAL_PENALTY'
+        ? 'আপিলের পরিমাণ নির্দিষ্ট জরিমানার চেয়ে বেশি হতে পারবে না।'
+        : 'আপিলের টাকার পরিমাণ সঠিক নয়।'
+    return { error, status: 400 }
+  }
+  input = { ...input, requestedReduction: requested.amount }
 
   const attendanceRecord = await prisma.attendanceRecord.findUnique({
     where: { id: input.attendanceRecordId },

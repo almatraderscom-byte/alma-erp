@@ -61,6 +61,9 @@ export type AttendanceWaiverClient = {
   requestedReductionAmount: number | null
   approvedReductionAmount: number | null
   finalAppliedPenalty?: number
+  refundedAmount?: number
+  refundReconciled?: boolean
+  refundIssue?: string | null
   hasAttachment?: boolean
   adminNote?: string | null
   reviewedAt?: string | null

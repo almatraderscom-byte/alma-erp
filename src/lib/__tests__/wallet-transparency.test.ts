@@ -10,7 +10,11 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 
-import { fineWindowSummary, mapFineAppeals } from '@/lib/wallet-transparency'
+import {
+  fineWindowSummary,
+  mapFineAppeals,
+  reconcilePenaltyAppealRefund,
+} from '@/lib/wallet-transparency'
 
 function appeal(overrides: Partial<FineAppealInfo> = {}): FineAppealInfo {
   return {
@@ -73,6 +77,33 @@ describe('fineWindowSummary', () => {
     }, null, null)
     expect(summary.refundCount).toBe(0)
     expect(summary.refundTotal).toBe(0)
+  })
+})
+
+describe('reconcilePenaltyAppealRefund', () => {
+  const approved = {
+    status: 'APPROVED',
+    approvedReductionAmount: 500,
+    reversalLedgerEntryId: 'refund-1',
+  } as never
+
+  it('does not label a missing adjustment as a completed wallet refund', () => {
+    expect(reconcilePenaltyAppealRefund(approved, 'fine-1', new Map())).toEqual({
+      refundedAmount: 0,
+      refundReconciled: false,
+      refundIssue: 'Approved refund ledger entry is missing.',
+    })
+  })
+
+  it('reports the actual ledger amount when it differs from the decision', () => {
+    const entries = new Map([['refund-1', {
+      id: 'refund-1', type: 'ADJUSTMENT', amount: 250,
+      source: 'attendance_late_penalty_reversal', relatedEntryId: 'fine-1',
+    }]]) as never
+    expect(reconcilePenaltyAppealRefund(approved, 'fine-1', entries)).toMatchObject({
+      refundedAmount: 250,
+      refundReconciled: false,
+    })
   })
 })
 

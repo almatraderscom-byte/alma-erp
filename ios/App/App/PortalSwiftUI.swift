@@ -225,6 +225,9 @@ struct PortalWaiver: Decodable, Identifiable {
     let requestedReductionAmount: Int?
     let approvedReductionAmount: Int?
     let finalAppliedPenalty: Int?
+    let refundedAmount: Int?
+    let refundReconciled: Bool?
+    let refundIssue: String?
     let adminNote: String?
     let reason: String?
     let reviewedAt: String?
@@ -232,7 +235,8 @@ struct PortalWaiver: Decodable, Identifiable {
 
     private enum Keys: String, CodingKey {
         case id, penaltyLedgerEntryId, status, statusLabel, requestType, originalPenaltyAmount
-        case requestedReductionAmount, approvedReductionAmount, finalAppliedPenalty, adminNote
+        case requestedReductionAmount, approvedReductionAmount, finalAppliedPenalty
+        case refundedAmount, refundReconciled, refundIssue, adminNote
         case reason, reviewedAt, createdAt
     }
     init(from decoder: Decoder) throws {
@@ -246,6 +250,9 @@ struct PortalWaiver: Decodable, Identifiable {
         requestedReductionAmount = portalFlexInt(c, .requestedReductionAmount)
         approvedReductionAmount = portalFlexInt(c, .approvedReductionAmount)
         finalAppliedPenalty = portalFlexInt(c, .finalAppliedPenalty)
+        refundedAmount = portalFlexInt(c, .refundedAmount)
+        refundReconciled = try? c.decodeIfPresent(Bool.self, forKey: .refundReconciled)
+        refundIssue = try? c.decodeIfPresent(String.self, forKey: .refundIssue)
         adminNote = try? c.decodeIfPresent(String.self, forKey: .adminNote)
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         reviewedAt = try? c.decodeIfPresent(String.self, forKey: .reviewedAt)
@@ -1238,8 +1245,14 @@ struct PortalScreen: View {
                             .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.red500)
                     }
                     if waiver.status == "APPROVED" || waiver.status == "PARTIALLY_APPROVED" {
-                        Text("Wallet refund: \(PortalFormat.money(waiver.approvedReductionAmount ?? 0)) · Final penalty: \(PortalFormat.money(waiver.finalAppliedPenalty ?? 0))")
-                            .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.green400)
+                        if waiver.refundReconciled == true {
+                            Text("Wallet credit posted: \(PortalFormat.money(waiver.refundedAmount ?? 0)) · Final penalty: \(PortalFormat.money(max(0, (waiver.originalPenaltyAmount ?? 0) - (waiver.refundedAmount ?? 0))))")
+                                .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.green400)
+                        } else {
+                            let issue = waiver.refundIssue ?? "Wallet adjustment is awaiting verification."
+                            Text("Wallet credit not reconciled: posted \(PortalFormat.money(waiver.refundedAmount ?? 0)) of approved \(PortalFormat.money(waiver.approvedReductionAmount ?? 0)). Effective ledger penalty: \(PortalFormat.money(max(0, (waiver.originalPenaltyAmount ?? 0) - (waiver.refundedAmount ?? 0)))). \(issue)")
+                                .font(.caption2.weight(.semibold)).foregroundStyle(PortalPalette.amber500)
+                        }
                     }
                     if waiver.penaltyLedgerEntryId == nil {
                         Text("Historical record: exact fine type is awaiting ledger verification.")
@@ -1320,8 +1333,14 @@ struct PortalScreen: View {
                         Text("Waiting for admin review. You asked to reduce \(PortalFormat.money(active.requestedReductionAmount ?? active.originalPenaltyAmount ?? 0)).")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else if active.status == "APPROVED" || active.status == "PARTIALLY_APPROVED" {
-                        Text("Approved reduction \(PortalFormat.money(active.approvedReductionAmount ?? 0)) · final penalty \(PortalFormat.money(active.finalAppliedPenalty ?? 0))")
-                            .font(.caption2).foregroundStyle(.secondary)
+                        if active.refundReconciled == true {
+                            Text("Wallet credit posted \(PortalFormat.money(active.refundedAmount ?? 0)) · final penalty \(PortalFormat.money(max(0, (active.originalPenaltyAmount ?? 0) - (active.refundedAmount ?? 0))))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            let issue = active.refundIssue ?? "Wallet adjustment is awaiting verification."
+                            Text("Approved \(PortalFormat.money(active.approvedReductionAmount ?? 0)), but wallet credit is not reconciled (posted \(PortalFormat.money(active.refundedAmount ?? 0))). \(issue)")
+                                .font(.caption2).foregroundStyle(PortalPalette.amber500)
+                        }
                     } else if active.status == "REJECTED" {
                         Text("Request rejected — full penalty remains. Reason: \(active.adminNote?.isEmpty == false ? active.adminNote! : "not recorded for this legacy decision").")
                             .font(.caption2).foregroundStyle(.secondary)
