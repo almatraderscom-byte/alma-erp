@@ -665,6 +665,30 @@ final class ApprovalsVM {
 
 // MARK: - Screen
 
+/// Pure presentation model for the penalty-appeal amount controls. Keeping the
+/// money rules out of the SwiftUI body makes the boundary cases independently
+/// testable without touching the approval API.
+struct PenaltyApprovalDecision: Equatable {
+    let originalPenalty: Int
+    let requestedReduction: Int
+    let amountText: String
+
+    var amount: Int? { Int(amountText) }
+    var maximumAllowed: Int { max(0, min(originalPenalty, requestedReduction)) }
+    var isValid: Bool {
+        guard let amount else { return false }
+        return amount > 0 && amount <= maximumAllowed
+    }
+    var walletCredit: Int { isValid ? (amount ?? 0) : 0 }
+    var remainingPenalty: Int { max(0, originalPenalty - walletCredit) }
+    var isPartial: Bool { isValid && remainingPenalty > 0 }
+    var halfPenalty: Int {
+        guard maximumAllowed > 0 else { return 0 }
+        let halfOriginal = max(1, Int((Double(originalPenalty) * 0.5).rounded()))
+        return min(maximumAllowed, halfOriginal)
+    }
+}
+
 @available(iOS 17.0, *)
 struct ApprovalsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -718,6 +742,14 @@ struct ApprovalsScreen: View {
             if view == "business" { await vm.load() } else { await vm.loadAgent() }
         }
         .task {
+            #if DEBUG
+            if let fixture = Self.penaltyApprovalFixture {
+                vm.approvals = [fixture]
+                vm.totalPending = 1
+                penaltyApproving = fixture
+                return
+            }
+            #endif
             if let actionId = AlmaApprovalNav.pendingAgentActionId, !actionId.isEmpty {
                 AlmaApprovalNav.pendingAgentActionId = nil
                 view = "agent"
@@ -776,9 +808,19 @@ struct ApprovalsScreen: View {
         }
         .sheet(item: $penaltyApproving) { ap in
             PenaltyApprovalDecisionSheet(approval: ap) { amount, note in
+                #if DEBUG
+                // The local regression fixture is deliberately incapable of
+                // submitting an approval, even if its final button is tapped.
+                guard !Self.penaltyApprovalFixtureEnabled else { return }
+                #endif
                 Task { await vm.act(ap, action: "APPROVE", note: note, approvedAmount: amount) }
             }
-            .presentationDetents([.height(430)])
+            // Amount controls + appeal context no longer fit inside the old
+            // fixed 430pt detent. A large, internally scrollable sheet keeps
+            // both the title and the final action reachable on every iPhone.
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationContentInteraction(.scrolls)
         }
         .sheet(item: $revising) { ac in
             ReviseNoteSheet(action: ac) { feedback in
@@ -787,6 +829,54 @@ struct ApprovalsScreen: View {
             .presentationDetents([.height(340)])
         }
     }
+
+    #if DEBUG
+    private static var penaltyApprovalFixtureEnabled: Bool {
+        ProcessInfo.processInfo.environment["ALMA_APPROVAL_SHEET_FIXTURE"] == "1"
+    }
+
+    /// Long, production-shaped data used only by local simulator/UI tests. It
+    /// never enters `ApprovalsVM.act`, so verification cannot resolve a real row.
+    private static var penaltyApprovalFixture: AlmaApproval? {
+        guard penaltyApprovalFixtureEnabled else { return nil }
+        let json = #"""
+        {
+          "id": "debug-penalty-appeal",
+          "module": "PAYROLL",
+          "type": "PENALTY_APPEAL",
+          "businessId": "debug-business",
+          "entityId": "debug-waiver",
+          "entityLabel": "Attendance penalty appeal",
+          "status": "PENDING",
+          "priority": "HIGH",
+          "reason": "কর্মী জানিয়েছেন যে সেদিন প্রবল বৃষ্টিতে রাস্তায় দীর্ঘ যানজট ছিল, অফিসে পৌঁছানোর আগে টিম লিডকে ফোনে জানিয়েছিলেন এবং পরে অতিরিক্ত সময় কাজ করে দায়িত্ব শেষ করেছেন। সংযুক্ত উপস্থিতি তথ্য, সময়ের ধারাবাহিকতা এবং এই বিস্তারিত ব্যাখ্যা যাচাই করে সিদ্ধান্ত নিন।",
+          "createdAt": "2026-08-08T09:15:00.000Z",
+          "businessName": "ALMA Fixture Business",
+          "executable": true,
+          "requestedBy": "Long Context Fixture Requester",
+          "requester": {
+            "id": "debug-requester",
+            "name": "Long Context Fixture Requester",
+            "role": "STAFF",
+            "employeeIdGas": "fixture-employee"
+          },
+          "penaltyAppeal": {
+            "fineDate": "2026-08-05T03:30:00.000Z",
+            "fineKind": "LATE",
+            "fineIdentityResolved": true,
+            "penaltyLedgerEntryId": "debug-ledger",
+            "lateMinutes": 47,
+            "checkInAt": "2026-08-05T04:17:00.000Z",
+            "originalPenaltyAmount": 1000,
+            "requestedReductionAmount": 1000,
+            "requestType": "FULL_WAIVER",
+            "appealSubmittedAt": "2026-08-08T09:15:00.000Z"
+          }
+        }
+        """#
+        return try? JSONDecoder().decode(AlmaApproval.self, from: Data(json.utf8))
+    }
+    #endif
 
     /// Re-open the withdraw txn sheet for a half-done bKash send (owner tapped
     /// "copy + open bKash" and left). Presents only while the approval is still
@@ -1958,6 +2048,12 @@ private struct PenaltyApprovalDecisionSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var amount = ""
     @State private var note = ""
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable {
+        case amount
+        case note
+    }
 
     private var original: Int {
         approval.penaltyAppeal?.originalPenaltyAmount ?? requested
@@ -1967,69 +2063,147 @@ private struct PenaltyApprovalDecisionSheet: View {
             ?? approval.penaltyAppeal?.originalPenaltyAmount
             ?? 0
     }
-    private var amountValue: Int { Int(amount) ?? 0 }
-    private var halfPenalty: Int {
-        min(requested, max(1, Int((Double(original) * 0.5).rounded())))
+    private var decision: PenaltyApprovalDecision {
+        PenaltyApprovalDecision(
+            originalPenalty: original,
+            requestedReduction: requested,
+            amountText: amount)
     }
-    private var remainingPenalty: Int { max(0, original - amountValue) }
-    private var isPartial: Bool { valid && remainingPenalty > 0 }
-    private var valid: Bool {
-        amountValue > 0 && amountValue <= requested && amountValue <= original
+    private var amountValue: Int { decision.amount ?? 0 }
+    private var halfPenalty: Int { decision.halfPenalty }
+    private var remainingPenalty: Int { decision.remainingPenalty }
+    private var isPartial: Bool { decision.isPartial }
+    private var valid: Bool { decision.isValid }
+    private var appealContext: String? {
+        guard let value = approval.reason?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Penalty appeal approval").font(.headline)
-            if let appeal = approval.penaltyAppeal { PenaltyAppealInfoBox(appeal: appeal) }
-            HStack(spacing: 8) {
-                decisionStat("Original penalty", value: original)
-                decisionStat("Staff requested", value: requested)
-            }
-            Text("Quick amount").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                quickAmountButton("Full requested", value: requested)
-                quickAmountButton("Half penalty", value: halfPenalty)
-            }
-            Text("Exact wallet credit (maximum \(ApprovalFormat.taka(requested)))")
-                .font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            TextField("৳", text: $amount)
-                .keyboardType(.numberPad)
-                .padding(12)
-                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(valid ? (isPartial ? "Partial approval" : "Full approval") : "Enter a valid amount")
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.green400) : ApprovalPalette.red400)
-                if valid {
-                    Text("Wallet credit \(ApprovalFormat.taka(amountValue)) · Remaining penalty \(ApprovalFormat.taka(remainingPenalty))")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Text("Staff notification and SMS will show this exact result.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text("Choose between ৳1 and the requested maximum \(ApprovalFormat.taka(requested)).")
-                        .font(.caption2).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Approve penalty appeal")
+                        .font(.headline)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("penalty.approval.title")
+                    Text("\((approval.type ?? "—").replacingOccurrences(of: "_", with: " ")) · \(approval.requester?.name ?? approval.requestedBy ?? "—")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("penalty.approval.requester")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+                Button("Close") {
+                    focusedField = nil
+                    dismiss()
+                }
+                .font(.subheadline.weight(.semibold))
+                .fixedSize()
+                .accessibilityIdentifier("penalty.approval.close")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background((valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.emerald600) : ApprovalPalette.red500).opacity(0.09),
-                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            TextField("অনুমোদনের নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
-                .lineLimit(2...4)
-                .padding(12)
-                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            Divider().opacity(0.55)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let appeal = approval.penaltyAppeal { PenaltyAppealInfoBox(appeal: appeal) }
+                    if let appealContext {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Appeal context")
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(.secondary)
+                            Text(appealContext)
+                                .font(.footnote)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                        .accessibilityIdentifier("penalty.approval.context")
+                    }
+                    HStack(spacing: 8) {
+                        decisionStat("Original penalty", value: original)
+                        decisionStat("Staff requested", value: requested)
+                    }
+                    Text("Quick amount").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        quickAmountButton("Full requested", value: requested)
+                        quickAmountButton("Half penalty", value: halfPenalty)
+                    }
+                    Text("Exact wallet credit (maximum \(ApprovalFormat.taka(requested)))")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    TextField("৳", text: $amount)
+                        .keyboardType(.numberPad)
+                        .focused($focusedField, equals: .amount)
+                        .accessibilityLabel("Approved wallet credit amount")
+                        .accessibilityIdentifier("penalty.approval.amount")
+                        .padding(12)
+                        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(valid ? (isPartial ? "Partial approval" : "Full approval") : "Enter a valid amount")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.green400) : ApprovalPalette.red400)
+                        if valid {
+                            Text("Wallet credit \(ApprovalFormat.taka(amountValue)) · Remaining penalty \(ApprovalFormat.taka(remainingPenalty))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Text("Staff notification and SMS will show this exact result.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            Text("Choose between ৳1 and the requested maximum \(ApprovalFormat.taka(requested)).")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background((valid ? (isPartial ? ApprovalPalette.amber500 : ApprovalPalette.emerald600) : ApprovalPalette.red500).opacity(0.09),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    TextField("অনুমোদনের নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+                        .focused($focusedField, equals: .note)
+                        .accessibilityLabel("Approval note, optional")
+                        .accessibilityIdentifier("penalty.approval.note")
+                        .padding(12)
+                        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("penalty.approval.scroll")
+
+            Divider().opacity(0.55)
+
             Button("\(isPartial ? "Approve partial" : "Approve full") · credit \(valid ? ApprovalFormat.taka(amountValue) : "—")") {
                 let rationale = note.trimmingCharacters(in: .whitespacesAndNewlines)
+                focusedField = nil
                 dismiss()
-                onConfirm(amountValue, rationale)
+                onConfirm(decision.walletCredit, rationale)
             }
             .buttonStyle(.borderedProminent)
             .tint(ApprovalPalette.coral)
             .frame(maxWidth: .infinity)
             .disabled(!valid)
-            Spacer(minLength: 0)
+            .accessibilityIdentifier("penalty.approval.confirm")
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .background(.ultraThinMaterial)
         }
-        .padding(18)
+        .presentationBackground { ApprovalsAurora() }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedField = nil }
+            }
+        }
         .onAppear { amount = String(requested) }
     }
 
