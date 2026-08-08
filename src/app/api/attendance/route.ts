@@ -104,7 +104,13 @@ export const GET = withApiRoute(
       ])
       const totalWorkMinutes = records.reduce((sum, r) => sum + r.totalWorkMinutes, 0)
       const lateCount = records.filter(r => r.lateMinutes > 0).length
-      const totalPenalties = records.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
+      const totalPenalties = records.reduce(
+        (sum, r) => sum
+          + Number(r.penaltyAmount || 0)
+          + Number(r.earlyLeavePenaltyAmount || 0)
+          + Number(r.noCheckoutFineAmount || 0),
+        0,
+      )
       const waivedPenalties = waivers
         .filter(w => w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED')
         .reduce((sum, w) => sum + Number(w.approvedReductionAmount || 0), 0)

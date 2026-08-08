@@ -99,6 +99,7 @@ struct AttendanceRecordRow: Decodable, Identifiable, Equatable {
     let userId: String?
     let employeeId: String?
     let employeeName: String?
+    let profileImageUrl: String?
     let checkInAt: String?
     let checkOutAt: String?
     let totalWorkMinutes: Int?
@@ -110,7 +111,7 @@ struct AttendanceRecordRow: Decodable, Identifiable, Equatable {
     let selfieCount: Int?
 
     private enum Keys: String, CodingKey {
-        case id, businessId, userId, employeeId, employeeName, checkInAt, checkOutAt
+        case id, businessId, userId, employeeId, employeeName, profileImageUrl, checkInAt, checkOutAt
         case totalWorkMinutes, lateMinutes, penaltyAmount, trustStatus
         case suspiciousReasons, verificationRequired, selfieCount
     }
@@ -121,6 +122,7 @@ struct AttendanceRecordRow: Decodable, Identifiable, Equatable {
         userId = try? c.decodeIfPresent(String.self, forKey: .userId)
         employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
         employeeName = try? c.decodeIfPresent(String.self, forKey: .employeeName)
+        profileImageUrl = try? c.decodeIfPresent(String.self, forKey: .profileImageUrl)
         checkInAt = try? c.decodeIfPresent(String.self, forKey: .checkInAt)
         checkOutAt = try? c.decodeIfPresent(String.self, forKey: .checkOutAt)
         totalWorkMinutes = attendanceFlexInt(c, .totalWorkMinutes)
@@ -141,14 +143,16 @@ struct AttendanceAbsentee: Decodable, Identifiable, Equatable {
     let employeeId: String?
     let name: String?
     let email: String?
+    let profileImageUrl: String?
 
-    private enum Keys: String, CodingKey { case id, employeeId, name, email }
+    private enum Keys: String, CodingKey { case id, employeeId, name, email, profileImageUrl }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
         name = try? c.decodeIfPresent(String.self, forKey: .name)
         email = try? c.decodeIfPresent(String.self, forKey: .email)
+        profileImageUrl = try? c.decodeIfPresent(String.self, forKey: .profileImageUrl)
     }
 }
 
@@ -157,6 +161,8 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
     let businessId: String?
     let employeeId: String?
     let requesterName: String?
+    let requesterUserId: String?
+    let requesterProfileImageUrl: String?
     let requestType: String?
     let originalPenaltyAmount: Int?
     let requestedReductionAmount: Int?
@@ -164,10 +170,11 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
     let hasAttachment: Bool?
     let createdAt: String?
     let lateMinutes: Int?
+    let attachmentUrl: String?
 
     private enum Keys: String, CodingKey {
-        case id, businessId, employeeId, requesterName, requestType, originalPenaltyAmount
-        case requestedReductionAmount, reason, hasAttachment, createdAt, lateMinutes
+        case id, businessId, employeeId, requesterName, requesterUserId, requesterProfileImageUrl, requestType, originalPenaltyAmount
+        case requestedReductionAmount, reason, hasAttachment, createdAt, lateMinutes, attachmentUrl
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -175,6 +182,8 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
         businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
         employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
         requesterName = try? c.decodeIfPresent(String.self, forKey: .requesterName)
+        requesterUserId = try? c.decodeIfPresent(String.self, forKey: .requesterUserId)
+        requesterProfileImageUrl = try? c.decodeIfPresent(String.self, forKey: .requesterProfileImageUrl)
         requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
         originalPenaltyAmount = attendanceFlexInt(c, .originalPenaltyAmount)
         requestedReductionAmount = attendanceFlexInt(c, .requestedReductionAmount)
@@ -182,7 +191,29 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
         hasAttachment = try? c.decodeIfPresent(Bool.self, forKey: .hasAttachment)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         lateMinutes = attendanceFlexInt(c, .lateMinutes)
+        attachmentUrl = try? c.decodeIfPresent(String.self, forKey: .attachmentUrl)
     }
+}
+
+private struct AttendanceWaiverDecisionRow: Decodable, Identifiable, Equatable {
+    let id: String
+    let employeeId: String?
+    let requesterName: String?
+    let requesterUserId: String?
+    let requesterProfileImageUrl: String?
+    let status: String
+    let originalPenaltyAmount: Int?
+    let approvedReductionAmount: Int?
+    let finalAppliedPenalty: Int?
+    let reason: String?
+    let adminNote: String?
+    let reviewerName: String?
+    let reviewedAt: String?
+    let attendanceDate: String?
+    let penaltyKind: String?
+    let refundAmount: Int?
+    let refundReconciled: Bool?
+    let refundIssue: String?
 }
 
 /// One selfie verification photo (web selfieLogs) — `imageUrl` is a 1h-signed storage
@@ -224,7 +255,7 @@ struct AttendanceSelfieLog: Decodable, Identifiable, Equatable {
     }
 }
 
-/// One row of the web's "Repeat late penalties" analytics footer.
+/// One row of the web's "Repeat attendance penalties" analytics footer.
 private struct AttendanceRepeatOffender: Decodable, Equatable {
     let employeeId: String
     let penaltyCount: Int
@@ -249,11 +280,12 @@ struct AttendancePenaltyAnalytics: Decodable, Equatable {
     let appealCount: Int
     let pendingCount: Int
     let approvalRate: Int
+    let reconciliationIssues: Int
     fileprivate let repeatOffenders: [AttendanceRepeatOffender]
 
     private enum Keys: String, CodingKey {
         case ok, analytics, totalPenalties, waivedAmount, reducedAmount
-        case netPenaltiesAfterWaivers, appealCount, pendingCount, approvalRate, repeatOffenders
+        case netPenaltiesAfterWaivers, appealCount, pendingCount, approvalRate, reconciliationIssues, repeatOffenders
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -265,6 +297,7 @@ struct AttendancePenaltyAnalytics: Decodable, Equatable {
         appealCount = attendanceFlexInt(c, .appealCount) ?? 0
         pendingCount = attendanceFlexInt(c, .pendingCount) ?? 0
         approvalRate = attendanceFlexInt(c, .approvalRate) ?? 0
+        reconciliationIssues = attendanceFlexInt(c, .reconciliationIssues) ?? 0
         repeatOffenders = (try? c.decodeIfPresent([AttendanceRepeatOffender].self, forKey: .repeatOffenders)) ?? []
     }
 }
@@ -323,8 +356,10 @@ struct AttendanceActionOk: Decodable {
 }
 
 struct AttendanceRankRow: Decodable, Identifiable, Equatable {
+    let userId: String?
     let employeeId: String?
     let name: String?
+    let profileImageUrl: String?
     let presentDays: Int?
     let lateCount: Int?
     let penaltyTotal: Int?
@@ -334,13 +369,15 @@ struct AttendanceRankRow: Decodable, Identifiable, Equatable {
     var id: String { "\(employeeId ?? "?")-\(name ?? "?")" }
 
     private enum Keys: String, CodingKey {
-        case employeeId, name, presentDays, lateCount, penaltyTotal
+        case userId, employeeId, name, profileImageUrl, presentDays, lateCount, penaltyTotal
         case averageWorkLabel, punctualityScore
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
+        userId = try? c.decodeIfPresent(String.self, forKey: .userId)
         employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
         name = try? c.decodeIfPresent(String.self, forKey: .name)
+        profileImageUrl = try? c.decodeIfPresent(String.self, forKey: .profileImageUrl)
         presentDays = attendanceFlexInt(c, .presentDays)
         lateCount = attendanceFlexInt(c, .lateCount)
         penaltyTotal = attendanceFlexInt(c, .penaltyTotal)
@@ -356,13 +393,14 @@ struct AttendanceDashboardResponse: Decodable {
     let records: [AttendanceRecordRow]
     let absentEmployees: [AttendanceAbsentee]
     let pendingWaivers: [AttendanceWaiverRow]
+    fileprivate let recentWaiverDecisions: [AttendanceWaiverDecisionRow]
     let selfieLogs: [AttendanceSelfieLog]
     let ranking: [AttendanceRankRow]
     let scopeAllBusinesses: Bool
     fileprivate let integrity: AttendanceIntegrity?
 
     private enum Keys: String, CodingKey {
-        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses, integrity
+        case ok, data, kpis, records, absentEmployees, pendingWaivers, recentWaiverDecisions, selfieLogs, ranking, scopeAllBusinesses, integrity
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -371,6 +409,7 @@ struct AttendanceDashboardResponse: Decodable {
         records = (try? c.decode([AttendanceRecordRow].self, forKey: .records)) ?? []
         absentEmployees = (try? c.decode([AttendanceAbsentee].self, forKey: .absentEmployees)) ?? []
         pendingWaivers = (try? c.decode([AttendanceWaiverRow].self, forKey: .pendingWaivers)) ?? []
+        recentWaiverDecisions = (try? c.decode([AttendanceWaiverDecisionRow].self, forKey: .recentWaiverDecisions)) ?? []
         selfieLogs = (try? c.decode([AttendanceSelfieLog].self, forKey: .selfieLogs)) ?? []
         ranking = (try? c.decode([AttendanceRankRow].self, forKey: .ranking)) ?? []
         scopeAllBusinesses = (try? c.decodeIfPresent(Bool.self, forKey: .scopeAllBusinesses)) ?? false
@@ -388,6 +427,7 @@ final class AttendanceVM {
     var records: [AttendanceRecordRow] = []
     var absentees: [AttendanceAbsentee] = []
     var waivers: [AttendanceWaiverRow] = []
+    fileprivate var recentDecisions: [AttendanceWaiverDecisionRow] = []
     var selfieLogs: [AttendanceSelfieLog] = []
     var ranking: [AttendanceRankRow] = []
     var analytics: AttendancePenaltyAnalytics? = nil
@@ -423,6 +463,7 @@ final class AttendanceVM {
             records = resp.records
             absentees = resp.absentEmployees
             waivers = resp.pendingWaivers
+            recentDecisions = resp.recentWaiverDecisions
             selfieLogs = resp.selfieLogs
             ranking = resp.ranking
             scopeAllBusinesses = resp.scopeAllBusinesses
@@ -455,6 +496,10 @@ final class AttendanceVM {
     func reviewWaiver(_ waiver: AttendanceWaiverRow, approve: Bool,
                       amount: Int, note: String) async {
         guard !busyIds.contains(waiver.id) else { return }
+        if !approve && note.trimmingCharacters(in: .whitespacesAndNewlines).count < 5 {
+            error = "প্রত্যাখ্যানের আগে স্পষ্ট কারণ লিখুন (অন্তত ৫ অক্ষর)।"
+            return
+        }
         busyIds.insert(waiver.id)
         notice = nil
         error = nil
@@ -462,8 +507,9 @@ final class AttendanceVM {
         do {
             var body: [String: AnyEncodable] = [
                 "action": AnyEncodable(approve ? "APPROVE" : "REJECT"),
-                "admin_note": AnyEncodable(note),
             ]
+            let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedNote.isEmpty { body["admin_note"] = AnyEncodable(trimmedNote) }
             // The web sends the page's business context; natively we know the waiver's
             // own business (in the ALL-scope payload) — strictly more correct.
             if let biz = waiver.businessId { body["business_id"] = AnyEncodable(biz) }
@@ -623,6 +669,7 @@ struct AttendanceScreen: View {
                 kpiStrip
                 analyticsSection
                 waiversSection
+                decisionHistorySection
                 recordsSection
                 selfiePendingSection
                 absentSection
@@ -912,12 +959,17 @@ struct AttendanceScreen: View {
                 }
                 // Web footer line (page.tsx:402-406): repeat offenders, first four.
                 if !a.repeatOffenders.isEmpty {
-                    Text("Repeat late penalties: "
+                    Text("Repeat attendance penalties: "
                          + a.repeatOffenders.prefix(4)
                              .map { "\($0.employeeId) (\(AttendanceFormat.money($0.penaltyTotal)))" }
                              .joined(separator: " · "))
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+                if a.reconciliationIssues > 0 {
+                    Text("ওয়ালেট যাচাই প্রয়োজন: \(a.reconciliationIssues)টি অনুমোদিত আপিলের linked credit মেলেনি।")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(AttendancePalette.amber600)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -986,6 +1038,7 @@ struct AttendanceScreen: View {
                     ForEach(Array(vm.absentees.enumerated()), id: \.element.id) { index, emp in
                         HStack(spacing: 10) {
                             AttendanceAvatar(name: emp.name ?? "?",
+                                             userId: emp.id, imageUrl: emp.profileImageUrl,
                                              dot: AttendancePalette.red500, size: 30)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(emp.name ?? "—").font(.footnote.weight(.semibold))
@@ -1018,10 +1071,60 @@ struct AttendanceScreen: View {
                 AttendanceWaiverCard(
                     waiver: w,
                     busy: vm.busyIds.contains(w.id),
+                    onOpenEvidence: w.attachmentUrl.map { path in { openWeb(path, "Appeal evidence") } },
                     onApprove: { reviewing = AttendanceWaiverReviewTarget(waiver: w, approve: true) },
                     onReject: { reviewing = AttendanceWaiverReviewTarget(waiver: w, approve: false) })
             }
         }
+    }
+
+    @ViewBuilder private var decisionHistorySection: some View {
+        if !vm.recentDecisions.isEmpty {
+            sectionHeader("Recent appeal decisions", count: vm.recentDecisions.count)
+            ForEach(vm.recentDecisions) { row in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 10) {
+                        AttendanceAvatar(name: row.requesterName ?? "?",
+                                         userId: row.requesterUserId,
+                                         imageUrl: row.requesterProfileImageUrl,
+                                         dot: nil, size: 30)
+                        Text("\(row.requesterName ?? "—") · \(row.employeeId ?? "—")")
+                            .font(.footnote.weight(.semibold)).lineLimit(1)
+                        Spacer()
+                        Text(row.status.replacingOccurrences(of: "_", with: " "))
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(row.status == "REJECTED" || row.status == "CANCELLED" ? AttendancePalette.red500 : AttendancePalette.emerald600)
+                    }
+                    Text("\((row.penaltyKind ?? "PENALTY").replacingOccurrences(of: "_", with: " ")) · আসল \(AttendanceFormat.money(row.originalPenaltyAmount ?? 0)) · ফেরত \(AttendanceFormat.money(row.approvedReductionAmount ?? 0)) · চূড়ান্ত \(AttendanceFormat.money(row.finalAppliedPenalty ?? 0))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let explanation = row.reason, !explanation.isEmpty {
+                        Text("স্টাফ: \(explanation)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Text(decisionSummary(row))
+                        .font(.caption).lineLimit(3)
+                    Text("রিভিউ: \(row.reviewerName ?? "পুরোনো / অজানা") · \(AttendanceFormat.dateTime(row.reviewedAt))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if row.refundReconciled == false {
+                        Text("হিসাব যাচাই প্রয়োজন: \(row.refundIssue ?? "ওয়ালেট ক্রেডিট মেলেনি")")
+                            .font(.caption2.weight(.bold)).foregroundStyle(AttendancePalette.amber600)
+                    } else if let refund = row.refundAmount, refund > 0 {
+                        Text("ওয়ালেট ক্রেডিট যাচাই হয়েছে · \(AttendanceFormat.money(refund))")
+                            .font(.caption2.weight(.bold)).foregroundStyle(AttendancePalette.emerald600)
+                    }
+                }
+                .padding(12)
+                .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+            }
+        }
+    }
+
+    private func decisionSummary(_ row: AttendanceWaiverDecisionRow) -> String {
+        if row.status == "REJECTED" {
+            return "প্রত্যাখ্যানের কারণ: \(row.adminNote?.isEmpty == false ? row.adminNote! : "পুরোনো সিদ্ধান্তে কারণ সংরক্ষিত হয়নি")"
+        }
+        if row.status == "CANCELLED" { return "স্টাফ আপিল বাতিল করেছেন" }
+        if let note = row.adminNote, !note.isEmpty { return "অনুমোদনের নোট: \(note)" }
+        return "অনুমোদিত — অতিরিক্ত নোট নেই"
     }
 
     // ── Face verification reviews (web "Pending face verification reviews") ──
@@ -1073,6 +1176,8 @@ struct AttendanceScreen: View {
                             .font(.caption.weight(.bold)).monospacedDigit()
                             .foregroundStyle(index < 3 ? AttendancePalette.accentText(colorScheme) : .secondary)
                             .frame(width: 22)
+                        AttendanceAvatar(name: row.name ?? "?", userId: row.userId,
+                                         imageUrl: row.profileImageUrl, dot: nil, size: 28)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.name ?? "—").font(.footnote.weight(.semibold)).lineLimit(1)
                             Text(rankMeta(row)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -1180,9 +1285,25 @@ struct AttendanceScreen: View {
 @available(iOS 17.0, *)
 private struct AttendanceAvatar: View {
     let name: String
+    var userId: String? = nil
+    var imageUrl: String? = nil
     let dot: Color?
     var size: CGFloat = 34
     @Environment(\.colorScheme) private var colorScheme
+
+    private var photoURL: URL? {
+        if let imageUrl, let absolute = URL(string: imageUrl), absolute.scheme == "https" || absolute.scheme == "http" {
+            return absolute
+        }
+        if let userId, !userId.isEmpty {
+            let encoded = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userId
+            return URL(string: "/api/users/\(encoded)/profile-image", relativeTo: AlmaAPI.baseURL)
+        }
+        if let imageUrl, !imageUrl.isEmpty {
+            return URL(string: imageUrl, relativeTo: AlmaAPI.baseURL)
+        }
+        return nil
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -1192,6 +1313,15 @@ private struct AttendanceAvatar: View {
                 .frame(width: size, height: size)
                 .background(AttendancePalette.coral.opacity(0.16), in: Circle())
                 .overlay(Circle().strokeBorder(AttendancePalette.coral.opacity(0.35), lineWidth: 1))
+            if let photoURL {
+                AsyncImage(url: photoURL) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    }
+                }
+            }
             if let dot {
                 Circle()
                     .fill(dot)
@@ -1222,7 +1352,8 @@ private struct AttendanceRecordCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                AttendanceAvatar(name: record.employeeName ?? "?", dot: dotColor)
+                AttendanceAvatar(name: record.employeeName ?? "?", userId: record.userId,
+                                 imageUrl: record.profileImageUrl, dot: dotColor)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(record.employeeName ?? "—")
                         .font(.footnote.weight(.semibold)).lineLimit(1)
@@ -1357,6 +1488,7 @@ private struct AttendanceRecordCard: View {
 private struct AttendanceWaiverCard: View {
     let waiver: AttendanceWaiverRow
     let busy: Bool
+    let onOpenEvidence: (() -> Void)?
     let onApprove: () -> Void
     let onReject: () -> Void
     @Environment(\.colorScheme) private var colorScheme
@@ -1365,6 +1497,8 @@ private struct AttendanceWaiverCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 AttendanceAvatar(name: waiver.requesterName ?? "?",
+                                 userId: waiver.requesterUserId,
+                                 imageUrl: waiver.requesterProfileImageUrl,
                                  dot: AttendancePalette.amber500, size: 30)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("\(waiver.requesterName ?? "—") · \(waiver.employeeId ?? "—")")
@@ -1375,6 +1509,11 @@ private struct AttendanceWaiverCard: View {
             }
             if let reason = waiver.reason, !reason.isEmpty {
                 Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            }
+            if let onOpenEvidence {
+                Button("জমা দেওয়া প্রমাণ দেখুন ↗", action: onOpenEvidence)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
             }
             if busy {
                 HStack(spacing: 8) {
@@ -1442,9 +1581,14 @@ private struct AttendanceWaiverReviewSheet: View {
     @State private var note = ""
 
     private var original: Int { waiver.originalPenaltyAmount ?? 0 }
+    private var requested: Int { waiver.requestedReductionAmount ?? original }
     private var amountValue: Int { Int(amount.trimmingCharacters(in: .whitespaces)) ?? 0 }
-    /// Web input constraints: min 1, max the original penalty.
-    private var amountValid: Bool { !approve || (amountValue >= 1 && amountValue <= original) }
+    private var halfPenalty: Int { min(requested, max(1, Int((Double(original) * 0.5).rounded()))) }
+    private var remainingPenalty: Int { max(0, original - amountValue) }
+    private var isPartial: Bool { amountValid && approve && remainingPenalty > 0 }
+    /// The reviewer may approve up to what the staff requested, never more.
+    private var amountValid: Bool { !approve || (amountValue >= 1 && amountValue <= requested && amountValue <= original) }
+    private var noteValid: Bool { approve || note.trimmingCharacters(in: .whitespacesAndNewlines).count >= 5 }
 
     var body: some View {
         ScrollView {
@@ -1456,6 +1600,16 @@ private struct AttendanceWaiverReviewSheet: View {
 
                 if approve {
                     VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            decisionStat("Original penalty", value: original)
+                            decisionStat("Staff requested", value: requested)
+                        }
+                        Text("Quick amount")
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            quickAmountButton("Full requested", value: requested)
+                            quickAmountButton("Half penalty", value: halfPenalty)
+                        }
                         Text("অনুমোদিত মওকুফ (ওয়ালেট ক্রেডিট)")
                             .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
                         TextField("৳", text: $amount)
@@ -1463,18 +1617,30 @@ private struct AttendanceWaiverReviewSheet: View {
                             .font(.body.monospacedDigit())
                             .padding(12)
                             .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
-                        Text(amountValid
-                             ? "অনুমোদনের পর ফাইনাল পেনাল্টি: \(AttendanceFormat.money(max(0, original - amountValue)))"
-                             : "১ থেকে \(AttendanceFormat.money(original))-এর মধ্যে দিন")
-                            .font(.caption2)
-                            .foregroundStyle(amountValid ? Color.secondary : AttendancePalette.amber600)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(amountValid ? (isPartial ? "Partial approval" : "Full approval") : "Enter a valid amount")
+                                .font(.caption.weight(.heavy))
+                                .foregroundStyle(amountValid ? (isPartial ? AttendancePalette.amber500 : AttendancePalette.green400) : AttendancePalette.red500)
+                            Text(amountValid
+                                 ? "Wallet credit \(AttendanceFormat.money(amountValue)) · Remaining penalty \(AttendanceFormat.money(remainingPenalty))"
+                                 : "১ থেকে \(AttendanceFormat.money(requested))-এর মধ্যে দিন")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            if amountValid {
+                                Text("Staff notification and SMS will show this exact result.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background((amountValid ? (isPartial ? AttendancePalette.amber500 : AttendancePalette.emerald600) : AttendancePalette.red500).opacity(0.09),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("অ্যাডমিন নোট")
+                    Text(approve ? "অনুমোদনের নোট (ঐচ্ছিক)" : "প্রত্যাখ্যানের কারণ (আবশ্যিক)")
                         .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-                    TextField("নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
+                    TextField(approve ? "প্রয়োজন হলে স্টাফের জন্য নোট লিখুন" : "কেন প্রত্যাখ্যান করছেন স্পষ্টভাবে লিখুন", text: $note, axis: .vertical)
                         .lineLimit(2...4)
                         .padding(12)
                         .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
@@ -1484,13 +1650,15 @@ private struct AttendanceWaiverReviewSheet: View {
                     dismiss()
                     onConfirm(amountValue, note.trimmingCharacters(in: .whitespacesAndNewlines))
                 } label: {
-                    Text(approve ? "অনুমোদন করুন" : "প্রত্যাখ্যান করুন")
+                    Text(approve
+                         ? "\(isPartial ? "Approve partial" : "Approve full") · credit \(amountValid ? AttendanceFormat.money(amountValue) : "—")"
+                         : "প্রত্যাখ্যান করুন")
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 4)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(approve ? AttendancePalette.coral : AttendancePalette.red500)
-                .disabled(!amountValid)
+                .disabled(!amountValid || !noteValid)
 
                 Spacer(minLength: 0)
             }
@@ -1500,6 +1668,30 @@ private struct AttendanceWaiverReviewSheet: View {
         .onAppear {
             amount = String(waiver.requestedReductionAmount ?? original)
         }
+    }
+
+    private func quickAmountButton(_ label: String, value: Int) -> some View {
+        Button {
+            amount = String(value)
+        } label: {
+            VStack(spacing: 2) {
+                Text(label).font(.caption2.weight(.semibold))
+                Text(AttendanceFormat.money(value)).font(.caption2.monospacedDigit())
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(amountValue == value ? AttendancePalette.coral : .secondary)
+    }
+
+    private func decisionStat(_ label: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(AttendanceFormat.money(value)).font(.subheadline.monospacedDigit().weight(.bold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -1667,6 +1859,7 @@ private struct AttendanceDetailSheet: View {
     private var header: some View {
         HStack(spacing: 12) {
             AttendanceAvatar(name: record.employeeName ?? "?",
+                             userId: record.userId, imageUrl: record.profileImageUrl,
                              dot: record.isLate ? AttendancePalette.amber500 : AttendancePalette.green400,
                              size: 44)
             VStack(alignment: .leading, spacing: 2) {

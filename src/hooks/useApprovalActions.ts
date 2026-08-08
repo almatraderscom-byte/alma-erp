@@ -12,7 +12,6 @@ import {
   readPendingApprovalOps,
   removePendingApprovalOp,
   type ApprovalActionKind,
-  type ApprovalOpState,
   type ApprovalRowUiState,
   type PendingApprovalOp,
 } from '@/lib/approval-action-tracker'
@@ -25,6 +24,7 @@ type ExecuteInput = {
   transactionId?: string
   /** EXPENSE_REIMBURSEMENT approvals: how the owner pays ('wallet' default | 'instant'). */
   payoutMode?: 'wallet' | 'instant'
+  approvedAmount?: number
 }
 
 type ExecuteResult =
@@ -120,7 +120,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
 
   const executeApproval = useCallback(
     async (input: ExecuteInput): Promise<ExecuteResult> => {
-      const { approvalId, action, note = '', rowLabel, transactionId, payoutMode } = input
+      const { approvalId, action, note = '', rowLabel, transactionId, payoutMode, approvedAmount } = input
 
       if (action === 'REJECT' && note.trim().length < 5) {
         toast.error('Rejection reason must be at least 5 characters')
@@ -159,7 +159,7 @@ export function useApprovalActions(onRefresh: () => Promise<void>) {
           {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, note, operation_id: operationId, ...(transactionId ? { transactionId } : {}), ...(payoutMode ? { payoutMode } : {}) }),
+            body: JSON.stringify({ action, note, operation_id: operationId, ...(transactionId ? { transactionId } : {}), ...(payoutMode ? { payoutMode } : {}), ...(approvedAmount != null ? { approvedAmount } : {}) }),
             cache: 'no-store',
           },
         )

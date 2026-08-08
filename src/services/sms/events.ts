@@ -5,6 +5,7 @@ import {
   invoiceReadySms,
   lowStockAlertSms,
   orderConfirmationSms,
+  penaltyAppealReviewedSms,
   payrollAdvanceAlertSms,
   salaryReceivedSms,
   tradingDailySummarySms,
@@ -146,6 +147,45 @@ export function enqueueWalletWithdrawalApprovedSms(input: {
       transactionId: input.transactionId,
     },
     cooldownMinutes: 10,
+  })
+}
+
+export function enqueuePenaltyAppealReviewedSms(input: {
+  businessId?: string | null
+  phone?: string | null
+  employeeId?: string | null
+  waiverId: string
+  penaltyLedgerEntryId?: string | null
+  action: 'APPROVE' | 'REJECT'
+  partial?: boolean
+  originalPenalty: number
+  requestedReduction: number
+  approvedReduction?: number
+  remainingPenalty?: number
+  fineLabel?: string | null
+  fineDate?: string | null
+  reason?: string | null
+}) {
+  if (!input.phone?.trim()) return
+  queueSmsAndFlush({
+    businessId: input.businessId || 'ALMA_LIFESTYLE',
+    phone: input.phone,
+    type: 'PENALTY_APPEAL_REVIEWED',
+    message: penaltyAppealReviewedSms(input),
+    metadata: {
+      employeeId: input.employeeId,
+      waiverId: input.waiverId,
+      penaltyLedgerEntryId: input.penaltyLedgerEntryId,
+      action: input.action,
+      partial: input.partial,
+      originalPenalty: input.originalPenalty,
+      requestedReduction: input.requestedReduction,
+      approvedReduction: input.approvedReduction,
+      remainingPenalty: input.remainingPenalty,
+    },
+    // Each fine is independent; two same-day appeal decisions must each send.
+    // Transaction/idempotency guards already prevent the same review re-firing.
+    cooldownMinutes: 0,
   })
 }
 

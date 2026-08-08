@@ -61,6 +61,7 @@ type AttendanceDashboard = {
   absentEmployees: Array<{ id: string; employeeId: string | null; name: string; email: string | null; profileImageUrl?: string | null }>
   pendingWaivers: Array<{
     id: string
+    businessId: string
     employeeId: string
     requesterUserId?: string
     requesterName: string
@@ -73,6 +74,36 @@ type AttendanceDashboard = {
     hasAttachment?: boolean
     createdAt: string
     lateMinutes: number
+    penaltyKind?: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT'
+    penaltyMinutes?: number | null
+    reviewContext?: {
+      exception: { status: string; scope: string; reason: string; adminNote?: string | null } | null
+      leave: { status: string; kind: string; reason: string; adminNote?: string | null } | null
+    }
+    attachmentUrl?: string | null
+  }>
+  recentWaiverDecisions: Array<{
+    id: string
+    employeeId: string
+    requesterName: string
+    requesterUserId?: string
+    requesterProfileImageUrl?: string | null
+    status: string
+    originalPenaltyAmount: number
+    requestedReductionAmount: number | null
+    approvedReductionAmount: number | null
+    finalAppliedPenalty: number
+    reason: string
+    adminNote?: string | null
+    reviewerName?: string | null
+    reviewedAt?: string | null
+    attendanceDate: string
+    penaltyKind: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT'
+    reversalLedgerEntryId?: string | null
+    refundAmount: number
+    refundReconciled: boolean
+    refundIssue?: string | null
+    attachmentUrl?: string | null
   }>
   selfieLogs: Array<{
     id: string
@@ -101,12 +132,18 @@ type AttendanceDashboard = {
 
 type ReviewState = {
   id: string
+  businessId: string
   employeeId: string
   originalPenalty: number
   requestedAmount: number
   amount: string
   action: 'APPROVE' | 'REJECT'
   note: string
+  reason: string
+  penaltyKind?: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT'
+  createdAt: string
+  attachmentUrl?: string | null
+  reviewContext?: AttendanceDashboard['pendingWaivers'][number]['reviewContext']
 } | null
 
 type PenaltyAnalytics = {
@@ -117,6 +154,7 @@ type PenaltyAnalytics = {
   appealCount: number
   pendingCount: number
   approvalRate: number
+  reconciliationIssues?: number
   repeatOffenders: Array<{ employeeId: string; penaltyCount: number; penaltyTotal: number }>
 }
 
@@ -192,21 +230,48 @@ function AttendancePageInner() {
     return data.pendingWaivers.find(w => w.id === reviewId) || null
   }, [reviewId, data?.pendingWaivers])
 
+  const startPenaltyReview = useCallback((
+    waiver: AttendanceDashboard['pendingWaivers'][number],
+    action: 'APPROVE' | 'REJECT',
+  ) => {
+    setReview({
+      id: waiver.id,
+      businessId: waiver.businessId,
+      employeeId: waiver.employeeId,
+      originalPenalty: Number(waiver.originalPenaltyAmount),
+      requestedAmount: Number(waiver.requestedReductionAmount ?? waiver.originalPenaltyAmount),
+      amount: String(waiver.requestedReductionAmount ?? waiver.originalPenaltyAmount),
+      action,
+      note: '',
+      reason: waiver.reason,
+      penaltyKind: waiver.penaltyKind,
+      createdAt: waiver.createdAt,
+      attachmentUrl: waiver.attachmentUrl,
+      reviewContext: waiver.reviewContext,
+    })
+  }, [])
+
   useEffect(() => {
     if (!openReviewFromUrl || review) return
-    setReview({
-      id: openReviewFromUrl.id,
-      employeeId: openReviewFromUrl.employeeId,
-      originalPenalty: Number(openReviewFromUrl.originalPenaltyAmount),
-      requestedAmount: Number(openReviewFromUrl.requestedReductionAmount ?? openReviewFromUrl.originalPenaltyAmount),
-      amount: String(openReviewFromUrl.requestedReductionAmount ?? openReviewFromUrl.originalPenaltyAmount),
-      action: 'APPROVE',
-      note: '',
-    })
-  }, [openReviewFromUrl, review])
+    startPenaltyReview(openReviewFromUrl, 'APPROVE')
+  }, [openReviewFromUrl, review, startPenaltyReview])
 
   async function submitReview() {
     if (!review || reviewBusy) return
+    if (review.action === 'REJECT' && review.note.trim().length < 5) {
+      toast.error('প্রত্যাখ্যানের কারণ লিখুন (অন্তত ৫ অক্ষর)।')
+      return
+    }
+    const approvedAmount = Number(review.amount)
+    if (review.action === 'APPROVE' && (
+      !Number.isFinite(approvedAmount)
+      || approvedAmount <= 0
+      || approvedAmount > review.requestedAmount
+      || approvedAmount > review.originalPenalty
+    )) {
+      toast.error(`Wallet credit must be between ৳0.01 and ৳${review.requestedAmount.toLocaleString('en-BD')}.`)
+      return
+    }
     setReviewBusy(true)
     try {
       const result = await safeFetchJsonWithToast(
@@ -215,15 +280,17 @@ function AttendancePageInner() {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            business_id: business.id,
+            business_id: review.businessId,
             action: review.action,
-            approved_reduction_amount: review.action === 'APPROVE' ? Number(review.amount || 0) : undefined,
+            approved_reduction_amount: review.action === 'APPROVE' ? approvedAmount : undefined,
             admin_note: review.note,
           }),
         },
       )
       if (!result.ok) return
-      toast.success(review.action === 'APPROVE' ? 'Penalty appeal approved — wallet credited' : 'Penalty appeal rejected')
+      toast.success(review.action === 'APPROVE'
+        ? `${approvedAmount < review.originalPenalty ? 'Partial' : 'Full'} approval — ৳${approvedAmount.toLocaleString('en-BD')} credited to wallet`
+        : 'Penalty appeal rejected')
       setReview(null)
       void load()
       void loadAnalytics()
@@ -401,7 +468,12 @@ function AttendancePageInner() {
           </div>
           {analytics.repeatOffenders.length > 0 && (
             <p className="mt-3 text-[10px] text-muted">
-              Repeat late penalties: {analytics.repeatOffenders.slice(0, 4).map(r => `${r.employeeId} (${money(r.penaltyTotal)})`).join(' · ')}
+              Repeat attendance penalties: {analytics.repeatOffenders.slice(0, 4).map(r => `${r.employeeId} (${money(r.penaltyTotal)})`).join(' · ')}
+            </p>
+          )}
+          {(analytics.reconciliationIssues ?? 0) > 0 && (
+            <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-bold text-amber-500">
+              Wallet reconciliation needed: {analytics.reconciliationIssues} approved appeal(s) do not match a linked credit row.
             </p>
           )}
         </Card>
@@ -425,13 +497,37 @@ function AttendancePageInner() {
                   <p className="text-cream font-bold">{w.requesterName} · {w.employeeId}</p>
                   <p className="text-muted-hi mt-1">{w.reason}</p>
                   <p className="text-muted mt-1">
-                    Late {w.lateMinutes}m · {w.requestType?.replace(/_/g, ' ').toLowerCase() || 'appeal'} · asked {money(w.requestedReductionAmount ?? w.originalPenaltyAmount)} of {money(w.originalPenaltyAmount)}
+                    {w.penaltyKind === 'NO_CHECKOUT'
+                      ? 'চেক-আউট না করার জরিমানা'
+                      : w.penaltyKind === 'EARLY_LEAVE'
+                        ? `আগে চেক-আউট${w.penaltyMinutes ? ` · ${w.penaltyMinutes} মিনিট আগে` : ''}`
+                        : `দেরিতে চেক-ইন · ${w.penaltyMinutes ?? w.lateMinutes} মিনিট দেরি`}
+                    {' · '}{w.requestType?.replace(/_/g, ' ').toLowerCase() || 'appeal'} · asked {money(w.requestedReductionAmount ?? w.originalPenaltyAmount)} of {money(w.originalPenaltyAmount)}
                     {w.hasAttachment ? ' · 📎 attachment' : ''} · {w.createdAt.slice(0, 10)}
                   </p>
+                  {(w.reviewContext?.exception || w.reviewContext?.leave) && (
+                    <div className="mt-2 space-y-1 rounded-lg border border-blue-500/25 bg-blue-500/[0.07] px-2.5 py-2 text-[10px]">
+                      {w.reviewContext.exception && (
+                        <p className="text-blue-300">
+                          অনুমতি: {w.reviewContext.exception.status} · {w.reviewContext.exception.scope.replace(/_/g, ' ').toLowerCase()} · {w.reviewContext.exception.reason}
+                        </p>
+                      )}
+                      {w.reviewContext.leave && (
+                        <p className="text-blue-300">
+                          ছুটি: {w.reviewContext.leave.status} · {w.reviewContext.leave.kind.replace(/_/g, ' ').toLowerCase()} · {w.reviewContext.leave.reason}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {w.attachmentUrl && (
+                    <a href={w.attachmentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-bold text-blue-400">
+                      Open submitted evidence ↗
+                    </a>
+                  )}
                 </div>
                 <div className="flex gap-2">
-                  <Button size="xs" variant="secondary" disabled={!canReview} onClick={() => setReview({ id: w.id, employeeId: w.employeeId, originalPenalty: Number(w.originalPenaltyAmount), requestedAmount: Number(w.requestedReductionAmount ?? w.originalPenaltyAmount), amount: String(w.requestedReductionAmount ?? w.originalPenaltyAmount), action: 'REJECT', note: '' })}>Reject</Button>
-                  <Button size="xs" variant="gold" disabled={!canReview} onClick={() => setReview({ id: w.id, employeeId: w.employeeId, originalPenalty: Number(w.originalPenaltyAmount), requestedAmount: Number(w.requestedReductionAmount ?? w.originalPenaltyAmount), amount: String(w.requestedReductionAmount ?? w.originalPenaltyAmount), action: 'APPROVE', note: '' })}>Approve</Button>
+                  <Button size="xs" variant="secondary" disabled={!canReview} onClick={() => startPenaltyReview(w, 'REJECT')}>Reject</Button>
+                  <Button size="xs" variant="gold" disabled={!canReview} onClick={() => startPenaltyReview(w, 'APPROVE')}>Approve</Button>
                 </div>
               </div>
             ))}
@@ -439,6 +535,55 @@ function AttendancePageInner() {
         )}
         {!canReview && <p className="mt-3 text-[11px] text-amber-600">Only Admin or Super Admin can review penalty appeals.</p>}
       </Card>
+
+      {canReview && (
+        <Card className="p-5">
+          <div className="mb-4">
+            <p className="text-sm font-bold text-cream">Recent penalty appeal decisions</p>
+            <p className="mt-1 text-[11px] text-muted">Reviewer, rationale, wallet credit, and final penalty remain visible after resolution.</p>
+          </div>
+          {loading ? <Skeleton className="h-28" /> : !(data?.recentWaiverDecisions ?? []).length ? (
+            <Empty icon="✓" title="No resolved penalty appeals yet" desc="Approved and rejected decisions will remain here for audit." />
+          ) : (
+            <div className="space-y-2">
+              {data!.recentWaiverDecisions.map(row => (
+                <div key={row.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4 text-[11px]">
+                  <div className="flex items-start gap-3">
+                    <EmployeeAvatar userId={row.requesterUserId} name={row.requesterName} imageUrl={row.requesterProfileImageUrl} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-bold text-cream">{row.requesterName} · {row.employeeId}</p>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${row.status === 'REJECTED' || row.status === 'CANCELLED' ? 'tone-red' : 'tone-green'}`}>
+                          {row.status.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-muted">
+                        {row.penaltyKind.replace(/_/g, ' ').toLowerCase()} · {new Date(row.attendanceDate).toLocaleDateString()} · original {money(row.originalPenaltyAmount)} · credited {money(row.approvedReductionAmount ?? 0)} · final {money(row.finalAppliedPenalty)}
+                      </p>
+                      <p className="mt-1 text-muted-hi">Staff explanation: {row.reason}</p>
+                      <p className="mt-1 text-muted-hi">
+                        {row.status === 'REJECTED'
+                          ? `Rejection reason: ${row.adminNote || 'Legacy rejection reason not recorded'}`
+                          : row.status === 'CANCELLED'
+                            ? 'Cancelled by requester'
+                            : row.adminNote
+                              ? `Approval note: ${row.adminNote}`
+                              : 'Approved — no additional note'}
+                      </p>
+                      <p className="mt-1 text-muted">Reviewed by {row.reviewerName || 'legacy / unknown reviewer'}{row.reviewedAt ? ` · ${new Date(row.reviewedAt).toLocaleString()}` : ''}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {row.reversalLedgerEntryId && row.refundReconciled && <span className="rounded-full border border-emerald-500/25 px-2 py-0.5 text-[10px] text-emerald-500">Wallet credit verified · {money(row.refundAmount)}</span>}
+                        {!row.refundReconciled && <span className="rounded-full border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-500">Reconciliation needed · {row.refundIssue}</span>}
+                        {row.attachmentUrl && <a href={row.attachmentUrl} target="_blank" rel="noreferrer" className="rounded-full border border-blue-500/25 px-2 py-0.5 text-[10px] text-blue-400">View evidence</a>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid lg:grid-cols-[1.5fr_1fr] gap-4">
         <Card className="p-5">
@@ -672,23 +817,78 @@ function AttendancePageInner() {
               </p>
             </div>
             <div className="mobile-modal-body space-y-3 px-5">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.04] p-3 text-[11px]">
+                <p className="font-bold text-cream">Staff explanation</p>
+                <p className="mt-1 text-muted-hi">{review.reason}</p>
+                <p className="mt-2 text-muted">{review.penaltyKind?.replace(/_/g, ' ').toLowerCase()} · submitted {new Date(review.createdAt).toLocaleString()}</p>
+                {review.attachmentUrl && <a href={review.attachmentUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-bold text-blue-400">Open submitted evidence ↗</a>}
+              </div>
+              {(review.reviewContext?.exception || review.reviewContext?.leave) && (
+                <div className="rounded-xl border border-blue-500/25 bg-blue-500/[0.07] p-3 text-[11px] text-blue-300">
+                  {review.reviewContext.exception && <p>Permission: {review.reviewContext.exception.status} · {review.reviewContext.exception.scope.replace(/_/g, ' ')} · {review.reviewContext.exception.reason}</p>}
+                  {review.reviewContext.leave && <p>Leave: {review.reviewContext.leave.status} · {review.reviewContext.leave.kind.replace(/_/g, ' ')} · {review.reviewContext.leave.reason}</p>}
+                </div>
+              )}
               {review.action === 'APPROVE' && (
-                <label className="block space-y-1 text-[11px]">
-                  <span className="text-muted">Approved reduction (wallet credit)</span>
-                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20" />
-                  <p className="text-muted">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
-                </label>
+                (() => {
+                  const approved = Number(review.amount)
+                  const valid = Number.isFinite(approved) && approved > 0 && approved <= review.requestedAmount && approved <= review.originalPenalty
+                  const remaining = valid ? Math.max(0, review.originalPenalty - approved) : review.originalPenalty
+                  const partial = valid && remaining > 0
+                  const halfPenalty = Math.min(review.requestedAmount, Math.max(1, Math.round((review.originalPenalty * 0.5) * 100) / 100))
+                  return (
+                    <div className="space-y-3 rounded-2xl border border-gold/20 bg-gold/[0.05] p-3 text-[11px]">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-xl border border-white/[0.06] bg-card/70 p-2.5">
+                          <p className="text-muted">Original penalty</p>
+                          <p className="mt-1 font-mono text-sm font-black text-cream">{money(review.originalPenalty)}</p>
+                        </div>
+                        <div className="rounded-xl border border-white/[0.06] bg-card/70 p-2.5">
+                          <p className="text-muted">Staff requested</p>
+                          <p className="mt-1 font-mono text-sm font-black text-cream">{money(review.requestedAmount)}</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="xs" variant={approved === review.requestedAmount ? 'gold' : 'secondary'} onClick={() => setReview(r => r ? { ...r, amount: String(review.requestedAmount) } : r)}>
+                          Full requested · {money(review.requestedAmount)}
+                        </Button>
+                        <Button size="xs" variant={approved === halfPenalty && halfPenalty !== review.requestedAmount ? 'gold' : 'secondary'} onClick={() => setReview(r => r ? { ...r, amount: String(halfPenalty) } : r)}>
+                          Half penalty · {money(halfPenalty)}
+                        </Button>
+                      </div>
+                      <label className="block space-y-1">
+                        <span className="font-bold text-muted">Exact wallet credit</span>
+                        <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" inputMode="decimal" min="0.01" max={review.requestedAmount} step="0.01" className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20" />
+                      </label>
+                      <div className={`rounded-xl border p-2.5 ${valid ? partial ? 'border-amber-500/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+                        {valid ? (
+                          <>
+                            <p className={`font-black ${partial ? 'text-amber-300' : 'text-emerald-300'}`}>{partial ? 'Partial approval' : 'Full approval'}</p>
+                            <p className="mt-1 text-muted-hi">Wallet credit {money(approved)} · Remaining penalty {money(remaining)}</p>
+                            <p className="mt-1 text-muted">Staff notification and SMS will show this exact result.</p>
+                          </>
+                        ) : (
+                          <p className="font-bold text-red-300">Enter up to the staff-requested maximum: {money(review.requestedAmount)}.</p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()
               )}
               <label className="block space-y-1 text-[11px]">
-                <span className="text-muted">Admin note</span>
-                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
+                <span className="text-muted">{review.action === 'REJECT' ? 'Rejection reason (required)' : 'Approval note (optional)'}</span>
+                <textarea required={review.action === 'REJECT'} minLength={review.action === 'REJECT' ? 5 : undefined} value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} placeholder={review.action === 'APPROVE' ? 'Add a note only if useful for the staff member' : 'Explain clearly why this appeal is being rejected'} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex justify-end gap-2">
                 <Button size="xs" variant="secondary" onClick={() => setReview(null)}>Cancel</Button>
-                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} disabled={reviewBusy} onClick={() => void submitReview()}>
-                  {reviewBusy ? 'Processing…' : review.action === 'APPROVE' ? 'Approve' : 'Reject'}
+                <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} disabled={reviewBusy || (review.action === 'REJECT' && review.note.trim().length < 5) || (review.action === 'APPROVE' && (!Number.isFinite(Number(review.amount)) || Number(review.amount) <= 0 || Number(review.amount) > review.requestedAmount || Number(review.amount) > review.originalPenalty))} onClick={() => void submitReview()}>
+                  {reviewBusy
+                    ? 'Processing…'
+                    : review.action === 'APPROVE'
+                      ? `${Number(review.amount) < review.originalPenalty ? 'Approve partial' : 'Approve full'} · credit ${money(Number(review.amount || 0))}`
+                      : 'Reject'}
                 </Button>
               </div>
             </div>

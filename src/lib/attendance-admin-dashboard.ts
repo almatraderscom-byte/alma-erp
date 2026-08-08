@@ -6,6 +6,7 @@ import { loadAttendanceRoster, dedupeEmployeesByUserId } from '@/lib/attendance-
 import { resolveProfileImageForUser } from '@/lib/user-display'
 import { scanAttendanceIntegrity } from '@/lib/attendance-integrity'
 import { isBusinessArchiveSchemaReady } from '@/lib/business-archive/availability'
+import { resolveAttendancePenaltyTarget } from '@/lib/attendance-penalty-target'
 
 function minutesLabel(minutes: number) {
   const h = Math.floor(minutes / 60)
@@ -38,7 +39,7 @@ export async function buildAdminAttendanceDashboard(input: {
   /** Only AttendanceRecord / AttendanceWaiverRequest have isArchived — not SelfieVerification. */
   const archivedBusinessFilter = { ...businessOnly, ...archiveClause }
 
-  const [employees, todayRecords, monthRecords, pendingWaivers, selfieRows, integrity] = await Promise.all([
+  const [employees, todayRecords, monthRecords, pendingWaivers, recentDecisions, selfieRows, integrity] = await Promise.all([
     loadRosterForScope(businessIds, monthStart, monthEnd),
     prisma.attendanceRecord.findMany({
       where: { ...archivedBusinessFilter, attendanceDate: date },
@@ -62,6 +63,19 @@ export async function buildAdminAttendanceDashboard(input: {
       orderBy: { createdAt: 'asc' },
       take: 50,
     }),
+    prisma.attendanceWaiverRequest.findMany({
+      where: {
+        ...archivedBusinessFilter,
+        status: { in: ['APPROVED', 'PARTIALLY_APPROVED', 'REJECTED', 'CANCELLED'] },
+      },
+      include: {
+        requester: { select: { id: true, name: true, email: true, profileImageUrl: true, updatedAt: true } },
+        reviewer: { select: { name: true } },
+        attendanceRecord: true,
+      },
+      orderBy: [{ reviewedAt: 'desc' }, { updatedAt: 'desc' }],
+      take: 20,
+    }),
     prisma.attendanceSelfieVerification.findMany({
       where: {
         ...businessOnly,
@@ -74,6 +88,45 @@ export async function buildAdminAttendanceDashboard(input: {
   ])
 
   const presentEmployeeIds = new Set(todayRecords.map(r => r.employeeId))
+  const pendingUserIds = Array.from(new Set(pendingWaivers.map(w => w.userId)))
+  const pendingDates = pendingWaivers.map(w => w.attendanceRecord.attendanceDate)
+  const minPendingDate = pendingDates.length
+    ? new Date(Math.min(...pendingDates.map(d => d.getTime())))
+    : null
+  const maxPendingDate = pendingDates.length
+    ? new Date(Math.max(...pendingDates.map(d => d.getTime())))
+    : null
+  const [appealExceptions, appealLeaves] = pendingUserIds.length && minPendingDate && maxPendingDate
+    ? await Promise.all([
+        prisma.attendanceException.findMany({
+          where: {
+            ...businessOnly,
+            userId: { in: pendingUserIds },
+            attendanceDate: { gte: minPendingDate, lte: maxPendingDate },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.attendanceLeave.findMany({
+          where: {
+            ...businessOnly,
+            userId: { in: pendingUserIds },
+            startDate: { lte: maxPendingDate },
+            endDate: { gte: minPendingDate },
+          },
+          orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        }),
+      ])
+    : [[], []]
+  const recentRefundIds = recentDecisions
+    .map(row => row.reversalLedgerEntryId)
+    .filter((id): id is string => Boolean(id))
+  const recentRefundRows = recentRefundIds.length
+    ? await prisma.employeeLedgerEntry.findMany({
+        where: { id: { in: recentRefundIds }, isArchived: false },
+        select: { id: true, type: true, amount: true, source: true, relatedEntryId: true },
+      })
+    : []
+  const recentRefundMap = new Map(recentRefundRows.map(row => [row.id, row]))
   const absentEmployees = employees.filter(
     e => e.employeeIdGas && !presentEmployeeIds.has(e.employeeIdGas),
   )
@@ -81,8 +134,16 @@ export async function buildAdminAttendanceDashboard(input: {
   const suspiciousRecords = todayRecords.filter(
     r => r.trustStatus !== 'TRUSTED' || r.verificationRequired,
   )
-  const todayPenaltyTotal = todayRecords.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
-  const monthPenaltyTotal = monthRecords.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
+  const recordPenaltyTotal = (r: {
+    penaltyAmount: unknown
+    earlyLeavePenaltyAmount: unknown
+    noCheckoutFineAmount: unknown
+  }) =>
+    Number(r.penaltyAmount || 0)
+    + Number(r.earlyLeavePenaltyAmount || 0)
+    + Number(r.noCheckoutFineAmount || 0)
+  const todayPenaltyTotal = todayRecords.reduce((sum, r) => sum + recordPenaltyTotal(r), 0)
+  const monthPenaltyTotal = monthRecords.reduce((sum, r) => sum + recordPenaltyTotal(r), 0)
   const elapsedMonthDays = Math.max(1, Math.min(date.getUTCDate(), attendanceDateFor().getUTCDate()))
   const attendanceRate = employees.length
     ? Math.round((monthRecords.length / (employees.length * elapsedMonthDays)) * 100)
@@ -92,7 +153,7 @@ export async function buildAdminAttendanceDashboard(input: {
     .map(employee => {
       const rows = monthRecords.filter(r => r.employeeId === employee.employeeIdGas)
       const lateCount = rows.filter(r => r.lateMinutes > 0).length
-      const penaltyTotal = rows.reduce((sum, r) => sum + Number(r.penaltyAmount || 0), 0)
+      const penaltyTotal = rows.reduce((sum, r) => sum + recordPenaltyTotal(r), 0)
       const avgWork = rows.length
         ? Math.round(rows.reduce((sum, r) => sum + r.totalWorkMinutes, 0) / rows.length)
         : 0
@@ -145,14 +206,94 @@ export async function buildAdminAttendanceDashboard(input: {
       email: e.email,
       profileImageUrl: resolveProfileImageForUser(e),
     })),
-    pendingWaivers: pendingWaivers.map(w => ({
-      ...attendanceWaiverDto(w),
-      requesterUserId: w.requester.id,
-      requesterName: w.requester.name,
-      requesterEmail: w.requester.email,
-      requesterProfileImageUrl: resolveProfileImageForUser(w.requester),
-      lateMinutes: w.attendanceRecord.lateMinutes,
-    })),
+    pendingWaivers: pendingWaivers.map(w => {
+      const resolvedPenalty = resolveAttendancePenaltyTarget(
+        w.attendanceRecord,
+        w.penaltyLedgerEntryId,
+        w.originalPenaltyAmount,
+      )
+      const exception = appealExceptions.find(row =>
+        row.userId === w.userId
+        && row.businessId === w.businessId
+        && row.attendanceDate.getTime() === w.attendanceRecord.attendanceDate.getTime(),
+      )
+      const coveringLeaves = appealLeaves.filter(row =>
+        row.userId === w.userId
+        && row.businessId === w.businessId
+        && row.startDate.getTime() <= w.attendanceRecord.attendanceDate.getTime()
+        && row.endDate.getTime() >= w.attendanceRecord.attendanceDate.getTime(),
+      )
+      const leave = coveringLeaves.find(row => row.status === 'APPROVED') || coveringLeaves[0]
+      return {
+        ...attendanceWaiverDto(w),
+        requesterUserId: w.requester.id,
+        requesterName: w.requester.name,
+        requesterEmail: w.requester.email,
+        requesterProfileImageUrl: resolveProfileImageForUser(w.requester),
+        penaltyLedgerEntryId: resolvedPenalty?.ledgerEntryId || null,
+        lateMinutes: w.attendanceRecord.lateMinutes,
+        penaltyKind: resolvedPenalty?.kind || 'UNKNOWN',
+        penaltyMinutes:
+          resolvedPenalty?.kind === 'EARLY_LEAVE'
+            ? w.attendanceRecord.earlyLeaveMinutes
+            : w.attendanceRecord.lateMinutes,
+        reviewContext: {
+          exception: exception ? {
+            status: exception.status,
+            scope: exception.scope,
+            reason: exception.reason,
+            adminNote: exception.adminNote,
+          } : null,
+          leave: leave ? {
+            status: leave.status,
+            kind: leave.kind,
+            reason: leave.reason,
+            adminNote: leave.adminNote,
+          } : null,
+        },
+        attachmentUrl: w.attachmentDataUrl
+          ? `/api/attendance/waivers/${w.id}/attachment?business_id=${encodeURIComponent(w.businessId)}`
+          : null,
+      }
+    }),
+    recentWaiverDecisions: recentDecisions.map(w => {
+      const resolvedPenalty = resolveAttendancePenaltyTarget(
+        w.attendanceRecord,
+        w.penaltyLedgerEntryId,
+        w.originalPenaltyAmount,
+      )
+      const refund = w.reversalLedgerEntryId ? recentRefundMap.get(w.reversalLedgerEntryId) : null
+      const approved = w.status === 'APPROVED' || w.status === 'PARTIALLY_APPROVED'
+      const expected = approved ? Number(w.approvedReductionAmount || 0) : 0
+      const refundAmount = refund ? Number(refund.amount || 0) : 0
+      const refundReconciled = !approved || Boolean(
+        refund
+        && refund.type === 'ADJUSTMENT'
+        && refund.source === 'attendance_late_penalty_reversal'
+        && (!refund.relatedEntryId || refund.relatedEntryId === resolvedPenalty?.ledgerEntryId)
+        && Math.abs(refundAmount - expected) < 0.01
+      )
+      return {
+        ...attendanceWaiverDto(w),
+        requesterUserId: w.requester.id,
+        requesterName: w.requester.name,
+        requesterProfileImageUrl: resolveProfileImageForUser(w.requester),
+        penaltyLedgerEntryId: resolvedPenalty?.ledgerEntryId || null,
+        reviewerName: w.reviewer?.name || null,
+        attendanceDate: w.attendanceRecord.attendanceDate.toISOString(),
+        penaltyKind: resolvedPenalty?.kind || 'UNKNOWN',
+        refundAmount,
+        refundReconciled,
+        refundIssue: !approved || refundReconciled
+          ? null
+          : !refund
+            ? 'Approved decision has no wallet credit row.'
+            : 'Wallet credit amount/link does not match the decision.',
+        attachmentUrl: w.attachmentDataUrl
+          ? `/api/attendance/waivers/${w.id}/attachment?business_id=${encodeURIComponent(w.businessId)}`
+          : null,
+      }
+    }),
     selfieLogs: await Promise.all(
       selfieRows.map(async row => {
         const imageUrl = await resolveAttendanceImageRefForDisplay(row.imageDataUrl)

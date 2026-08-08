@@ -35,11 +35,20 @@ type FineAppealInfo = {
   attendanceRecordId: string | null
   refundEntryId: string | null
   refundedAmount: number
+  requestedReductionAmount: number | null
+  approvedReductionAmount: number | null
+  finalPenaltyAmount: number
+  requestType: string | null
+  reason: string | null
   adminNote: string | null
+  reviewerName: string | null
   reviewedAt: string | null
+  refundReconciled: boolean
+  refundIssue: string | null
 }
 
-type WalletStatementEntry = WalletEntryDto & {
+type WalletStatementEntry = Omit<WalletEntryDto, 'id'> & {
+  id: string
   labelBn: string
   appeal: FineAppealInfo | null
   createdAt?: string
@@ -506,18 +515,24 @@ function AppealChip({ entry, onOpenAppeal }: { entry: WalletStatementEntry; onOp
   if (!a) return null
 
   function openModal() {
-    if (!a || !a.attendanceRecordId) return
+    const attendanceRecordId = a?.attendanceRecordId
+    if (!attendanceRecordId) return
     onOpenAppeal({
-      attendanceRecordId: a.attendanceRecordId,
+      attendanceRecordId,
+      penaltyLedgerEntryId: entry.id,
       penaltyAmount: Math.round(Math.abs(entry.signedAmount)),
       lateMinutes: 0,
       attendanceDate: String(entry.date).slice(0, 10),
+      penaltyKind: entry.source === 'attendance_no_checkout_fine'
+        ? 'NO_CHECKOUT'
+        : entry.source === 'attendance_early_leave_penalty'
+          ? 'EARLY_LEAVE'
+          : 'LATE',
     })
   }
 
   switch (a.status) {
     case 'NONE':
-    case 'CANCELLED':
       if (!a.appealable) return null
       if (a.attendanceRecordId) {
         return (
@@ -531,20 +546,34 @@ function AppealChip({ entry, onOpenAppeal }: { entry: WalletStatementEntry; onOp
           আপিল করুন — আর {toBnDigits(a.daysLeft)} দিন
         </Link>
       )
+    case 'CANCELLED':
+      return <span className={`${APPEAL_CHIP_BASE} border-border bg-white/[0.03] text-muted`}>আপিল বাতিল · পুনরায় আপিল করা যাবে না</span>
     case 'PENDING':
       return <span className={`${APPEAL_CHIP_BASE} border-amber-500/30 bg-amber-500/10 text-amber-300`}>আপিল অপেক্ষায়</span>
     case 'APPROVED':
     case 'PARTIALLY_APPROVED':
       return (
-        <span className={`${APPEAL_CHIP_BASE} border-emerald-500/30 bg-emerald-500/10 text-emerald-300`}>
-          আপিল মঞ্জুর — {moneyBn(a.refundedAmount)} ফেরত
-        </span>
+        <div>
+          <span className={`${APPEAL_CHIP_BASE} border-emerald-500/30 bg-emerald-500/10 text-emerald-300`}>
+            আপিল মঞ্জুর — {moneyBn(a.refundedAmount)} ফেরত · চূড়ান্ত জরিমানা {moneyBn(a.finalPenaltyAmount)}
+          </span>
+          <p className="mt-1 text-[10px] text-muted">
+            {a.adminNote ? `অনুমোদনের নোট: ${a.adminNote}` : 'অনুমোদিত — অতিরিক্ত নোট নেই'}
+            {a.reviewerName ? ` · ${a.reviewerName}` : ''}
+            {a.reviewedAt ? ` · ${dateBn(a.reviewedAt)}` : ''}
+          </p>
+          {!a.refundReconciled && <p className="mt-1 text-[10px] font-bold text-amber-400">হিসাব যাচাই প্রয়োজন: {a.refundIssue}</p>}
+        </div>
       )
     case 'REJECTED':
       return (
         <div>
           <span className={`${APPEAL_CHIP_BASE} border-red-500/30 bg-red-500/10 text-red-300`}>আপিল নাকচ</span>
-          {a.adminNote && <p className="mt-1 text-[10px] text-muted">কারণ: {a.adminNote}</p>}
+          <p className="mt-1 text-[10px] text-muted">
+            কারণ: {a.adminNote || 'পুরোনো সিদ্ধান্তে কারণ সংরক্ষিত হয়নি'}
+            {a.reviewerName ? ` · ${a.reviewerName}` : ''}
+            {a.reviewedAt ? ` · ${dateBn(a.reviewedAt)}` : ''}
+          </p>
         </div>
       )
     case 'EXPIRED':
@@ -561,7 +590,7 @@ function StatementRow({ entry, onOpenAppeal }: { entry: WalletStatementEntry; on
   const secondLine = noteText ? `${noteText} · ${dateLabel}` : dateLabel
 
   const row = (
-    <div className="py-3 flex items-start gap-3">
+    <div id={`ledger-${entry.id}`} className="scroll-mt-24 py-3 flex items-start gap-3">
       <DirectionIcon signedAmount={entry.signedAmount} isRefund={isRefund} />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-bold text-cream">{entry.labelBn}</p>

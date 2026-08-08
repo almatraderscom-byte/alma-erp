@@ -10,7 +10,7 @@
 //         → entries (labelBn + per-fine `appeal` info) · fineSummaries
 //           (last30Days / thisMonth / sinceJoining / customRange) · summary
 //    POST /api/attendance/waivers   → staff files a penalty appeal
-//         { attendance_record_id, business_id, reason, request_type }
+//         { attendance_record_id, penalty_ledger_entry_id, business_id, reason, request_type }
 //
 //  Owner rules surfaced here:
 //   • every fine shows WHY + its appeal state forever (none/pending/approved/
@@ -85,6 +85,11 @@ private struct WSAppealInfo: Decodable {
     let attendanceRecordId: String?
     let refundedAmount: Double?
     let adminNote: String?
+    let reviewerName: String?
+    let reviewedAt: String?
+    let finalPenaltyAmount: Double?
+    let refundReconciled: Bool?
+    let refundIssue: String?
 }
 
 private struct WSEntry: Decodable, Identifiable {
@@ -236,7 +241,7 @@ private final class WalletStatementVM {
         }
     }
 
-    func submitAppeal(recordId: String, reason: String) async -> Bool {
+    func submitAppeal(recordId: String, penaltyLedgerEntryId: String, reason: String) async -> Bool {
         appealBusy = true
         defer { appealBusy = false }
         do {
@@ -244,6 +249,7 @@ private final class WalletStatementVM {
                 "POST", "/api/attendance/waivers",
                 body: [
                     "attendance_record_id": recordId,
+                    "penalty_ledger_entry_id": penaltyLedgerEntryId,
                     "business_id": businessId,
                     "reason": reason,
                     "request_type": "FULL_WAIVE",
@@ -418,7 +424,7 @@ struct WalletStatementScreen: View {
             WSAppealSheet(entry: entry, busy: vm.appealBusy) { reason in
                 guard let rid = entry.appeal?.attendanceRecordId else { return }
                 Task {
-                    if await vm.submitAppeal(recordId: rid, reason: reason) {
+                    if await vm.submitAppeal(recordId: rid, penaltyLedgerEntryId: entry.id, reason: reason) {
                         appealTarget = nil
                     }
                 }
@@ -647,14 +653,23 @@ struct WalletStatementScreen: View {
             case "PENDING":
                 chip("আপিল অপেক্ষায় — Boss দেখছেন", WSPalette.blue500)
             case "APPROVED", "PARTIALLY_APPROVED":
-                chip("আপিল মঞ্জুর — \(WSFormat.moneyBn(a.refundedAmount ?? 0)) ফেরত", WSPalette.emerald600)
+                VStack(alignment: .leading, spacing: 2) {
+                    chip("\(a.status == "PARTIALLY_APPROVED" ? "আপিল আংশিক মঞ্জুর" : "আপিল সম্পূর্ণ মঞ্জুর") — \(WSFormat.moneyBn(a.refundedAmount ?? 0)) ফেরত · বাকি জরিমানা \(WSFormat.moneyBn(a.finalPenaltyAmount ?? 0))", WSPalette.emerald600)
+                    Text("\(a.adminNote?.isEmpty == false ? "অনুমোদনের নোট: \(a.adminNote!)" : "অনুমোদিত — অতিরিক্ত নোট নেই")\(a.reviewerName?.isEmpty == false ? " · \(a.reviewerName!)" : "")")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    if a.refundReconciled == false {
+                        Text("হিসাব যাচাই প্রয়োজন: \(a.refundIssue ?? "ওয়ালেট ক্রেডিট মেলেনি")")
+                            .font(.system(size: 10, weight: .bold)).foregroundStyle(WSPalette.amber600)
+                    }
+                }
             case "REJECTED":
                 VStack(alignment: .leading, spacing: 2) {
                     chip("আপিল নাকচ", WSPalette.red500)
-                    if let note = a.adminNote, !note.isEmpty {
-                        Text("কারণ: \(note)").font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
+                    Text("কারণ: \(a.adminNote?.isEmpty == false ? a.adminNote! : "পুরোনো সিদ্ধান্তে কারণ সংরক্ষিত হয়নি")\(a.reviewerName?.isEmpty == false ? " · \(a.reviewerName!)" : "")")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
+            case "CANCELLED":
+                chip("আপিল বাতিল · পুনরায় আপিল করা যাবে না", .secondary)
             case "EXPIRED":
                 chip("আপিলের সময় শেষ — \(WSFormat.bnDigits(String(vm.appealWindowDays))) দিন পেরিয়েছে", .secondary)
             default:

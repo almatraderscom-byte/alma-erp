@@ -23,6 +23,25 @@ export function walletWithdrawalApprovedSms(input: { amount: number; transaction
   return `ALMA: আপনার withdrawal accept করা হয়েছে। Amount: ৳${money(input.amount)}${txn ? ` | TxID: ${txn}` : ''}। ধন্যবাদ — ALMA`
 }
 
+export function penaltyAppealReviewedSms(input: {
+  action: 'APPROVE' | 'REJECT'
+  partial?: boolean
+  originalPenalty: number
+  requestedReduction: number
+  approvedReduction?: number
+  remainingPenalty?: number
+  fineLabel?: string | null
+  fineDate?: string | null
+  reason?: string | null
+}) {
+  const fine = [input.fineLabel, input.fineDate].filter(Boolean).join(' · ') || 'attendance penalty'
+  if (input.action === 'REJECT') {
+    return `ALMA: ${fine} আপিল প্রত্যাখ্যাত। আসল penalty ৳${money(input.originalPenalty)} বহাল। কারণ: ${String(input.reason || 'ERP-তে দেখুন').slice(0, 180)}`
+  }
+  const outcome = input.partial ? 'আংশিকভাবে অনুমোদিত' : 'সম্পূর্ণ অনুমোদিত'
+  return `ALMA: ${fine} আপিল ${outcome}। চেয়েছিলেন ৳${money(input.requestedReduction)}; wallet credit ৳${money(input.approvedReduction || 0)}; বাকি penalty ৳${money(input.remainingPenalty || 0)}।`
+}
+
 export function payrollAdvanceAlertSms() {
   return 'ALMA ALERT: নতুন salary advance request এসেছে'
 }

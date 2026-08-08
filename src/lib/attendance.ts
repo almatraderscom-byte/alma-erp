@@ -548,6 +548,8 @@ export function attendanceRecordDto(
     earlyLeaveMinutes: record.earlyLeaveMinutes,
     earlyLeavePenaltyAmount: record.earlyLeavePenaltyAmount == null ? null : Number(record.earlyLeavePenaltyAmount),
     earlyLeavePenaltyLedgerEntryId: record.earlyLeavePenaltyLedgerEntryId,
+    noCheckoutFineAmount: record.noCheckoutFineAmount == null ? null : Number(record.noCheckoutFineAmount),
+    noCheckoutFineLedgerEntryId: record.noCheckoutFineLedgerEntryId,
     browserFingerprint: record.browserFingerprint,
     deviceKey: record.deviceKey,
     sessionId: record.sessionId,
@@ -608,6 +610,7 @@ export function attendanceWaiverDto(waiver: AttendanceWaiverRequest) {
     reviewedById: waiver.reviewedById,
     reviewedAt: waiver.reviewedAt?.toISOString() || null,
     reversalLedgerEntryId: waiver.reversalLedgerEntryId,
+    penaltyLedgerEntryId: waiver.penaltyLedgerEntryId,
     createdAt: waiver.createdAt.toISOString(),
     updatedAt: waiver.updatedAt.toISOString(),
   }
