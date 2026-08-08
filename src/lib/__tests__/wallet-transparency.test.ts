@@ -64,11 +64,27 @@ describe('fineWindowSummary', () => {
     })
   })
 
-  it('does not count permission/reset corrections as appeal refunds', () => {
+  it('keeps appeal metrics separate while net cost follows posted ledger credits', () => {
     const summary = fineWindowSummary(entries, {}, null, null)
     expect(summary.refundCount).toBe(0)
     expect(summary.refundTotal).toBe(0)
-    expect(summary.netFineCost).toBe(500)
+    expect(summary.netFineCost).toBe(0)
+  })
+
+  it('subtracts exact permission and reset reversals from net fine cost', () => {
+    const summary = fineWindowSummary([
+      { id: 'fine-exception', type: 'PENALTY', source: 'attendance_late_penalty', amount: 100, date: new Date('2026-07-31T00:00:00.000Z'), relatedEntryId: null },
+      { id: 'fine-reset', type: 'PENALTY', source: 'attendance_no_checkout_fine', amount: 50, date: new Date('2026-07-31T00:00:00.000Z'), relatedEntryId: null },
+      { id: 'exception-refund', type: 'ADJUSTMENT', source: 'attendance_exception_refund', amount: 100, date: new Date('2026-08-02T00:00:00.000Z'), relatedEntryId: 'fine-exception' },
+      { id: 'reset-refund', type: 'ADJUSTMENT', source: 'attendance_reset_reversal', amount: 50, date: new Date('2026-08-02T00:00:00.000Z'), relatedEntryId: 'fine-reset' },
+    ] as never, {}, null, null)
+    expect(summary).toMatchObject({
+      fineCount: 2,
+      fineTotal: 150,
+      refundCount: 0,
+      refundTotal: 0,
+      netFineCost: 0,
+    })
   })
 
   it('does not claim a refund when the linked credit fails reconciliation', () => {

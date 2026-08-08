@@ -38,6 +38,11 @@ export type FineAppealInfo = {
 }
 
 const APPEAL_REFUND_SOURCES = new Set(['attendance_late_penalty_reversal'])
+const FINE_REVERSAL_SOURCES = new Set([
+  ...APPEAL_REFUND_SOURCES,
+  'attendance_exception_refund',
+  'attendance_reset_reversal',
+])
 
 type PenaltyRefundWaiver = Pick<
   AttendanceWaiverRequest,
@@ -240,13 +245,31 @@ export function fineWindowSummary(
   from: Date | null,
   to: Date | null,
 ): FineWindowSummary {
-  let fineCount = 0, fineTotal = 0, refundCount = 0, refundTotal = 0, pendingAppeals = 0
+  // Attribute every exact, ledger-linked fine reversal to the original fine's
+  // date. Appeal refund metrics stay appeal-only, while net cost reflects all
+  // actual wallet credits (appeal, approved exception, and attendance reset).
+  const reversalByFineId = new Map<string, number>()
+  for (const entry of entries) {
+    if (
+      entry.type !== 'ADJUSTMENT'
+      || !entry.relatedEntryId
+      || !entry.source
+      || !FINE_REVERSAL_SOURCES.has(entry.source)
+    ) continue
+    reversalByFineId.set(
+      entry.relatedEntryId,
+      (reversalByFineId.get(entry.relatedEntryId) || 0) + Math.max(0, Number(entry.amount || 0)),
+    )
+  }
+
+  let fineCount = 0, fineTotal = 0, fineReversalTotal = 0, refundCount = 0, refundTotal = 0, pendingAppeals = 0
   for (const e of entries) {
     const d = new Date(e.date)
     if (!inWindow(d, from, to)) continue
     if (e.type === 'PENALTY') {
       fineCount += 1
       fineTotal += Math.abs(Number(e.amount || 0))
+      fineReversalTotal += reversalByFineId.get(e.id) || 0
       if (appeals[e.id]?.status === 'PENDING') pendingAppeals += 1
       const appeal = appeals[e.id]
       if (appeal?.refundReconciled && appeal.refundedAmount > 0) {
@@ -263,7 +286,7 @@ export function fineWindowSummary(
     refundCount,
     refundTotal,
     pendingAppeals,
-    netFineCost: fineTotal - refundTotal,
+    netFineCost: Math.max(0, fineTotal - fineReversalTotal),
   }
 }
 
