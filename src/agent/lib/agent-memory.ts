@@ -1,6 +1,24 @@
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
-import { blendedScore, rerankMemories } from '@/agent/lib/memory-rerank'
+import { blendedScore } from '@/agent/lib/memory-rerank'
+import {
+  BOTH_ARMS_BONUS,
+  NO_LEXEME_TSQUERY,
+  buildLikePatterns,
+  buildOrTsQuery,
+  extractQueryTokens,
+  fuseRrf,
+  keywordSimilarityProxy,
+  rawPhrasePatterns,
+  type RankedArmHit,
+} from '@/agent/lib/memory-hybrid'
+import {
+  MEMORY_MAX_ITEMS,
+  MEMORY_RETRIEVAL_TIMEOUT_MS,
+  applyMemoryBudget,
+  withMemoryTimeout,
+} from '@/agent/lib/memory-budget'
+import { retrieveMemoryDigests } from '@/agent/lib/memory-digest'
 import type { RelevantMemory } from '@/agent/lib/system-prompt'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
@@ -8,7 +26,10 @@ const HIGH_IMPORTANCE = /(পছন্দ|না করবে|ভুল হয�
 
 const SIMILARITY_THRESHOLD = 0.45
 const VECTOR_FETCH_LIMIT = 20
-const RERANK_TAKE = 6
+/** Keyword arm depth — matched to the vector arm so neither dominates the fusion. */
+const KEYWORD_FETCH_LIMIT = 20
+/** Fused candidates carried into the reranker before the budget trims to final size. */
+const FUSED_POOL = 15
 
 function resolveImportance(content: string, explicit?: number | null): number {
   if (explicit != null && explicit >= 1 && explicit <= 5) return explicit
@@ -200,80 +221,209 @@ async function reinforceMemoriesOnUse(selectedIds: string[]): Promise<void> {
   )
 }
 
+/** One fact row as returned by either retrieval arm. */
+interface FactRow {
+  id: string
+  content: string
+  scope: string
+  importance: number
+  createdAt: Date
+  last_used_at: Date | null
+  score?: number
+  /** True when the row matched an ILIKE pattern, not merely a shared lexeme. */
+  literal_match?: boolean
+}
+
+/** Vector arm: semantic match. Returns [] when embeddings are unavailable. */
+async function vectorArm(vec: string, accessClause: string): Promise<FactRow[]> {
+  const rows: FactRow[] =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).$queryRawUnsafe(
+      `SELECT id, content, scope, importance, "createdAt", last_used_at,
+              1 - (embedding <=> $1::vector) AS score
+       FROM agent_memory
+       WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
+         AND (expires_at IS NULL OR expires_at > NOW())
+       ORDER BY embedding <=> $1::vector
+       LIMIT ${VECTOR_FETCH_LIMIT}`,
+      vec,
+    )
+  return rows.filter((r) => (r.score ?? 0) >= SIMILARITY_THRESHOLD)
+}
+
+/**
+ * Keyword arm: exact-token match, the half embeddings are bad at (order ids,
+ * phone numbers, names, product codes). 'simple' config = no stemming, which is
+ * what makes it work for Bangla; pg_trgm ILIKE catches partial/inflected forms.
+ *
+ * A query that yields no tokens (all stopwords, or a word shorter than three
+ * letters like "মা") falls back to searching the raw phrase — otherwise, when
+ * the embedding is also unavailable, BOTH arms would go silent and the turn
+ * would lose memory it used to find (Codex P2, PR #711).
+ */
+async function keywordArm(tokens: string[], rawQuery: string, accessClause: string): Promise<FactRow[]> {
+  const tsQuery = tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY
+  const likePatterns = tokens.length > 0 ? buildLikePatterns(tokens) : rawPhrasePatterns(rawQuery)
+  // Nothing to match on at all — an empty ILIKE array would be a no-op anyway,
+  // and a bare '%%' pattern would match every row.
+  if (tokens.length === 0 && likePatterns.length === 0) return []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // Literal matches sort FIRST (Codex P2, PR #711). A row found only through
+  // ILIKE — an inflected Bangla word, an identifier Postgres tokenises its own
+  // way — has ts_rank 0, so ordering by rank alone let twenty ordinary full-text
+  // matches push the exact hit past the LIMIT. That row is the entire reason
+  // this arm exists, so it must never be the one that gets cut.
+  return (prisma as any).$queryRawUnsafe(
+    `SELECT id, content, scope, importance, "createdAt", last_used_at,
+            (content ILIKE ANY($2::text[])) AS literal_match,
+            ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
+     FROM agent_memory
+     WHERE pinned = false ${accessClause}
+       AND (expires_at IS NULL OR expires_at > NOW())
+       AND (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
+            OR content ILIKE ANY($2::text[]))
+     ORDER BY literal_match DESC, score DESC, COALESCE(last_used_at, "createdAt") DESC
+     LIMIT ${KEYWORD_FETCH_LIMIT}`,
+    tsQuery,
+    likePatterns,
+  )
+}
+
+/**
+ * Hybrid recall for one turn: digest layers first, then facts fused from the
+ * vector and keyword arms.
+ *
+ * Both arms run in parallel and are merged with Reciprocal Rank Fusion, so a
+ * fact that only one arm can see still surfaces while the ones both arms agree
+ * on rank highest. The final list passes through the retrieval budget, and the
+ * whole thing is time-boxed — a slow database costs the turn its memory, never
+ * the owner's reply.
+ */
+/** What one retrieval pass produced: what to inject, and what to mark as used. */
+interface RetrievalOutcome {
+  memories: RelevantMemory[]
+  /** Fact rows that actually made it into the prompt — never digest blocks. */
+  factIds: string[]
+}
+
 export async function retrieveRelevantMemories(
   userMessage: string,
   personalMode: boolean,
   businessId: AgentBusinessId,
 ): Promise<RelevantMemory[]> {
+  // Reinforcement lives OUTSIDE the raced work on purpose (Codex P2, PR #711).
+  // Marking a memory "used" lifts its future ranking, so it must happen only for
+  // memories the turn actually received. An abort check inside the race is not
+  // enough — the deadline can pass while the UPDATE itself is in flight, and the
+  // statement cannot be cancelled. Running it after the race removes the window
+  // entirely instead of narrowing it.
+  //
+  // `null` distinguishes "lost the race or failed" from "won, found nothing".
+  const outcome = await withMemoryTimeout<RetrievalOutcome | null>(
+    retrieveRelevantMemoriesUnbounded(userMessage, personalMode, businessId),
+    null,
+    MEMORY_RETRIEVAL_TIMEOUT_MS,
+    'agent-memory',
+  )
+  if (!outcome) return []
+
+  if (outcome.factIds.length > 0) {
+    // Dispatched, not awaited (Codex P2, PR #711). The timeout above promises
+    // that a slow database costs the turn its memory and not the owner's reply —
+    // awaiting an unbounded UPDATE right after it would hand that latency back.
+    // Bookkeeping does not belong on the response path; the request stays alive
+    // for the model call that follows, which is far longer than this statement.
+    void reinforceMemoriesOnUse(outcome.factIds).catch((err) => {
+      console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
+    })
+  }
+  return outcome.memories
+}
+
+async function retrieveRelevantMemoriesUnbounded(
+  userMessage: string,
+  personalMode: boolean,
+  businessId: AgentBusinessId,
+): Promise<RetrievalOutcome> {
   try {
     const accessClause = buildMemoryAccessClause(personalMode, businessId)
+    const tokens = extractQueryTokens(userMessage)
+
     const embedResult = await embed(userMessage)
-    if (!embedResult.success) {
-      // ILIKE fallback when embedding is unavailable
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const fbRows: Array<{ id: string; content: string; scope: string }> = await (prisma as any).$queryRawUnsafe(
-        `SELECT id, content, scope FROM agent_memory
-         WHERE pinned = false AND content ILIKE $1 ${accessClause}
-           AND (expires_at IS NULL OR expires_at > NOW())
-         ORDER BY "createdAt" DESC LIMIT 6`,
-        `%${userMessage.slice(0, 100)}%`,
-      )
-      return fbRows.map((r) => ({ id: r.id, content: r.content, scope: r.scope, score: 0.5 }))
-    }
+    const vec = embedResult.success ? vectorLiteral(embedResult.data) : null
 
-    const vec = vectorLiteral(embedResult.data)
+    const [vectorRows, keywordRows, digests] = await Promise.all([
+      vec ? vectorArm(vec, accessClause) : Promise.resolve<FactRow[]>([]),
+      keywordArm(tokens, userMessage, accessClause),
+      retrieveMemoryDigests({ queryVector: vec ?? undefined, personalMode, businessId }),
+    ])
 
-    const rows: Array<{
-      id: string
-      content: string
-      scope: string
-      score: number
-      importance: number
-      createdAt: Date
-      last_used_at: Date | null
-    }> =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (prisma as any).$queryRawUnsafe(
-        `SELECT id, content, scope, importance, "createdAt", last_used_at,
-                1 - (embedding <=> $1::vector) AS score
-         FROM agent_memory
-         WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
-           AND (expires_at IS NULL OR expires_at > NOW())
-         ORDER BY embedding <=> $1::vector
-         LIMIT ${VECTOR_FETCH_LIMIT}`,
-        vec,
-      )
+    const byId = new Map<string, FactRow>()
+    const vectorSimilarity = new Map<string, number>()
+    const keywordRank = new Map<string, number>()
+
+    const vectorHits: RankedArmHit[] = vectorRows.map((row, rank) => {
+      byId.set(row.id, row)
+      vectorSimilarity.set(row.id, row.score ?? 0)
+      return { id: row.id, rank }
+    })
+    const keywordHits: RankedArmHit[] = keywordRows.map((row, rank) => {
+      if (!byId.has(row.id)) byId.set(row.id, row)
+      keywordRank.set(row.id, rank)
+      // `exact` breaks ties in the fusion, so it must mean a LITERAL match —
+      // not merely "found by the keyword arm" (Codex P2, PR #711). A row that
+      // shares only a generic lexeme ("ord" out of "ORD-123") has earned no
+      // priority over a semantic hit.
+      return { id: row.id, rank, exact: row.literal_match === true }
+    })
 
     const now = new Date()
-    const candidates = rows
-      .filter((r) => r.score >= SIMILARITY_THRESHOLD)
-      .map((r) => ({
-        id: r.id,
-        content: r.content,
-        scope: r.scope,
-        similarity: r.score,
-        importance: r.importance,
-        createdAt: r.createdAt,
-        lastUsedAt: r.last_used_at,
-      }))
+    const fused = fuseRrf([vectorHits, keywordHits]).slice(0, FUSED_POOL)
 
-    const ranked = rerankMemories(candidates, RERANK_TAKE, now)
-    const selectedIds = ranked.map((m) => m.id)
+    const scored = fused
+      .map((hit) => {
+        const row = byId.get(hit.id)
+        if (!row) return null
+        const similarity =
+          vectorSimilarity.get(hit.id) ?? keywordSimilarityProxy(keywordRank.get(hit.id) ?? KEYWORD_FETCH_LIMIT)
+        const rankable = {
+          id: row.id,
+          content: row.content,
+          similarity,
+          importance: row.importance,
+          createdAt: row.createdAt,
+          lastUsedAt: row.last_used_at,
+        }
+        // Agreement between the two arms is the one signal a hybrid setup adds
+        // that neither arm produces alone — worth a small, explicit nudge.
+        const score = blendedScore(rankable, now) + (hit.arms > 1 ? BOTH_ARMS_BONUS : 0)
+        return { id: row.id, content: row.content, scope: row.scope, score }
+      })
+      .filter((x): x is { id: string; content: string; scope: string; score: number } => x !== null)
+      .sort((a, b) => b.score - a.score)
 
-    try {
-      await reinforceMemoriesOnUse(selectedIds)
-    } catch (err) {
-      console.warn('[agent-memory] reinforceMemoriesOnUse failed:', err instanceof Error ? err.message : err)
+    const budgeted = applyMemoryBudget(scored, { maxItems: MEMORY_MAX_ITEMS })
+
+    return {
+      memories: [
+        // Digest blocks lead: they are the compressed picture the facts belong to.
+        ...digests.map((d) => ({
+          id: d.id,
+          content: d.content,
+          scope: 'digest',
+          score: Math.round(d.score * 100) / 100,
+        })),
+        ...budgeted.kept.map((m) => ({
+          id: m.id,
+          content: m.content,
+          scope: m.scope,
+          score: Math.round(m.score * 100) / 100,
+        })),
+      ],
+      factIds: budgeted.kept.map((m) => m.id),
     }
-
-    return ranked.map((m) => ({
-      id: m.id,
-      content: m.content,
-      scope: m.scope,
-      score: Math.round(blendedScore(m, now) * 100) / 100,
-    }))
   } catch (err) {
     console.warn('[agent-memory] retrieveRelevantMemories failed:', err instanceof Error ? err.message : err)
-    return []
+    return { memories: [], factIds: [] }
   }
 }

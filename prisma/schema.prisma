@@ -2463,6 +2463,32 @@ model AgentMemory {
   @@map("agent_memory")
 }
 
+/// Distilled memory layers (owner-approved 2026-08-03). Flat facts answer "what
+/// was said"; these answer "what is the situation" without paying for every fact
+/// row. L2 = one scenario block per topic, L3 = one standing persona block per
+/// scope. DERIVED data — rebuilt weekly from AgentMemory, never hand-authored,
+/// so dropping the table loses nothing permanent.
+model AgentMemoryDigest {
+  id          String                       @id @default(uuid())
+  /// 'L2' (scenario) | 'L3' (persona)
+  layer       String
+  /// 'personal' | 'business' — matches the retrieval mode
+  scope       String
+  /// NULL for personal blocks; the business for business blocks
+  businessId  String?                      @map("business_id")
+  topic       String
+  content     String                       @db.Text
+  embedding   Unsupported("vector(1536)")?
+  sourceCount Int                          @default(0) @map("source_count")
+  sourceIds   Json?                        @map("source_ids")
+  refreshedAt DateTime                     @default(now()) @map("refreshed_at")
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+
+  @@index([layer, scope])
+  @@map("agent_memory_digest")
+}
+
 /// Answer Gate (owner decision 2026-07-08): verified reusable Q&A pairs served
 /// in front of EXPENSIVE heads only (Gemini/Opus-class). Cheap heads bypass.
 model AgentQaCache {
