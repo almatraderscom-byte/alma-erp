@@ -134,7 +134,12 @@ export const POST = withApiRoute('attendance.waivers.create', async (req: NextRe
   }
 
   const requestType = parseRequestType(body.request_type)
-  const requestedReduction = defaultRequestedReduction(penalty, requestType, body.requested_reduction_amount)
+  // Preserve an explicitly supplied amount so the service can reject zero or
+  // over-limit input before immutable once-only appeal history is created.
+  // Defaults apply only when an amount was genuinely omitted.
+  const requestedReduction = body.requested_reduction_amount == null
+    ? defaultRequestedReduction(penalty, requestType)
+    : Number(body.requested_reduction_amount)
 
   const result = await submitPenaltyAppeal({
     attendanceRecordId: record.id,

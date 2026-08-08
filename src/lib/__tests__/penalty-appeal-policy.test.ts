@@ -39,6 +39,13 @@ describe('penalty appeal policy', () => {
     expect(resolveRequestedPenaltyReduction(500, 250)).toEqual({ ok: true, amount: 250 })
   })
 
+  it('rejects an over-limit staff request instead of turning it into a full waiver', () => {
+    expect(resolveRequestedPenaltyReduction(500, 750)).toEqual({
+      ok: false,
+      reason: 'EXCEEDS_ORIGINAL_PENALTY',
+    })
+  })
+
   it('formats the selected amount without substituting the late fine', () => {
     const message = formatPenaltyAppealTelegramMessage({
       employeeName: 'Employee',

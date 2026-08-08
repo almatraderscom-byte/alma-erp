@@ -216,6 +216,7 @@ private data class PortalWaiver(
 
 private data class PortalAttendanceToday(
     val id: String?,
+    val penaltyLedgerEntryId: String?,
     val attendanceDate: String?,
     val checkInAt: String?,
     val checkOutAt: String?,
@@ -227,6 +228,7 @@ private data class PortalAttendanceToday(
     companion object {
         fun from(o: JSONObject): PortalAttendanceToday = PortalAttendanceToday(
             id = o.str("id"),
+            penaltyLedgerEntryId = o.str("penaltyLedgerEntryId"),
             attendanceDate = o.str("attendanceDate"),
             checkInAt = o.str("checkInAt"),
             checkOutAt = o.str("checkOutAt"),
@@ -671,10 +673,11 @@ private class PortalState {
     }
 
     /** Web PenaltyAppealModal submit — attachment stays a web-only extra. */
-    suspend fun submitPenaltyAppeal(recordId: String, requestType: String, reason: String, partialAmount: Int?) {
+    suspend fun submitPenaltyAppeal(recordId: String, penaltyLedgerEntryId: String, requestType: String, reason: String, partialAmount: Int?) {
         val body = JSONObject()
             .put("business_id", PORTAL_BUSINESS_ID)
             .put("attendance_record_id", recordId)
+            .put("penalty_ledger_entry_id", penaltyLedgerEntryId)
             .put("reason", reason)
             .put("request_type", requestType)
         if (requestType == "PARTIAL_REDUCE") body.put("requested_reduction_amount", partialAmount ?: 0)
@@ -919,8 +922,11 @@ fun PortalScreen(ctx: PushCtx) {
                 dark = dark,
             ) { requestType, reason, partialAmount ->
                 appealSheet = false
-                vm.attendanceToday?.id?.let { recordId ->
-                    scope.launch { vm.submitPenaltyAppeal(recordId, requestType, reason, partialAmount) }
+                val today = vm.attendanceToday
+                val recordId = today?.id
+                val penaltyLedgerEntryId = today?.penaltyLedgerEntryId
+                if (recordId != null && penaltyLedgerEntryId != null) {
+                    scope.launch { vm.submitPenaltyAppeal(recordId, penaltyLedgerEntryId, requestType, reason, partialAmount) }
                 }
             }
         }
