@@ -145,6 +145,43 @@ describe('refundFinesForApprovedException — scope decides which posted fines r
     expect(nocheckout?.amount).toBe(200)
   })
 
+  it('does not move an exact late-fine appeal credit onto an early-leave fine', async () => {
+    recordFindUnique.mockResolvedValue({
+      id: 'rec-1',
+      penaltyAmount: 50,
+      penaltyLedgerEntryId: 'l-late',
+      earlyLeavePenaltyAmount: 100,
+      earlyLeavePenaltyLedgerEntryId: 'l-early',
+      noCheckoutFineAmount: 0,
+      noCheckoutFineLedgerEntryId: null,
+    })
+    waiverFindMany.mockResolvedValue([{
+      reversalLedgerEntryId: 'rev-late',
+      penaltyLedgerEntryId: 'l-late',
+    }])
+    ledgerFindMany.mockImplementation(async (args: unknown) => {
+      const where = (args as { where?: { source?: string } }).where || {}
+      if (where.source === 'attendance_late_penalty_reversal') {
+        return [{ id: 'rev-late', amount: 50, relatedEntryId: 'l-late' }]
+      }
+      return []
+    })
+
+    await refundFinesForApprovedException(ex('FULL_DAY'))
+
+    const credited = createEntry.mock.calls.map(call => call[0] as {
+      sourceRef: string
+      amount: number
+      relatedEntryId: string
+    })
+    expect(credited).toHaveLength(1)
+    expect(credited[0]).toMatchObject({
+      amount: 100,
+      relatedEntryId: 'l-early',
+    })
+    expect(credited[0].sourceRef).toMatch(/:early$/)
+  })
+
   it('skips a fine kind this exception already refunded (idempotent re-run)', async () => {
     recordFindUnique.mockResolvedValue(fullyFinedRecord)
     ledgerFindMany.mockImplementation(async (args: unknown) => {

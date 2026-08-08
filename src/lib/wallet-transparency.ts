@@ -261,7 +261,7 @@ export function fineWindowSummary(
       // link. They cannot be attributed to the deleted attendance record, but
       // remain real wallet credits and must reduce net cost in their posted
       // window (especially the since-joining statement).
-      if (entry.source === 'attendance_reset_reversal' && inWindow(new Date(entry.date), from, to)) {
+      if (entry.source === 'attendance_reset_reversal' && !from && !to) {
         legacyUnlinkedResetTotal += Math.max(0, Number(entry.amount || 0))
       }
       continue

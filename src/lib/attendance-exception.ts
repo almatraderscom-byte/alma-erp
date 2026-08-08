@@ -123,7 +123,12 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
   for (const t of targets) {
     if (!kinds.has(t.kind) || !t.posted || t.amount <= 0) continue
     if (alreadyRefundedKinds.has(t.kind)) continue
-    const refund = Math.min(t.amount, budget)
+    const creditedForExactFine = t.ledgerEntryId
+      ? alreadyCredited.byFineId.get(t.ledgerEntryId) || 0
+      : 0
+    const remainingForExactFine = roundMoney(t.amount - creditedForExactFine)
+    if (remainingForExactFine <= 0) continue
+    const refund = Math.min(remainingForExactFine, budget)
     if (refund <= 0) break
     try {
       await createCompensationLedgerEntry(
@@ -167,14 +172,20 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
 async function sumExistingFineRefunds(
   attendanceRecordId: string,
   exceptionId: string,
-): Promise<{ total: number; exceptionKinds: Set<FineKind> }> {
+): Promise<{ total: number; exceptionKinds: Set<FineKind>; byFineId: Map<string, number> }> {
   const exceptionKinds = new Set<FineKind>()
+  const byFineId = new Map<string, number>()
   let total = 0
+
+  const addFineCredit = (fineId: string | null | undefined, amount: number) => {
+    if (!fineId) return
+    byFineId.set(fineId, roundMoney((byFineId.get(fineId) || 0) + amount))
+  }
 
   // Appeal-path reversals tied to this attendance record.
   const waivers = await prisma.attendanceWaiverRequest.findMany({
     where: { attendanceRecordId, reversalLedgerEntryId: { not: null } },
-    select: { reversalLedgerEntryId: true },
+    select: { reversalLedgerEntryId: true, penaltyLedgerEntryId: true },
   })
   const reversalIds = waivers
     .map(w => w.reversalLedgerEntryId)
@@ -182,9 +193,17 @@ async function sumExistingFineRefunds(
   if (reversalIds.length > 0) {
     const rows = await prisma.employeeLedgerEntry.findMany({
       where: { id: { in: reversalIds }, isArchived: false, source: LATE_PENALTY_REVERSAL_SOURCE },
-      select: { amount: true },
+      select: { id: true, amount: true, relatedEntryId: true },
     })
-    total += rows.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+    const waiverFineByReversalId = new Map(waivers.map(waiver => [
+      waiver.reversalLedgerEntryId,
+      waiver.penaltyLedgerEntryId,
+    ]))
+    for (const row of rows) {
+      const amount = Number(row.amount || 0)
+      total += amount
+      addFineCredit(row.relatedEntryId || waiverFineByReversalId.get(row.id), amount)
+    }
   }
 
   // Exception-path refunds already raised by this exception.
@@ -194,15 +213,17 @@ async function sumExistingFineRefunds(
       sourceRef: { startsWith: `attendance-exc-refund:${exceptionId}:` },
       isArchived: false,
     },
-    select: { amount: true, sourceRef: true },
+    select: { amount: true, sourceRef: true, relatedEntryId: true },
   })
   for (const r of excRefunds) {
-    total += Number(r.amount || 0)
+    const amount = Number(r.amount || 0)
+    total += amount
+    addFineCredit(r.relatedEntryId, amount)
     const kind = r.sourceRef?.split(':').pop()
     if (kind === 'late' || kind === 'early' || kind === 'nocheckout') exceptionKinds.add(kind)
   }
 
-  return { total: roundMoney(total), exceptionKinds }
+  return { total: roundMoney(total), exceptionKinds, byFineId }
 }
 
 function dateLabel(date: Date) {

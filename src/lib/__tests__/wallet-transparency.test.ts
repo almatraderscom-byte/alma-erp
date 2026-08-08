@@ -99,6 +99,14 @@ describe('fineWindowSummary', () => {
     })
   })
 
+  it('does not apply an unlinked legacy reset to an unrelated bounded-window fine', () => {
+    const summary = fineWindowSummary([
+      { id: 'fine-august', type: 'PENALTY', source: 'attendance_late_penalty', amount: 50, date: new Date('2026-08-03T00:00:00.000Z'), relatedEntryId: null },
+      { id: 'reset-legacy-july-fine', type: 'ADJUSTMENT', source: 'attendance_reset_reversal', amount: 100, date: new Date('2026-08-02T00:00:00.000Z'), relatedEntryId: null },
+    ] as never, {}, new Date('2026-08-01T00:00:00.000Z'), new Date('2026-08-31T23:59:59.999Z'))
+    expect(summary.netFineCost).toBe(50)
+  })
+
   it('does not claim a refund when the linked credit fails reconciliation', () => {
     const summary = fineWindowSummary(entries, {
       'fine-1': appeal({ refundedAmount: 0, refundReconciled: false, refundIssue: 'missing' }),
