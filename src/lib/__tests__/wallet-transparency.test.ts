@@ -87,6 +87,18 @@ describe('fineWindowSummary', () => {
     })
   })
 
+  it('includes a legacy unlinked reset credit in its posted ledger window', () => {
+    const summary = fineWindowSummary([
+      { id: 'fine-legacy', type: 'PENALTY', source: 'attendance_late_penalty', amount: 100, date: new Date('2026-07-31T00:00:00.000Z'), relatedEntryId: null },
+      { id: 'reset-legacy', type: 'ADJUSTMENT', source: 'attendance_reset_reversal', amount: 100, date: new Date('2026-08-02T00:00:00.000Z'), relatedEntryId: null },
+    ] as never, {}, null, null)
+    expect(summary).toMatchObject({
+      fineTotal: 100,
+      refundTotal: 0,
+      netFineCost: 0,
+    })
+  })
+
   it('does not claim a refund when the linked credit fails reconciliation', () => {
     const summary = fineWindowSummary(entries, {
       'fine-1': appeal({ refundedAmount: 0, refundReconciled: false, refundIssue: 'missing' }),

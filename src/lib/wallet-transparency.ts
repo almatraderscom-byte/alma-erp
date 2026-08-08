@@ -249,13 +249,23 @@ export function fineWindowSummary(
   // date. Appeal refund metrics stay appeal-only, while net cost reflects all
   // actual wallet credits (appeal, approved exception, and attendance reset).
   const reversalByFineId = new Map<string, number>()
+  let legacyUnlinkedResetTotal = 0
   for (const entry of entries) {
     if (
       entry.type !== 'ADJUSTMENT'
-      || !entry.relatedEntryId
       || !entry.source
       || !FINE_REVERSAL_SOURCES.has(entry.source)
     ) continue
+    if (!entry.relatedEntryId) {
+      // Older reset rows were posted before the writer stored the exact fine
+      // link. They cannot be attributed to the deleted attendance record, but
+      // remain real wallet credits and must reduce net cost in their posted
+      // window (especially the since-joining statement).
+      if (entry.source === 'attendance_reset_reversal' && inWindow(new Date(entry.date), from, to)) {
+        legacyUnlinkedResetTotal += Math.max(0, Number(entry.amount || 0))
+      }
+      continue
+    }
     reversalByFineId.set(
       entry.relatedEntryId,
       (reversalByFineId.get(entry.relatedEntryId) || 0) + Math.max(0, Number(entry.amount || 0)),
@@ -286,7 +296,7 @@ export function fineWindowSummary(
     refundCount,
     refundTotal,
     pendingAppeals,
-    netFineCost: Math.max(0, fineTotal - fineReversalTotal),
+    netFineCost: Math.max(0, fineTotal - fineReversalTotal - legacyUnlinkedResetTotal),
   }
 }
 

@@ -37,6 +37,7 @@ export async function resetAttendanceRecordByAdmin(recordId: string, actorUserId
         approvedById: actorUserId,
         source: ATTENDANCE_RESET_REVERSAL_SOURCE,
         sourceRef,
+        relatedEntryId: record.penaltyLedgerEntryId || null,
         note: `Attendance reset by admin — late penalty reversed · ${record.attendanceDate.toISOString().slice(0, 10)}`,
       })
       penaltyReversed = penaltyAmount
