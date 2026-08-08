@@ -93,7 +93,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const penaltyEntityIds = approvalsRaw
     .filter(row => isPenaltyApprovalType(row.module, row.type))
     .map(row => row.entityId)
-  const [walletRows, penaltyRows] = await Promise.all([
+  const [walletRows, penaltyRows, penaltyAttachmentRows] = await Promise.all([
     walletEntityIds.length
       ? prisma.walletRequest.findMany({
           where: { id: { in: walletEntityIds } },
@@ -110,7 +110,6 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
             originalPenaltyAmount: true,
             requestedReductionAmount: true,
             penaltyLedgerEntryId: true,
-            attachmentDataUrl: true,
             businessId: true,
             createdAt: true,
             attendanceRecord: {
@@ -131,10 +130,25 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
           },
         })
       : [],
+    penaltyEntityIds.length
+      ? prisma.attendanceWaiverRequest.findMany({
+          where: {
+            id: { in: penaltyEntityIds },
+            attachmentDataUrl: { not: null },
+          },
+          select: { id: true },
+        })
+      : [],
   ])
   const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
   const penaltyStatusMap = new Map(penaltyRows.map(w => [w.id, w.status]))
-  const penaltyWaiverMap = new Map(penaltyRows.map(w => [w.id, w]))
+  const penaltyAttachmentIds = new Set(penaltyAttachmentRows.map(row => row.id))
+  const penaltyWaiverMap = new Map(
+    penaltyRows.map(waiver => [
+      waiver.id,
+      { ...waiver, hasAttachment: penaltyAttachmentIds.has(waiver.id) },
+    ]),
+  )
 
   const payoutByUser = new Map<string, Awaited<ReturnType<typeof resolvePayoutSummariesForUsers>> extends Map<string, infer V> ? V : never>()
   if (role === 'SUPER_ADMIN') {
@@ -220,7 +234,7 @@ type PenaltyWaiverSlice = {
   originalPenaltyAmount: unknown
   requestedReductionAmount: unknown
   penaltyLedgerEntryId: string | null
-  attachmentDataUrl: string | null
+  hasAttachment: boolean
   businessId: string
   createdAt: Date
   attendanceRecord: {
@@ -267,7 +281,7 @@ function penaltyAppealContext(waiver: PenaltyWaiverSlice | undefined) {
       waiver.requestedReductionAmount == null ? null : Number(waiver.requestedReductionAmount),
     requestType: waiver.requestType,
     appealSubmittedAt: waiver.createdAt.toISOString(),
-    attachmentUrl: waiver.attachmentDataUrl
+    attachmentUrl: waiver.hasAttachment
       ? `/api/attendance/waivers/${waiver.id}/attachment?business_id=${encodeURIComponent(waiver.businessId)}`
       : null,
   }
