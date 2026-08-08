@@ -6,6 +6,11 @@ final class AssistantParityV2UITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
+        if name.contains("testPenaltyApprovalSheetKeepsHeaderAndActionReachable") {
+            // This test owns a separate, non-submitting Approvals fixture launch;
+            // do not make it depend on the Assistant smoke setup below.
+            return
+        }
         app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
         app.launchEnvironment["ALMA_ASSISTANT_PARITY"] = "1"
         app.launchEnvironment["ALMA_MERGE_MOCK"] = "library"
@@ -44,6 +49,67 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "Generated")).count > 0)
         XCTAssertTrue(app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "Uploaded")).count > 0)
+    }
+
+    func testPenaltyApprovalSheetKeepsHeaderAndActionReachable() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_OPEN_TAB"] = "3"
+        app.launchEnvironment["ALMA_APPROVAL_SHEET_FIXTURE"] = "1"
+        app.launch()
+
+        let title = app.staticTexts["penalty.approval.title"]
+        let close = app.buttons["penalty.approval.close"]
+        let amount = app.textFields["penalty.approval.amount"]
+        let confirm = app.buttons["penalty.approval.confirm"]
+
+        XCTAssertTrue(title.waitForExistence(timeout: 8))
+        XCTAssertTrue(close.exists)
+        XCTAssertTrue(confirm.exists)
+        XCTAssertTrue(confirm.isEnabled, "an empty optional note must not block approval")
+        XCTAssertTrue(title.isHittable)
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(confirm.isHittable)
+        let initialTitleFrame = title.frame
+
+        let full = XCTAttachment(screenshot: app.screenshot())
+        full.name = "penalty-approval-full"
+        full.lifetime = .keepAlways
+        add(full)
+
+        let scroll = app.scrollViews["penalty.approval.scroll"]
+        XCTAssertTrue(scroll.exists)
+        scroll.swipeUp()
+        XCTAssertTrue(app.textFields["penalty.approval.note"].isHittable)
+        XCTAssertTrue(title.isHittable, "the pinned header must survive body scrolling")
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(confirm.isHittable, "the pinned action must survive body scrolling")
+
+        scroll.swipeDown()
+        let halfButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Half penalty")
+        ).firstMatch
+        XCTAssertTrue(halfButton.exists)
+        halfButton.tap()
+        XCTAssertTrue(app.staticTexts["Partial approval"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Wallet credit ৳500")
+        ).firstMatch.exists)
+        XCTAssertEqual(title.frame.minX, initialTitleFrame.minX, accuracy: 1,
+                       "amount changes must not shift or clip the pinned title")
+
+        let partial = XCTAttachment(screenshot: app.screenshot())
+        partial.name = "penalty-approval-partial"
+        partial.lifetime = .keepAlways
+        add(partial)
+
+        XCTAssertTrue(amount.isHittable)
+        amount.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(title.isHittable, "the pinned title must remain usable with the keyboard open")
+        XCTAssertTrue(close.isHittable)
+        XCTAssertTrue(confirm.isHittable, "the pinned action must remain usable with the keyboard open")
+        XCTAssertTrue(app.buttons["Done"].exists)
     }
 
     func testNativeActionCardsUseExplicitCleanHierarchy() {

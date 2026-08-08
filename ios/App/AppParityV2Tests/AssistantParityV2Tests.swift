@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testPenaltyApprovalDecisionFullHalfAndCustomResults() {
+        let full = PenaltyApprovalDecision(
+            originalPenalty: 1_000, requestedReduction: 1_000, amountText: "1000")
+        XCTAssertTrue(full.isValid)
+        XCTAssertEqual(full.walletCredit, 1_000)
+        XCTAssertEqual(full.remainingPenalty, 0)
+        XCTAssertFalse(full.isPartial)
+        XCTAssertEqual(full.halfPenalty, 500)
+
+        let half = PenaltyApprovalDecision(
+            originalPenalty: 1_000, requestedReduction: 1_000, amountText: "500")
+        XCTAssertTrue(half.isValid)
+        XCTAssertEqual(half.walletCredit, 500)
+        XCTAssertEqual(half.remainingPenalty, 500)
+        XCTAssertTrue(half.isPartial)
+
+        let custom = PenaltyApprovalDecision(
+            originalPenalty: 1_000, requestedReduction: 800, amountText: "375")
+        XCTAssertTrue(custom.isValid)
+        XCTAssertEqual(custom.walletCredit, 375)
+        XCTAssertEqual(custom.remainingPenalty, 625)
+        XCTAssertTrue(custom.isPartial)
+    }
+
+    func testPenaltyApprovalDecisionRejectsInvalidBoundaries() {
+        for invalid in ["", "abc", "0", "-1", "801"] {
+            let decision = PenaltyApprovalDecision(
+                originalPenalty: 1_000, requestedReduction: 800, amountText: invalid)
+            XCTAssertFalse(decision.isValid, "\(invalid) must not be submittable")
+            XCTAssertEqual(decision.walletCredit, 0)
+            XCTAssertEqual(decision.remainingPenalty, 1_000)
+        }
+
+        let inconsistentServerAmounts = PenaltyApprovalDecision(
+            originalPenalty: 600, requestedReduction: 800, amountText: "601")
+        XCTAssertFalse(inconsistentServerAmounts.isValid,
+                       "credit must never exceed the original penalty")
+    }
+
     func testLiveBargeInCorrelationRecognizesRenderedEchoWithSmallDelay() {
         let rendered: [Float] = (0..<160).map {
             let x = Double($0)
