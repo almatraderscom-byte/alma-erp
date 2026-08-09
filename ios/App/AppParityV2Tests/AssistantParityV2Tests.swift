@@ -80,8 +80,10 @@ final class AssistantParityV2Tests: XCTestCase {
 
     func testTopModelMenuPreservesAutoAndProviderGrouping() {
         let models = [
-            AgentModelInfo(id: "claude", label: "Claude", provider: "anthropic", enabled: true, isDefault: false),
-            AgentModelInfo(id: "gemini", label: "Gemini", provider: "google", enabled: true, isDefault: true),
+            AgentModelInfo(id: "claude", label: "Claude", provider: "anthropic", enabled: true,
+                           isDefault: false, contextWindow: 200_000),
+            AgentModelInfo(id: "gemini", label: "Gemini", provider: "google", enabled: true,
+                           isDefault: true, contextWindow: 1_000_000),
         ]
 
         let elements = AssistantBarHooks.modelMenuElements(
@@ -92,6 +94,64 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(menus.count, 3)
         XCTAssertEqual(actions.map(\.title), ["Auto", "Claude", "Gemini"])
         XCTAssertEqual(actions.first?.state, .on)
+    }
+
+    func testNativeContextWindowDecodesProviderMeasuredUsage() throws {
+        let json = Data(#"""
+        {
+          "checkedAt":"2026-08-09T12:00:00.000Z",
+          "selectedModelId":"auto",
+          "resolvedModelId":"claude-sonnet-4-6",
+          "model":{"id":"auto","label":"Auto","resolvedLabel":"Claude Sonnet 4.6","contextWindow":200000,"auto":true},
+          "context":{"usedTokens":24800,"percentage":12.4,"source":"provider_round","measuredAt":"2026-08-09T11:59:58.000Z","exact":true,"breakdown":[]}
+        }
+        """#.utf8)
+
+        let snapshot = try JSONDecoder().decode(AgentUsageSnapshot.self, from: json)
+
+        XCTAssertEqual(snapshot.usedPercentage, 12.4, accuracy: 0.001)
+        XCTAssertEqual(snapshot.remainingPercentage, 88)
+        XCTAssertEqual(snapshot.model.contextWindow, 200_000)
+        XCTAssertEqual(AgentContextTokenFormat.compact(snapshot.context.usedTokens), "24.8K")
+        XCTAssertEqual(AgentContextTokenFormat.compact(snapshot.model.contextWindow), "200K")
+        XCTAssertTrue(snapshot.context.exact)
+    }
+
+    func testFreshAutoContextStartsAtZeroThenFollowsLiveRoutedModel() {
+        let vm = AssistantVM()
+        vm.modelId = nil
+        vm.models = [
+            AgentModelInfo(id: "claude-haiku-4-5", label: "Claude Haiku 4.5",
+                           provider: "anthropic", enabled: true,
+                           isDefault: false, contextWindow: 200_000),
+            AgentModelInfo(id: "or-grok-4.20", label: "Grok 4.20 (OpenRouter)",
+                           provider: "openrouter", enabled: true,
+                           isDefault: false, contextWindow: 2_000_000),
+        ]
+
+        XCTAssertTrue(vm.contextRoutePending)
+        XCTAssertEqual(vm.effectiveContextUsedTokens, 0)
+        XCTAssertEqual(vm.effectiveContextPercentage, 0)
+        XCTAssertNil(vm.effectiveContextWindow)
+
+        vm.liveResolvedModelId = "or-grok-4.20"
+
+        XCTAssertFalse(vm.contextRoutePending)
+        XCTAssertEqual(vm.effectiveContextModel?.provider, "openrouter")
+        XCTAssertEqual(vm.effectiveContextWindow, 2_000_000)
+        XCTAssertEqual(vm.effectiveContextPercentage, 0)
+    }
+
+    func testModelInfoTransportKeepsCanonicalModelIdForAutoContext() throws {
+        let data = Data(#"{"type":"model_info","modelId":"gemini-3.1-pro","label":"Gemini 3.1 Pro","displayName":"Gemini 3.1 Pro"}"#.utf8)
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: data)
+
+        guard case .modelInfo(let modelId, let label, let displayName) = AgentTurnEvent(dto: dto) else {
+            return XCTFail("model_info must remain a typed native event")
+        }
+        XCTAssertEqual(modelId, "gemini-3.1-pro")
+        XCTAssertEqual(label, "Gemini 3.1 Pro")
+        XCTAssertEqual(displayName, "Gemini 3.1 Pro")
     }
 
     func testRecoveryIdentityIndexCoalescesDuplicateRowsWithoutCrashing() {
@@ -490,6 +550,71 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertTrue(message.selfCorrected)
     }
 
+    func testClaudeChatFixtureCarriesConversationFirstAgentSequence() {
+        let vm = AssistantVM()
+        vm.loadClaudeChatFixture()
+
+        XCTAssertEqual(vm.conversationId, "fixture-claude-chat")
+        XCTAssertEqual(vm.permissionMode, .standard)
+        XCTAssertEqual(vm.messages.count, 2)
+        guard let answer = vm.messages.last else {
+            return XCTFail("fixture must include an assistant answer")
+        }
+        XCTAssertEqual(answer.thinkingMs, 12_400)
+        XCTAssertEqual(answer.tools.count, 6)
+        XCTAssertEqual(answer.blocks.compactMap { block -> String? in
+            if case .prose(_, let text) = block { return text }
+            return nil
+        }.count, 3)
+        XCTAssertEqual(answer.blocks.compactMap { block -> String? in
+            if case .activity(let activity) = block, activity.kind == .thinking {
+                return activity.id
+            }
+            return nil
+        }, ["claude-thought-1", "claude-thought-2"])
+        guard case .file(_, let artifactId, let name) = answer.blocks.last else {
+            return XCTFail("fixture must finish with the action-plan file")
+        }
+        XCTAssertEqual(artifactId, "claude-action-plan")
+        XCTAssertEqual(name, "৩০ দিনের Sales Recovery Plan.md")
+        XCTAssertEqual(AgentCompactActivityRow.friendlyLabel("get_sales_overview"),
+                       "বিক্রির সারাংশ")
+    }
+
+    #if DEBUG
+    func testInteractiveClaudePreviewUsesRealCatalogAndChronologicalSSEContract() {
+        let models = AlmaMergeReadinessURLProtocol.interactivePreviewModels
+        let ids = Set(models.map(\.id))
+        XCTAssertEqual(models.count, 17)
+        XCTAssertTrue(ids.contains("claude-sonnet-4-6"))
+        XCTAssertTrue(ids.contains("gemini-3.1-pro"))
+        XCTAssertTrue(ids.contains("gpt-5.6-luna"))
+        XCTAssertTrue(ids.contains("or-deepseek-v4-flash"))
+        XCTAssertTrue(ids.contains("xai-grok-4.20"))
+        XCTAssertFalse(ids.contains("or-glm-4-32b"), "worker-only models must stay out of the picker")
+
+        let frames = AlmaMergeReadinessURLProtocol.interactivePreviewFrames(
+            modelId: "claude-sonnet-4-6", prompt: "show me a recovery plan", turn: 7)
+        let types = frames.map(\.type)
+        XCTAssertEqual(Array(types.prefix(3)), ["conversation_id", "turn_id", "model_info"])
+        XCTAssertEqual(types.last, "done")
+        XCTAssertTrue(types.contains("thinking_delta"))
+        XCTAssertTrue(types.contains("text_delta"))
+        XCTAssertGreaterThanOrEqual(types.filter { $0 == "tool_start" }.count, 4)
+        XCTAssertEqual(types.filter { $0 == "tool_start" }.count,
+                       types.filter { $0 == "tool_end" }.count)
+        XCTAssertTrue(types.contains("artifact_saved"))
+        XCTAssertEqual(frames.map(\.delayMilliseconds), frames.map(\.delayMilliseconds).sorted())
+
+        let modelInfo = frames.first(where: { $0.type == "model_info" })?.event
+        XCTAssertEqual(modelInfo?["displayName"] as? String, "Claude Sonnet 4.6")
+        let renderedText = frames.filter { $0.type == "text_delta" }
+            .compactMap { $0.event["delta"] as? String }.joined()
+        XCTAssertTrue(renderedText.contains("show me a recovery plan"))
+        XCTAssertTrue(renderedText.contains("local deterministic response"))
+    }
+    #endif
+
     func testCacheOverflowStaysBoundedAndKeepsForwardRecovery() async {
         let vm = AssistantVM()
         vm.loadHistoryCacheOverflowFixture()
@@ -685,5 +810,83 @@ final class AssistantParityV2Tests: XCTestCase {
         gate.socketSetupComplete = true
         XCTAssertTrue(gate.canPublishLive,
                       "a resumed socket may publish only after its own setupComplete")
+    }
+
+    func testProductionActivityNoiseCollapsesToClaudeStyleEpisodes() {
+        let blocks: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "think-1", kind: .thinking,
+                            label: "প্রশ্ন বুঝেছে", thinkFull: "scope")),
+            .prose(id: "understanding", text: "Boss, বুঝেছি—data দেখছি।"),
+            .activity(.init(id: "verify-1", kind: .progress,
+                            label: "নিজের উত্তর যাচাই করছে")),
+            .activity(.init(id: "think-2", kind: .thinking,
+                            label: "The business snapshot says", thinkFull: "snapshot")),
+            .activity(.init(id: "verify-2", kind: .progress,
+                            label: "source নিশ্চিত করছে")),
+            .activity(.init(id: "think-3", kind: .thinking,
+                            label: "The dashboard snapshot confirms", thinkFull: "confirmed")),
+            .activity(.init(id: "search", kind: .search,
+                            label: "Searched available tools")),
+            .activity(.init(id: "dashboard", kind: .tool,
+                            label: "get_dashboard_snapshot", toolId: "dashboard", ok: true)),
+            .prose(id: "final", text: "## ফলাফল\nসব data মিলেছে।"),
+        ]
+
+        let items = AgentTurnBlocksView.makeRenderItems(from: blocks)
+        XCTAssertEqual(items.count, 5,
+                       "raw provider chatter must render as thought → prose → thought → tools → prose")
+        guard items.indices.contains(3),
+              case .activityCluster(_, let activities) = items[3] else {
+            return XCTFail("the operational episode must be one expandable cluster")
+        }
+        XCTAssertEqual(activities.filter { $0.kind == .tool }.count, 1)
+        XCTAssertEqual(activities.filter { $0.kind == .search }.count, 1)
+        if case .block(.activity(let thought)) = items[2] {
+            XCTAssertEqual(thought.label, "findings যাচাই করেছে")
+            XCTAssertTrue(thought.thinkFull.contains("snapshot"))
+            XCTAssertTrue(thought.thinkFull.contains("confirmed"))
+        } else {
+            XCTFail("the repeated verification bursts must become one thought summary")
+        }
+    }
+
+    func testProgressOnlyProviderDoesNotInventEmptyThoughtDetail() {
+        let blocks: [AgentChatMessage.TurnBlock] = [
+            .activity(.init(id: "round", kind: .progress,
+                            label: "প্রথম data round শুরু করেছে", live: true)),
+            .activity(.init(id: "verify", kind: .progress,
+                            label: "result যাচাই করছে", live: true)),
+            .activity(.init(id: "tool", kind: .tool,
+                            label: "get_dashboard_snapshot", toolId: "tool", live: true)),
+        ]
+
+        let items = AgentTurnBlocksView.makeRenderItems(from: blocks)
+        guard case .block(.activity(let lifecycle)) = items.first else {
+            return XCTFail("progress-only providers need one factual lifecycle row")
+        }
+        XCTAssertEqual(lifecycle.kind, .progress)
+        XCTAssertEqual(lifecycle.label, "result যাচাই করছে")
+        XCTAssertTrue(lifecycle.thinkFull.contains("প্রথম data round"))
+        XCTAssertTrue(lifecycle.thinkFull.contains("result যাচাই"))
+    }
+
+    func testCumulativeProviderSnapshotBecomesOnlyNewSuffix() {
+        XCTAssertEqual(
+            AgentChatMessage.incrementalStreamSuffix(
+                existing: "Boss, dashboard দেখছি।",
+                incoming: "Boss, dashboard দেখছি। এখন sales মিলাচ্ছি।"),
+            " এখন sales মিলাচ্ছি।")
+    }
+
+    func testRepeatedProviderParagraphIsNotRenderedTwice() {
+        let paragraph = "Boss, dashboard, sales এবং inventory মিলিয়ে risk report তৈরি করছি।"
+        XCTAssertEqual(
+            AgentChatMessage.incrementalStreamSuffix(
+                existing: "আগের ভূমিকা।\n\n" + paragraph,
+                incoming: paragraph),
+            "")
+        XCTAssertEqual(
+            AgentChatMessage.incrementalStreamSuffix(existing: "ha", incoming: "ha"),
+            "ha", "short intentional repetition must remain possible")
     }
 }

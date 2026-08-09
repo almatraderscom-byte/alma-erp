@@ -274,11 +274,11 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .plan: return "list.clipboard"
-        case .careful: return "shield"
-        case .standard: return "scalemass"
+        case .plan: return "doc.text.magnifyingglass"
+        case .careful: return "hand.raised"
+        case .standard: return "checkmark.shield"
         case .supervised: return "eye"
-        case .elevated: return "timer"
+        case .elevated: return "exclamationmark.shield"
         }
     }
 
@@ -688,11 +688,55 @@ struct AgentModelInfo: Decodable, Identifiable, Equatable {
     let provider: String?
     let enabled: Bool?
     let isDefault: Bool?
-    enum CodingKeys: String, CodingKey { case id, label, provider, enabled, isDefault = "default" }
+    let contextWindow: Int?
+    enum CodingKeys: String, CodingKey {
+        case id, label, provider, enabled, contextWindow
+        case isDefault = "default"
+    }
 }
 struct AgentModelsResponse: Decodable {
     let defaultModelId: String?
     let models: [AgentModelInfo]?
+}
+
+/// The native projection of `/api/assistant/usage`. The web and iOS Agent now
+/// read the same provider-measured context figure; the phone never estimates a
+/// full-window percentage from cumulative billing tokens.
+struct AgentUsageSnapshot: Decodable, Equatable {
+    struct Model: Decodable, Equatable {
+        let id: String?
+        let label: String
+        let resolvedLabel: String?
+        let provider: String?
+        let contextWindow: Int?
+        let auto: Bool
+    }
+
+    struct Breakdown: Decodable, Equatable, Identifiable {
+        let id: String
+        let label: String
+        let tokens: Int
+        let percentage: Double
+        let color: String?
+    }
+
+    struct Context: Decodable, Equatable {
+        let usedTokens: Int?
+        let percentage: Double
+        let source: String
+        let measuredAt: String?
+        let exact: Bool
+        let breakdown: [Breakdown]
+    }
+
+    let checkedAt: String
+    let selectedModelId: String
+    let resolvedModelId: String?
+    let model: Model
+    let context: Context
+
+    var usedPercentage: Double { min(100, max(0, context.percentage)) }
+    var remainingPercentage: Int { Int((100 - usedPercentage).rounded()) }
 }
 
 /// Keeps every live "who is answering" label inside a small phone-screen budget.
@@ -1368,6 +1412,37 @@ struct AgentChatMessage: Identifiable, Equatable {
         return s
     }
 
+    /// Provider adapters normally emit token deltas, but some OpenRouter heads
+    /// occasionally send a cumulative snapshot or replay the latest paragraph.
+    /// Convert all three wire shapes into one append-only suffix so a provider
+    /// change can never make the native transcript duplicate itself.
+    static func incrementalStreamSuffix(existing: String, incoming: String) -> String {
+        guard !incoming.isEmpty else { return "" }
+        guard !existing.isEmpty else { return incoming }
+
+        // Full cumulative snapshot: "Hello" → "Hello world".
+        if incoming.hasPrefix(existing) {
+            return String(incoming.dropFirst(existing.count))
+        }
+
+        // Exact replay of a substantial recent paragraph. Keep tiny repeats
+        // ("ha ha", punctuation, etc.) because those can be intentional prose.
+        if incoming.count >= 24, existing.hasSuffix(incoming) { return "" }
+
+        // Partial replay across transport/provider chunk boundaries. Requiring a
+        // meaningful overlap avoids eating normal repeated words.
+        let maximum = min(existing.count, incoming.count)
+        guard maximum >= 16 else { return incoming }
+        for length in stride(from: maximum, through: 16, by: -1) {
+            let oldStart = existing.index(existing.endIndex, offsetBy: -length)
+            let newEnd = incoming.index(incoming.startIndex, offsetBy: length)
+            if existing[oldStart...] == incoming[..<newEnd] {
+                return String(incoming[newEnd...])
+            }
+        }
+        return incoming
+    }
+
     /// text_delta → extend the last prose block, or open a new one after activity.
     static func appendProseBlock(_ blocks: [TurnBlock], chunk: String, messageId: String) -> [TurnBlock] {
         var next = blocks
@@ -1593,6 +1668,11 @@ final class AssistantVM {
     var composerDraft = "" {
         didSet { persistCurrentComposerDraft() }
     }
+    /// Rebuilds SwiftUI's native TextField only when a server-accepted send
+    /// clears it. On iOS 26 an actively focused, axis-based TextField can retain
+    /// its old internal buffer even though the binding and persisted draft are
+    /// already empty, making a completed message look unsent in the composer.
+    var composerClearEpoch = 0
     private var restoringComposerDraft = false
     /// VM-level duplicate-submit guard. UI disabled states are secondary; this is
     /// the canonical protection shared by chat cards, sheets and voice actions.
@@ -2831,8 +2911,16 @@ final class AssistantVM {
     var modelLabel: String?          // live label from the stream's model_info event
     /// The answering model as Boss reads it — "DeepSeek V4 Flash", "Grok 4.20".
     var answeringModelName: String = ""
+    /// Canonical registry id from the live `model_info` event. This is essential
+    /// for Auto: its routed head can change every turn, and label matching is not
+    /// a safe basis for choosing a context-window limit.
+    var liveResolvedModelId: String?
     var modelId: String?             // nil or "auto" = Auto (router picks per turn)
     var models: [AgentModelInfo] = []
+    var usageSnapshot: AgentUsageSnapshot?
+    var usageLoading = false
+    var usageError = false
+    private var usageRequestGeneration = 0
 
     var isAutoModel: Bool { modelId == nil || modelId == "auto" }
     /// What the pill shows: Auto, or the pinned model's label.
@@ -2844,10 +2932,77 @@ final class AssistantVM {
         return AgentModelShortName.display(raw)
     }
 
+    /// Re-runs when the chat/model changes and once more when a stream settles.
+    /// It intentionally excludes individual token deltas so the usage route is
+    /// not hammered while the answer is growing.
+    var usageRefreshIdentity: String {
+        "\(conversationId ?? "new")|\(modelId ?? "auto")|\(liveResolvedModelId ?? "unresolved")|\(isStreaming ? "live" : "settled")"
+    }
+
+    /// Context identity used by every composer surface. Priority is deliberate:
+    /// the live routed head (Auto can change per turn), then an explicit owner
+    /// selection, then the latest server-measured head from the settled turn.
+    var effectiveContextModel: AgentModelInfo? {
+        if isAutoModel, let liveResolvedModelId,
+           let model = models.first(where: { $0.id == liveResolvedModelId }) {
+            return model
+        }
+        if !isAutoModel, let modelId,
+           let model = models.first(where: { $0.id == modelId }) {
+            return model
+        }
+        if let resolved = usageSnapshot?.resolvedModelId,
+           let model = models.first(where: { $0.id == resolved }) {
+            return model
+        }
+        return nil
+    }
+
+    var effectiveContextWindow: Int? {
+        effectiveContextModel?.contextWindow ?? usageSnapshot?.model.contextWindow
+    }
+
+    var effectiveContextUsedTokens: Int { max(0, usageSnapshot?.context.usedTokens ?? 0) }
+
+    var effectiveContextPercentage: Double {
+        guard let limit = effectiveContextWindow, limit > 0 else { return 0 }
+        return min(100, max(0, Double(effectiveContextUsedTokens) / Double(limit) * 100))
+    }
+
+    var contextRoutePending: Bool {
+        isAutoModel && liveResolvedModelId == nil && usageSnapshot?.resolvedModelId == nil
+    }
+
     func loadModels() async {
         guard models.isEmpty else { return }
         if let resp: AgentModelsResponse = try? await AlmaAPI.shared.get("/api/assistant/models") {
             models = (resp.models ?? []).filter { $0.enabled != false }
+        }
+    }
+
+    func refreshUsage() async {
+        usageRequestGeneration += 1
+        let generation = usageRequestGeneration
+        usageLoading = true
+        usageError = false
+
+        let selected = modelId ?? "auto"
+        let query: [String: String?] = [
+            "modelId": selected,
+            "conversationId": conversationId,
+        ]
+
+        do {
+            let snapshot: AgentUsageSnapshot = try await AlmaAPI.shared.get(
+                "/api/assistant/usage", query: query)
+            guard generation == usageRequestGeneration else { return }
+            usageSnapshot = snapshot
+            usageError = false
+            usageLoading = false
+        } catch {
+            guard generation == usageRequestGeneration else { return }
+            usageError = true
+            usageLoading = false
         }
     }
 
@@ -2857,6 +3012,10 @@ final class AssistantVM {
     func selectModel(_ id: String?) {
         let previous = modelId
         modelId = id
+        liveResolvedModelId = nil
+        modelLabel = nil
+        answeringModelName = ""
+        usageSnapshot = nil
         AlmaAgentHaptics.selection()
         guard let cid = conversationId else { return }
         Task { [weak self] in
@@ -4387,6 +4546,10 @@ final class AssistantVM {
         selectedSessionIdentity = "server:\(id)"
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
+        liveResolvedModelId = nil
+        modelLabel = nil
+        answeringModelName = ""
+        usageSnapshot = nil
         // The mode belongs to the CHAT, not to the phone: opening a chat he had
         // set to সতর্ক must not show স্বাভাবিক while the server runs সতর্ক.
         permissionMode = AgentPermissionMode.from(selected?.permissionMode)
@@ -4458,6 +4621,10 @@ final class AssistantVM {
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
         modelId = nil
+        liveResolvedModelId = nil
+        modelLabel = nil
+        answeringModelName = ""
+        usageSnapshot = nil
         messages = []
         restoreCurrentComposerDraft()
         openTasks = []
@@ -4466,6 +4633,54 @@ final class AssistantVM {
         sessionFileIndexConversationId = nil
         AlmaAgentHaptics.light()
     }
+
+    #if DEBUG
+    /// Local real-provider matrix harness. It never PATCHes the conversation the
+    /// owner was reading: `newChat()` clears the server id before the model/mode
+    /// are assigned, and all behaviour remains behind simulator-only env flags.
+    func prepareProviderMatrixTest(environment: [String: String]) async {
+        guard let testModelId = environment["ALMA_ASSISTANT_TEST_MODEL_ID"],
+              !testModelId.isEmpty else { return }
+        AlmaTurnLog.event("assistant.modelCatalog", models.map(\.id).joined(separator: ","))
+        await newChat()
+        guard models.contains(where: { $0.id == testModelId }) else {
+            errorToast = "Test model is not enabled: \(testModelId)"
+            AlmaTurnLog.event("assistant.testModelMissing", testModelId)
+            return
+        }
+        selectModel(testModelId)
+        composerDraft = environment["ALMA_ASSISTANT_COMPOSER_TEXT"] ?? ""
+        if environment["ALMA_ASSISTANT_TEST_FULL_ACCESS"] == "1" {
+            permissionMode = .elevated
+        }
+        AlmaTurnLog.event("assistant.testModel", testModelId)
+        guard environment["ALMA_ASSISTANT_TEST_AUTO_SEND"] == "1",
+              !composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        try? await Task.sleep(for: .milliseconds(900))
+        send(composerDraft)
+    }
+
+    func providerMatrixThoughtRequest() -> AgentActivitySheetRequest? {
+        guard let answer = messages.last(where: { $0.role == .assistant }),
+              let thought = answer.blocks.compactMap({ block -> AgentChatMessage.ActivityBlock? in
+                  if case .activity(let activity) = block, activity.kind == .thinking {
+                      return activity
+                  }
+                  return nil
+              }).last else { return nil }
+        return .init(
+            message: answer, kind: .thoughtProcess,
+            slice: thought.thinkFull, activityIds: [thought.id])
+    }
+
+    func waitForProviderMatrixThoughtRequest() async -> AgentActivitySheetRequest? {
+        for _ in 0..<25 {
+            if let request = providerMatrixThoughtRequest() { return request }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return nil
+    }
+    #endif
 
     @discardableResult
     func deleteConversation(_ id: String) async -> Bool {
@@ -5197,6 +5412,9 @@ final class AssistantVM {
             }
         }
         isStreaming = true
+        liveResolvedModelId = nil
+        modelLabel = nil
+        answeringModelName = ""
         lastLiveEventAt = Date()   // stall clock starts at the send, not at first event
         thinkingLive = true
         beginUnderstanding()
@@ -5342,6 +5560,12 @@ final class AssistantVM {
                 req.setValue(String(body.files.count), forHTTPHeaderField: "X-ALMA-Fixture-File-Count")
                 req.setValue(body.files.first?.path ?? "", forHTTPHeaderField: "X-ALMA-Fixture-File-Path")
                 req.setValue(body.clientMessageId ?? "", forHTTPHeaderField: "X-ALMA-Fixture-Client-Message")
+            }
+            if AlmaMergeReadinessURLProtocol.scenario == "claudeInteractive" {
+                req.setValue(body.modelId ?? "auto", forHTTPHeaderField: "X-ALMA-Preview-Model")
+                let prompt = String(body.message.prefix(240))
+                req.setValue(Data(prompt.utf8).base64EncodedString(),
+                             forHTTPHeaderField: "X-ALMA-Preview-Prompt")
             }
             #endif
             req.httpBody = try JSONEncoder().encode(body)
@@ -5734,7 +5958,8 @@ final class AssistantVM {
                 }
             case .personalMode(let active):
                 personalMode = active
-            case .modelInfo(let label, let displayName):
+            case .modelInfo(let modelId, let label, let displayName):
+                if !modelId.isEmpty { liveResolvedModelId = modelId }
                 if !label.isEmpty { modelLabel = label }
                 // Owner, 2026-07-28: he wants to see WHO answered, every time —
                 // the live row used to name only the three families the old
@@ -5749,10 +5974,14 @@ final class AssistantVM {
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                    messages[i].thinking = (messages[i].thinking ?? "") + chunk
-                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
+                    let current = messages[i].thinking ?? ""
+                    let delta = AgentChatMessage.incrementalStreamSuffix(
+                        existing: current, incoming: chunk)
+                    guard !delta.isEmpty else { break }
+                    messages[i].thinking = current + delta
+                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: delta)
                     messages[i].blocks = AgentChatMessage.appendThinkBlock(
-                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                        messages[i].blocks, chunk: delta, messageId: messages[i].id)
                     touchedStream = true
                 }
             case .progressUpdate(let label):
@@ -5773,12 +6002,15 @@ final class AssistantVM {
                 requestLiveMode("writing")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    let delta = AgentChatMessage.incrementalStreamSuffix(
+                        existing: messages[i].text, incoming: chunk)
+                    guard !delta.isEmpty else { break }
                     if messages[i].text.isEmpty, let start = messages[i].streamStartedAt {
                         messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
                     }
-                    messages[i].text += chunk
+                    messages[i].text += delta
                     messages[i].blocks = AgentChatMessage.appendProseBlock(
-                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                        messages[i].blocks, chunk: delta, messageId: messages[i].id)
                     touchedStream = true
                 }
             case .toolStart(let tid, let name, let inputPretty):
@@ -5965,6 +6197,15 @@ final class AssistantVM {
                 }
             case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
                        let cacheCreation, let cacheRead, let roundCostsUsd):
+                // Terminal server truth is also an acceptance proof. Some direct
+                // production streams can coalesce/omit the early id envelope;
+                // clear the matching focused composer here before finalizeTurn
+                // retires its descriptor so a delivered message never remains as
+                // a misleading ready-to-send draft.
+                if let clientMessageId = currentClientMessageId
+                    ?? recoverableTurn?.clientMessageId {
+                    markOutgoingAccepted(clientMessageId: clientMessageId)
+                }
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     if let tokensIn { messages[i].tokensIn = tokensIn }
                     if let tokensOut { messages[i].tokensOut = tokensOut }
@@ -6308,6 +6549,165 @@ final class AssistantVM {
     }
 
     #if DEBUG
+    /// Claude-style native Agent proof requested for simulator review. It uses
+    /// the production message/composer/sheet views but no production API or web
+    /// route: one deterministic turn demonstrates thought duration → short
+    /// understanding → clustered business tools → interim reply → sales research
+    /// → polished answer → downloadable action-plan card. The optional
+    /// `claudeInteractive` URLProtocol then lets the same real UI accept new turns.
+    func loadClaudeChatFixture() {
+        queuedOwnerMessages = []
+        pendingFiles = []
+        dictationFailure = nil
+        recoverableTurn = nil
+        currentClientMessageId = nil
+        isStreaming = false
+        thinkingLive = false
+        errorToast = nil
+        composerDraft = ""
+        permissionMode = .standard
+        conversationId = "fixture-claude-chat"
+        selectedSessionIdentity = "fixture:claude-chat"
+        conversationTitle = "Sales recovery research"
+
+        var owner = AgentChatMessage(
+            id: "claude-flow-owner",
+            role: .user,
+            text: "গত ৯০ দিনে sales কেন কমেছে বের করো, তারপর একটা practical recovery plan বানাও।")
+        owner.createdAt = "2026-08-09T09:30:00.000Z"
+
+        let businessTools: [AgentChatMessage.Tool] = [
+            .init(
+                id: "claude-sales-overview", name: "get_sales_overview", ok: true,
+                preview: "Revenue, order and margin trend loaded.", live: false,
+                inputPretty: "{\n  \"range\": \"last_90_days\",\n  \"compareTo\": \"previous_90_days\"\n}",
+                resultFull: "Revenue -18.4%\nOrders -13.1%\nAverage order value -6.1%\nGross margin -3.2 points"),
+            .init(
+                id: "claude-customer-segments", name: "get_customer_segments", ok: true,
+                preview: "Repeat-customer cohorts compared.", live: false,
+                inputPretty: "{\n  \"cohorts\": [\"new\", \"repeat\", \"vip\"]\n}",
+                resultFull: "Repeat purchase rate 31% → 23%\nVIP revenue -9%\nNew customer conversion stable at 2.8%"),
+            .init(
+                id: "claude-inventory-health", name: "get_inventory_health", ok: true,
+                preview: "Availability and stock-out windows checked.", live: false,
+                inputPretty: "{\n  \"includeStockouts\": true,\n  \"groupBy\": \"sku\"\n}",
+                resultFull: "12 high-intent SKUs were unavailable for 9–17 days\nEstimated missed revenue: ৳3.8L"),
+        ]
+        let researchTools: [AgentChatMessage.Tool] = [
+            .init(
+                id: "claude-period-compare", name: "compare_sales_periods", ok: true,
+                preview: "Seasonality-normalized periods compared.", live: false,
+                inputPretty: "{\n  \"normalizeSeasonality\": true,\n  \"periods\": 2\n}",
+                resultFull: "Organic demand explains ~4% of decline; operational factors explain ~14%."),
+            .init(
+                id: "claude-channel-performance", name: "analyze_channel_performance", ok: true,
+                preview: "Paid, organic and direct channels analyzed.", live: false,
+                inputPretty: "{\n  \"channels\": [\"paid\", \"organic\", \"direct\"]\n}",
+                resultFull: "Paid CAC +27%\nMeta ROAS 3.1 → 2.2\nDirect conversion -0.8 points"),
+            .init(
+                id: "claude-stockout-impact", name: "find_stockout_impact", ok: true,
+                preview: "Stock-outs matched against lost carts.", live: false,
+                inputPretty: "{\n  \"join\": [\"inventory\", \"cart_events\", \"orders\"]\n}",
+                resultFull: "38% of the revenue gap overlaps with unavailable top-selling SKUs."),
+        ]
+
+        let understanding = "Boss, বুঝেছি। আগে গত ৯০ দিনের sales, customer আর stock data একসাথে দেখব। তারপর decline-এর মূল কারণগুলো যাচাই করে অগ্রাধিকারসহ recovery plan দেব।"
+        let interim = "প্রথম data pass-এ declineটা শুধু demand কমার কারণে মনে হচ্ছে না। Repeat customer কমেছে, আর top-selling SKU stock-out ছিল—এখন channel performance-এর সাথে impact মিলিয়ে দেখছি।"
+        let final = """
+        ## মূল সমস্যা
+
+        Sales **১৮.৪% কমেছে**। সবচেয়ে বড় তিনটি কারণ:
+
+        1. **Top SKU stock-out — ৩৮% impact**
+           ১২টি high-intent SKU ৯–১৭ দিন unavailable ছিল।
+        2. **Repeat customer drop — ৩১% → ২৩%**
+           Retention follow-up দুর্বল হওয়ায় recurring revenue কমেছে।
+        3. **Paid channel efficiency — CAC +২৭%**
+           Meta ROAS ৩.১ থেকে ২.২-এ নেমেছে।
+
+        ## এখন কী করব
+
+        - **এই সপ্তাহ:** top ১২ SKU restock ও low-stock alert চালু
+        - **পরের ১৪ দিন:** lapsed customer win-back campaign
+        - **৩০ দিন:** দুর্বল ad set বন্ধ করে budget high-ROAS creative-এ সরানো
+
+        আমার হিসাবে এগুলো ঠিকভাবে চালালে ৩০ দিনের মধ্যে হারানো revenue-এর **৳৫.২–৳৬.১ লাখ** recover করার বাস্তব সুযোগ আছে। নিচে execution-ready action plan দিলাম।
+        """
+        let thoughtOne = "অনুরোধের scope হলো diagnosis এবং execution plan—তাই sales trend-এর পাশাপাশি customer retention ও inventory availability একই period-এ তুলনা করা দরকার।"
+        let thoughtTwo = "প্রথম correlation-কে কারণ ধরে নেওয়া ঠিক হবে না; seasonality-normalized sales, channel efficiency এবং stock-out overlap দিয়ে findings যাচাই করা দরকার।"
+
+        var answer = AgentChatMessage(id: "claude-flow-answer", role: .assistant)
+        answer.serverId = answer.id
+        answer.createdAt = "2026-08-09T09:30:14.000Z"
+        answer.text = final
+        answer.thinking = thoughtOne + "\n\n" + thoughtTwo
+        answer.thinkingMs = 12_400
+        answer.tools = businessTools + researchTools
+        answer.blocks = [
+            .activity(.init(
+                id: "claude-thought-1", kind: .thinking,
+                label: "প্রশ্নের উদ্দেশ্য ও প্রয়োজনীয় data বুঝেছে", thinkFull: thoughtOne)),
+            .prose(id: "claude-understanding", text: understanding),
+            .activity(.init(id: "claude-business-search", kind: .search,
+                            label: "Business data research")),
+            .activity(.init(id: "claude-sales-overview", kind: .tool,
+                            label: "get_sales_overview", toolId: "claude-sales-overview", ok: true)),
+            .activity(.init(id: "claude-customer-segments", kind: .tool,
+                            label: "get_customer_segments", toolId: "claude-customer-segments", ok: true)),
+            .activity(.init(id: "claude-inventory-health", kind: .tool,
+                            label: "get_inventory_health", toolId: "claude-inventory-health", ok: true)),
+            .prose(id: "claude-interim", text: interim),
+            .activity(.init(
+                id: "claude-thought-2", kind: .thinking,
+                label: "প্রাথমিক findings যাচাই করেছে", thinkFull: thoughtTwo)),
+            .activity(.init(id: "claude-performance-search", kind: .search,
+                            label: "Sales performance research")),
+            .activity(.init(id: "claude-period-compare", kind: .tool,
+                            label: "compare_sales_periods", toolId: "claude-period-compare", ok: true)),
+            .activity(.init(id: "claude-channel-performance", kind: .tool,
+                            label: "analyze_channel_performance", toolId: "claude-channel-performance", ok: true)),
+            .activity(.init(id: "claude-stockout-impact", kind: .tool,
+                            label: "find_stockout_impact", toolId: "claude-stockout-impact", ok: true)),
+            .prose(id: "claude-final", text: final),
+            .file(id: "claude-action-plan-file",
+                  artifactId: "claude-action-plan", name: "৩০ দিনের Sales Recovery Plan.md"),
+        ]
+        answer.timeline = [
+            .think(thoughtOne),
+            .text(understanding, superseded: false),
+            .tool(id: businessTools[0].id, name: businessTools[0].name, ok: true, live: false,
+                  inputPretty: businessTools[0].inputPretty, resultFull: businessTools[0].resultFull, shot: nil),
+            .tool(id: businessTools[1].id, name: businessTools[1].name, ok: true, live: false,
+                  inputPretty: businessTools[1].inputPretty, resultFull: businessTools[1].resultFull, shot: nil),
+            .tool(id: businessTools[2].id, name: businessTools[2].name, ok: true, live: false,
+                  inputPretty: businessTools[2].inputPretty, resultFull: businessTools[2].resultFull, shot: nil),
+            .text(interim, superseded: false),
+            .think(thoughtTwo),
+            .tool(id: researchTools[0].id, name: researchTools[0].name, ok: true, live: false,
+                  inputPretty: researchTools[0].inputPretty, resultFull: researchTools[0].resultFull, shot: nil),
+            .tool(id: researchTools[1].id, name: researchTools[1].name, ok: true, live: false,
+                  inputPretty: researchTools[1].inputPretty, resultFull: researchTools[1].resultFull, shot: nil),
+            .tool(id: researchTools[2].id, name: researchTools[2].name, ok: true, live: false,
+                  inputPretty: researchTools[2].inputPretty, resultFull: researchTools[2].resultFull, shot: nil),
+            .text(final, superseded: false),
+            .file(id: "claude-action-plan", name: "৩০ দিনের Sales Recovery Plan.md"),
+        ]
+        answer.tokensIn = 24_800
+        answer.tokensOut = 1_960
+        answer.cacheRead = 14_200
+        answer.apiRounds = 4
+        answer.costUsd = "0.0924"
+
+        artifacts = [
+            .init(
+                id: "claude-action-plan", messageId: answer.id, type: "markdown",
+                title: "৩০ দিনের Sales Recovery Plan.md",
+                content: final + "\n\n## Execution checklist\n\n- [ ] Top ১২ SKU restock owner assign\n- [ ] Win-back audience তৈরি\n- [ ] ROAS guardrail চালু\n- [ ] Day 7, 14 ও 30 review",
+                version: 1, createdAt: "2026-08-09T09:30:14.000Z"),
+        ]
+        messages = [owner, answer]
+    }
+
     /// Merge-readiness-only held stream. It uses the production composer/send
     /// queue path but never touches a server, so the simulator can prove that an
     /// owner follow-up becomes a visible, persisted queue entry while busy.
@@ -7736,12 +8136,20 @@ final class AssistantVM {
         let descriptor = recoverableTurn.flatMap {
             $0.clientMessageId == clientMessageId ? $0 : nil
         }
-        let text = descriptor?.message
+        // History reconciliation can replace/retire the recovery descriptor in
+        // the same batch that proves acceptance. The optimistic owner row is the
+        // second authoritative copy of what was sent, so retain it as fallback.
+        let text = descriptor?.message ?? messages.first(where: {
+            $0.clientMessageId == clientMessageId && $0.role == .user
+        })?.text
         let attachmentIds = Set(descriptor?.attachmentIds ?? [])
         for index in messages.indices where messages[index].clientMessageId == clientMessageId {
             messages[index].outgoingState = .accepted
         }
-        if let text, composerDraft == text { composerDraft = "" }
+        if let text, Self.sameComposerText(composerDraft, text) {
+            composerDraft = ""
+            composerClearEpoch &+= 1
+        }
         if !attachmentIds.isEmpty {
             removeAttachmentCacheFiles(attachmentIds)
             pendingFiles.removeAll { attachmentIds.contains($0.id) }
@@ -7880,6 +8288,17 @@ final class AssistantVM {
                 }
             }
         }
+    }
+
+    /// UIKit may normalize line breaks and Unicode spacing in an actively
+    /// focused multiline TextField between the tap and the first SSE envelope.
+    /// Treat those presentation-only differences as the same draft, while still
+    /// protecting a genuinely new follow-up the owner started typing meanwhile.
+    private static func sameComposerText(_ lhs: String, _ rhs: String) -> Bool {
+        func normalized(_ value: String) -> String {
+            value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        return normalized(lhs) == normalized(rhs)
     }
 
     /// Legacy path: AVAudioRecorder + upload-after-stop. Used only when the
@@ -8097,23 +8516,24 @@ struct AgentAuroraBackground: View {
 
     var body: some View {
         let dark = scheme == .dark
-        // Premium static aurora: the colour identity stays intact, but the root
-        // background never drives the entire native view graph at display-link
-        // cadence. Motion belongs only to an explicit active-task indicator.
+        // Claude-like reading canvas first, ALMA atmosphere second. The previous
+        // saturated full-screen rainbow competed with long answers and tinted
+        // every glass control; these faint static blooms keep identity without
+        // turning ordinary conversation into a dashboard.
         let blobs: [AuroraBlob] = [
-            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10),
-            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25),
-            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55),
-            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80),
-            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95),
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.14 : 0.055), size: 380, x: 0.15, y: 0.10),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.13 : 0.050), size: 420, x: 0.85, y: 0.25),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.11 : 0.045), size: 360, x: 0.30, y: 0.55),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.12 : 0.050), size: 400, x: 0.80, y: 0.80),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.10 : 0.040), size: 340, x: 0.20, y: 0.95),
         ]
         GeometryReader { geo in
             ZStack {
                 (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
                       : Color(red: 0.980, green: 0.976, blue: 0.965))
-                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.07 : 0.025), .clear],
                                center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
-                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.08 : 0.030), .clear],
                                center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
                 ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
                     Circle()
@@ -8896,8 +9316,9 @@ struct AgentMessageRow: View {
                     if !message.blocks.isEmpty {
                         // Claude composition — chronological prose ↔ compact rows;
                         // rows persist after settle (tap → sheets), prose never moves.
-                        AgentTurnBlocksView(message: message, pal: pal, vm: vm, onToolTap: onToolTap) { kind, slice in
-                            onActivitySheet(.init(message: message, kind: kind, slice: slice))
+                        AgentTurnBlocksView(message: message, pal: pal, vm: vm, onToolTap: onToolTap) { kind, slice, ids in
+                            onActivitySheet(.init(message: message, kind: kind,
+                                                  slice: slice, activityIds: ids))
                         }
                     } else {
                         // Persisted history turn — one collapsed summary row above the prose.
@@ -9247,10 +9668,18 @@ struct AgentToolIOSheet: View {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(AgentPalette.coral)
-                Text(tool.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(pal.ink)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(AgentCompactActivityRow.friendlyLabel(tool.name))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1)
+                    if AgentCompactActivityRow.friendlyLabel(tool.name) != tool.name {
+                        Text(tool.name)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(pal.muted.opacity(0.72))
+                            .lineLimit(1)
+                    }
+                }
                 if tool.ok == false {
                     badge("ব্যর্থ", fg: Color(red: 0.73, green: 0.11, blue: 0.11),
                           bg: Color.red.opacity(0.12), border: Color.red.opacity(0.3))
@@ -9383,17 +9812,68 @@ struct AgentActivitySheetRequest: Identifiable, Equatable {
     /// row used to open the WHOLE trace from the first thought), or the text opened
     /// for manual selection (selectText). nil → whole-message fallback.
     var slice: String? = nil
-    var id: String { "\(message.id)-\(kind)-\(slice?.hashValue ?? 0)" }
+    /// A collapsed chat row can represent several adjacent tools. Keep those ids
+    /// on the sheet request so tapping that row opens exactly that cluster, while
+    /// the settled whole-turn summary continues to show the complete trace.
+    var activityIds: [String] = []
+    var id: String {
+        "\(message.id)-\(kind)-\(slice?.hashValue ?? 0)-\(activityIds.joined(separator: ","))"
+    }
 }
 
 @available(iOS 17.0, *)
 struct AgentThoughtProcessSheet: View {
     let request: AgentActivitySheetRequest
+    let vm: AssistantVM
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var openItems: Set<Int> = []
 
-    private var message: AgentChatMessage { request.message }
+    /// A sheet can stay open for the whole turn. Resolve the message from the
+    /// observable VM on every render instead of freezing the value captured by
+    /// the tap; this is what makes thought/progress/tool detail truly live.
+    private var message: AgentChatMessage {
+        vm.messages.first(where: { $0.id == request.message.id })
+            ?? (request.message.isStreaming
+                ? vm.messages.last(where: { $0.role == .assistant && $0.isStreaming })
+                : nil)
+            ?? request.message
+    }
+
+    /// All thinking bursts in the tapped contiguous activity episode. Providers
+    /// may interleave progress between reasoning chunks; the compact row keeps
+    /// the first id, while this live projection keeps appending every later chunk.
+    private var liveScopedThoughtText: String {
+        let targets = Set(request.activityIds)
+        guard !targets.isEmpty,
+              let hit = message.blocks.firstIndex(where: { block in
+                  guard case .activity(let activity) = block else { return false }
+                  return targets.contains(activity.id)
+              }) else { return "" }
+        var lower = hit
+        while lower > message.blocks.startIndex {
+            let previous = message.blocks.index(before: lower)
+            guard case .activity = message.blocks[previous] else { break }
+            lower = previous
+        }
+        var upper = hit
+        while message.blocks.index(after: upper) < message.blocks.endIndex {
+            let next = message.blocks.index(after: upper)
+            guard case .activity = message.blocks[next] else { break }
+            upper = next
+        }
+        return message.blocks[lower...upper].compactMap { block -> String? in
+            guard case .activity(let activity) = block,
+                  activity.kind == .thinking else { return nil }
+            let detail = activity.thinkFull.trimmingCharacters(in: .whitespacesAndNewlines)
+            return detail.isEmpty ? nil : detail
+        }.joined(separator: "\n\n")
+    }
+
+    private var sheetGrowthIdentity: String {
+        let scopedLength = liveScopedThoughtText.count
+        return "\(message.blocks.count)|\(message.timeline.count)|\(message.tools.count)|\(scopedLength)|\(message.isStreaming)"
+    }
 
     var body: some View {
         let pal = AgentPalette(scheme)
@@ -9408,8 +9888,8 @@ struct AgentThoughtProcessSheet: View {
                         .background(Color.white.opacity(0.06), in: Circle())
                 }
                 Spacer()
-                Text(request.kind == .thoughtProcess ? "Thought process"
-                     : request.kind == .selectText ? "টেক্সট সিলেক্ট করুন" : "Summary")
+                Text(request.kind == .thoughtProcess ? "ভাবনার বিস্তারিত"
+                     : request.kind == .selectText ? "টেক্সট সিলেক্ট করুন" : "কাজের বিস্তারিত")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(pal.ink)
                 Spacer()
@@ -9430,15 +9910,24 @@ struct AgentThoughtProcessSheet: View {
                 AlmaSelectableTextView(text: request.slice ?? message.text,
                                        inkColor: UIColor(pal.ink))
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        if request.kind == .summary {
-                            summaryTimelineBody(pal)
-                        } else {
-                            thoughtProcessBody(pal)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            if request.kind == .summary {
+                                summaryTimelineBody(pal)
+                            } else {
+                                thoughtProcessBody(pal)
+                            }
+                            Color.clear.frame(height: 1).id("activity-sheet-live-bottom")
+                        }
+                        .padding(.horizontal, 16).padding(.bottom, 28)
+                    }
+                    .onChange(of: sheetGrowthIdentity) { _, _ in
+                        guard request.kind == .thoughtProcess, message.isStreaming else { return }
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo("activity-sheet-live-bottom", anchor: .bottom)
                         }
                     }
-                    .padding(.horizontal, 16).padding(.bottom, 28)
                 }
             }
         }
@@ -9446,16 +9935,31 @@ struct AgentThoughtProcessSheet: View {
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(22)
         .presentationBackground {
-            // LOCKED §7 — glossy floating glass (model-switcher tone), aurora bleeds through.
-            Color(red: 0.23, green: 0.23, blue: 0.275).opacity(0.42)
+            // Claude's sheet stays quiet and native in both appearances. The old
+            // hard-coded dark purple panel looked foreign in the light chat.
+            (pal.dark
+                ? Color(red: 0.16, green: 0.16, blue: 0.19).opacity(0.88)
+                : Color(red: 0.976, green: 0.969, blue: 0.945).opacity(0.94))
                 .background(.ultraThinMaterial)
+        }
+        .onAppear {
+            #if DEBUG
+            let env = ProcessInfo.processInfo.environment
+            let args = ProcessInfo.processInfo.arguments
+            if env["ALMA_ASSISTANT_CLAUDE_ACTIVITY_EXPANDED"] == "1"
+                || args.contains("ALMA_ASSISTANT_CLAUDE_ACTIVITY_EXPANDED=1") {
+                openItems.insert(0)
+            }
+            #endif
         }
     }
 
     @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
         // Row-scoped slice first (this step's OWN thought / the tapped text);
         // whole-trace fallback for the settled-summary header path.
-        let slice = request.slice?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let liveSlice = liveScopedThoughtText
+        let capturedSlice = request.slice?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let slice = liveSlice.isEmpty ? capturedSlice : liveSlice
         let prose = slice.isEmpty ? combinedThinkingText : slice
         if prose.isEmpty {
             Text("এখনো কোনো চিন্তার বিবরণ নেই।")
@@ -9493,7 +9997,7 @@ struct AgentThoughtProcessSheet: View {
     }
 
     @ViewBuilder private func summaryHeader(_ pal: AgentPalette) -> some View {
-        let steps = max(message.tools.count, message.phases.count, 1)
+        let steps = max(summaryItems.count, 1)
         let tok = max(1, combinedThinkingText.count / 4)
         HStack(spacing: 8) {
             Image(systemName: "clock")
@@ -9549,10 +10053,18 @@ struct AgentThoughtProcessSheet: View {
                     }
                 } label: {
                     HStack(spacing: 8) {
-                        Text(item.title)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(pal.ink)
-                            .multilineTextAlignment(.leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(pal.ink)
+                                .multilineTextAlignment(.leading)
+                            if let subtitle = item.subtitle, !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(pal.muted.opacity(0.72))
+                                    .lineLimit(1)
+                            }
+                        }
                         Spacer(minLength: 4)
                         if hasDetail {
                             Image(systemName: "chevron.right")
@@ -9626,6 +10138,7 @@ struct AgentThoughtProcessSheet: View {
     private struct SummaryItem {
         let icon: String            // SF Symbol name — never emoji
         let title: String
+        var subtitle: String? = nil
         let body: String?
         let input: String?
         let output: String?
@@ -9634,6 +10147,9 @@ struct AgentThoughtProcessSheet: View {
         /// Browser-step screenshot URL (owner report 2026-07-15: the collapsed-steps
         /// sheet listed only labels, so the earlier sites' screenshots looked lost).
         var shot: String? = nil
+        /// Matches a tool/activity id when this item came from a clustered chat row.
+        /// Thought/file rows deliberately leave it nil and remain whole-turn only.
+        var sourceId: String? = nil
         var tint: Color {
             if failed { return .red }
             if icon == "magnifyingglass" { return Color(red: 0.831, green: 0.659, blue: 0.294) } // gold
@@ -9664,18 +10180,22 @@ struct AgentThoughtProcessSheet: View {
             case .tool(let id, let name, let ok, _, let input, let result, let shot):
                 flushThink()
                 if !sawSearch {
-                    out.append(.init(icon: "magnifyingglass", title: "Searched available tools",
+                    out.append(.init(icon: "magnifyingglass",
+                                     title: AgentCompactActivityRow.friendlyLabel("Searched available tools"),
                                      body: nil, input: nil, output: nil,
                                      isThought: false, failed: false))
                     sawSearch = true
                 }
                 let tool = message.tools.first { $0.id == id }
-                out.append(.init(icon: "wrench.and.screwdriver", title: name,
+                let friendly = AgentCompactActivityRow.friendlyLabel(name)
+                out.append(.init(icon: "wrench.and.screwdriver", title: friendly,
+                                 subtitle: friendly == name ? nil : name,
                                  body: nil,
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
                                  isThought: false, failed: ok == false,
-                                 shot: shot ?? tool?.screenshot))
+                                 shot: shot ?? tool?.screenshot,
+                                 sourceId: id))
             case .text:
                 // Prose lives in the message body — the activity summary only lists steps.
                 continue
@@ -9694,13 +10214,80 @@ struct AgentThoughtProcessSheet: View {
                                      input: nil, output: nil, isThought: true, failed: false))
                 }
                 for t in p.tools {
-                    out.append(.init(icon: "wrench.and.screwdriver", title: t.name, body: nil,
+                    let friendly = AgentCompactActivityRow.friendlyLabel(t.name)
+                    out.append(.init(icon: "wrench.and.screwdriver", title: friendly,
+                                     subtitle: friendly == t.name ? nil : t.name, body: nil,
                                      input: t.inputPretty, output: t.resultFull ?? t.preview,
-                                     isThought: false, failed: t.ok == false))
+                                     isThought: false, failed: t.ok == false,
+                                     sourceId: t.id))
                 }
             }
         }
-        return out
+        // `progress_update` is intentionally provider-neutral and does not live
+        // in the legacy think/tool timeline. Read it from chronological blocks so
+        // Luna/GPT/Qwen all expose the same live lifecycle inside this sheet.
+        for block in message.blocks {
+            guard case .activity(let activity) = block,
+                  activity.kind == .progress,
+                  !out.contains(where: {
+                      $0.sourceId == activity.id || $0.title == activity.label
+                  }) else { continue }
+            let detail = activity.thinkFull.trimmingCharacters(in: .whitespacesAndNewlines)
+            out.append(.init(
+                icon: "checklist", title: activity.label,
+                body: detail.isEmpty ? nil : detail,
+                input: nil, output: nil,
+                isThought: false, failed: false,
+                sourceId: activity.id))
+        }
+        // Some canonical history responses carry presentation blocks + tools but
+        // omit the legacy timeline/phases arrays. The chat row can still render
+        // from those blocks; mirror the tool collection here so tapping it never
+        // opens an empty sheet.
+        let representedToolIds = Set(out.compactMap(\.sourceId))
+        for tool in message.tools where !representedToolIds.contains(tool.id) {
+            let friendly = AgentCompactActivityRow.friendlyLabel(tool.name)
+            let representedByName = out.contains {
+                $0.sourceId != nil
+                    && ($0.title == friendly || $0.title == tool.name
+                        || $0.subtitle == tool.name)
+            }
+            if representedByName { continue }
+            out.append(.init(
+                icon: "wrench.and.screwdriver", title: friendly,
+                subtitle: friendly == tool.name ? nil : tool.name,
+                body: nil, input: tool.inputPretty,
+                output: tool.resultFull ?? tool.preview,
+                isThought: false, failed: tool.ok == false,
+                shot: tool.screenshot, sourceId: tool.id))
+        }
+
+        // A reconnect/history merge can retain the same completed tool under two
+        // transport ids (live event + canonical replay). Preserve genuinely
+        // different calls, but collapse byte-for-byte duplicate I/O rows.
+        var seenToolPayloads: Set<String> = []
+        out = out.filter { item in
+            guard item.sourceId != nil else { return true }
+            let signature = [item.subtitle ?? item.title,
+                             item.input ?? "", item.output ?? "", item.shot ?? ""]
+                .joined(separator: "\u{001F}")
+            return seenToolPayloads.insert(signature).inserted
+        }
+        guard !request.activityIds.isEmpty else { return out }
+        let allowed = Set(request.activityIds)
+        let exact = out.filter { item in
+            guard item.sourceId != nil else { return false }
+            return item.sourceId.map(allowed.contains) == true
+                || allowed.contains(item.title)
+                || item.subtitle.map(allowed.contains) == true
+        }
+        if !exact.isEmpty { return exact }
+
+        // Defensive compatibility for historical rows written before stable
+        // tool ids were persisted. Never present an empty panel for a visible
+        // tool cluster; cap the fallback to the tapped cluster's tool count.
+        return Array(out.filter { $0.sourceId != nil }
+            .suffix(max(1, request.activityIds.count / 2)))
     }
 }
 
@@ -9843,8 +10430,12 @@ struct AgentMessageActions: View {
                 actionButtons
                 Spacer(minLength: 0)
             }
+            // Billing truth belongs to every settled turn. Claude-style activity
+            // compaction must never hide the provider usage returned by `done` or
+            // canonical history: total cost plus the same input/output/cache split
+            // the production iOS chat exposed before this visual pass.
             costText
-            .padding(.top, 2)
+                .padding(.top, 2)
             if reasonsOpen && !feedbackSent {
                 feedbackReasonsRow
             }
@@ -10009,15 +10600,17 @@ struct AgentMessageActions: View {
             .accessibilityLabel("More")
     }
 
-    /// Human-readable usage summary. Detailed activity remains one tap away;
-    /// cryptic cache arrows no longer compete with the response itself.
+    /// Human-readable per-turn billing summary with the provider cache split.
+    /// Values are rendered only when the server supplied usage; nothing is
+    /// estimated locally, so a fresh/unfinished turn never shows invented cost.
     @ViewBuilder private var costText: some View {
         if let tin = message.tokensIn {
             let tout = message.tokensOut ?? 0
             let cw = message.cacheCreation ?? 0
             let cr = message.cacheRead ?? 0
             let total = tin + tout + cw + cr
-            let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
+            let rounds = (message.apiRounds ?? 0) > 1
+                ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
             let cost = message.costUsd.map {
                 " · $" + (Double($0).map { String(format: "%.4f", $0) } ?? $0)
             } ?? ""
@@ -10781,6 +11374,7 @@ struct AgentToolScreenshotThumb: View {
 struct AgentCompactActivityRow: View {
     let icon: String
     let label: String
+    var subtitle: String? = nil
     var italic = false
     var labelColor: Color
     var iconColor: Color
@@ -10788,13 +11382,19 @@ struct AgentCompactActivityRow: View {
     var shimmer = false            // live headline while the model is thinking (Claude)
     let onTap: () -> Void
 
-    private var displayLabel: String {
+    static func friendlyLabel(_ label: String) -> String {
         let known: [String: String] = [
             "Searched available tools": "উপযুক্ত টুল খুঁজেছে",
             "Let me be honest about this.": "উত্তর দেওয়ার আগে সত্যতা যাচাই করেছে",
             "live_browser_look": "লাইভ browser যাচাই করেছে",
             "get_inventory_status": "স্টকের বর্তমান অবস্থা দেখেছে",
             "inventory_sync": "স্টক sync করছে",
+            "get_sales_overview": "বিক্রির সারাংশ",
+            "get_customer_segments": "ক্রেতা segment",
+            "get_inventory_health": "স্টকের স্বাস্থ্য",
+            "compare_sales_periods": "সময়ের বিক্রি তুলনা",
+            "analyze_channel_performance": "channel performance",
+            "find_stockout_impact": "stock-out প্রভাব",
         ]
         if let value = known[label] { return value }
         guard label.contains("_") else { return label }
@@ -10802,6 +11402,13 @@ struct AgentCompactActivityRow: View {
             .split(separator: " ")
             .map { $0.capitalized }
             .joined(separator: " ")
+    }
+
+    private var displayLabel: String { Self.friendlyLabel(label) }
+    private var displaySubtitle: String? {
+        guard let subtitle = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !subtitle.isEmpty else { return nil }
+        return subtitle
     }
 
     var body: some View {
@@ -10820,12 +11427,21 @@ struct AgentCompactActivityRow: View {
                         .frame(width: 18, alignment: .center)
                     // Claude: chevron hugs the text; long labels truncate well before the
                     // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
-                    Text(displayLabel)
-                        .font(.subheadline.weight(italic ? .regular : .medium))
-                        .italic(italic && !shimmer)   // live row was never italic (AlmaShimmerText parity)
-                        .foregroundStyle(labelColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayLabel)
+                            .font(.subheadline.weight(italic ? .regular : .medium))
+                            .italic(italic && !shimmer)   // live row was never italic (AlmaShimmerText parity)
+                            .foregroundStyle(labelColor)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if let displaySubtitle {
+                            Text(displaySubtitle)
+                                .font(.system(size: 11.5, weight: .regular))
+                                .foregroundStyle(labelColor.opacity(0.72))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(labelColor.opacity(0.45))
@@ -10834,7 +11450,7 @@ struct AgentCompactActivityRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.trailing, 20)
-            .frame(minHeight: 44)
+            .frame(minHeight: displaySubtitle == nil ? 44 : 52)
             .contentShape(Rectangle())
         }
         .buttonStyle(AlmaAgentPressStyle())
@@ -10961,9 +11577,29 @@ struct AgentTurnBlocksView: View {
     let pal: AgentPalette
     let vm: AssistantVM
     let onToolTap: (AgentChatMessage.Tool) -> Void
-    let onActivitySheet: (AgentActivitySheetRequest.Kind, String?) -> Void
+    let onActivitySheet: (AgentActivitySheetRequest.Kind, String?, [String]) -> Void
 
-    private static let maxVisibleBlocks = 12
+    // Raw tool events now collapse into clusters, so 24 durable blocks still
+    // render as only a handful of conversational rows in ordinary turns.
+    private static let maxVisibleBlocks = 24
+
+    /// Chat stays conversational: every activity episode between prose/card/file
+    /// boundaries becomes at most one thought summary plus one expandable tool
+    /// cluster. Providers often alternate thinking/progress/thinking before a
+    /// single tool; drawing every raw event made production look like a step log
+    /// even though the deterministic preview was calm. Raw blocks stay untouched
+    /// and remain fully available in the activity sheet.
+    enum RenderItem: Identifiable {
+        case block(AgentChatMessage.TurnBlock)
+        case activityCluster(id: String, activities: [AgentChatMessage.ActivityBlock])
+
+        var id: String {
+            switch self {
+            case .block(let block): return block.id
+            case .activityCluster(let id, _): return id
+            }
+        }
+    }
 
     private var displayedBlocks: [AgentChatMessage.TurnBlock] {
         guard message.blocks.count > Self.maxVisibleBlocks else { return message.blocks }
@@ -10977,8 +11613,122 @@ struct AgentTurnBlocksView: View {
         return Array(pinned) + Array(message.blocks[tailStart...])
     }
 
+    static func makeRenderItems(
+        from blocks: [AgentChatMessage.TurnBlock]
+    ) -> [RenderItem] {
+        var items: [RenderItem] = []
+        var activityEpisode: [AgentChatMessage.ActivityBlock] = []
+
+        func thoughtSummary(
+            _ cognition: [AgentChatMessage.ActivityBlock]
+        ) -> AgentChatMessage.ActivityBlock {
+            let thoughts = cognition.filter { $0.kind == .thinking }
+            let firstThought = thoughts.first
+            let id = firstThought?.id ?? cognition[0].id
+            // Provider-neutral truth: Luna's tool endpoint can emit lifecycle
+            // progress without reasoning tokens. Do not present that as a private
+            // thought with an empty detail sheet; keep it as factual progress.
+            if thoughts.isEmpty {
+                let progressDetail = cognition.map(\.label)
+                    .reduce(into: [String]()) { result, value in
+                        if result.last != value { result.append(value) }
+                    }.joined(separator: "\n")
+                return .init(
+                    id: id, kind: .progress,
+                    label: cognition.last?.label ?? "কাজ এগোচ্ছে",
+                    thinkFull: progressDetail,
+                    live: cognition.contains(where: \.live))
+            }
+            let rawDetails = thoughts.compactMap { activity -> String? in
+                let detail = activity.thinkFull.trimmingCharacters(in: .whitespacesAndNewlines)
+                return detail.isEmpty ? nil : detail
+            }
+            let detail = rawDetails.reduce(into: [String]()) { result, value in
+                if result.last != value { result.append(value) }
+            }.joined(separator: "\n\n")
+            let verification = cognition.first { activity in
+                let lower = activity.label.lowercased()
+                return lower.contains("verify") || lower.contains("check")
+                    || lower.contains("যাচাই") || lower.contains("নিশ্চিত")
+            }
+            let label: String
+            if cognition.count == 1 {
+                label = cognition[0].label
+            } else if verification != nil {
+                label = "findings যাচাই করেছে"
+            } else {
+                label = "পরের ধাপের আগে findings মিলিয়েছে"
+            }
+            return .init(
+                id: id, kind: .thinking, label: label, thinkFull: detail,
+                live: cognition.contains(where: \.live))
+        }
+
+        func flushEpisode() {
+            guard !activityEpisode.isEmpty else { return }
+            let cognition = activityEpisode.filter {
+                $0.kind == .thinking || $0.kind == .progress
+            }
+            let operations = activityEpisode.filter {
+                $0.kind == .search || $0.kind == .tool
+            }
+
+            if cognition.isEmpty {
+                if let first = operations.first {
+                    items.append(.activityCluster(
+                        id: "cluster-\(first.id)", activities: operations))
+                }
+            } else if operations.isEmpty {
+                items.append(.block(.activity(thoughtSummary(cognition))))
+            } else {
+                let firstCognition = activityEpisode.firstIndex {
+                    $0.kind == .thinking || $0.kind == .progress
+                } ?? 0
+                let firstOperation = activityEpisode.firstIndex {
+                    $0.kind == .search || $0.kind == .tool
+                } ?? 0
+                if firstCognition <= firstOperation {
+                    items.append(.block(.activity(thoughtSummary(cognition))))
+                    if let first = operations.first {
+                        items.append(.activityCluster(
+                            id: "cluster-\(first.id)", activities: operations))
+                    }
+                } else if let first = activityEpisode.first {
+                    // Do not invent a reordered chronology for the unusual case
+                    // where a provider reports the tool before its explanation.
+                    items.append(.activityCluster(
+                        id: "cluster-\(first.id)", activities: activityEpisode))
+                }
+            }
+            activityEpisode.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            if case .activity(let activity) = block {
+                activityEpisode.append(activity)
+            } else {
+                flushEpisode()
+                items.append(.block(block))
+            }
+        }
+        flushEpisode()
+        return items
+    }
+
+    private var renderItems: [RenderItem] {
+        Self.makeRenderItems(from: displayedBlocks)
+    }
+
+    private var firstThinkingId: String? {
+        message.blocks.compactMap { block -> String? in
+            guard case .activity(let activity) = block, activity.kind == .thinking else { return nil }
+            return activity.id
+        }.first
+    }
+
     var body: some View {
         let blocks = displayedBlocks
+        let items = renderItems
         let hiddenCount = max(0, message.blocks.count - blocks.count)
         let lastBlockId = message.blocks.last?.id
         VStack(alignment: .leading, spacing: 6) {
@@ -11007,11 +11757,17 @@ struct AgentTurnBlocksView: View {
                 AgentCompactActivityRow(icon: "clock.arrow.circlepath",
                                         label: "আগের \(almaBn(hiddenCount)) ধাপ",
                                         labelColor: pal.muted, iconColor: pal.muted) {
-                    onActivitySheet(.summary, nil)
+                    onActivitySheet(.summary, nil, [])
                 }
             }
-            ForEach(blocks) { block in
-                switch block {
+            ForEach(items) { item in
+                switch item {
+                case .activityCluster(_, let activities):
+                    activityClusterRow(
+                        activities,
+                        isTail: activities.contains { $0.id == lastBlockId } && message.isStreaming)
+                case .block(let block):
+                    switch block {
                 case .prose(let id, let text):
                     proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
                 case .file(_, let artifactId, let name):
@@ -11040,6 +11796,7 @@ struct AgentTurnBlocksView: View {
                     }
                 case .activity(let a):
                     activityRow(a, isTail: block.id == lastBlockId && message.isStreaming)
+                    }
                 }
             }
         }
@@ -11071,10 +11828,15 @@ struct AgentTurnBlocksView: View {
             // Tail thinking row = the LIVE changing headline → shimmer (Claude parity).
             // Tap → ONLY this step's own burst — never the whole trace from the
             // first thought (owner report build-70 round 2).
-            AgentCompactActivityRow(icon: "clock", label: a.label, italic: true,
+            let timed = a.id == firstThinkingId && (message.thinkingMs ?? 0) > 0
+            let seconds = max(1, (message.thinkingMs ?? 0) / 1000)
+            AgentCompactActivityRow(icon: "clock",
+                                    label: timed ? "ভেবেছে \(almaBn(seconds)) সেকেন্ড" : a.label,
+                                    subtitle: timed ? AgentCompactActivityRow.friendlyLabel(a.label) : nil,
+                                    italic: !timed,
                                     labelColor: pal.muted, iconColor: pal.muted,
                                     shimmer: isTail) {
-                onActivitySheet(.thoughtProcess, a.thinkFull)
+                onActivitySheet(.thoughtProcess, a.thinkFull, [a.id])
             }
         case .progress:
             // Factual lifecycle supplied by the runner — never label or open it
@@ -11082,12 +11844,12 @@ struct AgentTurnBlocksView: View {
             AgentCompactActivityRow(icon: "checklist", label: a.label,
                                     labelColor: pal.mutedHi, iconColor: AgentPalette.coral,
                                     shimmer: isTail) {
-                onActivitySheet(.summary, nil)
+                onActivitySheet(.summary, nil, [])
             }
         case .search:
             AgentCompactActivityRow(icon: "magnifyingglass", label: a.label,
                                     labelColor: pal.muted, iconColor: pal.muted) {
-                onActivitySheet(.summary, nil)
+                onActivitySheet(.summary, nil, [])
             }
         case .tool:
             // A step still RUNNING (no result yet) shimmers its icon+title while it
@@ -11101,7 +11863,7 @@ struct AgentTurnBlocksView: View {
                     if let t = message.tools.first(where: { $0.id == a.toolId }) {
                         onToolTap(t)
                     } else {
-                        onActivitySheet(.summary, nil)
+                        onActivitySheet(.summary, nil, [])
                     }
                 }
                 // Browser screenshot INLINE — the owner sees what the agent saw
@@ -11113,6 +11875,86 @@ struct AgentTurnBlocksView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private func activityClusterRow(
+        _ activities: [AgentChatMessage.ActivityBlock],
+        isTail: Bool
+    ) -> some View {
+        let toolActivities = activities.filter { $0.kind == .tool }
+        // Canonical history and live SSE can use different wrapper ids for the
+        // same tool. Carry both the provider id and raw name so the detail sheet
+        // can resolve its Input/Output after either projection path.
+        let ids = Array(Set(toolActivities.flatMap {
+            [$0.toolId ?? $0.id, $0.label]
+        }))
+        AgentCompactActivityRow(
+            icon: clusterIcon(activities),
+            label: clusterTitle(activities),
+            subtitle: clusterSubtitle(toolActivities),
+            labelColor: pal.mutedHi,
+            iconColor: activities.contains(where: { $0.kind == .search })
+                ? Color(red: 0.74, green: 0.57, blue: 0.24)
+                : AgentPalette.teal,
+            failed: activities.contains(where: { $0.ok == false }),
+            shimmer: isTail && activities.contains(where: { $0.live || $0.ok == nil })
+        ) {
+            onActivitySheet(.summary, nil, ids)
+        }
+        .accessibilityHint("চাপলে প্রতিটি tool-এর input ও result দেখা যাবে")
+    }
+
+    private func clusterTitle(_ activities: [AgentChatMessage.ActivityBlock]) -> String {
+        let searchLabels = activities.filter { $0.kind == .search }
+            .map(\.label).joined(separator: " ").lowercased()
+        let toolLabels = activities.filter { $0.kind == .tool }
+            .map(\.label).joined(separator: " ").lowercased()
+        let toolCount = activities.filter { $0.kind == .tool }.count
+        let count = max(toolCount, activities.count)
+        if toolLabels.contains("dashboard") || toolLabels.contains("business snapshot") {
+            return "ব্যবসার বর্তমান data দেখেছে"
+        }
+        if searchLabels.contains("sales performance") || searchLabels.contains("বিক্রি") {
+            return "বিক্রির performance গবেষণা করেছে"
+        }
+        if searchLabels.contains("business data") || searchLabels.contains("ব্যবস") {
+            return "\(almaBn(max(1, toolCount)))টি ব্যবসার data দেখেছে"
+        }
+        if toolLabels.contains("inventory") || toolLabels.contains("stock") {
+            return "স্টক ও availability data দেখেছে"
+        }
+        if toolLabels.contains("customer") || toolLabels.contains("client") {
+            return "customer data বিশ্লেষণ করেছে"
+        }
+        if activities.contains(where: { $0.kind == .search }) {
+            return toolCount > 0
+                ? "\(almaBn(toolCount))টি উৎসে তথ্য খুঁজেছে"
+                : AgentCompactActivityRow.friendlyLabel(activities[0].label)
+        }
+        if toolCount == 1,
+           let tool = activities.first(where: { $0.kind == .tool }) {
+            return "\(AgentCompactActivityRow.friendlyLabel(tool.label)) চালিয়েছে"
+        }
+        if count > 1 { return "\(almaBn(count))টি action একসাথে চালিয়েছে" }
+        return AgentCompactActivityRow.friendlyLabel(activities[0].label)
+    }
+
+    private func clusterSubtitle(_ tools: [AgentChatMessage.ActivityBlock]) -> String? {
+        guard !tools.isEmpty else { return nil }
+        let labels = tools.prefix(3).map { AgentCompactActivityRow.friendlyLabel($0.label) }
+        let remainder = tools.count - labels.count
+        return labels.joined(separator: " · ")
+            + (remainder > 0 ? " · +\(almaBn(remainder))" : "")
+    }
+
+    private func clusterIcon(_ activities: [AgentChatMessage.ActivityBlock]) -> String {
+        let labels = activities.map(\.label).joined(separator: " ").lowercased()
+        if labels.contains("sales") || labels.contains("বিক্রি") {
+            return "chart.line.uptrend.xyaxis"
+        }
+        if activities.contains(where: { $0.kind == .search }) { return "magnifyingglass" }
+        if activities.contains(where: { $0.kind == .progress }) { return "checklist" }
+        return "wrench.and.screwdriver"
     }
 }
 
@@ -11445,10 +12287,10 @@ struct AlmaPermissionModeMenuButton: UIViewControllerRepresentable {
             view.backgroundColor = .clear
             view.addSubview(button)
             NSLayoutConstraint.activate([
-                button.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                button.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
-                button.topAnchor.constraint(equalTo: view.topAnchor),
-                button.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                button.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                button.widthAnchor.constraint(equalToConstant: 36),
+                button.heightAnchor.constraint(equalToConstant: 36),
             ])
         }
     }
@@ -11472,38 +12314,29 @@ struct AlmaPermissionModeMenuButton: UIViewControllerRepresentable {
     /// DRAWS at its natural size, so the chip looked right while the tap fell
     /// through to whatever was behind it.
     func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Host, context: Context) -> CGSize? {
-        let fitted = uiViewController.button.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        return CGSize(width: max(fitted.width, 96), height: max(fitted.height, 32))
+        CGSize(width: 36, height: 36)
     }
 
     private func apply(to button: UIButton) {
         var config = UIButton.Configuration.plain()
-        config.title = mode.label
         config.image = UIImage(systemName: mode.symbol)
-        config.imagePadding = 5
-        config.imagePlacement = .leading
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 11, bottom: 6, trailing: 9)
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         config.cornerStyle = .capsule
-        // The system's own popup chevron — the mark that says "this opens a menu"
-        // everywhere else in iOS, instead of a hand-drawn one.
-        config.indicator = .popup
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var out = incoming
-            out.font = .systemFont(ofSize: 12, weight: .medium)
-            return out
-        }
-        // The colour IS the mode. Foreground, fill and stroke all move together so
-        // the chip reads at a glance from across the room, and the standard rung
-        // stays neutral so a changed mode is what catches the eye.
-        let accent = mode.tint.map { UIColor($0) }
-        config.baseForegroundColor = accent ?? UIColor(pal.mutedHi)
-        config.background.backgroundColor = accent?.withAlphaComponent(0.16)
-            ?? UIColor.white.withAlphaComponent(pal.dark ? 0.05 : 0.35)
-        config.background.strokeColor = accent?.withAlphaComponent(0.45) ?? UIColor(pal.borderSubtle)
-        config.background.strokeWidth = accent == nil ? 1 : 1.2
+        config.indicator = .none
+        // Reference grammar: one coloured approval glyph, no permanent label or
+        // chevron. The full mode name and explanation live in the system menu.
+        let standardBlue = Color(red: 0.34, green: 0.69, blue: 0.98)
+        let accent = UIColor(mode.tint ?? standardBlue)
+        config.baseForegroundColor = accent
+        config.background.backgroundColor = accent.withAlphaComponent(0.10)
+        config.background.strokeColor = accent.withAlphaComponent(0.30)
+        config.background.strokeWidth = 1
         button.configuration = config
         button.menu = buildMenu()
+        button.accessibilityIdentifier = "agent.permission-mode"
+        button.accessibilityLabel = "অনুমোদন মোড: \(mode.label)"
+        button.accessibilityHint = mode.hint
     }
 
     private func buildMenu() -> UIMenu {
@@ -11531,6 +12364,281 @@ struct AlmaPermissionModeMenuButton: UIViewControllerRepresentable {
     }
 }
 
+/// Anchored iPhone approval picker. A UIKit `UIMenu` looked correct but its
+/// primary action was swallowed when hosted inside the Assistant safe-area
+/// composer on Simulator and device. The same native popover presentation used
+/// by Context window is reliable here and lets every rung keep its explanation.
+@available(iOS 17.0, *)
+struct AgentPermissionModePopover: View {
+    let selected: AgentPermissionMode
+    let onPick: (AgentPermissionMode) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(alignment: .leading, spacing: 5) {
+            Text("কাজ কীভাবে অনুমোদন হবে?")
+                .font(.system(size: 15.5, weight: .semibold))
+                .foregroundStyle(pal.ink)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+            Text("টাকা সরানো ও নিরাপত্তার কাজ সব মোডেই আপনার হাতে")
+                .font(.system(size: 11.5))
+                .foregroundStyle(pal.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 5)
+
+            ForEach(AgentPermissionMode.allCases) { candidate in
+                Button {
+                    AlmaAgentHaptics.selection()
+                    if candidate != selected { onPick(candidate) }
+                    dismiss()
+                } label: {
+                    HStack(alignment: .top, spacing: 11) {
+                        Image(systemName: candidate.symbol)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(candidate.tint ?? pal.mutedHi)
+                            .frame(width: 23, height: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(candidate.label)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(pal.ink)
+                            Text(candidate.hint)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(pal.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 4)
+                        if candidate == selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(AgentPalette.coral)
+                                .padding(.top, 3)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                }
+                .buttonStyle(AlmaAgentPressStyle())
+            }
+        }
+        .padding(6)
+        .frame(width: 318)
+        .background(.ultraThinMaterial)
+        .presentationCompactAdaptation(.popover)
+        .accessibilityIdentifier("agent.permission-mode.popover")
+    }
+}
+
+enum AgentContextTokenFormat {
+    static func compact(_ value: Int?) -> String {
+        guard let value else { return "—" }
+        let amount = Double(max(0, value))
+        if amount >= 1_000_000 {
+            return String(format: amount >= 10_000_000 ? "%.0fM" : "%.1fM", amount / 1_000_000)
+                .replacingOccurrences(of: ".0M", with: "M")
+        }
+        if amount >= 1_000 {
+            return String(format: amount >= 100_000 ? "%.0fK" : "%.1fK", amount / 1_000)
+                .replacingOccurrences(of: ".0K", with: "K")
+        }
+        return "\(Int(amount))"
+    }
+}
+
+@available(iOS 17.0, *)
+struct AgentContextRingGlyph: View {
+    let percentage: Double?
+    let loading: Bool
+    let pal: AgentPalette
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(pal.muted.opacity(0.18), lineWidth: 2.2)
+            if let percentage {
+                Circle()
+                    .trim(from: 0, to: max(0.015, min(1, percentage / 100)))
+                    .stroke(
+                        AngularGradient(colors: [
+                            Color(red: 0.34, green: 0.78, blue: 0.98),
+                            Color(red: 0.70, green: 0.58, blue: 0.98),
+                        ], center: .center),
+                        style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            if loading {
+                ProgressView().controlSize(.mini).tint(pal.mutedHi)
+            } else {
+                Circle()
+                    .fill(pal.ink.opacity(percentage == nil ? 0.34 : 0.82))
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .frame(width: 30, height: 30)
+    }
+}
+
+@available(iOS 17.0, *)
+struct AgentContextWindowPopover: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                AgentContextRingGlyph(
+                    percentage: vm.usageSnapshot == nil && vm.usageLoading
+                        ? nil : vm.effectiveContextPercentage,
+                    loading: vm.usageLoading,
+                    pal: pal)
+                    .frame(width: 38, height: 38)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Context window")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                    Text(modelLabel)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                    Text(providerLine)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(pal.muted.opacity(0.76))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Button {
+                    Task { await vm.refreshUsage() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(width: 30, height: 30)
+                        .background(pal.muted.opacity(0.08), in: Circle())
+                }
+                .accessibilityLabel("Context refresh করুন")
+            }
+
+            if vm.usageSnapshot != nil {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(metricHeadline)
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                        .foregroundStyle(pal.ink)
+                        .accessibilityIdentifier("agent.context.remaining")
+                    Text(metricDetail)
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(pal.mutedHi)
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(pal.muted.opacity(0.14))
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [Color(red: 0.34, green: 0.78, blue: 0.98),
+                                         Color(red: 0.70, green: 0.58, blue: 0.98)],
+                                startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(CGFloat(5),
+                                              geo.size.width * CGFloat(vm.effectiveContextPercentage / 100)))
+                    }
+                }
+                .frame(height: 7)
+
+                HStack(spacing: 6) {
+                    Image(systemName: contextIsProviderMeasured
+                          ? "checkmark.seal.fill" : "clock")
+                    Text(contextStatus)
+                    Spacer(minLength: 0)
+                    if vm.usageLoading { ProgressView().controlSize(.mini) }
+                }
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(contextIsProviderMeasured ? AgentPalette.teal : pal.muted)
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(vm.usageError ? "Live context পাওয়া যায়নি" : "Context মাপছি…")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                    Text("Provider-এর শেষ completed round থেকে এই meter আপডেট হয়।")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(pal.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 286)
+        .background(.ultraThinMaterial)
+        .presentationCompactAdaptation(.popover)
+        .accessibilityIdentifier("agent.context.popover")
+    }
+
+    private var modelLabel: String {
+        if vm.isAutoModel, let live = vm.effectiveContextModel {
+            return "Auto · \(AgentModelShortName.display(live.label))"
+        }
+        if let snapshot = vm.usageSnapshot {
+            if snapshot.model.auto, let resolved = snapshot.model.resolvedLabel {
+                return "Auto · \(AgentModelShortName.display(resolved))"
+            }
+            if snapshot.model.auto { return "Auto" }
+            return AgentModelShortName.display(snapshot.model.label)
+        }
+        return vm.modelPillLabel
+    }
+
+    private var providerLine: String {
+        guard let model = vm.effectiveContextModel else {
+            return vm.contextRoutePending ? "Per-message routing · first reply pending" : "Model sync pending"
+        }
+        let provider: String
+        switch model.provider ?? "" {
+        case "anthropic": provider = "Anthropic"
+        case "google": provider = "Google"
+        case "openai": provider = "OpenAI"
+        case "openrouter": provider = "OpenRouter"
+        case "xai": provider = "xAI"
+        default:
+            let fallback = (model.provider ?? "").capitalized
+            provider = fallback.isEmpty ? "Provider" : fallback
+        }
+        return "\(provider) · \(AgentContextTokenFormat.compact(vm.effectiveContextWindow)) window"
+    }
+
+    private var metricHeadline: String {
+        guard vm.effectiveContextWindow != nil else { return "0 used" }
+        return "\(Int((100 - vm.effectiveContextPercentage).rounded()))% left"
+    }
+
+    private var metricDetail: String {
+        if let limit = vm.effectiveContextWindow {
+            return "\(AgentContextTokenFormat.compact(vm.effectiveContextUsedTokens)) used / \(AgentContextTokenFormat.compact(limit))"
+        }
+        return "Fresh session · Auto resolves on the first reply"
+    }
+
+    private var liveModelDiffersFromSnapshot: Bool {
+        guard vm.isAutoModel, let live = vm.liveResolvedModelId else { return false }
+        return live != vm.usageSnapshot?.resolvedModelId
+    }
+
+    private var contextIsProviderMeasured: Bool {
+        vm.usageSnapshot?.context.exact == true && !liveModelDiffersFromSnapshot
+    }
+
+    private var contextStatus: String {
+        if vm.contextRoutePending { return "Fresh session · 0 tokens" }
+        if liveModelDiffersFromSnapshot { return "Live routed model · measuring current turn" }
+        if contextIsProviderMeasured { return "Provider measured" }
+        if vm.usageSnapshot?.context.usedTokens == nil { return "Fresh session · 0 tokens" }
+        return "Reconciled for this model"
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -11543,17 +12651,48 @@ struct AgentComposerView: View {
     @State private var showDocumentPicker = false
     @State private var showCamera = false
     @State private var showScanner = false
+    @State private var showContextWindow = false
+    @State private var showPermissionModes = false
     @FocusState private var focused: Bool
 
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
-            || showCamera || showScanner
+            || showCamera || showScanner || showContextWindow || showPermissionModes
+    }
+
+    /// ChatGPT/Codex mobile grammar: an idle, empty composer is a compact one-line
+    /// affordance. Focus, content, files, recording or any active state expands it
+    /// into the full writing console without making the draft jump to another view.
+    private var compactComposer: Bool {
+        !focused
+            && vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && vm.pendingFiles.isEmpty
+            && !vm.isStreaming
+            && !vm.composerSubmissionPending
+            && !vm.hasPendingAttachmentSend
+            && !vm.isRecording
+            && vm.dictationFailure == nil
+            && !hasComposerPresentation
     }
 
     var body: some View {
         let pal = AgentPalette(scheme)
         VStack(spacing: 0) {
             VStack(spacing: 8) {
+                #if DEBUG
+                if AlmaMergeReadinessURLProtocol.scenario == "claudeInteractive" {
+                    HStack(spacing: 6) {
+                        Image(systemName: "iphone.gen3")
+                        Text("SIMULATOR DEMO · OFFLINE")
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(pal.mutedHi)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("agent.preview.offline")
+                }
+                #endif
                 if vm.queuedOwnerMessageCount > 0 {
                     HStack(spacing: 6) {
                         Image(systemName: "clock.arrow.circlepath")
@@ -11603,32 +12742,25 @@ struct AgentComposerView: View {
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
-                    // ABOVE the input, not below it: the strip under the composer
-                    // is inside the floating tab bar's hit area, so a chip drawn
-                    // there is visible and untappable — three sim rounds proved it
-                    // (Menu, popover and sheet all failed from that row alone).
-                    HStack(spacing: 8) {
-                        permissionModeChip(pal)
-                        Spacer(minLength: 0)
-                    }
-                    .frame(height: 34)
-                    .padding(.horizontal, 4)
-                    .padding(.bottom, 2)
                     composerInputRow(pal)
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 7)
+            .padding(.vertical, compactComposer ? 4 : 7)
             // NATIVE POLISH (owner, 2026-07-28). On iOS 26 the bar is real Liquid
             // Glass — the system material, its own specular edge and its own
             // shadow — instead of four hand-rolled layers (a fill, a material, a
             // stroke and a neon ring) impersonating one. The pre-26 path keeps
             // exactly what shipped, so nothing changes on an older phone.
             .modifier(AlmaComposerSurface(pal: pal, focused: focused))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agent.composer.surface")
             .padding(.horizontal, 10)
             .padding(.bottom, 7)
         }
-        .padding(.top, 8)
+        .padding(.top, compactComposer ? 2 : 8)
+        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.84),
+                   value: compactComposer)
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
             vm.composerDraft = vm.composerDraft.isEmpty
@@ -11675,6 +12807,9 @@ struct AgentComposerView: View {
         }
         .onDisappear {
             FloatingChatHead.shared.setSuppressed(false, reason: "assistant-composer-presentation")
+        }
+        .task(id: vm.usageRefreshIdentity) {
+            await vm.refreshUsage()
         }
         .task {
             let process = ProcessInfo.processInfo
@@ -11846,104 +12981,189 @@ struct AgentComposerView: View {
     /// popover is not a menu; it looked like a panel from another app. UIKit
     /// presents the menu from the button itself and sidesteps the whole problem.
     @ViewBuilder private func permissionModeChip(_ pal: AgentPalette) -> some View {
-        AlmaPermissionModeMenuButton(
-            mode: vm.permissionMode,
-            pal: pal,
-            onPick: { next in Task { await vm.setPermissionMode(next) } })
-            .accessibilityLabel("মোড: \(vm.permissionMode.label)")
-            .accessibilityHint(vm.permissionMode.hint)
+        let standardBlue = Color(red: 0.34, green: 0.69, blue: 0.98)
+        let accent = vm.permissionMode.tint ?? standardBlue
+        Button {
+            AlmaAgentHaptics.light()
+            showPermissionModes.toggle()
+        } label: {
+            Image(systemName: vm.permissionMode.symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 36, height: 36)
+                .background(accent.opacity(0.10), in: Circle())
+                .overlay(Circle().strokeBorder(accent.opacity(0.30), lineWidth: 1))
+                .almaAgentHitTarget()
+        }
+        .accessibilityIdentifier("agent.permission-mode")
+        .accessibilityLabel("অনুমোদন মোড: \(vm.permissionMode.label)")
+        .accessibilityHint(vm.permissionMode.hint)
+        .popover(isPresented: $showPermissionModes,
+                 attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            AgentPermissionModePopover(selected: vm.permissionMode) { next in
+                Task { await vm.setPermissionMode(next) }
+            }
+        }
     }
 
     @ViewBuilder private func composerInputRow(_ pal: AgentPalette) -> some View {
-        HStack(alignment: .bottom, spacing: 2) {
-            Button {
-                showAttachmentChoices = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(pal.muted)
-                    .frame(width: 36, height: 36)
-                    .almaAgentHitTarget()
-            }
-            .accessibilityLabel("ফাইল যোগ করুন")
-            .popover(isPresented: $showAttachmentChoices, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-                attachmentMenu(pal)
-                    .presentationCompactAdaptation(.popover)
-                    .presentationBackground(.ultraThinMaterial)
-            }
-            TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
-                      text: $vm.composerDraft, axis: .vertical)
-                .font(.system(size: 17))
-                .foregroundStyle(pal.ink)
-                .lineLimit(1...5)
-                .focused($focused)
-                .disabled(vm.composerSubmissionPending)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 10)
-                .frame(minHeight: 46, alignment: .center)
-            // mic → Whisper dictation
-            Button { vm.toggleRecording() } label: {
-                Group {
-                    if vm.transcribing {
-                        AlmaMiniLoader(mode: .thinking, size: 16)
-                    } else {
-                        Image(systemName: vm.isRecording ? "stop.fill" : "mic")
-                            .font(.system(size: 15, weight: .medium))
-                    }
+        VStack(alignment: .leading, spacing: compactComposer ? 0 : 2) {
+            HStack(alignment: .center, spacing: compactComposer ? 3 : 0) {
+                if compactComposer { attachmentButton(pal) }
+
+                TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
+                          text: $vm.composerDraft, axis: .vertical)
+                    .id(vm.composerClearEpoch)
+                    .font(.system(size: 17))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(compactComposer ? 1...1 : 1...5)
+                    .focused($focused)
+                    .disabled(vm.composerSubmissionPending)
+                    .accessibilityIdentifier("agent.composer.input")
+                    .padding(.horizontal, compactComposer ? 5 : 12)
+                    .padding(.top, compactComposer ? 7 : 9)
+                    .padding(.bottom, compactComposer ? 7 : 5)
+                    .frame(minHeight: 42, alignment: .topLeading)
+
+                if compactComposer {
+                    dictationButton(pal)
+                    voiceButton(pal)
                 }
-                .foregroundStyle(vm.isRecording ? .white : pal.muted)
-                .frame(width: 36, height: 36)
-                .background(vm.isRecording ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear), in: Circle())
-                .almaAgentHitTarget()
             }
-            .accessibilityLabel(vm.isRecording ? "রেকর্ডিং বন্ধ করুন" : "কণ্ঠে লিখুন")
-            // voice-to-voice — the NATIVE orb console (AssistantVoiceSwiftUI.swift)
-            Button {
-                AlmaAgentHaptics.light()
-                vm.showVoice = true
-            } label: {
-                Image(systemName: "waveform")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(AgentPalette.teal)
-                    .frame(width: 36, height: 36)
-                    .almaAgentHitTarget()
-            }
-            .accessibilityLabel("ভয়েস কথোপকথন")
-            // Kimi/iOS grammar: no inert send button in the empty state. It slides
-            // in only when text/file input is actionable; Stop still remains visible.
-            if showSendControl {
-                Button {
-                    if vm.isStreaming && sendEnabled {
-                        send()
-                    } else if vm.isStreaming {
-                        vm.stopStreaming()
-                    } else {
-                        send()
-                    }
-                } label: {
-                    Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
-                        .background(
-                            LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            in: Circle())
-                        .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7))
-                        .shadow(color: AgentPalette.coral.opacity(0.32), radius: 7, y: 3)
-                        .almaAgentHitTarget()
+
+            if !compactComposer {
+                HStack(alignment: .center, spacing: 2) {
+                    attachmentButton(pal)
+                    permissionModeChip(pal)
+                    contextWindowButton(pal)
+                    Spacer(minLength: 2)
+                    dictationButton(pal)
+                    voiceButton(pal)
+                    if showSendControl { sendButton() }
                 }
-                .accessibilityLabel(vm.isStreaming && sendEnabled
-                                    ? "বার্তাটি অপেক্ষায় রাখুন"
-                                    : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
-                .transition(reduceMotion ? .opacity : .asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72)),
-                    removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72))))
+                .padding(.horizontal, 5)
+                .padding(.bottom, 4)
+                .frame(minHeight: 44)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .frame(minHeight: 48)
+        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78),
+                   value: compactComposer)
         .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78),
                    value: showSendControl)
+    }
+
+    @ViewBuilder private func attachmentButton(_ pal: AgentPalette) -> some View {
+        Button {
+            showAttachmentChoices = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(pal.mutedHi)
+                .frame(width: 34, height: 34)
+                .background(pal.muted.opacity(0.09), in: Circle())
+                .almaAgentHitTarget()
+        }
+        .accessibilityLabel("ফাইল যোগ করুন")
+        .popover(isPresented: $showAttachmentChoices,
+                 attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            attachmentMenu(pal)
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.ultraThinMaterial)
+        }
+    }
+
+    @ViewBuilder private func contextWindowButton(_ pal: AgentPalette) -> some View {
+        Button {
+            AlmaAgentHaptics.light()
+            showContextWindow.toggle()
+            if showContextWindow { Task { await vm.refreshUsage() } }
+        } label: {
+            AgentContextRingGlyph(
+                percentage: vm.usageSnapshot == nil && vm.usageLoading
+                    ? nil : vm.effectiveContextPercentage,
+                loading: vm.usageLoading,
+                pal: pal)
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+                .almaAgentHitTarget()
+        }
+        .accessibilityIdentifier("agent.context-window")
+        .accessibilityLabel(contextAccessibilityLabel)
+        .accessibilityHint("চাপলে ব্যবহৃত ও অবশিষ্ট context দেখাবে")
+        .popover(isPresented: $showContextWindow,
+                 attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            AgentContextWindowPopover(vm: vm)
+        }
+    }
+
+    private var contextAccessibilityLabel: String {
+        guard vm.usageSnapshot != nil else { return "Context window" }
+        return "Context window, \(Int(vm.effectiveContextPercentage.rounded())) শতাংশ ব্যবহৃত"
+    }
+
+    @ViewBuilder private func dictationButton(_ pal: AgentPalette) -> some View {
+        Button { vm.toggleRecording() } label: {
+            Group {
+                if vm.transcribing {
+                    AlmaMiniLoader(mode: .thinking, size: 16)
+                } else {
+                    Image(systemName: vm.isRecording ? "stop.fill" : "mic")
+                        .font(.system(size: 15, weight: .medium))
+                }
+            }
+            .foregroundStyle(vm.isRecording ? .white : pal.muted)
+            .frame(width: 34, height: 34)
+            .background(vm.isRecording ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear),
+                        in: Circle())
+            .almaAgentHitTarget()
+        }
+        .accessibilityLabel(vm.isRecording ? "রেকর্ডিং বন্ধ করুন" : "কণ্ঠে লিখুন")
+    }
+
+    @ViewBuilder private func voiceButton(_ pal: AgentPalette) -> some View {
+        Button {
+            AlmaAgentHaptics.light()
+            vm.showVoice = true
+        } label: {
+            Image(systemName: "waveform")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AgentPalette.teal)
+                .frame(width: 34, height: 34)
+                .almaAgentHitTarget()
+        }
+        .accessibilityLabel("ভয়েস কথোপকথন")
+    }
+
+    @ViewBuilder private func sendButton() -> some View {
+        Button {
+            if vm.isStreaming && sendEnabled {
+                send()
+            } else if vm.isStreaming {
+                vm.stopStreaming()
+            } else {
+                send()
+            }
+        } label: {
+            Image(systemName: vm.isStreaming && !sendEnabled ? "stop.fill" : "arrow.up")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(
+                    LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: Circle())
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.7))
+                .shadow(color: AgentPalette.coral.opacity(0.32), radius: 7, y: 3)
+                .almaAgentHitTarget()
+        }
+        .accessibilityLabel(vm.isStreaming && sendEnabled
+                            ? "বার্তাটি অপেক্ষায় রাখুন"
+                            : (vm.isStreaming ? "উত্তর থামান" : "বার্তা পাঠান"))
+        .accessibilityIdentifier("agent.composer.send")
+        .transition(reduceMotion ? .opacity : .asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72)),
+            removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.72))))
     }
 
     private var showSendControl: Bool { sendEnabled || vm.isStreaming }
@@ -15224,7 +16444,6 @@ struct AssistantScreen: View {
     /// 1.4: ONE cancelable debounce task owns bottom-scrolling (the old
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
-    @State private var showArtifacts = false
     @State private var showLibrary = false
     @State private var showProjectPicker = false
     @State private var showConversationSearch = false
@@ -15251,7 +16470,7 @@ struct AssistantScreen: View {
 
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
-            || activitySheet != nil || showArtifacts || showLibrary || showProjectPicker
+            || activitySheet != nil || showLibrary || showProjectPicker
             || showConversationSearch || showBackgroundTasks
     }
 
@@ -15270,12 +16489,13 @@ struct AssistantScreen: View {
     }
 
     private var hasBackgroundTaskSurface: Bool {
-        // The anchor is a stable entry point after every settled reply. Its label
-        // alone communicates whether execution is idle or has N active jobs.
-        vm.messages.contains {
-            $0.role == .assistant && !$0.isStreaming
-                && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Normal conversation should end quietly like Claude. Mount this entry
+        // point only when there is real durable work or a decision waiting—not
+        // an inert "Background Tasks" label after every ordinary answer.
+        let activeDrive = (vm.planDrive?.drives ?? []).contains {
+            $0.phase == "driving" || $0.phase == "waiting-approval" || $0.phase == "needs-decision"
         }
+        return activeDrive || !vm.activeBackgroundTurns.isEmpty || !vm.mergedAttention.isEmpty
     }
 
     /// The drawer animates itself (slide-from-left) — the system cover must not.
@@ -15585,17 +16805,13 @@ struct AssistantScreen: View {
                 "reduceMotion=\(UIAccessibility.isReduceMotionEnabled) reduceTransparency=\(UIAccessibility.isReduceTransparencyEnabled) contentSize=\(UIApplication.shared.preferredContentSizeCategory.rawValue)")
             barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
-            barHooks.provideModelMenu = { completion in
-                Task { @MainActor in
-                    await vm.loadModels()
-                    completion(AssistantBarHooks.modelMenuElements(
-                        models: vm.models,
-                        selectedId: vm.modelId,
-                        onSelect: { vm.selectModel($0) }
-                    ))
-                }
-            }
-            barHooks.installModelMenu()
+            // Install an immediately-available native menu. `bootstrap()` loads
+            // the production catalogue and the onChange below replaces this
+            // Auto-only seed in place. A UIDeferredMenuElement left iOS showing
+            // its system "Loading…" placeholder even after the API returned.
+            barHooks.installModelMenu(
+                models: vm.models, selectedId: vm.modelId,
+                onSelect: { vm.selectModel($0) })
             barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
             barHooks.isPinned = { vm.currentConversationPinned }
             barHooks.hasProject = { vm.currentProjectId != nil }
@@ -15689,6 +16905,32 @@ struct AssistantScreen: View {
                 AlmaTurnLog.event("assistant.contentReady", "fixture=stress count=\(vm.messages.count)")
                 return
             }
+            #if DEBUG
+            if argFlag("ALMA_ASSISTANT_CLAUDE_CHAT") {
+                vm.loadClaudeChatFixture()
+                if AlmaMergeReadinessURLProtocol.scenario == "claudeInteractive" {
+                    await vm.loadModels()
+                }
+                AlmaTurnLog.event("assistant.contentReady", "fixture=claude-chat count=\(vm.messages.count)")
+                if argFlag("ALMA_ASSISTANT_CLAUDE_ACTIVITY"), let answer = vm.messages.last {
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(700))
+                        activitySheet = .init(
+                            message: answer, kind: .summary,
+                            activityIds: ["claude-sales-overview", "claude-customer-segments",
+                                          "claude-inventory-health"])
+                    }
+                } else if !argFlag("ALMA_ASSISTANT_CLAUDE_BOTTOM") {
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(1_500))
+                        followSuppressedUntil = Date().addingTimeInterval(5)
+                        nearBottom = false
+                        timelineScrollTarget = "claude-flow-owner"
+                    }
+                }
+                return
+            }
+            #endif
             if argFlag("ALMA_ASSISTANT_READING_FIXTURE") {
                 vm.loadReadingSurfaceFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=reading-surface")
@@ -15844,6 +17086,14 @@ struct AssistantScreen: View {
             // the REAL bootstrap finishing below.
             awakening.begin(sessionNeedsRestore: vm.messages.isEmpty)
             await vm.bootstrap()
+            #if DEBUG
+            // Production-connected simulator matrix; release/TestFlight never
+            // sees this environment-only path.
+            await vm.prepareProviderMatrixTest(environment: rawEnv)
+            if rawEnv["ALMA_ASSISTANT_TEST_OPEN_LIVE_THOUGHT"] == "1" {
+                activitySheet = await vm.waitForProviderMatrixThoughtRequest()
+            }
+            #endif
             awakening.markReady(hasContent: !vm.messages.isEmpty)
             AlmaTurnLog.event("assistant.contentReady", "live count=\(vm.messages.count)")
         }
@@ -15885,10 +17135,7 @@ struct AssistantScreen: View {
             AgentToolIOSheet(tool: tool)
         }
         .sheet(item: $activitySheet) { req in
-            AgentThoughtProcessSheet(request: req)
-        }
-        .sheet(isPresented: $showArtifacts) {
-            AgentArtifactsSheet(vm: vm, openWeb: openWeb)
+            AgentThoughtProcessSheet(request: req, vm: vm)
         }
         .sheet(isPresented: $showLibrary) {
             AgentLibrarySheet(vm: vm) { messageId in
@@ -15940,45 +17187,30 @@ struct AssistantScreen: View {
         .onChange(of: vm.modelPillLabel) { _, label in
             barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
         }
+        .onChange(of: vm.models) { _, models in
+            barHooks.installModelMenu(
+                models: models, selectedId: vm.modelId,
+                onSelect: { vm.selectModel($0) })
+        }
+        .onChange(of: vm.modelId) { _, selectedId in
+            barHooks.installModelMenu(
+                models: vm.models, selectedId: selectedId,
+                onSelect: { vm.selectModel($0) })
+        }
         .onChange(of: vm.isStreaming) { _, streaming in
             barHooks.updateModelLabel(vm.modelPillLabel, enabled: !streaming)
         }
         .onAppear {
             // The Assistant already has its own conversation controls; the
             // app-wide office chat head obscures long answers and the composer.
-            FloatingChatHead.shared.setSuppressed(true, reason: "assistant-screen")
+            FloatingChatHead.shared.setSuppressed(true, reason: "assistant-chat-content")
         }
         .onDisappear {
             FloatingChatHead.shared.setSuppressed(false, reason: "assistant-presentation")
-            FloatingChatHead.shared.setSuppressed(false, reason: "assistant-screen")
+            FloatingChatHead.shared.setSuppressed(false, reason: "assistant-chat-content")
         }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
-        }
-        // Artifacts badge — web header-badge parity: appears only when this
-        // conversation actually has artifacts; tap → glossy list/detail sheet.
-        .overlay(alignment: .topTrailing) {
-            if !vm.artifacts.isEmpty && !vm.authExpired {
-                Button {
-                    AlmaAgentHaptics.light()
-                    showArtifacts = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "doc.richtext")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(almaBn(vm.artifacts.count))
-                            .font(.system(size: 11.5, weight: .bold))
-                    }
-                    .foregroundStyle(AgentPalette.coral)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
-                }
-                .buttonStyle(AlmaAgentPressStyle())
-                .padding(.trailing, 14).padding(.top, 6)
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
-            }
         }
         .overlay(alignment: .bottom) {
             if let toast = vm.errorToast { toastView(toast, pal) }
@@ -16168,10 +17400,6 @@ final class AssistantModelPillButton: UIButton {
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
-    /// Supplies a fresh model snapshot whenever the system asks to open the
-    /// source-anchored menu. A deferred menu lets the API load finish without
-    /// falling back to an iPhone bottom sheet.
-    var provideModelMenu: ((@escaping ([UIMenuElement]) -> Void) -> Void)?
     weak var modelButton: AssistantModelPillButton?
     var isPinned: (() -> Bool)?
     var hasProject: (() -> Bool)?
@@ -16197,18 +17425,16 @@ final class AssistantBarHooks: NSObject {
         modelButton?.update(label: label, enabled: enabled)
     }
 
-    func installModelMenu() {
-        let deferred = UIDeferredMenuElement.uncached { [weak self] completion in
-            Task { @MainActor in
-                guard let provider = self?.provideModelMenu else {
-                    completion([])
-                    return
-                }
+    func installModelMenu(
+        models: [AgentModelInfo], selectedId: String?,
+        onSelect: @escaping (String?) -> Void
+    ) {
+        modelButton?.menu = UIMenu(children: Self.modelMenuElements(
+            models: models, selectedId: selectedId,
+            onSelect: { id in
                 AlmaAgentHaptics.selection()
-                provider(completion)
-            }
-        }
-        modelButton?.menu = UIMenu(children: [deferred])
+                onSelect(id)
+            }))
     }
 
     static func modelMenuElements(
@@ -16489,6 +17715,13 @@ struct AgentArtifactViewerSheet: View {
     private func load() async {
         let started = Date()
         AlmaTurnLog.event("artifact.preview.begin", artifactId)
+        // History/bootstrap already hydrate this conversation's artifacts. Use
+        // that authoritative cache first so opening a just-created document is
+        // instant (and the DEBUG simulator fixture remains fully offline).
+        if let cached = vm.artifacts.first(where: { $0.id == artifactId }) {
+            accept(cached, started: started)
+            return
+        }
         guard let cid = vm.conversationId else {
             loadError = "কথোপকথন পাওয়া যায়নি"
             AlmaTurnLog.event("artifact.preview.fail", "missing-conversation")
@@ -16500,23 +17733,27 @@ struct AgentArtifactViewerSheet: View {
                 loadError = "ফাইলটা আর নেই"
                 return
             }
-            artifact = a
-            AlmaTurnLog.event(
-                "artifact.preview.ready",
-                "type=\(a.type ?? "unknown") ms=\(Int(Date().timeIntervalSince(started) * 1000))")
-            // Write a real .md file so the share sheet hands the client a document.
-            if let content = a.content {
-                let safe = (a.title ?? fallbackTitle)
-                    .replacingOccurrences(of: "/", with: "-")
-                    .prefix(80)
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("\(safe).md")
-                try? content.data(using: .utf8)?.write(to: url)
-                shareURL = url
-            }
+            accept(a, started: started)
         } catch {
             loadError = "লোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
             AlmaTurnLog.event("artifact.preview.fail", "network")
+        }
+    }
+
+    private func accept(_ value: AgentArtifactWire, started: Date) {
+        artifact = value
+        AlmaTurnLog.event(
+            "artifact.preview.ready",
+            "type=\(value.type ?? "unknown") ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+        // Write a real .md file so the share sheet hands the client a document.
+        if let content = value.content {
+            let safe = (value.title ?? fallbackTitle)
+                .replacingOccurrences(of: "/", with: "-")
+                .prefix(80)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(safe).md")
+            try? content.data(using: .utf8)?.write(to: url)
+            shareURL = url
         }
     }
 }

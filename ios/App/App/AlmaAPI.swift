@@ -31,6 +31,57 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
     private static var multiRequestCounts: [String: Int] = [:]
     private static var recoveryStreamServed = false
     private static var unexpectedEOFReplayServed = false
+    private static let interactiveLock = NSLock()
+    private static var interactiveSelectedModelId = "auto"
+    private static var interactiveTurnCounter = 0
+
+    /// DEBUG-only snapshot of the real head-pickable registry. The interactive
+    /// Simulator preview must exercise the production model picker without asking
+    /// the owner to connect this build to production. Enabled/disabled state remains
+    /// deliberately local; only a real authenticated server can know its live map.
+    struct InteractivePreviewModel: Equatable {
+        let id: String
+        let label: String
+        let provider: String
+        var isDefault = false
+        var contextWindow = 200_000
+
+        var json: [String: Any] {
+            ["id": id, "label": label, "provider": provider,
+             "enabled": true, "default": isDefault,
+             "contextWindow": contextWindow]
+        }
+    }
+
+    struct InteractivePreviewFrame {
+        let delayMilliseconds: Int
+        let event: [String: Any]
+        var type: String { event["type"] as? String ?? "" }
+    }
+
+    static let interactivePreviewModels: [InteractivePreviewModel] = [
+        .init(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", isDefault: true),
+        .init(id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "anthropic"),
+        .init(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic"),
+        .init(id: "gemini-3.1-pro", label: "Gemini 3.1 Pro", provider: "google"),
+        .init(id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google"),
+        .init(id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", provider: "google"),
+        .init(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google"),
+        .init(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: "openai"),
+        .init(id: "gpt-5.5", label: "GPT-5.5", provider: "openai"),
+        .init(id: "gpt-5.4", label: "GPT-5.4", provider: "openai"),
+        .init(id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: "openai"),
+        .init(id: "or-qwen3-max", label: "Qwen 3.7 Max (OpenRouter)", provider: "openrouter"),
+        .init(id: "or-deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter"),
+        .init(id: "or-grok-4.20", label: "Grok 4.20 (OpenRouter)", provider: "openrouter"),
+        .init(id: "or-deepseek-v4-pro", label: "DeepSeek V4 Pro (OpenRouter)", provider: "openrouter"),
+        .init(id: "or-qwen2.5-vl-72b", label: "Qwen 2.5 VL 72B (OpenRouter)", provider: "openrouter"),
+        .init(id: "xai-grok-4.20", label: "Grok 4.20 (xAI direct)", provider: "xai"),
+    ]
+
+    private let interactiveStreamQueue = DispatchQueue(
+        label: "com.almatraders.erp.agent.preview-stream", qos: .userInitiated)
+    private var interactiveStreamStopped = false
     static var scenario: String? {
         let process = ProcessInfo.processInfo
         if let value = process.environment["ALMA_MERGE_MOCK"], !value.isEmpty { return value }
@@ -48,6 +99,14 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         let path = url.path
+        if scenario == "claudeInteractive" {
+            #if targetEnvironment(simulator)
+            handleClaudeInteractive(path: path)
+            #else
+            respond(status: 503, json: ["error": "interactive_preview_is_simulator_only"])
+            #endif
+            return
+        }
         if scenario == "streamEOF" {
             if path == "/api/assistant/chat" {
                 // Reproduce the owner-hit failure exactly: the direct stream sends
@@ -309,7 +368,262 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
         respond(status: 503, json: ["error": "unhandled_merge_fixture", "path": path])
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        interactiveStreamQueue.async { [weak self] in
+            self?.interactiveStreamStopped = true
+        }
+    }
+
+    private func handleClaudeInteractive(path: String) {
+        let method = request.httpMethod ?? "GET"
+        if method == "GET", path == "/api/assistant/models" {
+            respond(status: 200, object: [
+                "defaultModelId": "claude-sonnet-4-6",
+                "models": Self.interactivePreviewModels.map(\.json),
+            ])
+            return
+        }
+
+        if method == "GET", path == "/api/assistant/usage" {
+            let selected = Self.currentInteractiveSelectedModel()
+            let resolved = selected == "auto" ? "claude-sonnet-4-6" : selected
+            let model = Self.interactivePreviewModels.first(where: { $0.id == resolved })
+                ?? Self.interactivePreviewModels[0]
+            let used = 24_800
+            let percentage = Double(used) / Double(model.contextWindow) * 100
+            respond(status: 200, object: [
+                "checkedAt": "2026-08-09T12:00:00.000Z",
+                "selectedModelId": selected,
+                "resolvedModelId": resolved,
+                "model": [
+                    "id": selected,
+                    "label": selected == "auto" ? "Auto" : model.label,
+                    "resolvedLabel": model.label,
+                    "contextWindow": model.contextWindow,
+                    "auto": selected == "auto",
+                ],
+                "context": [
+                    "usedTokens": used,
+                    "percentage": percentage,
+                    "source": "provider_round",
+                    "measuredAt": "2026-08-09T11:59:58.000Z",
+                    "exact": true,
+                    "breakdown": [[
+                        "id": "conversation",
+                        "label": "Conversation",
+                        "tokens": used,
+                        "percentage": percentage,
+                        "color": "blue",
+                    ]],
+                ],
+            ])
+            return
+        }
+
+        if method == "PATCH", path == "/api/assistant/conversations/fixture-claude-chat" {
+            if let body = requestJSON(), let selected = body["modelId"] as? String {
+                Self.setInteractiveSelectedModel(selected)
+            }
+            // One response intentionally satisfies both callers on this route:
+            // selectModel decodes AgentConversation; permission mode decodes OkResponse.
+            respond(status: 200, object: [
+                "ok": true,
+                "id": "fixture-claude-chat",
+                "title": "Sales recovery research",
+                "modelId": Self.currentInteractiveSelectedModel(),
+                "permissionMode": "standard",
+            ])
+            return
+        }
+
+        if method == "POST", path == "/api/assistant/chat" {
+            let turn = Self.nextInteractiveTurn()
+            let selected = request.value(forHTTPHeaderField: "X-ALMA-Preview-Model")
+                ?? Self.currentInteractiveSelectedModel()
+            let prompt = Self.decodePreviewPrompt(
+                request.value(forHTTPHeaderField: "X-ALMA-Preview-Prompt"))
+            respondInteractiveStream(
+                frames: Self.interactivePreviewFrames(
+                    modelId: selected, prompt: prompt, turn: turn))
+            return
+        }
+
+        if method == "GET", path.contains("/conversations/fixture-claude-chat/messages") {
+            // The production merge deliberately preserves a richer local streamed
+            // tail when the server page is thinner. An empty page therefore proves
+            // that exact convergence behavior without manufacturing a second row.
+            respond(status: 200, object: [])
+            return
+        }
+
+        if method == "GET", path == "/api/assistant/conversations/fixture-claude-chat/artifacts" {
+            respond(status: 200, object: [[
+                "id": "claude-action-plan",
+                "messageId": "claude-flow-answer",
+                "type": "markdown",
+                "title": "৩০ দিনের Sales Recovery Plan.md",
+                "content": "# Simulator Action Plan\n\n- [ ] প্রথম priority ঠিক করুন\n- [ ] owner ও deadline দিন\n- [ ] ৭ দিন পর result review করুন",
+                "version": 1,
+                "createdAt": "2026-08-09T09:30:14.000Z",
+            ]])
+            return
+        }
+
+        if path.contains("/cancel") || path.contains("/stop") {
+            respond(status: 200, object: ["ok": true])
+            return
+        }
+
+        respond(status: 503, json: ["error": "unhandled_interactive_preview", "path": path])
+    }
+
+    private func requestJSON() -> [String: Any]? {
+        guard let data = request.httpBody else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func setInteractiveSelectedModel(_ modelId: String) {
+        interactiveLock.lock(); defer { interactiveLock.unlock() }
+        interactiveSelectedModelId = modelId
+    }
+
+    private static func currentInteractiveSelectedModel() -> String {
+        interactiveLock.lock(); defer { interactiveLock.unlock() }
+        return interactiveSelectedModelId
+    }
+
+    private static func nextInteractiveTurn() -> Int {
+        interactiveLock.lock(); defer { interactiveLock.unlock() }
+        interactiveTurnCounter += 1
+        return interactiveTurnCounter
+    }
+
+    private static func decodePreviewPrompt(_ encoded: String?) -> String {
+        guard let encoded, let data = Data(base64Encoded: encoded),
+              let text = String(data: data, encoding: .utf8) else {
+            return "আপনার নতুন প্রশ্ন"
+        }
+        let compact = text.replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return compact.isEmpty ? "আপনার নতুন প্রশ্ন" : String(compact.prefix(180))
+    }
+
+    static func interactivePreviewFrames(modelId: String, prompt: String,
+                                         turn: Int = 1) -> [InteractivePreviewFrame] {
+        let routed = modelId == "auto" ? "gemini-3.1-pro" : modelId
+        let model = interactivePreviewModels.first(where: { $0.id == routed })
+            ?? interactivePreviewModels[0]
+        let prefix = "preview-\(turn)"
+        let safePrompt = prompt.isEmpty ? "আপনার নতুন প্রশ্ন" : String(prompt.prefix(180))
+        let final = """
+        ## Simulator demo সম্পন্ন
+
+        **আপনার প্রশ্ন:** \(safePrompt)
+
+        এটি \(model.label)-এর UI contract দেখানোর জন্য local deterministic response। কোনো production business data পড়া বা পরিবর্তন করা হয়নি।
+
+        ### Action plan
+
+        1. প্রথমে সবচেয়ে গুরুত্বপূর্ণ signal যাচাই করুন
+        2. owner ও deadline-সহ কাজ ভাগ করুন
+        3. ৭ দিন পর measurable result review করুন
+        """
+        return [
+            .init(delayMilliseconds: 0, event: [
+                "type": "conversation_id", "id": "fixture-claude-chat"]),
+            .init(delayMilliseconds: 70, event: [
+                "type": "turn_id", "id": "\(prefix)-turn"]),
+            .init(delayMilliseconds: 150, event: [
+                "type": "model_info", "label": model.label, "displayName": model.label]),
+            .init(delayMilliseconds: 420, event: [
+                "type": "thinking_delta",
+                "delta": "প্রশ্নের উদ্দেশ্য বুঝছি: \(safePrompt)।\n"]),
+            .init(delayMilliseconds: 920, event: [
+                "type": "thinking_delta",
+                "delta": "এটি offline Simulator, তাই real data claim না করে demo evidence ও action flow দেখাতে হবে।"]),
+            .init(delayMilliseconds: 1_350, event: [
+                "type": "text_delta",
+                "delta": "Boss, বুঝেছি। আগে প্রশ্নটাকে সংক্ষেপে যাচাই করছি, তারপর relevant signals দেখে practical action plan দেব।"]),
+            .init(delayMilliseconds: 1_420, event: [
+                "type": "preamble",
+                "text": "Boss, বুঝেছি। আগে প্রশ্নটাকে সংক্ষেপে যাচাই করছি, তারপর relevant signals দেখে practical action plan দেব।"]),
+            .init(delayMilliseconds: 1_780, event: [
+                "type": "progress_update", "label": "প্রয়োজনীয় business signals খুঁজছে"]),
+            .init(delayMilliseconds: 2_050, event: [
+                "type": "tool_start", "id": "\(prefix)-sales", "name": "get_sales_overview",
+                "input": ["range": "last_90_days", "source": "simulator_demo"]]),
+            .init(delayMilliseconds: 2_430, event: [
+                "type": "tool_end", "id": "\(prefix)-sales", "success": true,
+                "resultPreview": "Demo revenue trend loaded; no production records queried."]),
+            .init(delayMilliseconds: 2_620, event: [
+                "type": "tool_start", "id": "\(prefix)-customers", "name": "get_customer_segments",
+                "input": ["segments": ["new", "repeat"], "source": "simulator_demo"]]),
+            .init(delayMilliseconds: 2_980, event: [
+                "type": "tool_end", "id": "\(prefix)-customers", "success": true,
+                "resultPreview": "Demo customer cohorts compared successfully."]),
+            .init(delayMilliseconds: 3_350, event: [
+                "type": "text_delta",
+                "delta": "প্রথম pass-এ signals পাওয়া গেছে। এখন channel impact ও execution priority মিলিয়ে final recommendation বানাচ্ছি।"]),
+            .init(delayMilliseconds: 3_780, event: [
+                "type": "thinking_delta",
+                "delta": "প্রথম finding-কে final ধরে না নিয়ে channel efficiency ও impact overlap দিয়ে cross-check করা দরকার।"]),
+            .init(delayMilliseconds: 4_160, event: [
+                "type": "progress_update", "label": "findings cross-check করছে"]),
+            .init(delayMilliseconds: 4_410, event: [
+                "type": "tool_start", "id": "\(prefix)-channel", "name": "analyze_channel_performance",
+                "input": ["channels": ["paid", "organic", "direct"], "source": "simulator_demo"]]),
+            .init(delayMilliseconds: 4_760, event: [
+                "type": "tool_end", "id": "\(prefix)-channel", "success": true,
+                "resultPreview": "Demo channel performance cross-check complete."]),
+            .init(delayMilliseconds: 4_940, event: [
+                "type": "tool_start", "id": "\(prefix)-impact", "name": "find_stockout_impact",
+                "input": ["join": ["inventory", "orders"], "source": "simulator_demo"]]),
+            .init(delayMilliseconds: 5_280, event: [
+                "type": "tool_end", "id": "\(prefix)-impact", "success": true,
+                "resultPreview": "Demo impact overlap verified; no live inventory accessed."]),
+            .init(delayMilliseconds: 5_690, event: [
+                "type": "text_delta", "delta": final]),
+            .init(delayMilliseconds: 6_080, event: [
+                "type": "artifact_saved", "id": "claude-action-plan",
+                "title": "৩০ দিনের Sales Recovery Plan.md", "artifactType": "markdown"]),
+            .init(delayMilliseconds: 6_350, event: [
+                "type": "done", "messageId": "\(prefix)-assistant",
+                "tokensIn": 1_280, "tokensOut": 620, "cacheRead": 420,
+                "costUsd": 0.0042, "needContinue": false, "apiRounds": 4,
+                "roundCostsUsd": [0.0010, 0.0011, 0.0010, 0.0011]]),
+        ]
+    }
+
+    private func respondInteractiveStream(frames: [InteractivePreviewFrame]) {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return
+        }
+        let payloads: [(delay: Int, data: Data)] = frames.compactMap { frame in
+            guard let json = try? JSONSerialization.data(withJSONObject: frame.event),
+                  let line = String(data: json, encoding: .utf8) else { return nil }
+            return (frame.delayMilliseconds, Data("data: \(line)\n\n".utf8))
+        }
+        guard payloads.count == frames.count else {
+            respond(status: 500, json: ["error": "interactive_preview_encoding_failed"])
+            return
+        }
+        let response = HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream",
+                           "Cache-Control": "no-cache"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        for (index, payload) in payloads.enumerated() {
+            interactiveStreamQueue.asyncAfter(
+                deadline: .now() + .milliseconds(payload.delay)) { [weak self] in
+                    guard let self, !self.interactiveStreamStopped else { return }
+                    self.client?.urlProtocol(self, didLoad: payload.data)
+                    if index == payloads.count - 1 {
+                        self.client?.urlProtocolDidFinishLoading(self)
+                        self.interactiveStreamStopped = true
+                    }
+                }
+        }
+    }
 
     private func respond(status: Int, json: [String: Any]) { respond(status: status, object: json) }
     private func respond(status: Int, object: Any) {

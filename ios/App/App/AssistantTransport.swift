@@ -81,6 +81,7 @@ struct AgentSSEEvent: Decodable {
     let id: String?
     let delta: String?
     let text: String?           // preamble
+    let modelId: String?        // model_info — canonical registry identity
     let label: String?
     let displayName: String?     // model_info — the name Boss reads
     let name: String?
@@ -146,7 +147,7 @@ enum AgentTurnEvent: Sendable {
     case conversationId(String)
     case turnId(String)
     case personalMode(Bool)
-    case modelInfo(label: String, displayName: String)
+    case modelInfo(modelId: String, label: String, displayName: String)
     case modelSwitchRequired(toLabel: String, fromLabel: String, fallbackModelId: String?)
     case thinkingDelta(String)
     /// Provider-neutral, truthful work headline. Unlike `thinkingDelta`, this is
@@ -201,7 +202,8 @@ enum AgentTurnEvent: Sendable {
         case "personal_mode":
             self = .personalMode(ev.active == true)
         case "model_info":
-            self = .modelInfo(label: ev.label ?? "", displayName: ev.displayName ?? "")
+            self = .modelInfo(modelId: ev.modelId ?? "", label: ev.label ?? "",
+                              displayName: ev.displayName ?? "")
         case "model_switch_required":
             self = .modelSwitchRequired(toLabel: ev.toLabel ?? "প্রিমিয়াম মডেল", fromLabel: ev.fromLabel ?? "",
                                         fallbackModelId: ev.fallbackModelId)
