@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useSyncExternalStore, useTransition } from 'react'
+import { useSyncExternalStore, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { isNativeShell } from '@/lib/native-shell'
@@ -46,10 +46,6 @@ export function StudioVersionSwitcher({
     () => true,
   )
   const [isPending, startTransition] = useTransition()
-
-  useEffect(() => {
-    if (!nativeShell) persistVersion(activeVersion)
-  }, [activeVersion, nativeShell])
 
   if (nativeShell || !canUseV4) return null
 

@@ -72,7 +72,7 @@ export default async function CreativeStudioPage(
   )
   const forceLegacy = requestedStudio === 'legacy'
   const forceOwnerV4Preview =
-    requestedStudio === 'v4'
+    explicitStudio === 'v4'
     && process.env.VERCEL_ENV === 'preview'
     && actorIsSystemOwner
 

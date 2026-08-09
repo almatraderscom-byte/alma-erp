@@ -86,7 +86,9 @@ export function CreativeStudioShell({ canUseV4 }: { canUseV4: boolean }) {
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandProfileId) ?? null
   const v4Query = new URLSearchParams({ studio: 'v4' })
   if (activeBrandProfileId) v4Query.set('brand', activeBrandProfileId)
-  if (activeProject) v4Query.set('project', activeProject.id)
+  if (activeProject?.brandProfileId === activeBrandProfileId) {
+    v4Query.set('project', activeProject.id)
+  }
   const v4Href = `/agent/creative-studio?${v4Query.toString()}`
 
   const changeBrand = useCallback((brandProfileId: string) => {
