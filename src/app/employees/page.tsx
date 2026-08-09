@@ -33,6 +33,7 @@ type LinkableUser = {
   matchedEmployeeId: string | null
   matchedEmployeeName: string | null
   selectable: boolean
+  active: boolean
 }
 
 export default function EmployeesPage() {
@@ -59,11 +60,11 @@ export default function EmployeesPage() {
     return map
   }, [users])
   const unlinkableUsers = useMemo(
-    () => users.filter(u => !u.linked && !u.orphanEmployeeId),
+    () => users.filter(u => u.active && !u.linked && !u.orphanEmployeeId),
     [users],
   )
 
-  const rosterEmployees = data?.employees ?? []
+  const rosterEmployees = useMemo(() => data?.employees ?? [], [data?.employees])
 
   const uniqueRoles = useMemo(() => {
     const roles = new Set(rosterEmployees.map(e => e.role).filter(Boolean))
@@ -84,7 +85,7 @@ export default function EmployeesPage() {
 
   const stats = useMemo(() => ({
     total: rosterEmployees.length,
-    active: rosterEmployees.filter(e => e.status === 'Active').length,
+    active: rosterEmployees.filter(e => String(e.status || '').toLowerCase() === 'active').length,
     departments: new Set(rosterEmployees.map(e => e.role).filter(Boolean)).size,
   }), [rosterEmployees])
 
@@ -241,8 +242,8 @@ export default function EmployeesPage() {
   }
 
   function getStatusColor(status: string) {
-    if (status === 'Active') return 'tone-green'
-    if (status === 'Inactive') return 'tone-red'
+    if (status.toLowerCase() === 'active') return 'tone-green'
+    if (status.toLowerCase() === 'inactive') return 'tone-red'
     return 'tone-amber'
   }
 
@@ -392,9 +393,9 @@ export default function EmployeesPage() {
                           </td>
                           <td className="py-3.5 pr-4">
                             {linkedUser ? (
-                              <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                              <span className={`text-xs font-medium flex items-center gap-1 ${linkedUser.active ? 'text-emerald-600' : 'text-muted'}`}>
                                 <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                                {linkedUser.name}
+                                {linkedUser.active ? linkedUser.name : `${linkedUser.name} · Offboarded`}
                               </span>
                             ) : (
                               <Button
