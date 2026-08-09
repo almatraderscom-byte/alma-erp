@@ -1,4 +1,5 @@
 import { notFound, redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
@@ -13,6 +14,10 @@ import {
 import { listProjects } from '@/lib/creative-studio/project-service'
 import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
 import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
+import {
+  resolveStudioWebVersionPreference,
+  STUDIO_WEB_VERSION_COOKIE,
+} from '@/agent/components/creative-studio/studio-version'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
 import {
   resolveCreativeStudioV3RouteDecision,
@@ -57,7 +62,12 @@ export default async function CreativeStudioPage(
   const actorIsSystemOwner = isSystemOwner(actor.erpRole)
   const requestedBrandId = first(searchParams?.brand)
   const requestedProjectId = first(searchParams?.project)
-  const requestedStudio = first(searchParams?.studio)
+  const explicitStudio = first(searchParams?.studio)
+  const cookieStore = await cookies()
+  const requestedStudio = resolveStudioWebVersionPreference(
+    explicitStudio,
+    cookieStore.get(STUDIO_WEB_VERSION_COOKIE)?.value,
+  )
   const forceLegacy = requestedStudio === 'legacy'
   const forceOwnerV4Preview =
     requestedStudio === 'v4'
@@ -77,24 +87,33 @@ export default async function CreativeStudioPage(
         && accessibleBrandIds.has(project.brandProfileId as string)),
   )
 
-  const decision = resolveCreativeStudioV3RouteDecision({
+  const rolloutEnvironment = {
+    CREATIVE_STUDIO_V3_UI_ENABLED: forceOwnerV4Preview
+      ? '1'
+      : process.env.CREATIVE_STUDIO_V3_UI_ENABLED,
+    CREATIVE_STUDIO_V3_OWNER_IDS: process.env.CREATIVE_STUDIO_V3_OWNER_IDS,
+    CREATIVE_STUDIO_V3_BRAND_IDS: forceOwnerV4Preview
+      ? '*'
+      : process.env.CREATIVE_STUDIO_V3_BRAND_IDS,
+    CREATIVE_STUDIO_V3_PROJECT_IDS: process.env.CREATIVE_STUDIO_V3_PROJECT_IDS,
+  }
+  const routeInput = {
     actorIsSystemOwner,
     accessibleBrands,
     accessibleProjects,
     requestedBrandId,
     requestedProjectId,
+    environment: rolloutEnvironment,
+  }
+  const decision = resolveCreativeStudioV3RouteDecision({
+    ...routeInput,
     forceLegacy,
-    environment: {
-      CREATIVE_STUDIO_V3_UI_ENABLED: forceOwnerV4Preview
-        ? '1'
-        : process.env.CREATIVE_STUDIO_V3_UI_ENABLED,
-      CREATIVE_STUDIO_V3_OWNER_IDS: process.env.CREATIVE_STUDIO_V3_OWNER_IDS,
-      CREATIVE_STUDIO_V3_BRAND_IDS: forceOwnerV4Preview
-        ? '*'
-        : process.env.CREATIVE_STUDIO_V3_BRAND_IDS,
-      CREATIVE_STUDIO_V3_PROJECT_IDS: process.env.CREATIVE_STUDIO_V3_PROJECT_IDS,
-    },
   })
+  const v4Available = decision.kind === 'v3'
+    || (forceLegacy && resolveCreativeStudioV3RouteDecision({
+      ...routeInput,
+      forceLegacy: false,
+    }).kind === 'v3')
 
   if (decision.kind === 'v3') {
     const foundation = getCreativeStudioV4PreviewFoundationFlags({
@@ -125,6 +144,8 @@ export default async function CreativeStudioPage(
     )
   }
 
-  if (decision.kind === 'legacy' && actorIsSystemOwner) return <CreativeStudio />
+  if (decision.kind === 'legacy' && actorIsSystemOwner) {
+    return <CreativeStudio canUseV4={v4Available} />
+  }
   notFound()
 }

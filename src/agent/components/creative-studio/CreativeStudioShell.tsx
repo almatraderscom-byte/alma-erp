@@ -12,6 +12,7 @@ import { ModelLibraryView } from '@/agent/components/creative-studio/ModelLibrar
 import { ProjectBar } from '@/agent/components/creative-studio/ProjectBar'
 import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
 import { StudioRoleSettings } from '@/agent/components/creative-studio/StudioRoleSettings'
+import { StudioVersionSwitcher } from '@/agent/components/creative-studio/StudioVersionSwitcher'
 import { StudioWorkspaceView, ENGINE_LABELS_BN } from '@/agent/components/creative-studio/StudioWorkspaceView'
 import { VideoStudioView } from '@/agent/components/creative-studio/VideoStudioView'
 import { AudioSvg, GallerySvg, StudioSvg, UserSvg, VideoSvg } from '@/agent/components/creative-studio/StudioUi'
@@ -40,7 +41,7 @@ export const STUDIO_NAV_ITEMS = STUDIO_NAV_DEFINITIONS.map((item) => ({
 
 const ACTIVE_BRAND_KEY = 'alma-creative-studio-brand'
 
-export function CreativeStudioShell() {
+export function CreativeStudioShell({ canUseV4 }: { canUseV4: boolean }) {
   const [view, setView] = useState<StudioView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
   const [brands, setBrands] = useState<StudioBrandProfile[]>([])
@@ -119,6 +120,11 @@ export function CreativeStudioShell() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <StudioVersionSwitcher
+              activeVersion="legacy"
+              canUseV4={canUseV4}
+              tone="dark"
+            />
             <BrandSwitcher
               brands={brands}
               activeBrandProfileId={activeBrandProfileId}
