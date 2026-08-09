@@ -17,12 +17,14 @@ import CreativeStudio from '@/agent/components/creative-studio/CreativeStudio'
 import {
   resolveStudioWebVersionPreference,
   STUDIO_WEB_VERSION_COOKIE,
+  type StudioWebV4Target,
 } from '@/agent/components/creative-studio/studio-version'
 import { CreativeStudioV3 } from '@/agent/components/creative-studio-v3/CreativeStudioV3'
 import {
   resolveCreativeStudioV3RouteDecision,
   selectCreativeStudioV3InitialProjectId,
 } from '@/agent/components/creative-studio-v3/route-access-policy'
+import { resolveCreativeStudioV3Rollout } from '@/agent/components/creative-studio-v3/rollout-policy'
 
 export const metadata = {
   title: 'Creative Studio',
@@ -111,11 +113,28 @@ export default async function CreativeStudioPage(
     ...routeInput,
     forceLegacy,
   })
-  const v4Available = decision.kind === 'v3'
-    || (forceLegacy && resolveCreativeStudioV3RouteDecision({
-      ...routeInput,
-      forceLegacy: false,
-    }).kind === 'v3')
+  const v4Targets = accessibleBrands.flatMap<StudioWebV4Target>((brand) => {
+    const scope = {
+      ownerId: brand.ownerId,
+      brandId: brand.brandProfileId,
+    }
+    if (resolveCreativeStudioV3Rollout(rolloutEnvironment, {
+      ...scope,
+      projectId: null,
+    })) {
+      return [{ brandProfileId: brand.brandProfileId, projectId: null }]
+    }
+    return accessibleProjects
+      .filter((project) => project.brandProfileId === brand.brandProfileId)
+      .filter((project) => resolveCreativeStudioV3Rollout(rolloutEnvironment, {
+        ...scope,
+        projectId: project.id,
+      }))
+      .map((project) => ({
+        brandProfileId: brand.brandProfileId,
+        projectId: project.id,
+      }))
+  })
 
   if (decision.kind === 'v3') {
     const foundation = getCreativeStudioV4PreviewFoundationFlags({
@@ -147,7 +166,7 @@ export default async function CreativeStudioPage(
   }
 
   if (decision.kind === 'legacy' && actorIsSystemOwner) {
-    return <CreativeStudio canUseV4={v4Available} />
+    return <CreativeStudio v4Targets={v4Targets} />
   }
   notFound()
 }

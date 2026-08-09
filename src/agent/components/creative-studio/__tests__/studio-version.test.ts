@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canSwitchToStudioV4,
   normalizeStudioWebVersion,
   resolveStudioWebVersionPreference,
 } from '@/agent/components/creative-studio/studio-version'
@@ -21,5 +22,21 @@ describe('Creative Studio web version preference', () => {
     expect(resolveStudioWebVersionPreference(null, 'legacy')).toBe('legacy')
     expect(resolveStudioWebVersionPreference('unknown', 'v4')).toBe('v4')
     expect(resolveStudioWebVersionPreference(undefined, undefined)).toBeNull()
+  })
+
+  it('admits every project under a server-approved brand target', () => {
+    expect(canSwitchToStudioV4(
+      [{ brandProfileId: 'brand-a', projectId: null }],
+      'brand-a',
+      'project-any',
+    )).toBe(true)
+  })
+
+  it('admits only the matching project for a project-scoped target', () => {
+    const targets = [{ brandProfileId: 'brand-a', projectId: 'project-a' }]
+    expect(canSwitchToStudioV4(targets, 'brand-a', 'project-a')).toBe(true)
+    expect(canSwitchToStudioV4(targets, 'brand-a', 'project-b')).toBe(false)
+    expect(canSwitchToStudioV4(targets, 'brand-b', 'project-a')).toBe(false)
+    expect(canSwitchToStudioV4(targets, null, 'project-a')).toBe(false)
   })
 })

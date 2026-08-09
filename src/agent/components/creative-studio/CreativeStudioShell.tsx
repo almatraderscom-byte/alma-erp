@@ -13,6 +13,10 @@ import { ProjectBar } from '@/agent/components/creative-studio/ProjectBar'
 import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
 import { StudioRoleSettings } from '@/agent/components/creative-studio/StudioRoleSettings'
 import { StudioVersionSwitcher } from '@/agent/components/creative-studio/StudioVersionSwitcher'
+import {
+  canSwitchToStudioV4,
+  type StudioWebV4Target,
+} from '@/agent/components/creative-studio/studio-version'
 import { StudioWorkspaceView, ENGINE_LABELS_BN } from '@/agent/components/creative-studio/StudioWorkspaceView'
 import { VideoStudioView } from '@/agent/components/creative-studio/VideoStudioView'
 import { AudioSvg, GallerySvg, StudioSvg, UserSvg, VideoSvg } from '@/agent/components/creative-studio/StudioUi'
@@ -41,7 +45,11 @@ export const STUDIO_NAV_ITEMS = STUDIO_NAV_DEFINITIONS.map((item) => ({
 
 const ACTIVE_BRAND_KEY = 'alma-creative-studio-brand'
 
-export function CreativeStudioShell({ canUseV4 }: { canUseV4: boolean }) {
+export function CreativeStudioShell({
+  v4Targets,
+}: {
+  v4Targets: StudioWebV4Target[]
+}) {
   const [view, setView] = useState<StudioView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
   const [brands, setBrands] = useState<StudioBrandProfile[]>([])
@@ -84,6 +92,11 @@ export function CreativeStudioShell({ canUseV4 }: { canUseV4: boolean }) {
   }, [])
 
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandProfileId) ?? null
+  const canUseV4 = canSwitchToStudioV4(
+    v4Targets,
+    activeBrandProfileId,
+    activeProject?.id ?? null,
+  )
   const v4Query = new URLSearchParams({ studio: 'v4' })
   if (activeBrandProfileId) v4Query.set('brand', activeBrandProfileId)
   if (activeProject?.brandProfileId === activeBrandProfileId) {

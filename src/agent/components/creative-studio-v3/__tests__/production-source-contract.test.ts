@@ -27,7 +27,7 @@ describe('Creative Studio V3 production source contract', () => {
     expect(routeSource).toContain("explicitStudio === 'v4'")
     expect(routeSource).toContain("process.env.VERCEL_ENV === 'preview'")
     expect(routeSource).toContain('getCreativeStudioV4PreviewFoundationFlags')
-    expect(routeSource).toContain('return <CreativeStudio canUseV4={v4Available} />')
+    expect(routeSource).toContain('return <CreativeStudio v4Targets={v4Targets} />')
     expect(routeSource).toContain('STUDIO_WEB_VERSION_COOKIE')
     expect(routeSource).toContain('actorIsSystemOwner')
     expect(routeSource).toContain('? cookieStore.get(STUDIO_WEB_VERSION_COOKIE)?.value')
@@ -37,6 +37,7 @@ describe('Creative Studio V3 production source contract', () => {
   it('persists only explicit web choices and carries only same-brand project context', () => {
     expect(versionSwitcherSource).toContain('persistVersion(version)')
     expect(versionSwitcherSource).not.toContain('useEffect')
+    expect(legacyShellSource).toContain('canSwitchToStudioV4')
     expect(legacyShellSource).toContain(
       'activeProject?.brandProfileId === activeBrandProfileId',
     )
