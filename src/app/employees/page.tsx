@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHREmployees } from '@/hooks/useHr'
@@ -12,8 +12,8 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { displayBdPhone } from '@/lib/phone'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
-const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
-const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
+const stagger: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const fadeUp: Variants = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
 import type { UserRole } from '@prisma/client'
 
 type LinkableUser = {

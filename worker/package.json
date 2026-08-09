@@ -12,16 +12,16 @@
     "migrate-hermes": "node scripts/migrate-hermes-finance.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
-    "@cursor/sdk": "^1.0.18",
+    "@cursor/sdk": "^1.0.27",
     "@google/genai": "^2.8.0",
-    "@imgly/background-removal-node": "^1.4.5",
+    "@imgly/background-removal": "^1.7.0",
     "@remotion/bundler": "^4.0.484",
     "@remotion/renderer": "^4.0.484",
-    "@sentry/node": "^8.55.2",
+    "@sentry/node": "^10.69.0",
     "@supabase/supabase-js": "^2.45.0",
     "adhan": "^4.4.3",
     "bullmq": "^5.0.0",
@@ -33,12 +33,15 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "remotion": "^4.0.484",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "telegraf": "^4.16.3",
     "twilio": "^5.3.0",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.0.0"
+  },
+  "overrides": {
+    "undici": "6.28.0"
   }
 }

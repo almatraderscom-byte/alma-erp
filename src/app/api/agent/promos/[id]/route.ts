@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { PatchPromoBodySchema } from '@/lib/agent-api/schemas/promos.schema'
 import * as svc from '@/lib/agent-api/services/promos.service'
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = PatchPromoBodySchema.safeParse(await req.json())
@@ -18,7 +19,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   } catch (e) { return agentErrorResponse(e) }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   try {

@@ -15,10 +15,8 @@ import { logEvent } from '@/lib/logger'
 import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 import { apiFailure, apiSuccess, classifyApprovalTxError } from '@/lib/safe-api-response'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
   const body = (await req.json().catch(() => ({}))) as {
     action?: 'APPROVE' | 'REJECT'

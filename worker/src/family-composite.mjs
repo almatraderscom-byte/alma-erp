@@ -4,7 +4,7 @@
  * The generative pair/group merge regenerated every face and garment; this
  * path never does. The adult try-on shot is the UNTOUCHED base (person +
  * background exactly as approved). The other person (or a whole approved pair)
- * is cut out with LOCAL segmentation (@imgly/background-removal-node — on-VPS,
+ * is cut out with LOCAL segmentation (@imgly/background-removal — on-VPS,
  * no third paid model) and inserted at the deterministic relative height from
  * src/lib/tryon/family-layout.ts (math mirrored here — keep in sync). FLUX
  * Fill may then harmonize ONLY a thin edge band + a ground-contact ellipse.
@@ -72,7 +72,7 @@ async function downloadBuf(supabase, path) {
 
 /** Local person cutout → RGBA PNG buffer (no paid API). */
 export async function segmentPerson(buf) {
-  const { removeBackground } = await import('@imgly/background-removal-node')
+  const { removeBackground } = await import('@imgly/background-removal')
   const blob = new Blob([buf], { type: 'image/png' })
   const out = await removeBackground(blob, { output: { format: 'image/png' } })
   return Buffer.from(await out.arrayBuffer())

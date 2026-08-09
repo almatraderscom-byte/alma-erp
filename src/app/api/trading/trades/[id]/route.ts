@@ -22,7 +22,7 @@ import {
 } from '@/lib/trading'
 import { queueTradingDeleteRequestAlert } from '@/lib/telegram-notification/trading-ops-alerts'
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
 type AuditEntry = {
   action: 'EDITED' | 'DELETE_REQUESTED' | 'DELETE_APPROVED' | 'DELETE_REJECTED'
@@ -72,7 +72,8 @@ function requireReason(value: unknown, label: string) {
   return reason
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+export async function PATCH(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const writeDenied = requireTradingWrite(ctx)

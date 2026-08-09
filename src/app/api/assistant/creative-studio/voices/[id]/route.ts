@@ -26,7 +26,8 @@ async function ownedVersion(owner: string, id: string) {
   })
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   let body: { action?: 'activate' | 'revoke'; reason?: string }
@@ -102,7 +103,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return Response.json({ error: 'invalid_action' }, { status: 422 })
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const owner = await ownerId(req)
   if (owner instanceof Response) return owner
   const version = await ownedVersion(owner, params.id)

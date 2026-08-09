@@ -29,7 +29,8 @@ async function requireOwner(req: NextRequest) {
   return { ok: true as const }
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireOwner(req)
   if ('error' in auth && auth.error) return auth.error
 
@@ -41,7 +42,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return Response.json({ status, purpose: brief.purpose, source: brief.source })
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireOwner(req)
   if ('error' in auth && auth.error) return auth.error
 

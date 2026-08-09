@@ -2719,6 +2719,7 @@ label.secondaryButton[aria-disabled='true'] {
 .finishSourceList small { color: var(--studio-muted); font-size: 11px; }
 
 .finishCanvas {
+  position: relative;
   display: grid;
   min-height: 570px;
   place-items: center;

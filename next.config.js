@@ -1,43 +1,41 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis', 'puppeteer-core', '@sparticuz/chromium'],
-    // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
-    // serverless function filesystem by default. The brand/Bangla TTFs are read from
-    // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
-    // disk — it ignores embedded @font-face data URIs). Without tracing them into the
-    // Lambda, every server-side SVG text render (Creative Studio finishing, ad
-    // creatives, brand frames) comes out BLANK on Vercel. Force-include the fonts for
-    // every route that renders branded images.
-    outputFileTracingIncludes: {
-      '/api/assistant/creative-studio/finish': ['./public/fonts/**'],
-      '/api/assistant/creative-studio/branding': ['./public/fonts/**'],
-      '/api/assistant/creative-studio/run': ['./public/fonts/**'],
-      '/api/assistant/brand-models': ['./public/fonts/**'],
-      '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
-      '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
+  serverExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis', 'puppeteer-core', '@sparticuz/chromium'],
+  // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
+  // serverless function filesystem by default. The brand/Bangla TTFs are read from
+  // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
+  // disk — it ignores embedded @font-face data URIs). Without tracing them into the
+  // Lambda, every server-side SVG text render (Creative Studio finishing, ad
+  // creatives, brand frames) comes out BLANK on Vercel. Force-include the fonts for
+  // every route that renders branded images.
+  outputFileTracingIncludes: {
+    '/api/assistant/creative-studio/finish': ['./public/fonts/**'],
+    '/api/assistant/creative-studio/branding': ['./public/fonts/**'],
+    '/api/assistant/creative-studio/run': ['./public/fonts/**'],
+    '/api/assistant/brand-models': ['./public/fonts/**'],
+    '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
+    '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
       // Client-report PDF (2026-07-16): Bangla TTFs for the report template.
       // NOTE: do NOT try to trace @sparticuz/chromium/bin here — local
       // nft.json picks it up but Vercel's bundler still drops it; the route
       // downloads the browser pack remotely instead (see the route file).
-      '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
+    '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
       // Skill Engine V2: the SKILL.md packages are read from disk at runtime by
       // skill-engine/runtime.ts. Without tracing them into the chat lambda, Vercel
       // drops the source `.md`/`.json` and discovery silently finds nothing.
-      '/api/assistant/chat': ['./src/agent/skills/**'],
+    '/api/assistant/chat': ['./src/agent/skills/**'],
       // SK-8: the owner's approval SCREEN hashes the same packages, so it needs
       // them on disk too. Without this the list comes back EMPTY on Vercel and
       // nothing can be approved — the same silent-nothing the chat lambda hit.
-      '/api/assistant/skills': ['./src/agent/skills/**'],
+    '/api/assistant/skills': ['./src/agent/skills/**'],
       // The probe that checks whether the line above actually worked. It must
       // trace the same files the chat route does, or its answer is about a
       // different lambda than the one that runs the agent.
-      '/api/assistant/internal/skill-probe': ['./src/agent/skills/**'],
+    '/api/assistant/internal/skill-probe': ['./src/agent/skills/**'],
       // SK-8 approvals over the internal token (worker/scripts). Same bytes, a
       // different door from the owner screen above — both need the files.
-      '/api/assistant/internal/skill-approvals': ['./src/agent/skills/**'],
-    },
+    '/api/assistant/internal/skill-approvals': ['./src/agent/skills/**'],
   },
   images: {
     remotePatterns: [
@@ -52,9 +50,8 @@ const nextConfig = {
   // (three 30-45m hung deploys on 2026-07-15/16, one of them production, all
   // wedged at exactly this stage; the same commit + same restored cache also
   // built in 4-6m, so it is a worker hang, not our code). Correctness moved to
-  // CI: the Agent PR Gate runs `tsc --noEmit` + `next lint` on every PR, so
+  // CI: the Agent PR Gate runs `tsc --noEmit` + the ESLint CLI on every PR, so
   // the deploy build only builds. Do NOT remove without re-checking the hang.
-  eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
   compress: true,
   env: {

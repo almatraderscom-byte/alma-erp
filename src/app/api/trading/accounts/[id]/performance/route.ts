@@ -13,11 +13,12 @@ import {
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
 const UPLOAD_COOLDOWN_MS = 45_000
 
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
 
@@ -62,7 +63,8 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function POST(req: NextRequest, { params }: RouteContext) {
+export async function POST(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const writeDenied = requireTradingWrite(ctx)
@@ -257,5 +259,5 @@ function recentVisibleCutoff() {
 }
 
 function sanitizeFileName(name: string) {
-  return name.replace(/[^\w.\- ]+/g, '').replace(/\s+/g, '-').slice(0, 120) || 'performance-screenshot'
+  return name.replace(/[^\w.\- ]+/g, '').replace(/\s+/g, '-').slice(0, 120) || 'performance-screenshot';
 }

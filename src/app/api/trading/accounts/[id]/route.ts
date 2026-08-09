@@ -17,11 +17,12 @@ import {
   requireTradingWrite,
 } from '@/lib/trading'
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
 const STATUSES = new Set(['ACTIVE', 'PAUSED', 'COMPLETED', 'CLOSED'])
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+export async function PATCH(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const writeDenied = requireTradingWrite(ctx)

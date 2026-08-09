@@ -60,7 +60,7 @@ export async function readRepoFile(
   const target = resolveRepoFile(repoRoot, normalized)
   if (!target) return { error: 'path out of repo' }
   try {
-    const content = await fs.readFile(target, 'utf8')
+    const content = await fs.readFile(/* turbopackIgnore: true */ target, 'utf8')
     return { file: normalized, content: content.slice(0, 12000) }
   } catch {
     return { error: 'read failed' }

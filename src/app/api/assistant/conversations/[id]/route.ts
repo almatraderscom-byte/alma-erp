@@ -12,10 +12,8 @@ import { prisma } from '@/lib/prisma'
  * only an id — without it a 'plan' chat would silently reopen as 'auto', with
  * every withheld tool re-armed.
  */
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
@@ -35,10 +33,8 @@ export async function GET(
   return Response.json(conv)
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
@@ -108,10 +104,8 @@ export async function PATCH(
   return Response.json(updated)
 }
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

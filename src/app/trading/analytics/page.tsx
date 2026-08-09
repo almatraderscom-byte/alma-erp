@@ -53,12 +53,15 @@ export default function TradingAnalyticsPage() {
 
   async function exportExcel() {
     if (!data) return
-    const XLSX = await import('xlsx')
-    const ws = XLSX.utils.json_to_sheet(reportJson(searchedRows))
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Trading Analytics')
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
-    downloadBlob('alma-trading-analytics.xlsx', new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+    const { default: writeExcelFile } = await import('write-excel-file/browser')
+    const report = reportJson(searchedRows)
+    const columns = Object.keys(report[0] ?? {})
+    const rows = [
+      columns,
+      ...report.map(row => columns.map(column => row[column as keyof typeof row])),
+    ]
+    const blob = await writeExcelFile(rows, { sheet: 'Trading Analytics' }).toBlob()
+    downloadBlob('alma-trading-analytics.xlsx', blob)
     toast.success('Excel exported')
   }
 

@@ -1,6 +1,6 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHRDashboard } from '@/hooks/useHr'
@@ -22,8 +22,8 @@ import { roundMoney } from '@/lib/money'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
 import { cn } from '@/lib/utils'
-const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
-const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
+const _stagger: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const _fadeUp: Variants = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
 import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'

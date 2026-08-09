@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { CompleteTaskBodySchema } from '@/lib/agent-api/schemas/tasks.schema'
 import * as svc from '@/lib/agent-api/services/tasks.service'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = CompleteTaskBodySchema.safeParse(await req.json().catch(() => ({})))

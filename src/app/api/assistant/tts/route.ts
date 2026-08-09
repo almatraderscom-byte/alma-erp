@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     // @/agent/lib/google-tts so camera announcements reuse the same agent voice.
     const audioBuffer = await synthesizeBanglaMp3(text, 'web_voice')
 
-    return new Response(audioBuffer, {
+    return new Response(new Uint8Array(audioBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'audio/mpeg',

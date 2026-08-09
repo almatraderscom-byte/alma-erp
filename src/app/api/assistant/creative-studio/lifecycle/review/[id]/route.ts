@@ -27,10 +27,8 @@ function errorResponse(error: unknown): Response {
   }
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const actor = await authenticateStudioRequest(req)
   if (actor instanceof Response) return actor
   let body: Record<string, unknown>

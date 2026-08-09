@@ -13,7 +13,8 @@ export const dynamic = 'force-dynamic'
  * turn (audit P0-1): admission span, every route/guard/tool/approval span with
  * guard reason codes, and the cost-governor spend lineage. Owner-only.
  */
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

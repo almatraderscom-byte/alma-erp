@@ -28,7 +28,8 @@ interface PatchBody {
   replacePhotos?: Array<{ base64?: string; mimeType?: string }>
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const unauth = await ownerOnly()
@@ -66,7 +67,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const unauth = await ownerOnly()

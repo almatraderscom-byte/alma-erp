@@ -30,10 +30,8 @@ function verifyInternalToken(provided: string): boolean {
   } catch { return false }
 }
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
@@ -60,10 +58,8 @@ export async function GET(
   })
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

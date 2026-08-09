@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type { StaffMonitorData } from '@/agent/lib/staff-monitor-types'
 
@@ -54,8 +54,8 @@ type KPIItem = {
   pulse?: boolean
 }
 
-const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } }
-const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
+const stagger: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } }
+const fadeUp: Variants = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
 
 export function MonitorKPIStrip({ data, brainStats }: {
   data: StaffMonitorData

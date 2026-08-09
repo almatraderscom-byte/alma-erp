@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { CustomerTagBodySchema } from '@/lib/agent-api/schemas/customers.schema'
 import * as svc from '@/lib/agent-api/services/customers.service'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = CustomerTagBodySchema.safeParse(await req.json())

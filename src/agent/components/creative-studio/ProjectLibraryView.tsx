@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   attachProjectAsset,
   fetchProjectAssets,
@@ -55,6 +56,12 @@ export function ProjectLibraryView({
   const [legacyAssets, setLegacyAssets] = useState<StudioProjectAsset[]>([])
   const [legacyLoading, setLegacyLoading] = useState(false)
   const [attaching, setAttaching] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState(false)
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    setPortalHost(document.body)
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -149,8 +156,20 @@ export function ProjectLibraryView({
     }
   }
 
-  return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-bg-1 text-cream">
+  const dismissLibrary = () => {
+    setDismissed(true)
+    onClose()
+  }
+
+  if (!portalHost || dismissed) return null
+
+  return createPortal(
+    <div
+      aria-label={`${project.name} asset library`}
+      aria-modal="true"
+      className="fixed inset-0 z-[100] flex flex-col bg-bg-1 text-cream"
+      role="dialog"
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/90 px-3 py-3 backdrop-blur-md">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-bold">{project.name} · Asset Library</h2>
@@ -162,7 +181,13 @@ export function ProjectLibraryView({
               Legacy থেকে যোগ
             </button>
           )}
-          <button type="button" onClick={onClose} aria-label="লাইব্রেরি বন্ধ করুন" className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
+          <button
+            type="button"
+            onClick={dismissLibrary}
+            onPointerDown={dismissLibrary}
+            aria-label="লাইব্রেরি বন্ধ করুন"
+            className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted"
+          >✕</button>
         </div>
       </div>
 
@@ -316,6 +341,7 @@ export function ProjectLibraryView({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    portalHost,
   )
 }

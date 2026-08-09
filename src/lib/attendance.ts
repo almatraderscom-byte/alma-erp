@@ -171,7 +171,9 @@ export function penaltyRefundNoteBn(fineDate: Date | null | undefined) {
 }
 
 export function hashAttendanceIp(req: NextRequest) {
-  const raw = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.ip || ''
+  const raw = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || req.headers.get('x-real-ip')?.trim()
+    || ''
   if (!raw) return null
   const salt = process.env.ATTENDANCE_IP_HASH_SALT || process.env.NEXTAUTH_SECRET || 'alma-attendance'
   return crypto.createHash('sha256').update(`${salt}:${raw}`).digest('hex').slice(0, 64)

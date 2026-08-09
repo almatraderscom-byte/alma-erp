@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { ApproveFineBodySchema } from '@/lib/agent-api/schemas/fines.schema'
 import * as svc from '@/lib/agent-api/services/fines.service'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = ApproveFineBodySchema.safeParse(await req.json().catch(() => ({ approvedBy: 'agent_via_sir' })))

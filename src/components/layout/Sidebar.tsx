@@ -26,7 +26,7 @@ function updateAppBadge(count: number) {
   else void nav.clearAppBadge?.().catch(() => {})
 }
 
-const MotionLink = motion(Link)
+const MotionLink = motion.create(Link)
 
 function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: string; label: string; badge: string | null; collapsed: boolean }) {
   const path = usePathname()

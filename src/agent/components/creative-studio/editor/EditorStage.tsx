@@ -32,7 +32,7 @@ export function EditorStage({
   playing: boolean
   playheadSec: number
   readOnly: boolean
-  regionRef: RefObject<HTMLElement>
+  regionRef: RefObject<HTMLElement | null>
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot
 }) {

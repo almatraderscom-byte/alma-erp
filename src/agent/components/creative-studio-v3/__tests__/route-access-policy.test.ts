@@ -204,4 +204,25 @@ describe('Creative Studio V3 route admission', () => {
       },
     })).toEqual({ kind: 'denied', reason: 'project_access_forbidden' })
   })
+
+  it('admits a bare route through an accessible project-scoped rollout', () => {
+    const decision = resolveCreativeStudioV3RouteDecision({
+      actorIsSystemOwner: false,
+      accessibleBrands: [brand('brand-a', 'creator')],
+      accessibleProjects: [project('project-a', 'brand-a')],
+      requestedBrandId: null,
+      requestedProjectId: null,
+      forceLegacy: false,
+      environment: {
+        CREATIVE_STUDIO_V3_UI_ENABLED: '1',
+        CREATIVE_STUDIO_V3_PROJECT_IDS: 'project-a',
+      },
+    })
+
+    expect(decision).toMatchObject({
+      kind: 'v3',
+      brand: { brandProfileId: 'brand-a' },
+      projectId: 'project-a',
+    })
+  })
 })

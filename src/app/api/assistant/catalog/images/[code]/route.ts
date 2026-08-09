@@ -57,7 +57,8 @@ async function listCodeFor(code: string, business: string): Promise<string> {
 }
 
 // GET → all images for the product/collection (primary first).
-export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ code: string }> }) {
+  const params = await props.params;
   const gate = await requireRole(req, 'manage')
   if (gate.res) return gate.res
 
@@ -75,7 +76,8 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
 }
 
 // POST → upload one or more photos (replicated across collection members).
-export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ code: string }> }) {
+  const params = await props.params;
   const gate = await requireRole(req, 'manage')
   if (gate.res) return gate.res
 
@@ -141,7 +143,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
 }
 
 // DELETE → remove one photo (across all collection members at that index).
-export async function DELETE(req: NextRequest, { params }: { params: { code: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ code: string }> }) {
+  const params = await props.params;
   // Delete is destructive → SUPER_ADMIN only (Admins can add but not remove).
   const gate = await requireRole(req, 'owner')
   if (gate.res) return gate.res

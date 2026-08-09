@@ -4,7 +4,8 @@ import { getJwt } from '@/lib/api-guards'
 import { businessAllowed } from '@/lib/business-access'
 import { createSignedObjectUrl } from '@/lib/supabase-storage'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const token = await getJwt(req)
     if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

@@ -102,4 +102,15 @@ describe('Creative Studio production responsive and a11y contract', () => {
     )
     expect(imageLab).toContain("composerRef.current?.scrollTo({ top: 0")
   })
+
+  it('anchors the finishing brand overlay to its preview canvas', () => {
+    const finishCanvasRules = [
+      ...v3Styles.matchAll(/\.finishCanvas\s*\{[\s\S]*?\n\}/g),
+    ].map((match) => match[0])
+    const layoutOverlayRule =
+      v3Styles.match(/\.layoutOverlay\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+
+    expect(finishCanvasRules.some((rule) => rule.includes('position: relative;'))).toBe(true)
+    expect(layoutOverlayRule).toContain('position: absolute;')
+  })
 })

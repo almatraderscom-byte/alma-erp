@@ -9,19 +9,20 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+ const params = await props.params;
+ const disabled = requireAgentEnabled()
+ if (disabled) return disabled
 
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+ const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+ if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+ if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = prisma as any
-  const existing = await db.agentArtifact.findUnique({ where: { id: params.id }, select: { id: true } })
-  if (!existing) return Response.json({ error: 'not_found' }, { status: 404 })
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const db = prisma as any
+ const existing = await db.agentArtifact.findUnique({ where: { id: params.id }, select: { id: true } })
+ if (!existing) return Response.json({ error: 'not_found' }, { status: 404 })
 
-  await db.agentArtifact.delete({ where: { id: params.id } })
-  return Response.json({ deleted: true })
+ await db.agentArtifact.delete({ where: { id: params.id } })
+ return Response.json({ deleted: true })
 }

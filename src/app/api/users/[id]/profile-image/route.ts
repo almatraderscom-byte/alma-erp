@@ -7,10 +7,8 @@ import { handleProfileImageDelete, handleProfileImageUpload } from '@/lib/profil
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const token = await getJwt(req)
     if (!token?.sub) return new NextResponse('Unauthorized', { status: 401 })
@@ -46,10 +44,8 @@ export async function GET(
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const userId = decodeURIComponent(params.id || '')
     if (!userId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -59,10 +55,8 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const userId = decodeURIComponent(params.id || '')
     if (!userId) return NextResponse.json({ error: 'Not found' }, { status: 404 })

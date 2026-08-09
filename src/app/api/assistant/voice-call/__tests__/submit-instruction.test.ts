@@ -173,7 +173,7 @@ describe('bot ↔ route source contract', () => {
   })
 
   it('middleware allowlists the bridge path (live bug 2026-07-23: session wall 401ed the bot)', () => {
-    const mw = readFileSync(join(process.cwd(), 'src/middleware.ts'), 'utf8')
+    const mw = readFileSync(join(process.cwd(), 'src/proxy.ts'), 'utf8')
     expect(mw).toContain("pathname === '/api/assistant/voice-call/submit-instruction'")
   })
 })

@@ -14,10 +14,8 @@ function parseDateParam(raw: string | null, endOfDay = false): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { employeeId: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ employeeId: string }> }) {
+  const params = await props.params;
   const employeeId = decodeURIComponent(params.employeeId)
   const url = new URL(req.url)
   const businessId = url.searchParams.get('business_id')

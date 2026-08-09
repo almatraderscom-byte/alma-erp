@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 import { OrderCancelBodySchema } from '@/lib/agent-api/schemas/reports.schema'
 import * as svc from '@/lib/agent-api/services/orders-write.service'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = guardAgentRequest(req)
   if (denied) return denied
   const body = OrderCancelBodySchema.safeParse(await req.json())

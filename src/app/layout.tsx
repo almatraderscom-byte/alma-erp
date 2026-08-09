@@ -78,7 +78,7 @@ async function loadServerSession() {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await loadServerSession()
   const buildReloadScript = buildMismatchReloadScript()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const themeMode = normalizeMode(cookieStore.get(THEME_COOKIE)?.value)
   const themeAccent = normalizeAccent(cookieStore.get(ACCENT_COOKIE)?.value)
   return (

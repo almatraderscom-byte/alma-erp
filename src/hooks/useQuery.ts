@@ -64,8 +64,8 @@ export function useQuery<T>(
 
   // Track whether we've ever completed a fetch
   const hasFetched = useRef(false)
-  const timerRef   = useRef<ReturnType<typeof setInterval>>()
-  const retryRef   = useRef<ReturnType<typeof setTimeout>>()
+  const timerRef   = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  const retryRef   = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // Prevent state updates after unmount
   const mounted    = useRef(true)
   const requestId  = useRef(0)

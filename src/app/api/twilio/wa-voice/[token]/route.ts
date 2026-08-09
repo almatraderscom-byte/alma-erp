@@ -10,7 +10,8 @@ import { verifyVoiceToken, synthesizeBanglaMp3 } from '@/agent/lib/wa/wa-voice'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(_req: NextRequest, { params }: { params: { token: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ token: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
@@ -22,7 +23,7 @@ export async function GET(_req: NextRequest, { params }: { params: { token: stri
   const mp3 = await synthesizeBanglaMp3(text, Math.floor(now / 1000))
   if (!mp3) return new Response('tts unavailable', { status: 503 })
 
-  return new Response(mp3, {
+  return new Response(new Uint8Array(mp3), {
     status: 200,
     headers: {
       'Content-Type': 'audio/mpeg',

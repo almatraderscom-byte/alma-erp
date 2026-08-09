@@ -14,10 +14,8 @@ type GasSalaryPatchResult = {
   new_salary?: number
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const viewerDenied = await forbidViewerWrite(req)
   if (viewerDenied) return viewerDenied
 

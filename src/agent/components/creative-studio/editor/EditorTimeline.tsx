@@ -51,7 +51,7 @@ export function EditorTimeline({
   onSplit: () => void
   onZoomChange: (zoom: number) => void
   readOnly: boolean
-  regionRef: RefObject<HTMLElement>
+  regionRef: RefObject<HTMLElement | null>
   selection: EditorSelection | null
   snapshot: EditorCompositionSnapshot
   playheadSec: number

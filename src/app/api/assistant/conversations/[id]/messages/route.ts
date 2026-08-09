@@ -8,10 +8,8 @@ import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { buildMessageCursorWhere, buildMessagesPagePlan } from '@/agent/lib/messages-page'
 import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import toast from 'react-hot-toast'
+import toast, { type Toast } from 'react-hot-toast'
 import { APP_BUILD_ID, formatBuildLabel, type BuildInfo } from '@/lib/runtime-build'
 import { isMeaningfulBuildId, isUpdateAvailable } from '@/lib/app-update'
 import { cn } from '@/lib/utils'
@@ -48,7 +48,7 @@ export function AgentBuildBadge({ variant = 'inline', className }: AgentBuildBad
     ].filter(Boolean)
 
     toast(
-      (t) => (
+      (t: Toast) => (
         <div className="text-left text-xs leading-relaxed max-w-[min(90vw,320px)]">
           <p className="font-bold text-cream mb-1.5">Deploy info</p>
           {lines.map((line) => (

@@ -24,6 +24,10 @@ const editorStyles = readFileSync(
   join(process.cwd(), 'src/agent/components/creative-studio/editor/ProjectEditor.module.css'),
   'utf8',
 )
+const projectLibrarySource = readFileSync(
+  join(process.cwd(), 'src/agent/components/creative-studio/ProjectLibraryView.tsx'),
+  'utf8',
+)
 
 describe('Creative Studio V3 cross-stream Editor integration', () => {
   it('routes both Long-form and selected Projects through real composition resolution', () => {
@@ -146,6 +150,22 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(editorStyles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(v3Styles).toContain('.shellBodyImmersive')
     expect(v3Styles).toContain('.editorHost')
+  })
+
+  it('dismisses the project asset library on pointer or keyboard activation', () => {
+    expect(projectLibrarySource).toContain("import { createPortal } from 'react-dom'")
+    expect(projectLibrarySource).toContain('setPortalHost(document.body)')
+    expect(projectLibrarySource).toContain('return createPortal(')
+    expect(projectLibrarySource).toContain('className="fixed inset-0 z-[100]')
+    expect(projectLibrarySource).toContain('aria-modal="true"')
+    expect(projectLibrarySource).toContain('role="dialog"')
+    expect(projectLibrarySource).toContain('const [dismissed, setDismissed] = useState(false)')
+    expect(projectLibrarySource).toContain('const dismissLibrary = () => {')
+    expect(projectLibrarySource).toContain('setDismissed(true)')
+    expect(projectLibrarySource).toContain('onClose()')
+    expect(projectLibrarySource).toContain('if (!portalHost || dismissed) return null')
+    expect(projectLibrarySource).toContain('onClick={dismissLibrary}')
+    expect(projectLibrarySource).toContain('onPointerDown={dismissLibrary}')
   })
 
   it('keeps Editor enrichment read-only and hands Lifecycle authority to the Review desk', () => {

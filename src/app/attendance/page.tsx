@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
@@ -17,8 +17,8 @@ import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
 import { SectionErrorBoundary } from '@/components/runtime/SectionErrorBoundary'
-const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
-const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
+const _stagger: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
+const _fadeUp: Variants = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
 
 type AttendanceDashboard = {
   businessId?: string

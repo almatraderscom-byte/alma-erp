@@ -7,10 +7,11 @@ import { verifyScreenshotTelegramToken } from '@/lib/telegram-notification/scree
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-type RouteContext = { params: { id: string } }
+type RouteContext = { params: Promise<{ id: string }> }
 
 /** Token-authenticated preview for Telegram sendPhoto (no ERP session). */
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, props: RouteContext) {
+  const params = await props.params;
   const url = new URL(req.url)
   const exp = Number(url.searchParams.get('exp'))
   const sig = url.searchParams.get('sig') || ''
@@ -40,5 +41,5 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
 }
 
 function sanitize(name: string) {
-  return name.replace(/[^\w.\- ]+/g, '').slice(0, 120) || 'screenshot.webp'
+  return name.replace(/[^\w.\- ]+/g, '').slice(0, 120) || 'screenshot.webp';
 }

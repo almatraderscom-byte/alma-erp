@@ -1,11 +1,11 @@
 'use client'
 
-import { motion } from 'framer-motion'
+import { motion, type Variants } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type { StaffSummary } from '@/agent/lib/staff-monitor-types'
 
-const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
-const slideUp = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
+const stagger: Variants = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
+const slideUp: Variants = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
 
 function statusInfo(s: StaffSummary): { dot: string; glow: string; border: string; label: string } {
   // Driving mode overrides everything — the staff is out, no dispatch/follow-up.

@@ -63,7 +63,7 @@ beforeEach(() => mocks.download.mockClear())
 
 describe('scoped project product preview', () => {
   it('streams the canonical original with private no-store headers', async () => {
-    const response = await GET(request() as never, { params: { id: 'project-1' } })
+    const response = await GET(request() as never, { params: Promise.resolve({ id: 'project-1' }) })
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/jpeg')
     expect(response.headers.get('cache-control')).toContain('no-store')
@@ -76,7 +76,7 @@ describe('scoped project product preview', () => {
   it('requires an explicit brand scope', async () => {
     const response = await GET(
       new NextRequest('https://app.example/api/assistant/creative-studio/projects/project-1/product-preview'),
-      { params: { id: 'project-1' } },
+      { params: Promise.resolve({ id: 'project-1' }) },
     )
     expect(response.status).toBe(422)
     expect(mocks.download).not.toHaveBeenCalled()

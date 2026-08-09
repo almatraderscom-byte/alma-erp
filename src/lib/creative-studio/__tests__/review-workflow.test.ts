@@ -290,7 +290,7 @@ describe('Creative review direct API enforcement', () => {
       targetState: 'changes_requested',
       expectedSequence: 0,
       note: 'রঙ ঠিক করুন',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
 
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toMatchObject({ error: 'brand_scope_mismatch' })
@@ -303,7 +303,7 @@ describe('Creative review direct API enforcement', () => {
       brandProfileId: 'brand-alma',
       targetState: 'approved',
       expectedSequence: 0,
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(approval.status).toBe(403)
     await expect(approval.json()).resolves.toMatchObject({ error: 'studio_approve_forbidden' })
 
@@ -312,7 +312,7 @@ describe('Creative review direct API enforcement', () => {
       brandProfileId: 'brand-alma',
       targetState: 'approved',
       expectedSequence: 0,
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(reviewerApproval.status).toBe(403)
     await expect(reviewerApproval.json()).resolves.toMatchObject({
       error: 'studio_approve_forbidden',
@@ -341,7 +341,7 @@ describe('Creative review direct API enforcement', () => {
           compositionId: 'composition-1',
           compositionVersionId: 'composition-version-1',
         }),
-        { params: { id: 'asset-1' } },
+        { params: Promise.resolve({ id: 'asset-1' }) },
       )
       expect(rejected.status).toBe(403)
       await expect(rejected.json()).resolves.toMatchObject({
@@ -360,7 +360,7 @@ describe('Creative review direct API enforcement', () => {
         compositionId: 'composition-1',
         compositionVersionId: 'composition-version-1',
       }),
-      { params: { id: 'asset-1' } },
+      { params: Promise.resolve({ id: 'asset-1' }) },
     )
     expect(approved.status).toBe(200)
     await expect(approved.json()).resolves.toMatchObject({
@@ -388,7 +388,7 @@ describe('Creative review direct API enforcement', () => {
       targetState: 'changes_requested',
       expectedSequence: 0,
       note: 'শিরোনামের রঙ আরও গাঢ় করুন',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(requested.status).toBe(200)
 
     workflowHarness.useActor('creator-1')
@@ -397,7 +397,7 @@ describe('Creative review direct API enforcement', () => {
       targetState: 'revised',
       expectedSequence: 1,
       note: 'রঙ সংশোধন করা হয়েছে',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(revised.status).toBe(200)
 
     workflowHarness.useActor('owner-1')
@@ -406,7 +406,7 @@ describe('Creative review direct API enforcement', () => {
       targetState: 'approved',
       expectedSequence: 2,
       note: 'প্রকাশের অনুমোদন',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(approved.status).toBe(200)
     await expect(approved.json()).resolves.toMatchObject({
       review: {
@@ -438,7 +438,7 @@ describe('Creative review direct API enforcement', () => {
       brandProfileId: 'brand-alma',
       targetState: 'approved',
       expectedSequence: 0,
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(approved.status).toBe(200)
     await expect(approved.json()).resolves.toMatchObject({
       review: {
@@ -491,7 +491,7 @@ describe('Creative review direct API enforcement', () => {
       expectedSequence: 0,
       compositionId: 'composition-1',
       compositionVersionId: 'composition-version-1',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(approved.status).toBe(200)
     await expect(approved.json()).resolves.toMatchObject({
       review: {
@@ -527,7 +527,7 @@ describe('Creative review direct API enforcement', () => {
       expectedSequence: 0,
       compositionId: 'composition-1',
       compositionVersionId: 'composition-version-1',
-    }), { params: { id: 'asset-1' } })
+    }), { params: Promise.resolve({ id: 'asset-1' }) })
     expect(response.status).toBe(409)
     await expect(response.json()).resolves.toMatchObject({
       error: 'composition_artifact_version_mismatch',

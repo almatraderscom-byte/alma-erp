@@ -10,7 +10,8 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest, { params }: { params: { callId: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ callId: string }> }) {
+  const params = await props.params;
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
   const identity = await identifyOfficeCallRequest(req)

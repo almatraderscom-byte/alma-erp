@@ -32,7 +32,7 @@ export function useMyAttendance(businessId: string, employeeId: string | null, e
     lastOkAt: null,
   })
   const requestId = useRef(0)
-  const retryTimer = useRef<ReturnType<typeof setTimeout>>()
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const disabledStateAppliedRef = useRef(false)
 
   const load = useCallback(

@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { TRADING_BUSINESS_ID, getTradingContext, requireTradingAdmin } from '@/lib/trading'
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await getTradingContext(req)
   if ('error' in ctx) return ctx.error
   const denied = requireTradingAdmin(ctx)

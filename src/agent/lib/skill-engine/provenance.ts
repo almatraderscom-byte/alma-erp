@@ -65,7 +65,8 @@ export async function computeSkillHash(dir: string): Promise<string> {
   for (const file of HASHED_FILES) {
     let content = ''
     try {
-      content = await fs.readFile(path.join(dir, file), 'utf8')
+      const target = path.join(/* turbopackIgnore: true */ dir, file)
+      content = await fs.readFile(/* turbopackIgnore: true */ target, 'utf8')
     } catch {
       content = ''
     }
