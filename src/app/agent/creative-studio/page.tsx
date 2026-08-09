@@ -66,7 +66,9 @@ export default async function CreativeStudioPage(
   const cookieStore = await cookies()
   const requestedStudio = resolveStudioWebVersionPreference(
     explicitStudio,
-    cookieStore.get(STUDIO_WEB_VERSION_COOKIE)?.value,
+    actorIsSystemOwner
+      ? cookieStore.get(STUDIO_WEB_VERSION_COOKIE)?.value
+      : null,
   )
   const forceLegacy = requestedStudio === 'legacy'
   const forceOwnerV4Preview =

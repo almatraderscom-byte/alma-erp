@@ -30,12 +30,14 @@ export function StudioVersionSwitcher({
   disabled = false,
   legacyHref,
   tone,
+  v4Href,
 }: {
   activeVersion: StudioWebVersion
   canUseV4: boolean
   disabled?: boolean
   legacyHref?: string
   tone: 'light' | 'dark'
+  v4Href?: string
 }) {
   const router = useRouter()
   const nativeShell = useSyncExternalStore(
@@ -56,8 +58,9 @@ export function StudioVersionSwitcher({
     persistVersion(version)
 
     const current = new URL(window.location.href)
-    const href = version === 'legacy' && legacyHref
-      ? legacyHref
+    const configuredHref = version === 'legacy' ? legacyHref : v4Href
+    const href = configuredHref
+      ? configuredHref
       : (() => {
           current.searchParams.set('studio', version)
           return `${current.pathname}?${current.searchParams.toString()}${current.hash}`
