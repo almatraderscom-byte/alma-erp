@@ -158,7 +158,12 @@ export function ProjectLibraryView({
   if (dismissed) return null
 
   return (
-    <div className="absolute inset-0 z-30 flex flex-col bg-bg-1 text-cream">
+    <div
+      aria-label={`${project.name} asset library`}
+      aria-modal="true"
+      className="fixed inset-0 z-[100] flex flex-col bg-bg-1 text-cream"
+      role="dialog"
+    >
       <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/90 px-3 py-3 backdrop-blur-md">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-bold">{project.name} · Asset Library</h2>

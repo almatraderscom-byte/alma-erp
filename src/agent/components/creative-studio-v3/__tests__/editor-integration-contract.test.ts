@@ -153,6 +153,9 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
   })
 
   it('dismisses the project asset library on pointer or keyboard activation', () => {
+    expect(projectLibrarySource).toContain('className="fixed inset-0 z-[100]')
+    expect(projectLibrarySource).toContain('aria-modal="true"')
+    expect(projectLibrarySource).toContain('role="dialog"')
     expect(projectLibrarySource).toContain('const [dismissed, setDismissed] = useState(false)')
     expect(projectLibrarySource).toContain('const dismissLibrary = () => {')
     expect(projectLibrarySource).toContain('setDismissed(true)')
