@@ -12,6 +12,11 @@ import { ModelLibraryView } from '@/agent/components/creative-studio/ModelLibrar
 import { ProjectBar } from '@/agent/components/creative-studio/ProjectBar'
 import { ProjectLibraryView } from '@/agent/components/creative-studio/ProjectLibraryView'
 import { StudioRoleSettings } from '@/agent/components/creative-studio/StudioRoleSettings'
+import { StudioVersionSwitcher } from '@/agent/components/creative-studio/StudioVersionSwitcher'
+import {
+  canSwitchToStudioV4,
+  type StudioWebV4Target,
+} from '@/agent/components/creative-studio/studio-version'
 import { StudioWorkspaceView, ENGINE_LABELS_BN } from '@/agent/components/creative-studio/StudioWorkspaceView'
 import { VideoStudioView } from '@/agent/components/creative-studio/VideoStudioView'
 import { AudioSvg, GallerySvg, StudioSvg, UserSvg, VideoSvg } from '@/agent/components/creative-studio/StudioUi'
@@ -40,7 +45,11 @@ export const STUDIO_NAV_ITEMS = STUDIO_NAV_DEFINITIONS.map((item) => ({
 
 const ACTIVE_BRAND_KEY = 'alma-creative-studio-brand'
 
-export function CreativeStudioShell() {
+export function CreativeStudioShell({
+  v4Targets,
+}: {
+  v4Targets: StudioWebV4Target[]
+}) {
   const [view, setView] = useState<StudioView>('studio')
   const [config, setConfig] = useState<StudioConfig | null>(null)
   const [brands, setBrands] = useState<StudioBrandProfile[]>([])
@@ -83,6 +92,17 @@ export function CreativeStudioShell() {
   }, [])
 
   const activeBrand = brands.find((brand) => brand.brandProfileId === activeBrandProfileId) ?? null
+  const canUseV4 = canSwitchToStudioV4(
+    v4Targets,
+    activeBrandProfileId,
+    activeProject?.id ?? null,
+  )
+  const v4Query = new URLSearchParams({ studio: 'v4' })
+  if (activeBrandProfileId) v4Query.set('brand', activeBrandProfileId)
+  if (activeProject?.brandProfileId === activeBrandProfileId) {
+    v4Query.set('project', activeProject.id)
+  }
+  const v4Href = `/agent/creative-studio?${v4Query.toString()}`
 
   const changeBrand = useCallback((brandProfileId: string) => {
     const brand = brands.find((item) => item.brandProfileId === brandProfileId)
@@ -119,6 +139,12 @@ export function CreativeStudioShell() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <StudioVersionSwitcher
+              activeVersion="legacy"
+              canUseV4={canUseV4}
+              tone="dark"
+              v4Href={v4Href}
+            />
             <BrandSwitcher
               brands={brands}
               activeBrandProfileId={activeBrandProfileId}

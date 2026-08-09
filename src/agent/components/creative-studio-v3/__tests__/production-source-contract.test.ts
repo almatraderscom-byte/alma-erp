@@ -8,6 +8,14 @@ const routeSource = readFileSync(
   join(process.cwd(), 'src/app/agent/creative-studio/page.tsx'),
   'utf8',
 )
+const legacyShellSource = readFileSync(
+  join(process.cwd(), 'src/agent/components/creative-studio/CreativeStudioShell.tsx'),
+  'utf8',
+)
+const versionSwitcherSource = readFileSync(
+  join(process.cwd(), 'src/agent/components/creative-studio/StudioVersionSwitcher.tsx'),
+  'utf8',
+)
 
 describe('Creative Studio V3 production source contract', () => {
   it('keeps the route default-off with an explicit legacy fallback', () => {
@@ -16,11 +24,24 @@ describe('Creative Studio V3 production source contract', () => {
     expect(routeSource).toContain('listAccessibleStudioBrands')
     expect(routeSource).toContain('resolveCreativeStudioV3RouteDecision')
     expect(routeSource).toContain("const forceLegacy = requestedStudio === 'legacy'")
-    expect(routeSource).toContain("requestedStudio === 'v4'")
+    expect(routeSource).toContain("explicitStudio === 'v4'")
     expect(routeSource).toContain("process.env.VERCEL_ENV === 'preview'")
     expect(routeSource).toContain('getCreativeStudioV4PreviewFoundationFlags')
-    expect(routeSource).toContain('return <CreativeStudio />')
+    expect(routeSource).toContain('requestedStudio: explicitStudio')
+    expect(routeSource).toContain('return <CreativeStudio v4Targets={v4Targets} />')
+    expect(routeSource).toContain('STUDIO_WEB_VERSION_COOKIE')
+    expect(routeSource).toContain('actorIsSystemOwner')
+    expect(routeSource).toContain('? cookieStore.get(STUDIO_WEB_VERSION_COOKIE)?.value')
     expect(policy).toContain("CREATIVE_STUDIO_V3_UI_ENABLED !== '1'")
+  })
+
+  it('persists only explicit web choices and carries only same-brand project context', () => {
+    expect(versionSwitcherSource).toContain('persistVersion(version)')
+    expect(versionSwitcherSource).not.toContain('useEffect')
+    expect(legacyShellSource).toContain('canSwitchToStudioV4')
+    expect(legacyShellSource).toContain(
+      'activeProject?.brandProfileId === activeBrandProfileId',
+    )
   })
 
   it('ships no demo/fixture imports, fake success state, or hard-coded initials', () => {

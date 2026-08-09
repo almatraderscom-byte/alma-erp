@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { StudioVersionSwitcher } from '@/agent/components/creative-studio/StudioVersionSwitcher'
 import type { StudioBrandProfile } from '@/agent/components/creative-studio/studio-api'
 import { StudioV3Icon, type StudioV3IconName } from '@/agent/components/creative-studio-v3/StudioV3Icon'
 import type {
@@ -252,7 +253,15 @@ export function StudioV3Shell({
             <StudioV3Icon name="spark" />
             Ask Creative Agent
           </button>
-          {legacyAllowed && <Link className={styles.legacyLink} href={legacyHref}>Legacy Studio</Link>}
+          {legacyAllowed && (
+            <StudioVersionSwitcher
+              activeVersion="v4"
+              canUseV4
+              disabled={immersive}
+              legacyHref={legacyHref}
+              tone="light"
+            />
+          )}
           <span
             aria-label={`${accountLabel} · ${accessLabel}`}
             className={styles.accountBadge}
