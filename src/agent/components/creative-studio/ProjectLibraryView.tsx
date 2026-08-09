@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   attachProjectAsset,
   fetchProjectAssets,
@@ -56,6 +57,11 @@ export function ProjectLibraryView({
   const [legacyLoading, setLegacyLoading] = useState(false)
   const [attaching, setAttaching] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState(false)
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    setPortalHost(document.body)
+  }, [])
 
   const load = async () => {
     setLoading(true)
@@ -155,9 +161,9 @@ export function ProjectLibraryView({
     onClose()
   }
 
-  if (dismissed) return null
+  if (!portalHost || dismissed) return null
 
-  return (
+  return createPortal(
     <div
       aria-label={`${project.name} asset library`}
       aria-modal="true"
@@ -335,6 +341,7 @@ export function ProjectLibraryView({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    portalHost,
   )
 }

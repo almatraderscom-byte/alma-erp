@@ -153,6 +153,9 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
   })
 
   it('dismisses the project asset library on pointer or keyboard activation', () => {
+    expect(projectLibrarySource).toContain("import { createPortal } from 'react-dom'")
+    expect(projectLibrarySource).toContain('setPortalHost(document.body)')
+    expect(projectLibrarySource).toContain('return createPortal(')
     expect(projectLibrarySource).toContain('className="fixed inset-0 z-[100]')
     expect(projectLibrarySource).toContain('aria-modal="true"')
     expect(projectLibrarySource).toContain('role="dialog"')
@@ -160,7 +163,7 @@ describe('Creative Studio V3 cross-stream Editor integration', () => {
     expect(projectLibrarySource).toContain('const dismissLibrary = () => {')
     expect(projectLibrarySource).toContain('setDismissed(true)')
     expect(projectLibrarySource).toContain('onClose()')
-    expect(projectLibrarySource).toContain('if (dismissed) return null')
+    expect(projectLibrarySource).toContain('if (!portalHost || dismissed) return null')
     expect(projectLibrarySource).toContain('onClick={dismissLibrary}')
     expect(projectLibrarySource).toContain('onPointerDown={dismissLibrary}')
   })
