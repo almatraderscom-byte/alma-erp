@@ -18,6 +18,14 @@ import {
   type OwnerTurnAuthorization,
 } from '@/agent/lib/turn-authorization'
 import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
+import {
+  NO_LEXEME_TSQUERY,
+  buildLikePatterns,
+  buildOrTsQuery,
+  extractQueryTokens,
+  fuseRrf,
+  rawPhrasePatterns,
+} from '@/agent/lib/memory-hybrid'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
 import { WA_TOOLS } from './wa-tools'
@@ -306,49 +314,101 @@ const search_memory: AgentTool = {
           ? `AND ${businessFilter}`
           : `AND (scope = 'personal' OR ${businessFilter})`
 
+    /**
+     * Hybrid recall (Codex P2, PR #711). This handler used to run a vector-only
+     * query, so the exact identifiers the hybrid work targets — ORD-123, a phone
+     * number, a product code — were still missed on the path the head actually
+     * uses when it deliberately looks something up. It now runs the same two arms
+     * as the per-turn retrieval and fuses them with RRF, keeping this tool's own
+     * business filtering and its 0.45 semantic floor.
+     *
+     * Expired facts are excluded here too: neither branch used to filter them, so
+     * a day-scoped fact ("আজ অফিস ছুটি") could be served as if still standing.
+     */
+    const liveFactsOnly = `AND (expires_at IS NULL OR expires_at > NOW())`
+    const tokens = extractQueryTokens(query)
+
     try {
       const embedResult = await embed(query)
-      if (!embedResult.success) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date }> =
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (prisma as any).$queryRawUnsafe(
-            `SELECT id, scope, key, content, pinned, "createdAt" AS created_at
-             FROM agent_memory
-             WHERE content ILIKE $1
-               ${scope ? `AND scope = $2` : ''}
-               ${businessFilterClause}
-             ORDER BY "createdAt" DESC
-             LIMIT ${limit}`,
-            ...(scope ? [`%${query}%`, scope] : [`%${query}%`]),
-          )
-        return {
-          success: true,
-          data: rows.map((r) => ({ ...r, businessId, score: null })),
-        }
+      const vec = embedResult.success ? vectorLiteral(embedResult.data) : null
+      // Fetch deeper than `limit` per arm so the fusion has something to work with.
+      const fetchDepth = limit * 3
+
+      type Row = {
+        id: string; scope: string; key: string | null; content: string
+        pinned: boolean; created_at: Date; score: number
+        /** True when the row matched an ILIKE pattern, not merely a shared lexeme. */
+        literal_match?: boolean
       }
 
-      const vec = vectorLiteral(embedResult.data)
-      // scope is parameterized ($3) — never interpolated — to prevent SQL injection.
-      const scopeClause = scope ? `AND scope = $3` : ''
-      const rows: Array<{ id: string; scope: string; key: string|null; content: string; pinned: boolean; created_at: Date; score: number }> =
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (prisma as any).$queryRawUnsafe(
+      const [vectorRows, keywordRows] = await Promise.all([
+        vec
+          ? // scope is parameterized ($3) — never interpolated — to prevent SQL injection.
+            ((prisma as any).$queryRawUnsafe(
+              `SELECT id, scope, key, content, pinned, "createdAt" AS created_at,
+                      1 - (embedding <=> $1::vector) AS score
+               FROM agent_memory
+               WHERE embedding IS NOT NULL ${liveFactsOnly} ${scope ? `AND scope = $3` : ''} ${businessFilterClause}
+               ORDER BY embedding <=> $1::vector
+               LIMIT $2`,
+              ...(scope ? [vec, fetchDepth, scope] : [vec, fetchDepth]),
+            ) as Promise<Row[]>)
+          : Promise.resolve<Row[]>([]),
+        // scope is parameterized ($4) for the same reason.
+        ((prisma as any).$queryRawUnsafe(
+          // literal_match first — an ILIKE-only hit scores 0 on ts_rank and would
+          // otherwise be the row the LIMIT drops (Codex P2, PR #711).
           `SELECT id, scope, key, content, pinned, "createdAt" AS created_at,
-                  1 - (embedding <=> $1::vector) AS score
+                  (content ILIKE ANY($2::text[])) AS literal_match,
+                  ts_rank(to_tsvector('simple', content), to_tsquery('simple', $1)) AS score
            FROM agent_memory
-           WHERE embedding IS NOT NULL ${scopeClause} ${businessFilterClause}
-           ORDER BY embedding <=> $1::vector
-           LIMIT $2`,
-          ...(scope ? [vec, limit, scope] : [vec, limit]),
-        )
+           WHERE (to_tsvector('simple', content) @@ to_tsquery('simple', $1)
+                  OR content ILIKE ANY($2::text[]))
+             ${liveFactsOnly} ${scope ? `AND scope = $4` : ''} ${businessFilterClause}
+           ORDER BY literal_match DESC, score DESC, "createdAt" DESC
+           LIMIT $3`,
+          ...(scope
+            ? [tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,
+               tokens.length > 0 ? buildLikePatterns(tokens) : rawPhrasePatterns(query),
+               fetchDepth, scope]
+            : [tokens.length > 0 ? buildOrTsQuery(tokens) : NO_LEXEME_TSQUERY,
+               tokens.length > 0 ? buildLikePatterns(tokens) : rawPhrasePatterns(query),
+               fetchDepth]),
+        ) as Promise<Row[]>),
+      ])
 
-      const results = rows
+      const byId = new Map<string, Row>()
+      const semanticScore = new Map<string, number>()
+
+      const vectorHits = vectorRows
         .filter((r) => r.score >= 0.45)
-        .map((r) => ({
-          id: r.id, scope: r.scope, key: r.key, content: r.content,
-          pinned: r.pinned, score: Math.round(r.score * 100) / 100,
-        }))
+        .map((row, rank) => {
+          byId.set(row.id, row)
+          semanticScore.set(row.id, row.score)
+          return { id: row.id, rank }
+        })
+      const keywordHits = keywordRows.map((row, rank) => {
+        if (!byId.has(row.id)) byId.set(row.id, row)
+        // `exact` breaks a tie against the vector arm's top hit, so it must
+        // mean a LITERAL match rather than "found by the keyword arm" (Codex P2).
+        return { id: row.id, rank, exact: row.literal_match === true }
+      })
+
+      const results = fuseRrf([vectorHits, keywordHits])
+        .slice(0, limit)
+        .map((hit) => {
+          const row = byId.get(hit.id)
+          if (!row) return null
+          const semantic = semanticScore.get(hit.id)
+          return {
+            id: row.id, scope: row.scope, key: row.key, content: row.content,
+            pinned: row.pinned,
+            // Semantic similarity when we have it; a keyword-only hit reports
+            // null, exactly as the old text fallback did.
+            score: semantic != null ? Math.round(semantic * 100) / 100 : null,
+          }
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null)
 
       return { success: true, data: { businessId, scope: scope ?? 'all', results } }
     } catch (err) {

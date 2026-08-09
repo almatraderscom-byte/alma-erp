@@ -134,6 +134,10 @@
       "schedule": "15 15 * * 5"
     },
     {
+      "path": "/api/assistant/internal/memory-digest",
+      "schedule": "45 15 * * 5"
+    },
+    {
       "path": "/api/assistant/internal/winback-nudge",
       "schedule": "0 4 * * 0"
     },

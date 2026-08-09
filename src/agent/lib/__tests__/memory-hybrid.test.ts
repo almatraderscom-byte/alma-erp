@@ -1,0 +1,244 @@
+import { describe, expect, it } from 'vitest'
+import {
+  BOTH_ARMS_BONUS,
+  MAX_QUERY_TOKENS,
+  NO_LEXEME_TSQUERY,
+  buildLikePatterns,
+  buildOrTsQuery,
+  extractQueryTokens,
+  fuseRrf,
+  keywordSimilarityProxy,
+  rawPhrasePatterns,
+} from '@/agent/lib/memory-hybrid'
+
+describe('extractQueryTokens', () => {
+  it('keeps Bangla content words and drops Bangla stopwords', () => {
+    const tokens = extractQueryTokens('আমার অর্ডারের ডেলিভারি কবে হবে')
+    expect(tokens).toContain('অর্ডারের')
+    expect(tokens).toContain('ডেলিভারি')
+    expect(tokens).not.toContain('আমার')
+    expect(tokens).not.toContain('হবে')
+  })
+
+  it('keeps Banglish content words and drops Banglish stopwords', () => {
+    const tokens = extractQueryTokens('amar order ta kobe deliver hobe boss')
+    expect(tokens).toEqual(expect.arrayContaining(['order', 'deliver']))
+    expect(tokens).not.toContain('amar')
+    expect(tokens).not.toContain('boss')
+  })
+
+  it('keeps short tokens that contain digits — order ids and numbers matter', () => {
+    const tokens = extractQueryTokens('order 42 এর কী অবস্থা')
+    expect(tokens).toContain('42')
+  })
+
+  it('strips punctuation without destroying the word', () => {
+    expect(extractQueryTokens('"পেমেন্ট", (bkash)!')).toEqual(['পেমেন্ট', 'bkash'])
+  })
+
+  // Codex P2 (PR #711): collapsing ORD-123 → ord123 matched neither the stored
+  // substring nor any lexeme, defeating the exact-identifier case entirely.
+  it('keeps separators INSIDE an identifier', () => {
+    expect(extractQueryTokens('ORD-123 kothay')).toContain('ord-123')
+    expect(extractQueryTokens('invoice INV_88/2026')).toContain('inv_88/2026')
+  })
+
+  it('strips separators at the edges of a token', () => {
+    expect(extractQueryTokens('-ORD-123-')).toEqual(['ord-123'])
+    expect(extractQueryTokens('...')).toEqual([])
+    expect(extractQueryTokens('--')).toEqual([])
+  })
+
+  it('deduplicates and caps the token count', () => {
+    const tokens = extractQueryTokens('alpha beta alpha gamma delta epsilon zeta eta theta iota kappa')
+    expect(new Set(tokens).size).toBe(tokens.length)
+    expect(tokens.length).toBeLessThanOrEqual(MAX_QUERY_TOKENS)
+  })
+
+  it('returns nothing for a message made only of stopwords', () => {
+    expect(extractQueryTokens('what is this')).toEqual([])
+  })
+})
+
+describe('buildOrTsQuery / buildLikePatterns', () => {
+  it('ORs the tokens so a long sentence still matches something', () => {
+    expect(buildOrTsQuery(['অর্ডার', 'ডেলিভারি'])).toBe('অর্ডার | ডেলিভারি')
+  })
+
+  it('emits no tsquery operators from user punctuation', () => {
+    // Tokens are cleaned before they get here — nothing but letters/digits survives.
+    const tokens = extractQueryTokens('a&b | c:*')
+    expect(buildOrTsQuery(tokens)).not.toMatch(/[&:*()!]/)
+  })
+
+  it('splits identifier tokens into their parts for the tsquery arm', () => {
+    // Postgres indexes ORD-123 as 'ord-123', 'ord' and '123', so the parts hit
+    // the same rows — and no separator can reach the tsquery grammar.
+    expect(buildOrTsQuery(['ord-123'])).toBe('ord | 123')
+    expect(buildOrTsQuery(['inv_88/2026'])).toBe('inv | 88 | 2026')
+  })
+
+  it('never lets a separator into the tsquery string', () => {
+    const tokens = extractQueryTokens('ORD-123 INV_88/2026 bkash.01711')
+    expect(buildOrTsQuery(tokens)).not.toMatch(/[-_./]/)
+  })
+
+  it('deduplicates repeated parts across identifiers', () => {
+    expect(buildOrTsQuery(['ord-123', 'ord-456'])).toBe('ord | 123 | 456')
+  })
+
+  it('keeps the FULL identifier for the ILIKE arm — the exact substring is the point', () => {
+    expect(buildLikePatterns(['ord-123'])).toEqual(['%ord-123%'])
+  })
+
+  it('builds ILIKE patterns for long tokens and digit tokens only', () => {
+    const patterns = buildLikePatterns(['abc', 'order', '42'])
+    expect(patterns).toContain('%order%')
+    expect(patterns).toContain('%42%')
+    expect(patterns).not.toContain('%abc%')
+  })
+
+  // Codex P2 round 6 (PR #711): '_' is a single-character wildcard in SQL, so
+  // %inv_88% also matched INVX88 and could outrank the exact identifier.
+  it('escapes LIKE wildcards so an identifier matches literally', () => {
+    expect(buildLikePatterns(['inv_88'])).toEqual(['%inv\\_88%'])
+    expect(buildLikePatterns(['ord-123'])).toEqual(['%ord-123%']) // nothing to escape
+  })
+
+  it('escapes wildcards in the raw-phrase fallback too', () => {
+    expect(rawPhrasePatterns('a_b')).toEqual(['%a\\_b%'])
+    expect(rawPhrasePatterns('100% sure')).toEqual(['%100\\% sure%'])
+  })
+
+  it('escapes a backslash before it can escape something else', () => {
+    expect(rawPhrasePatterns('a\\_b')).toEqual(['%a\\\\\\_b%'])
+  })
+
+  it('caps the number of ILIKE patterns', () => {
+    const many = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf']
+    expect(buildLikePatterns(many).length).toBeLessThanOrEqual(5)
+  })
+})
+
+// Codex P2 round 2 (PR #711): with no tokens AND no embedding, both arms went
+// silent and a short query like "মা" found nothing at all.
+describe('rawPhrasePatterns', () => {
+  it('falls back to the raw phrase when no token survives extraction', () => {
+    expect(extractQueryTokens('মা')).toEqual([])
+    expect(rawPhrasePatterns('মা')).toEqual(['%মা%'])
+  })
+
+  it('trims the phrase and caps its length', () => {
+    expect(rawPhrasePatterns('  মা  ')).toEqual(['%মা%'])
+    const long = 'ক'.repeat(200)
+    expect(rawPhrasePatterns(long)[0].length).toBe(62) // 60 chars + two % signs
+  })
+
+  // Codex P2 round 5 (PR #711): "%মা?%" matched no stored fact that simply said মা.
+  it('strips edge punctuation — the owner types questions, not search terms', () => {
+    expect(rawPhrasePatterns('মা?')).toEqual(['%মা%'])
+    expect(rawPhrasePatterns('"মা"!')).toEqual(['%মা%'])
+    expect(rawPhrasePatterns('  মা।  ')).toEqual(['%মা%'])
+  })
+
+  it('leaves the inside of a phrase alone', () => {
+    expect(rawPhrasePatterns('ORD-123?')).toEqual(['%ORD-123%'])
+    expect(rawPhrasePatterns('মা কেমন আছে?')).toEqual(['%মা কেমন আছে%'])
+  })
+
+  it('refuses a phrase that is only punctuation', () => {
+    expect(rawPhrasePatterns('???')).toEqual([])
+    expect(rawPhrasePatterns('...!')).toEqual([])
+  })
+
+  it('refuses a phrase too short to filter — %% would match every row', () => {
+    expect(rawPhrasePatterns('')).toEqual([])
+    expect(rawPhrasePatterns('   ')).toEqual([])
+    expect(rawPhrasePatterns('ক')).toEqual([])
+  })
+
+  it('offers a sentinel that parses as a tsquery but matches nothing', () => {
+    expect(NO_LEXEME_TSQUERY).toMatch(/^[a-z_]+$/)
+  })
+})
+
+describe('fuseRrf', () => {
+  it('ranks a row both arms found above rows only one arm found', () => {
+    const vector = [{ id: 'a', rank: 0 }, { id: 'b', rank: 1 }]
+    const keyword = [{ id: 'c', rank: 0 }, { id: 'b', rank: 1 }]
+    const fused = fuseRrf([vector, keyword])
+    expect(fused[0].id).toBe('b')
+    expect(fused[0].arms).toBe(2)
+  })
+
+  it('keeps rows that only one arm could see', () => {
+    const vector = [{ id: 'semantic-only', rank: 0 }]
+    const keyword = [{ id: 'exact-token-only', rank: 0 }]
+    const ids = fuseRrf([vector, keyword]).map((h) => h.id)
+    expect(ids).toContain('semantic-only')
+    expect(ids).toContain('exact-token-only')
+  })
+
+  it('records the best rank a row reached in any arm', () => {
+    const fused = fuseRrf([[{ id: 'x', rank: 7 }], [{ id: 'x', rank: 2 }]])
+    expect(fused[0].bestRank).toBe(2)
+  })
+
+  // Codex P2 round 8 (PR #711): at limit: 1 the top hit of each arm ties on both
+  // rrf and bestRank, and a stable sort kept whichever arm was listed first.
+  it('prefers the exact hit when scores tie exactly', () => {
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const keyword = [{ id: 'exact', rank: 0, exact: true }]
+    expect(fuseRrf([vector, keyword])[0].id).toBe('exact')
+    // Arm order must not decide it either way.
+    expect(fuseRrf([keyword, vector])[0].id).toBe('exact')
+  })
+
+  it('ignores a keyword hit that is not a literal match', () => {
+    // Codex P2 round 9 (PR #711): marking every keyword row exact let a row
+    // sharing only the generic lexeme "ord" beat the top semantic hit at limit 1.
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const lexemeOnly = [{ id: 'shares-a-word', rank: 0, exact: false }]
+    expect(fuseRrf([vector, lexemeOnly])[0].id).toBe('semantic')
+  })
+
+  it('does not let exactness override a genuinely better score', () => {
+    const vector = [{ id: 'semantic', rank: 0 }]
+    const keyword = [{ id: 'exact', rank: 5, exact: true }]
+    expect(fuseRrf([vector, keyword])[0].id).toBe('semantic')
+  })
+
+  it('carries exactness onto a row both arms found', () => {
+    const fused = fuseRrf([[{ id: 'x', rank: 1 }], [{ id: 'x', rank: 0, exact: true }]])
+    expect(fused[0].exact).toBe(true)
+    expect(fused[0].arms).toBe(2)
+  })
+
+  it('handles empty arms', () => {
+    expect(fuseRrf([[], []])).toEqual([])
+    expect(fuseRrf([[{ id: 'a', rank: 0 }], []]).map((h) => h.id)).toEqual(['a'])
+  })
+
+  it('scores strictly by rank, not by arm order', () => {
+    const a = fuseRrf([[{ id: 'first', rank: 0 }], [{ id: 'second', rank: 3 }]])
+    expect(a[0].id).toBe('first')
+    const b = fuseRrf([[{ id: 'second', rank: 3 }], [{ id: 'first', rank: 0 }]])
+    expect(b[0].id).toBe('first')
+  })
+})
+
+describe('keywordSimilarityProxy', () => {
+  it('gives the top keyword hit a strong-but-not-perfect similarity', () => {
+    expect(keywordSimilarityProxy(0)).toBeCloseTo(0.72, 5)
+  })
+
+  it('decays with rank and never falls below the retrieval threshold', () => {
+    expect(keywordSimilarityProxy(5)).toBeLessThan(keywordSimilarityProxy(0))
+    expect(keywordSimilarityProxy(99)).toBeGreaterThanOrEqual(0.45)
+  })
+
+  it('keeps the both-arms bonus small enough not to override ranking', () => {
+    expect(BOTH_ARMS_BONUS).toBeGreaterThan(0)
+    expect(BOTH_ARMS_BONUS).toBeLessThan(0.1)
+  })
+})
