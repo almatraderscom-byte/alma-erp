@@ -123,14 +123,131 @@ final class AssistantParityV2UITests: XCTestCase {
     }
 
     func testComposerPlusUsesAnchoredAttachmentMenu() {
-        let add = app.buttons["ফাইল যোগ করুন"]
-        XCTAssertTrue(add.waitForExistence(timeout: 4))
-        add.tap()
+        let plusButton = app.buttons["ফাইল যোগ করুন"]
+        XCTAssertTrue(plusButton.waitForExistence(timeout: 4))
+        plusButton.tap()
         XCTAssertTrue(app.buttons["Photo Library"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Files"].exists)
         XCTAssertTrue(app.buttons["Scan Document"].exists)
         XCTAssertTrue(app.buttons["Recent Library"].exists)
         XCTAssertFalse(app.otherElements["Drag Indicator"].exists)
+    }
+
+    func testClaudeChatFlowClustersToolsAndKeepsModeBesidePlus() {
+        relaunch(fixture: "ALMA_ASSISTANT_CLAUDE_CHAT", mock: "claude-chat")
+
+        let thought = app.staticTexts["ভেবেছে ১২ সেকেন্ড"]
+        XCTAssertTrue(thought.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["৩টি ব্যবসার data দেখেছে"].exists)
+
+        let plusButton = app.buttons["ফাইল যোগ করুন"]
+        XCTAssertTrue(plusButton.exists)
+        let composer = app.descendants(matching: .any)["agent.composer.input"]
+        XCTAssertTrue(composer.exists)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        let mode = app.buttons["agent.permission-mode"]
+        XCTAssertTrue(mode.exists)
+        XCTAssertLessThan(abs(plusButton.frame.midY - mode.frame.midY), 12,
+                          "plus and execution mode must share the composer control row")
+        XCTAssertGreaterThan(mode.frame.midX, plusButton.frame.midX)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+
+        let businessCluster = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "৩টি ব্যবসার data দেখেছে")
+        ).firstMatch
+        for _ in 0..<4 {
+            if businessCluster.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(businessCluster.isHittable)
+        businessCluster.tap()
+        XCTAssertTrue(app.staticTexts["কাজের বিস্তারিত"].waitForExistence(timeout: 3))
+        let salesTool = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "get_sales_overview")
+        ).firstMatch
+        XCTAssertTrue(salesTool.exists)
+        salesTool.tap()
+        XCTAssertTrue(app.staticTexts["ইনপুট · INPUT"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["ফলাফল · OUTPUT"].exists)
+        app.buttons["বন্ধ করুন"].tap()
+
+        app.swipeUp(velocity: .fast)
+        app.swipeUp(velocity: .fast)
+        XCTAssertTrue(app.staticTexts["বিক্রির performance গবেষণা করেছে"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "৩০ দিনের Sales Recovery Plan.md")
+        ).firstMatch.waitForExistence(timeout: 3))
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "claude-style-agent-chat-flow"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
+    func testClaudeInteractivePreviewSelectsModelAndStreamsArbitraryMessage() {
+        relaunch(fixture: "ALMA_ASSISTANT_CLAUDE_CHAT", mock: "claudeInteractive")
+
+        XCTAssertTrue(app.staticTexts["SIMULATOR DEMO · OFFLINE"].waitForExistence(timeout: 5))
+
+        let surface = app.descendants(matching: .any)["agent.composer.surface"]
+        let composer = app.descendants(matching: .any)["agent.composer.input"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 3))
+        XCTAssertTrue(composer.exists)
+        let context = app.buttons["agent.context-window"]
+        XCTAssertFalse(context.exists, "context control stays tucked away in the idle compact composer")
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(context.waitForExistence(timeout: 3),
+                      "focus expands the composer and reveals its action row")
+        context.tap()
+        XCTAssertTrue(app.staticTexts["Context window"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["88% left"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["24.8K used / 200K"].waitForExistence(timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.18)).tap()
+
+        let mode = app.buttons["agent.permission-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 3))
+        XCTAssertLessThanOrEqual(mode.frame.width, 48,
+                                 "approval mode must stay an icon-only compact control")
+        mode.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["প্ল্যান"].waitForExistence(timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.18)).tap()
+
+        let modelPicker = app.buttons["মডেল বাছাই"]
+        XCTAssertTrue(modelPicker.waitForExistence(timeout: 3))
+        modelPicker.tap()
+        let sonnet = app.buttons["Claude Sonnet 4.6"]
+        XCTAssertTrue(sonnet.waitForExistence(timeout: 4))
+        sonnet.tap()
+        let selected = NSPredicate(format: "value == %@", "Sonnet 4.6")
+        expectation(for: selected, evaluatedWith: modelPicker)
+        waitForExpectations(timeout: 4)
+
+        composer.typeText("show me a recovery plan")
+        let send = app.buttons["agent.composer.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 3))
+        XCTAssertTrue(send.isHittable)
+        send.tap()
+
+        XCTAssertTrue(app.textViews["show me a recovery plan"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "offline Simulator")
+        ).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "Simulator demo সম্পন্ন")
+        ).firstMatch.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.textViews.matching(
+            NSPredicate(format: "label CONTAINS %@", "Claude Sonnet 4.6")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "৩০ দিনের Sales Recovery Plan.md")
+        ).firstMatch.waitForExistence(timeout: 4))
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "claude-interactive-offline-preview"
+        proof.lifetime = .keepAlways
+        add(proof)
     }
 
     func testCleanEOFWithoutTerminalRecoversSameTurnWithoutNavigation() {
@@ -163,10 +280,9 @@ final class AssistantParityV2UITests: XCTestCase {
         ).firstMatch.exists)
         XCTAssertTrue(app.buttons["টেবিল কপি করুন"].exists)
         XCTAssertTrue(app.buttons["ফাইল যোগ করুন"].exists)
-        XCTAssertTrue(app.staticTexts["Input"].exists)
-        XCTAssertTrue(app.staticTexts["Output"].exists)
-        XCTAssertTrue(app.staticTexts["Cache write"].exists)
-        XCTAssertTrue(app.staticTexts["Cache read"].exists)
+        XCTAssertFalse(app.staticTexts["Cache write"].exists,
+                       "provider billing diagnostics must not clutter normal chat")
+        XCTAssertFalse(app.staticTexts["Cache read"].exists)
 
         let top = XCTAttachment(screenshot: app.screenshot())
         top.name = "native-reading-surface-top"
