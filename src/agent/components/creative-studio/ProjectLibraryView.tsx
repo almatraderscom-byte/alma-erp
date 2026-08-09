@@ -55,6 +55,7 @@ export function ProjectLibraryView({
   const [legacyAssets, setLegacyAssets] = useState<StudioProjectAsset[]>([])
   const [legacyLoading, setLegacyLoading] = useState(false)
   const [attaching, setAttaching] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -149,6 +150,13 @@ export function ProjectLibraryView({
     }
   }
 
+  const dismissLibrary = () => {
+    setDismissed(true)
+    onClose()
+  }
+
+  if (dismissed) return null
+
   return (
     <div className="absolute inset-0 z-30 flex flex-col bg-bg-1 text-cream">
       <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/90 px-3 py-3 backdrop-blur-md">
@@ -162,7 +170,13 @@ export function ProjectLibraryView({
               Legacy থেকে যোগ
             </button>
           )}
-          <button type="button" onClick={onClose} aria-label="লাইব্রেরি বন্ধ করুন" className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted">✕</button>
+          <button
+            type="button"
+            onClick={dismissLibrary}
+            onPointerDown={dismissLibrary}
+            aria-label="লাইব্রেরি বন্ধ করুন"
+            className="grid h-8 w-8 place-items-center rounded-full bg-white/10 text-muted"
+          >✕</button>
         </div>
       </div>
 
