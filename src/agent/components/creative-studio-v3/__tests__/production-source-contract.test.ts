@@ -27,6 +27,7 @@ describe('Creative Studio V3 production source contract', () => {
     expect(routeSource).toContain("explicitStudio === 'v4'")
     expect(routeSource).toContain("process.env.VERCEL_ENV === 'preview'")
     expect(routeSource).toContain('getCreativeStudioV4PreviewFoundationFlags')
+    expect(routeSource).toContain('requestedStudio: explicitStudio')
     expect(routeSource).toContain('return <CreativeStudio v4Targets={v4Targets} />')
     expect(routeSource).toContain('STUDIO_WEB_VERSION_COOKIE')
     expect(routeSource).toContain('actorIsSystemOwner')

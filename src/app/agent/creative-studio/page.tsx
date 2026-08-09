@@ -139,7 +139,7 @@ export default async function CreativeStudioPage(
   if (decision.kind === 'v3') {
     const foundation = getCreativeStudioV4PreviewFoundationFlags({
       actorIsSystemOwner,
-      requestedStudio,
+      requestedStudio: explicitStudio,
     })
     const initialProjectId = selectCreativeStudioV3InitialProjectId({
       accessibleProjects,
