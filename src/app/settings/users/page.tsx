@@ -30,6 +30,10 @@ type RowUser = {
   salaryHint: string | null
   profileImageUrl: string | null
   createdAt: string
+  offboarding: {
+    complete: boolean
+    liveAccess: { agentStaff: boolean; telegram: boolean; creativeStudio: boolean }
+  }
 }
 
 function RoleBadge({ role }: { role: UserRole }) {
@@ -56,7 +60,7 @@ function parseBizCsv(csv: string): BusinessId[] {
 }
 
 export default function UsersSettingsPage() {
-  const { role: actorRole } = useActor()
+  const { role: actorRole, userId: actorUserId } = useActor()
   const normalized = normalizeAlmaRole(actorRole)
 
   const [users, setUsers] = useState<RowUser[]>([])
@@ -66,6 +70,7 @@ export default function UsersSettingsPage() {
   const [editUser, setEditUser] = useState<RowUser | null>(null)
   const [permUser, setPermUser] = useState<RowUser | null>(null)
   const [resetUser, setResetUser] = useState<RowUser | null>(null)
+  const [offboardUser, setOffboardUser] = useState<RowUser | null>(null)
 
   const allowed = useMemo(() => can(normalized, 'userManage'), [normalized])
 
@@ -168,19 +173,31 @@ export default function UsersSettingsPage() {
                       <td className="py-2 pr-3 text-muted max-w-[140px] truncate" title={u.businessAccess}>{u.businessAccess.replace(/,/g, ', ')}</td>
                       <td className="py-2 pr-3 font-mono text-gold-dim">{u.employeeIdGas || '—'}</td>
                       <td className="py-2 pr-3">
-                        <span className={u.active ? 'text-green-400' : 'text-red-400'}>{u.active ? 'Active' : 'Inactive'}</span>
+                        <span className={u.active ? 'text-green-400' : u.offboarding.complete ? 'text-muted' : 'text-amber-400'}>
+                          {u.active ? 'Active' : u.offboarding.complete ? 'Offboarded' : 'Offboarding incomplete'}
+                        </span>
                       </td>
                       <td className="py-2 pr-4 text-right space-x-2 whitespace-nowrap">
                         <button type="button" className="text-gold hover:underline" onClick={() => setPermUser(u)}>Permissions</button>
                         <button type="button" className="text-gold-dim hover:underline" onClick={() => setEditUser(u)}>Edit</button>
                         <button type="button" className="text-muted hover:underline" onClick={() => setResetUser(u)}>Reset PW</button>
-                        <button
-                          type="button"
-                          className="text-muted hover:text-amber-400"
-                          onClick={() => void patchUser(u.id, { active: !u.active })}
-                        >
-                          {u.active ? 'Deactivate' : 'Activate'}
-                        </button>
+                        {u.id !== actorUserId && u.role !== 'SUPER_ADMIN' && (u.active || !u.offboarding.complete) ? (
+                          <button
+                            type="button"
+                            className="text-red-400 hover:text-red-300 hover:underline"
+                            onClick={() => setOffboardUser(u)}
+                          >
+                            {u.active ? 'Offboard' : 'Finish offboarding'}
+                          </button>
+                        ) : !u.active && u.offboarding.complete ? (
+                          <button
+                            type="button"
+                            className="text-muted hover:text-cream hover:underline"
+                            onClick={() => void patchUser(u.id, { active: true })}
+                          >
+                            Restore login only
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -218,6 +235,17 @@ export default function UsersSettingsPage() {
           user={resetUser}
           onClose={() => setResetUser(null)}
           onDone={() => { setResetUser(null); void load() }}
+        />
+      )}
+
+      {offboardUser && (
+        <OffboardUserModal
+          user={offboardUser}
+          onClose={() => setOffboardUser(null)}
+          onDone={() => {
+            setOffboardUser(null)
+            void load()
+          }}
         />
       )}
 
@@ -293,6 +321,97 @@ export default function UsersSettingsPage() {
         />
       )}
     </>
+  )
+}
+
+function OffboardUserModal({
+  user,
+  onClose,
+  onDone,
+}: {
+  user: RowUser
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [confirmation, setConfirmation] = useState('')
+  const [reason, setReason] = useState('')
+  const confirmed = confirmation.trim().toLowerCase() === user.name.trim().toLowerCase()
+
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!confirmed) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/users/${user.id}/offboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim() || 'Employment ended' }),
+      })
+      const result = await res.json().catch(() => ({})) as {
+        error?: string
+        hrRoster?: Array<{ status: string }>
+      }
+      if (!res.ok) throw new Error(result.error || 'Offboarding failed')
+      const hrFailed = result.hrRoster?.some(item => item.status === 'failed')
+      if (hrFailed) toast.error('Access revoked. HR roster sync needs a retry.')
+      else toast.success(`${user.name} has been fully offboarded`)
+      onDone()
+    } catch (error) {
+      toast.error((error as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <MobileModalPortal open zIndex={150} onBackdropClick={busy ? undefined : onClose}>
+      <Card className="mobile-modal-shell w-full max-w-lg border-red-500/30 sm:rounded-2xl">
+        <div className="mobile-modal-header p-5 pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-red-300">Offboard staff member</p>
+              <p className="mt-1 text-[11px] text-muted">{user.name} · {user.employeeIdGas || 'No HR ID'}</p>
+            </div>
+            <button type="button" className="text-muted hover:text-cream" onClick={onClose} disabled={busy}>×</button>
+          </div>
+        </div>
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+          <div className="mobile-modal-body space-y-4 px-5 pb-4 text-xs">
+            <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-muted-hi leading-relaxed">
+              This immediately blocks existing ERP sessions and disables Agent AI staff access, Telegram/ntfy,
+              push and call devices, Creative Studio roles, open tasks, scheduled calls, and the HR roster entry.
+              Historical payroll, attendance and task records are kept for audit.
+            </div>
+            <label className="block space-y-1">
+              <span className="text-muted">Reason</span>
+              <textarea
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                rows={2}
+                className="w-full rounded-xl border border-white/[0.08] bg-card/85 px-3 py-2 text-cream focus:outline-none focus:border-red-400/50"
+                placeholder="Employment ended"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-muted">Type <strong className="text-cream">{user.name}</strong> to confirm</span>
+              <input
+                value={confirmation}
+                onChange={e => setConfirmation(e.target.value)}
+                autoComplete="off"
+                className="w-full rounded-xl border border-white/[0.08] bg-card/85 px-3 py-2 text-cream focus:outline-none focus:border-red-400/50"
+              />
+            </label>
+          </div>
+          <div className="mobile-modal-footer flex gap-2 px-5 pt-3">
+            <Button variant="secondary" type="button" className="flex-1 justify-center" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button variant="danger" type="submit" className="flex-1 justify-center" disabled={busy || !confirmed}>
+              {busy ? 'Revoking access…' : user.active ? 'Offboard now' : 'Finish offboarding'}
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </MobileModalPortal>
   )
 }
 

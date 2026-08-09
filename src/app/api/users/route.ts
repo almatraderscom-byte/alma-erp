@@ -76,14 +76,43 @@ export async function GET(req: NextRequest) {
       profileImageUrl: true,
       updatedAt: true,
       createdAt: true,
+      offboardedAt: true,
+      hrOffboardedAt: true,
+      offboardedBy: true,
+      offboardingReason: true,
+      agentStaffLinks: {
+        select: { active: true, telegramChatId: true, ntfyTopic: true },
+      },
+      tradingTelegramLinks: {
+        select: { approved: true },
+      },
+      creativeStudioRoles: {
+        select: { id: true },
+      },
     },
   })
 
   return NextResponse.json({
-    users: users.map(user => ({
-      ...user,
-      profileImageUrl: resolveProfileImageForUser(user),
-    })),
+    users: users.map(user => {
+      const { agentStaffLinks, tradingTelegramLinks, creativeStudioRoles, ...account } = user
+      const liveAccess = {
+        agentStaff: agentStaffLinks.some(link => link.active || link.telegramChatId || link.ntfyTopic),
+        telegram: tradingTelegramLinks.some(link => link.approved),
+        creativeStudio: creativeStudioRoles.length > 0,
+      }
+      return {
+        ...account,
+        profileImageUrl: resolveProfileImageForUser(account),
+        offboarding: {
+          complete:
+            !account.active
+            && Boolean(account.offboardedAt)
+            && (!account.employeeIdGas || Boolean(account.hrOffboardedAt))
+            && !Object.values(liveAccess).some(Boolean),
+          liveAccess,
+        },
+      }
+    }),
   })
 }
 

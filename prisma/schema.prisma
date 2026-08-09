@@ -29,6 +29,10 @@ model User {
   joiningDate                      DateTime?
   salaryHint                       Decimal?                          @db.Decimal(12, 2)
   profileImageUrl                  String?
+  offboardedAt                     DateTime?
+  hrOffboardedAt                   DateTime?
+  offboardedBy                     String?
+  offboardingReason                String?                           @db.Text
   createdAt                        DateTime                          @default(now())
   updatedAt                        DateTime                          @updatedAt
   advanceRequests                  SalaryAdvanceRequest[]
@@ -78,6 +82,7 @@ model User {
   @@index([active, createdAt])
   @@index([employeeIdGas])
   @@index([businessAccess])
+  @@index([offboardedAt])
 }
 
 enum AdvanceStatus {
