@@ -969,7 +969,9 @@ final class AssistantParityV2Tests: XCTestCase {
             audioConfigured: true)
 
         gate.bindSocketAttempt(oldAttempt)
+        XCTAssertEqual(gate.setupAcceptance(for: oldAttempt), false)
         XCTAssertTrue(gate.acceptSocketSetup(oldAttempt))
+        XCTAssertEqual(gate.setupAcceptance(for: oldAttempt), true)
         XCTAssertTrue(gate.deferSetupForCallKit(oldAttempt))
         XCTAssertEqual(gate.pendingCallKitAttempt, oldAttempt)
         gate.callKitAudioActive = true
@@ -979,6 +981,9 @@ final class AssistantParityV2Tests: XCTestCase {
                        "CallKit deactivation between preflight and publish must win")
 
         gate.bindSocketAttempt(newAttempt)
+        XCTAssertNil(gate.setupAcceptance(for: oldAttempt),
+                     "an invalidated setup frame is stale, not a current failed setup")
+        XCTAssertEqual(gate.setupAcceptance(for: newAttempt), false)
         XCTAssertNil(gate.pendingCallKitAttempt)
         XCTAssertFalse(gate.acceptSocketSetup(oldAttempt))
         XCTAssertFalse(gate.deferSetupForCallKit(oldAttempt))
@@ -986,6 +991,7 @@ final class AssistantParityV2Tests: XCTestCase {
 
         gate.callKitAudioActive = true
         XCTAssertTrue(gate.acceptSocketSetup(newAttempt))
+        XCTAssertEqual(gate.setupAcceptance(for: newAttempt), true)
         XCTAssertTrue(gate.claimPublish(newAttempt))
         XCTAssertFalse(gate.claimPublish(newAttempt),
                        "one exact physical socket attempt may publish only once")
@@ -1071,6 +1077,320 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(state.claimConversionFailure(
             transportGeneration: 7,
             windowEpoch: secondEpoch))
+    }
+
+    func testLiveVoiceEvidenceRecordsTypedLifecycleAndTransportRecoveryEvents() throws {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .callKit,
+            fixture: .unitTest)
+
+        let observedUptime = ProcessInfo.processInfo.systemUptime
+        recorder.recordLifecycleEvent(
+            .appBackgrounded,
+            observedUptime: observedUptime + 1.0)
+        recorder.recordLifecycleEvent(
+            .appWillEnterForeground,
+            observedUptime: observedUptime + 1.25)
+        recorder.recordLifecycleEvent(.appBecameActive)
+        recorder.recordLifecycleEvent(.audioInterruptionBegan)
+        recorder.recordLifecycleEvent(.audioInterruptionEnded)
+        recorder.recordLifecycleEvent(.mediaServicesReset)
+        recorder.recordLifecycleEvent(.callKitAudioActivated)
+        recorder.recordLifecycleEvent(.callKitAudioDeactivated)
+        recorder.recordLifecycleEvent(.fullRestartScheduled)
+
+        let firstGeneration = recorder.beginTransportAttempt(resuming: false)
+        recorder.recordTransportEvent(.socketReceiveFailed, generation: firstGeneration)
+        recorder.recordTransportEvent(.socketReceiveFailed, generation: firstGeneration)
+        recorder.recordTransportEvent(.socketPingFailed, generation: firstGeneration)
+        recorder.recordTransportEvent(.providerErrorObserved, generation: firstGeneration)
+        recorder.recordTransportEvent(.goAwayObserved, generation: firstGeneration)
+        recorder.recordTransportEvent(
+            .resumptionHandleObserved,
+            generation: firstGeneration)
+        recorder.recordTransportEvent(.reconnectScheduled, generation: firstGeneration)
+        recorder.recordTransportEvent(.socketClosed, generation: firstGeneration)
+
+        let resumedGeneration = recorder.beginTransportAttempt(resuming: true)
+        recorder.recordTransportEvent(.resumptionAccepted, generation: firstGeneration)
+        recorder.recordTransportEvent(.resumptionAccepted, generation: resumedGeneration)
+        recorder.recordTransportEvent(.resumptionUnavailable, generation: resumedGeneration)
+        recorder.endSession(.ownerEnded)
+
+        let report = recorder.report()
+        XCTAssertEqual(report.events.map(\.name), [
+            .sessionStarted,
+            .appBackgrounded,
+            .appWillEnterForeground,
+            .appBecameActive,
+            .audioInterruptionBegan,
+            .audioInterruptionEnded,
+            .mediaServicesReset,
+            .callKitAudioActivated,
+            .callKitAudioDeactivated,
+            .fullRestartScheduled,
+            .transportStarted,
+            .socketError,
+            .socketError,
+            .providerErrorObserved,
+            .goAwayObserved,
+            .resumptionHandleObserved,
+            .reconnectScheduled,
+            .socketClosed,
+            .transportStarted,
+            .resumptionAccepted,
+            .resumptionUnavailable,
+            .sessionEnded,
+        ])
+        XCTAssertEqual(
+            report.events.filter { $0.name == .socketError }.count,
+            2,
+            "distinct receive and ping failures remain separately attributable")
+        XCTAssertEqual(
+            report.events.filter { $0.name == .socketError }.map(\.reason),
+            [.socketReceiveFailed, .socketPingFailed])
+        XCTAssertEqual(
+            report.events.first(where: { $0.name == .resumptionAccepted })?
+                .transportGeneration,
+            resumedGeneration,
+            "a stale transport cannot append lifecycle evidence to its replacement")
+        XCTAssertEqual(
+            report.events.first(where: { $0.name == .transportStarted
+                && $0.transportGeneration == resumedGeneration })?.resumedTransport,
+            true)
+        let background = try XCTUnwrap(
+            report.events.first(where: { $0.name == .appBackgrounded }))
+        let entering = try XCTUnwrap(
+            report.events.first(where: { $0.name == .appWillEnterForeground }))
+        XCTAssertEqual(
+            entering.elapsedMilliseconds - background.elapsedMilliseconds,
+            250,
+            accuracy: 1,
+            "async evidence recording must retain callback-observation time")
+    }
+
+    func testLiveVoiceProviderControlEvidenceClassifiesFactualBoundaries() {
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.providerErrorEvents(
+                recoveryAttempt: false,
+                resumptionRequested: false,
+                setupAccepted: false),
+            [.providerErrorObserved])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.providerErrorEvents(
+                recoveryAttempt: true,
+                resumptionRequested: false,
+                setupAccepted: false),
+            [.providerErrorObserved, .reconnectSetupFailed],
+            "a fresh reconnect failure must not claim a resumption failure")
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.providerErrorEvents(
+                recoveryAttempt: true,
+                resumptionRequested: true,
+                setupAccepted: false),
+            [.providerErrorObserved, .reconnectSetupFailed, .resumptionAttemptFailed])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.providerErrorEvents(
+                recoveryAttempt: true,
+                resumptionRequested: true,
+                setupAccepted: true),
+            [.providerErrorObserved],
+            "an error after accepted setup must not retroactively claim setup/resumption failure")
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.setupCompleteEvents(
+                resumptionRequested: false),
+            [])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.setupCompleteEvents(
+                resumptionRequested: true),
+            [.resumptionAccepted])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.resumptionUpdateEvents(
+                resumable: false,
+                hasUsableHandle: false),
+            [.resumptionUnavailable])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.resumptionUpdateEvents(
+                resumable: true,
+                hasUsableHandle: false),
+            [])
+        XCTAssertEqual(
+            AlmaLiveVoiceProviderControlEvidence.resumptionUpdateEvents(
+                resumable: true,
+                hasUsableHandle: true),
+            [.resumptionHandleObserved])
+    }
+
+    func testLiveVoiceLifecycleEvidenceRejectsDelayedPriorSessionCallback() {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        let priorSessionID = recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        recorder.endSession(.ownerEnded)
+
+        let currentSessionID = recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini31,
+            voiceID: "Kore",
+            callMode: .callKit,
+            fixture: .noNetwork)
+        recorder.recordLifecycleEvent(
+            .appBackgrounded,
+            expectedLocalSessionID: priorSessionID)
+        recorder.recordLifecycleEvent(
+            .appBecameActive,
+            expectedLocalSessionID: currentSessionID)
+
+        XCTAssertEqual(
+            recorder.report().events.map(\.name),
+            [.sessionStarted, .appBecameActive],
+            "a delayed notification from the ended call cannot enter the next report")
+    }
+
+    func testLiveVoiceLifecycleRelayRetainsSourceSessionAcrossActorDelay() throws {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        let live = AlmaGeminiLiveSession(evidenceRecorder: recorder)
+        let relay = AlmaLiveVoiceLifecycleEvidenceRelay()
+
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .callKit,
+            fixture: .unitTest)
+        live.beginEvidenceSession()
+        let priorToken = relay.bind(live)
+        let priorObservation = try XCTUnwrap(
+            relay.record(.callKitAudioActivated, observedUptime: 10))
+        XCTAssertEqual(priorObservation.sourceToken, priorToken)
+        XCTAssertTrue(priorObservation.evidenceSubmittedAtSource)
+        live.flushEvidence()
+        recorder.endSession(.ownerEnded)
+        live.finishEvidenceSession()
+
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini31,
+            voiceID: "Kore",
+            callMode: .callKit,
+            fixture: .noNetwork)
+        live.beginEvidenceSession()
+        let staleObservation = try XCTUnwrap(
+            relay.record(.callKitAudioDeactivated, observedUptime: 20))
+        XCTAssertEqual(staleObservation.sourceToken, priorToken)
+        live.flushEvidence()
+        XCTAssertEqual(
+            recorder.report().events.map(\.name),
+            [.sessionStarted],
+            "a CallKit callback captured for the prior call cannot enter a reused session")
+
+        let currentToken = relay.bind(live)
+        XCTAssertNotEqual(currentToken, priorToken)
+        let currentObservation = try XCTUnwrap(
+            relay.record(.callKitAudioActivated, observedUptime: 30))
+        XCTAssertEqual(currentObservation.sourceToken, currentToken)
+        live.flushEvidence()
+        XCTAssertEqual(
+            recorder.report().events.map(\.name),
+            [.sessionStarted, .callKitAudioActivated])
+        relay.clear(live)
+        XCTAssertNil(relay.record(.callKitAudioDeactivated, observedUptime: 40))
+        live.finishEvidenceSession()
+        recorder.endSession(.ownerEnded)
+    }
+
+    func testLiveVoiceLifecycleRelayFinalizesAfterPhysicalCallKitDeactivation() throws {
+        let priorRecorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        let priorLive = AlmaGeminiLiveSession(evidenceRecorder: priorRecorder)
+        let currentRecorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        let currentLive = AlmaGeminiLiveSession(evidenceRecorder: currentRecorder)
+        let relay = AlmaLiveVoiceLifecycleEvidenceRelay()
+
+        priorRecorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .callKit,
+            fixture: .unitTest)
+        priorLive.beginEvidenceSession()
+        let priorToken = relay.bind(priorLive)
+        let priorFinalizer = AlmaLiveVoiceTerminalEvidenceFinalizer(
+            live: priorLive,
+            recorder: priorRecorder,
+            expectedLocalSessionID: priorRecorder.sessionID,
+            outcome: .ownerEnded)
+        XCTAssertTrue(relay.deferFinalization(
+            priorLive,
+            token: priorToken,
+            finalizer: priorFinalizer,
+            fallbackAfter: 60))
+        XCTAssertNil(
+            relay.record(.callKitAudioActivated, observedUptime: 43),
+            "the stopped agent tail must not steal a new Office call's activation")
+
+        // A replacement binding must not steal the old physical deactivation.
+        currentRecorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini31,
+            voiceID: "Kore",
+            callMode: .callKit,
+            fixture: .noNetwork)
+        currentLive.beginEvidenceSession()
+        let currentToken = relay.bind(currentLive)
+
+        let terminalObservation = try XCTUnwrap(
+            relay.record(.callKitAudioDeactivated, observedUptime: 44))
+        XCTAssertEqual(terminalObservation.sourceToken, priorToken)
+        XCTAssertTrue(terminalObservation.evidenceSubmittedAtSource)
+        XCTAssertEqual(
+            priorRecorder.report().events.map(\.name),
+            [.sessionStarted, .callKitAudioDeactivated, .sessionEnded])
+        XCTAssertEqual(currentRecorder.report().events.map(\.name), [.sessionStarted])
+        XCTAssertFalse(relay.finishDeferredFinalization(for: priorToken))
+        XCTAssertFalse(priorFinalizer.finish(), "terminal evidence finalization is exact-once")
+
+        let currentObservation = try XCTUnwrap(
+            relay.record(.callKitAudioActivated, observedUptime: 45))
+        XCTAssertEqual(currentObservation.sourceToken, currentToken)
+        currentLive.flushEvidence()
+        XCTAssertEqual(
+            currentRecorder.report().events.map(\.name),
+            [.sessionStarted, .callKitAudioActivated])
+        relay.clear(currentLive)
+        currentLive.finishEvidenceSession()
+        currentRecorder.endSession(.ownerEnded)
+    }
+
+    func testLiveVoiceLifecycleBehaviorFenceRejectsReplacementSessionTasks() {
+        XCTAssertTrue(AlmaLiveVoiceLifecycleSessionFence.acceptsBehaviorEpoch(
+            7,
+            currentEpoch: 7,
+            isClosed: false))
+        XCTAssertFalse(AlmaLiveVoiceLifecycleSessionFence.acceptsBehaviorEpoch(
+            7,
+            currentEpoch: 8,
+            isClosed: false),
+            "a notification actor-hop from call A cannot restart or pause call B")
+        XCTAssertFalse(AlmaLiveVoiceLifecycleSessionFence.acceptsBehaviorEpoch(
+            8,
+            currentEpoch: 8,
+            isClosed: true))
+
+        let prior = AlmaLiveVoiceLifecycleSourceToken(
+            bindingOrdinal: 11,
+            localSessionID: "voice-test-0001")
+        let current = AlmaLiveVoiceLifecycleSourceToken(
+            bindingOrdinal: 12,
+            localSessionID: "voice-test-0001")
+        XCTAssertTrue(AlmaLiveVoiceLifecycleSessionFence.acceptsSourceToken(
+            current,
+            currentToken: current,
+            isClosed: false))
+        XCTAssertFalse(AlmaLiveVoiceLifecycleSessionFence.acceptsSourceToken(
+            prior,
+            currentToken: current,
+            isClosed: false),
+            "CallKit deactivation from call A cannot pause replacement call B")
     }
 
     func testLiveVoiceEvidencePreservesTypedDeliveryChainAcrossReconnect() throws {

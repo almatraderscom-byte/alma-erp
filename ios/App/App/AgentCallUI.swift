@@ -79,12 +79,12 @@ final class AgentCallController: NSObject {
 
     /// CallKit activated the shared audio session — the live engine can start
     /// capture/playback now (it must never activate the session itself).
-    func audioSessionActivated() {
-        engine?.callKitAudioActivated()
+    func audioSessionActivated(_ observation: AlmaLiveVoiceLifecycleObservation) {
+        engine?.callKitAudioActivated(observation)
     }
 
-    func audioSessionDeactivated() {
-        engine?.callKitAudioDeactivated()
+    func audioSessionDeactivated(_ observation: AlmaLiveVoiceLifecycleObservation) {
+        engine?.callKitAudioDeactivated(observation)
     }
 
     func setMuted(_ muted: Bool) {

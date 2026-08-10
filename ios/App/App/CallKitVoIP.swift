@@ -38,6 +38,7 @@ final class CallKitVoIP: NSObject {
     private var voipRegistry: PKPushRegistry?
     private let provider: CXProvider
     private let callController = CXCallController()
+    private let agentLifecycleEvidence = AlmaLiveVoiceLifecycleEvidenceRelay()
 
     private enum CallDirection { case incoming, outgoing }
     /// 'office' = staff↔owner Agora call (OfficeCallCoordinator). 'agent' = the AI
@@ -88,6 +89,32 @@ final class CallKitVoIP: NSObject {
         provider = CXProvider(configuration: config)
         super.init()
         provider.setDelegate(self, queue: nil)
+    }
+
+    /// Bind only after the engine has minted its local evidence-session ID.
+    /// CallKit delegate callbacks then retain callback-time/session attribution
+    /// without waiting for the MainActor hand-off that controls media behavior.
+    @discardableResult
+    func bindAgentLifecycleEvidence(
+        _ source: AlmaGeminiLiveSession
+    ) -> AlmaLiveVoiceLifecycleSourceToken {
+        agentLifecycleEvidence.bind(source)
+    }
+
+    func clearAgentLifecycleEvidence(_ source: AlmaGeminiLiveSession) {
+        agentLifecycleEvidence.clear(source)
+    }
+
+    @discardableResult
+    func deferAgentLifecycleEvidenceFinalization(
+        _ source: AlmaGeminiLiveSession,
+        token: AlmaLiveVoiceLifecycleSourceToken,
+        finalizer: AlmaLiveVoiceTerminalEvidenceFinalizer
+    ) -> Bool {
+        agentLifecycleEvidence.deferFinalization(
+            source,
+            token: token,
+            finalizer: finalizer)
     }
 
     /// Call once at launch (AppDelegate). Sets up the VoIP registry + retries token upload
@@ -547,6 +574,7 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        let lifecycleObservation = agentLifecycleEvidence.record(.callKitAudioActivated)
         AlmaVoiceAudioTrace.event(
             "callkit.didActivate",
             "category=\(audioSession.category.rawValue) mode=\(audioSession.mode.rawValue) "
@@ -556,8 +584,8 @@ extension CallKitVoIP: CXProviderDelegate {
         // (Agora for office calls, the live voice engine for agent calls). Neither
         // may activate the session itself.
         Task { @MainActor in
-            if AgentCallController.shared.isActive {
-                AgentCallController.shared.audioSessionActivated()
+            if let lifecycleObservation {
+                AgentCallController.shared.audioSessionActivated(lifecycleObservation)
             } else {
                 OfficeCallCoordinator.shared.audioSessionActivated()
             }
@@ -565,13 +593,14 @@ extension CallKitVoIP: CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        let lifecycleObservation = agentLifecycleEvidence.record(.callKitAudioDeactivated)
         AlmaVoiceAudioTrace.event("callkit.didDeactivate")
         // Deactivation can also be an interruption/route hand-off while the
         // call is still alive. Pause the matching graph and require the next
         // didActivate before rendering resumes.
         Task { @MainActor in
-            if AgentCallController.shared.isActive {
-                AgentCallController.shared.audioSessionDeactivated()
+            if let lifecycleObservation {
+                AgentCallController.shared.audioSessionDeactivated(lifecycleObservation)
             }
         }
     }
