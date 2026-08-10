@@ -38,6 +38,18 @@ describe('layer 2 — the rules that keywords can never get right', () => {
       .not.toBe('alma-image-generation')
   })
 
+  it('requires the creation verb to target the image output', () => {
+    for (const prompt of [
+      'Create a report comparing image models.',
+      'Create an analysis of the best image generators.',
+      'একটি ইমেজ মডেল তুলনা রিপোর্ট তৈরি করো।',
+    ]) {
+      expect(applyRules(prompt)?.skill).not.toBe('alma-image-generation')
+    }
+    expect(applyRules('Compare image models, then create a premium launch poster.')?.skill)
+      .toBe('alma-image-generation')
+  })
+
   it('routes explicit official-source citations to cited research', () => {
     expect(applyRules(
       'Compare OpenAI and Anthropic using only official sources, inline citations, and a Sources list.',

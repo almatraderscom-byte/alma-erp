@@ -375,8 +375,34 @@ const IMAGE_OUTPUT =
   /(?:image|images|photo|photos|picture|pictures|poster|posters|illustration|illustrations|artwork|creative|visual\s+variation|visual\s+variations|ছবি|ফটো|পোস্টার|ইমেজ|ক্রিয়েটিভ|ভিজুয়াল)/i
 const IMAGE_GENERATION_VERB =
   /(?:create|generate|make|design|render|produce|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
-export const isImageGenerationAsk = (text: string): boolean =>
-  IMAGE_OUTPUT.test(text) && IMAGE_GENERATION_VERB.test(text) && !MEDIA_DERIVE_ASK.test(text)
+const NON_IMAGE_CREATION_OBJECT =
+  /\b(?:report|comparison|compare|comparing|analysis|audit|summary|article|document|guide|list|research|presentation|spreadsheet|code|model|models)\b|(?:রিপোর্ট|তুলনা|বিশ্লেষণ|অডিট|সারাংশ|নথি|তালিকা|গবেষণা)/i
+
+function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end: number }> {
+  const matches: Array<{ start: number; end: number }> = []
+  const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`)
+  for (const match of text.matchAll(regex)) {
+    if (match.index === undefined) continue
+    matches.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return matches
+}
+
+export const isImageGenerationAsk = (text: string): boolean => {
+  if (MEDIA_DERIVE_ASK.test(text)) return false
+  const outputs = matchRanges(IMAGE_OUTPUT, text)
+  const verbs = matchRanges(IMAGE_GENERATION_VERB, text)
+
+  return verbs.some((verb) => outputs.some((output) => {
+    const distance = Math.max(verb.start, output.start) - Math.min(verb.end, output.end)
+    if (distance > 160) return false
+    const between = verb.end <= output.start
+      ? text.slice(verb.end, output.start)
+      : text.slice(output.end, verb.start)
+    if (/[.!?\n]/.test(between)) return false
+    return !NON_IMAGE_CREATION_OBJECT.test(between)
+  }))
+}
 
 /** Research/citation asks should use the existing cited-research procedure. */
 const CITED_RESEARCH_ASK =

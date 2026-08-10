@@ -9187,7 +9187,15 @@ struct AgentMarkdownText: View {
     }
     @State private var browserURL: URL?
 
-    static func extractCitations(_ source: String) -> [AgentCitation] {
+    private static func proseWithoutFencedCode(_ source: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: "```.*?```", options: [.dotMatchesLineSeparators]) else { return source }
+        let range = NSRange(location: 0, length: (source as NSString).length)
+        return regex.stringByReplacingMatches(in: source, range: range, withTemplate: "")
+    }
+
+    private static func extractMarkdownLinks(_ source: String) -> [AgentCitation] {
+        let source = proseWithoutFencedCode(source)
         guard let regex = try? NSRegularExpression(
             pattern: "(?<!!)\\[([^\\]]+)\\]\\((https?://[^)\\s]+|/[^)\\s]+)\\)") else { return [] }
         let ns = source as NSString
@@ -9206,7 +9214,31 @@ struct AgentMarkdownText: View {
         return result
     }
 
+    private static func isCitationEvidence(_ link: AgentCitation) -> Bool {
+        let actionLabel = #"^(?:download|open|view|click|copy|share|edit|save|play|watch|listen|ডাউনলোড|খুলুন|দেখুন|কপি|শেয়ার|সেভ)(?:\b|\s|:)"#
+        if link.title.range(of: actionLabel, options: [.regularExpression, .caseInsensitive]) != nil {
+            return false
+        }
+        if link.url.path.lowercased().hasPrefix("/api/") { return false }
+        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
+        return !mediaExtensions.contains(link.url.pathExtension.lowercased())
+    }
+
+    static func extractCitations(_ source: String) -> [AgentCitation] {
+        extractMarkdownLinks(source).filter(isCitationEvidence).enumerated().map { index, link in
+            .init(id: index + 1, title: link.title, url: link.url)
+        }
+    }
+
+    private static func extractMediaLinks(_ source: String) -> [AgentCitation] {
+        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
+        return extractMarkdownLinks(source).filter {
+            mediaExtensions.contains($0.url.pathExtension.lowercased())
+        }
+    }
+
     private var citations: [AgentCitation] { Self.extractCitations(text) }
+    private var mediaLinks: [AgentCitation] { Self.extractMediaLinks(text) }
 
     private enum Segment: Identifiable {
         case paragraph(String)
@@ -9357,7 +9389,7 @@ struct AgentMarkdownText: View {
                 AgentCitationStrip(citations: citations, pal: pal,
                                    onOpen: openCitation, onSources: { showSources = true })
             }
-            ForEach(citations.filter { ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"].contains($0.url.pathExtension.lowercased()) }) { media in
+            ForEach(mediaLinks) { media in
                 AgentMediaCard(title: media.title, url: media.url, pal: pal)
             }
         }
