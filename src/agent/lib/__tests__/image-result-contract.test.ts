@@ -33,4 +33,11 @@ describe('image result delivery contract', () => {
     expect(imageResultQcWarnings({ qc: { flagged: 'legacy warning' } }))
       .toEqual(['legacy warning'])
   })
+
+  it('surfaces a partial-batch warning without hiding completed images', () => {
+    expect(imageResultQcWarnings({
+      partialWarning: '1 of 3 images completed; variation 2 failed.',
+      variationQc: [{ pass: true }],
+    })).toEqual(['1 of 3 images completed; variation 2 failed.'])
+  })
 })

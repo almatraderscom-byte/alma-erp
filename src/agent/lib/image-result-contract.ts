@@ -30,6 +30,11 @@ export function imageResultQcWarnings(data: Record<string, unknown> | undefined)
   const qcRows = variationQc ?? [data.qc]
   const warnings: string[] = []
   const seen = new Set<string>()
+  if (typeof data.partialWarning === 'string' && data.partialWarning.trim()) {
+    const warning = data.partialWarning.trim()
+    seen.add(warning)
+    warnings.push(warning)
+  }
   qcRows.forEach((qc, index) => {
     if (!qc || typeof qc !== 'object') return
     const flagged = (qc as { flagged?: unknown }).flagged

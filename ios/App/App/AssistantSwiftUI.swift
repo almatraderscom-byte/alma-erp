@@ -238,6 +238,7 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     /// all until 2026-07-28, so on the phone every chat silently ran on the
     /// default no matter what he had chosen on the web.
     var permissionMode: String?
+    var pinnedSkill: String?
     var updatedAt: String?
 }
 
@@ -2794,6 +2795,28 @@ final class AssistantVM {
         var files: [PendingFileSnapshot]
         var referencedFiles: [AgentFileRef]?
         var selectionReference: String?
+        var suspendedContext: SuspendedComposerContext?
+    }
+
+    private struct SuspendedComposerContext: Codable, Equatable {
+        var text: String
+        var referencedFiles: [AgentFileRef]
+        var selectionReference: String?
+    }
+
+    private var suspendedComposerContext: SuspendedComposerContext? {
+        didSet { persistCurrentComposerDraft() }
+    }
+
+    private func restoreSuspendedComposerContext() {
+        guard let suspendedComposerContext else { return }
+        restoringComposerDraft = true
+        composerDraft = suspendedComposerContext.text
+        referencedFileRefs = suspendedComposerContext.referencedFiles
+        composerSelectionReference = suspendedComposerContext.selectionReference
+        self.suspendedComposerContext = nil
+        restoringComposerDraft = false
+        persistCurrentComposerDraft()
     }
 
     private struct PendingAttachmentSend: Codable {
@@ -2880,13 +2903,14 @@ final class AssistantVM {
                          cacheFileName: file.cacheFileName, state: state, fileRef: ref)
         }
         if composerDraft.isEmpty && files.isEmpty && referencedFileRefs.isEmpty
-            && composerSelectionReference == nil {
+            && composerSelectionReference == nil && suspendedComposerContext == nil {
             store.removeValue(forKey: composerDraftKey)
         } else {
             store[composerDraftKey] = .init(
                 text: composerDraft, files: files,
                 referencedFiles: referencedFileRefs.isEmpty ? nil : referencedFileRefs,
-                selectionReference: composerSelectionReference)
+                selectionReference: composerSelectionReference,
+                suspendedContext: suspendedComposerContext)
         }
         if let data = try? JSONEncoder().encode(store) {
             UserDefaults.standard.set(data, forKey: Self.composerDraftsKey)
@@ -2900,6 +2924,7 @@ final class AssistantVM {
         composerDraft = snapshot?.text ?? ""
         referencedFileRefs = snapshot?.referencedFiles ?? []
         composerSelectionReference = snapshot?.selectionReference
+        suspendedComposerContext = snapshot?.suspendedContext
         let directory = Self.attachmentCacheDirectory()
         pendingFiles = (snapshot?.files ?? []).compactMap { item in
             guard let directory,
@@ -3427,11 +3452,25 @@ final class AssistantVM {
     /// failure as a chip that lies about it.
     fileprivate func refreshPermissionModeFromServer() async {
         guard let cid = conversationId else { return }
-        struct Row: Decodable { let permissionMode: String? }
+        struct Row: Decodable {
+            let permissionMode: String?
+            let pinnedSkill: String?
+        }
         guard let row: Row = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)") else { return }
-        let mode = AgentPermissionMode.from(row.permissionMode)
-        if mode != permissionMode { permissionMode = mode }
+        applyConversationSettings(permissionMode: row.permissionMode, pinnedSkill: row.pinnedSkill)
     }
+
+    private func applyConversationSettings(permissionMode rawMode: String?, pinnedSkill: String?) {
+        let mode = AgentPermissionMode.from(rawMode)
+        if mode != permissionMode { permissionMode = mode }
+        pinnedSkillName = pinnedSkill
+    }
+
+    #if DEBUG
+    func debugApplyConversationSettings(permissionMode: String?, pinnedSkill: String?) {
+        applyConversationSettings(permissionMode: permissionMode, pinnedSkill: pinnedSkill)
+    }
+    #endif
 
     private func loadActiveConversation() async {
         do {
@@ -4660,14 +4699,14 @@ final class AssistantVM {
         // The mode belongs to the CHAT, not to the phone: opening a chat he had
         // set to সতর্ক must not show স্বাভাবিক while the server runs সতর্ক.
         permissionMode = AgentPermissionMode.from(selected?.permissionMode)
-        Task { await refreshPermissionModeFromServer() }
+        pinnedSkillName = nil
+        await refreshPermissionModeFromServer()
         currentProjectId = selected?.projectId
         conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
         lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
         resetHistoryWindowState()
         messages = []
-        pinnedSkillName = nil
         openTasks = []
         artifacts = []
         indexedSessionFileMessages = []
@@ -4678,7 +4717,6 @@ final class AssistantVM {
         restoreCurrentComposerDraft()
         restoreTick += 1     // screen replays the single session-opening loader
         await loadMessages()
-        pinnedSkillName = messages.reversed().compactMap(\.skill?.name).first
         restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
@@ -4754,7 +4792,18 @@ final class AssistantVM {
     }
 
     func referenceGeneratedImage(_ ref: AgentFileRef, variation: Bool) {
+        guard pendingFiles.isEmpty, pendingAttachmentSend == nil else {
+            errorToast = "চলতি attachment প্রস্তুত বা Remove করার পর image action নিন"
+            AlmaAgentHaptics.warning()
+            return
+        }
+        if suspendedComposerContext == nil {
+            suspendedComposerContext = .init(
+                text: composerDraft, referencedFiles: referencedFileRefs,
+                selectionReference: composerSelectionReference)
+        }
         referencedFileRefs = [ref]
+        composerSelectionReference = nil
         composerDraft = variation
             ? "এই ছবিটির একটি নতুন variation তৈরি করুন — composition ও quality ধরে রাখুন: "
             : "এই ছবিটি edit করুন: "
@@ -4763,6 +4812,9 @@ final class AssistantVM {
 
     func removeReferencedFile(_ ref: AgentFileRef) {
         referencedFileRefs.removeAll { $0 == ref }
+        if referencedFileRefs.isEmpty, suspendedComposerContext != nil {
+            restoreSuspendedComposerContext()
+        }
     }
 
     func prepareSelectionQuestion(_ selection: String, inSideConversation: Bool) async {
@@ -5497,7 +5549,11 @@ final class AssistantVM {
             queueOwnerMessage(text: text, files: readyFiles, askCardId: askCardId,
                               sentPendingIds: [], clientMessageId: clientMessageId,
                               attachmentIds: attachmentIds)
-            referencedFileRefs = []
+            if suspendedComposerContext != nil {
+                restoreSuspendedComposerContext()
+            } else {
+                referencedFileRefs = []
+            }
             return
         }
         startPreparedTurn(text: text, files: readyFiles,
@@ -5506,7 +5562,11 @@ final class AssistantVM {
                           autoContinueFromTurnId: autoContinueFromTurnId,
                           clientMessageId: clientMessageId,
                           attachmentIds: attachmentIds)
-        referencedFileRefs = []
+        if suspendedComposerContext != nil {
+            restoreSuspendedComposerContext()
+        } else {
+            referencedFileRefs = []
+        }
     }
 
     private var structuredSelectionQuote: String? {

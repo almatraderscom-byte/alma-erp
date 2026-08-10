@@ -1013,7 +1013,7 @@ async function processImageGen(job) {
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
-  const { normalizeVariationCount, variationPrompt } = await import('./image/variation-contract.mjs')
+  const { normalizeVariationCount, variationPrompt, partialVariationWarning } = await import('./image/variation-contract.mjs')
   const requestedVariationCount = normalizeVariationCount(variationCount)
   let totalCostUsd = 0
 
@@ -1146,14 +1146,30 @@ async function processImageGen(job) {
   // action and one worker result, then return adjacent file refs so every chat
   // surface can present a shared gallery/viewer rather than N unrelated cards.
   const deliveredImages = [{ storagePath: qcResult.storagePath, qc: qcResult.qc }]
+  let partialVariationFailure = null
   for (let variationIndex = 2; variationIndex <= requestedVariationCount; variationIndex += 1) {
     const prompt = variationPrompt(basePrompt, variationIndex, requestedVariationCount)
-    const variation = await generateAndQcVariation(prompt, variationIndex)
-    await postProcessImage(supabase, `${pendingActionId}-v${variationIndex}`, variation.qcResult.storagePath, {
-      original: artifactsByPath.get(variation.qcResult.storagePath),
-    })
-    deliveredImages.push({ storagePath: variation.qcResult.storagePath, qc: variation.qcResult.qc })
-    console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} delivered → ${variation.qcResult.storagePath}`)
+    try {
+      const variation = await generateAndQcVariation(prompt, variationIndex)
+      await postProcessImage(supabase, `${pendingActionId}-v${variationIndex}`, variation.qcResult.storagePath, {
+        original: artifactsByPath.get(variation.qcResult.storagePath),
+      })
+      deliveredImages.push({ storagePath: variation.qcResult.storagePath, qc: variation.qcResult.qc })
+      console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} delivered → ${variation.qcResult.storagePath}`)
+    } catch (variationError) {
+      partialVariationFailure = {
+        failedVariation: variationIndex,
+        requestedCount: requestedVariationCount,
+        deliveredCount: deliveredImages.length,
+        warning: partialVariationWarning(
+          deliveredImages.length, requestedVariationCount, variationIndex),
+      }
+      console.error(
+        `[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} failed after ${deliveredImages.length} delivered:`,
+        variationError instanceof Error ? variationError.message : variationError,
+      )
+      break
+    }
   }
 
   await callJobResult(pendingActionId, 'success', {
@@ -1161,6 +1177,9 @@ async function processImageGen(job) {
     storagePaths: deliveredImages.map((image) => image.storagePath),
     images: deliveredImages,
     variationCount: deliveredImages.length,
+    requestedVariationCount,
+    partialVariationFailure,
+    partialWarning: partialVariationFailure?.warning,
     allPaths: [...artifactsByPath.keys()],
     conversationId,
     provider: genericProviderForModel(first.modelName),

@@ -14,9 +14,46 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.skill?.name, "alma-image-generation")
     }
 
+    func testClearedServerPinWinsOverHistoricalSkillStamp() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.skillPinned(
+            skill: "alma-image-generation", source: "router",
+            reason: "historical image turn", isolated: true)])
+        XCTAssertEqual(vm.pinnedSkillName, "alma-image-generation")
+
+        vm.debugApplyConversationSettings(permissionMode: nil, pinnedSkill: nil)
+
+        XCTAssertNil(vm.pinnedSkillName)
+        XCTAssertEqual(vm.messages.last?.skill?.name, "alma-image-generation",
+                       "history remains factual without becoming the current pin")
+    }
+
     func testGeneratedFileRefsSuppressDuplicateMarkdownImageGallery() {
         XCTAssertTrue(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: false))
         XCTAssertFalse(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: true))
+    }
+
+    func testGeneratedImageActionRestoresUnsentComposerContextWhenCancelled() {
+        let vm = AssistantVM()
+        let originalRef = AgentFileRef(
+            bucket: "agent-files", path: "draft-reference.png", mediaType: "image/png")
+        let generatedRef = AgentFileRef(
+            bucket: "agent-files", path: "generated.png", mediaType: "image/png")
+        vm.composerDraft = "Owner's unrelated unsent draft"
+        vm.referencedFileRefs = [originalRef]
+        vm.composerSelectionReference = "selected draft quote"
+
+        vm.referenceGeneratedImage(generatedRef, variation: false)
+
+        XCTAssertEqual(vm.referencedFileRefs, [generatedRef])
+        XCTAssertNil(vm.composerSelectionReference)
+        XCTAssertEqual(vm.composerDraft, "এই ছবিটি edit করুন: ")
+
+        vm.removeReferencedFile(generatedRef)
+
+        XCTAssertEqual(vm.composerDraft, "Owner's unrelated unsent draft")
+        XCTAssertEqual(vm.referencedFileRefs, [originalRef])
+        XCTAssertEqual(vm.composerSelectionReference, "selected draft quote")
     }
 
     func testMermaidBranchParserPreservesActualEdges() {
