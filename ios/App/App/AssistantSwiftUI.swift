@@ -6305,6 +6305,7 @@ final class AssistantVM {
                 // pointed at in ChatGPT. Arrives before any work starts.
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }), !skill.isEmpty {
+                    pinnedSkillName = skill
                     messages[i].skill = .init(name: skill, source: source,
                                               reason: reason, isolated: isolated)
                     touchedStream = true
@@ -6476,6 +6477,15 @@ final class AssistantVM {
             Task { [weak self] in await self?.submitQueuedSteeringIfPossible() }
         }
     }
+
+    #if DEBUG
+    /// Exercises the same live reducer used by SSE without opening a network
+    /// stream. Tests use this to keep composer-level live state in sync with
+    /// the turn row contract.
+    func debugApplyTurnEvents(_ events: [AgentTurnEvent]) {
+        apply(events)
+    }
+    #endif
 
     /// Web parity (AgentApp MAX_AUTO_CONTINUES): a serverless-deadline turn ended
     /// mid-task — machine-send "continue" so long jobs finish end-to-end. Bounded;
@@ -9107,9 +9117,14 @@ struct AgentMarkdownText: View {
     /// Settled agent prose sets this — paragraphs render as in-place selectable
     /// UITextViews. Streaming/shimmering prose keeps the SwiftUI Text path.
     var selectable = false
+    var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
     @Environment(\.openURL) private var openURL
     @State private var showSources = false
+
+    static func shouldRenderRemoteImages(suppressRemoteImages: Bool) -> Bool {
+        !suppressRemoteImages
+    }
     @State private var browserURL: URL?
 
     static func extractCitations(_ source: String) -> [AgentCitation] {
@@ -9273,7 +9288,9 @@ struct AgentMarkdownText: View {
                 case .mermaid(let source): AgentMermaidDiagram(source: source, pal: pal)
                 case .form(let source): AgentInteractiveFormCard(source: source, pal: pal)
                 case .imageGroup(let images):
-                    AgentAdjacentRemoteImageGallery(images: images)
+                    if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages) {
+                        AgentAdjacentRemoteImageGallery(images: images)
+                    }
                 }
             }
             if !citations.isEmpty {
@@ -9660,29 +9677,52 @@ private struct AgentMathCard: View {
 }
 
 @available(iOS 17.0, *)
-private struct AgentMermaidDiagram: View {
+struct AgentMermaidDiagram: View {
+    struct Edge: Identifiable, Equatable {
+        let from: String
+        let to: String
+        var id: String { "\(from)→\(to)" }
+    }
     let source: String
     let pal: AgentPalette
-    private var nodes: [String] {
-        let edgeTokens = source.components(separatedBy: .newlines).flatMap { line -> [String] in
-            let values = line.components(separatedBy: "-->")
-            return values.count > 1 ? values : []
+    static func parseEdges(_ source: String) -> [Edge]? {
+        // A partial preview is more dangerous than a source fallback. Do not
+        // silently drop edge forms this compact renderer does not understand.
+        if source.contains("-.->") || source.contains("==>") || source.contains("---") {
+            return nil
         }
-        var labels: [String: String] = [:]
-        var order: [String] = []
-        for raw in edgeTokens {
-            let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        func node(_ raw: String) -> (id: String, explicitLabel: String?)? {
+            var clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if clean.hasPrefix("|"), let close = clean.dropFirst().firstIndex(of: "|") {
+                clean = String(clean[clean.index(after: close)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             let id = clean.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
-            guard !id.isEmpty else { continue }
-            let key = String(id)
-            if !order.contains(key) { order.append(key) }
+            guard !id.isEmpty else { return nil }
             if let open = clean.firstIndex(of: "["), let close = clean.lastIndex(of: "]"), open < close {
-                labels[key] = String(clean[clean.index(after: open)..<close])
-                    .trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+                return (String(id), String(clean[clean.index(after: open)..<close])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " \"")))
+            }
+            return (String(id), nil)
+        }
+        var edges: [Edge] = []
+        var labels: [String: String] = [:]
+        for line in source.components(separatedBy: .newlines) where line.contains("-->") {
+            let parts = line.components(separatedBy: "-->")
+            for index in 0..<(parts.count - 1) {
+                guard let fromNode = node(parts[index]), let toNode = node(parts[index + 1]) else {
+                    return nil
+                }
+                if let explicit = fromNode.explicitLabel { labels[fromNode.id] = explicit }
+                if let explicit = toNode.explicitLabel { labels[toNode.id] = explicit }
+                let from = labels[fromNode.id] ?? fromNode.id
+                let to = labels[toNode.id] ?? toNode.id
+                edges.append(.init(from: from, to: to))
             }
         }
-        return order.map { labels[$0] ?? $0 }
+        return edges.isEmpty ? nil : edges
     }
+    private var edges: [Edge]? { Self.parseEdges(source) }
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
@@ -9691,26 +9731,29 @@ private struct AgentMermaidDiagram: View {
                 Button { UIPasteboard.general.string = source } label: { Image(systemName: "doc.on.doc") }
             }
             .font(.system(size: 11, weight: .semibold)).foregroundStyle(pal.muted)
-            if nodes.isEmpty {
+            if let edges {
+                VStack(spacing: 7) {
+                    ForEach(edges) { edge in
+                        HStack(spacing: 8) {
+                            Text(edge.from)
+                            Image(systemName: "arrow.right")
+                                .font(.caption).foregroundStyle(AgentPalette.teal)
+                            Text(edge.to)
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .frame(maxWidth: .infinity)
+                        .background(AgentPalette.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            } else {
                 // Generic visualization fallback: preserve the source and make
                 // failure explicit instead of showing a blank web canvas.
                 Text(source).font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(pal.ink).textSelection(.enabled)
                 Label("Preview unavailable · source preserved", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(pal.muted)
-            } else {
-                VStack(spacing: 5) {
-                    ForEach(Array(nodes.enumerated()), id: \.offset) { index, node in
-                        Text(node).font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(pal.ink)
-                            .padding(.horizontal, 14).padding(.vertical, 9)
-                            .frame(maxWidth: .infinity)
-                            .background(AgentPalette.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-                        if index < nodes.count - 1 {
-                            Image(systemName: "arrow.down").font(.caption).foregroundStyle(AgentPalette.teal)
-                        }
-                    }
-                }
             }
         }
         .padding(12)
@@ -9834,6 +9877,7 @@ private struct AgentProgressiveMarkdownText: View {
     let text: String
     let pal: AgentPalette
     var selectable = false
+    var suppressRemoteImages = false
     var onAskSelection: ((String, Bool) -> Void)? = nil
     @State private var expanded = false
     private static let initialCharacterBudget = 12_000
@@ -9849,6 +9893,7 @@ private struct AgentProgressiveMarkdownText: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable,
+                              suppressRemoteImages: suppressRemoteImages,
                               onAskSelection: onAskSelection)
             if isGiant {
                 Button {
@@ -10531,13 +10576,20 @@ struct AgentMessageRow: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 if message.isStreaming {
                                     HStack(alignment: .bottom, spacing: 2) {
-                                        AgentMarkdownText(text: message.text, pal: pal)
+                                        AgentMarkdownText(
+                                            text: message.text, pal: pal,
+                                            suppressRemoteImages: !message.fileRefs.filter {
+                                                $0.mediaType.hasPrefix("image/")
+                                            }.isEmpty)
                                             .modifier(AgentShimmerModifier())
                                         AgentTypingCursor()
                                     }
                                 } else {
                                     AgentProgressiveMarkdownText(
                                         text: message.text, pal: pal, selectable: true,
+                                        suppressRemoteImages: !message.fileRefs.filter {
+                                            $0.mediaType.hasPrefix("image/")
+                                        }.isEmpty,
                                         onAskSelection: { selection, side in
                                             Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
                                         })
@@ -13025,7 +13077,11 @@ struct AgentTurnBlocksView: View {
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if isTail {
                 HStack(alignment: .bottom, spacing: 2) {
-                    AgentMarkdownText(text: text, pal: pal)
+                    AgentMarkdownText(
+                        text: text, pal: pal,
+                        suppressRemoteImages: message.fileRefs.contains {
+                            $0.mediaType.hasPrefix("image/")
+                        })
                         .modifier(AgentShimmerModifier())
                     AgentTypingCursor()
                 }
@@ -13037,6 +13093,9 @@ struct AgentTurnBlocksView: View {
                 // would swallow the long-press); whole-reply copy lives in the footer.
                 AgentProgressiveMarkdownText(
                     text: text, pal: pal, selectable: true,
+                    suppressRemoteImages: message.fileRefs.contains {
+                        $0.mediaType.hasPrefix("image/")
+                    },
                     onAskSelection: { selection, side in
                         Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
                     })

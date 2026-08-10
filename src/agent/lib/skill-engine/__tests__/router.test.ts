@@ -43,6 +43,12 @@ describe('layer 2 — the rules that keywords can never get right', () => {
       'Compare OpenAI and Anthropic using only official sources, inline citations, and a Sources list.',
     )?.skill).toBe('alma-research')
   })
+
+  it('treats citations as output requirements when a concrete workflow exists', () => {
+    expect(applyRules(
+      'Audit almatraders.com SEO and include official sources with inline citations.',
+    )?.skill).toBe('seo-auditing-own-site')
+  })
   it('a fix order is a fix order', () => {
     expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
     expect(applyRules('product-code-110 এর meta description লিখে দাও')?.skill).toBe('seo-fixing-own-site')

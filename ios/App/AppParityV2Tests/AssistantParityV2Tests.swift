@@ -3,6 +3,40 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testLiveSkillPinUpdatesComposerAndStreamingTurnTogether() {
+        let vm = AssistantVM()
+
+        vm.debugApplyTurnEvents([.skillPinned(
+            skill: "alma-image-generation", source: "router",
+            reason: "image generation", isolated: true)])
+
+        XCTAssertEqual(vm.pinnedSkillName, "alma-image-generation")
+        XCTAssertEqual(vm.messages.last?.skill?.name, "alma-image-generation")
+    }
+
+    func testGeneratedFileRefsSuppressDuplicateMarkdownImageGallery() {
+        XCTAssertTrue(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: false))
+        XCTAssertFalse(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: true))
+    }
+
+    func testMermaidBranchParserPreservesActualEdges() {
+        let edges = AgentMermaidDiagram.parseEdges("""
+        graph TD
+        A[Prompt]-->B[Tool]
+        A-->C[Approval]
+        """)
+
+        XCTAssertEqual(edges, [
+            .init(from: "Prompt", to: "Tool"),
+            .init(from: "Prompt", to: "Approval"),
+        ])
+        XCTAssertFalse(edges?.contains(.init(from: "Tool", to: "Approval")) ?? true)
+    }
+
+    func testUnsupportedMermaidFallsBackInsteadOfInventingEdges() {
+        XCTAssertNil(AgentMermaidDiagram.parseEdges("graph TD\nA -.-> B"))
+    }
+
     func testAttachmentDeduplicationPreservesOwnerSelectionOrder() {
         let first = AgentFileRef(bucket: "agent", path: "first.png", mediaType: "image/png")
         let second = AgentFileRef(bucket: "agent", path: "second.png", mediaType: "image/png")

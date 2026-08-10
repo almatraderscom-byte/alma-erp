@@ -99,7 +99,7 @@ const FIX_VERB_BANGLISH =
   /\b(thik\s*kor|thik\s*kore|thk\s*kor|shomadhan|shongshodhon|likh|likhe|lekh|lekho|save\s*kor|boshao|bosao|jog\s*kor|update\s*kor|thik\s*kore\s*dao)/i
 /** …unless the thing being asked for IS the audit or the report. */
 const AUDIT_ASK =
-  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run|kor|koro|calao|chalao|dao)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|report\s*(?:banao|dao|koro)|পূর্ণাঙ্গ\s*seo|\bdekho\b|\bdekhao\b)/i
+  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run|kor|koro|calao|chalao|dao)|\baudit\b(?!\s+(?:finding|findings|issue|issues|problem|problems)\b)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|report\s*(?:banao|dao|koro)|পূর্ণাঙ্গ\s*seo|\bdekho\b|\bdekhao\b)/i
 /**
  * `slug` joins the clear SEO markers for the same reason: it is an on-page SEO
  * field in this business and nothing else, and its absence is what let the miss
@@ -463,12 +463,6 @@ export const RULES: RouterRule[] = [
     why: 'নতুন ছবি/পোস্টার/variation বানাতে বলা হয়েছে — existing generate_image approval pipeline ব্যবহার হবে',
   },
   {
-    id: 'cited-research',
-    skill: 'alma-research',
-    test: (t) => CITED_RESEARCH_ASK.test(t),
-    why: 'official source ও inline citation চাওয়া হয়েছে — cited research procedure দরকার',
-  },
-  {
     id: 'client-site-seo',
     skill: 'seo-fixing-client-site',
     test: (t) => isSeoTopic(t) && OTHER_DOMAIN.test(t) && !OWN_SITE.test(t),
@@ -613,6 +607,15 @@ export const RULES: RouterRule[] = [
     skill: 'mac-file-organizer',
     test: (t) => FOLDER_PLACE.test(t) && TIDY_VERB.test(t) && !CODE_CHECKOUT.test(t),
     why: 'Mac-এর ফোল্ডার গোছানোর কথা — তালিকা আগে, Trash-ই সর্বোচ্চ',
+  },
+  {
+    // Citation formatting cannot replace a concrete execution workflow. Keep
+    // this broad research fallback last so "audit SEO with official sources"
+    // still runs the audit skill, while a standalone comparison gets research.
+    id: 'cited-research',
+    skill: 'alma-research',
+    test: (t) => CITED_RESEARCH_ASK.test(t),
+    why: 'official source ও inline citation চাওয়া হয়েছে — cited research procedure দরকার',
   },
 ]
 
