@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { imageResultPaths, imageResultQcWarnings } from '@/agent/lib/image-result-contract'
+import {
+  imageResultPaths,
+  imageResultQcWarnings,
+  signImageResultPreviews,
+} from '@/agent/lib/image-result-contract'
 
 describe('image result delivery contract', () => {
   it('keeps legacy single-image callbacks working', () => {
@@ -39,5 +43,20 @@ describe('image result delivery contract', () => {
       partialWarning: '1 of 3 images completed; variation 2 failed.',
       variationQc: [{ pass: true }],
     })).toEqual(['1 of 3 images completed; variation 2 failed.'])
+  })
+
+  it('keeps every durable path when one preview URL cannot be signed', async () => {
+    const paths = ['generated/one.png', 'generated/two.png', 'generated/three.png']
+    const delivery = await signImageResultPreviews(paths, async (path) => {
+      if (path.endsWith('two.png')) throw new Error('signing timeout')
+      return `https://signed.example/${path}`
+    })
+
+    expect(delivery.previews.map((preview) => [preview.path, preview.index])).toEqual([
+      ['generated/one.png', 0],
+      ['generated/three.png', 2],
+    ])
+    expect(delivery.failedPaths).toEqual(['generated/two.png'])
+    expect(paths).toHaveLength(3)
   })
 })

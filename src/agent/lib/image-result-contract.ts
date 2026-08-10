@@ -46,3 +46,28 @@ export function imageResultQcWarnings(data: Record<string, unknown> | undefined)
   })
   return warnings
 }
+
+export interface SignedImagePreview {
+  path: string
+  url: string
+  index: number
+}
+
+/** File refs are the durable delivery. Signed Markdown URLs are best-effort
+ * previews and one signing outage must never erase the rest of a paid batch. */
+export async function signImageResultPreviews(
+  paths: string[],
+  sign: (path: string) => Promise<string>,
+): Promise<{ previews: SignedImagePreview[]; failedPaths: string[] }> {
+  const settled = await Promise.allSettled(paths.map((path) => sign(path)))
+  const previews: SignedImagePreview[] = []
+  const failedPaths: string[] = []
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled' && result.value) {
+      previews.push({ path: paths[index], url: result.value, index })
+    } else {
+      failedPaths.push(paths[index])
+    }
+  })
+  return { previews, failedPaths }
+}

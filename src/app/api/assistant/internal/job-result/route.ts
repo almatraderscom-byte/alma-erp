@@ -18,7 +18,11 @@ import {
   postAssistantMessage,
 } from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
-import { imageResultPaths, imageResultQcWarnings } from '@/agent/lib/image-result-contract'
+import {
+  imageResultPaths,
+  imageResultQcWarnings,
+  signImageResultPreviews,
+} from '@/agent/lib/image-result-contract'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
@@ -325,20 +329,33 @@ export async function POST(req: NextRequest) {
         messageText = `✅ Reel saved: \`${storagePath}\` (approval card failed: ${detail})`
       }
     } else {
+      const resultPaths = imageResultPaths(data)
+      // Persist these independently of ephemeral preview signing. Native image
+      // cards are driven by file_ref blocks, not by signed Markdown URLs.
+      messageImagePaths = resultPaths
       try {
-        const resultPaths = imageResultPaths(data)
-        const imageUrls = resultPaths.length
-          ? await Promise.all(resultPaths.map((path) => agentStorageSignedUrl(path, IMAGE_SIGNED_URL_TTL_SEC)))
-          : [String(data?.imageUrl ?? '')].filter(Boolean)
-        if (imageUrls.length === 0) throw new Error('No image path in job result')
-        messageText = imageUrls.length === 1
-          ? `✅ Image generated successfully.\n![Generated image](${imageUrls[0]})`
-          : `✅ ${imageUrls.length} image variations generated successfully.\n` +
-            imageUrls.map((url, index) => `![Generated image ${index + 1}](${url})`).join('\n')
-        // The native app renders images ONLY from file_ref content blocks —
-        // markdown image links display as plain text there, so the owner
-        // couldn't see the preview he was asked to confirm (2026-07-13).
-        messageImagePaths = resultPaths
+        const signed = resultPaths.length
+          ? await signImageResultPreviews(
+              resultPaths,
+              (path) => agentStorageSignedUrl(path, IMAGE_SIGNED_URL_TTL_SEC),
+            )
+          : { previews: [], failedPaths: [] }
+        const fallbackUrl = resultPaths.length === 0 ? String(data?.imageUrl ?? '').trim() : ''
+        if (resultPaths.length === 0 && !fallbackUrl) throw new Error('No image path in job result')
+        const deliveredCount = resultPaths.length || 1
+        messageText = deliveredCount === 1
+          ? '✅ Image generated successfully.'
+          : `✅ ${deliveredCount} image variations generated successfully.`
+        const previewRows = signed.previews.map((preview) =>
+          `![Generated image ${preview.index + 1}](${preview.url})`)
+        if (fallbackUrl) previewRows.push(`![Generated image](${fallbackUrl})`)
+        if (previewRows.length) messageText += `\n${previewRows.join('\n')}`
+        if (signed.failedPaths.length) {
+          console.warn('[job-result] some signed image previews failed', {
+            pendingActionId, failedPaths: signed.failedPaths,
+          })
+          messageText += `\n\n_${signed.failedPaths.length} preview link(s) unavailable; completed images remain attached._`
+        }
         resumeAgentAfterImage = true
         const qcWarnings = imageResultQcWarnings(data)
         if (qcWarnings.length) {
@@ -347,9 +364,12 @@ export async function POST(req: NextRequest) {
       } catch (signErr) {
         const detail = signErr instanceof Error ? signErr.message : String(signErr)
         console.error('[job-result] signed URL failed', { storagePath, detail })
-        messageText = storagePath
+        messageText = messageImagePaths.length
+          ? `✅ ${messageImagePaths.length} image(s) generated and attached.\n(Preview link could not be created.)`
+          : storagePath
           ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
           : `✅ Image generated but preview unavailable.`
+        resumeAgentAfterImage = messageImagePaths.length > 0
       }
     }
   } else if (action.type === 'outbound_call' && status === 'failed') {

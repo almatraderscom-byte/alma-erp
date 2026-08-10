@@ -410,8 +410,10 @@ const CITED_RESEARCH_ASK =
 
 /** Pure answer-format requests need the normal head, not a narrow workflow. */
 const ANSWER_FORMAT =
-  /(?:rich\s+response|syntax[- ]highlighted|code\s+block|rendered\s+latex|mermaid|interactive\s+form|exactly\s+[\d০-৯]+\s+numbered|ঠিক\s+[\d০-৯]+টি\s+numbered|numbered\s+steps?|bullet\s+list)/i
+  /(?:rich\s+response|syntax[- ]highlighted|code\s+block|rendered\s+latex|mermaid|interactive\s+form|exactly\s+(?:[\d০-৯]+|one|two|three|four|five|six|seven|eight|nine|ten)\s+numbered|ঠিক\s+[\d০-৯]+টি\s+numbered|numbered\s+steps?|bullet\s+list)/i
 const ANSWER_VERB = /(?:write|return|give|provide|show|list|লিখ|দাও|দেখাও|তৈরি\s+কর)/i
+const FORMAT_ONLY_NEGATION =
+  /(?:do\s+not|don't|never|কোরো\s+না|করবে\s+না)[^.!?\n]{0,120}(?:create|save|publish|execute|run|send|post|ask)|(?:just|only)\s+(?:return|write|show|list)/i
 export const isHeadOnlyAnswerAsk = (text: string): boolean =>
   ANSWER_FORMAT.test(text) && ANSWER_VERB.test(text) && !isImageGenerationAsk(text)
 /**
@@ -675,6 +677,19 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     }
   }
 
+  // Explicitly negated execution is an answer request, not a workflow. Check
+  // this before deterministic rules so words inside "do not create/publish"
+  // cannot stage a storefront or campaign action.
+  if (isHeadOnlyAnswerAsk(t) && FORMAT_ONLY_NEGATION.test(t)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'answer-format: execution explicitly forbidden — unrestricted head শুধু requested answer দেবে',
+      candidates: [],
+      needsModel: false,
+    }
+  }
+
   // Layer 2 — a rule wins outright, even over a strong keyword score.
   const rule = applyRules(t)
   if (rule) {
@@ -689,10 +704,17 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     }
   }
 
-  // Formatting is only a head-only request when no concrete workflow rule
-  // matched. "Fix SEO and give numbered steps" must retain the SEO procedure;
-  // "return exactly eight steps" still avoids an irrelevant keyword pin.
-  if (isHeadOnlyAnswerAsk(t)) {
+  // Score before the format fallback. A clearly dominant keyword workflow is
+  // still a workflow when the owner asks for bullets; an ambiguous pile of
+  // format words (code/LaTeX/Mermaid, or a plain numbered answer) belongs to
+  // the unrestricted head rather than whichever narrow skill barely wins.
+  const picked = selectSkills({ skills: eligible, warnings: [] }, t)
+  const scored = scoreCandidates({ skills: eligible, warnings: [] }, t)
+  const top = scored[0]
+  const second = scored[1]
+  const margin = top && second ? top.score - second.score : Infinity
+  const hasDominantWorkflow = Boolean(top && top.score >= MIN_KEYWORD_SCORE && margin >= AMBIGUITY_MARGIN)
+  if (isHeadOnlyAnswerAsk(t) && (FORMAT_ONLY_NEGATION.test(t) || !hasDominantWorkflow)) {
     return {
       skill: null,
       layer: 'rule',
@@ -703,14 +725,10 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
   }
 
   // Layer 3 — keyword scoring over the eligible set.
-  const picked = selectSkills({ skills: eligible, warnings: [] }, t)
-  const scored = scoreCandidates({ skills: eligible, warnings: [] }, t)
   if (picked.length === 0) {
     return { skill: null, layer: 'none', reason: 'কোনো skill যথেষ্ট মেলেনি', candidates: scored, needsModel: false }
   }
 
-  const top = scored[0]
-  const second = scored[1]
   if (!top || top.score < MIN_KEYWORD_SCORE) {
     return {
       skill: null,
@@ -720,7 +738,6 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
       needsModel: false,
     }
   }
-  const margin = top && second ? top.score - second.score : Infinity
   const ambiguous = margin < AMBIGUITY_MARGIN
 
   return {

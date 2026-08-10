@@ -113,6 +113,20 @@ describe('ADS-0 regression — the whole router, not just the rule layer', () =>
     const index = await discoverSkills(SKILLS_ROOT)
     expect(routeSkill(index, 'Fix almatraders.com SEO and give numbered steps').skill)
       .toBe('seo-fixing-own-site')
+    expect(routeSkill(index, 'Research competitor prices and give a bullet list').skill)
+      .toBe('alma-research')
+    expect(routeSkill(index, 'Give competitor prices in a bullet list').skill)
+      .toBe('alma-research')
+  })
+
+  it('keeps genuinely format-only rich and numbered answers on the unrestricted head', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    expect(routeSkill(index,
+      'Return one rich response with Swift code, rendered LaTeX, Mermaid, and an interactive form.').skill)
+      .toBeNull()
+    expect(routeSkill(index,
+      'Write exactly eight numbered steps for an ALMA AI launch; do not create, save, or publish anything.').skill)
+      .toBeNull()
   })
 
   it('an ads question pins NO skill on the index production actually serves', async () => {
