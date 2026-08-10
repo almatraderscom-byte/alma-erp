@@ -1057,6 +1057,15 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(citations.map(\.title), ["OpenAI research"])
     }
 
+    func testCitationDestinationPreservesBalancedParentheses() {
+        let citations = AgentMarkdownText.extractCitations(
+            "[Wikipedia](https://en.wikipedia.org/wiki/Function_(mathematics))")
+
+        XCTAssertEqual(citations.count, 1)
+        XCTAssertEqual(citations[0].url.absoluteString,
+                       "https://en.wikipedia.org/wiki/Function_(mathematics)")
+    }
+
     func testRichOutputFileRefsSurviveCanonicalColdLoad() throws {
         let data = #"{"id":"rich","role":"assistant","content":[{"type":"text","text":"ready"},{"type":"file_ref","bucket":"agent-files","path":"one.jpg","mediaType":"image/jpeg"},{"type":"file_ref","bucket":"agent-files","path":"two.jpg","mediaType":"image/jpeg"}],"tokensIn":10,"tokensOut":5,"costUsd":0.04}"#.data(using: .utf8)!
         let message = AgentChatMessage.from(try JSONDecoder().decode(AgentMessageWire.self, from: data))

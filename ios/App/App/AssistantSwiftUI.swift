@@ -9196,14 +9196,42 @@ struct AgentMarkdownText: View {
 
     private static func extractMarkdownLinks(_ source: String) -> [AgentCitation] {
         let source = proseWithoutFencedCode(source)
-        guard let regex = try? NSRegularExpression(
-            pattern: "(?<!!)\\[([^\\]]+)\\]\\((https?://[^)\\s]+|/[^)\\s]+)\\)") else { return [] }
-        let ns = source as NSString
         var seen: Set<String> = []
         var result: [AgentCitation] = []
-        for match in regex.matches(in: source, range: NSRange(location: 0, length: ns.length)) {
-            let title = ns.substring(with: match.range(at: 1))
-            let raw = ns.substring(with: match.range(at: 2))
+        var cursor = source.startIndex
+        while cursor < source.endIndex,
+              let titleOpen = source[cursor...].firstIndex(of: "[") {
+            let afterOpen = source.index(after: titleOpen)
+            if titleOpen > source.startIndex,
+               source[source.index(before: titleOpen)] == "!" {
+                cursor = afterOpen
+                continue
+            }
+            guard let titleClose = source.range(of: "](", range: afterOpen..<source.endIndex) else {
+                break
+            }
+            let destinationStart = titleClose.upperBound
+            var scan = destinationStart
+            var depth = 1
+            var destinationEnd: String.Index?
+            while scan < source.endIndex {
+                let character = source[scan]
+                if character == "(" { depth += 1 }
+                if character == ")" {
+                    depth -= 1
+                    if depth == 0 {
+                        destinationEnd = scan
+                        break
+                    }
+                }
+                scan = source.index(after: scan)
+            }
+            guard let destinationEnd else { break }
+            let title = String(source[afterOpen..<titleClose.lowerBound])
+            let raw = String(source[destinationStart..<destinationEnd])
+            cursor = source.index(after: destinationEnd)
+            guard !title.isEmpty, !raw.isEmpty,
+                  !raw.contains(where: { $0.isWhitespace }) else { continue }
             let url = raw.hasPrefix("/")
                 ? URL(string: raw, relativeTo: AssistantNet.base)?.absoluteURL
                 : URL(string: raw)

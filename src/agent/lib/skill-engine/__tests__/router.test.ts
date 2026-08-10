@@ -42,11 +42,15 @@ describe('layer 2 — the rules that keywords can never get right', () => {
     for (const prompt of [
       'Create a report comparing image models.',
       'Create an analysis of the best image generators.',
+      'Create an image classification model for product photos.',
+      'Generate an image recognition API.',
       'একটি ইমেজ মডেল তুলনা রিপোর্ট তৈরি করো।',
     ]) {
       expect(applyRules(prompt)?.skill).not.toBe('alma-image-generation')
     }
     expect(applyRules('Compare image models, then create a premium launch poster.')?.skill)
+      .toBe('alma-image-generation')
+    expect(applyRules('Create an image of a fashion model wearing an ALMA jacket.')?.skill)
       .toBe('alma-image-generation')
   })
 

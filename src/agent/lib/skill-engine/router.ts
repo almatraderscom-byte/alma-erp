@@ -377,6 +377,8 @@ const IMAGE_GENERATION_VERB =
   /(?:create|generate|make|design|render|produce|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
 const NON_IMAGE_CREATION_OBJECT =
   /\b(?:report|comparison|compare|comparing|analysis|audit|summary|article|document|guide|list|research|presentation|spreadsheet|code|model|models)\b|(?:রিপোর্ট|তুলনা|বিশ্লেষণ|অডিট|সারাংশ|নথি|তালিকা|গবেষণা)/i
+const NON_IMAGE_OUTPUT_SUFFIX =
+  /^\s*(?:(?:classification|recognition|generation|diffusion|vision|machine[- ]learning|ml|ai)\s+){0,4}(?:model|system|api|code|library|framework|classifier)\b|^\s*(?:ক্লাসিফিকেশন|মডেল|সিস্টেম|কোড|লাইব্রেরি)\b/i
 
 function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end: number }> {
   const matches: Array<{ start: number; end: number }> = []
@@ -400,7 +402,9 @@ export const isImageGenerationAsk = (text: string): boolean => {
       ? text.slice(verb.end, output.start)
       : text.slice(output.end, verb.start)
     if (/[.!?\n]/.test(between)) return false
-    return !NON_IMAGE_CREATION_OBJECT.test(between)
+    if (NON_IMAGE_CREATION_OBJECT.test(between)) return false
+    const outputSuffix = text.slice(output.end, output.end + 100)
+    return !NON_IMAGE_OUTPUT_SUFFIX.test(outputSuffix)
   }))
 }
 
