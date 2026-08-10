@@ -15,7 +15,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { discoverSkills } from '@/agent/lib/skill-engine/loader'
-import { applyRules, routeSkill, type RouteDecision } from '@/agent/lib/skill-engine/router'
+import { applyRules, isHeadOnlyAnswerAsk, routeSkill, type RouteDecision } from '@/agent/lib/skill-engine/router'
 import path from 'path'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
@@ -55,7 +55,7 @@ export function shouldReleaseRouterPin(pinnedSkill: string, text: string): boole
   if (staleNarrowPins.has(pinnedSkill)) {
     const explicitErpScope =
       /(orders?|অর্ডার|approval|অনুমোদন|revenue|sales?|বিক্রি|stock|inventory|product|customer|pending\s+approval)/i
-    return explicitErpScope.test(t)
+    return explicitErpScope.test(t) || isHeadOnlyAnswerAsk(t)
   }
 
   return false

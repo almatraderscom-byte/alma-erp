@@ -23,6 +23,21 @@ import type { SkillMetadata } from '@/agent/lib/skill-engine/types'
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 
 describe('layer 2 — the rules that keywords can never get right', () => {
+  it('routes standalone image generation to the image pipeline, never incident diagnosis', () => {
+    for (const prompt of [
+      'Create a premium black-and-gold ALMA AI assistant launch poster. Portrait 4:5, friendly blue robot, ALMA AI. Return one image, no collage.',
+      'Create three separate visual variations of an ALMA AI poster so they can be swiped as 1/3, 2/3, and 3/3.',
+      'একটি ৪:৫ ALMA AI পোস্টার ছবি বানাও, collage নয়।',
+    ]) {
+      expect(applyRules(prompt)?.skill).toBe('alma-image-generation')
+    }
+  })
+
+  it('routes explicit official-source citations to cited research', () => {
+    expect(applyRules(
+      'Compare OpenAI and Anthropic using only official sources, inline citations, and a Sources list.',
+    )?.skill).toBe('alma-research')
+  })
   it('a fix order is a fix order', () => {
     expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
     expect(applyRules('product-code-110 এর meta description লিখে দাও')?.skill).toBe('seo-fixing-own-site')
@@ -116,6 +131,17 @@ describe('layer 3 — hand the close calls to the head, do not guess', () => {
     if (d.layer !== 'none') {
       expect(['model', 'keyword']).toContain(d.layer)
       if (d.needsModel) expect(d.candidates.length).toBeGreaterThan(1)
+    }
+  })
+
+  it('does not permanently pin a formatting-only answer to an unrelated skill', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const prompt of [
+      'Return one rich response containing a Swift retry code block, rendered LaTeX, Mermaid, form, audio and video cards.',
+      'Write exactly eight numbered steps for an ALMA AI launch; final step owner approval.',
+    ]) {
+      const decision = routeSkill(index, prompt)
+      expect(decision.skill).toBeNull()
     }
   })
 

@@ -494,6 +494,24 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(relaunched.composerDraft, "kill-এর পরও draft থাকবে")
     }
 
+    func testSelectionAndGeneratedImageReferenceRecoverWithDraft() {
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.selectedSessionIdentity.v2")
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.composerDrafts.v2")
+        let reference = AgentFileRef(
+            bucket: "agent-files", path: "generated/campaign.jpg", mediaType: "image/jpeg")
+
+        let first = AssistantVM()
+        first.composerDraft = "এই অংশ নিয়ে explain করো"
+        first.composerSelectionReference = "selected source sentence"
+        first.referencedFileRefs = [reference]
+
+        let relaunched = AssistantVM()
+        relaunched.debugRestoreComposerDraft()
+        XCTAssertEqual(relaunched.composerDraft, first.composerDraft)
+        XCTAssertEqual(relaunched.composerSelectionReference, "selected source sentence")
+        XCTAssertEqual(relaunched.referencedFileRefs, [reference])
+    }
+
     func testDurableDictationAudioRearmsRetryWhenMarkerWasLost() {
         let first = AssistantVM()
         first.loadDictationRecoveryFixture()
@@ -589,9 +607,12 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertTrue(ids.contains("claude-sonnet-4-6"))
         XCTAssertTrue(ids.contains("gemini-3.1-pro"))
         XCTAssertTrue(ids.contains("gpt-5.6-luna"))
+        XCTAssertTrue(ids.contains("or-qwen3-max"))
         XCTAssertTrue(ids.contains("or-deepseek-v4-flash"))
         XCTAssertTrue(ids.contains("xai-grok-4.20"))
         XCTAssertFalse(ids.contains("or-glm-4-32b"), "worker-only models must stay out of the picker")
+        XCTAssertEqual(AgentModelShortName.display("Qwen 3.7 Max (OpenRouter)"), "Qwen 3.7")
+        XCTAssertEqual(AgentModelShortName.display("Qwen3.5 Coder (OpenRouter)"), "Qwen3.5")
 
         let frames = AlmaMergeReadinessURLProtocol.interactivePreviewFrames(
             modelId: "claude-sonnet-4-6", prompt: "show me a recovery plan", turn: 7)
@@ -888,5 +909,32 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(
             AgentChatMessage.incrementalStreamSuffix(existing: "ha", incoming: "ha"),
             "ha", "short intentional repetition must remain possible")
+    }
+
+    func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
+        let citations = AgentMarkdownText.extractCitations("""
+        [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).
+        [ALMA costs](/agent/costs) ![ignored image](https://example.com/image.png)
+        """)
+        XCTAssertEqual(citations.count, 2)
+        XCTAssertEqual(citations[0].title, "OpenAI research")
+        XCTAssertEqual(citations[0].domain, "openai.com")
+        XCTAssertEqual(citations[0].dateLabel, "2026-08-09")
+        XCTAssertFalse(citations[0].isALMAInternal)
+        XCTAssertTrue(citations[1].isALMAInternal)
+        XCTAssertEqual(citations[1].url.path, "/agent/costs")
+    }
+
+    func testRichOutputFileRefsSurviveCanonicalColdLoad() throws {
+        let data = #"{"id":"rich","role":"assistant","content":[{"type":"text","text":"ready"},{"type":"file_ref","bucket":"agent-files","path":"one.jpg","mediaType":"image/jpeg"},{"type":"file_ref","bucket":"agent-files","path":"two.jpg","mediaType":"image/jpeg"}],"tokensIn":10,"tokensOut":5,"costUsd":0.04}"#.data(using: .utf8)!
+        let message = AgentChatMessage.from(try JSONDecoder().decode(AgentMessageWire.self, from: data))
+        XCTAssertEqual(message.fileRefs.count, 2)
+        XCTAssertEqual(message.imagePaths, ["one.jpg", "two.jpg"])
+        XCTAssertEqual(message.costUsd, "0.0400")
+    }
+
+    func testSyntaxHighlighterPreservesSourceText() {
+        let source = "let amount = 5000 // whole taka"
+        XCTAssertEqual(String(AgentSyntaxHighlighter.highlight(source, language: "swift").characters), source)
     }
 }

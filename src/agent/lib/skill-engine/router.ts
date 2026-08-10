@@ -360,6 +360,34 @@ const MEDIA_CONVERT_ASK =
 /** …but MAKING new media is Creative Studio's job, not a converter's. */
 const MEDIA_CREATE_ASK =
   /(banao|বানাও|toiri|তৈরি|generate|design|ডিজাইন|poster|পোস্টার|creative|ad\s*banao)/i
+
+/**
+ * A fresh creative image request.  This must be deterministic: falling through
+ * to token scoring lets the common words "ALMA" and "agent" select the
+ * incident-diagnosis skill, whose read-only allowlist then removes
+ * `generate_image` from the turn.
+ *
+ * Keep both halves mandatory.  Merely mentioning an image (for example,
+ * "inspect this image") is not generation, and a generic "create a report"
+ * is not an image job.
+ */
+const IMAGE_OUTPUT =
+  /(?:image|images|photo|photos|picture|pictures|poster|posters|illustration|illustrations|artwork|creative|visual\s+variation|visual\s+variations|ছবি|ফটো|পোস্টার|ইমেজ|ক্রিয়েটিভ|ভিজুয়াল)/i
+const IMAGE_GENERATION_VERB =
+  /(?:create|generate|make|design|render|produce|variation|variations|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
+export const isImageGenerationAsk = (text: string): boolean =>
+  IMAGE_OUTPUT.test(text) && IMAGE_GENERATION_VERB.test(text) && !MEDIA_DERIVE_ASK.test(text)
+
+/** Research/citation asks should use the existing cited-research procedure. */
+const CITED_RESEARCH_ASK =
+  /(?:official\s+(?:source|sources|documentation)|inline\s+citation|citations?|sources?\s+list|উৎস|সাইটেশন|সূত্র)/i
+
+/** Pure answer-format requests need the normal head, not a narrow workflow. */
+const ANSWER_FORMAT =
+  /(?:rich\s+response|syntax[- ]highlighted|code\s+block|rendered\s+latex|mermaid|interactive\s+form|exactly\s+[\d০-৯]+\s+numbered|ঠিক\s+[\d০-৯]+টি\s+numbered|numbered\s+steps?|bullet\s+list)/i
+const ANSWER_VERB = /(?:write|return|give|provide|show|list|লিখ|দাও|দেখাও|তৈরি\s+কর)/i
+export const isHeadOnlyAnswerAsk = (text: string): boolean =>
+  ANSWER_FORMAT.test(text) && ANSWER_VERB.test(text) && !isImageGenerationAsk(text)
 /**
  * …unless the sentence names a SOURCE and a TARGET: "video theke gif banao" is
  * a conversion wearing the word "banao" (Codex). Source-to-target beats the
@@ -428,6 +456,18 @@ export interface RouterRule {
  * the wrong place; the `why` is what gets stored in the trace.
  */
 export const RULES: RouterRule[] = [
+  {
+    id: 'image-generation',
+    skill: 'alma-image-generation',
+    test: (t) => isImageGenerationAsk(t),
+    why: 'নতুন ছবি/পোস্টার/variation বানাতে বলা হয়েছে — existing generate_image approval pipeline ব্যবহার হবে',
+  },
+  {
+    id: 'cited-research',
+    skill: 'alma-research',
+    test: (t) => CITED_RESEARCH_ASK.test(t),
+    why: 'official source ও inline citation চাওয়া হয়েছে — cited research procedure দরকার',
+  },
   {
     id: 'client-site-seo',
     skill: 'seo-fixing-client-site',
@@ -601,6 +641,16 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
       skill: null,
       layer: 'rule',
       reason: 'অনুমতির অনুরোধ — কোনো skill নয়, head নিজেই কার্ড বানাবে',
+      candidates: [],
+      needsModel: false,
+    }
+  }
+
+  if (isHeadOnlyAnswerAsk(t)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'answer-format: workflow নয় — unrestricted head-ই requested format-এ উত্তর দেবে',
       candidates: [],
       needsModel: false,
     }

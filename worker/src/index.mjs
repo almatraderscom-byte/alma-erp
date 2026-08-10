@@ -985,6 +985,7 @@ async function processImageGen(job) {
     conversationId,
     aspectRatio,
     imageSize,
+    variationCount,
     contentPipeline,
     referenceContract,
   } = payload
@@ -1012,6 +1013,8 @@ async function processImageGen(job) {
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
+  const { normalizeVariationCount, variationPrompt } = await import('./image/variation-contract.mjs')
+  const requestedVariationCount = normalizeVariationCount(variationCount)
   let totalCostUsd = 0
 
   async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
@@ -1110,8 +1113,37 @@ async function processImageGen(job) {
     },
   })
 
+  // One owner decision may authorize a small variation set.  Keep one pending
+  // action and one worker result, then return adjacent file refs so every chat
+  // surface can present a shared gallery/viewer rather than N unrelated cards.
+  const deliveredImages = [{ storagePath: qcResult.storagePath }]
+  for (let variationIndex = 2; variationIndex <= requestedVariationCount; variationIndex += 1) {
+    const prompt = variationPrompt(basePrompt, variationIndex, requestedVariationCount)
+    const generated = await generateImageToStorage({
+      ...genOpts,
+      prompt,
+      suffix: `v${variationIndex}`,
+    })
+    artifactsByPath.set(generated.storagePath, generated.original)
+    await logImageCost(
+      generated.storagePath,
+      generated.modelName,
+      generated.resolvedAspectRatio,
+      generated.resolvedImageSize,
+      100 + variationIndex,
+    )
+    await postProcessImage(supabase, `${pendingActionId}-v${variationIndex}`, generated.storagePath, {
+      original: generated.original,
+    })
+    deliveredImages.push({ storagePath: generated.storagePath })
+    console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} → ${generated.storagePath}`)
+  }
+
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
+    storagePaths: deliveredImages.map((image) => image.storagePath),
+    images: deliveredImages,
+    variationCount: deliveredImages.length,
     allPaths: [...artifactsByPath.keys()],
     conversationId,
     provider: genericProviderForModel(first.modelName),
