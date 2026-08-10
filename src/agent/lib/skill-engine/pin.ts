@@ -47,6 +47,12 @@ export function shouldReleaseRouterPin(pinnedSkill: string, text: string): boole
   const t = (text ?? '').trim()
   if (!t) return false
 
+  // A pure answer-format request belongs to the unrestricted head regardless
+  // of whichever workflow the previous turn used. Keeping an image/research
+  // pin here removes the renderer tools and makes a new prompt look like a
+  // continuation of unrelated work.
+  if (isHeadOnlyAnswerAsk(t)) return true
+
   const staleNarrowPins = new Set([
     'alma-staff-dispatch',
     'alma-agent-incident-diagnosis',

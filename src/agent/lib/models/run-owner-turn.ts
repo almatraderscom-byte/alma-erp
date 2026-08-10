@@ -12,6 +12,7 @@ import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
 import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
+import { isImageGenerationAsk } from '@/agent/lib/skill-engine/router'
 import {
   claimsCompletion,
   dependencyBlockMessage,
@@ -906,7 +907,7 @@ async function* runAlternateProviderTurn(
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     suppressWork ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    suppressWork || telegramFastPath
+    suppressWork || telegramFastPath || isImageGenerationAsk(lastUserText)
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
     suppressWork ? Promise.resolve([]) : getActivePlaybook(businessId),

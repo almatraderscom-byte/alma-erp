@@ -16,9 +16,15 @@ import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
 import { isIsolatedSkill, type IsolatedSkillPrompt } from '@/agent/lib/skill-engine/isolation'
 import { skillIsolationEnabled } from '@/agent/config'
 import type { SkillIndex, SkillManifest } from '@/agent/lib/skill-engine/types'
+import { applyRules } from '@/agent/lib/skill-engine/router'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 const MAX_SKILL_BODY_CHARS = 6000 // roadmap: activated SKILL.md ≤ ~5k tokens
+// Native rich-output P0 routes are product capabilities, not an experiment.
+// Keep the broad skill engine switch for every other package, but never make
+// image delivery or cited research disappear just because that global rollout
+// switch is off (the live iOS failure on 2026-08-10).
+const ALWAYS_ON_P0_SKILLS = new Set(['alma-image-generation', 'alma-research'])
 
 export { isSkillEngineEnabled }
 
@@ -93,8 +99,13 @@ export async function buildActiveSkills(
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
   const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
-  if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
+  const engineEnabled = await isSkillEngineEnabled()
+  const deterministic = engineEnabled ? null : applyRules(lastUserText)
+  const p0Skill = deterministic?.skill && ALWAYS_ON_P0_SKILLS.has(deterministic.skill)
+    ? deterministic.skill
+    : null
+  if (!engineEnabled && !p0Skill) return none
   try {
     const index = await getIndex()
     if (index.skills.length === 0) return none
@@ -102,7 +113,9 @@ export async function buildActiveSkills(
     // SK-3: with a conversation, the skill is PINNED — decided once, announced,
     // and stable for every later turn (one cache write instead of one per turn).
     // Without one (a worker task, a test), fall back to per-call selection.
-    let picked = selectSkills(index, lastUserText)
+    let picked = p0Skill
+      ? index.skills.filter((skill) => skill.name === p0Skill)
+      : selectSkills(index, lastUserText)
     let pinned: ActiveSkills['pinned'] = null
     if (opts.conversationId) {
       const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')

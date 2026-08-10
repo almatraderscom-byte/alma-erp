@@ -95,6 +95,12 @@ describe('the pin sticks', () => {
     expect(shouldReleaseRouterPin('seo-auditing-own-site', 'latest orders dekhao')).toBe(false)
   })
 
+  it('releases any router workflow for a pure rich-answer request', () => {
+    const prompt = 'Return one rich response with a syntax-highlighted code block and rendered LaTeX.'
+    expect(shouldReleaseRouterPin('alma-image-generation', prompt)).toBe(true)
+    expect(shouldReleaseRouterPin('alma-research', prompt)).toBe(true)
+  })
+
   it('keeps plain ERP record reads out of narrow workflow skills', () => {
     expect(isExplicitErpRecordRead('Show the three newest orders with order ID and status')).toBe(true)
     expect(isExplicitErpRecordRead('latest orders dekhao')).toBe(true)

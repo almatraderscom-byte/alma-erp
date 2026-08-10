@@ -16,6 +16,21 @@ describe('skill-engine runtime bridge (gated)', () => {
     expect(block).toBe('')
   })
 
+  it('keeps native P0 image generation active when the broad rollout switch is off', async () => {
+    const block = await buildActiveSkillsBlock(
+      'Create three separate visual variations of an ALMA AI poster as separate images.',
+    )
+    expect(block).toContain('alma-image-generation')
+    expect(block).toContain('generate_image')
+  })
+
+  it('keeps native P0 cited research active when the broad rollout switch is off', async () => {
+    const block = await buildActiveSkillsBlock(
+      'Compare OpenAI and Anthropic using only official sources with inline citations.',
+    )
+    expect(block).toContain('alma-research')
+  })
+
   it('when enabled, an active skill matching the message is injected', async () => {
     process.env.SKILL_ENGINE_ENABLED = 'true'
     // alma-owner-daily-briefing is status:active and keyword-matches "daily brief".
