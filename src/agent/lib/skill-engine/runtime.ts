@@ -105,7 +105,22 @@ export async function buildActiveSkills(
   const p0Skill = deterministic?.skill && ALWAYS_ON_P0_SKILLS.has(deterministic.skill)
     ? deterministic.skill
     : null
-  if (!engineEnabled && !p0Skill) return none
+  // A short continuation ("make another one", "check Gemini too") will not
+  // re-match the deterministic rule, but it still belongs to an already-pinned
+  // P0 workflow. Resolve that saved pin before the broad rollout gate returns.
+  // Non-P0 pins remain controlled by the global switch.
+  let resolvedPin: Awaited<ReturnType<typeof import('@/agent/lib/skill-engine/pin')['resolveSkillPin']>> | null = null
+  if (!engineEnabled && !p0Skill && opts.conversationId) {
+    try {
+      const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
+      resolvedPin = await resolveSkillPin(opts.conversationId, lastUserText)
+    } catch {
+      return none
+    }
+    if (!resolvedPin.skill || !ALWAYS_ON_P0_SKILLS.has(resolvedPin.skill)) return none
+  } else if (!engineEnabled && !p0Skill) {
+    return none
+  }
   try {
     const index = await getIndex()
     if (index.skills.length === 0) return none
@@ -119,7 +134,7 @@ export async function buildActiveSkills(
     let pinned: ActiveSkills['pinned'] = null
     if (opts.conversationId) {
       const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
-      const pin = await resolveSkillPin(opts.conversationId, lastUserText)
+      const pin = resolvedPin ?? await resolveSkillPin(opts.conversationId, lastUserText)
       picked = pin.skill ? index.skills.filter((s) => s.name === pin.skill) : []
       if (pin.skill) {
         pinned = {

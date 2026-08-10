@@ -10,6 +10,16 @@ export type CrossSurfaceSnippet = {
   updatedAt: string
 }
 
+/**
+ * True only when the owner explicitly points at a different/prior chat. This is
+ * intentionally narrower than generic words such as "before" or "previous":
+ * standalone image generation should not inherit stale conversations, while an
+ * explicit "use the campaign from the other chat" request must retain recall.
+ */
+export function referencesOtherConversation(text: string): boolean {
+  return /(?:\b(?:other|another|previous|prior|earlier|last)\s+(?:chat|conversation|thread)\b|\b(?:chat|conversation|thread)\s+(?:from|we\s+had\s+in)\s+(?:before|earlier)\b|(?:অন্য|আগের|পূর্বের)\s*(?:চ্যাট|কথোপকথন|কনভারসেশন|থ্রেড)|(?:onno|ager|agerer|purber)\s*(?:chat|conversation|thread))/i.test(text)
+}
+
 function extractAssistantText(content: unknown): string {
   if (!content) return ''
   if (typeof content === 'string') return content.slice(0, 200)

@@ -36,7 +36,7 @@ import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
-import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
+import { loadRecentOtherConversations, referencesOtherConversation } from '@/agent/lib/cross-surface'
 import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText, matchIntentPacks, CORE_PACK, DOMAIN_PACKS } from '@/agent/tools/state-router'
 import { workflowToolBinding } from '@/agent/lib/workflow-templates'
 import {
@@ -907,7 +907,9 @@ async function* runAlternateProviderTurn(
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     suppressWork ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    suppressWork || telegramFastPath || isImageGenerationAsk(lastUserText)
+    suppressWork
+      || telegramFastPath
+      || (isImageGenerationAsk(lastUserText) && !referencesOtherConversation(lastUserText))
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
     suppressWork ? Promise.resolve([]) : getActivePlaybook(businessId),

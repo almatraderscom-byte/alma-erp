@@ -1,7 +1,21 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+
+const mockPrisma = vi.hoisted(() => ({
+  agentKvSetting: { findUnique: vi.fn() },
+  agentConversation: { findUnique: vi.fn(), update: vi.fn() },
+}))
+vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
+
 import { buildActiveSkillsBlock, isSkillEngineEnabled, __resetSkillIndexCache } from '@/agent/lib/skill-engine/runtime'
 
 describe('skill-engine runtime bridge (gated)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({ pinnedSkill: null, skillRouteTrace: null })
+    mockPrisma.agentConversation.update.mockResolvedValue({})
+  })
+
   afterEach(() => {
     delete process.env.SKILL_ENGINE_ENABLED
     __resetSkillIndexCache()
@@ -29,6 +43,28 @@ describe('skill-engine runtime bridge (gated)', () => {
       'Compare OpenAI and Anthropic using only official sources with inline citations.',
     )
     expect(block).toContain('alma-research')
+  })
+
+  it('continues an existing P0 image pin when a short follow-up does not re-match the rule', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'alma-image-generation',
+      skillRouteTrace: { source: 'router', layer: 'rule', reason: 'image', candidates: [], at: '' },
+    })
+
+    const block = await buildActiveSkillsBlock('make another one', { conversationId: 'c1' })
+
+    expect(block).toContain('alma-image-generation')
+    expect(block).toContain('generate_image')
+    expect(mockPrisma.agentConversation.findUnique).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not revive a non-P0 pin while the broad rollout switch is off', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'seo-fixing-own-site',
+      skillRouteTrace: { source: 'router', layer: 'rule', reason: 'seo', candidates: [], at: '' },
+    })
+
+    expect(await buildActiveSkillsBlock('continue', { conversationId: 'c1' })).toBe('')
   })
 
   it('when enabled, an active skill matching the message is injected', async () => {
