@@ -17,6 +17,40 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(almaComposerDraftAppending("Budget: 500", to: ""), "Budget: 500")
     }
 
+    func testSideConversationRefusalDoesNotModifyCurrentComposer() async {
+        let vm = AssistantVM()
+        vm.conversationId = "current-conversation"
+        vm.composerDraft = "Owner's unsent draft"
+        vm.isStreaming = true
+
+        await vm.prepareSelectionQuestion("selected private text", inSideConversation: true)
+
+        XCTAssertEqual(vm.conversationId, "current-conversation")
+        XCTAssertEqual(vm.composerDraft, "Owner's unsent draft")
+        XCTAssertNil(vm.composerSelectionReference)
+    }
+
+    func testRegenerateReplaysAcceptedRowWithoutConsumingComposerContext() async {
+        let vm = AssistantVM()
+        vm.conversationId = "regenerate-conversation"
+        vm.composerDraft = "Unsent future request"
+        vm.composerSelectionReference = "Draft-only selection"
+        let draftRef = AgentFileRef(bucket: "agent", path: "draft.png", mediaType: "image/png")
+        let originalRef = AgentFileRef(bucket: "agent", path: "original.png", mediaType: "image/png")
+        vm.referencedFileRefs = [draftRef]
+        var accepted = AgentChatMessage(id: "accepted", role: .user, text: "Original accepted prompt")
+        accepted.fileRefs = [originalRef]
+
+        await vm.regenerateAcceptedPrompt(accepted)
+
+        XCTAssertEqual(vm.composerDraft, "Unsent future request")
+        XCTAssertEqual(vm.composerSelectionReference, "Draft-only selection")
+        XCTAssertEqual(vm.referencedFileRefs, [draftRef])
+        let replay = vm.messages.first { $0.role == .user && $0.text == "Original accepted prompt" }
+        XCTAssertEqual(replay?.fileRefs, [originalRef])
+        XCTAssertFalse(replay?.text.contains("Draft-only selection") ?? true)
+    }
+
     func testPenaltyApprovalDecisionFullHalfAndCustomResults() {
         let full = PenaltyApprovalDecision(
             originalPenalty: 1_000, requestedReduction: 1_000, amountText: "1000")

@@ -4710,10 +4710,11 @@ final class AssistantVM {
         }
     }
 
-    func newChat() async {
+    @discardableResult
+    func newChat() async -> Bool {
         if isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
-            return
+            return false
         }
         persistCurrentComposerDraft()
         stopStreaming(cancelServer: false)
@@ -4742,6 +4743,7 @@ final class AssistantVM {
         indexedSessionFileMessages = []
         sessionFileIndexConversationId = nil
         AlmaAgentHaptics.light()
+        return true
     }
 
     func editAcceptedPrompt(_ message: AgentChatMessage) {
@@ -4769,7 +4771,7 @@ final class AssistantVM {
         if inSideConversation {
             let project = currentProjectId
             let mode = permissionMode
-            await newChat()
+            guard await newChat() else { return }
             currentProjectId = project
             permissionMode = mode
         }
@@ -4790,7 +4792,7 @@ final class AssistantVM {
         let oldProject = currentProjectId
         let oldPermission = permissionMode
         if fork {
-            await newChat()
+            guard await newChat() else { return }
             currentProjectId = oldProject
             permissionMode = oldPermission
             modelId = selectedModelId
@@ -4809,8 +4811,13 @@ final class AssistantVM {
                 }
             }
         }
-        referencedFileRefs = message.fileRefs
-        send(message.text)
+        // Regeneration is an exact replay of the accepted owner row. It must
+        // never consume a quote, attachment upload, or file reference currently
+        // staged in the composer for a different future message.
+        startPreparedTurn(
+            text: message.text,
+            files: message.fileRefs,
+            clientMessageId: UUID().uuidString)
     }
 
     #if DEBUG

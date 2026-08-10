@@ -374,7 +374,7 @@ const MEDIA_CREATE_ASK =
 const IMAGE_OUTPUT =
   /(?:image|images|photo|photos|picture|pictures|poster|posters|illustration|illustrations|artwork|creative|visual\s+variation|visual\s+variations|ছবি|ফটো|পোস্টার|ইমেজ|ক্রিয়েটিভ|ভিজুয়াল)/i
 const IMAGE_GENERATION_VERB =
-  /(?:create|generate|make|design|render|produce|variation|variations|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
+  /(?:create|generate|make|design|render|produce|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
 export const isImageGenerationAsk = (text: string): boolean =>
   IMAGE_OUTPUT.test(text) && IMAGE_GENERATION_VERB.test(text) && !MEDIA_DERIVE_ASK.test(text)
 
@@ -646,16 +646,6 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     }
   }
 
-  if (isHeadOnlyAnswerAsk(t)) {
-    return {
-      skill: null,
-      layer: 'rule',
-      reason: 'answer-format: workflow নয় — unrestricted head-ই requested format-এ উত্তর দেবে',
-      candidates: [],
-      needsModel: false,
-    }
-  }
-
   // Layer 2 — a rule wins outright, even over a strong keyword score.
   const rule = applyRules(t)
   if (rule) {
@@ -666,6 +656,19 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
       candidates: [{ name: rule.skill, score: Infinity }],
       // A rule may name a skill that has not been written yet (SK-5). Say so
       // rather than silently falling through to a worse answer.
+      needsModel: false,
+    }
+  }
+
+  // Formatting is only a head-only request when no concrete workflow rule
+  // matched. "Fix SEO and give numbered steps" must retain the SEO procedure;
+  // "return exactly eight steps" still avoids an irrelevant keyword pin.
+  if (isHeadOnlyAnswerAsk(t)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'answer-format: workflow নয় — unrestricted head-ই requested format-এ উত্তর দেবে',
+      candidates: [],
       needsModel: false,
     }
   }

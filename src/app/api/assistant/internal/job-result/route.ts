@@ -18,7 +18,7 @@ import {
   postAssistantMessage,
 } from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
-import { imageResultPaths } from '@/agent/lib/image-result-contract'
+import { imageResultPaths, imageResultQcWarnings } from '@/agent/lib/image-result-contract'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
@@ -340,11 +340,9 @@ export async function POST(req: NextRequest) {
         // couldn't see the preview he was asked to confirm (2026-07-13).
         messageImagePaths = resultPaths
         resumeAgentAfterImage = true
-        const qcFlag = typeof data?.qc === 'object' && data.qc !== null
-          ? (data.qc as { flagged?: string }).flagged
-          : undefined
-        if (qcFlag) {
-          messageText += `\n\n_${qcFlag}_`
+        const qcWarnings = imageResultQcWarnings(data)
+        if (qcWarnings.length) {
+          messageText += `\n\n_${qcWarnings.join(' · ')}_`
         }
       } catch (signErr) {
         const detail = signErr instanceof Error ? signErr.message : String(signErr)

@@ -22,3 +22,22 @@ export function imageResultPaths(data: Record<string, unknown> | undefined): str
   }
   return paths
 }
+
+/** Owner-visible QC warnings for every delivered variation, not only image 1. */
+export function imageResultQcWarnings(data: Record<string, unknown> | undefined): string[] {
+  if (!data) return []
+  const variationQc = Array.isArray(data.variationQc) ? data.variationQc : null
+  const qcRows = variationQc ?? [data.qc]
+  const warnings: string[] = []
+  const seen = new Set<string>()
+  qcRows.forEach((qc, index) => {
+    if (!qc || typeof qc !== 'object') return
+    const flagged = (qc as { flagged?: unknown }).flagged
+    if (typeof flagged !== 'string' || !flagged.trim()) return
+    const warning = variationQc ? `Image ${index + 1}: ${flagged.trim()}` : flagged.trim()
+    if (seen.has(warning)) return
+    seen.add(warning)
+    warnings.push(warning)
+  })
+  return warnings
+}

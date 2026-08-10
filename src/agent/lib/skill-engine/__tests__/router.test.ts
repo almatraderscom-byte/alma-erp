@@ -33,6 +33,11 @@ describe('layer 2 — the rules that keywords can never get right', () => {
     }
   })
 
+  it('does not treat the noun "variations" as image creation intent', () => {
+    expect(applyRules('Compare these image variations and tell me which is best')?.skill)
+      .not.toBe('alma-image-generation')
+  })
+
   it('routes explicit official-source citations to cited research', () => {
     expect(applyRules(
       'Compare OpenAI and Anthropic using only official sources, inline citations, and a Sources list.',
@@ -86,6 +91,12 @@ describe('layer 2 — the rules that keywords can never get right', () => {
 })
 
 describe('ADS-0 regression — the whole router, not just the rule layer', () => {
+  it('keeps a concrete workflow even when the owner requests numbered formatting', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    expect(routeSkill(index, 'Fix almatraders.com SEO and give numbered steps').skill)
+      .toBe('seo-fixing-own-site')
+  })
+
   it('an ads question pins NO skill on the index production actually serves', async () => {
     // Rules were only half the story: with the rule removed, the keyword layer
     // still had to decline. It does — the weak-match guard fires rather than

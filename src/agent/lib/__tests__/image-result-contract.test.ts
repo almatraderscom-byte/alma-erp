@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imageResultPaths } from '@/agent/lib/image-result-contract'
+import { imageResultPaths, imageResultQcWarnings } from '@/agent/lib/image-result-contract'
 
 describe('image result delivery contract', () => {
   it('keeps legacy single-image callbacks working', () => {
@@ -16,5 +16,21 @@ describe('image result delivery contract', () => {
         { storagePath: 'generated/three.png' },
       ],
     })).toEqual(['generated/one.png', 'generated/two.png', 'generated/three.png'])
+  })
+
+  it('surfaces a QC warning from every flagged variation', () => {
+    expect(imageResultQcWarnings({
+      qc: { flagged: 'first warning' },
+      variationQc: [
+        { pass: true },
+        { pass: false, flagged: 'reference mismatch' },
+        { pass: false, flagged: 'text unreadable' },
+      ],
+    })).toEqual([
+      'Image 2: reference mismatch',
+      'Image 3: text unreadable',
+    ])
+    expect(imageResultQcWarnings({ qc: { flagged: 'legacy warning' } }))
+      .toEqual(['legacy warning'])
   })
 })
