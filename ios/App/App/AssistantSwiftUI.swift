@@ -823,6 +823,14 @@ struct AgentFileRef: Codable, Hashable {
     let mediaType: String
 }
 
+/// Keep the owner's picker/reference order while removing duplicate uploads.
+/// A Set alone is intentionally not returned because its iteration order is
+/// not a transport contract ("first image" must remain the first image).
+func almaOrderedUniqueFileRefs(_ refs: [AgentFileRef]) -> [AgentFileRef] {
+    var seen = Set<AgentFileRef>()
+    return refs.filter { seen.insert($0).inserted }
+}
+
 struct AgentSessionFile: Identifiable, Equatable {
     enum Origin: String { case uploaded, generated }
     let id: String
@@ -5458,7 +5466,7 @@ final class AssistantVM {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
         let reusedFiles = structuredAutoContinue ? [] : referencedFileRefs
-        let readyFiles = Array(Set(uploadedFiles + reusedFiles))
+        let readyFiles = almaOrderedUniqueFileRefs(uploadedFiles + reusedFiles)
         guard !text.isEmpty || !pendingFiles.isEmpty || !reusedFiles.isEmpty || structuredAutoContinue else { return }
         if !structuredAutoContinue, readyPendingFiles.count != pendingFiles.count {
             let clientMessageId = UUID().uuidString
@@ -8377,7 +8385,7 @@ final class AssistantVM {
             if case .ready(let ref) = file.state { return ref }
             return nil
         }
-        let refs = Array(Set(uploadedRefs + (pending.referencedFiles ?? [])))
+        let refs = almaOrderedUniqueFileRefs(uploadedRefs + (pending.referencedFiles ?? []))
         upsertLocalOwnerIntent(
             clientMessageId: pending.clientMessageId, text: pending.text,
             files: refs, attachmentIds: pending.attachmentIds, state: .queued)
@@ -13459,6 +13467,14 @@ enum AlmaComposerPrefill {
     }
 }
 
+func almaComposerDraftAppending(_ incoming: String, to existing: String) -> String {
+    let current = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+    let addition = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !current.isEmpty else { return addition }
+    guard !addition.isEmpty else { return current }
+    return current + "\n\n" + addition
+}
+
 enum AlmaAssistantLibraryRequest {
     static let note = Notification.Name("almaAssistantOpenSessionLibrary")
 }
@@ -14061,7 +14077,7 @@ struct AgentComposerView: View {
     private func consumePrefill() {
         guard let text = AlmaComposerPrefill.pending else { return }
         AlmaComposerPrefill.pending = nil
-        vm.composerDraft = text
+        vm.composerDraft = almaComposerDraftAppending(text, to: vm.composerDraft)
         focused = true
     }
 

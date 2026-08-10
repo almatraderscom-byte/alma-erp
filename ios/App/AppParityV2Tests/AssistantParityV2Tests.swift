@@ -3,6 +3,20 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testAttachmentDeduplicationPreservesOwnerSelectionOrder() {
+        let first = AgentFileRef(bucket: "agent", path: "first.png", mediaType: "image/png")
+        let second = AgentFileRef(bucket: "agent", path: "second.png", mediaType: "image/png")
+
+        XCTAssertEqual(almaOrderedUniqueFileRefs([first, second, first]), [first, second])
+    }
+
+    func testInteractiveFormResponseAppendsWithoutDestroyingDraft() {
+        XCTAssertEqual(
+            almaComposerDraftAppending("Budget: 500\nNote: Launch", to: "Keep this owner draft"),
+            "Keep this owner draft\n\nBudget: 500\nNote: Launch")
+        XCTAssertEqual(almaComposerDraftAppending("Budget: 500", to: ""), "Budget: 500")
+    }
+
     func testPenaltyApprovalDecisionFullHalfAndCustomResults() {
         let full = PenaltyApprovalDecision(
             originalPenalty: 1_000, requestedReduction: 1_000, amountText: "1000")
