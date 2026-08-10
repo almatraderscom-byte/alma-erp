@@ -16,9 +16,15 @@ import { isSkillEngineEnabled } from '@/agent/lib/skill-engine/enabled'
 import { isIsolatedSkill, type IsolatedSkillPrompt } from '@/agent/lib/skill-engine/isolation'
 import { skillIsolationEnabled } from '@/agent/config'
 import type { SkillIndex, SkillManifest } from '@/agent/lib/skill-engine/types'
+import { applyRules } from '@/agent/lib/skill-engine/router'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 const MAX_SKILL_BODY_CHARS = 6000 // roadmap: activated SKILL.md ≤ ~5k tokens
+// Native rich-output P0 routes are product capabilities, not an experiment.
+// Keep the broad skill engine switch for every other package, but never make
+// image delivery or cited research disappear just because that global rollout
+// switch is off (the live iOS failure on 2026-08-10).
+const ALWAYS_ON_P0_SKILLS = new Set(['alma-image-generation', 'alma-research'])
 
 export { isSkillEngineEnabled }
 
@@ -93,8 +99,28 @@ export async function buildActiveSkills(
   opts: { conversationId?: string } = {},
 ): Promise<ActiveSkills> {
   const none: ActiveSkills = { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
-  if (!(await isSkillEngineEnabled())) return none
   if (!lastUserText || !lastUserText.trim()) return none
+  const engineEnabled = await isSkillEngineEnabled()
+  const deterministic = engineEnabled ? null : applyRules(lastUserText)
+  const p0Skill = deterministic?.skill && ALWAYS_ON_P0_SKILLS.has(deterministic.skill)
+    ? deterministic.skill
+    : null
+  // A short continuation ("make another one", "check Gemini too") will not
+  // re-match the deterministic rule, but it still belongs to an already-pinned
+  // P0 workflow. Resolve that saved pin before the broad rollout gate returns.
+  // Non-P0 pins remain controlled by the global switch.
+  let resolvedPin: Awaited<ReturnType<typeof import('@/agent/lib/skill-engine/pin')['resolveSkillPin']>> | null = null
+  if (!engineEnabled && !p0Skill && opts.conversationId) {
+    try {
+      const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
+      resolvedPin = await resolveSkillPin(opts.conversationId, lastUserText)
+    } catch {
+      return none
+    }
+    if (!resolvedPin.skill || !ALWAYS_ON_P0_SKILLS.has(resolvedPin.skill)) return none
+  } else if (!engineEnabled && !p0Skill) {
+    return none
+  }
   try {
     const index = await getIndex()
     if (index.skills.length === 0) return none
@@ -102,16 +128,24 @@ export async function buildActiveSkills(
     // SK-3: with a conversation, the skill is PINNED — decided once, announced,
     // and stable for every later turn (one cache write instead of one per turn).
     // Without one (a worker task, a test), fall back to per-call selection.
-    let picked = selectSkills(index, lastUserText)
+    let picked = p0Skill
+      ? index.skills.filter((skill) => skill.name === p0Skill)
+      : selectSkills(index, lastUserText)
     let pinned: ActiveSkills['pinned'] = null
     if (opts.conversationId) {
       const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
-      const pin = await resolveSkillPin(opts.conversationId, lastUserText)
-      picked = pin.skill ? index.skills.filter((s) => s.name === pin.skill) : []
-      if (pin.skill) {
+      const pin = resolvedPin ?? await resolveSkillPin(opts.conversationId, lastUserText)
+      // The disabled engine may never activate a non-P0 owner/router pin. A
+      // fresh deterministic P0 request still runs its product capability for
+      // this turn without overwriting the owner's saved non-P0 preference.
+      const effectiveSkill = !engineEnabled && pin.skill && !ALWAYS_ON_P0_SKILLS.has(pin.skill)
+        ? p0Skill
+        : pin.skill
+      picked = effectiveSkill ? index.skills.filter((s) => s.name === effectiveSkill) : []
+      if (effectiveSkill) {
         pinned = {
-          skill: pin.skill,
-          source: pin.source === 'owner' ? 'owner' : 'router',
+          skill: effectiveSkill,
+          source: effectiveSkill === pin.skill && pin.source === 'owner' ? 'owner' : 'router',
           layer: pin.trace?.layer ?? 'pinned',
           reason: pin.trace?.reason ?? 'আগে থেকেই এই চ্যাটে pin করা',
         }

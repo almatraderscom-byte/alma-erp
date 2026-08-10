@@ -22,7 +22,7 @@ import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
-import { buildActiveSkillsBlock } from '@/agent/lib/skill-engine/runtime'
+import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
@@ -35,7 +35,7 @@ import { isVoiceInstructionText, ownerRequestedCallback } from '@/agent/lib/voic
 import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
-import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
+import { loadRecentOtherConversations, shouldSuppressCrossSurfaceForImage } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
@@ -1047,15 +1047,25 @@ export async function* runAgentTurn(
     }
   }
 
+  const activeSkillsPromise = personalMode
+    ? Promise.resolve(null)
+    : buildActiveSkills(lastUserText, { conversationId })
+  const crossSurfacePromise = (async () => {
+    if (personalMode || telegramFastPath) return []
+    const skills = await activeSkillsPromise
+    const activeSkill = skills?.pinned?.skill ?? skills?.manifest?.name ?? null
+    return shouldSuppressCrossSurfaceForImage(lastUserText, activeSkill)
+      ? []
+      : loadRecentOtherConversations(conversationId, 5)
+  })()
+
   // Load pinned memories, relevant memories, and tool selection in parallel
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    personalMode || telegramFastPath
-      ? Promise.resolve([])
-      : loadRecentOtherConversations(conversationId, 5),
+    crossSurfacePromise,
     personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
     personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch((err) => {
       console.warn('[core] outcomeLearnings fetch failed:', err instanceof Error ? err.message : String(err))
@@ -1128,7 +1138,7 @@ export async function* runAgentTurn(
 
   // Skill Engine V2 (gated OFF by default) — same on-demand skill selection as the
   // normalized path in run-owner-turn; '' when disabled/personal/no match (fail-open).
-  const activeSkillsBlock = personalMode ? '' : await buildActiveSkillsBlock(lastUserText, { conversationId })
+  const activeSkillsBlock = (await activeSkillsPromise)?.block ?? ''
 
   // Parity with run-owner-turn: name the dead capabilities before the first step.
   const deadCapabilityBlock = capabilityPreflightBlock()
