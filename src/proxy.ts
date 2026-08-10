@@ -7,6 +7,7 @@ import type { BusinessId } from '@/lib/businesses'
 import { businessAllowed } from '@/lib/business-access'
 import { isAuthPath, isPublicAppPath } from '@/lib/auth-paths'
 import { isAssistantWorkerRequest } from '@/lib/agent-internal-auth'
+import { resolveActiveSessionToken } from '@/lib/session-authorization'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
 
@@ -185,7 +186,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
   }
 
-  const token = await getToken({ req, secret })
+  const rawToken = await getToken({ req, secret })
 
   // Auth pages are always served. Client-side session handles post-login redirect.
   // Edge redirect here caused ping-pong when JWT existed but /api/auth/session failed.
@@ -211,6 +212,11 @@ export async function proxy(req: NextRequest) {
     if (limited) return limited
   }
 
+  if (pathname === '/api/auth/session' && rawToken?.sub) {
+    const activeToken = await resolveActiveSessionToken(rawToken)
+    if (!activeToken) return revokedSessionResponse(req, true)
+  }
+
   if (isPublicApiOrShare(pathname)) {
     return NextResponse.next()
   }
@@ -220,7 +226,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next()
   }
 
-  if (!token?.sub) {
+  if (!rawToken?.sub) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -232,6 +238,9 @@ export async function proxy(req: NextRequest) {
     }
     return NextResponse.redirect(url)
   }
+
+  const token = await resolveActiveSessionToken(rawToken)
+  if (!token) return revokedSessionResponse(req, pathname.startsWith('/api/'))
 
   if (pathname.startsWith('/api/')) {
     const role = normalizeAlmaRole(token.role as string)
@@ -266,6 +275,25 @@ export async function proxy(req: NextRequest) {
   }
 
   return NextResponse.next()
+}
+
+function revokedSessionResponse(req: NextRequest, api: boolean) {
+  const response = api
+    ? NextResponse.json(api && req.nextUrl.pathname === '/api/auth/session' ? {} : { error: 'Account inactive' }, {
+        status: req.nextUrl.pathname === '/api/auth/session' ? 200 : 401,
+      })
+    : NextResponse.redirect(new URL('/login', req.url))
+
+  for (const name of ['__Secure-next-auth.session-token', 'next-auth.session-token']) {
+    response.cookies.set(name, '', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: name.startsWith('__Secure-'),
+      path: '/',
+      expires: new Date(0),
+    })
+  }
+  return response
 }
 
 export const config = {

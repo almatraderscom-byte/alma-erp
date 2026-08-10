@@ -1,11 +1,11 @@
 import { getToken } from 'next-auth/jwt'
 import type { NextRequest } from 'next/server'
-import type { NextResponse } from 'next/server'
 import type { UserRole } from '@prisma/client'
 import type { AlmaRole } from '@/lib/roles'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { businessAllowed } from '@/lib/business-access'
 import { apiFailure } from '@/lib/safe-api-response'
+import { resolveActiveSessionToken } from '@/lib/session-authorization'
 
 function isAuthBuildPhase() {
   return (
@@ -21,7 +21,8 @@ export async function getJwt(req: NextRequest) {
     if (isAuthBuildPhase()) return null
     throw new Error('NEXTAUTH_SECRET is not configured')
   }
-  return getToken({ req, secret })
+  const token = await getToken({ req, secret })
+  return resolveActiveSessionToken(token)
 }
 
 /** Block read-only VIEWER from mutating routes. */

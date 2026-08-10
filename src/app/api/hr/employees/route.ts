@@ -79,7 +79,6 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
   const employeeIds = new Set(roster.employees.map(e => e.emp_id))
   const users = await prisma.user.findMany({
     where: {
-      active: true,
       role: { not: 'SUPER_ADMIN' },
       businessAccess: { contains: businessId },
       ...(process.env.NODE_ENV === 'production' && process.env.ENABLE_DEMO_USERS !== 'true'
@@ -102,6 +101,7 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
       employeeIdGas: true,
       salaryHint: true,
       joiningDate: true,
+      active: true,
     },
   })
 
@@ -125,7 +125,8 @@ async function linkedEmployeeUsers(req: NextRequest, businessId: string, roster:
       orphanEmployeeId,
       matchedEmployeeId: suggested?.emp_id || null,
       matchedEmployeeName: suggested?.name || null,
-      selectable: !linked,
+      selectable: user.active && !linked,
+      active: user.active,
     }
   })
 }

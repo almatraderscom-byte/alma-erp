@@ -40,6 +40,16 @@ async function notifyStaff(
   tx: Tx,
   args: { staffId: string; taskId: string; kind: string; title: string; body?: string; businessId: string },
 ) {
+  const active = await tx.agentStaff.findFirst({
+    where: {
+      id: args.staffId,
+      active: true,
+      OR: [{ userId: null }, { user: { active: true } }],
+    },
+    select: { id: true },
+  })
+  if (!active) return
+
   await tx.officeNotification.create({
     data: {
       recipientStaffId: args.staffId,
@@ -55,8 +65,43 @@ async function notifyStaff(
 async function loadTask(taskId: string, businessId: string) {
   return prisma.agentStaffTask.findFirst({
     where: { id: taskId, businessId },
-    include: { staff: { select: { id: true, name: true, telegramChatId: true, ntfyTopic: true } } },
+    include: {
+      staff: {
+        select: {
+          id: true,
+          name: true,
+          active: true,
+          userId: true,
+          user: { select: { active: true } },
+          telegramChatId: true,
+          ntfyTopic: true,
+        },
+      },
+    },
   })
+}
+
+function canReceiveTaskNotification(staff: {
+  active: boolean
+  userId: string | null
+  user: { active: boolean } | null
+}) {
+  return staff.active && (!staff.userId || staff.user?.active === true)
+}
+
+async function pushTaskStaffPing(
+  staff: {
+    active: boolean
+    userId: string | null
+    user: { active: boolean } | null
+    telegramChatId: string | null
+    ntfyTopic: string | null
+  },
+  title: string,
+  body?: string,
+) {
+  if (!canReceiveTaskNotification(staff)) return
+  await pushStaffPing(staff, title, body)
 }
 
 export type ActionResult = { ok: true; status: string } | { ok: false; error: string; code: number }
@@ -88,7 +133,7 @@ export async function approveTask(taskId: string, businessId: string): Promise<A
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'কাজ অনুমোদিত ✅', task.title)
+  await pushTaskStaffPing(task.staff, 'কাজ অনুমোদিত ✅', task.title)
   return { ok: true, status: 'done' }
 }
 
@@ -142,7 +187,7 @@ export async function redoTask(taskId: string, businessId: string, note?: string
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'সংশোধন দরকার 🔄', trimmed ?? task.title)
+  await pushTaskStaffPing(task.staff, 'সংশোধন দরকার 🔄', trimmed ?? task.title)
   return { ok: true, status: 'sent' }
 }
 
@@ -187,7 +232,7 @@ export async function addComment(
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'নতুন মন্তব্য 💬', body)
+  await pushTaskStaffPing(task.staff, 'নতুন মন্তব্য 💬', body)
   return { ok: true, status: task.status }
 }
 
@@ -199,6 +244,9 @@ export async function requestUpdate(
 ): Promise<ActionResult> {
   const task = await loadTask(taskId, businessId)
   if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+  if (!canReceiveTaskNotification(task.staff) || ['cancelled', 'rejected', 'done', 'completed'].includes(task.status)) {
+    return { ok: false, error: 'staff_inactive_or_task_closed', code: 409 }
+  }
 
   const note = args.note?.trim() || null
   const by = args.by ?? 'owner'
@@ -238,7 +286,7 @@ export async function requestUpdate(
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'কাজের আপডেট দিন ⏰', note ?? task.title)
+  await pushTaskStaffPing(task.staff, 'কাজের আপডেট দিন ⏰', note ?? task.title)
   return { ok: true, status: task.status }
 }
 
@@ -286,7 +334,7 @@ export async function setTaskDue(taskId: string, businessId: string, dueAtIso: s
       })
     }
   })
-  if (dueAt) await pushStaffPing(task.staff, 'কাজের সময়সীমা ⏳', `"${task.title}" — ${bnDueLabel(dueAt)} এর মধ্যে শেষ করুন`)
+  if (dueAt) await pushTaskStaffPing(task.staff, 'কাজের সময়সীমা ⏳', `"${task.title}" — ${bnDueLabel(dueAt)} এর মধ্যে শেষ করুন`)
   return { ok: true, status: task.status }
 }
 
@@ -324,7 +372,7 @@ export async function decideSelfInitiated(
       businessId,
     })
   })
-  await pushStaffPing(task.staff, approve ? 'আপনার কাজ অনুমোদিত ✨' : 'কাজ অনুমোদন হয়নি', task.title)
+  await pushTaskStaffPing(task.staff, approve ? 'আপনার কাজ অনুমোদিত ✨' : 'কাজ অনুমোদন হয়নি', task.title)
   return { ok: true, status: approve ? 'sent' : 'cancelled' }
 }
 
@@ -380,7 +428,7 @@ export async function agentAutoVerify(
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'কাজ যাচাই হয়েছে ✅', task.title)
+  await pushTaskStaffPing(task.staff, 'কাজ যাচাই হয়েছে ✅', task.title)
   return { ok: true, status: 'done' }
 }
 
@@ -427,7 +475,7 @@ export async function agentRequestRedo(taskId: string, businessId: string, note:
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'সংশোধন দরকার 🔄', trimmed)
+  await pushTaskStaffPing(task.staff, 'সংশোধন দরকার 🔄', trimmed)
   return { ok: true, status: 'sent' }
 }
 
@@ -517,7 +565,7 @@ export async function agentAcceptUnverified(
       businessId,
     })
   })
-  await pushStaffPing(task.staff, 'কাজ গ্রহণ করা হয়েছে ✅', task.title)
+  await pushTaskStaffPing(task.staff, 'কাজ গ্রহণ করা হয়েছে ✅', task.title)
   return { ok: true, status: 'done' }
 }
 

@@ -7,6 +7,7 @@
 import { sendTelegramMessage } from '@/lib/trading-telegram-bot'
 import { sendStaffNtfy } from '@/agent/lib/notify-owner'
 import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/lib/notification-sound'
+import { prisma } from '@/lib/prisma'
 
 const APP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
 const OFFICE_URL = `${APP_BASE}/portal/office`
@@ -31,9 +32,20 @@ export async function pushStaffDevice(
   data: Record<string, unknown> = {},
   highPriority = false,
 ): Promise<DevicePushResult> {
-  const ids = [...new Set(userIds.filter(Boolean))]
+  const requestedIds = [...new Set(userIds.filter(Boolean))]
   try {
-    if (ids.length === 0) return { ok: true, attempted: 0, status: null, reason: 'no_targets' }
+    if (requestedIds.length === 0) return { ok: true, attempted: 0, status: null, reason: 'no_targets' }
+
+    // External push aliases remain valid after a browser/app session was issued.
+    // Re-check the canonical user record immediately before every send so an
+    // offboarded employee cannot receive a stale queued ring or notification.
+    const activeUsers = await prisma.user.findMany({
+      where: { id: { in: requestedIds }, active: true },
+      select: { id: true },
+    })
+    const ids = activeUsers.map((user) => user.id)
+    if (ids.length === 0) return { ok: true, attempted: 0, status: null, reason: 'no_active_targets' }
+
     const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID
     const apiKey = process.env.ONESIGNAL_REST_API_KEY
     if (!appId || !apiKey) return { ok: false, attempted: ids.length, status: null, reason: 'onesignal_unconfigured' }
@@ -78,7 +90,7 @@ export async function pushStaffDevice(
     }
   } catch (err) {
     console.warn('[office-notify] staff device push failed:', (err as Error)?.message)
-    return { ok: false, attempted: ids.length, status: null, reason: 'request_failed' }
+    return { ok: false, attempted: requestedIds.length, status: null, reason: 'request_failed' }
   }
 }
 

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getJwt, requireRoles } from '@/lib/api-guards'
@@ -43,6 +42,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (body.role && !canAssignRole(actorRole, body.role)) {
       return NextResponse.json({ error: 'Cannot assign this role' }, { status: 403 })
     }
+    if (body.active === false) {
+      return NextResponse.json(
+        { error: 'Use the offboarding action so every staff access channel is revoked together.' },
+        { status: 400 },
+      )
+    }
     const targetRole = body.role ?? existing.role
     const systemOwner = isSystemOwner(targetRole)
     const phone = body.phone !== undefined ? normalizeBdPhone(body.phone) : undefined
@@ -59,7 +64,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.businessAccess !== undefined ? { businessAccess: body.businessAccess.trim() } : {}),
         ...(systemOwner ? { employeeIdGas: null } : body.employeeIdGas !== undefined ? { employeeIdGas: body.employeeIdGas } : {}),
-        ...(body.active !== undefined ? { active: body.active } : {}),
+        ...(body.active !== undefined
+          ? {
+              active: body.active,
+              ...(body.active
+                ? {
+                    offboardedAt: null,
+                    hrOffboardedAt: null,
+                    offboardedBy: null,
+                    offboardingReason: null,
+                  }
+                : {}),
+            }
+          : {}),
         ...(body.profileImageUrl !== undefined ? { profileImageUrl: body.profileImageUrl } : {}),
         ...(systemOwner ? { salaryHint: null } : body.salaryHint !== undefined ? { salaryHint: body.salaryHint } : {}),
         ...(systemOwner

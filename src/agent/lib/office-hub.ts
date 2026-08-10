@@ -321,7 +321,17 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       where: { businessId, proposedFor: todayDate, status: 'done' },
     }),
     prisma.agentStaffTask.findMany({
-      where: { businessId, updateRequestedAt: { not: null } },
+      // Historical tasks may retain update-request timestamps after an employee
+      // is offboarded. They belong in history, never in today's actionable
+      // Call/Remind queue.
+      where: {
+        businessId,
+        updateRequestedAt: { not: null },
+        staff: {
+          active: true,
+          OR: [{ userId: null }, { user: { active: true } }],
+        },
+      },
       orderBy: { updateRequestedAt: 'asc' },
       select: {
         id: true,
