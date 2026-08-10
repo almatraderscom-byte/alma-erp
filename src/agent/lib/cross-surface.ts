@@ -2,6 +2,7 @@
  * Recent conversation snippets from OTHER surfaces (web vs Telegram).
  */
 import { prisma } from '@/lib/prisma'
+import { isImageGenerationAsk } from '@/agent/lib/skill-engine/router'
 
 export type CrossSurfaceSnippet = {
   conversationId: string
@@ -18,6 +19,13 @@ export type CrossSurfaceSnippet = {
  */
 export function referencesOtherConversation(text: string): boolean {
   return /(?:\b(?:other|another|different|separate|previous|prior|earlier|last)\s+(?:chat|conversation|thread)\b|\b(?:chat|conversation|thread)\s+(?:from|we\s+had\s+in)\s+(?:before|earlier)\b|(?:অন্য|আলাদা|আগের|পূর্বের)\s*(?:চ্যাট|কথোপকথন|কনভারসেশন|থ্রেড)|(?:onno|alada|ager|agerer|purber)\s*(?:chat|conversation|thread))/i.test(text)
+}
+
+/** Standalone image turns, including noun-less continuations of a pinned image
+ * workflow, must not inherit unrelated chat summaries. */
+export function shouldSuppressCrossSurfaceForImage(text: string, activeSkill: string | null): boolean {
+  const imageWorkflow = activeSkill === 'alma-image-generation' || isImageGenerationAsk(text)
+  return imageWorkflow && !referencesOtherConversation(text)
 }
 
 function extractAssistantText(content: unknown): string {

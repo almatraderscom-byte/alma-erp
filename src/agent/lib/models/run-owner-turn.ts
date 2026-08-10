@@ -12,7 +12,6 @@ import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
 import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
-import { isImageGenerationAsk } from '@/agent/lib/skill-engine/router'
 import {
   claimsCompletion,
   dependencyBlockMessage,
@@ -36,7 +35,7 @@ import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
-import { loadRecentOtherConversations, referencesOtherConversation } from '@/agent/lib/cross-surface'
+import { loadRecentOtherConversations, shouldSuppressCrossSurfaceForImage } from '@/agent/lib/cross-surface'
 import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText, matchIntentPacks, CORE_PACK, DOMAIN_PACKS } from '@/agent/tools/state-router'
 import { workflowToolBinding } from '@/agent/lib/workflow-templates'
 import {
@@ -902,16 +901,26 @@ async function* runAlternateProviderTurn(
       || isJobDeliveryDirective(projectSystemInstructions)
     )
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse, agentControls] = await Promise.all([
+  const activeSkillsPromise = suppressWork
+    ? Promise.resolve<Awaited<ReturnType<typeof buildActiveSkills>>>({
+        block: '', pinned: null, manifest: null, isolated: null, heldBack: null,
+      })
+    : buildActiveSkills(lastUserText, { conversationId })
+  const crossSurfacePromise = (async () => {
+    if (suppressWork || telegramFastPath) return []
+    const skills = await activeSkillsPromise
+    const activeSkill = skills.pinned?.skill ?? skills.manifest?.name ?? null
+    return shouldSuppressCrossSurfaceForImage(lastUserText, activeSkill)
+      ? []
+      : loadRecentOtherConversations(conversationId, 5)
+  })()
+
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse, agentControls, activeSkills] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
     suppressWork ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    suppressWork
-      || telegramFastPath
-      || (isImageGenerationAsk(lastUserText) && !referencesOtherConversation(lastUserText))
-      ? Promise.resolve([])
-      : loadRecentOtherConversations(conversationId, 5),
+    crossSurfacePromise,
     suppressWork ? Promise.resolve([]) : getActivePlaybook(businessId),
     suppressWork ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
     suppressWork ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
@@ -935,13 +944,9 @@ async function* runAlternateProviderTurn(
     // BEFORE the prompt is built (the prompt is now derived from the FINAL tool
     // list). Batched here so moving it up costs no extra latency.
     getAgentControls(),
+    activeSkillsPromise,
   ])
 
-  // Skill Engine V2 (gated OFF by default) — pick ≤3 on-demand skill procedures for
-  // this turn from the message text; '' when disabled or nothing matches (fail-open).
-  const activeSkills = suppressWork
-    ? { block: '', pinned: null, manifest: null, isolated: null, heldBack: null }
-    : await buildActiveSkills(lastUserText, { conversationId })
   // SK-7: when the pinned skill runs isolated, its procedure becomes the STABLE
   // system prompt instead of a volatile add-on. Sending both would ship it twice.
   const activeSkillsBlock = activeSkills.isolated ? '' : activeSkills.block
