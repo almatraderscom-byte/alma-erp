@@ -11,6 +11,23 @@ final class AssistantParityV2UITests: XCTestCase {
             // do not make it depend on the Assistant smoke setup below.
             return
         }
+        let ownsFixtureLaunch = [
+            "testNativeActionCardsUseExplicitCleanHierarchy",
+            "testClaudeChatFlowClustersToolsAndKeepsModeBesidePlus",
+            "testClaudeInteractivePreviewSelectsModelAndStreamsArbitraryMessage",
+            "testLiveThoughtSheetUpdatesWithoutReopening",
+            "testCleanEOFWithoutTerminalRecoversSameTurnWithoutNavigation",
+            "testNativeReadingSurfaceUsesSemanticMarkdownAndQuietChrome",
+            "testRichOutputGallerySourcesAndSharedViewer",
+            "testGeneratedImageFailureRetriesWithoutLosingSettledTurn",
+            "testCommandAndSkillAutocompleteUsesSupportedContracts",
+        ].contains { name.contains($0) }
+        if ownsFixtureLaunch {
+            // These tests immediately relaunch with a dedicated fixture. Avoid
+            // an unnecessary first app launch: on iOS 26 it can leave WebKit's
+            // accessibility process racing the real fixture automation session.
+            return
+        }
         app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
         app.launchEnvironment["ALMA_ASSISTANT_PARITY"] = "1"
         app.launchEnvironment["ALMA_MERGE_MOCK"] = "library"
@@ -139,6 +156,17 @@ final class AssistantParityV2UITests: XCTestCase {
         let thought = app.staticTexts["ভেবেছে ১২ সেকেন্ড"]
         XCTAssertTrue(thought.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["৩টি ব্যবসার data দেখেছে"].exists)
+        let thoughtRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@", "ভেবেছে ১২ সেকেন্ড")
+        ).firstMatch
+        XCTAssertTrue(thoughtRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(thoughtRow.isHittable)
+        thoughtRow.tap()
+        XCTAssertTrue(app.staticTexts["ভাবনার বিস্তারিত"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "diagnosis এবং execution plan")
+        ).firstMatch.exists)
+        app.buttons["বন্ধ করুন"].tap()
 
         let plusButton = app.buttons["ফাইল যোগ করুন"]
         XCTAssertTrue(plusButton.exists)
@@ -152,25 +180,6 @@ final class AssistantParityV2UITests: XCTestCase {
                           "plus and execution mode must share the composer control row")
         XCTAssertGreaterThan(mode.frame.midX, plusButton.frame.midX)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
-
-        let businessCluster = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "৩টি ব্যবসার data দেখেছে")
-        ).firstMatch
-        for _ in 0..<4 {
-            if businessCluster.isHittable { break }
-            app.swipeUp(velocity: .slow)
-        }
-        XCTAssertTrue(businessCluster.isHittable)
-        businessCluster.tap()
-        XCTAssertTrue(app.staticTexts["কাজের বিস্তারিত"].waitForExistence(timeout: 3))
-        let salesTool = app.buttons.matching(
-            NSPredicate(format: "label CONTAINS %@", "get_sales_overview")
-        ).firstMatch
-        XCTAssertTrue(salesTool.exists)
-        salesTool.tap()
-        XCTAssertTrue(app.staticTexts["ইনপুট · INPUT"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["ফলাফল · OUTPUT"].exists)
-        app.buttons["বন্ধ করুন"].tap()
 
         app.swipeUp(velocity: .fast)
         app.swipeUp(velocity: .fast)
@@ -250,6 +259,29 @@ final class AssistantParityV2UITests: XCTestCase {
         add(proof)
     }
 
+    func testLiveThoughtSheetUpdatesWithoutReopening() {
+        relaunch(fixture: "ALMA_ASSISTANT_LIVE_THOUGHT", mock: "library")
+
+        XCTAssertTrue(app.staticTexts["ভাবনার বিস্তারিত"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "প্রথম provider-visible কাজের সারাংশ")
+        ).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "দ্বিতীয় provider-visible update")
+        ).firstMatch.waitForExistence(timeout: 4),
+        "the presented sheet must observe the live VM instead of a tap-time snapshot")
+        XCTAssertTrue(app.staticTexts["ভাবনার বিস্তারিত"].exists,
+                      "the update arrived without closing or reopening the sheet")
+        XCTAssertFalse(app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "private chain-of-thought")
+        ).firstMatch.exists)
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "agent-live-thought-sheet-updated"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
     func testCleanEOFWithoutTerminalRecoversSameTurnWithoutNavigation() {
         relaunch(fixture: "ALMA_ASSISTANT_STREAM_EOF", mock: "streamEOF")
         let recovered = app.textViews.matching(
@@ -280,9 +312,10 @@ final class AssistantParityV2UITests: XCTestCase {
         ).firstMatch.exists)
         XCTAssertTrue(app.buttons["টেবিল কপি করুন"].exists)
         XCTAssertTrue(app.buttons["ফাইল যোগ করুন"].exists)
-        XCTAssertFalse(app.staticTexts["Cache write"].exists,
-                       "provider billing diagnostics must not clutter normal chat")
-        XCTAssertFalse(app.staticTexts["Cache read"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["agent.turn.cost-summary"].exists,
+                      "every settled answer must retain its server-reported cost footer")
+        XCTAssertTrue(app.staticTexts["Cache write"].exists)
+        XCTAssertTrue(app.staticTexts["Cache read"].exists)
 
         let top = XCTAttachment(screenshot: app.screenshot())
         top.name = "native-reading-surface-top"
@@ -297,6 +330,97 @@ final class AssistantParityV2UITests: XCTestCase {
         add(bottom)
     }
 
+    func testRichOutputGallerySourcesAndSharedViewer() {
+        relaunch(fixture: "ALMA_ASSISTANT_RICH_OUTPUT", mock: "rich-output")
+
+        XCTAssertTrue(app.descendants(matching: .any)["agent.turn.cost-summary"]
+            .waitForExistence(timeout: 3), "Every settled rich turn must retain its cost footer")
+        let gallery = app.otherElements["agent.generated-image-gallery"]
+        for _ in 0..<6 where !gallery.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(gallery.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["Generated image 1 of 3"].exists)
+
+        let galleryProof = XCTAttachment(screenshot: app.screenshot())
+        galleryProof.name = "agent-rich-output-gallery"
+        galleryProof.lifetime = .keepAlways
+        add(galleryProof)
+
+        app.descendants(matching: .any)["Generated image 1 of 3"].tap()
+        XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["agent.generated-image.save"].exists)
+        XCTAssertTrue(app.buttons["agent.generated-image.share"].exists)
+        XCTAssertTrue(app.buttons["agent.generated-image.copy"].exists)
+        XCTAssertTrue(app.buttons["agent.generated-image.edit"].exists)
+        XCTAssertTrue(app.buttons["agent.generated-image.variation"].exists)
+        app.swipeLeft()
+        XCTAssertTrue(app.staticTexts["2 / 3"].waitForExistence(timeout: 2))
+        Thread.sleep(forTimeInterval: 0.8)
+
+        let viewerProof = XCTAttachment(screenshot: app.screenshot())
+        viewerProof.name = "agent-rich-output-shared-viewer"
+        viewerProof.lifetime = .keepAlways
+        add(viewerProof)
+
+        app.buttons["Close"].tap()
+        for _ in 0..<8 where !app.buttons["agent.sources.open"].isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(app.buttons["agent.sources.open"].waitForExistence(timeout: 4))
+        app.buttons["agent.sources.open"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["agent.sources.sheet"]
+            .waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["OpenAI"].exists)
+        XCTAssertTrue(app.staticTexts["ALMA Costs"].exists)
+    }
+
+    func testGeneratedImageFailureRetriesWithoutLosingSettledTurn() {
+        relaunch(
+            fixture: "ALMA_ASSISTANT_RICH_OUTPUT",
+            mock: "rich-output",
+            extraEnvironment: ["ALMA_ASSISTANT_RICH_IMAGE_FAILURE": "1"])
+
+        let retry = app.buttons["agent.generated-image.retry"]
+        for _ in 0..<7 where !retry.isHittable { app.swipeUp(velocity: .slow) }
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["agent.turn.cost-summary"].exists)
+
+        retry.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["Generated image 1 of 3"]
+            .waitForExistence(timeout: 10))
+        XCTAssertFalse(retry.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["agent.turn.cost-summary"].exists)
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "agent-generated-image-retry-preserves-turn"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
+    func testCommandAndSkillAutocompleteUsesSupportedContracts() {
+        relaunch(
+            fixture: "ALMA_ASSISTANT_PARITY",
+            mock: "library",
+            extraEnvironment: ["ALMA_ASSISTANT_AUTOCOMPLETE_FIXTURE": "1"])
+
+        let input = app.textFields["agent.composer.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 4))
+        input.tap()
+        input.typeText("/")
+        XCTAssertTrue(app.descendants(matching: .any)["agent.composer.autocomplete"]
+            .waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["/status"].exists)
+
+        app.buttons["/status"].tap()
+        XCTAssertTrue((input.value as? String)?.contains("/status") == true)
+        input.tap()
+        input.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8))
+        input.typeText("@ios")
+        XCTAssertTrue(app.buttons["ios-simulator-verifier"].waitForExistence(timeout: 3))
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "agent-command-skill-autocomplete"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
     func testAgentSectionRoutesLiveInDrawerNotOverConversation() {
         let drawer = app.buttons["চ্যাট হিস্টরি"]
         XCTAssertTrue(drawer.waitForExistence(timeout: 3))
@@ -309,12 +433,14 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(app.buttons["Hub"].exists)
     }
 
-    private func relaunch(fixture: String, mock: String) {
+    private func relaunch(fixture: String, mock: String,
+                          extraEnvironment: [String: String] = [:]) {
         app.terminate()
         app = XCUIApplication()
         app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
         app.launchEnvironment[fixture] = "1"
         app.launchEnvironment["ALMA_MERGE_MOCK"] = mock
+        for (key, value) in extraEnvironment { app.launchEnvironment[key] = value }
         app.launch()
         let title = app.staticTexts["ALMA AI"]
         if !title.waitForExistence(timeout: 5) {

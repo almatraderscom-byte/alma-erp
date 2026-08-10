@@ -58,9 +58,10 @@ describe('converting media', () => {
   })
 
   it('does not steal Creative Studio’s job', () => {
-    // MAKING media is a different program entirely.
+    // Video creation is a different program entirely. A standalone poster is
+    // intentionally owned by the new image-generation approval pipeline.
     expect(applyRules('ekta product video banao')).toBeNull()
-    expect(applyRules('notun poster design koro')).toBeNull()
+    expect(applyRules('notun poster design koro')?.skill).toBe('alma-image-generation')
   })
 })
 

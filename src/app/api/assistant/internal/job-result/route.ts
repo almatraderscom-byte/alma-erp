@@ -18,6 +18,11 @@ import {
   postAssistantMessage,
 } from '@/agent/lib/job-delivery'
 import { prisma } from '@/lib/prisma'
+import {
+  imageResultPaths,
+  imageResultQcWarnings,
+  signImageResultPreviews,
+} from '@/agent/lib/image-result-contract'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
@@ -272,7 +277,7 @@ export async function POST(req: NextRequest) {
   /** Storage path of a generated image — persisted as a file_ref block so the
    * NATIVE app shows the actual picture (it renders images only from file_ref;
    * a markdown image link is plain text there — owner report 2026-07-13). */
-  let messageImagePath: string | null = null
+  let messageImagePaths: string[] = []
   let pushTelegram = false
   // True only for a plain image_gen success that just posted its image into the
   // conversation. That is the moment the head can finally chain to the next step
@@ -324,31 +329,47 @@ export async function POST(req: NextRequest) {
         messageText = `✅ Reel saved: \`${storagePath}\` (approval card failed: ${detail})`
       }
     } else {
+      const resultPaths = imageResultPaths(data)
+      // Persist these independently of ephemeral preview signing. Native image
+      // cards are driven by file_ref blocks, not by signed Markdown URLs.
+      messageImagePaths = resultPaths
       try {
-        const imageUrl = storagePath
-          ? await agentStorageSignedUrl(storagePath, IMAGE_SIGNED_URL_TTL_SEC)
-          : String(data?.imageUrl ?? '')
-        if (!imageUrl) throw new Error('No image path in job result')
-        messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
-        // The native app renders images ONLY from file_ref content blocks —
-        // markdown image links display as plain text there, so the owner
-        // couldn't see the preview he was asked to confirm (2026-07-13).
-        if (storagePath) {
-          messageImagePath = storagePath
+        const signed = resultPaths.length
+          ? await signImageResultPreviews(
+              resultPaths,
+              (path) => agentStorageSignedUrl(path, IMAGE_SIGNED_URL_TTL_SEC),
+            )
+          : { previews: [], failedPaths: [] }
+        const fallbackUrl = resultPaths.length === 0 ? String(data?.imageUrl ?? '').trim() : ''
+        if (resultPaths.length === 0 && !fallbackUrl) throw new Error('No image path in job result')
+        const deliveredCount = resultPaths.length || 1
+        messageText = deliveredCount === 1
+          ? '✅ Image generated successfully.'
+          : `✅ ${deliveredCount} image variations generated successfully.`
+        const previewRows = signed.previews.map((preview) =>
+          `![Generated image ${preview.index + 1}](${preview.url})`)
+        if (fallbackUrl) previewRows.push(`![Generated image](${fallbackUrl})`)
+        if (previewRows.length) messageText += `\n${previewRows.join('\n')}`
+        if (signed.failedPaths.length) {
+          console.warn('[job-result] some signed image previews failed', {
+            pendingActionId, failedPaths: signed.failedPaths,
+          })
+          messageText += `\n\n_${signed.failedPaths.length} preview link(s) unavailable; completed images remain attached._`
         }
         resumeAgentAfterImage = true
-        const qcFlag = typeof data?.qc === 'object' && data.qc !== null
-          ? (data.qc as { flagged?: string }).flagged
-          : undefined
-        if (qcFlag) {
-          messageText += `\n\n_${qcFlag}_`
+        const qcWarnings = imageResultQcWarnings(data)
+        if (qcWarnings.length) {
+          messageText += `\n\n_${qcWarnings.join(' · ')}_`
         }
       } catch (signErr) {
         const detail = signErr instanceof Error ? signErr.message : String(signErr)
         console.error('[job-result] signed URL failed', { storagePath, detail })
-        messageText = storagePath
+        messageText = messageImagePaths.length
+          ? `✅ ${messageImagePaths.length} image(s) generated and attached.\n(Preview link could not be created.)`
+          : storagePath
           ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
           : `✅ Image generated but preview unavailable.`
+        resumeAgentAfterImage = messageImagePaths.length > 0
       }
     }
   } else if (action.type === 'outbound_call' && status === 'failed') {
@@ -399,7 +420,7 @@ export async function POST(req: NextRequest) {
 
   if (convId && messageText) {
     const contentBlocks: Array<Record<string, unknown>> = [{ type: 'text', text: messageText }]
-    if (messageImagePath) {
+    for (const messageImagePath of messageImagePaths) {
       const ext = messageImagePath.split('.').pop()?.toLowerCase()
       contentBlocks.push({
         type: 'file_ref',

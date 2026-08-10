@@ -23,6 +23,48 @@ import type { SkillMetadata } from '@/agent/lib/skill-engine/types'
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 
 describe('layer 2 — the rules that keywords can never get right', () => {
+  it('routes standalone image generation to the image pipeline, never incident diagnosis', () => {
+    for (const prompt of [
+      'Create a premium black-and-gold ALMA AI assistant launch poster. Portrait 4:5, friendly blue robot, ALMA AI. Return one image, no collage.',
+      'Create three separate visual variations of an ALMA AI poster so they can be swiped as 1/3, 2/3, and 3/3.',
+      'একটি ৪:৫ ALMA AI পোস্টার ছবি বানাও, collage নয়।',
+    ]) {
+      expect(applyRules(prompt)?.skill).toBe('alma-image-generation')
+    }
+  })
+
+  it('does not treat the noun "variations" as image creation intent', () => {
+    expect(applyRules('Compare these image variations and tell me which is best')?.skill)
+      .not.toBe('alma-image-generation')
+  })
+
+  it('requires the creation verb to target the image output', () => {
+    for (const prompt of [
+      'Create a report comparing image models.',
+      'Create an analysis of the best image generators.',
+      'Create an image classification model for product photos.',
+      'Generate an image recognition API.',
+      'একটি ইমেজ মডেল তুলনা রিপোর্ট তৈরি করো।',
+    ]) {
+      expect(applyRules(prompt)?.skill).not.toBe('alma-image-generation')
+    }
+    expect(applyRules('Compare image models, then create a premium launch poster.')?.skill)
+      .toBe('alma-image-generation')
+    expect(applyRules('Create an image of a fashion model wearing an ALMA jacket.')?.skill)
+      .toBe('alma-image-generation')
+  })
+
+  it('routes explicit official-source citations to cited research', () => {
+    expect(applyRules(
+      'Compare OpenAI and Anthropic using only official sources, inline citations, and a Sources list.',
+    )?.skill).toBe('alma-research')
+  })
+
+  it('treats citations as output requirements when a concrete workflow exists', () => {
+    expect(applyRules(
+      'Audit almatraders.com SEO and include official sources with inline citations.',
+    )?.skill).toBe('seo-auditing-own-site')
+  })
   it('a fix order is a fix order', () => {
     expect(applyRules('almatraders.com এর ছবির alt ঠিক করো')?.skill).toBe('seo-fixing-own-site')
     expect(applyRules('product-code-110 এর meta description লিখে দাও')?.skill).toBe('seo-fixing-own-site')
@@ -71,6 +113,26 @@ describe('layer 2 — the rules that keywords can never get right', () => {
 })
 
 describe('ADS-0 regression — the whole router, not just the rule layer', () => {
+  it('keeps a concrete workflow even when the owner requests numbered formatting', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    expect(routeSkill(index, 'Fix almatraders.com SEO and give numbered steps').skill)
+      .toBe('seo-fixing-own-site')
+    expect(routeSkill(index, 'Research competitor prices and give a bullet list').skill)
+      .toBe('alma-research')
+    expect(routeSkill(index, 'Give competitor prices in a bullet list').skill)
+      .toBe('alma-research')
+  })
+
+  it('keeps genuinely format-only rich and numbered answers on the unrestricted head', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    expect(routeSkill(index,
+      'Return one rich response with Swift code, rendered LaTeX, Mermaid, and an interactive form.').skill)
+      .toBeNull()
+    expect(routeSkill(index,
+      'Write exactly eight numbered steps for an ALMA AI launch; do not create, save, or publish anything.').skill)
+      .toBeNull()
+  })
+
   it('an ads question pins NO skill on the index production actually serves', async () => {
     // Rules were only half the story: with the rule removed, the keyword layer
     // still had to decline. It does — the weak-match guard fires rather than
@@ -116,6 +178,17 @@ describe('layer 3 — hand the close calls to the head, do not guess', () => {
     if (d.layer !== 'none') {
       expect(['model', 'keyword']).toContain(d.layer)
       if (d.needsModel) expect(d.candidates.length).toBeGreaterThan(1)
+    }
+  })
+
+  it('does not permanently pin a formatting-only answer to an unrelated skill', async () => {
+    const index = await discoverSkills(SKILLS_ROOT)
+    for (const prompt of [
+      'Return one rich response containing a Swift retry code block, rendered LaTeX, Mermaid, form, audio and video cards.',
+      'Write exactly eight numbered steps for an ALMA AI launch; final step owner approval.',
+    ]) {
+      const decision = routeSkill(index, prompt)
+      expect(decision.skill).toBeNull()
     }
   })
 

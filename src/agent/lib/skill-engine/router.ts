@@ -99,7 +99,7 @@ const FIX_VERB_BANGLISH =
   /\b(thik\s*kor|thik\s*kore|thk\s*kor|shomadhan|shongshodhon|likh|likhe|lekh|lekho|save\s*kor|boshao|bosao|jog\s*kor|update\s*kor|thik\s*kore\s*dao)/i
 /** …unless the thing being asked for IS the audit or the report. */
 const AUDIT_ASK =
-  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run|kor|koro|calao|chalao|dao)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|report\s*(?:banao|dao|koro)|পূর্ণাঙ্গ\s*seo|\bdekho\b|\bdekhao\b)/i
+  /((?:অডিট|audit)\s*(?:কর|চালাও|দাও|run|kor|koro|calao|chalao|dao)|\baudit\b(?!\s+(?:finding|findings|issue|issues|problem|problems)\b)|রিপোর্ট\s*(?:বানা|তৈরি|দাও|লিখ)|\breport\b|report\s*(?:banao|dao|koro)|পূর্ণাঙ্গ\s*seo|\bdekho\b|\bdekhao\b)/i
 /**
  * `slug` joins the clear SEO markers for the same reason: it is an on-page SEO
  * field in this business and nothing else, and its absence is what let the miss
@@ -360,6 +360,66 @@ const MEDIA_CONVERT_ASK =
 /** …but MAKING new media is Creative Studio's job, not a converter's. */
 const MEDIA_CREATE_ASK =
   /(banao|বানাও|toiri|তৈরি|generate|design|ডিজাইন|poster|পোস্টার|creative|ad\s*banao)/i
+
+/**
+ * A fresh creative image request.  This must be deterministic: falling through
+ * to token scoring lets the common words "ALMA" and "agent" select the
+ * incident-diagnosis skill, whose read-only allowlist then removes
+ * `generate_image` from the turn.
+ *
+ * Keep both halves mandatory.  Merely mentioning an image (for example,
+ * "inspect this image") is not generation, and a generic "create a report"
+ * is not an image job.
+ */
+const IMAGE_OUTPUT =
+  /(?:image|images|photo|photos|picture|pictures|poster|posters|illustration|illustrations|artwork|creative|visual\s+variation|visual\s+variations|ছবি|ফটো|পোস্টার|ইমেজ|ক্রিয়েটিভ|ভিজুয়াল)/i
+const IMAGE_GENERATION_VERB =
+  /(?:create|generate|make|design|render|produce|বানাও|বানিয়ে|তৈরি|ডিজাইন|জেনারেট|রেন্ডার)/i
+const NON_IMAGE_CREATION_OBJECT =
+  /\b(?:report|comparison|compare|comparing|analysis|audit|summary|article|document|guide|list|research|presentation|spreadsheet|code|model|models)\b|(?:রিপোর্ট|তুলনা|বিশ্লেষণ|অডিট|সারাংশ|নথি|তালিকা|গবেষণা)/i
+const NON_IMAGE_OUTPUT_SUFFIX =
+  /^\s*(?:(?:classification|recognition|generation|diffusion|vision|machine[- ]learning|ml|ai)\s+){0,4}(?:model|system|api|code|library|framework|classifier)\b|^\s*(?:ক্লাসিফিকেশন|মডেল|সিস্টেম|কোড|লাইব্রেরি)\b/i
+
+function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end: number }> {
+  const matches: Array<{ start: number; end: number }> = []
+  const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`)
+  for (const match of text.matchAll(regex)) {
+    if (match.index === undefined) continue
+    matches.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return matches
+}
+
+export const isImageGenerationAsk = (text: string): boolean => {
+  if (MEDIA_DERIVE_ASK.test(text)) return false
+  const outputs = matchRanges(IMAGE_OUTPUT, text)
+  const verbs = matchRanges(IMAGE_GENERATION_VERB, text)
+
+  return verbs.some((verb) => outputs.some((output) => {
+    const distance = Math.max(verb.start, output.start) - Math.min(verb.end, output.end)
+    if (distance > 160) return false
+    const between = verb.end <= output.start
+      ? text.slice(verb.end, output.start)
+      : text.slice(output.end, verb.start)
+    if (/[.!?\n]/.test(between)) return false
+    if (NON_IMAGE_CREATION_OBJECT.test(between)) return false
+    const outputSuffix = text.slice(output.end, output.end + 100)
+    return !NON_IMAGE_OUTPUT_SUFFIX.test(outputSuffix)
+  }))
+}
+
+/** Research/citation asks should use the existing cited-research procedure. */
+const CITED_RESEARCH_ASK =
+  /(?:official\s+(?:source|sources|documentation)|inline\s+citation|citations?|sources?\s+list|উৎস|সাইটেশন|সূত্র)/i
+
+/** Pure answer-format requests need the normal head, not a narrow workflow. */
+const ANSWER_FORMAT =
+  /(?:rich\s+response|syntax[- ]highlighted|code\s+block|rendered\s+latex|mermaid|interactive\s+form|exactly\s+(?:[\d০-৯]+|one|two|three|four|five|six|seven|eight|nine|ten)\s+numbered|ঠিক\s+[\d০-৯]+টি\s+numbered|numbered\s+steps?|bullet\s+list)/i
+const ANSWER_VERB = /(?:write|return|give|provide|show|list|লিখ|দাও|দেখাও|তৈরি\s+কর)/i
+const FORMAT_ONLY_NEGATION =
+  /(?:do\s+not|don't|never|কোরো\s+না|করবে\s+না)[^.!?\n]{0,120}(?:create|save|publish|execute|run|send|post|ask)|(?:just|only)\s+(?:return|write|show|list)/i
+export const isHeadOnlyAnswerAsk = (text: string): boolean =>
+  ANSWER_FORMAT.test(text) && ANSWER_VERB.test(text) && !isImageGenerationAsk(text)
 /**
  * …unless the sentence names a SOURCE and a TARGET: "video theke gif banao" is
  * a conversion wearing the word "banao" (Codex). Source-to-target beats the
@@ -428,6 +488,12 @@ export interface RouterRule {
  * the wrong place; the `why` is what gets stored in the trace.
  */
 export const RULES: RouterRule[] = [
+  {
+    id: 'image-generation',
+    skill: 'alma-image-generation',
+    test: (t) => isImageGenerationAsk(t),
+    why: 'নতুন ছবি/পোস্টার/variation বানাতে বলা হয়েছে — existing generate_image approval pipeline ব্যবহার হবে',
+  },
   {
     id: 'client-site-seo',
     skill: 'seo-fixing-client-site',
@@ -574,6 +640,15 @@ export const RULES: RouterRule[] = [
     test: (t) => FOLDER_PLACE.test(t) && TIDY_VERB.test(t) && !CODE_CHECKOUT.test(t),
     why: 'Mac-এর ফোল্ডার গোছানোর কথা — তালিকা আগে, Trash-ই সর্বোচ্চ',
   },
+  {
+    // Citation formatting cannot replace a concrete execution workflow. Keep
+    // this broad research fallback last so "audit SEO with official sources"
+    // still runs the audit skill, while a standalone comparison gets research.
+    id: 'cited-research',
+    skill: 'alma-research',
+    test: (t) => CITED_RESEARCH_ASK.test(t),
+    why: 'official source ও inline citation চাওয়া হয়েছে — cited research procedure দরকার',
+  },
 ]
 
 export function applyRules(text: string): RouterRule | null {
@@ -606,6 +681,19 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     }
   }
 
+  // Explicitly negated execution is an answer request, not a workflow. Check
+  // this before deterministic rules so words inside "do not create/publish"
+  // cannot stage a storefront or campaign action.
+  if (isHeadOnlyAnswerAsk(t) && FORMAT_ONLY_NEGATION.test(t)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'answer-format: execution explicitly forbidden — unrestricted head শুধু requested answer দেবে',
+      candidates: [],
+      needsModel: false,
+    }
+  }
+
   // Layer 2 — a rule wins outright, even over a strong keyword score.
   const rule = applyRules(t)
   if (rule) {
@@ -620,15 +708,31 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
     }
   }
 
-  // Layer 3 — keyword scoring over the eligible set.
+  // Score before the format fallback. A clearly dominant keyword workflow is
+  // still a workflow when the owner asks for bullets; an ambiguous pile of
+  // format words (code/LaTeX/Mermaid, or a plain numbered answer) belongs to
+  // the unrestricted head rather than whichever narrow skill barely wins.
   const picked = selectSkills({ skills: eligible, warnings: [] }, t)
   const scored = scoreCandidates({ skills: eligible, warnings: [] }, t)
+  const top = scored[0]
+  const second = scored[1]
+  const margin = top && second ? top.score - second.score : Infinity
+  const hasDominantWorkflow = Boolean(top && top.score >= MIN_KEYWORD_SCORE && margin >= AMBIGUITY_MARGIN)
+  if (isHeadOnlyAnswerAsk(t) && (FORMAT_ONLY_NEGATION.test(t) || !hasDominantWorkflow)) {
+    return {
+      skill: null,
+      layer: 'rule',
+      reason: 'answer-format: workflow নয় — unrestricted head-ই requested format-এ উত্তর দেবে',
+      candidates: [],
+      needsModel: false,
+    }
+  }
+
+  // Layer 3 — keyword scoring over the eligible set.
   if (picked.length === 0) {
     return { skill: null, layer: 'none', reason: 'কোনো skill যথেষ্ট মেলেনি', candidates: scored, needsModel: false }
   }
 
-  const top = scored[0]
-  const second = scored[1]
   if (!top || top.score < MIN_KEYWORD_SCORE) {
     return {
       skill: null,
@@ -638,7 +742,6 @@ export function routeSkill(index: SkillIndex, text: string, ctx: RouteContext = 
       needsModel: false,
     }
   }
-  const margin = top && second ? top.score - second.score : Infinity
   const ambiguous = margin < AMBIGUITY_MARGIN
 
   return {

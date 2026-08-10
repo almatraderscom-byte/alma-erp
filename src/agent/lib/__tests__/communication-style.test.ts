@@ -8,6 +8,18 @@ afterEach(() => {
 const STYLE_MARKER = 'কথা বলার ধরন'
 
 describe('COMMUNICATION_STYLE (BP5 — how it talks, model-agnostic)', () => {
+  it('advertises native rich-output grammar without allowing fabricated media', async () => {
+    const { buildSystemPrompt } = await import('../system-prompt')
+    const text = buildSystemPrompt().map((b) => b.text ?? '').join('\n')
+
+    expect(text).toContain('## Native rich-output contract')
+    expect(text).toContain('```latex')
+    expect(text).toContain('```mermaid')
+    expect(text).toContain('```form')
+    expect(text).toContain('URL বানাবে না')
+    expect(text).toContain('raw private reasoning কখনো output করবে না')
+  })
+
   it('is absent by default (exact current prompt)', async () => {
     vi.resetModules()
     const { buildSystemPrompt } = await import('../system-prompt')

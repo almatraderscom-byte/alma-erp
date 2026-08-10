@@ -84,6 +84,12 @@ const generate_image: AgentTool = {
         enum: ['1K', '2K', '4K'],
         description: 'Output resolution (default 2K)',
       },
+      count: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 4,
+        description: 'Number of distinct images/variations to render under this one approval (default 1, max 4).',
+      },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['prompt'],
@@ -91,7 +97,8 @@ const generate_image: AgentTool = {
   handler: async (input) => {
     try {
       const quality = (input.quality as string) === 'standard' ? 'standard' : 'pro'
-      const costEstimate = quality === 'pro' ? 4.5 : 1.1 // BDT estimate
+      const count = Math.min(4, Math.max(1, Math.floor(Number(input.count) || 1)))
+      const costEstimate = (quality === 'pro' ? 4.5 : 1.1) * count // BDT estimate
 
       // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
       // conversation at a time — cross-type, so a post + a fresh image can't be
@@ -105,7 +112,7 @@ const generate_image: AgentTool = {
       if (blockedImg) return blockedImg
 
       const summary =
-        `Image generation request (${quality} quality)\n` +
+        `Image generation request (${quality} quality${count > 1 ? `, ${count} variations` : ''})\n` +
         `Prompt: ${String(input.prompt).slice(0, 200)}`
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +126,7 @@ const generate_image: AgentTool = {
             referenceImageId: input.referenceImageId ?? null,
             aspectRatio: input.aspectRatio ?? null,
             imageSize: input.imageSize ?? null,
+            variationCount: count,
             conversationId: input.conversationId ?? null,
           },
           summary,
@@ -134,7 +142,7 @@ const generate_image: AgentTool = {
           summary,
           costEstimate,
           message:
-            'Image generation request created. Awaiting owner approval before rendering.',
+            `${count > 1 ? `${count} image variations` : 'Image'} queued as one request. Awaiting owner approval before rendering.`,
         },
       }
     } catch (err) {

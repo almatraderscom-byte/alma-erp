@@ -3,6 +3,125 @@ import XCTest
 
 @MainActor
 final class AssistantParityV2Tests: XCTestCase {
+    func testLiveSkillPinUpdatesComposerAndStreamingTurnTogether() {
+        let vm = AssistantVM()
+
+        vm.debugApplyTurnEvents([.skillPinned(
+            skill: "alma-image-generation", source: "router",
+            reason: "image generation", isolated: true)])
+
+        XCTAssertEqual(vm.pinnedSkillName, "alma-image-generation")
+        XCTAssertEqual(vm.messages.last?.skill?.name, "alma-image-generation")
+    }
+
+    func testClearedServerPinWinsOverHistoricalSkillStamp() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.skillPinned(
+            skill: "alma-image-generation", source: "router",
+            reason: "historical image turn", isolated: true)])
+        XCTAssertEqual(vm.pinnedSkillName, "alma-image-generation")
+
+        vm.debugApplyConversationSettings(permissionMode: nil, pinnedSkill: nil)
+
+        XCTAssertNil(vm.pinnedSkillName)
+        XCTAssertEqual(vm.messages.last?.skill?.name, "alma-image-generation",
+                       "history remains factual without becoming the current pin")
+    }
+
+    func testGeneratedFileRefsSuppressDuplicateMarkdownImageGallery() {
+        XCTAssertTrue(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: false))
+        XCTAssertFalse(AgentMarkdownText.shouldRenderRemoteImages(suppressRemoteImages: true))
+    }
+
+    func testGeneratedImageActionRestoresUnsentComposerContextWhenCancelled() {
+        let vm = AssistantVM()
+        let originalRef = AgentFileRef(
+            bucket: "agent-files", path: "draft-reference.png", mediaType: "image/png")
+        let generatedRef = AgentFileRef(
+            bucket: "agent-files", path: "generated.png", mediaType: "image/png")
+        vm.composerDraft = "Owner's unrelated unsent draft"
+        vm.referencedFileRefs = [originalRef]
+        vm.composerSelectionReference = "selected draft quote"
+
+        vm.referenceGeneratedImage(generatedRef, variation: false)
+
+        XCTAssertEqual(vm.referencedFileRefs, [generatedRef])
+        XCTAssertNil(vm.composerSelectionReference)
+        XCTAssertEqual(vm.composerDraft, "এই ছবিটি edit করুন: ")
+
+        vm.removeReferencedFile(generatedRef)
+
+        XCTAssertEqual(vm.composerDraft, "Owner's unrelated unsent draft")
+        XCTAssertEqual(vm.referencedFileRefs, [originalRef])
+        XCTAssertEqual(vm.composerSelectionReference, "selected draft quote")
+    }
+
+    func testMermaidBranchParserPreservesActualEdges() {
+        let edges = AgentMermaidDiagram.parseEdges("""
+        graph TD
+        A[Prompt]-->B[Tool]
+        A-->C[Approval]
+        """)
+
+        XCTAssertEqual(edges, [
+            .init(from: "Prompt", to: "Tool"),
+            .init(from: "Prompt", to: "Approval"),
+        ])
+        XCTAssertFalse(edges?.contains(.init(from: "Tool", to: "Approval")) ?? true)
+    }
+
+    func testUnsupportedMermaidFallsBackInsteadOfInventingEdges() {
+        XCTAssertNil(AgentMermaidDiagram.parseEdges("graph TD\nA -.-> B"))
+    }
+
+    func testAttachmentDeduplicationPreservesOwnerSelectionOrder() {
+        let first = AgentFileRef(bucket: "agent", path: "first.png", mediaType: "image/png")
+        let second = AgentFileRef(bucket: "agent", path: "second.png", mediaType: "image/png")
+
+        XCTAssertEqual(almaOrderedUniqueFileRefs([first, second, first]), [first, second])
+    }
+
+    func testInteractiveFormResponseAppendsWithoutDestroyingDraft() {
+        XCTAssertEqual(
+            almaComposerDraftAppending("Budget: 500\nNote: Launch", to: "Keep this owner draft"),
+            "Keep this owner draft\n\nBudget: 500\nNote: Launch")
+        XCTAssertEqual(almaComposerDraftAppending("Budget: 500", to: ""), "Budget: 500")
+    }
+
+    func testSideConversationRefusalDoesNotModifyCurrentComposer() async {
+        let vm = AssistantVM()
+        vm.conversationId = "current-conversation"
+        vm.composerDraft = "Owner's unsent draft"
+        vm.isStreaming = true
+
+        await vm.prepareSelectionQuestion("selected private text", inSideConversation: true)
+
+        XCTAssertEqual(vm.conversationId, "current-conversation")
+        XCTAssertEqual(vm.composerDraft, "Owner's unsent draft")
+        XCTAssertNil(vm.composerSelectionReference)
+    }
+
+    func testRegenerateReplaysAcceptedRowWithoutConsumingComposerContext() async {
+        let vm = AssistantVM()
+        vm.conversationId = "regenerate-conversation"
+        vm.composerDraft = "Unsent future request"
+        vm.composerSelectionReference = "Draft-only selection"
+        let draftRef = AgentFileRef(bucket: "agent", path: "draft.png", mediaType: "image/png")
+        let originalRef = AgentFileRef(bucket: "agent", path: "original.png", mediaType: "image/png")
+        vm.referencedFileRefs = [draftRef]
+        var accepted = AgentChatMessage(id: "accepted", role: .user, text: "Original accepted prompt")
+        accepted.fileRefs = [originalRef]
+
+        await vm.regenerateAcceptedPrompt(accepted)
+
+        XCTAssertEqual(vm.composerDraft, "Unsent future request")
+        XCTAssertEqual(vm.composerSelectionReference, "Draft-only selection")
+        XCTAssertEqual(vm.referencedFileRefs, [draftRef])
+        let replay = vm.messages.first { $0.role == .user && $0.text == "Original accepted prompt" }
+        XCTAssertEqual(replay?.fileRefs, [originalRef])
+        XCTAssertFalse(replay?.text.contains("Draft-only selection") ?? true)
+    }
+
     func testPenaltyApprovalDecisionFullHalfAndCustomResults() {
         let full = PenaltyApprovalDecision(
             originalPenalty: 1_000, requestedReduction: 1_000, amountText: "1000")
@@ -494,6 +613,24 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(relaunched.composerDraft, "kill-এর পরও draft থাকবে")
     }
 
+    func testSelectionAndGeneratedImageReferenceRecoverWithDraft() {
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.selectedSessionIdentity.v2")
+        UserDefaults.standard.removeObject(forKey: "alma.assistant.composerDrafts.v2")
+        let reference = AgentFileRef(
+            bucket: "agent-files", path: "generated/campaign.jpg", mediaType: "image/jpeg")
+
+        let first = AssistantVM()
+        first.composerDraft = "এই অংশ নিয়ে explain করো"
+        first.composerSelectionReference = "selected source sentence"
+        first.referencedFileRefs = [reference]
+
+        let relaunched = AssistantVM()
+        relaunched.debugRestoreComposerDraft()
+        XCTAssertEqual(relaunched.composerDraft, first.composerDraft)
+        XCTAssertEqual(relaunched.composerSelectionReference, "selected source sentence")
+        XCTAssertEqual(relaunched.referencedFileRefs, [reference])
+    }
+
     func testDurableDictationAudioRearmsRetryWhenMarkerWasLost() {
         let first = AssistantVM()
         first.loadDictationRecoveryFixture()
@@ -589,9 +726,12 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertTrue(ids.contains("claude-sonnet-4-6"))
         XCTAssertTrue(ids.contains("gemini-3.1-pro"))
         XCTAssertTrue(ids.contains("gpt-5.6-luna"))
+        XCTAssertTrue(ids.contains("or-qwen3-max"))
         XCTAssertTrue(ids.contains("or-deepseek-v4-flash"))
         XCTAssertTrue(ids.contains("xai-grok-4.20"))
         XCTAssertFalse(ids.contains("or-glm-4-32b"), "worker-only models must stay out of the picker")
+        XCTAssertEqual(AgentModelShortName.display("Qwen 3.7 Max (OpenRouter)"), "Qwen 3.7")
+        XCTAssertEqual(AgentModelShortName.display("Qwen3.5 Coder (OpenRouter)"), "Qwen3.5")
 
         let frames = AlmaMergeReadinessURLProtocol.interactivePreviewFrames(
             modelId: "claude-sonnet-4-6", prompt: "show me a recovery plan", turn: 7)
@@ -888,5 +1028,54 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(
             AgentChatMessage.incrementalStreamSuffix(existing: "ha", incoming: "ha"),
             "ha", "short intentional repetition must remain possible")
+    }
+
+    func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
+        let citations = AgentMarkdownText.extractCitations("""
+        [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).
+        [ALMA costs](/agent/costs) ![ignored image](https://example.com/image.png)
+        """)
+        XCTAssertEqual(citations.count, 2)
+        XCTAssertEqual(citations[0].title, "OpenAI research")
+        XCTAssertEqual(citations[0].domain, "openai.com")
+        XCTAssertEqual(citations[0].dateLabel, "2026-08-09")
+        XCTAssertFalse(citations[0].isALMAInternal)
+        XCTAssertTrue(citations[1].isALMAInternal)
+        XCTAssertEqual(citations[1].url.path, "/agent/costs")
+    }
+
+    func testSourcesExcludeActionsMediaAndFencedCodeExamples() {
+        let citations = AgentMarkdownText.extractCitations("""
+        Evidence: [OpenAI research](https://openai.com/research).
+        [Download report](/api/reports/launch.pdf)
+        [Watch demo](https://example.com/demo.mp4)
+        ```markdown
+        [Literal example](https://example.com/not-a-source)
+        ```
+        """)
+
+        XCTAssertEqual(citations.map(\.title), ["OpenAI research"])
+    }
+
+    func testCitationDestinationPreservesBalancedParentheses() {
+        let citations = AgentMarkdownText.extractCitations(
+            "[Wikipedia](https://en.wikipedia.org/wiki/Function_(mathematics))")
+
+        XCTAssertEqual(citations.count, 1)
+        XCTAssertEqual(citations[0].url.absoluteString,
+                       "https://en.wikipedia.org/wiki/Function_(mathematics)")
+    }
+
+    func testRichOutputFileRefsSurviveCanonicalColdLoad() throws {
+        let data = #"{"id":"rich","role":"assistant","content":[{"type":"text","text":"ready"},{"type":"file_ref","bucket":"agent-files","path":"one.jpg","mediaType":"image/jpeg"},{"type":"file_ref","bucket":"agent-files","path":"two.jpg","mediaType":"image/jpeg"}],"tokensIn":10,"tokensOut":5,"costUsd":0.04}"#.data(using: .utf8)!
+        let message = AgentChatMessage.from(try JSONDecoder().decode(AgentMessageWire.self, from: data))
+        XCTAssertEqual(message.fileRefs.count, 2)
+        XCTAssertEqual(message.imagePaths, ["one.jpg", "two.jpg"])
+        XCTAssertEqual(message.costUsd, "0.0400")
+    }
+
+    func testSyntaxHighlighterPreservesSourceText() {
+        let source = "let amount = 5000 // whole taka"
+        XCTAssertEqual(String(AgentSyntaxHighlighter.highlight(source, language: "swift").characters), source)
     }
 }

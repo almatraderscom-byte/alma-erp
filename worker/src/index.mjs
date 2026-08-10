@@ -985,6 +985,7 @@ async function processImageGen(job) {
     conversationId,
     aspectRatio,
     imageSize,
+    variationCount,
     contentPipeline,
     referenceContract,
   } = payload
@@ -1012,6 +1013,8 @@ async function processImageGen(job) {
   }
 
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
+  const { normalizeVariationCount, variationPrompt, partialVariationWarning } = await import('./image/variation-contract.mjs')
+  const requestedVariationCount = normalizeVariationCount(variationCount)
   let totalCostUsd = 0
 
   async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
@@ -1044,51 +1047,80 @@ async function processImageGen(job) {
     })
   }
 
-  await assertStudioRunPaidAttempt(pendingActionId, payload, 1)
-  const first = await generateImageToStorage({ ...genOpts, prompt: basePrompt })
-  const artifactsByPath = new Map([[first.storagePath, first.original]])
-  await logImageCost(first.storagePath, first.modelName, first.resolvedAspectRatio, first.resolvedImageSize, 1)
-  console.log(`[worker] image-gen ${pendingActionId} — gen attempt 1 → ${first.storagePath}`)
-
   const productType = contentPipeline?.productCode ?? null
   const productImagePath = payload.qcProductImagePath ?? secondReferenceImageId ?? null
+  const personImagePath = payload.qcPersonImagePath
+    ?? referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
+    ?? referenceImageId
+    ?? null
+  const artifactsByPath = new Map()
+  let paidAttempt = 0
 
-  let regenCount = 0
-  const qcResult = await runImageQcLoop({
-    supabase,
-    appUrl: getAppUrl(),
-    token: getInternalToken(),
-    qcLevel,
-    initialPath: first.storagePath,
-    productType,
-    productImagePath,
-    personImagePath: payload.qcPersonImagePath
-      ?? referenceContract?.bindings?.find((binding) => binding.role === 'person')?.path
-      ?? referenceImageId
-      ?? null,
-    surface: payload.qcSurface,
-    pipelineMode: payload.pipelineMode,
-    maxPaidGenerations: payload.studioPaidAttemptLimit,
-    generationPrompt: basePrompt,
-    regenerate: async (fixHint, attemptNum) => {
-      regenCount += 1
-      await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)
-      const regenPrompt = `${basePrompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
-      const regen = await generateImageToStorage({
-        ...genOpts,
-        prompt: regenPrompt,
-        suffix: `qc${attemptNum}`,
-      })
-      artifactsByPath.set(regen.storagePath, regen.original)
-      await logImageCost(regen.storagePath, regen.modelName, regen.resolvedAspectRatio, regen.resolvedImageSize, attemptNum)
-      console.log(`[worker] image-gen ${pendingActionId} — QC regen ${attemptNum} → ${regen.storagePath}`)
-      return regen.storagePath
-    },
-  })
+  async function generateAndQcVariation(prompt, variationIndex) {
+    paidAttempt += 1
+    await assertStudioRunPaidAttempt(pendingActionId, payload, paidAttempt)
+    const initial = await generateImageToStorage({
+      ...genOpts,
+      prompt,
+      ...(variationIndex === 1 ? {} : { suffix: `v${variationIndex}` }),
+    })
+    artifactsByPath.set(initial.storagePath, initial.original)
+    await logImageCost(
+      initial.storagePath,
+      initial.modelName,
+      initial.resolvedAspectRatio,
+      initial.resolvedImageSize,
+      paidAttempt,
+    )
+    console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} attempt 1 → ${initial.storagePath}`)
 
-  if (qcResult.qc?.scores?.length) {
-    console.log(`[worker] image-gen ${pendingActionId} — QC`, JSON.stringify(qcResult.qc))
+    const configuredLimit = Number(payload.studioPaidAttemptLimit)
+    const remainingPaidGenerations = Number.isInteger(configuredLimit)
+      ? Math.max(1, configuredLimit - paidAttempt + 1)
+      : undefined
+    const qcResult = await runImageQcLoop({
+      supabase,
+      appUrl: getAppUrl(),
+      token: getInternalToken(),
+      qcLevel,
+      initialPath: initial.storagePath,
+      productType,
+      productImagePath,
+      personImagePath,
+      surface: payload.qcSurface,
+      pipelineMode: payload.pipelineMode,
+      maxPaidGenerations: remainingPaidGenerations,
+      generationPrompt: prompt,
+      regenerate: async (fixHint, attemptNum) => {
+        paidAttempt += 1
+        await assertStudioRunPaidAttempt(pendingActionId, payload, paidAttempt)
+        const regenPrompt = `${prompt}\n\nQC FIX (regeneration attempt ${attemptNum}): ${fixHint}`
+        const regen = await generateImageToStorage({
+          ...genOpts,
+          prompt: regenPrompt,
+          suffix: `v${variationIndex}-qc${attemptNum}`,
+        })
+        artifactsByPath.set(regen.storagePath, regen.original)
+        await logImageCost(
+          regen.storagePath,
+          regen.modelName,
+          regen.resolvedAspectRatio,
+          regen.resolvedImageSize,
+          paidAttempt,
+        )
+        console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex} QC regen ${attemptNum} → ${regen.storagePath}`)
+        return regen.storagePath
+      },
+    })
+    if (qcResult.qc?.scores?.length) {
+      console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex} QC`, JSON.stringify(qcResult.qc))
+    }
+    return { initial, qcResult }
   }
+
+  const firstVariation = await generateAndQcVariation(basePrompt, 1)
+  const first = firstVariation.initial
+  const qcResult = firstVariation.qcResult
 
   const { postProcessImage } = await import('./cs/branding.mjs')
   // Only a fast gallery thumbnail here — branding (logo + code + hook) is an
@@ -1110,8 +1142,44 @@ async function processImageGen(job) {
     },
   })
 
+  // One owner decision may authorize a small variation set.  Keep one pending
+  // action and one worker result, then return adjacent file refs so every chat
+  // surface can present a shared gallery/viewer rather than N unrelated cards.
+  const deliveredImages = [{ storagePath: qcResult.storagePath, qc: qcResult.qc }]
+  let partialVariationFailure = null
+  for (let variationIndex = 2; variationIndex <= requestedVariationCount; variationIndex += 1) {
+    const prompt = variationPrompt(basePrompt, variationIndex, requestedVariationCount)
+    try {
+      const variation = await generateAndQcVariation(prompt, variationIndex)
+      await postProcessImage(supabase, `${pendingActionId}-v${variationIndex}`, variation.qcResult.storagePath, {
+        original: artifactsByPath.get(variation.qcResult.storagePath),
+      })
+      deliveredImages.push({ storagePath: variation.qcResult.storagePath, qc: variation.qcResult.qc })
+      console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} delivered → ${variation.qcResult.storagePath}`)
+    } catch (variationError) {
+      partialVariationFailure = {
+        failedVariation: variationIndex,
+        requestedCount: requestedVariationCount,
+        deliveredCount: deliveredImages.length,
+        warning: partialVariationWarning(
+          deliveredImages.length, requestedVariationCount, variationIndex),
+      }
+      console.error(
+        `[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} failed after ${deliveredImages.length} delivered:`,
+        variationError instanceof Error ? variationError.message : variationError,
+      )
+      break
+    }
+  }
+
   await callJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
+    storagePaths: deliveredImages.map((image) => image.storagePath),
+    images: deliveredImages,
+    variationCount: deliveredImages.length,
+    requestedVariationCount,
+    partialVariationFailure,
+    partialWarning: partialVariationFailure?.warning,
     allPaths: [...artifactsByPath.keys()],
     conversationId,
     provider: genericProviderForModel(first.modelName),
@@ -1131,6 +1199,7 @@ async function processImageGen(job) {
     studioMode: payload.studioMode,
     costUsd: Math.round(totalCostUsd * 1_000_000) / 1_000_000,
     qc: qcResult.qc,
+    variationQc: deliveredImages.map((image) => image.qc),
     ...finishing,
   })
 

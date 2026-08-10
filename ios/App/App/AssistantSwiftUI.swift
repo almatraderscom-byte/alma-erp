@@ -32,10 +32,13 @@ import SwiftUI
 import UIKit
 import WebKit
 import AVFoundation
+import AVKit
 import PhotosUI
+import Photos
 import UniformTypeIdentifiers
 import VisionKit
 import QuickLook
+import SafariServices
 import ObjectiveC
 import os.signpost
 import CoreText
@@ -235,8 +238,28 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     /// all until 2026-07-28, so on the phone every chat silently ran on the
     /// default no matter what he had chosen on the web.
     var permissionMode: String?
+    var pinnedSkill: String?
     var updatedAt: String?
 }
+
+/// Existing `/api/assistant/skills` owner-session contract. Only rows that the
+/// server says would run are offered by the composer; drafts/revoked packages
+/// stay visible on the dedicated approval surface, never as misleading choices.
+struct AgentSkillOption: Decodable, Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    let status: String
+    let implicit: Bool
+    let wouldRun: Bool
+    let blockedBy: String?
+}
+
+struct AgentSkillCatalogResponse: Decodable {
+    let rows: [AgentSkillOption]
+}
+
+private struct AgentSkillPinBody: Encodable { let skill: String? }
+private struct AgentSkillPinResponse: Decodable { let ok: Bool?; let skill: String? }
 
 /// The five modes, mirroring `src/agent/lib/permission-mode.ts`.
 ///
@@ -765,8 +788,13 @@ enum AgentModelShortName {
         } else if lower.contains("gemini") {
             compact = ["Gemini", version].compactMap { $0 }.joined(separator: " ")
         } else if lower.contains("qwen") {
-            compact = words.first(where: { $0.lowercased().contains("qwen") })
-                ?? ["Qwen", version].compactMap { $0 }.joined(separator: " ")
+            let qwenToken = words.first(where: { $0.lowercased().contains("qwen") })
+            if let qwenToken,
+               qwenToken.rangeOfCharacter(from: .decimalDigits) != nil {
+                compact = qwenToken
+            } else {
+                compact = ["Qwen", version].compactMap { $0 }.joined(separator: " ")
+            }
         } else if lower.contains("sonnet") {
             compact = ["Sonnet", version].compactMap { $0 }.joined(separator: " ")
         } else if lower.contains("opus") {
@@ -794,6 +822,14 @@ struct AgentFileRef: Codable, Hashable {
     let bucket: String
     let path: String
     let mediaType: String
+}
+
+/// Keep the owner's picker/reference order while removing duplicate uploads.
+/// A Set alone is intentionally not returned because its iteration order is
+/// not a transport contract ("first image" must remain the first image).
+func almaOrderedUniqueFileRefs(_ refs: [AgentFileRef]) -> [AgentFileRef] {
+    var seen = Set<AgentFileRef>()
+    return refs.filter { seen.insert($0).inserted }
 }
 
 struct AgentSessionFile: Identifiable, Equatable {
@@ -1421,7 +1457,7 @@ struct AgentChatMessage: Identifiable, Equatable {
         guard !existing.isEmpty else { return incoming }
 
         // Full cumulative snapshot: "Hello" → "Hello world".
-        if incoming.hasPrefix(existing) {
+        if incoming.count > existing.count, incoming.hasPrefix(existing) {
             return String(incoming.dropFirst(existing.count))
         }
 
@@ -1666,6 +1702,18 @@ final class AssistantVM {
     /// Gate 1 source of truth. The composer no longer owns an ephemeral @State
     /// string that disappears on navigation/process death.
     var composerDraft = "" {
+        didSet { persistCurrentComposerDraft() }
+    }
+    /// Existing server file_refs deliberately reused by rich-output actions
+    /// (Edit/Variation/Ask about this image). They ride the already-audited
+    /// `files` field of /api/assistant/chat; no image-action API is invented.
+    var referencedFileRefs: [AgentFileRef] = [] {
+        didSet { persistCurrentComposerDraft() }
+    }
+    /// A visible quote chip for “Ask about selection”. The quoted text is folded
+    /// into the ordinary owner message at send time, so history/recovery use the
+    /// same durable chat contract as every other prompt.
+    var composerSelectionReference: String? {
         didSet { persistCurrentComposerDraft() }
     }
     /// Rebuilds SwiftUI's native TextField only when a server-accepted send
@@ -2552,6 +2600,9 @@ final class AssistantVM {
     var loadingConversations = false
     var loadingMoreConversations = false
     var projects: [AgentProject] = []
+    var skillCatalog: [AgentSkillOption] = []
+    var pinnedSkillName: String?
+    var skillCatalogLoading = false
     var memories: [AgentMemoryRow] = []
     var memoriesLoading = false
     var financeSummary: AgentFinanceSummary?
@@ -2742,6 +2793,30 @@ final class AssistantVM {
     private struct ComposerDraftSnapshot: Codable {
         var text: String
         var files: [PendingFileSnapshot]
+        var referencedFiles: [AgentFileRef]?
+        var selectionReference: String?
+        var suspendedContext: SuspendedComposerContext?
+    }
+
+    private struct SuspendedComposerContext: Codable, Equatable {
+        var text: String
+        var referencedFiles: [AgentFileRef]
+        var selectionReference: String?
+    }
+
+    private var suspendedComposerContext: SuspendedComposerContext? {
+        didSet { persistCurrentComposerDraft() }
+    }
+
+    private func restoreSuspendedComposerContext() {
+        guard let suspendedComposerContext else { return }
+        restoringComposerDraft = true
+        composerDraft = suspendedComposerContext.text
+        referencedFileRefs = suspendedComposerContext.referencedFiles
+        composerSelectionReference = suspendedComposerContext.selectionReference
+        self.suspendedComposerContext = nil
+        restoringComposerDraft = false
+        persistCurrentComposerDraft()
     }
 
     private struct PendingAttachmentSend: Codable {
@@ -2750,6 +2825,7 @@ final class AssistantVM {
         let sessionIdentity: String
         let text: String
         let attachmentIds: [UUID]
+        var referencedFiles: [AgentFileRef]?
         let askCardId: String?
         let createdAt: Date
     }
@@ -2826,10 +2902,15 @@ final class AssistantVM {
             return .init(id: file.id, name: file.name, mediaType: file.mediaType,
                          cacheFileName: file.cacheFileName, state: state, fileRef: ref)
         }
-        if composerDraft.isEmpty && files.isEmpty {
+        if composerDraft.isEmpty && files.isEmpty && referencedFileRefs.isEmpty
+            && composerSelectionReference == nil && suspendedComposerContext == nil {
             store.removeValue(forKey: composerDraftKey)
         } else {
-            store[composerDraftKey] = .init(text: composerDraft, files: files)
+            store[composerDraftKey] = .init(
+                text: composerDraft, files: files,
+                referencedFiles: referencedFileRefs.isEmpty ? nil : referencedFileRefs,
+                selectionReference: composerSelectionReference,
+                suspendedContext: suspendedComposerContext)
         }
         if let data = try? JSONEncoder().encode(store) {
             UserDefaults.standard.set(data, forKey: Self.composerDraftsKey)
@@ -2841,6 +2922,9 @@ final class AssistantVM {
         defer { restoringComposerDraft = false }
         let snapshot = Self.loadComposerDrafts()[composerDraftKey]
         composerDraft = snapshot?.text ?? ""
+        referencedFileRefs = snapshot?.referencedFiles ?? []
+        composerSelectionReference = snapshot?.selectionReference
+        suspendedComposerContext = snapshot?.suspendedContext
         let directory = Self.attachmentCacheDirectory()
         pendingFiles = (snapshot?.files ?? []).compactMap { item in
             guard let directory,
@@ -2977,6 +3061,54 @@ final class AssistantVM {
         guard models.isEmpty else { return }
         if let resp: AgentModelsResponse = try? await AlmaAPI.shared.get("/api/assistant/models") {
             models = (resp.models ?? []).filter { $0.enabled != false }
+        }
+    }
+
+    func loadSkillCatalog() async {
+        guard skillCatalog.isEmpty, !skillCatalogLoading else { return }
+        skillCatalogLoading = true
+        defer { skillCatalogLoading = false }
+#if DEBUG
+        let process = ProcessInfo.processInfo
+        if process.environment["ALMA_ASSISTANT_AUTOCOMPLETE_FIXTURE"] == "1"
+            || process.arguments.contains("ALMA_ASSISTANT_AUTOCOMPLETE_FIXTURE=1") {
+            skillCatalog = [
+                .init(name: "ios-simulator-verifier", status: "active", implicit: true,
+                      wouldRun: true, blockedBy: nil),
+                .init(name: "pdf-processor", status: "active", implicit: true,
+                      wouldRun: true, blockedBy: nil),
+            ]
+            return
+        }
+#endif
+        if let response: AgentSkillCatalogResponse = try? await AlmaAPI.shared.get("/api/assistant/skills") {
+            skillCatalog = response.rows.filter(\.wouldRun)
+        }
+    }
+
+    /// Pin/clear uses the same owner-session contract as web. It never encodes a
+    /// skill name into chat prose, so autocomplete cannot claim a package was
+    /// selected when the durable conversation setting rejected it.
+    @discardableResult
+    func setSkillPin(_ name: String?) async -> Bool {
+        guard let cid = conversationId, !isStreaming else {
+            errorToast = conversationId == nil
+                ? "প্রথম বার্তা পাঠানোর পর skill pin করুন"
+                : "চলতি উত্তর শেষ হলে skill বদলান"
+            return false
+        }
+        do {
+            let response: AgentSkillPinResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/conversations/\(cid)/skill",
+                body: AgentSkillPinBody(skill: name))
+            guard response.ok != false else { throw URLError(.badServerResponse) }
+            pinnedSkillName = response.skill
+            AlmaAgentHaptics.selection()
+            return true
+        } catch {
+            errorToast = "Skill pin করা গেল না"
+            AlmaAgentHaptics.error()
+            return false
         }
     }
 
@@ -3320,11 +3452,25 @@ final class AssistantVM {
     /// failure as a chip that lies about it.
     fileprivate func refreshPermissionModeFromServer() async {
         guard let cid = conversationId else { return }
-        struct Row: Decodable { let permissionMode: String? }
+        struct Row: Decodable {
+            let permissionMode: String?
+            let pinnedSkill: String?
+        }
         guard let row: Row = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)") else { return }
-        let mode = AgentPermissionMode.from(row.permissionMode)
-        if mode != permissionMode { permissionMode = mode }
+        applyConversationSettings(permissionMode: row.permissionMode, pinnedSkill: row.pinnedSkill)
     }
+
+    private func applyConversationSettings(permissionMode rawMode: String?, pinnedSkill: String?) {
+        let mode = AgentPermissionMode.from(rawMode)
+        if mode != permissionMode { permissionMode = mode }
+        pinnedSkillName = pinnedSkill
+    }
+
+    #if DEBUG
+    func debugApplyConversationSettings(permissionMode: String?, pinnedSkill: String?) {
+        applyConversationSettings(permissionMode: permissionMode, pinnedSkill: pinnedSkill)
+    }
+    #endif
 
     private func loadActiveConversation() async {
         do {
@@ -4553,7 +4699,8 @@ final class AssistantVM {
         // The mode belongs to the CHAT, not to the phone: opening a chat he had
         // set to সতর্ক must not show স্বাভাবিক while the server runs সতর্ক.
         permissionMode = AgentPermissionMode.from(selected?.permissionMode)
-        Task { await refreshPermissionModeFromServer() }
+        pinnedSkillName = nil
+        await refreshPermissionModeFromServer()
         currentProjectId = selected?.projectId
         conversationTitle = selected?.title?.isEmpty == false ? selected!.title! : "ALMA AI"
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
@@ -4601,10 +4748,11 @@ final class AssistantVM {
         }
     }
 
-    func newChat() async {
+    @discardableResult
+    func newChat() async -> Bool {
         if isStreaming || recoverableTurn != nil {
             errorToast = "চলতি উত্তর শেষ হলে নতুন কথোপকথন খুলুন — বর্তমান কাজটি সুরক্ষিত আছে"
-            return
+            return false
         }
         persistCurrentComposerDraft()
         stopStreaming(cancelServer: false)
@@ -4625,6 +4773,7 @@ final class AssistantVM {
         modelLabel = nil
         answeringModelName = ""
         usageSnapshot = nil
+        pinnedSkillName = nil
         messages = []
         restoreCurrentComposerDraft()
         openTasks = []
@@ -4632,6 +4781,95 @@ final class AssistantVM {
         indexedSessionFileMessages = []
         sessionFileIndexConversationId = nil
         AlmaAgentHaptics.light()
+        return true
+    }
+
+    func editAcceptedPrompt(_ message: AgentChatMessage) {
+        guard message.role == .user, message.outgoingState == nil || message.outgoingState == .accepted else { return }
+        composerDraft = message.text
+        referencedFileRefs = message.fileRefs
+        AlmaAgentHaptics.selection()
+    }
+
+    func referenceGeneratedImage(_ ref: AgentFileRef, variation: Bool) {
+        guard pendingFiles.isEmpty, pendingAttachmentSend == nil else {
+            errorToast = "চলতি attachment প্রস্তুত বা Remove করার পর image action নিন"
+            AlmaAgentHaptics.warning()
+            return
+        }
+        if suspendedComposerContext == nil {
+            suspendedComposerContext = .init(
+                text: composerDraft, referencedFiles: referencedFileRefs,
+                selectionReference: composerSelectionReference)
+        }
+        referencedFileRefs = [ref]
+        composerSelectionReference = nil
+        composerDraft = variation
+            ? "এই ছবিটির একটি নতুন variation তৈরি করুন — composition ও quality ধরে রাখুন: "
+            : "এই ছবিটি edit করুন: "
+        AlmaAgentHaptics.selection()
+    }
+
+    func removeReferencedFile(_ ref: AgentFileRef) {
+        referencedFileRefs.removeAll { $0 == ref }
+        if referencedFileRefs.isEmpty, suspendedComposerContext != nil {
+            restoreSuspendedComposerContext()
+        }
+    }
+
+    func prepareSelectionQuestion(_ selection: String, inSideConversation: Bool) async {
+        let clean = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        if inSideConversation {
+            let project = currentProjectId
+            let mode = permissionMode
+            guard await newChat() else { return }
+            currentProjectId = project
+            permissionMode = mode
+        }
+        composerSelectionReference = String(clean.prefix(4_000))
+        composerDraft = "এই নির্বাচিত অংশটি সম্পর্কে "
+        AlmaAgentHaptics.selection()
+    }
+
+    /// Repeat/fork actions are composed exclusively from contracts already used
+    /// by native chat: conversation PATCH, new-chat state, and /chat message+files.
+    func regenerateAcceptedPrompt(_ message: AgentChatMessage,
+                                  withModel selectedModelId: String? = nil,
+                                  fork: Bool = false) async {
+        guard message.role == .user, !isStreaming, recoverableTurn == nil else {
+            errorToast = "চলতি উত্তর শেষ হলে আবার তৈরি করুন"
+            return
+        }
+        let oldProject = currentProjectId
+        let oldPermission = permissionMode
+        if fork {
+            guard await newChat() else { return }
+            currentProjectId = oldProject
+            permissionMode = oldPermission
+            modelId = selectedModelId
+        } else if let selectedModelId {
+            let previous = modelId
+            modelId = selectedModelId
+            if let cid = conversationId {
+                do {
+                    let _: AgentConversation = try await AlmaAPI.shared.send(
+                        "PATCH", "/api/assistant/conversations/\(cid)",
+                        body: ["modelId": selectedModelId])
+                } catch {
+                    modelId = previous
+                    errorToast = "মডেল বদলানো গেল না"
+                    return
+                }
+            }
+        }
+        // Regeneration is an exact replay of the accepted owner row. It must
+        // never consume a quote, attachment upload, or file reference currently
+        // staged in the composer for a different future message.
+        startPreparedTurn(
+            text: message.text,
+            files: message.fileRefs,
+            clientMessageId: UUID().uuidString)
     }
 
     #if DEBUG
@@ -5259,8 +5497,17 @@ final class AssistantVM {
             pendingAutoContinue = false
             pendingAutoContinueTurnId = nil
         }   // manual message resets the budget and cancels a queued machine turn
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
+        let typedText = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selectedQuote = structuredAutoContinue ? nil : structuredSelectionQuote
+        let text = selectedQuote.map { "> \($0.replacingOccurrences(of: "\n", with: "\n> "))\n\n\(typedText)" }
+            ?? typedText
+        if selectedQuote != nil {
+            // The canonical owner row contains the quote, while the pre-send UI
+            // keeps it as a compact chip instead of silently hiding context.
+            composerDraft = text
+            composerSelectionReference = nil
+        }
         if !structuredAutoContinue, pendingAttachmentSend != nil {
             errorToast = "আগের attachment-সহ বার্তাটি প্রস্তুত হচ্ছে — লেখা ও ফাইল নিরাপদ আছে"
             return
@@ -5274,16 +5521,20 @@ final class AssistantVM {
         let readyPendingFiles = pendingFiles.filter {
             if case .ready = $0.state { return true } else { return false }
         }
-        let readyFiles: [AgentFileRef] = readyPendingFiles.compactMap {
+        let uploadedFiles: [AgentFileRef] = readyPendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
-        guard !text.isEmpty || !pendingFiles.isEmpty || structuredAutoContinue else { return }
+        let reusedFiles = structuredAutoContinue ? [] : referencedFileRefs
+        let readyFiles = almaOrderedUniqueFileRefs(uploadedFiles + reusedFiles)
+        guard !text.isEmpty || !pendingFiles.isEmpty || !reusedFiles.isEmpty || structuredAutoContinue else { return }
         if !structuredAutoContinue, readyPendingFiles.count != pendingFiles.count {
             let clientMessageId = UUID().uuidString
             pendingAttachmentSend = .init(
                 clientMessageId: clientMessageId, conversationId: conversationId,
                 sessionIdentity: selectedSessionIdentity, text: text,
-                attachmentIds: attachmentIds, askCardId: askCardId, createdAt: Date())
+                attachmentIds: attachmentIds,
+                referencedFiles: reusedFiles.isEmpty ? nil : reusedFiles,
+                askCardId: askCardId, createdAt: Date())
             upsertLocalOwnerIntent(
                 clientMessageId: clientMessageId, text: text, files: readyFiles,
                 attachmentIds: attachmentIds, state: .waitingForAttachments)
@@ -5298,6 +5549,11 @@ final class AssistantVM {
             queueOwnerMessage(text: text, files: readyFiles, askCardId: askCardId,
                               sentPendingIds: [], clientMessageId: clientMessageId,
                               attachmentIds: attachmentIds)
+            if suspendedComposerContext != nil {
+                restoreSuspendedComposerContext()
+            } else {
+                referencedFileRefs = []
+            }
             return
         }
         startPreparedTurn(text: text, files: readyFiles,
@@ -5306,6 +5562,16 @@ final class AssistantVM {
                           autoContinueFromTurnId: autoContinueFromTurnId,
                           clientMessageId: clientMessageId,
                           attachmentIds: attachmentIds)
+        if suspendedComposerContext != nil {
+            restoreSuspendedComposerContext()
+        } else {
+            referencedFileRefs = []
+        }
+    }
+
+    private var structuredSelectionQuote: String? {
+        let clean = composerSelectionReference?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return clean.isEmpty ? nil : clean
     }
 
     private func queueOwnerMessage(text: String, files: [AgentFileRef], askCardId: String?,
@@ -6099,6 +6365,7 @@ final class AssistantVM {
                 // pointed at in ChatGPT. Arrives before any work starts.
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }), !skill.isEmpty {
+                    pinnedSkillName = skill
                     messages[i].skill = .init(name: skill, source: source,
                                               reason: reason, isolated: isolated)
                     touchedStream = true
@@ -6270,6 +6537,15 @@ final class AssistantVM {
             Task { [weak self] in await self?.submitQueuedSteeringIfPossible() }
         }
     }
+
+    #if DEBUG
+    /// Exercises the same live reducer used by SSE without opening a network
+    /// stream. Tests use this to keep composer-level live state in sync with
+    /// the turn row contract.
+    func debugApplyTurnEvents(_ events: [AgentTurnEvent]) {
+        apply(events)
+    }
+    #endif
 
     /// Web parity (AgentApp MAX_AUTO_CONTINUES): a serverless-deadline turn ended
     /// mid-task — machine-send "continue" so long jobs finish end-to-end. Bounded;
@@ -6933,6 +7209,86 @@ final class AssistantVM {
     /// fixed-size middle window mounted. It exercises cache promotion, search
     /// targeting, a 60k-character response and media rows without touching the
     /// server. Available only to local DEBUG Simulator launches.
+    func loadRichOutputFixture() {
+        queuedOwnerMessages = []
+        pendingFiles = []
+        referencedFileRefs = []
+        composerSelectionReference = nil
+        var owner = AgentChatMessage(id: "rich-owner", role: .user,
+                                     text: "তিনটি campaign image, sources আর implementation preview দেখাও")
+        owner.outgoingState = .accepted
+        owner.clientMessageId = "fixture-rich-owner"
+        var answer = AgentChatMessage(id: "rich-answer", role: .assistant)
+        answer.serverId = answer.id
+        answer.text = """
+        ## Campaign direction
+        তিনটি adjacent render একই viewer-এ swipe করা যাবে। [OpenAI](https://openai.com/research) এবং [ALMA Costs](/agent/costs) থেকে source details দেখুন।
+
+        ```swift
+        struct Campaign { let title: String; let budget: Int }
+        let launch = Campaign(title: "Eid", budget: 5000)
+        ```
+
+        ```latex
+        ROI = \\frac{Revenue - Cost}{Cost} \\times 100
+        ```
+
+        ```mermaid
+        graph TD
+        Prompt[Owner prompt] --> Render[Generate images]
+        Render --> Review[Owner review]
+        Review --> Publish[Approved publish]
+        ```
+
+        ```form
+        {"title":"Campaign feedback","submitLabel":"Add feedback","fields":[{"id":"direction","label":"Direction","options":["Keep","Edit","New variation"]},{"id":"note","label":"Note","placeholder":"What should change?"}]}
+        ```
+        """
+        answer.tokensIn = 24_800
+        answer.tokensOut = 1_320
+        answer.apiRounds = 3
+        answer.roundCostsUsd = [0.012, 0.018, 0.021]
+        answer.costUsd = "0.0510"
+        let refs = (1...3).map {
+            AgentFileRef(bucket: "fixture", path: "fixture/rich-image-\($0).jpg", mediaType: "image/jpeg")
+        }
+        answer.fileRefs = refs
+        answer.imagePaths = refs.map(\.path)
+        for (index, ref) in refs.enumerated() {
+            signedURLs[ref.path] = URL(string: "https://picsum.photos/seed/alma-rich-\(index + 1)/900/1100")
+        }
+        messages = [owner, answer]
+    }
+
+    #if DEBUG
+    /// Deterministic UI proof that an already-presented thought sheet observes
+    /// the live message in this VM. The strings are explicitly provider-visible
+    /// summaries; the fixture never manufactures or labels private reasoning.
+    func loadLiveThoughtSheetFixture() {
+        queuedOwnerMessages = []
+        pendingFiles = []
+        conversationId = "fixture-live-thought"
+        var answer = AgentChatMessage(id: "fixture-live-thought-answer", role: .assistant)
+        answer.isStreaming = true
+        answer.thinking = "প্রথম provider-visible কাজের সারাংশ।"
+        answer.blocks = [.activity(.init(
+            id: "fixture-live-thought-step", kind: .thinking,
+            label: "কাজের সারাংশ আপডেট করছে",
+            thinkFull: answer.thinking ?? "", live: true))]
+        messages = [answer]
+    }
+
+    func appendLiveThoughtSheetFixture() {
+        guard let index = messages.firstIndex(where: { $0.id == "fixture-live-thought-answer" }) else {
+            return
+        }
+        let delta = "\n\nদ্বিতীয় provider-visible update একই খোলা sheet-এ এসেছে।"
+        messages[index].thinking = (messages[index].thinking ?? "") + delta
+        messages[index].blocks = AgentChatMessage.appendThinkBlock(
+            messages[index].blocks, chunk: delta, messageId: messages[index].id)
+    }
+    #endif
+
     func loadHugeSessionFixture(logicalCount: Int = 600) {
         let started = Date()
         // A DEBUG fixture must be independent of whatever durable turn the same
@@ -8102,14 +8458,16 @@ final class AssistantVM {
         guard selected.allSatisfy({ if case .ready = $0.state { return true }; return false }) else {
             return
         }
-        let refs = selected.compactMap { file -> AgentFileRef? in
+        let uploadedRefs = selected.compactMap { file -> AgentFileRef? in
             if case .ready(let ref) = file.state { return ref }
             return nil
         }
+        let refs = almaOrderedUniqueFileRefs(uploadedRefs + (pending.referencedFiles ?? []))
         upsertLocalOwnerIntent(
             clientMessageId: pending.clientMessageId, text: pending.text,
             files: refs, attachmentIds: pending.attachmentIds, state: .queued)
         pendingAttachmentSend = nil
+        referencedFileRefs = []
         if isStreaming || recoverableTurn != nil {
             queueOwnerMessage(
                 text: pending.text, files: refs, askCardId: pending.askCardId,
@@ -8574,8 +8932,12 @@ extension UIFont {
 struct AlmaSelectableRichText: UIViewRepresentable {
     let attributed: NSAttributedString
     var tint: UIColor = UIColor(AgentPalette.coral)   // selection handles/highlight
+    var onAskSelection: ((String, Bool) -> Void)? = nil
 
-    init(attributed: NSAttributedString) { self.attributed = attributed }
+    init(attributed: NSAttributedString, onAskSelection: ((String, Bool) -> Void)? = nil) {
+        self.attributed = attributed
+        self.onAskSelection = onAskSelection
+    }
 
     /// Plain single-style text (the owner's coral bubble — white handles there,
     /// coral-on-coral would be invisible).
@@ -8596,11 +8958,27 @@ struct AlmaSelectableRichText: UIViewRepresentable {
     /// is now answered from an explicit measure, cached by
     /// (content, rounded width, Dynamic Type size); a nil width reuses the last
     /// REAL layout width so a stale estimate can never stick.
-    final class Coordinator {
+    final class Coordinator: NSObject, UITextViewDelegate {
         var cache: [String: CGSize] = [:]
         var lastRealWidth: CGFloat = 0
+        var onAskSelection: ((String, Bool) -> Void)?
+        init(onAskSelection: ((String, Bool) -> Void)?) { self.onAskSelection = onAskSelection }
+
+        func textView(_ textView: UITextView, editMenuForTextIn range: NSRange,
+                      suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard range.length > 0, let swiftRange = Range(range, in: textView.text),
+                  onAskSelection != nil else { return UIMenu(children: suggestedActions) }
+            let selection = String(textView.text[swiftRange])
+            let ask = UIAction(title: "Ask about selection", image: UIImage(systemName: "quote.bubble")) { [weak self] _ in
+                self?.onAskSelection?(selection, false)
+            }
+            let side = UIAction(title: "Open side conversation", image: UIImage(systemName: "arrow.triangle.branch")) { [weak self] _ in
+                self?.onAskSelection?(selection, true)
+            }
+            return UIMenu(children: suggestedActions + [ask, side])
+        }
     }
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(onAskSelection: onAskSelection) }
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -8616,6 +8994,7 @@ struct AlmaSelectableRichText: UIViewRepresentable {
         tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.tintColor = tint
         tv.attributedText = attributed
+        tv.delegate = context.coordinator
         return tv
     }
 
@@ -8624,6 +9003,7 @@ struct AlmaSelectableRichText: UIViewRepresentable {
             tv.attributedText = attributed
             tv.invalidateIntrinsicContentSize()
         }
+        context.coordinator.onAskSelection = onAskSelection
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
@@ -8650,6 +9030,140 @@ struct AlmaSelectableRichText: UIViewRepresentable {
     }
 }
 
+struct AgentCitation: Identifiable, Equatable {
+    let id: Int
+    let title: String
+    let url: URL
+    var domain: String { url.host?.replacingOccurrences(of: "www.", with: "") ?? url.absoluteString }
+    var faviconURL: URL? {
+        guard let scheme = url.scheme, let host = url.host else { return nil }
+        return URL(string: "\(scheme)://\(host)/favicon.ico")
+    }
+    /// Citation payloads currently arrive as ordinary Markdown links. Surface a
+    /// date only when the URL/title actually carries one; never synthesize
+    /// publication metadata that the audited chat contract did not send.
+    var dateLabel: String? {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+           let value = components.queryItems?.first(where: {
+               ["date", "published", "publishedat", "updated"].contains($0.name.lowercased())
+           })?.value,
+           !value.isEmpty {
+            return String(value.prefix(10))
+        }
+        guard let regex = try? NSRegularExpression(pattern: "\\b(20\\d{2}-[01]\\d-[0-3]\\d)\\b") else {
+            return nil
+        }
+        let range = NSRange(title.startIndex..<title.endIndex, in: title)
+        guard let match = regex.firstMatch(in: title, range: range),
+              let swiftRange = Range(match.range(at: 1), in: title) else { return nil }
+        return String(title[swiftRange])
+    }
+    var isALMAInternal: Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == AssistantNet.base.host?.lowercased()
+            || host.hasSuffix("alma-erp-six.vercel.app")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentCitationStrip: View {
+    let citations: [AgentCitation]
+    let pal: AgentPalette
+    let onOpen: (AgentCitation) -> Void
+    let onSources: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(citations) { citation in
+                        Button { onOpen(citation) } label: {
+                            HStack(spacing: 5) {
+                                Text("\(citation.id)")
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .frame(width: 17, height: 17)
+                                    .background(AgentPalette.teal.opacity(0.22), in: Circle())
+                                Text(citation.domain).lineLimit(1)
+                            }
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(pal.mutedHi)
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .background(pal.card.opacity(0.65), in: Capsule())
+                            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                        }
+                        .accessibilityLabel("Citation \(citation.id), \(citation.title), \(citation.domain)")
+                    }
+                }
+            }
+            Button(action: onSources) {
+                Label("Sources · \(citations.count)", systemImage: "books.vertical")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(AgentPalette.teal)
+                    .frame(minHeight: 36)
+            }
+            .accessibilityIdentifier("agent.sources.open")
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentSourcesSheet: View {
+    let citations: [AgentCitation]
+    let onOpen: (AgentCitation) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        NavigationStack {
+            List(citations) { citation in
+                Button { onOpen(citation) } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        AsyncImage(url: citation.faviconURL) { phase in
+                            if let image = phase.image { image.resizable().scaledToFit() }
+                            else { Image(systemName: citation.isALMAInternal ? "building.2" : "globe") }
+                        }
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(citation.title).font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(AgentPalette(scheme).ink)
+                            HStack(spacing: 5) {
+                                Text(citation.domain)
+                                Text("·")
+                                Text(citation.isALMAInternal ? "ALMA" : "External")
+                                if let date = citation.dateLabel {
+                                    Text("·")
+                                    Text(date)
+                                }
+                            }
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                        Spacer()
+                        Text("\(citation.id)").font(.system(size: 11, weight: .bold, design: .rounded))
+                    }
+                    .padding(.vertical, 5)
+                }
+            }
+            .navigationTitle("Sources")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("agent.sources.sheet")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentSafeBrowser: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let controller = SFSafariViewController(url: url)
+        controller.preferredControlTintColor = UIColor(AgentPalette.coral)
+        controller.dismissButtonStyle = .close
+        return controller
+    }
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
 @available(iOS 17.0, *)
 struct AgentMarkdownTable: Equatable {
     let header: [String]
@@ -8663,21 +9177,117 @@ struct AgentMarkdownText: View {
     /// Settled agent prose sets this — paragraphs render as in-place selectable
     /// UITextViews. Streaming/shimmering prose keeps the SwiftUI Text path.
     var selectable = false
+    var suppressRemoteImages = false
+    var onAskSelection: ((String, Bool) -> Void)? = nil
+    @Environment(\.openURL) private var openURL
+    @State private var showSources = false
+
+    static func shouldRenderRemoteImages(suppressRemoteImages: Bool) -> Bool {
+        !suppressRemoteImages
+    }
+    @State private var browserURL: URL?
+
+    private static func proseWithoutFencedCode(_ source: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: "```.*?```", options: [.dotMatchesLineSeparators]) else { return source }
+        let range = NSRange(location: 0, length: (source as NSString).length)
+        return regex.stringByReplacingMatches(in: source, range: range, withTemplate: "")
+    }
+
+    private static func extractMarkdownLinks(_ source: String) -> [AgentCitation] {
+        let source = proseWithoutFencedCode(source)
+        var seen: Set<String> = []
+        var result: [AgentCitation] = []
+        var cursor = source.startIndex
+        while cursor < source.endIndex,
+              let titleOpen = source[cursor...].firstIndex(of: "[") {
+            let afterOpen = source.index(after: titleOpen)
+            if titleOpen > source.startIndex,
+               source[source.index(before: titleOpen)] == "!" {
+                cursor = afterOpen
+                continue
+            }
+            guard let titleClose = source.range(of: "](", range: afterOpen..<source.endIndex) else {
+                break
+            }
+            let destinationStart = titleClose.upperBound
+            var scan = destinationStart
+            var depth = 1
+            var destinationEnd: String.Index?
+            while scan < source.endIndex {
+                let character = source[scan]
+                if character == "(" { depth += 1 }
+                if character == ")" {
+                    depth -= 1
+                    if depth == 0 {
+                        destinationEnd = scan
+                        break
+                    }
+                }
+                scan = source.index(after: scan)
+            }
+            guard let destinationEnd else { break }
+            let title = String(source[afterOpen..<titleClose.lowerBound])
+            let raw = String(source[destinationStart..<destinationEnd])
+            cursor = source.index(after: destinationEnd)
+            guard !title.isEmpty, !raw.isEmpty,
+                  !raw.contains(where: { $0.isWhitespace }) else { continue }
+            let url = raw.hasPrefix("/")
+                ? URL(string: raw, relativeTo: AssistantNet.base)?.absoluteURL
+                : URL(string: raw)
+            guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  seen.insert(url.absoluteString).inserted else { continue }
+            result.append(.init(id: result.count + 1, title: title, url: url))
+        }
+        return result
+    }
+
+    private static func isCitationEvidence(_ link: AgentCitation) -> Bool {
+        let actionLabel = #"^(?:download|open|view|click|copy|share|edit|save|play|watch|listen|ডাউনলোড|খুলুন|দেখুন|কপি|শেয়ার|সেভ)(?:\b|\s|:)"#
+        if link.title.range(of: actionLabel, options: [.regularExpression, .caseInsensitive]) != nil {
+            return false
+        }
+        if link.url.path.lowercased().hasPrefix("/api/") { return false }
+        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
+        return !mediaExtensions.contains(link.url.pathExtension.lowercased())
+    }
+
+    static func extractCitations(_ source: String) -> [AgentCitation] {
+        extractMarkdownLinks(source).filter(isCitationEvidence).enumerated().map { index, link in
+            .init(id: index + 1, title: link.title, url: link.url)
+        }
+    }
+
+    private static func extractMediaLinks(_ source: String) -> [AgentCitation] {
+        let mediaExtensions: Set<String> = ["mp4", "mov", "m4v", "mp3", "m4a", "wav", "aac"]
+        return extractMarkdownLinks(source).filter {
+            mediaExtensions.contains($0.url.pathExtension.lowercased())
+        }
+    }
+
+    private var citations: [AgentCitation] { Self.extractCitations(text) }
+    private var mediaLinks: [AgentCitation] { Self.extractMediaLinks(text) }
 
     private enum Segment: Identifiable {
         case paragraph(String)
         case code(lang: String, body: String)
         case table(String)
+        case math(String)
+        case mermaid(String)
+        case form(String)
         /// Markdown image `![alt](https://…)` — web parity: the agent embeds
         /// camera snapshots / generated images as markdown; iOS used to show the
         /// raw `![…](…)` text (owner report 2026-07-15).
-        case image(url: String, alt: String)
+        case imageGroup([(url: String, alt: String)])
         var id: String {
             switch self {
             case .paragraph(let s): return "p\(s.hashValue)"
             case .code(let l, let b): return "c\(l.hashValue)\(b.hashValue)"
             case .table(let s): return "t\(s.hashValue)"
-            case .image(let u, _): return "i\(u.hashValue)"
+            case .imageGroup(let images): return "i\(images.map(\.url).joined().hashValue)"
+            case .math(let s): return "m\(s.hashValue)"
+            case .mermaid(let s): return "g\(s.hashValue)"
+            case .form(let s): return "f\(s.hashValue)"
             }
         }
     }
@@ -8701,8 +9311,15 @@ struct AgentMarkdownText: View {
             if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 out.append(.paragraph(before.trimmingCharacters(in: .whitespacesAndNewlines)))
             }
-            out.append(.image(url: ns.substring(with: m.range(at: 2)),
-                              alt: ns.substring(with: m.range(at: 1))))
+            let image = (url: ns.substring(with: m.range(at: 2)),
+                         alt: ns.substring(with: m.range(at: 1)))
+            if case .imageGroup(var adjacent)? = out.last,
+               before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                adjacent.append(image)
+                out[out.count - 1] = .imageGroup(adjacent)
+            } else {
+                out.append(.imageGroup([image]))
+            }
             cursor = m.range.location + m.range.length
         }
         let rest = ns.substring(from: cursor)
@@ -8728,7 +9345,13 @@ struct AgentMarkdownText: View {
                 var lines = part.components(separatedBy: "\n")
                 let lang = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
                 if !lines.isEmpty { lines.removeFirst() }
-                out.append(.code(lang: lang, body: lines.joined(separator: "\n").trimmingCharacters(in: .newlines)))
+                let body = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+                switch lang.lowercased() {
+                case "mermaid": out.append(.mermaid(body))
+                case "latex", "tex", "math": out.append(.math(body))
+                case "form", "jsonform", "ui-form": out.append(.form(body))
+                default: out.append(.code(lang: lang, body: body))
+                }
             } else {
                 // plain text — pull out contiguous table blocks
                 var buf: [String] = []
@@ -8781,18 +9404,39 @@ struct AgentMarkdownText: View {
                 case .paragraph(let s): paragraph(s)
                 case .code(let lang, let body): codeCard(lang: lang, body: body)
                 case .table(let s): tableCard(s)
-                case .image(let url, _):
-                    // Framed chat image, tap → full-screen pinch-zoom viewer
-                    // (web ImageWithDownload parity).
-                    AgentToolScreenshotThumb(urlString: url, maxHeight: 300, fit: true)
+                case .math(let source): AgentMathCard(source: source, pal: pal)
+                case .mermaid(let source): AgentMermaidDiagram(source: source, pal: pal)
+                case .form(let source): AgentInteractiveFormCard(source: source, pal: pal)
+                case .imageGroup(let images):
+                    if Self.shouldRenderRemoteImages(suppressRemoteImages: suppressRemoteImages) {
+                        AgentAdjacentRemoteImageGallery(images: images)
+                    }
                 }
             }
+            if !citations.isEmpty {
+                AgentCitationStrip(citations: citations, pal: pal,
+                                   onOpen: openCitation, onSources: { showSources = true })
+            }
+            ForEach(mediaLinks) { media in
+                AgentMediaCard(title: media.title, url: media.url, pal: pal)
+            }
         }
+        .sheet(isPresented: $showSources) {
+            AgentSourcesSheet(citations: citations, onOpen: openCitation)
+        }
+        .sheet(item: $browserURL) { AgentSafeBrowser(url: $0) }
+    }
+
+    private func openCitation(_ citation: AgentCitation) {
+        AlmaAgentHaptics.selection()
+        if citation.isALMAInternal { openURL(citation.url) }
+        else { browserURL = citation.url }
     }
 
     @ViewBuilder private func paragraph(_ s: String) -> some View {
         if selectable {
-            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal))
+            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal),
+                                   onAskSelection: onAskSelection)
         } else {
             plainParagraph(s)
         }
@@ -8945,9 +9589,8 @@ struct AgentMarkdownText: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ScrollView(.horizontal, showsIndicators: true) {
-                    Text(body)
+                    Text(AgentSyntaxHighlighter.highlight(body, language: lang))
                         .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(Color.white.opacity(0.92))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)
                         .padding(.bottom, 3)
@@ -9034,6 +9677,318 @@ struct AgentMarkdownText: View {
     }
 }
 
+@available(iOS 17.0, *)
+enum AgentSyntaxHighlighter {
+    static func highlight(_ source: String, language: String) -> AttributedString {
+        let output = NSMutableAttributedString(string: source, attributes: [
+            .foregroundColor: UIColor.white.withAlphaComponent(0.92),
+            .font: UIFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+        ])
+        func color(_ pattern: String, _ color: UIColor, options: NSRegularExpression.Options = []) {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+            let range = NSRange(location: 0, length: output.length)
+            regex.enumerateMatches(in: source, range: range) { match, _, _ in
+                if let range = match?.range { output.addAttribute(.foregroundColor, value: color, range: range) }
+            }
+        }
+        color("\\b(let|var|func|class|struct|enum|protocol|extension|import|return|if|else|for|while|switch|case|async|await|throws|try|const|function|interface|type|export|from|def|in|True|False|nil|null|undefined)\\b",
+              UIColor(AgentPalette.coralLt))
+        color("\\b\\d+(?:\\.\\d+)?\\b", UIColor(red: 0.96, green: 0.72, blue: 0.38, alpha: 1))
+        color("\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'",
+              UIColor(red: 0.62, green: 0.84, blue: 0.64, alpha: 1))
+        color("//.*$|#.*$|/\\*[\\s\\S]*?\\*/", UIColor.white.withAlphaComponent(0.38), options: [.anchorsMatchLines])
+        return AttributedString(output)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentMathCard: View {
+    let source: String
+    let pal: AgentPalette
+    private enum Part {
+        case text(String)
+        case fraction(String, String)
+    }
+    private var parts: [Part] {
+        var output: [Part] = []
+        var cursor = source.startIndex
+        while let marker = source[cursor...].range(of: "\\frac{") {
+            if marker.lowerBound > cursor {
+                output.append(.text(Self.symbols(String(source[cursor..<marker.lowerBound]))))
+            }
+            let numeratorStart = marker.upperBound
+            guard let numeratorEnd = Self.closingBrace(in: source, from: numeratorStart),
+                  source.index(after: numeratorEnd) < source.endIndex,
+                  source[source.index(after: numeratorEnd)] == "{" else {
+                output.append(.text(Self.symbols(String(source[marker.lowerBound...]))))
+                return output
+            }
+            let denominatorStart = source.index(numeratorEnd, offsetBy: 2)
+            guard let denominatorEnd = Self.closingBrace(in: source, from: denominatorStart) else {
+                output.append(.text(Self.symbols(String(source[marker.lowerBound...]))))
+                return output
+            }
+            output.append(.fraction(
+                Self.symbols(String(source[numeratorStart..<numeratorEnd])),
+                Self.symbols(String(source[denominatorStart..<denominatorEnd]))))
+            cursor = source.index(after: denominatorEnd)
+        }
+        if cursor < source.endIndex { output.append(.text(Self.symbols(String(source[cursor...])))) }
+        return output.isEmpty ? [.text(Self.symbols(source))] : output
+    }
+    private static func closingBrace(in value: String, from start: String.Index) -> String.Index? {
+        var depth = 1
+        var index = start
+        while index < value.endIndex {
+            if value[index] == "{" { depth += 1 }
+            if value[index] == "}" {
+                depth -= 1
+                if depth == 0 { return index }
+            }
+            index = value.index(after: index)
+        }
+        return nil
+    }
+    private static func symbols(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\times", with: "×")
+            .replacingOccurrences(of: "\\cdot", with: "·")
+            .replacingOccurrences(of: "\\le", with: "≤")
+            .replacingOccurrences(of: "\\ge", with: "≥")
+            .replacingOccurrences(of: "\\neq", with: "≠")
+            .replacingOccurrences(of: "\\infty", with: "∞")
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("LaTeX", systemImage: "function")
+                Spacer()
+                Button { UIPasteboard.general.string = source } label: { Image(systemName: "doc.on.doc") }
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(pal.muted)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .center, spacing: 3) {
+                    ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                        switch part {
+                        case .text(let value):
+                            Text(value)
+                        case .fraction(let numerator, let denominator):
+                            VStack(spacing: 1) {
+                                Text(numerator).padding(.horizontal, 3)
+                                Rectangle().frame(height: 1)
+                                Text(denominator).padding(.horizontal, 3)
+                            }
+                            .font(.system(size: 13, weight: .regular, design: .serif))
+                        }
+                    }
+                }
+                .font(.system(size: 19, weight: .regular, design: .serif))
+                .italic()
+                .foregroundStyle(pal.ink)
+                .padding(.vertical, 6)
+            }
+        }
+        .padding(12)
+        .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.borderSubtle))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Mathematical formula, \(source)")
+    }
+}
+
+@available(iOS 17.0, *)
+struct AgentMermaidDiagram: View {
+    struct Edge: Identifiable, Equatable {
+        let from: String
+        let to: String
+        var id: String { "\(from)→\(to)" }
+    }
+    let source: String
+    let pal: AgentPalette
+    static func parseEdges(_ source: String) -> [Edge]? {
+        // A partial preview is more dangerous than a source fallback. Do not
+        // silently drop edge forms this compact renderer does not understand.
+        if source.contains("-.->") || source.contains("==>") || source.contains("---") {
+            return nil
+        }
+        func node(_ raw: String) -> (id: String, explicitLabel: String?)? {
+            var clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if clean.hasPrefix("|"), let close = clean.dropFirst().firstIndex(of: "|") {
+                clean = String(clean[clean.index(after: close)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let id = clean.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+            guard !id.isEmpty else { return nil }
+            if let open = clean.firstIndex(of: "["), let close = clean.lastIndex(of: "]"), open < close {
+                return (String(id), String(clean[clean.index(after: open)..<close])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " \"")))
+            }
+            return (String(id), nil)
+        }
+        var edges: [Edge] = []
+        var labels: [String: String] = [:]
+        for line in source.components(separatedBy: .newlines) where line.contains("-->") {
+            let parts = line.components(separatedBy: "-->")
+            for index in 0..<(parts.count - 1) {
+                guard let fromNode = node(parts[index]), let toNode = node(parts[index + 1]) else {
+                    return nil
+                }
+                if let explicit = fromNode.explicitLabel { labels[fromNode.id] = explicit }
+                if let explicit = toNode.explicitLabel { labels[toNode.id] = explicit }
+                let from = labels[fromNode.id] ?? fromNode.id
+                let to = labels[toNode.id] ?? toNode.id
+                edges.append(.init(from: from, to: to))
+            }
+        }
+        return edges.isEmpty ? nil : edges
+    }
+    private var edges: [Edge]? { Self.parseEdges(source) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label("Diagram", systemImage: "point.3.connected.trianglepath.dotted")
+                Spacer()
+                Button { UIPasteboard.general.string = source } label: { Image(systemName: "doc.on.doc") }
+            }
+            .font(.system(size: 11, weight: .semibold)).foregroundStyle(pal.muted)
+            if let edges {
+                VStack(spacing: 7) {
+                    ForEach(edges) { edge in
+                        HStack(spacing: 8) {
+                            Text(edge.from)
+                            Image(systemName: "arrow.right")
+                                .font(.caption).foregroundStyle(AgentPalette.teal)
+                            Text(edge.to)
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .frame(maxWidth: .infinity)
+                        .background(AgentPalette.teal.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+            } else {
+                // Generic visualization fallback: preserve the source and make
+                // failure explicit instead of showing a blank web canvas.
+                Text(source).font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(pal.ink).textSelection(.enabled)
+                Label("Preview unavailable · source preserved", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(pal.muted)
+            }
+        }
+        .padding(12)
+        .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.borderSubtle))
+        .accessibilityIdentifier("agent.mermaid")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentInteractiveFormCard: View {
+    struct Field: Identifiable {
+        let id: String
+        let label: String
+        let placeholder: String
+        let options: [String]
+    }
+    let source: String
+    let pal: AgentPalette
+    @State private var values: [String: String] = [:]
+
+    private var json: [String: Any]? {
+        guard let data = source.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+    private var fields: [Field] {
+        guard let rows = json?["fields"] as? [[String: Any]] else { return [] }
+        return rows.enumerated().map { index, row in
+            let id = row["id"] as? String ?? row["name"] as? String ?? "field_\(index + 1)"
+            return .init(id: id, label: row["label"] as? String ?? id,
+                         placeholder: row["placeholder"] as? String ?? "",
+                         options: row["options"] as? [String] ?? [])
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Label(json?["title"] as? String ?? "Interactive form", systemImage: "rectangle.and.pencil.and.ellipsis")
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(pal.ink)
+            if fields.isEmpty {
+                Text(source).font(.system(size: 12, design: .monospaced)).foregroundStyle(pal.mutedHi)
+                Text("Unsupported form schema · source preserved").font(.caption).foregroundStyle(pal.muted)
+            } else {
+                ForEach(fields) { field in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(field.label).font(.caption.weight(.semibold)).foregroundStyle(pal.mutedHi)
+                        if field.options.isEmpty {
+                            TextField(field.placeholder, text: Binding(
+                                get: { values[field.id] ?? "" }, set: { values[field.id] = $0 }))
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            Picker(field.label, selection: Binding(
+                                get: { values[field.id] ?? field.options.first ?? "" },
+                                set: { values[field.id] = $0 })) {
+                                ForEach(field.options, id: \.self) { Text($0).tag($0) }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    }
+                }
+                Button(json?["submitLabel"] as? String ?? "Add response to composer") {
+                    let response = fields.map { "\($0.label): \(values[$0.id] ?? $0.options.first ?? "")" }
+                        .joined(separator: "\n")
+                    AlmaComposerPrefill.pending = response
+                    NotificationCenter.default.post(name: AlmaComposerPrefill.note, object: nil)
+                    AlmaAgentHaptics.success()
+                }
+                .buttonStyle(.borderedProminent).tint(AgentPalette.coral)
+            }
+        }
+        .padding(12)
+        .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.borderSubtle))
+        .accessibilityIdentifier("agent.interactive-form")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentMediaCard: View {
+    let title: String
+    let url: URL
+    let pal: AgentPalette
+    @State private var player: AVPlayer
+    init(title: String, url: URL, pal: AgentPalette) {
+        self.title = title; self.url = url; self.pal = pal
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+    private var isVideo: Bool { ["mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(title, systemImage: isVideo ? "video" : "waveform")
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+            }
+            .foregroundStyle(pal.mutedHi)
+            if isVideo {
+                VideoPlayer(player: player).aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                HStack {
+                    Button { player.play() } label: { Image(systemName: "play.fill") }
+                    Button { player.pause() } label: { Image(systemName: "pause.fill") }
+                    Text(url.lastPathComponent).font(.caption).lineLimit(1)
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .padding(12)
+        .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.borderSubtle))
+        .accessibilityIdentifier(isVideo ? "agent.video-card" : "agent.audio-card")
+    }
+}
+
 /// A single generated response can be tens of thousands of characters. Parse a
 /// bounded first slice initially, then opt into the full markdown tree only when
 /// the owner asks. Copy/share/TTS continue to use the original complete string.
@@ -9042,6 +9997,8 @@ private struct AgentProgressiveMarkdownText: View {
     let text: String
     let pal: AgentPalette
     var selectable = false
+    var suppressRemoteImages = false
+    var onAskSelection: ((String, Bool) -> Void)? = nil
     @State private var expanded = false
     private static let initialCharacterBudget = 12_000
 
@@ -9055,7 +10012,9 @@ private struct AgentProgressiveMarkdownText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable)
+            AgentMarkdownText(text: visibleText, pal: pal, selectable: selectable,
+                              suppressRemoteImages: suppressRemoteImages,
+                              onAskSelection: onAskSelection)
             if isGiant {
                 Button {
                     AlmaAgentHaptics.selection()
@@ -9076,6 +10035,373 @@ private struct AgentProgressiveMarkdownText: View {
 }
 
 // MARK: - Message rows
+
+@available(iOS 17.0, *)
+private struct AgentGeneratedImagePreview: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+    let refs: [AgentFileRef?]
+    let initialIndex: Int
+}
+
+@available(iOS 17.0, *)
+private struct AgentAdjacentRemoteImageGallery: View {
+    let images: [(url: String, alt: String)]
+    @State private var preview: AgentGeneratedImagePreview?
+    private var urls: [URL] { images.compactMap { URL(string: $0.url) } }
+    var body: some View {
+        Group {
+            if urls.count == 1, let url = urls.first {
+                remoteTile(url, index: 0).aspectRatio(4 / 3, contentMode: .fit)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                    ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
+                        remoteTile(url, index: index).aspectRatio(1, contentMode: .fit)
+                    }
+                }
+                .frame(maxWidth: 640, alignment: .leading)
+            }
+        }
+        .fullScreenCover(item: $preview) { AgentGeneratedImageViewer(preview: $0, vm: nil) }
+        .accessibilityIdentifier("agent.adjacent-image-gallery")
+    }
+    private func remoteTile(_ url: URL, index: Int) -> some View {
+        AsyncImage(url: url) { phase in
+            if let image = phase.image { image.resizable().scaledToFill() }
+            else if phase.error != nil {
+                ContentUnavailableView("ছবি লোড হয়নি", systemImage: "arrow.clockwise")
+            } else { AgentImageSkeleton() }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            preview = .init(urls: urls, refs: Array(repeating: nil, count: urls.count), initialIndex: index)
+        }
+        .accessibilityLabel(images.indices.contains(index) && !images[index].alt.isEmpty
+            ? images[index].alt : "Image \(index + 1) of \(urls.count)")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentGeneratedImageGallery: View {
+    let refs: [AgentFileRef]
+    let vm: AssistantVM
+    @Environment(\.colorScheme) private var scheme
+    @State private var urls: [String: URL] = [:]
+    @State private var failed: Set<String> = []
+    @State private var preview: AgentGeneratedImagePreview?
+    /// Deterministic DEBUG-only failure used by the UI recovery test. The first
+    /// generated image fails before URL resolution once; retry then exercises the
+    /// production path with the fixture's already-seeded URL and keeps the turn.
+    @State private var simulatedFailureConsumed = false
+
+    private var imageRefs: [AgentFileRef] {
+        refs.filter { $0.mediaType.hasPrefix("image/") }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        Group {
+            if imageRefs.count == 1, let ref = imageRefs.first {
+                tile(ref, index: 0, pal: pal)
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .frame(maxWidth: 520)
+            } else if !imageRefs.isEmpty {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                    ForEach(Array(imageRefs.enumerated()), id: \.element) { index, ref in
+                        tile(ref, index: index, pal: pal)
+                            .aspectRatio(1, contentMode: .fit)
+                    }
+                }
+                .frame(maxWidth: 640, alignment: .leading)
+                .overlay(alignment: .bottomTrailing) {
+                    Text("\(imageRefs.count) images")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(.black.opacity(0.62), in: Capsule())
+                        .padding(8)
+                }
+            }
+        }
+        .task(id: imageRefs.map(\.path).joined(separator: "|")) { await resolveAll() }
+        .fullScreenCover(item: $preview) { item in
+            AgentGeneratedImageViewer(preview: item, vm: vm)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent.generated-image-gallery")
+    }
+
+    @ViewBuilder private func tile(_ ref: AgentFileRef, index: Int, pal: AgentPalette) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(pal.card.opacity(0.55))
+            if failed.contains(ref.path) {
+                Button {
+                    failed.remove(ref.path)
+                    urls.removeValue(forKey: ref.path)
+                    // Keep the deterministic fixture URL so the retry can become
+                    // ready without a server. Production failures still evict a
+                    // stale signed URL before asking the existing API for another.
+                    if !shouldSimulateFailure(for: ref) {
+                        vm.signedURLs.removeValue(forKey: ref.path)
+                    }
+                    Task { await resolve(ref) }
+                } label: {
+                    VStack(spacing: 7) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("আবার চেষ্টা")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pal.mutedHi)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .accessibilityIdentifier("agent.generated-image.retry")
+            } else if let url = urls[ref.path] {
+                AsyncImage(url: url, transaction: .init(animation: .easeOut(duration: 0.18))) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        Color.clear.onAppear { failed.insert(ref.path) }
+                    default:
+                        AgentImageSkeleton()
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { openPreview(at: index) }
+            } else {
+                AgentImageSkeleton()
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+        .accessibilityLabel(failed.contains(ref.path)
+            ? "Generated image failed, retry" : "Generated image \(index + 1) of \(imageRefs.count)")
+    }
+
+    private func resolveAll() async {
+        for ref in imageRefs where urls[ref.path] == nil && !failed.contains(ref.path) {
+            await resolve(ref)
+        }
+    }
+
+    private func resolve(_ ref: AgentFileRef) async {
+        if shouldSimulateFailure(for: ref), !simulatedFailureConsumed {
+            simulatedFailureConsumed = true
+            failed.insert(ref.path)
+            return
+        }
+        if let url = await vm.signedURL(for: ref.path) {
+            urls[ref.path] = url
+        } else {
+            failed.insert(ref.path)
+        }
+    }
+
+    private func shouldSimulateFailure(for ref: AgentFileRef) -> Bool {
+#if DEBUG
+        let process = ProcessInfo.processInfo
+        let enabled = process.environment["ALMA_ASSISTANT_RICH_IMAGE_FAILURE"] == "1"
+            || process.arguments.contains("ALMA_ASSISTANT_RICH_IMAGE_FAILURE=1")
+        return enabled && ref.path == imageRefs.first?.path
+#else
+        return false
+#endif
+    }
+
+    private func openPreview(at index: Int) {
+        let resolved = imageRefs.compactMap { urls[$0.path] }
+        guard resolved.count == imageRefs.count else { return }
+        preview = .init(urls: resolved, refs: imageRefs.map(Optional.some), initialIndex: index)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentImageSkeleton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+    var body: some View {
+        ZStack {
+            Color.white.opacity(0.045)
+            Image(systemName: "sparkles")
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(AgentPalette.coral.opacity(pulse ? 0.75 : 0.25))
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+        }
+        .accessibilityLabel("Image generating")
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentGeneratedImageViewer: View {
+    let preview: AgentGeneratedImagePreview
+    let vm: AssistantVM?
+    @Environment(\.dismiss) private var dismiss
+    @State private var index: Int
+    @State private var images: [URL: UIImage] = [:]
+    @State private var shareItems: AgentShareItems?
+    @State private var toast: String?
+
+    init(preview: AgentGeneratedImagePreview, vm: AssistantVM?) {
+        self.preview = preview
+        self.vm = vm
+        _index = State(initialValue: preview.initialIndex)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $index) {
+                ForEach(Array(preview.urls.enumerated()), id: \.offset) { i, url in
+                    // PageTabView can adopt a fitted portrait image's intrinsic
+                    // width. Give every URL the exact viewer proposal so a Pro
+                    // Max never shows two neighboring pages at once.
+                    GeometryReader { page in
+                        AgentZoomableRemoteImage(url: url) { image in images[url] = image }
+                            .frame(width: page.size.width, height: page.size.height)
+                            .contentShape(Rectangle())
+                    }
+                        .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            VStack {
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("Close")
+                    Spacer()
+                    if preview.urls.count > 1 {
+                        Text("\(index + 1) / \(preview.urls.count)")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.top, 8)
+                Spacer()
+                actionBar
+            }
+            if let toast {
+                Text(toast).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(.black.opacity(0.72), in: Capsule())
+            }
+        }
+        .sheet(item: $shareItems) { AgentGenericShareSheet(items: $0.items) }
+    }
+
+    private var actionBar: some View {
+        HStack(spacing: 7) {
+            viewerAction("Save", "square.and.arrow.down") { save() }
+            viewerAction("Share", "square.and.arrow.up") { share() }
+            viewerAction("Copy", "doc.on.doc") { copy() }
+            if vm != nil, preview.refs.indices.contains(index), preview.refs[index] != nil {
+                viewerAction("Edit", "wand.and.stars") { reference(false) }
+                viewerAction("Variation", "square.on.square") { reference(true) }
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 10).padding(.bottom, 10)
+    }
+
+    private func viewerAction(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                Text(title).font(.system(size: 9.5, weight: .semibold)).lineLimit(1)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .accessibilityIdentifier("agent.generated-image.\(title.lowercased())")
+    }
+
+    private func save() {
+        guard let image = images[preview.urls[index]] else { show("ছবি এখনো প্রস্তুত হচ্ছে") ; return }
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                Task { @MainActor in show("Photos permission দরকার") }; return
+            }
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            } completionHandler: { ok, _ in Task { @MainActor in show(ok ? "Photos-এ সংরক্ষিত" : "Save করা গেল না") } }
+        }
+    }
+
+    private func share() {
+        let url = preview.urls[index]
+        if let image = images[url] {
+            shareItems = .init(items: [image])
+        } else {
+            shareItems = .init(items: [url])
+        }
+    }
+    private func copy() {
+        guard let image = images[preview.urls[index]] else { show("ছবি এখনো প্রস্তুত হচ্ছে"); return }
+        UIPasteboard.general.image = image
+        show("ছবি কপি হয়েছে")
+    }
+    private func reference(_ variation: Bool) {
+        guard preview.refs.indices.contains(index), let ref = preview.refs[index] else { return }
+        vm?.referenceGeneratedImage(ref, variation: variation)
+        dismiss()
+    }
+    private func show(_ message: String) {
+        toast = message
+        Task { try? await Task.sleep(for: .seconds(1.6)); if toast == message { toast = nil } }
+    }
+}
+
+private struct AgentShareItems: Identifiable { let id = UUID(); let items: [Any] }
+
+private struct AgentGenericShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+@available(iOS 17.0, *)
+private struct AgentZoomableRemoteImage: View {
+    let url: URL
+    let onLoaded: (UIImage) -> Void
+    @State private var image: UIImage?
+    @State private var scale: CGFloat = 1
+    @State private var baseScale: CGFloat = 1
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .scaleEffect(scale)
+                    .gesture(MagnifyGesture().onChanged { scale = min(5, max(1, baseScale * $0.magnification)) }
+                        .onEnded { _ in baseScale = scale })
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring(response: 0.3)) { scale = scale > 1 ? 1 : 2; baseScale = scale }
+                    }
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .task(id: url) {
+            guard image == nil else { return }
+            if let (data, _) = try? await URLSession.shared.data(from: url), let loaded = UIImage(data: data) {
+                image = loaded; onLoaded(loaded)
+            }
+        }
+    }
+}
 
 @available(iOS 17.0, *)
 struct AgentChatImage: View {
@@ -9299,6 +10625,44 @@ struct AgentMessageRow: View {
                         }
                     }
                 }
+                if message.outgoingState == nil || message.outgoingState == .accepted {
+                    HStack(spacing: 14) {
+                        Button {
+                            vm.editAcceptedPrompt(message)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        Button {
+                            Task { await vm.regenerateAcceptedPrompt(message) }
+                        } label: {
+                            Label("Regenerate", systemImage: "arrow.clockwise")
+                        }
+                        Menu {
+                            Section("Regenerate with model") {
+                                Button("Auto") {
+                                    Task { await vm.regenerateAcceptedPrompt(message, withModel: "auto") }
+                                }
+                                ForEach(vm.models) { model in
+                                    Button(model.label) {
+                                        Task { await vm.regenerateAcceptedPrompt(message, withModel: model.id) }
+                                    }
+                                }
+                            }
+                            Button {
+                                Task { await vm.regenerateAcceptedPrompt(message, fork: true) }
+                            } label: {
+                                Label("Branch into new chat", systemImage: "arrow.triangle.branch")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .task { await vm.loadModels() }
+                    }
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("agent.accepted-prompt-actions")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 44)   // ~85% max width feel
@@ -9332,12 +10696,23 @@ struct AgentMessageRow: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 if message.isStreaming {
                                     HStack(alignment: .bottom, spacing: 2) {
-                                        AgentMarkdownText(text: message.text, pal: pal)
+                                        AgentMarkdownText(
+                                            text: message.text, pal: pal,
+                                            suppressRemoteImages: !message.fileRefs.filter {
+                                                $0.mediaType.hasPrefix("image/")
+                                            }.isEmpty)
                                             .modifier(AgentShimmerModifier())
                                         AgentTypingCursor()
                                     }
                                 } else {
-                                    AgentProgressiveMarkdownText(text: message.text, pal: pal)
+                                    AgentProgressiveMarkdownText(
+                                        text: message.text, pal: pal, selectable: true,
+                                        suppressRemoteImages: !message.fileRefs.filter {
+                                            $0.mediaType.hasPrefix("image/")
+                                        }.isEmpty,
+                                        onAskSelection: { selection, side in
+                                            Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
+                                        })
                                         // 1.4: cap ONLY the collapsed state; expanded rows size
                                         // naturally (never a greedy .infinity inside the lazy list).
                                         .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
@@ -9405,8 +10780,10 @@ struct AgentMessageRow: View {
                         .padding(.vertical, 2)
                     }
 
-                    ForEach(message.imagePaths, id: \.self) { p in
-                        AgentChatImage(path: p, vm: vm)
+                    let generatedImageRefs = message.fileRefs.filter { $0.mediaType.hasPrefix("image/") }
+                    if !generatedImageRefs.isEmpty {
+                        AgentGeneratedImageGallery(refs: generatedImageRefs, vm: vm)
+                            .padding(.top, 2)
                     }
                     // Cards already pinned in-flow by TurnBlocks render THERE; only
                     // cards with no block (persisted history turns) fall back here.
@@ -10408,6 +11785,7 @@ struct AgentMessageActions: View {
     let onBackgroundTasks: () -> Void
     let onSelectText: () -> Void
     let onShowActivity: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var copied = false
     // Debug self-test hook (never set in production launches): ALMA_FEEDBACK_OPEN=1
     // pre-opens the 👎 reason chips so the fixture screenshot proves the row.
@@ -10617,16 +11995,29 @@ struct AgentMessageActions: View {
             Text("\(almaBnCompact(total)) tokens\(cost)\(rounds)")
                 .font(.caption2)
                 .foregroundStyle(pal.muted.opacity(0.76))
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+                .accessibilityIdentifier("agent.turn.cost-summary")
                 .accessibilityLabel(
                     "মোট \(total) টোকেন; ইনপুট \(tin); আউটপুট \(tout); cache write \(cw); cache read \(cr)")
-            HStack(spacing: 0) {
-                usageMetric("Input", value: tin)
-                usageMetric("Output", value: tout)
-                usageMetric("Cache write", value: cw)
-                usageMetric("Cache read", value: cr)
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
+                          alignment: .leading, spacing: 8) {
+                    usageMetric("Input", value: tin)
+                    usageMetric("Output", value: tout)
+                    usageMetric("Cache write", value: cw)
+                    usageMetric("Cache read", value: cr)
+                }
+                .padding(.top, 5)
+            } else {
+                HStack(spacing: 0) {
+                    usageMetric("Input", value: tin)
+                    usageMetric("Output", value: tout)
+                    usageMetric("Cache write", value: cw)
+                    usageMetric("Cache read", value: cr)
+                }
+                .padding(.top, 3)
             }
-            .padding(.top, 3)
         }
     }
 
@@ -11806,7 +13197,11 @@ struct AgentTurnBlocksView: View {
         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if isTail {
                 HStack(alignment: .bottom, spacing: 2) {
-                    AgentMarkdownText(text: text, pal: pal)
+                    AgentMarkdownText(
+                        text: text, pal: pal,
+                        suppressRemoteImages: message.fileRefs.contains {
+                            $0.mediaType.hasPrefix("image/")
+                        })
                         .modifier(AgentShimmerModifier())
                     AgentTypingCursor()
                 }
@@ -11816,7 +13211,14 @@ struct AgentTurnBlocksView: View {
                 // DIRECTLY selectable in the chat — long-press/double-tap marks with
                 // native grabbers and the system Copy menu. No context menu here (it
                 // would swallow the long-press); whole-reply copy lives in the footer.
-                AgentProgressiveMarkdownText(text: text, pal: pal, selectable: true)
+                AgentProgressiveMarkdownText(
+                    text: text, pal: pal, selectable: true,
+                    suppressRemoteImages: message.fileRefs.contains {
+                        $0.mediaType.hasPrefix("image/")
+                    },
+                    onAskSelection: { selection, side in
+                        Task { await vm.prepareSelectionQuestion(selection, inSideConversation: side) }
+                    })
                     .padding(.vertical, 2)
             }
         }
@@ -12251,6 +13653,14 @@ enum AlmaComposerPrefill {
     }
 }
 
+func almaComposerDraftAppending(_ incoming: String, to existing: String) -> String {
+    let current = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+    let addition = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !current.isEmpty else { return addition }
+    guard !addition.isEmpty else { return current }
+    return current + "\n\n" + addition
+}
+
 enum AlmaAssistantLibraryRequest {
     static let note = Notification.Name("almaAssistantOpenSessionLibrary")
 }
@@ -12640,12 +14050,20 @@ struct AgentContextWindowPopover: View {
 }
 
 @available(iOS 17.0, *)
+private struct AgentComposerAutocompleteItem: Identifiable {
+    enum Kind { case command, skill }
+    let kind: Kind
+    let value: String
+    var id: String { "\(kind == .command ? "command" : "skill"):\(value)" }
+}
+
+@available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
     @State private var showAttachmentChoices = false
     @State private var showPhotoPicker = false
     @State private var showDocumentPicker = false
@@ -12654,6 +14072,8 @@ struct AgentComposerView: View {
     @State private var showContextWindow = false
     @State private var showPermissionModes = false
     @FocusState private var focused: Bool
+
+    private static let supportedCommands = ["status", "help", "ping", "cancel", "balance"]
 
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
@@ -12667,6 +14087,8 @@ struct AgentComposerView: View {
         !focused
             && vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && vm.pendingFiles.isEmpty
+            && vm.referencedFileRefs.isEmpty
+            && vm.composerSelectionReference == nil
             && !vm.isStreaming
             && !vm.composerSubmissionPending
             && !vm.hasPendingAttachmentSend
@@ -12738,7 +14160,14 @@ struct AgentComposerView: View {
                     .foregroundStyle(AgentPalette.coral)
                     .padding(.horizontal, 10)
                 }
-                if !vm.pendingFiles.isEmpty && !vm.isRecording { attachmentsRow(pal) }
+                if vm.pinnedSkillName != nil || !autocompleteItems.isEmpty {
+                    composerAutocompleteRow(pal)
+                }
+                if (!vm.pendingFiles.isEmpty || !vm.referencedFileRefs.isEmpty
+                    || vm.composerSelectionReference != nil) && !vm.isRecording {
+                    composerReferencesRow(pal)
+                    if !vm.pendingFiles.isEmpty { attachmentsRow(pal) }
+                }
                 if vm.isRecording {
                     recordingBar(pal)
                 } else {
@@ -12771,17 +14200,23 @@ struct AgentComposerView: View {
         .onAppear { consumePrefill() }
         .onReceive(NotificationCenter.default.publisher(for: AlmaComposerPrefill.note)
             .receive(on: DispatchQueue.main)) { _ in consumePrefill() }
-        .onChange(of: photoItem) { _, item in
-            guard let item else { return }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let img = UIImage(data: data) {
-                    vm.attachImage(img)
+                // Preserve the Photo Library order. Each item is independently
+                // recoverable once enqueued, and one unreadable asset cannot
+                // discard the rest of a multi-select batch.
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let img = UIImage(data: data) {
+                        vm.attachImage(img)
+                    }
                 }
-                photoItem = nil
+                photoItems = []
             }
         }
-        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoItems,
+                      maxSelectionCount: 20, matching: .images)
         .fileImporter(isPresented: $showDocumentPicker,
                       allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
@@ -12811,6 +14246,7 @@ struct AgentComposerView: View {
         .task(id: vm.usageRefreshIdentity) {
             await vm.refreshUsage()
         }
+        .task { await vm.loadSkillCatalog() }
         .task {
             let process = ProcessInfo.processInfo
             let demo = process.environment["ALMA_ASSISTANT_ATTACHMENT_MENU"] == "1"
@@ -12827,8 +14263,76 @@ struct AgentComposerView: View {
     private func consumePrefill() {
         guard let text = AlmaComposerPrefill.pending else { return }
         AlmaComposerPrefill.pending = nil
-        vm.composerDraft = text
+        vm.composerDraft = almaComposerDraftAppending(text, to: vm.composerDraft)
         focused = true
+    }
+
+    private var autocompleteItems: [AgentComposerAutocompleteItem] {
+        let raw = vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let prefix = raw.first, prefix == "/" || prefix == "@",
+              !raw.dropFirst().contains(where: \.isWhitespace) else { return [] }
+        let query = String(raw.dropFirst()).lowercased()
+        var rows: [AgentComposerAutocompleteItem] = []
+        if prefix == "/" {
+            rows += Self.supportedCommands
+                .filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
+                .map { .init(kind: .command, value: $0) }
+        }
+        if vm.conversationId != nil {
+            rows += vm.skillCatalog
+                .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+                .prefix(8)
+                .map { .init(kind: .skill, value: $0.name) }
+        }
+        return Array(rows.prefix(10))
+    }
+
+    @ViewBuilder private func composerAutocompleteRow(_ pal: AgentPalette) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 7) {
+                if let pinned = vm.pinnedSkillName {
+                    Button {
+                        Task { _ = await vm.setSkillPin(nil) }
+                    } label: {
+                        Label(pinned, systemImage: "brain.head.profile")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(AgentPalette.coral)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(AgentPalette.coral.opacity(0.10), in: Capsule())
+                    }
+                    .accessibilityIdentifier("agent.skill-pin")
+                    .accessibilityHint("চাপলে skill pin সরে যাবে")
+                }
+                ForEach(autocompleteItems) { item in
+                    Button { chooseAutocomplete(item) } label: {
+                        Label(item.kind == .command ? "/\(item.value)" : item.value,
+                              systemImage: item.kind == .command ? "terminal" : "brain")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(pal.mutedHi)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(pal.card.opacity(0.72), in: Capsule())
+                    }
+                    .accessibilityIdentifier("agent.autocomplete.\(item.id)")
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .accessibilityIdentifier("agent.composer.autocomplete")
+    }
+
+    private func chooseAutocomplete(_ item: AgentComposerAutocompleteItem) {
+        switch item.kind {
+        case .command:
+            vm.composerDraft = "/\(item.value) "
+            focused = true
+        case .skill:
+            Task {
+                if await vm.setSkillPin(item.value) {
+                    vm.composerDraft = ""
+                    focused = true
+                }
+            }
+        }
     }
 
     @ViewBuilder private func recordingBar(_ pal: AgentPalette) -> some View {
@@ -12939,6 +14443,43 @@ struct AgentComposerView: View {
             .padding(.horizontal, 4).padding(.vertical, 3)
         }
         .frame(height: 70)
+    }
+
+    @ViewBuilder private func composerReferencesRow(_ pal: AgentPalette) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let selection = vm.composerSelectionReference {
+                    HStack(spacing: 7) {
+                        Image(systemName: "quote.opening")
+                        Text(selection).lineLimit(2)
+                        Button { vm.composerSelectionReference = nil } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .accessibilityLabel("নির্বাচিত অংশ সরান")
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .frame(maxWidth: 270)
+                    .background(AgentPalette.teal.opacity(0.10), in: Capsule())
+                }
+                ForEach(vm.referencedFileRefs, id: \.self) { ref in
+                    HStack(spacing: 7) {
+                        Image(systemName: ref.mediaType.hasPrefix("image/") ? "photo" : "doc")
+                        Text("Referenced \(ref.mediaType.hasPrefix("image/") ? "image" : "file")")
+                        Button { vm.removeReferencedFile(ref) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .accessibilityLabel("Reference সরান")
+                    }
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(AgentPalette.coral.opacity(0.10), in: Capsule())
+                }
+            }
+            .padding(.horizontal, 4)
+        }
     }
 
     @ViewBuilder private func attachmentStateGlyph(_ file: AssistantVM.PendingFile) -> some View {
@@ -13171,7 +14712,7 @@ struct AgentComposerView: View {
     private var sendEnabled: Bool {
         !vm.composerSubmissionPending
             && (!vm.composerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !vm.pendingFiles.isEmpty)
+                || !vm.pendingFiles.isEmpty || !vm.referencedFileRefs.isEmpty)
     }
 
     @ViewBuilder private func attachmentMenu(_ pal: AgentPalette) -> some View {
@@ -16433,6 +17974,7 @@ struct AssistantScreen: View {
     @Namespace private var backgroundTaskNamespace
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion // IOSP-5
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var nearBottom = true
     /// Own-send anchors the user's message to the viewport top; tail-follow
     /// handlers stand down until this instant so they don't yank to the bottom
@@ -16622,7 +18164,13 @@ struct AssistantScreen: View {
                         // A brand-new chat intentionally has no reply footer.
                         // ALMA identity + Background Tasks belong to a settled
                         // assistant reply, never to the empty welcome state.
-                        Color.clear.frame(height: 4).id(Self.bottomID)
+                        // At accessibility sizes the composer grows vertically.
+                        // A real tail spacer keeps the expanded two-row billing
+                        // footer fully scrollable above that inset instead of
+                        // leaving its last metrics behind the translucent input.
+                        Color.clear
+                            .frame(height: dynamicTypeSize.isAccessibilitySize ? 112 : 4)
+                            .id(Self.bottomID)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
@@ -16906,6 +18454,20 @@ struct AssistantScreen: View {
                 return
             }
             #if DEBUG
+            if argFlag("ALMA_ASSISTANT_LIVE_THOUGHT") {
+                vm.loadLiveThoughtSheetFixture()
+                if let answer = vm.messages.last {
+                    activitySheet = .init(
+                        message: answer, kind: .thoughtProcess,
+                        activityIds: ["fixture-live-thought-step"])
+                }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(1_500))
+                    vm.appendLiveThoughtSheetFixture()
+                }
+                AlmaTurnLog.event("assistant.contentReady", "fixture=live-thought-sheet")
+                return
+            }
             if argFlag("ALMA_ASSISTANT_CLAUDE_CHAT") {
                 vm.loadClaudeChatFixture()
                 if AlmaMergeReadinessURLProtocol.scenario == "claudeInteractive" {
@@ -16940,6 +18502,11 @@ struct AssistantScreen: View {
                         timelineScrollTarget = "reading-owner"
                     }
                 }
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_RICH_OUTPUT") {
+                vm.loadRichOutputFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=rich-output")
                 return
             }
             #if DEBUG

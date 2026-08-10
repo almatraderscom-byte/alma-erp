@@ -26,7 +26,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     where: { id },
     select: {
       id: true, title: true, projectId: true, archived: true, pinned: true,
-      modelId: true, chatMode: true, permissionMode: true, updatedAt: true,
+      modelId: true, chatMode: true, permissionMode: true, pinnedSkill: true,
+      updatedAt: true,
     },
   })
   if (!conv) return Response.json({ error: 'not_found' }, { status: 404 })
@@ -97,7 +98,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     data,
     select: {
       id: true, title: true, projectId: true, archived: true, pinned: true,
-      modelId: true, chatMode: true, permissionMode: true, updatedAt: true,
+      modelId: true, chatMode: true, permissionMode: true, pinnedSkill: true,
+      updatedAt: true,
     },
   })
 
