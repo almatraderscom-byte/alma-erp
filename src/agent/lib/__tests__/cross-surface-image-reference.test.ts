@@ -5,7 +5,10 @@ describe('explicit cross-chat references', () => {
   it.each([
     'Create a poster based on the campaign we finalized in the other chat.',
     'Use the previous conversation to make this image.',
+    'Create a poster based on the campaign in a different chat.',
+    'Generate an image using the design from a separate conversation.',
     'আগের চ্যাটের campaign দিয়ে poster বানাও।',
+    'আলাদা চ্যাটের campaign দিয়ে poster বানাও।',
     'ager chat er design diye image banao',
   ])('keeps recall for %s', (prompt) => {
     expect(referencesOtherConversation(prompt)).toBe(true)

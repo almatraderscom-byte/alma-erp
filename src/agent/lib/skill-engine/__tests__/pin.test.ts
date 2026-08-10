@@ -101,6 +101,11 @@ describe('the pin sticks', () => {
     expect(shouldReleaseRouterPin('alma-research', prompt)).toBe(true)
   })
 
+  it('keeps research pinned when only its output format changes', () => {
+    const prompt = 'Compare Gemini and Claude; provide a bullet list with inline citations.'
+    expect(shouldReleaseRouterPin('alma-research', prompt)).toBe(false)
+  })
+
   it('keeps plain ERP record reads out of narrow workflow skills', () => {
     expect(isExplicitErpRecordRead('Show the three newest orders with order ID and status')).toBe(true)
     expect(isExplicitErpRecordRead('latest orders dekhao')).toBe(true)

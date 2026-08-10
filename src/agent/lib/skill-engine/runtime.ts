@@ -135,11 +135,17 @@ export async function buildActiveSkills(
     if (opts.conversationId) {
       const { resolveSkillPin } = await import('@/agent/lib/skill-engine/pin')
       const pin = resolvedPin ?? await resolveSkillPin(opts.conversationId, lastUserText)
-      picked = pin.skill ? index.skills.filter((s) => s.name === pin.skill) : []
-      if (pin.skill) {
+      // The disabled engine may never activate a non-P0 owner/router pin. A
+      // fresh deterministic P0 request still runs its product capability for
+      // this turn without overwriting the owner's saved non-P0 preference.
+      const effectiveSkill = !engineEnabled && pin.skill && !ALWAYS_ON_P0_SKILLS.has(pin.skill)
+        ? p0Skill
+        : pin.skill
+      picked = effectiveSkill ? index.skills.filter((s) => s.name === effectiveSkill) : []
+      if (effectiveSkill) {
         pinned = {
-          skill: pin.skill,
-          source: pin.source === 'owner' ? 'owner' : 'router',
+          skill: effectiveSkill,
+          source: effectiveSkill === pin.skill && pin.source === 'owner' ? 'owner' : 'router',
           layer: pin.trace?.layer ?? 'pinned',
           reason: pin.trace?.reason ?? 'আগে থেকেই এই চ্যাটে pin করা',
         }

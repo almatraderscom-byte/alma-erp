@@ -67,6 +67,19 @@ describe('skill-engine runtime bridge (gated)', () => {
     expect(await buildActiveSkillsBlock('continue', { conversationId: 'c1' })).toBe('')
   })
 
+  it('does not let a disabled non-P0 owner pin hijack a fresh P0 image request', async () => {
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: 'seo-fixing-own-site',
+      skillRouteTrace: { source: 'owner', layer: 'owner', reason: 'owner', candidates: [], at: '' },
+    })
+
+    const block = await buildActiveSkillsBlock('Create a launch poster image.', { conversationId: 'c1' })
+
+    expect(block).toContain('alma-image-generation')
+    expect(block).toContain('generate_image')
+    expect(block).not.toContain('seo-fixing-own-site')
+  })
+
   it('when enabled, an active skill matching the message is injected', async () => {
     process.env.SKILL_ENGINE_ENABLED = 'true'
     // alma-owner-daily-briefing is status:active and keyword-matches "daily brief".

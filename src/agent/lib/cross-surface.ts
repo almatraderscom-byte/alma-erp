@@ -17,7 +17,7 @@ export type CrossSurfaceSnippet = {
  * explicit "use the campaign from the other chat" request must retain recall.
  */
 export function referencesOtherConversation(text: string): boolean {
-  return /(?:\b(?:other|another|previous|prior|earlier|last)\s+(?:chat|conversation|thread)\b|\b(?:chat|conversation|thread)\s+(?:from|we\s+had\s+in)\s+(?:before|earlier)\b|(?:অন্য|আগের|পূর্বের)\s*(?:চ্যাট|কথোপকথন|কনভারসেশন|থ্রেড)|(?:onno|ager|agerer|purber)\s*(?:chat|conversation|thread))/i.test(text)
+  return /(?:\b(?:other|another|different|separate|previous|prior|earlier|last)\s+(?:chat|conversation|thread)\b|\b(?:chat|conversation|thread)\s+(?:from|we\s+had\s+in)\s+(?:before|earlier)\b|(?:অন্য|আলাদা|আগের|পূর্বের)\s*(?:চ্যাট|কথোপকথন|কনভারসেশন|থ্রেড)|(?:onno|alada|ager|agerer|purber)\s*(?:chat|conversation|thread))/i.test(text)
 }
 
 function extractAssistantText(content: unknown): string {

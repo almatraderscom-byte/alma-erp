@@ -47,6 +47,11 @@ export function shouldReleaseRouterPin(pinnedSkill: string, text: string): boole
   const t = (text ?? '').trim()
   if (!t) return false
 
+  // Formatting instructions do not end a workflow when the same message still
+  // deterministically belongs to it (for example cited research in bullets).
+  const matchingRule = applyRules(t)
+  if (matchingRule?.skill === pinnedSkill) return false
+
   // A pure answer-format request belongs to the unrestricted head regardless
   // of whichever workflow the previous turn used. Keeping an image/research
   // pin here removes the renderer tools and makes a new prompt look like a
