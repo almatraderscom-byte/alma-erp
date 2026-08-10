@@ -56,6 +56,45 @@ struct AlmaLiveVoiceChoice: Identifiable, Hashable {
     let symbol: String
 }
 
+// MARK: - Live Voice recovery rollout gates
+
+/// Phase-specific rollback switches must be checked where behavior starts. Do
+/// not add a future phase here until its entry point actually reads the flag.
+enum AlmaLiveVoiceRecoveryFeature: String {
+    case evidenceV1 = "evidence-v1"
+
+    var defaultEnabled: Bool { true }
+}
+
+enum AlmaLiveVoiceRecoveryFeatures {
+    private static let defaultsPrefix = "alma-live-voice-recovery-"
+
+    static func isEnabled(
+        _ feature: AlmaLiveVoiceRecoveryFeature,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        let environmentKey = "ALMA_LIVE_VOICE_" + feature.rawValue
+            .replacingOccurrences(of: "-", with: "_")
+            .uppercased()
+        if let value = environment[environmentKey]?.lowercased() {
+            if ["1", "true", "yes", "on"].contains(value) { return true }
+            if ["0", "false", "no", "off"].contains(value) { return false }
+        }
+        let key = defaultsPrefix + feature.rawValue
+        guard defaults.object(forKey: key) != nil else { return feature.defaultEnabled }
+        return defaults.bool(forKey: key)
+    }
+
+    static func set(
+        _ enabled: Bool,
+        for feature: AlmaLiveVoiceRecoveryFeature,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(enabled, forKey: defaultsPrefix + feature.rawValue)
+    }
+}
+
 enum AlmaLiveVoicePreferences {
     static let modelKey = "alma-live-model"
     static let voiceKey = "alma-live-voice"
@@ -249,6 +288,8 @@ struct AlmaLiveAudioReadiness: Equatable {
     var callKitAudioActive = false
     var audioConfigured = false
     var setupPublished = false
+    var socketAttempt: AlmaLiveVoiceSocketAttempt?
+    var pendingCallKitAttempt: AlmaLiveVoiceSocketAttempt?
 
     var waitingForCallKit: Bool {
         callKitManaged && socketSetupComplete && !callKitAudioActive
@@ -263,12 +304,1001 @@ struct AlmaLiveAudioReadiness: Equatable {
     mutating func beginSocketAttempt() {
         socketSetupComplete = false
         setupPublished = false
+        socketAttempt = nil
+        pendingCallKitAttempt = nil
+    }
+
+    mutating func bindSocketAttempt(_ attempt: AlmaLiveVoiceSocketAttempt) {
+        socketSetupComplete = false
+        setupPublished = false
+        socketAttempt = attempt
+        pendingCallKitAttempt = nil
+    }
+
+    @discardableResult
+    mutating func acceptSocketSetup(_ attempt: AlmaLiveVoiceSocketAttempt) -> Bool {
+        guard socketAttempt == attempt else { return false }
+        socketSetupComplete = true
+        return true
+    }
+
+    @discardableResult
+    mutating func deferSetupForCallKit(_ attempt: AlmaLiveVoiceSocketAttempt) -> Bool {
+        guard socketAttempt == attempt, socketSetupComplete, !setupPublished else {
+            return false
+        }
+        pendingCallKitAttempt = attempt
+        return true
+    }
+
+    @discardableResult
+    mutating func claimPublish(_ attempt: AlmaLiveVoiceSocketAttempt) -> Bool {
+        guard socketAttempt == attempt, canPublishLive else { return false }
+        setupPublished = true
+        if pendingCallKitAttempt == attempt { pendingCallKitAttempt = nil }
+        return true
     }
 
     mutating func resetMedia() {
         socketSetupComplete = false
         audioConfigured = false
         setupPublished = false
+        socketAttempt = nil
+        pendingCallKitAttempt = nil
+    }
+}
+
+/// Runtime socket-attempt identity. The ordinal remains unique even when the
+/// diagnostics gate is disabled and its evidence generation would otherwise be 0.
+struct AlmaLiveVoiceSocketAttempt: Equatable {
+    let ordinal: Int
+    let socketIdentity: ObjectIdentifier
+    let evidenceGeneration: Int
+}
+
+// MARK: - Phase 0A typed, privacy-safe evidence
+
+enum AlmaLiveVoiceEvidenceCallMode: String, Codable, Sendable {
+    case standalone
+    case callKit = "callkit"
+    case debugNoNetwork = "debug-no-network"
+}
+
+enum AlmaLiveVoiceEvidenceRoute: String, Codable, Sendable {
+    case builtInSpeaker = "built-in-speaker"
+    case builtInReceiver = "built-in-receiver"
+    case bluetoothHFP = "bluetooth-hfp"
+    case headphones
+    case other
+    case none
+}
+
+enum AlmaLiveVoiceEvidenceEventName: String, Codable, Sendable {
+    case sessionStarted = "session.started"
+    case sessionEnded = "session.ended"
+    case profileActivated = "profile.activated"
+    case transportStarted = "transport.started"
+    case socketOpened = "transport.socket-opened"
+    case audioGraphReady = "audio.graph-ready"
+    case audioRouteChanged = "audio.route-changed"
+    case rawFirstEnergy = "input.raw-first-energy"
+    case conversionFirstSucceeded = "input.conversion-first-succeeded"
+    case conversionFailed = "input.conversion-failed"
+    case audioFirstQueued = "input.audio-first-queued"
+    case audioFirstSendSucceeded = "input.audio-first-send-succeeded"
+    case audioSendFailed = "input.audio-send-failed"
+    case audioSendTrackingUnavailable = "input.audio-send-tracking-unavailable"
+    case staleSendCompletionIgnored = "input.stale-send-completion-ignored"
+    case providerInputTranscriptionObserved = "provider.input-transcription-observed"
+    case providerModelAudioObserved = "provider.model-audio-observed"
+    case toolCallObserved = "tool.call-observed"
+}
+
+enum AlmaLiveVoiceEvidenceRouteReason: String, Codable, Sendable {
+    case systemNotification = "system-notification"
+    case verification
+}
+
+enum AlmaLiveVoiceEvidenceRevisionStatus: String, Codable, Sendable {
+    case unavailableUntrustedBundleStamp = "unavailable-untrusted-bundle-stamp"
+}
+
+enum AlmaLiveVoiceEvidenceReason: String, Codable, Sendable {
+    case converterOutputUnavailable = "converter-output-unavailable"
+    case conversionError = "conversion-error"
+    case emptyConvertedAudio = "empty-converted-audio"
+    case socketUnavailable = "socket-unavailable"
+    case serializationFailed = "serialization-failed"
+    case socketSendFailed = "socket-send-failed"
+    case evidenceBindingUnavailable = "evidence-binding-unavailable"
+}
+
+enum AlmaLiveVoiceEvidenceSessionOutcome: String, Codable, Sendable {
+    case ownerEnded = "owner-ended"
+    case failed
+    case debugFixture = "debug-fixture"
+}
+
+#if DEBUG
+enum AlmaLiveVoiceEvidenceFixture: String, Sendable {
+    case noNetwork = "voice-debug-no-network"
+    case unitTest = "voice-test-0001"
+}
+#endif
+
+enum AlmaLiveVoiceEvidenceTool: String, Codable, Sendable {
+    case quickLookup = "quick-erp-lookup"
+    case endCall = "end-call"
+    case runAgentTurn = "run-agent-turn"
+    case unknown
+
+    init(providerName: String?) {
+        switch providerName {
+        case "quick_erp_lookup": self = .quickLookup
+        case "end_call": self = .endCall
+        case "run_agent_turn": self = .runAgentTurn
+        default: self = .unknown
+        }
+    }
+}
+
+struct AlmaLiveVoiceEvidenceSendContext: Equatable, Sendable {
+    let localSessionID: String
+    let transportGeneration: Int
+    let turnOrdinal: Int
+    let audioChunkOrdinal: Int
+    let byteCount: Int
+}
+
+/// Pure identity/generation/ready reducer. Callers synchronize mutations; the
+/// value type itself makes the current-ready-socket acceptance rule unit-testable
+/// without constructing a URLSession task.
+struct AlmaLiveVoiceEvidenceTransportBinding: Equatable {
+    private(set) var generation = 0
+    private(set) var socketIdentity: ObjectIdentifier?
+    private(set) var ready = false
+
+    mutating func begin(generation: Int) {
+        self.generation = generation
+        socketIdentity = nil
+        ready = false
+    }
+
+    mutating func bind(socketIdentity: ObjectIdentifier, generation: Int) {
+        guard generation == self.generation else { return }
+        self.socketIdentity = socketIdentity
+        ready = false
+    }
+
+    @discardableResult
+    mutating func markReady(
+        socketIdentity: ObjectIdentifier,
+        generation: Int
+    ) -> Bool {
+        guard self.socketIdentity == socketIdentity, self.generation == generation else {
+            return false
+        }
+        ready = true
+        return true
+    }
+
+    mutating func markNotReady() {
+        ready = false
+    }
+
+    func matches(
+        socketIdentity: ObjectIdentifier,
+        generation: Int? = nil,
+        requireReady: Bool
+    ) -> Bool {
+        self.socketIdentity == socketIdentity
+            && (generation == nil || self.generation == generation)
+            && (!requireReady || ready)
+    }
+
+    func completion(
+        socketIdentity: ObjectIdentifier,
+        sourceGeneration: Int
+    ) -> (currentGeneration: Int, isCurrentReadySocket: Bool) {
+        (
+            generation,
+            sourceGeneration == generation
+                && self.socketIdentity == socketIdentity
+                && ready
+        )
+    }
+}
+
+/// Pure one-shot reducer for the first energy-bearing capture in each local
+/// input window. Digital silence is deliberately ignored; raw energy and PCM
+/// conversion become claimable together so the ledger cannot emit a later raw
+/// event after conversion/queue success.
+struct AlmaLiveVoiceEvidenceInputStageState: Equatable {
+    private(set) var transportGeneration = 0
+    private(set) var windowEpoch = 0
+    private(set) var rawEnergyRecorded = false
+    private(set) var conversionRecorded = false
+    private(set) var conversionFailureRecorded = false
+    private(set) var intakeComplete = false
+
+    mutating func reset(transportGeneration: Int) {
+        self.transportGeneration = transportGeneration
+        rearm(transportGeneration: transportGeneration)
+    }
+
+    mutating func rearm(transportGeneration: Int) {
+        guard transportGeneration == self.transportGeneration else { return }
+        windowEpoch += 1
+        rawEnergyRecorded = false
+        conversionRecorded = false
+        conversionFailureRecorded = false
+        intakeComplete = false
+    }
+
+    mutating func claimInput(
+        transportGeneration: Int,
+        windowEpoch: Int,
+        hasEnergy: Bool
+    ) -> (raw: Bool, conversion: Bool) {
+        guard transportGeneration == self.transportGeneration,
+              windowEpoch == self.windowEpoch,
+              !intakeComplete,
+              hasEnergy else {
+            return (false, false)
+        }
+        let raw = !rawEnergyRecorded
+        let conversion = !conversionRecorded
+        rawEnergyRecorded = true
+        conversionRecorded = true
+        return (raw, conversion)
+    }
+
+    mutating func claimConversionFailure(
+        transportGeneration: Int,
+        windowEpoch: Int
+    ) -> Bool {
+        guard transportGeneration == self.transportGeneration,
+              windowEpoch == self.windowEpoch,
+              !conversionFailureRecorded else { return false }
+        conversionFailureRecorded = true
+        return true
+    }
+
+    func chainReady(transportGeneration: Int, windowEpoch: Int) -> Bool {
+        matches(transportGeneration: transportGeneration, windowEpoch: windowEpoch)
+            && rawEnergyRecorded
+            && conversionRecorded
+    }
+
+    func matches(transportGeneration: Int, windowEpoch: Int) -> Bool {
+        transportGeneration == self.transportGeneration
+            && windowEpoch == self.windowEpoch
+    }
+
+    mutating func markIntakeComplete(
+        transportGeneration: Int,
+        windowEpoch: Int
+    ) {
+        guard chainReady(
+            transportGeneration: transportGeneration,
+            windowEpoch: windowEpoch) else { return }
+        intakeComplete = true
+    }
+
+    mutating func markIntakeNeedsRetry(
+        transportGeneration: Int,
+        windowEpoch: Int
+    ) {
+        guard transportGeneration == self.transportGeneration,
+              windowEpoch == self.windowEpoch else { return }
+        intakeComplete = false
+    }
+}
+
+struct AlmaLiveVoiceEvidenceEvent: Codable, Equatable, Sendable {
+    let sequence: Int
+    let elapsedMilliseconds: Int
+    let name: AlmaLiveVoiceEvidenceEventName
+    let localSessionID: String
+    let transportGeneration: Int
+    let sourceTransportGeneration: Int?
+    let turnOrdinal: Int?
+    let toolOrdinal: Int?
+    let audioChunkOrdinal: Int?
+    let byteCount: Int?
+    let rmsMilli: Int?
+    let route: AlmaLiveVoiceEvidenceRoute?
+    let routeReason: AlmaLiveVoiceEvidenceRouteReason?
+    let reason: AlmaLiveVoiceEvidenceReason?
+    let tool: AlmaLiveVoiceEvidenceTool?
+    let resumedTransport: Bool?
+}
+
+struct AlmaLiveVoiceEvidenceReport: Codable, Equatable, Sendable {
+    struct App: Codable, Equatable, Sendable {
+        let version: String
+        let build: String
+        let commit: String
+        let revisionStatus: AlmaLiveVoiceEvidenceRevisionStatus
+    }
+
+    struct Session: Codable, Equatable, Sendable {
+        let id: String
+        let startedAt: String
+        let endedAt: String?
+        let callMode: AlmaLiveVoiceEvidenceCallMode
+        let requestedModelID: String
+        let requestedVoiceID: String
+        let activeModelID: String
+        let activeVoiceID: String
+        let outcome: AlmaLiveVoiceEvidenceSessionOutcome?
+    }
+
+    let schemaVersion: Int
+    let generatedAt: String
+    let privacyContract: [String]
+    let featureEnabled: Bool
+    let app: App
+    let session: Session
+    let events: [AlmaLiveVoiceEvidenceEvent]
+}
+
+enum AlmaLiveVoiceEvidenceExportError: Error {
+    case disabled
+}
+
+/// A bounded evidence ledger shared by the main actor, audio queue, and socket
+/// callbacks. Its API accepts only allow-listed enums and numeric aggregates;
+/// there is deliberately no arbitrary detail string that could carry speech,
+/// prompts, URLs, credentials, provider IDs, or tool payloads.
+final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
+    private struct StageKey: Hashable {
+        let transportGeneration: Int
+        let turnOrdinal: Int
+    }
+
+    private struct ModelStageKey: Hashable {
+        let transportGeneration: Int
+        let playbackGeneration: Int
+    }
+
+    private static let logger = Logger(
+        subsystem: "com.almatraders.erp.voice",
+        category: "RecoveryEvidence")
+    private static let firstEnergyEvidenceFloor = 0.000_001
+    private static let maximumEvents = 600
+
+    private let enabled: Bool
+    private let lock = NSLock()
+    private var sessionActive = false
+    private var localSessionID = "not-started"
+    private var startedAt = Date()
+    private var startedUptime = ProcessInfo.processInfo.systemUptime
+    private var endedAt: Date?
+    private var callMode: AlmaLiveVoiceEvidenceCallMode = .standalone
+    private var requestedModelID = "unknown"
+    private var requestedVoiceID = "unknown"
+    private var activeModelID = "unknown"
+    private var activeVoiceID = "unknown"
+    private var outcome: AlmaLiveVoiceEvidenceSessionOutcome?
+    private var sequence = 0
+    private var lastElapsedMilliseconds = 0
+    private var transportGeneration = 0
+    private var transportActive = false
+    /// Never reused for this recorder's lifetime. `transportGeneration` resets
+    /// to an inactive sentinel between logical sessions, while this counter
+    /// prevents a delayed callback from session A/gen 1 authenticating against
+    /// session B's first transport.
+    private var nextTransportGeneration = 0
+    private var turnOrdinal = 0
+    private var toolOrdinal = 0
+    private var audioChunkOrdinal = 0
+    private var activeTurnOrdinal: Int?
+    private var events: [AlmaLiveVoiceEvidenceEvent] = []
+    private var rawEnergyStages = Set<StageKey>()
+    private var conversionSucceededStages = Set<StageKey>()
+    private var queuedStages = Set<StageKey>()
+    private var sendSucceededStages = Set<StageKey>()
+    private var sendFailedStages = Set<StageKey>()
+    private var untrackedSendStages = Set<StageKey>()
+    private var transcriptionStages = Set<StageKey>()
+    private var ambiguousTranscriptionGenerations = Set<Int>()
+    private var conversionFailureGenerations = Set<Int>()
+    private var staleCompletionGenerations = Set<Int>()
+    private var modelAudioStages = Set<ModelStageKey>()
+
+    init(enabled: Bool) {
+        self.enabled = enabled
+    }
+
+    var isEnabled: Bool { enabled }
+
+    static func isFirstEnergyCandidate(_ rms: Double) -> Bool {
+        rms.isFinite && rms >= firstEnergyEvidenceFloor
+    }
+
+    var sessionID: String {
+        lock.lock()
+        let value = localSessionID
+        lock.unlock()
+        return value
+    }
+
+    @discardableResult
+    func beginSession(
+        modelID: String,
+        voiceID: String,
+        callMode: AlmaLiveVoiceEvidenceCallMode
+    ) -> String {
+        beginSession(
+            modelID: modelID,
+            voiceID: voiceID,
+            callMode: callMode,
+            localSessionID: Self.makeLocalSessionID())
+    }
+
+    #if DEBUG
+    @discardableResult
+    func beginFixtureSession(
+        modelID: String,
+        voiceID: String,
+        callMode: AlmaLiveVoiceEvidenceCallMode,
+        fixture: AlmaLiveVoiceEvidenceFixture
+    ) -> String {
+        beginSession(
+            modelID: modelID,
+            voiceID: voiceID,
+            callMode: callMode,
+            localSessionID: fixture.rawValue)
+    }
+    #endif
+
+    private func beginSession(
+        modelID: String,
+        voiceID: String,
+        callMode: AlmaLiveVoiceEvidenceCallMode,
+        localSessionID: String
+    ) -> String {
+        guard enabled else { return "evidence-disabled" }
+        lock.lock()
+        sessionActive = true
+        self.localSessionID = localSessionID
+        startedAt = Date()
+        startedUptime = ProcessInfo.processInfo.systemUptime
+        endedAt = nil
+        self.callMode = callMode
+        requestedModelID = Self.safeModelID(modelID)
+        requestedVoiceID = Self.safeVoiceID(voiceID)
+        activeModelID = "unknown"
+        activeVoiceID = "unknown"
+        outcome = nil
+        sequence = 0
+        lastElapsedMilliseconds = 0
+        transportGeneration = 0
+        transportActive = false
+        turnOrdinal = 0
+        toolOrdinal = 0
+        audioChunkOrdinal = 0
+        activeTurnOrdinal = nil
+        events.removeAll(keepingCapacity: true)
+        rawEnergyStages.removeAll(keepingCapacity: true)
+        conversionSucceededStages.removeAll(keepingCapacity: true)
+        queuedStages.removeAll(keepingCapacity: true)
+        sendSucceededStages.removeAll(keepingCapacity: true)
+        sendFailedStages.removeAll(keepingCapacity: true)
+        untrackedSendStages.removeAll(keepingCapacity: true)
+        transcriptionStages.removeAll(keepingCapacity: true)
+        ambiguousTranscriptionGenerations.removeAll(keepingCapacity: true)
+        conversionFailureGenerations.removeAll(keepingCapacity: true)
+        staleCompletionGenerations.removeAll(keepingCapacity: true)
+        modelAudioStages.removeAll(keepingCapacity: true)
+        appendLocked(name: .sessionStarted)
+        let created = localSessionID
+        lock.unlock()
+        return created
+    }
+
+    func endSession(_ outcome: AlmaLiveVoiceEvidenceSessionOutcome) {
+        guard enabled else { return }
+        lock.lock()
+        guard sessionActive, endedAt == nil else { lock.unlock(); return }
+        self.outcome = outcome
+        appendLocked(name: .sessionEnded)
+        endedAt = Date()
+        sessionActive = false
+        transportActive = false
+        lock.unlock()
+    }
+
+    func activateProfile(modelID: String, voiceID: String, generation: Int) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else {
+            lock.unlock()
+            return
+        }
+        activeModelID = Self.safeModelID(modelID)
+        activeVoiceID = Self.safeVoiceID(voiceID)
+        appendLocked(name: .profileActivated)
+        lock.unlock()
+    }
+
+    @discardableResult
+    func beginTransportAttempt(resuming: Bool) -> Int {
+        guard enabled else { return 0 }
+        lock.lock()
+        guard sessionActive else { lock.unlock(); return 0 }
+        nextTransportGeneration += 1
+        transportGeneration = nextTransportGeneration
+        transportActive = true
+        appendLocked(name: .transportStarted, resumedTransport: resuming)
+        let generation = transportGeneration
+        lock.unlock()
+        return generation
+    }
+
+    func recordSocketOpened(generation: Int) {
+        appendIfCurrentTransport(name: .socketOpened, generation: generation)
+    }
+
+    func recordAudioGraphReady(generation: Int, route: AlmaLiveVoiceEvidenceRoute) {
+        appendIfCurrentTransport(name: .audioGraphReady, generation: generation, route: route)
+    }
+
+    func recordAudioRouteChanged(
+        generation: Int,
+        route: AlmaLiveVoiceEvidenceRoute,
+        reason: AlmaLiveVoiceEvidenceRouteReason
+    ) {
+        appendIfCurrentTransport(
+            name: .audioRouteChanged,
+            generation: generation,
+            route: route,
+            routeReason: reason)
+    }
+
+    func recordRawEnergy(
+        rms: Double,
+        generation: Int,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled, Self.isFirstEnergyCandidate(rms) else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard rawEnergyStages.insert(key).inserted else { lock.unlock(); return }
+        appendLocked(
+            name: .rawFirstEnergy,
+            turnOrdinal: turn,
+            rmsMilli: min(1_000, max(0, Int((rms * 1_000).rounded()))),
+            observedUptime: observedUptime)
+        lock.unlock()
+    }
+
+    func recordConversionSucceeded(
+        byteCount: Int,
+        generation: Int,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled, byteCount > 0 else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else {
+            lock.unlock()
+            return
+        }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard conversionSucceededStages.insert(key).inserted else { lock.unlock(); return }
+        appendLocked(
+            name: .conversionFirstSucceeded,
+            turnOrdinal: turn,
+            byteCount: byteCount,
+            observedUptime: observedUptime)
+        lock.unlock()
+    }
+
+    func recordConversionFailed(
+        _ reason: AlmaLiveVoiceEvidenceReason,
+        generation: Int,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              conversionFailureGenerations.insert(generation).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(
+            name: .conversionFailed,
+            turnOrdinal: activeTurnOrdinal,
+            reason: reason,
+            observedUptime: observedUptime)
+        lock.unlock()
+    }
+
+    func recordAudioQueued(
+        byteCount: Int,
+        generation: Int,
+        observedUptime: TimeInterval? = nil
+    ) -> AlmaLiveVoiceEvidenceSendContext? {
+        guard enabled, byteCount > 0 else { return nil }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return nil }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        audioChunkOrdinal += 1
+        let chunk = audioChunkOrdinal
+        if queuedStages.insert(key).inserted {
+            appendLocked(
+                name: .audioFirstQueued,
+                turnOrdinal: turn,
+                audioChunkOrdinal: chunk,
+                byteCount: byteCount,
+                observedUptime: observedUptime)
+        }
+        let context = AlmaLiveVoiceEvidenceSendContext(
+            localSessionID: localSessionID,
+            transportGeneration: generation,
+            turnOrdinal: turn,
+            audioChunkOrdinal: chunk,
+            byteCount: byteCount)
+        lock.unlock()
+        return context
+    }
+
+    func recordAudioSendCompletion(
+        _ context: AlmaLiveVoiceEvidenceSendContext,
+        succeeded: Bool,
+        currentGeneration: Int,
+        isCurrentReadySocket: Bool,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard sessionActive, context.localSessionID == localSessionID else {
+            lock.unlock()
+            return
+        }
+        let isCurrent = context.transportGeneration == transportGeneration
+            && context.transportGeneration == currentGeneration
+            && isCurrentReadySocket
+        guard isCurrent else {
+            if staleCompletionGenerations.insert(context.transportGeneration).inserted {
+                appendLocked(
+                    name: .staleSendCompletionIgnored,
+                    sourceTransportGeneration: context.transportGeneration,
+                    turnOrdinal: context.turnOrdinal,
+                    audioChunkOrdinal: context.audioChunkOrdinal,
+                    byteCount: context.byteCount,
+                    observedUptime: observedUptime)
+            }
+            lock.unlock()
+            return
+        }
+        let key = StageKey(
+            transportGeneration: context.transportGeneration,
+            turnOrdinal: context.turnOrdinal)
+        if succeeded {
+            guard sendSucceededStages.insert(key).inserted else {
+                lock.unlock()
+                return
+            }
+            appendLocked(
+                name: .audioFirstSendSucceeded,
+                turnOrdinal: context.turnOrdinal,
+                audioChunkOrdinal: context.audioChunkOrdinal,
+                byteCount: context.byteCount,
+                observedUptime: observedUptime)
+        } else if sendFailedStages.insert(key).inserted {
+            appendLocked(
+                name: .audioSendFailed,
+                turnOrdinal: context.turnOrdinal,
+                audioChunkOrdinal: context.audioChunkOrdinal,
+                byteCount: context.byteCount,
+                reason: .socketSendFailed,
+                observedUptime: observedUptime)
+        }
+        lock.unlock()
+    }
+
+    func recordAudioNotQueued(
+        _ reason: AlmaLiveVoiceEvidenceReason,
+        byteCount: Int,
+        generation: Int
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard sendFailedStages.insert(key).inserted else { lock.unlock(); return }
+        appendLocked(
+            name: .audioSendFailed,
+            turnOrdinal: turn,
+            byteCount: max(0, byteCount),
+            reason: reason)
+        lock.unlock()
+    }
+
+    /// Runtime readiness remains authoritative for delivery. This event means
+    /// only that Phase 0A could not correlate the send to its diagnostic socket
+    /// binding, so no local completion/provider receipt claim will be made.
+    func recordAudioSendTrackingUnavailable(
+        byteCount: Int,
+        generation: Int
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard untrackedSendStages.insert(key).inserted else { lock.unlock(); return }
+        appendLocked(
+            name: .audioSendTrackingUnavailable,
+            turnOrdinal: turn,
+            byteCount: max(0, byteCount),
+            reason: .evidenceBindingUnavailable)
+        lock.unlock()
+    }
+
+    func recordProviderInputTranscriptionObserved(
+        generation: Int,
+        correlateToActiveInput: Bool = true
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        guard correlateToActiveInput, let turn = activeTurnOrdinal else {
+            guard ambiguousTranscriptionGenerations.insert(generation).inserted else {
+                lock.unlock()
+                return
+            }
+            appendLocked(name: .providerInputTranscriptionObserved)
+            lock.unlock()
+            return
+        }
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard transcriptionStages.insert(key).inserted else { lock.unlock(); return }
+        appendLocked(name: .providerInputTranscriptionObserved, turnOrdinal: turn)
+        lock.unlock()
+    }
+
+    /// A locally confirmed interruption starts a new owner input turn even if
+    /// the provider never delivered `turnComplete` for the interrupted model
+    /// audio. The supplied values are the already-observed current mic RMS and
+    /// converted pre-roll size; no PCM/content enters the ledger.
+    func recordConfirmedBargeInInputBoundary(
+        rms: Double,
+        convertedByteCount: Int,
+        generation: Int,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        let turn = ensureActiveTurnLocked()
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        if Self.isFirstEnergyCandidate(rms), rawEnergyStages.insert(key).inserted {
+            appendLocked(
+                name: .rawFirstEnergy,
+                turnOrdinal: turn,
+                rmsMilli: min(1_000, max(0, Int((rms * 1_000).rounded()))),
+                observedUptime: observedUptime)
+        }
+        if convertedByteCount > 0, conversionSucceededStages.insert(key).inserted {
+            appendLocked(
+                name: .conversionFirstSucceeded,
+                turnOrdinal: turn,
+                byteCount: convertedByteCount,
+                observedUptime: observedUptime)
+        }
+        lock.unlock()
+    }
+
+    /// The first PCM chunk of a local playback epoch belongs to the prior input
+    /// window (if one exists), then arms one stable prospective input window for
+    /// natural listening, VPIO barge-in, local acoustic barge-in, or manual orb
+    /// interruption. Provider `turnComplete` never advances this correlation.
+    func recordProviderModelAudioObserved(
+        generation: Int,
+        playbackGeneration: Int,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        let key = ModelStageKey(
+            transportGeneration: generation,
+            playbackGeneration: playbackGeneration)
+        guard acceptsTransportLocked(generation),
+              modelAudioStages.insert(key).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(
+            name: .providerModelAudioObserved,
+            turnOrdinal: activeTurnOrdinal,
+            observedUptime: observedUptime)
+        activeTurnOrdinal = nil
+        lock.unlock()
+    }
+
+    func recordModelTurnCompleted(generation: Int) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        // Observation only. Cross-stream ordering is not guaranteed, and local
+        // PCM may still be buffered, so this signal cannot close/advance input.
+        lock.unlock()
+    }
+
+    @discardableResult
+    func recordToolCallObserved(
+        _ tool: AlmaLiveVoiceEvidenceTool,
+        generation: Int
+    ) -> Int? {
+        guard enabled else { return nil }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return nil }
+        toolOrdinal += 1
+        let ordinal = toolOrdinal
+        appendLocked(
+            name: .toolCallObserved,
+            turnOrdinal: activeTurnOrdinal,
+            toolOrdinal: ordinal,
+            tool: tool)
+        lock.unlock()
+        return ordinal
+    }
+
+    func report() -> AlmaLiveVoiceEvidenceReport {
+        lock.lock()
+        let report = reportLocked()
+        lock.unlock()
+        return report
+    }
+
+    func encodedReport() throws -> Data {
+        guard enabled else { throw AlmaLiveVoiceEvidenceExportError.disabled }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(report())
+    }
+
+    func exportURL() throws -> URL {
+        let data = try encodedReport()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("alma-live-voice-evidence-\(sessionID).json")
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
+    private func appendIfCurrentTransport(
+        name: AlmaLiveVoiceEvidenceEventName,
+        generation: Int,
+        route: AlmaLiveVoiceEvidenceRoute? = nil,
+        routeReason: AlmaLiveVoiceEvidenceRouteReason? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        appendLocked(name: name, route: route, routeReason: routeReason)
+        lock.unlock()
+    }
+
+    private func acceptsTransportLocked(_ generation: Int) -> Bool {
+        sessionActive && transportActive && generation > 0
+            && generation == transportGeneration
+    }
+
+    private func ensureActiveTurnLocked() -> Int {
+        if let activeTurnOrdinal { return activeTurnOrdinal }
+        turnOrdinal += 1
+        activeTurnOrdinal = turnOrdinal
+        return turnOrdinal
+    }
+
+    private func appendLocked(
+        name: AlmaLiveVoiceEvidenceEventName,
+        sourceTransportGeneration: Int? = nil,
+        turnOrdinal: Int? = nil,
+        toolOrdinal: Int? = nil,
+        audioChunkOrdinal: Int? = nil,
+        byteCount: Int? = nil,
+        rmsMilli: Int? = nil,
+        route: AlmaLiveVoiceEvidenceRoute? = nil,
+        routeReason: AlmaLiveVoiceEvidenceRouteReason? = nil,
+        reason: AlmaLiveVoiceEvidenceReason? = nil,
+        tool: AlmaLiveVoiceEvidenceTool? = nil,
+        resumedTransport: Bool? = nil,
+        observedUptime: TimeInterval? = nil
+    ) {
+        sequence += 1
+        let observedElapsed = max(
+            0,
+            Int(((observedUptime ?? ProcessInfo.processInfo.systemUptime) - startedUptime) * 1_000))
+        let elapsed = max(lastElapsedMilliseconds, observedElapsed)
+        lastElapsedMilliseconds = elapsed
+        let event = AlmaLiveVoiceEvidenceEvent(
+            sequence: sequence,
+            elapsedMilliseconds: elapsed,
+            name: name,
+            localSessionID: localSessionID,
+            transportGeneration: transportGeneration,
+            sourceTransportGeneration: sourceTransportGeneration,
+            turnOrdinal: turnOrdinal,
+            toolOrdinal: toolOrdinal,
+            audioChunkOrdinal: audioChunkOrdinal,
+            byteCount: byteCount,
+            rmsMilli: rmsMilli,
+            route: route,
+            routeReason: routeReason,
+            reason: reason,
+            tool: tool,
+            resumedTransport: resumedTransport)
+        events.append(event)
+        if events.count > Self.maximumEvents {
+            events.removeFirst(events.count - Self.maximumEvents)
+        }
+        Self.logger.info("session=\(self.localSessionID, privacy: .public) sequence=\(self.sequence) event=\(name.rawValue, privacy: .public) transport=\(self.transportGeneration)")
+    }
+
+    private func reportLocked() -> AlmaLiveVoiceEvidenceReport {
+        let info = Bundle.main.infoDictionary
+        return AlmaLiveVoiceEvidenceReport(
+            schemaVersion: 1,
+            generatedAt: Self.iso(Date()),
+            privacyContract: [
+                "no-pcm-or-audio-payload",
+                "no-transcript-prompt-or-user-content",
+                "no-tool-arguments-results-or-provider-call-id",
+                "no-url-token-cookie-credential-or-content-hash",
+                "typed-allowlisted-fields-only",
+            ],
+            featureEnabled: enabled,
+            app: .init(
+                version: Self.safeBuildValue(
+                    info?["CFBundleShortVersionString"] as? String),
+                build: Self.safeBuildValue(info?["CFBundleVersion"] as? String),
+                commit: "unknown",
+                revisionStatus: .unavailableUntrustedBundleStamp),
+            session: .init(
+                id: localSessionID,
+                startedAt: Self.iso(startedAt),
+                endedAt: endedAt.map(Self.iso),
+                callMode: callMode,
+                requestedModelID: requestedModelID,
+                requestedVoiceID: requestedVoiceID,
+                activeModelID: activeModelID,
+                activeVoiceID: activeVoiceID,
+                outcome: outcome),
+            events: events)
+    }
+
+    private static func makeLocalSessionID() -> String {
+        return "voice-" + UUID().uuidString.lowercased()
+    }
+
+    private static func safeModelID(_ value: String) -> String {
+        AlmaLiveVoicePreferences.models.contains(where: { $0.id == value }) ? value : "unknown"
+    }
+
+    private static func safeVoiceID(_ value: String) -> String {
+        AlmaLiveVoicePreferences.voices.contains(where: { $0.id == value }) ? value : "unknown"
+    }
+
+    private static func safeBuildValue(_ value: String?) -> String {
+        guard let value,
+              value.range(of: #"^[A-Za-z0-9._-]{1,80}$"#, options: .regularExpression) != nil
+        else { return "unknown" }
+        return value
+    }
+
+    private static func iso(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
     }
 }
 
@@ -369,6 +1399,10 @@ final class AlmaVoiceEngine {
     private(set) var selectedLiveModelID = AlmaLiveVoicePreferences.modelID
     private(set) var selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
     private(set) var callStartedAt: Date?
+    private let recoveryEvidence: AlmaLiveVoiceEvidenceRecorder
+
+    var recoveryEvidenceSessionID: String { recoveryEvidence.sessionID }
+    var isRecoveryEvidenceEnabled: Bool { recoveryEvidence.isEnabled }
 
     var selectedLiveModel: AlmaLiveModelChoice {
         AlmaLiveVoicePreferences.models.first(where: { $0.id == selectedLiveModelID })
@@ -576,7 +1610,7 @@ final class AlmaVoiceEngine {
 
     private let tts = AlmaTtsQueue()
     private let streamer = AlmaStreamingSTT()
-    private let live = AlmaGeminiLiveSession()
+    private let live: AlmaGeminiLiveSession
     let wake = AlmaWakeWord()
     // Dynamic Island / Lock Screen Live Activity (docs/alma-live-activity-PLAN.md)
     private let liveActivity = VoiceLiveActivityController()
@@ -586,6 +1620,13 @@ final class AlmaVoiceEngine {
     private var keepAlive: AVAudioPlayer?
     private var recoveryObservers: [NSObjectProtocol] = []
     fileprivate var startingListen = false   // a listen is spinning up (double-tap guard)
+
+    init() {
+        let evidence = AlmaLiveVoiceEvidenceRecorder(
+            enabled: AlmaLiveVoiceRecoveryFeatures.isEnabled(.evidenceV1))
+        recoveryEvidence = evidence
+        live = AlmaGeminiLiveSession(evidenceRecorder: evidence)
+    }
 
     // Image attachments — voice parity with the chat composer. Photograph a
     // product / paste a poster and the SAME multimodal turn the chat runs fires
@@ -639,6 +1680,11 @@ final class AlmaVoiceEngine {
         isMuted = false
         selectedLiveModelID = AlmaLiveVoicePreferences.modelID
         selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
+        recoveryEvidence.beginSession(
+            modelID: selectedLiveModelID,
+            voiceID: selectedLiveVoiceID,
+            callMode: callKitManaged ? .callKit : .standalone)
+        live.beginEvidenceSession()
         // A CallKit incoming call must start on the receiver. Explicitly pinning
         // it to `.speaker` prevents the locked system call screen from clearing
         // our app-level override, so its Speaker OFF button appears to do
@@ -846,6 +1892,8 @@ final class AlmaVoiceEngine {
     }
 
     func end() {
+        live.finishEvidenceSession()
+        recoveryEvidence.endSession(callConnection == .failed ? .failed : .ownerEnded)
         if #available(iOS 17.0, *), AlmaCallBarBridge.shared.engine === self {
             AlmaCallBarBridge.shared.engine = nil
             AlmaCallBarBridge.shared.consoleVisible = false
@@ -918,6 +1966,33 @@ final class AlmaVoiceEngine {
         state = .idle
         Task { await chatVM?.loadMessages() }   // the voice turn lands in the thread
     }
+
+    func exportRecoveryEvidence() -> URL? {
+        do {
+            live.flushEvidence()
+            let url = try recoveryEvidence.exportURL()
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: "ভয়েস evidence report প্রস্তুত হয়েছে")
+            return url
+        } catch {
+            errorToast = "ভয়েস evidence report তৈরি করা যায়নি।"
+            return nil
+        }
+    }
+
+    #if DEBUG
+    func debugPrepareRecoveryEvidenceFixture() {
+        selectedLiveModelID = AlmaLiveVoicePreferences.gemini25
+        selectedLiveVoiceID = "Aoede"
+        recoveryEvidence.beginFixtureSession(
+            modelID: selectedLiveModelID,
+            voiceID: selectedLiveVoiceID,
+            callMode: .debugNoNetwork,
+            fixture: .noNetwork)
+        recoveryEvidence.endSession(.debugFixture)
+    }
+    #endif
 
     // ── Conversation keep-alive + audio self-heal ──────────────────────────
     // Keep-alive: a looping SILENT player runs ONLY while a conversation is
@@ -2419,7 +3494,13 @@ enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, au
 @available(iOS 17.0, *)
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
+    private let evidenceRecorder: AlmaLiveVoiceEvidenceRecorder
     private let traceID = String(UUID().uuidString.prefix(8))
+
+    init(evidenceRecorder: AlmaLiveVoiceEvidenceRecorder) {
+        self.evidenceRecorder = evidenceRecorder
+        super.init()
+    }
 
     struct SessionResponse: Decodable {
         let token: String
@@ -2492,6 +3573,40 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// so two callbacks can never both pass recoverConnection's guards and
     /// tear down / replace the socket concurrently.
     private let netQueue = DispatchQueue(label: "alma.voice.net")
+    private let evidenceTransportLock = NSLock()
+    private var evidenceTransportBinding = AlmaLiveVoiceEvidenceTransportBinding()
+    private var evidenceAudioTurnEpoch = 0
+    private var evidenceAudioSendPending = false
+    private var evidenceAudioSendSucceeded = false
+    private var nextEvidenceSendClaimID = 0
+    private struct PendingInputEvidence {
+        let rms: Double
+        let convertedByteCount: Int
+        let transportGeneration: Int
+        let inputWindowEpoch: Int
+        let observedUptime: TimeInterval
+        let confirmedBargeIn: Bool
+    }
+    private struct ClaimedInputEvidence {
+        let pending: PendingInputEvidence
+        let recordRaw: Bool
+        let recordConversion: Bool
+
+        var shouldSubmit: Bool {
+            pending.confirmedBargeIn || recordRaw || recordConversion
+        }
+    }
+    private enum AudioSendEvidenceClaimResult {
+        case claimed(generation: Int, turnEpoch: Int, claimID: Int)
+        case alreadyCovered
+        case unavailable
+    }
+    private let evidenceSubmissionLock = NSLock()
+    private let evidenceQueue = DispatchQueue(label: "alma.voice.recovery-evidence")
+    private var evidenceSessionAccepting = false
+    /// Accessed only on `evidenceQueue`; completion callbacks carry a local claim
+    /// ID so an immediate callback can never overtake context creation.
+    private var evidenceSendContexts: [Int: AlmaLiveVoiceEvidenceSendContext] = [:]
     private var hasConnectedOnce = false
     private var mintedSession: SessionResponse?
     private var mintedAt = Date.distantPast
@@ -2619,6 +3734,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let playbackReferenceReadyRequiredFrames = 4
     private let playbackReferenceSpeechRequiredFrames = 4 // ≈80ms
     private let audioLock = NSLock()
+    // Accessed only while `audioLock` is held. These one-shot guards keep the
+    // evidence recorder and OSLog off the realtime callback after each stage's
+    // first observation, while leaving the audio/VAD decisions untouched.
+    private var evidenceInputStageState = AlmaLiveVoiceEvidenceInputStageState()
+    private var captureSocketAttempt: AlmaLiveVoiceSocketAttempt?
     /// EVERY AVAudioEngine/AVAudioPlayerNode lifecycle call goes through this ONE
     /// serial queue. Build 82 device crash reports (0x8BADF00D watchdog): main
     /// thread deadlocked inside AVFAudio's recursive_mutex ([AVAudioPlayerNode
@@ -2635,6 +3755,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var bootstrapRouteProtectionUntil = Date.distantPast
     private let readinessLock = NSLock()
     private var readiness = AlmaLiveAudioReadiness()
+    private var socketAttemptOrdinal = 0
     /// CallKit owns the AVAudioSession for an agent call (plan C2). The app must
     /// NOT set the category or activate it — doing so threw on the owner's
     /// device (build 89: "লাইভ অডিও চালু করা যায়নি", agent silent). CallKit has
@@ -2659,8 +3780,256 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// dead attempt cannot touch the replacement session.
     private var audioAttemptGeneration = 0
 
+    func beginEvidenceSession() {
+        evidenceSubmissionLock.lock()
+        evidenceSessionAccepting = false
+        evidenceSubmissionLock.unlock()
+        evidenceQueue.sync { evidenceSendContexts.removeAll(keepingCapacity: true) }
+        evidenceSubmissionLock.lock()
+        evidenceSessionAccepting = evidenceRecorder.isEnabled
+        evidenceSubmissionLock.unlock()
+    }
+
+    func finishEvidenceSession() {
+        evidenceSubmissionLock.lock()
+        evidenceSessionAccepting = false
+        evidenceSubmissionLock.unlock()
+        _ = invalidateSocketReadiness()
+        evidenceQueue.sync { evidenceSendContexts.removeAll(keepingCapacity: true) }
+    }
+
+    func flushEvidence() {
+        guard evidenceRecorder.isEnabled else { return }
+        // A point-in-time drain does not close intake. Holding the submission
+        // lock here would let a live export priority-invert the realtime tap;
+        // the recorder's own lock still makes the subsequent report snapshot
+        // internally consistent.
+        evidenceQueue.sync {}
+    }
+
+    @discardableResult
+    private func submitEvidenceLocked(
+        _ action: @escaping (AlmaLiveVoiceEvidenceRecorder) -> Void
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled, evidenceSessionAccepting else { return false }
+        evidenceQueue.async { [weak self] in
+            guard let self else { return }
+            action(self.evidenceRecorder)
+        }
+        return true
+    }
+
+    @discardableResult
+    private func submitEvidence(
+        _ action: @escaping (AlmaLiveVoiceEvidenceRecorder) -> Void
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled else { return false }
+        evidenceSubmissionLock.lock()
+        let submitted = submitEvidenceLocked(action)
+        evidenceSubmissionLock.unlock()
+        return submitted
+    }
+
+    private func submitEvidenceSync(
+        _ action: (AlmaLiveVoiceEvidenceRecorder) -> Void
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        evidenceQueue.sync { action(evidenceRecorder) }
+        evidenceSubmissionLock.unlock()
+    }
+
     private func trace(_ name: String, _ detail: String = "") {
         AlmaVoiceAudioTrace.event(name, "id=\(traceID) \(detail)")
+    }
+
+    private func beginEvidenceTransport(resuming: Bool) -> Int {
+        guard evidenceRecorder.isEnabled else { return 0 }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return 0
+        }
+        var generation = 0
+        evidenceQueue.sync {
+            generation = evidenceRecorder.beginTransportAttempt(resuming: resuming)
+        }
+        evidenceTransportLock.lock()
+        evidenceTransportBinding.begin(generation: generation)
+        evidenceAudioTurnEpoch += 1
+        evidenceAudioSendPending = false
+        evidenceAudioSendSucceeded = false
+        evidenceTransportLock.unlock()
+
+        audioLock.lock()
+        evidenceInputStageState.reset(transportGeneration: generation)
+        audioLock.unlock()
+        evidenceSubmissionLock.unlock()
+        return generation
+    }
+
+    private func evidenceTransportGenerationSnapshot() -> Int {
+        guard evidenceRecorder.isEnabled else { return 0 }
+        evidenceTransportLock.lock()
+        let generation = evidenceTransportBinding.generation
+        evidenceTransportLock.unlock()
+        return generation
+    }
+
+    private func bindEvidenceSocket(
+        _ socket: URLSessionWebSocketTask,
+        generation: Int
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceTransportLock.lock()
+        evidenceTransportBinding.bind(
+            socketIdentity: ObjectIdentifier(socket),
+            generation: generation)
+        evidenceTransportLock.unlock()
+    }
+
+    private func evidenceGeneration(
+        for socket: URLSessionWebSocketTask,
+        requireReady: Bool
+    ) -> Int? {
+        guard evidenceRecorder.isEnabled else { return nil }
+        evidenceTransportLock.lock()
+        let matches = evidenceTransportBinding.matches(
+            socketIdentity: ObjectIdentifier(socket),
+            requireReady: requireReady)
+        let generation = matches ? evidenceTransportBinding.generation : nil
+        evidenceTransportLock.unlock()
+        return generation
+    }
+
+    private func evidenceCompletionState(
+        for socket: URLSessionWebSocketTask,
+        sourceGeneration: Int,
+        turnEpoch: Int,
+        succeeded: Bool
+    ) -> (currentGeneration: Int, isCurrentReadySocket: Bool) {
+        guard evidenceRecorder.isEnabled else { return (0, false) }
+        evidenceTransportLock.lock()
+        let state = evidenceTransportBinding.completion(
+            socketIdentity: ObjectIdentifier(socket),
+            sourceGeneration: sourceGeneration)
+        if turnEpoch == evidenceAudioTurnEpoch {
+            evidenceAudioSendPending = false
+            if succeeded && state.isCurrentReadySocket { evidenceAudioSendSucceeded = true }
+        }
+        evidenceTransportLock.unlock()
+        return state
+    }
+
+    private func claimEvidenceAudioSend(
+        for socket: URLSessionWebSocketTask,
+        sourceGeneration: Int
+    ) -> AudioSendEvidenceClaimResult {
+        guard evidenceRecorder.isEnabled else { return .alreadyCovered }
+        evidenceTransportLock.lock()
+        guard evidenceTransportBinding.matches(
+            socketIdentity: ObjectIdentifier(socket),
+            generation: sourceGeneration,
+            requireReady: true
+        ) else {
+            evidenceTransportLock.unlock()
+            return .unavailable
+        }
+        let result: AudioSendEvidenceClaimResult
+        if evidenceAudioSendPending || evidenceAudioSendSucceeded {
+            result = .alreadyCovered
+        } else {
+            evidenceAudioSendPending = true
+            nextEvidenceSendClaimID += 1
+            result = .claimed(
+                generation: evidenceTransportBinding.generation,
+                turnEpoch: evidenceAudioTurnEpoch,
+                claimID: nextEvidenceSendClaimID)
+        }
+        evidenceTransportLock.unlock()
+        return result
+    }
+
+    private func abandonEvidenceAudioSendClaim(turnEpoch: Int) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceTransportLock.lock()
+        if turnEpoch == evidenceAudioTurnEpoch { evidenceAudioSendPending = false }
+        evidenceTransportLock.unlock()
+    }
+
+    private func beginNextEvidenceAudioTurn(generation: Int) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceTransportLock.lock()
+        if generation == evidenceTransportBinding.generation {
+            evidenceAudioTurnEpoch += 1
+            evidenceAudioSendPending = false
+            evidenceAudioSendSucceeded = false
+        }
+        evidenceTransportLock.unlock()
+    }
+
+    /// Establish the next local input window before capture can submit its first
+    /// evidence stage. Only fixed-size state and queue submission happen inline;
+    /// recorder collections/JSON timing/OSLog run on `evidenceQueue`.
+    /// Caller holds `evidenceSubmissionLock`, so model-boundary publication,
+    /// send-epoch rotation, and first-stage rearming cannot interleave with a
+    /// capture evidence batch.
+    private func beginModelEvidenceEpochLocked(
+        transportGeneration: Int,
+        playbackGeneration: Int,
+        observedUptime: TimeInterval
+    ) {
+        guard evidenceRecorder.isEnabled, evidenceSessionAccepting else { return }
+        _ = submitEvidenceLocked { recorder in
+            recorder.recordProviderModelAudioObserved(
+                generation: transportGeneration,
+                playbackGeneration: playbackGeneration,
+                observedUptime: observedUptime)
+        }
+        beginNextEvidenceAudioTurn(generation: transportGeneration)
+        audioLock.lock()
+        evidenceInputStageState.rearm(transportGeneration: transportGeneration)
+        audioLock.unlock()
+    }
+
+    private func submitConversionFailureEvidence(
+        _ reason: AlmaLiveVoiceEvidenceReason,
+        generation: Int,
+        inputWindowEpoch: Int,
+        observedUptime: TimeInterval
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        guard claimFirstConversionFailureEvidence(
+            generation: generation,
+            inputWindowEpoch: inputWindowEpoch) else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        _ = submitEvidenceLocked { recorder in
+            recorder.recordConversionFailed(
+                reason,
+                generation: generation,
+                observedUptime: observedUptime)
+        }
+        evidenceSubmissionLock.unlock()
+    }
+
+    private func evidenceRoute(_ session: AVAudioSession = .sharedInstance()) -> AlmaLiveVoiceEvidenceRoute {
+        let ports = session.currentRoute.outputs.map(\.portType)
+        if ports.contains(.builtInSpeaker) { return .builtInSpeaker }
+        if ports.contains(.builtInReceiver) { return .builtInReceiver }
+        if ports.contains(.bluetoothHFP) { return .bluetoothHFP }
+        if ports.contains(.headphones) || ports.contains(.headsetMic) { return .headphones }
+        return ports.isEmpty ? .none : .other
     }
 
     private func audioSessionDescription(_ session: AVAudioSession = .sharedInstance()) -> String {
@@ -2719,6 +4088,158 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         return snapshot
     }
 
+    private func bindRuntimeSocketAttempt(
+        _ socket: URLSessionWebSocketTask,
+        evidenceGeneration: Int
+    ) -> AlmaLiveVoiceSocketAttempt {
+        readinessLock.lock()
+        socketAttemptOrdinal += 1
+        let attempt = AlmaLiveVoiceSocketAttempt(
+            ordinal: socketAttemptOrdinal,
+            socketIdentity: ObjectIdentifier(socket),
+            evidenceGeneration: evidenceGeneration)
+        readiness.bindSocketAttempt(attempt)
+        socketReady = false
+        audioLock.lock()
+        captureSocketAttempt = nil
+        audioLock.unlock()
+        readinessLock.unlock()
+        return attempt
+    }
+
+    private func isCurrentSocketAttempt(_ attempt: AlmaLiveVoiceSocketAttempt) -> Bool {
+        readinessLock.lock()
+        let current = readiness.socketAttempt == attempt
+        readinessLock.unlock()
+        return current
+    }
+
+    private func acceptSocketSetup(
+        _ attempt: AlmaLiveVoiceSocketAttempt
+    ) -> AlmaLiveAudioReadiness? {
+        readinessLock.lock()
+        guard readiness.acceptSocketSetup(attempt) else {
+            readinessLock.unlock()
+            return nil
+        }
+        if readiness.waitingForCallKit {
+            _ = readiness.deferSetupForCallKit(attempt)
+        }
+        let snapshot = readiness
+        readinessLock.unlock()
+        return snapshot
+    }
+
+    @discardableResult
+    private func deferSocketSetupForCallKit(
+        _ attempt: AlmaLiveVoiceSocketAttempt
+    ) -> Bool {
+        readinessLock.lock()
+        let deferred = readiness.deferSetupForCallKit(attempt)
+        readinessLock.unlock()
+        return deferred
+    }
+
+    private func canPublishSocketSetup(
+        _ attempt: AlmaLiveVoiceSocketAttempt
+    ) -> Bool {
+        readinessLock.lock()
+        let canPublish = readiness.socketAttempt == attempt && readiness.canPublishLive
+        readinessLock.unlock()
+        return canPublish
+    }
+
+    /// Publish evidence-ready and behavioral-ready as one source-bound state
+    /// transition. Capture can only observe `socketReady` after the exact
+    /// generation/identity has been marked ready.
+    private func publishSocketReady(_ attempt: AlmaLiveVoiceSocketAttempt) -> Bool {
+        readinessLock.lock()
+        guard readiness.socketAttempt == attempt, readiness.canPublishLive else {
+            readinessLock.unlock()
+            return false
+        }
+        evidenceTransportLock.lock()
+        let evidenceMatches = !evidenceRecorder.isEnabled
+            || evidenceTransportBinding.matches(
+                socketIdentity: attempt.socketIdentity,
+                generation: attempt.evidenceGeneration,
+                requireReady: false)
+        guard evidenceMatches, readiness.claimPublish(attempt) else {
+            evidenceTransportLock.unlock()
+            readinessLock.unlock()
+            return false
+        }
+        if evidenceRecorder.isEnabled {
+            guard evidenceTransportBinding.markReady(
+                socketIdentity: attempt.socketIdentity,
+                generation: attempt.evidenceGeneration) else {
+                evidenceTransportLock.unlock()
+                readinessLock.unlock()
+                return false
+            }
+        }
+        socketReady = true
+        evidenceTransportLock.unlock()
+        audioLock.lock()
+        captureSocketAttempt = attempt
+        audioLock.unlock()
+        readinessLock.unlock()
+        return true
+    }
+
+    /// Withdraw diagnostics readiness before behavioral readiness. When a
+    /// source attempt is supplied, a stale callback cannot invalidate its
+    /// replacement.
+    @discardableResult
+    private func invalidateSocketReadiness(
+        attempt: AlmaLiveVoiceSocketAttempt? = nil,
+        socket: URLSessionWebSocketTask? = nil
+    ) -> Bool {
+        readinessLock.lock()
+        if let attempt, readiness.socketAttempt != attempt {
+            readinessLock.unlock()
+            return false
+        }
+        if let socket,
+           readiness.socketAttempt?.socketIdentity != ObjectIdentifier(socket) {
+            readinessLock.unlock()
+            return false
+        }
+        evidenceTransportLock.lock()
+        evidenceTransportBinding.markNotReady()
+        socketReady = false
+        evidenceTransportLock.unlock()
+        audioLock.lock()
+        captureSocketAttempt = nil
+        audioLock.unlock()
+        readiness.beginSocketAttempt()
+        audioConfigPending = false
+        readinessLock.unlock()
+        return true
+    }
+
+    private func socketReadySnapshot() -> Bool {
+        readinessLock.lock()
+        let value = socketReady
+        readinessLock.unlock()
+        return value
+    }
+
+    /// Caller holds `readinessLock`. Audio sends keep that lock through their
+    /// evidence claim, so reconnect invalidation cannot land between runtime
+    /// validation and the current-ready transport decision.
+    private func validateSocketForSendLocked(
+        _ socket: URLSessionWebSocketTask,
+        requireReady: Bool
+    ) -> AlmaLiveVoiceSocketAttempt? {
+        guard let attempt = readiness.socketAttempt,
+              attempt.socketIdentity == ObjectIdentifier(socket),
+              !requireReady || socketReady else {
+            return nil
+        }
+        return attempt
+    }
+
     func start() async throws {
         stopped = false
         firstInputFrameTraced = false
@@ -2763,6 +4284,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func connect(_ minted: SessionResponse, resumptionHandle: String?) throws {
+        let evidenceGeneration = beginEvidenceTransport(resuming: resumptionHandle != nil)
         guard var parts = URLComponents(string: minted.websocketUrl) else { throw AlmaLiveVoiceError.badURL }
         parts.queryItems = (parts.queryItems ?? []) + [URLQueryItem(name: "access_token", value: minted.token)]
         guard let url = parts.url else { throw AlmaLiveVoiceError.badURL }
@@ -2774,10 +4296,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         session = s
         let socket = s.webSocketTask(with: url)
         ws = socket
-        socketReady = false
+        bindEvidenceSocket(socket, generation: evidenceGeneration)
+        let attempt = bindRuntimeSocketAttempt(
+            socket,
+            evidenceGeneration: evidenceGeneration)
         pendingResumptionHandle = resumptionHandle
         socket.resume()
-        receiveLoop(socket)
+        receiveLoop(socket, attempt: attempt)
     }
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
@@ -2867,20 +4392,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     /// Socket is live AND audio is running — announce the connection once.
-    private func finishSetup() {
-        var didClaim = false
-        updateReadiness { state in
-            guard state.canPublishLive else { return }
-            state.setupPublished = true
-            didClaim = true
-        }
-        guard didClaim else { return }
+    private func finishSetup(for attempt: AlmaLiveVoiceSocketAttempt) {
+        guard canPublishSocketSetup(attempt) else { return }
         trace("setup.live", audioSessionDescription())
         #if DEBUG
         NSLog("ALMA-VOICE setup finished — session LIVE (audio configured)")
         #endif
         audioConfigPending = false
-        socketReady = true
+        submitEvidenceSync { recorder in
+            recorder.activateProfile(
+                modelID: mintedSession?.model ?? AlmaLiveVoicePreferences.modelID,
+                voiceID: mintedSession?.voice ?? AlmaLiveVoicePreferences.voiceID,
+                generation: attempt.evidenceGeneration)
+            recorder.recordAudioGraphReady(
+                generation: attempt.evidenceGeneration,
+                route: evidenceRoute())
+        }
+        guard publishSocketReady(attempt) else { return }
         reconnecting = false
         reconnectAttempts = 0
         startKeepalive()
@@ -2900,7 +4428,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // Activation can arrive before microphone permission and socket setup.
         // Remember it, but never build/start media early: startLiveConnection()
         // deliberately resets a previous socket attempt.
-        guard gate.socketSetupComplete else { return }
+        guard gate.socketSetupComplete, let attempt = gate.socketAttempt else { return }
         if configured {
             // Activation landed AFTER audio setup. CallKit's activation resets
             // the output route (first call ends up on the RECEIVER — near
@@ -2910,7 +4438,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // once the calling screen appeared (owner device 2026-07-31).
             do {
                 try resumeAudioGraphAfterActivation()
-                finishSetup()
+                finishSetup(for: attempt)
                 nudgeSpeakerRoute()
             } catch {
                 // Never publish LIVE when CallKit activated but the render unit
@@ -2918,7 +4446,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // existing bounded retry path instead of leaving a silent timer.
                 configured = false
                 updateReadiness { $0.audioConfigured = false }
-                scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+                _ = deferSocketSetupForCallKit(attempt)
+                scheduleCallKitAudioRetry(for: attempt, retry: 1, lastError: error)
                 return
             }
             // Mirror recoverAudio(): a mid-turn activation can stop the PLAYER
@@ -2939,9 +4468,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // Only finish the session when setup was already waiting on audio —
             // otherwise finishSetup() would announce a live call with ws == nil,
             // cancel the in-flight connect task and lose the greeting/brief.
-            if audioConfigPending { finishSetup() }
+            if gate.pendingCallKitAttempt == attempt || audioConfigPending {
+                finishSetup(for: attempt)
+            }
         } catch {
-            scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+            _ = deferSocketSetupForCallKit(attempt)
+            scheduleCallKitAudioRetry(for: attempt, retry: 1, lastError: error)
         }
     }
 
@@ -2953,6 +4485,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         trace("media.callkitDeactivated")
         let gate = updateReadiness { $0.callKitAudioActive = false }
         audioConfigPending = gate.socketSetupComplete
+        if let attempt = gate.socketAttempt, gate.socketSetupComplete {
+            _ = deferSocketSetupForCallKit(attempt)
+        }
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
             if self.player.isPlaying { self.player.pause() }
@@ -2987,6 +4522,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let outputs = av.currentRoute.outputs
         let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
         let onReceiver = outputs.contains { $0.portType == .builtInReceiver }
+        if evidenceRecorder.isEnabled {
+            let generation = evidenceTransportGenerationSnapshot()
+            let route = evidenceRoute(av)
+            let reason: AlmaLiveVoiceEvidenceRouteReason = notification == nil
+                ? .verification
+                : .systemNotification
+            _ = submitEvidence { recorder in
+                recorder.recordAudioRouteChanged(
+                    generation: generation,
+                    route: route,
+                    reason: reason)
+            }
+        }
 
         audioLock.lock()
         let bootstrapProtected = Date() < bootstrapRouteProtectionUntil
@@ -3262,13 +4810,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// at 3.6 s (3 tries) declared "audio failed" on calls that were about to
     /// work. If audio truly cannot start, fail with the UNDERLYING error so the
     /// device note finally says why (build 91's note was just the generic line).
-    private func scheduleCallKitAudioRetry(attempt: Int, lastError: Error? = nil) {
+    private func scheduleCallKitAudioRetry(
+        for socketAttempt: AlmaLiveVoiceSocketAttempt,
+        retry: Int,
+        lastError: Error? = nil
+    ) {
         let initialGate = readinessSnapshot()
+        guard initialGate.socketAttempt == socketAttempt else { return }
         guard !initialGate.callKitManaged || initialGate.callKitAudioActive else {
             audioConfigPending = initialGate.socketSetupComplete
+            _ = deferSocketSetupForCallKit(socketAttempt)
             return
         }
-        guard attempt <= 8 else {
+        guard retry <= 8 else {
             let detail = lastError.map { String(String(describing: $0).prefix(140)) } ?? "no didActivate"
             fail("লাইভ অডিও চালু করা যায়নি। [\(detail)]")
             return
@@ -3278,15 +4832,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             guard let self, !self.stopped, !self.configured,
                   generation == self.audioAttemptGeneration else { return }
             let gate = self.readinessSnapshot()
+            guard gate.socketAttempt == socketAttempt else { return }
             guard !gate.callKitManaged || gate.callKitAudioActive else {
                 self.audioConfigPending = gate.socketSetupComplete
+                _ = self.deferSocketSetupForCallKit(socketAttempt)
                 return
             }
             do {
                 try self.configureAudio()
-                if self.audioConfigPending { self.finishSetup() }
+                if gate.pendingCallKitAttempt == socketAttempt || self.audioConfigPending {
+                    self.finishSetup(for: socketAttempt)
+                }
             } catch {
-                self.scheduleCallKitAudioRetry(attempt: attempt + 1, lastError: error)
+                self.scheduleCallKitAudioRetry(
+                    for: socketAttempt,
+                    retry: retry + 1,
+                    lastError: error)
             }
         }
     }
@@ -3419,12 +4980,109 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    private func claimFirstInputEvidence(
+        generation: Int,
+        inputWindowEpoch: Int,
+        rms: Double
+    ) -> (raw: Bool, conversion: Bool) {
+        guard evidenceRecorder.isEnabled else { return (false, false) }
+        audioLock.lock()
+        // A continuously open VPIO path often forwards digital silence before
+        // the owner speaks. Do not let that produce a misleading
+        // conversion→queued→success chain with raw energy appended later.
+        // The first energy-bearing converted frame claims both stages together.
+        let hasEnergy = AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
+        let claim = evidenceInputStageState.claimInput(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch,
+            hasEnergy: hasEnergy)
+        audioLock.unlock()
+        return claim
+    }
+
+    private func inputEvidenceChainReady(
+        generation: Int,
+        inputWindowEpoch: Int
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled else { return false }
+        audioLock.lock()
+        let ready = evidenceInputStageState.chainReady(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch)
+        audioLock.unlock()
+        return ready
+    }
+
+    private func inputEvidenceWindowMatches(
+        generation: Int,
+        inputWindowEpoch: Int
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled else { return false }
+        audioLock.lock()
+        let matches = evidenceInputStageState.matches(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch)
+        audioLock.unlock()
+        return matches
+    }
+
+    private func claimFirstConversionFailureEvidence(
+        generation: Int,
+        inputWindowEpoch: Int
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled else { return false }
+        audioLock.lock()
+        let claim = evidenceInputStageState.claimConversionFailure(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch)
+        audioLock.unlock()
+        return claim
+    }
+
+    private func markInputEvidenceIntakeComplete(
+        generation: Int,
+        inputWindowEpoch: Int
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        audioLock.lock()
+        evidenceInputStageState.markIntakeComplete(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch)
+        audioLock.unlock()
+    }
+
+    private func markInputEvidenceIntakeNeedsRetry(
+        generation: Int,
+        inputWindowEpoch: Int
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        audioLock.lock()
+        evidenceInputStageState.markIntakeNeedsRetry(
+            transportGeneration: generation,
+            windowEpoch: inputWindowEpoch)
+        audioLock.unlock()
+    }
+
     private func capture(_ buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat) {
         audioLock.lock()
         let muted = inputMuted
+        let evidenceGeneration = evidenceInputStageState.transportGeneration
+        let evidenceInputWindowEpoch = evidenceInputStageState.windowEpoch
+        let evidenceIntakeComplete = evidenceInputStageState.intakeComplete
+        let sourceSocketAttempt = captureSocketAttempt
         audioLock.unlock()
-        guard !muted, !stopped, socketReady,
-              let converter = inputConverter, let outFormat = inputFormat else { return }
+        guard let sourceSocketAttempt else { return }
+        guard !muted, !stopped,
+              !evidenceRecorder.isEnabled
+                || sourceSocketAttempt.evidenceGeneration == evidenceGeneration else { return }
+        guard let converter = inputConverter, let outFormat = inputFormat else {
+            submitConversionFailureEvidence(
+                .converterOutputUnavailable,
+                generation: evidenceGeneration,
+                inputWindowEpoch: evidenceInputWindowEpoch,
+                observedUptime: ProcessInfo.processInfo.systemUptime)
+            return
+        }
         let frames = Int(buffer.frameLength)
         guard frames > 0 else { return }
         audioLock.lock()
@@ -3451,12 +5109,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         micDebugFrameCount += 1
         if micDebugFrameCount % 100 == 0 {
-            NSLog("ALMA-VOICE mic alive frames=%d rms=%.4f socketReady=%d", micDebugFrameCount, rms, socketReady ? 1 : 0)
+            NSLog("ALMA-VOICE mic alive frames=%d rms=%.4f socketReady=1", micDebugFrameCount, rms)
         }
         #endif
 
         let capacity = AVAudioFrameCount(Double(frames) * outFormat.sampleRate / nativeFormat.sampleRate + 32)
-        guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
+            submitConversionFailureEvidence(
+                .converterOutputUnavailable,
+                generation: evidenceGeneration,
+                inputWindowEpoch: evidenceInputWindowEpoch,
+                observedUptime: ProcessInfo.processInfo.systemUptime)
+            return
+        }
         var supplied = false
         var conversionError: NSError?
         converter.convert(to: output, error: &conversionError) { _, status in
@@ -3465,8 +5130,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             status.pointee = .haveData
             return buffer
         }
-        guard conversionError == nil, output.frameLength > 0,
-              let samples = output.int16ChannelData?[0] else { return }
+        guard conversionError == nil else {
+            submitConversionFailureEvidence(
+                .conversionError,
+                generation: evidenceGeneration,
+                inputWindowEpoch: evidenceInputWindowEpoch,
+                observedUptime: ProcessInfo.processInfo.systemUptime)
+            return
+        }
+        guard output.frameLength > 0, let samples = output.int16ChannelData?[0] else {
+            submitConversionFailureEvidence(
+                .emptyConvertedAudio,
+                generation: evidenceGeneration,
+                inputWindowEpoch: evidenceInputWindowEpoch,
+                observedUptime: ProcessInfo.processInfo.systemUptime)
+            return
+        }
         let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
         let captureUptime = ProcessInfo.processInfo.systemUptime
 
@@ -3841,49 +5520,126 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             #endif
             beginLocalBargeIn()
-            for chunk in preRoll { sendRealtimeAudio(chunk) }
+            let inputEvidence = evidenceRecorder.isEnabled && !evidenceIntakeComplete
+                    && AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
+                ? PendingInputEvidence(
+                    rms: rms,
+                    convertedByteCount: bytes.count,
+                    transportGeneration: evidenceGeneration,
+                    inputWindowEpoch: evidenceInputWindowEpoch,
+                    observedUptime: captureUptime,
+                    confirmedBargeIn: true)
+                : nil
+            if let currentChunk = preRoll.last {
+                // The current energy-bearing frame is the LAST pre-roll item.
+                // Older silence/noise may still be forwarded for prefix audio,
+                // but it cannot satisfy this frame's delivery evidence.
+                for chunk in preRoll.dropLast() {
+                    sendRealtimeAudio(chunk, sourceAttempt: sourceSocketAttempt)
+                }
+                sendRealtimeAudio(
+                    currentChunk,
+                    sourceAttempt: sourceSocketAttempt,
+                    inputEvidence: inputEvidence)
+            } else {
+                sendRealtimeAudio(
+                    bytes,
+                    sourceAttempt: sourceSocketAttempt,
+                    inputEvidence: inputEvidence)
+            }
         } else if sendNormally {
+            let inputEvidence = evidenceRecorder.isEnabled && !evidenceIntakeComplete
+                    && AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
+                ? PendingInputEvidence(
+                    rms: rms,
+                    convertedByteCount: bytes.count,
+                    transportGeneration: evidenceGeneration,
+                    inputWindowEpoch: evidenceInputWindowEpoch,
+                    observedUptime: captureUptime,
+                    confirmedBargeIn: false)
+                : nil
             if !preRoll.isEmpty {
                 // Listen gate just opened: the pre-roll already contains this
                 // frame — flush it instead of sending `bytes` twice.
-                for chunk in preRoll { sendRealtimeAudio(chunk) }
+                for chunk in preRoll.dropLast() {
+                    sendRealtimeAudio(chunk, sourceAttempt: sourceSocketAttempt)
+                }
+                sendRealtimeAudio(
+                    preRoll[preRoll.count - 1],
+                    sourceAttempt: sourceSocketAttempt,
+                    inputEvidence: inputEvidence)
             } else {
-                sendRealtimeAudio(bytes)
+                sendRealtimeAudio(
+                    bytes,
+                    sourceAttempt: sourceSocketAttempt,
+                    inputEvidence: inputEvidence)
             }
         }
     }
 
-    private func sendRealtimeAudio(_ bytes: Data) {
+    private func sendRealtimeAudio(
+        _ bytes: Data,
+        sourceAttempt: AlmaLiveVoiceSocketAttempt,
+        inputEvidence: PendingInputEvidence? = nil
+    ) {
         sendJSON(["realtimeInput": ["audio": [
             "mimeType": "audio/pcm;rate=16000",
             "data": bytes.base64EncodedString(),
-        ]]])
+        ]]],
+            audioEvidenceByteCount: inputEvidence == nil ? nil : bytes.count,
+            audioEvidenceGeneration: sourceAttempt.evidenceGeneration,
+            audioSourceAttempt: sourceAttempt,
+            audioInputEvidence: inputEvidence)
     }
 
-    private func receiveLoop(_ socket: URLSessionWebSocketTask) {
+    private func receiveLoop(
+        _ socket: URLSessionWebSocketTask,
+        attempt: AlmaLiveVoiceSocketAttempt
+    ) {
         socket.receive { [weak self, weak socket] result in
-            guard let self, let socket, !self.stopped, self.ws === socket else { return }
+            guard let self, let socket, !self.stopped, self.ws === socket,
+                  self.isCurrentSocketAttempt(attempt) else { return }
+            let evidenceGeneration = self.evidenceGeneration(
+                for: socket,
+                requireReady: false) ?? 0
             switch result {
             case .failure(let error):
                 #if DEBUG
                 NSLog("ALMA-VOICE websocket receive failed: %@", String(describing: error))
                 #endif
-                self.recoverConnection()
+                if self.invalidateSocketReadiness(attempt: attempt) {
+                    self.recoverConnection()
+                }
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    self.onMessage(text)
+                    self.onMessage(
+                        text,
+                        attempt: attempt,
+                        evidenceGeneration: evidenceGeneration)
                 case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) { self.onMessage(text) }
+                    if let text = String(data: data, encoding: .utf8) {
+                        self.onMessage(
+                            text,
+                            attempt: attempt,
+                            evidenceGeneration: evidenceGeneration)
+                    }
                 @unknown default:
                     break
                 }
-                if self.ws === socket { self.receiveLoop(socket) }
+                if self.ws === socket, self.isCurrentSocketAttempt(attempt) {
+                    self.receiveLoop(socket, attempt: attempt)
+                }
             }
         }
     }
 
-    private func onMessage(_ text: String) {
+    private func onMessage(
+        _ text: String,
+        attempt: AlmaLiveVoiceSocketAttempt,
+        evidenceGeneration: Int
+    ) {
+        guard isCurrentSocketAttempt(attempt) else { return }
         guard let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         if let error = root["error"] as? [String: Any] {
@@ -3897,19 +5653,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // field) — drop it and retry the same call transparently.
                 allowAffective = false
                 reconnecting = false
-                recoverConnection(allowInitial: true)
+                if invalidateSocketReadiness(attempt: attempt) {
+                    recoverConnection(allowInitial: true)
+                }
                 return
             }
             if reconnecting {
                 reconnecting = false
-                recoverConnection(forceFreshToken: true, allowInitial: true)
+                if invalidateSocketReadiness(attempt: attempt) {
+                    recoverConnection(forceFreshToken: true, allowInitial: true)
+                }
                 return
             }
             fail("রিয়েলটাইম ভয়েস সার্ভার সংযোগ নেয়নি।")
             return
         }
         if root["setupComplete"] != nil {
-            let gate = updateReadiness { $0.socketSetupComplete = true }
+            guard let gate = acceptSocketSetup(attempt) else { return }
             if gate.waitingForCallKit {
                 audioConfigPending = true
                 #if DEBUG
@@ -3919,14 +5679,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             do {
                 try configureAudio()
-                finishSetup()
+                finishSetup(for: attempt)
             } catch {
                 // Under CallKit the session may not be activated yet — keep the
                 // socket and retry from callKitAudioActivated() instead of
                 // failing the whole call (owner device, build 89).
                 if callKitOwnsAudioSession {
                     audioConfigPending = true
-                    scheduleCallKitAudioRetry(attempt: 1, lastError: error)
+                    _ = deferSocketSetupForCallKit(attempt)
+                    scheduleCallKitAudioRetry(for: attempt, retry: 1, lastError: error)
                 } else {
                     fail("লাইভ অডিও চালু করা যায়নি। [\(String(String(describing: error).prefix(140)))]")
                 }
@@ -3937,9 +5698,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
            let handle = update["newHandle"] as? String, !handle.isEmpty {
             latestResumptionHandle = handle
         }
-        if let content = root["serverContent"] as? [String: Any] { handleServerContent(content) }
+        if let content = root["serverContent"] as? [String: Any] {
+            handleServerContent(content, evidenceGeneration: evidenceGeneration)
+        }
         if let tool = root["toolCall"] as? [String: Any],
            let calls = tool["functionCalls"] as? [[String: Any]] {
+            for call in calls {
+                let evidenceTool = AlmaLiveVoiceEvidenceTool(
+                    providerName: call["name"] as? String)
+                _ = submitEvidence { recorder in
+                    _ = recorder.recordToolCallObserved(
+                        evidenceTool,
+                        generation: evidenceGeneration)
+                }
+            }
             for call in calls where call["name"] as? String == "quick_erp_lookup" {
                 let id = call["id"] as? String ?? UUID().uuidString
                 let toolName = (call["args"] as? [String: Any])?["tool"] as? String ?? ""
@@ -3984,7 +5756,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         if root["goAway"] != nil {
-            recoverConnection()
+            if invalidateSocketReadiness(attempt: attempt) {
+                recoverConnection()
+            }
         }
     }
 
@@ -4012,14 +5786,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func keepaliveTick() {
-        guard !stopped, !reconnecting, socketReady, let socket = ws else { return }
+        guard !stopped, !reconnecting, socketReadySnapshot(), let socket = ws else { return }
         if awaitingPong {
             // Previous ping got no pong within a full tick — the socket is stalled.
             #if DEBUG
             NSLog("ALMA-VOICE keepalive: pong missing — socket stalled, reconnecting")
             #endif
             awaitingPong = false
-            recoverConnection()
+            if invalidateSocketReadiness(socket: socket) {
+                recoverConnection()
+            }
             return
         }
         awaitingPong = true
@@ -4034,7 +5810,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     NSLog("ALMA-VOICE keepalive: ping failed — reconnecting (%@)", String(describing: error))
                     #endif
                     self.awaitingPong = false
-                    self.recoverConnection()
+                    if self.invalidateSocketReadiness(socket: socket) {
+                        self.recoverConnection()
+                    }
                 }
             }
         }
@@ -4078,8 +5856,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         reconnectAttempts += 1
         reconnecting = true
-        socketReady = false
-        updateReadiness { $0.beginSocketAttempt() }
+        _ = invalidateSocketReadiness()
         stopKeepalive()
         #if DEBUG
         NSLog("ALMA-VOICE reconnect attempt %d (forceFreshToken=%d)", reconnectAttempts, forceFreshToken ? 1 : 0)
@@ -4127,7 +5904,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func handleServerContent(_ content: [String: Any]) {
+    private func handleServerContent(
+        _ content: [String: Any],
+        evidenceGeneration: Int
+    ) {
         if content["interrupted"] as? Bool == true {
             #if DEBUG
             NSLog("ALMA-VOICE server INTERRUPTED model turn")
@@ -4135,9 +5915,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             stopModelPlayback(interrupted: true)
             DispatchQueue.main.async { [weak self] in self?.engine?.liveWasInterrupted() }
         }
-        if let input = content["inputTranscription"] as? [String: Any],
-           let text = input["text"] as? String {
-            DispatchQueue.main.async { [weak self] in self?.engine?.liveInputTranscript(text) }
+        if let input = content["inputTranscription"] as? [String: Any] {
+            audioLock.lock()
+            let modelPlaybackStillActive = modelAudioTurnOpen
+            audioLock.unlock()
+            _ = submitEvidence { recorder in
+                recorder.recordProviderInputTranscriptionObserved(
+                    generation: evidenceGeneration,
+                    correlateToActiveInput: !modelPlaybackStillActive)
+            }
+            if let text = input["text"] as? String {
+                DispatchQueue.main.async { [weak self] in self?.engine?.liveInputTranscript(text) }
+            }
         }
         if let output = content["outputTranscription"] as? [String: Any],
            let text = output["text"] as? String {
@@ -4151,7 +5940,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 guard let inline = part["inlineData"] as? [String: Any],
                       let encoded = inline["data"] as? String,
                       let pcm = Data(base64Encoded: encoded) else { continue }
-                playPCM(pcm)
+                playPCM(pcm, evidenceGeneration: evidenceGeneration)
             }
         }
         if content["generationComplete"] as? Bool == true {
@@ -4162,11 +5951,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             NSLog("ALMA-VOICE model turn complete transcriptChars=%d", outputTranscript.count)
             #endif
             outputTranscript = ""
-            completeModelTurn()
+            completeModelTurn(evidenceGeneration: evidenceGeneration)
         }
     }
 
-    private func playPCM(_ pcm: Data) {
+    private func playPCM(_ pcm: Data, evidenceGeneration: Int) {
         guard configured, let format = playbackFormat,
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                             frameCapacity: AVAudioFrameCount(pcm.count / 2)),
@@ -4190,9 +5979,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var shouldStart = false
         var alreadyStarted = false
         var fallbackDeadline = Date.distantPast
+        let serializesEvidenceBoundary = evidenceRecorder.isEnabled
+        if serializesEvidenceBoundary { evidenceSubmissionLock.lock() }
         audioLock.lock()
         if bargeInPending {
             audioLock.unlock()
+            if serializesEvidenceBoundary { evidenceSubmissionLock.unlock() }
             return
         }
         if !modelAudioTurnOpen {
@@ -4231,8 +6023,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let scheduledBufferID = bufferID
         let scheduledGeneration = generation
 
+        if newTurn, serializesEvidenceBoundary {
+            beginModelEvidenceEpochLocked(
+                transportGeneration: evidenceGeneration,
+                playbackGeneration: scheduledGeneration,
+                observedUptime: ProcessInfo.processInfo.systemUptime)
+        }
+        if serializesEvidenceBoundary { evidenceSubmissionLock.unlock() }
+
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
+            self.audioLock.lock()
+            let stillCurrent = self.playbackGeneration == scheduledGeneration
+                && self.modelAudioTurnOpen
+                && self.pendingPlaybackBuffers.contains(scheduledBufferID)
+            self.audioLock.unlock()
+            guard stillCurrent else { return }
             self.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 self?.playbackBufferFinished(id: scheduledBufferID, generation: scheduledGeneration)
             }
@@ -4273,6 +6079,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         audioQueue.async { [weak self] in
             guard let self, !self.stopped else { return }
+            self.audioLock.lock()
+            let stillCurrent = self.playbackGeneration == generation
+                && self.modelAudioTurnOpen
+                && self.playbackStarted
+            self.audioLock.unlock()
+            guard stillCurrent else { return }
             self.player.volume = 1
             if !self.firstPlaybackPrimed {
                 self.firstPlaybackPrimed = true
@@ -4296,6 +6108,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                       recoveryGeneration == self.playbackRecoveryGeneration else { return }
                 self.audioLock.lock()
                 let stillPlayingTurn = self.playbackStarted
+                    && self.playbackGeneration == generation
                 self.audioLock.unlock()
                 guard stillPlayingTurn else { return }
                 let renderedSamples: AVAudioFramePosition = self.player.lastRenderTime
@@ -4438,7 +6251,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if shouldFinish { finishModelPlayback(generation: generation) }
     }
 
-    private func completeModelTurn() {
+    private func completeModelTurn(evidenceGeneration: Int) {
+        _ = submitEvidence { recorder in
+            recorder.recordModelTurnCompleted(generation: evidenceGeneration)
+        }
         audioLock.lock()
         bargeInPending = false
         bargeSpeechFrames = 0
@@ -4555,12 +6371,289 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ]])
     }
 
-    private func sendJSON(_ object: [String: Any], requireReady: Bool = true) {
-        guard !stopped, (!requireReady || socketReady), JSONSerialization.isValidJSONObject(object),
+    private func recordAudioNotQueued(
+        _ reason: AlmaLiveVoiceEvidenceReason,
+        byteCount: Int,
+        sourceGeneration: Int,
+        inputEvidence: PendingInputEvidence? = nil
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        let claimedInput = claimPendingInputEvidence(
+            inputEvidence,
+            sourceGeneration: sourceGeneration)
+        guard inputEvidence == nil || claimedInput != nil else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        let submitted = submitEvidenceLocked { recorder in
+            if let claimedInput, claimedInput.shouldSubmit {
+                Self.recordClaimedInputEvidence(claimedInput, recorder: recorder)
+            }
+            recorder.recordAudioNotQueued(
+                reason,
+                byteCount: byteCount,
+                generation: sourceGeneration)
+        }
+        if submitted, let claimedInput, claimedInput.shouldSubmit {
+            markInputEvidenceIntakeComplete(
+                generation: sourceGeneration,
+                inputWindowEpoch: claimedInput.pending.inputWindowEpoch)
+        }
+        evidenceSubmissionLock.unlock()
+    }
+
+    /// Caller holds `evidenceSubmissionLock`. Model-epoch rotation takes the
+    /// same lock before rearming these one-shot flags, so a capture can never
+    /// publish raw/conversion under one input window and queue its first chunk
+    /// under another.
+    private func claimPendingInputEvidence(
+        _ pending: PendingInputEvidence?,
+        sourceGeneration: Int
+    ) -> ClaimedInputEvidence? {
+        guard let pending,
+              pending.transportGeneration == sourceGeneration,
+              inputEvidenceWindowMatches(
+                generation: pending.transportGeneration,
+                inputWindowEpoch: pending.inputWindowEpoch) else { return nil }
+        let claims = claimFirstInputEvidence(
+            generation: pending.transportGeneration,
+            inputWindowEpoch: pending.inputWindowEpoch,
+            rms: pending.rms)
+        return ClaimedInputEvidence(
+            pending: pending,
+            recordRaw: claims.raw,
+            recordConversion: claims.conversion)
+    }
+
+    private static func recordClaimedInputEvidence(
+        _ claimed: ClaimedInputEvidence,
+        recorder: AlmaLiveVoiceEvidenceRecorder
+    ) {
+        let pending = claimed.pending
+        if pending.confirmedBargeIn {
+            recorder.recordConfirmedBargeInInputBoundary(
+                rms: pending.rms,
+                convertedByteCount: pending.convertedByteCount,
+                generation: pending.transportGeneration,
+                observedUptime: pending.observedUptime)
+            return
+        }
+        if claimed.recordRaw {
+            recorder.recordRawEnergy(
+                rms: pending.rms,
+                generation: pending.transportGeneration,
+                observedUptime: pending.observedUptime)
+        }
+        if claimed.recordConversion {
+            recorder.recordConversionSucceeded(
+                byteCount: pending.convertedByteCount,
+                generation: pending.transportGeneration,
+                observedUptime: pending.observedUptime)
+        }
+    }
+
+    private func prepareAudioSendEvidence(
+        for socket: URLSessionWebSocketTask,
+        byteCount: Int,
+        sourceGeneration: Int,
+        observedUptime: TimeInterval,
+        inputEvidence: PendingInputEvidence?
+    ) -> (
+        claim: (
+            generation: Int,
+            turnEpoch: Int,
+            claimID: Int,
+            inputWindowEpoch: Int
+        )?,
+        submitted: Bool
+    ) {
+        guard evidenceRecorder.isEnabled else { return (nil, true) }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return (nil, false)
+        }
+        guard let inputEvidence else {
+            evidenceSubmissionLock.unlock()
+            return (nil, true)
+        }
+        let claimedInput = claimPendingInputEvidence(
+            inputEvidence,
+            sourceGeneration: sourceGeneration)
+        let chainReady = inputEvidenceChainReady(
+            generation: sourceGeneration,
+            inputWindowEpoch: inputEvidence.inputWindowEpoch)
+        let claimResult: AudioSendEvidenceClaimResult = chainReady
+            ? claimEvidenceAudioSend(for: socket, sourceGeneration: sourceGeneration)
+            : .alreadyCovered
+        let claim: (
+            generation: Int,
+            turnEpoch: Int,
+            claimID: Int,
+            inputWindowEpoch: Int
+        )?
+        let bindingUnavailable: Bool
+        switch claimResult {
+        case .claimed(let generation, let turnEpoch, let claimID):
+            claim = (
+                generation,
+                turnEpoch,
+                claimID,
+                inputEvidence.inputWindowEpoch)
+            bindingUnavailable = false
+        case .alreadyCovered:
+            claim = nil
+            bindingUnavailable = false
+        case .unavailable:
+            claim = nil
+            bindingUnavailable = true
+        }
+        guard claimedInput?.shouldSubmit == true || claim != nil || bindingUnavailable else {
+            evidenceSubmissionLock.unlock()
+            return (nil, true)
+        }
+        let submitted = submitEvidenceLocked { [weak self] recorder in
+            if let claimedInput, claimedInput.shouldSubmit {
+                Self.recordClaimedInputEvidence(claimedInput, recorder: recorder)
+            }
+            if bindingUnavailable {
+                recorder.recordAudioSendTrackingUnavailable(
+                    byteCount: byteCount,
+                    generation: sourceGeneration)
+                return
+            }
+            guard let claim,
+                  let self,
+                  let context = recorder.recordAudioQueued(
+                    byteCount: byteCount,
+                    generation: claim.generation,
+                    observedUptime: observedUptime) else { return }
+            self.evidenceSendContexts[claim.claimID] = context
+        }
+        if !submitted, let claim {
+            abandonEvidenceAudioSendClaim(turnEpoch: claim.turnEpoch)
+        } else if submitted, claim != nil || bindingUnavailable {
+            markInputEvidenceIntakeComplete(
+                generation: sourceGeneration,
+                inputWindowEpoch: inputEvidence.inputWindowEpoch)
+        }
+        evidenceSubmissionLock.unlock()
+        return (claim, submitted)
+    }
+
+    private func submitAudioSendCompletion(
+        for socket: URLSessionWebSocketTask,
+        claim: (
+            generation: Int,
+            turnEpoch: Int,
+            claimID: Int,
+            inputWindowEpoch: Int
+        ),
+        succeeded: Bool,
+        observedUptime: TimeInterval
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        evidenceSubmissionLock.lock()
+        guard evidenceSessionAccepting else {
+            evidenceSubmissionLock.unlock()
+            return
+        }
+        let state = evidenceCompletionState(
+            for: socket,
+            sourceGeneration: claim.generation,
+            turnEpoch: claim.turnEpoch,
+            succeeded: succeeded)
+        if !succeeded || !state.isCurrentReadySocket {
+            markInputEvidenceIntakeNeedsRetry(
+                generation: claim.generation,
+                inputWindowEpoch: claim.inputWindowEpoch)
+        }
+        _ = submitEvidenceLocked { [weak self] recorder in
+            guard let self,
+                  let context = self.evidenceSendContexts.removeValue(
+                    forKey: claim.claimID) else { return }
+            recorder.recordAudioSendCompletion(
+                context,
+                succeeded: succeeded,
+                currentGeneration: state.currentGeneration,
+                isCurrentReadySocket: state.isCurrentReadySocket,
+                observedUptime: observedUptime)
+        }
+        evidenceSubmissionLock.unlock()
+    }
+
+    private func sendJSON(
+        _ object: [String: Any],
+        requireReady: Bool = true,
+        sourceSocket: URLSessionWebSocketTask? = nil,
+        audioEvidenceByteCount: Int? = nil,
+        audioEvidenceGeneration: Int? = nil,
+        audioSourceAttempt: AlmaLiveVoiceSocketAttempt? = nil,
+        audioInputEvidence: PendingInputEvidence? = nil
+    ) {
+        guard !stopped else { return }
+        let sourceGeneration = audioEvidenceGeneration
+            ?? evidenceTransportGenerationSnapshot()
+        guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object),
-              let text = String(data: data, encoding: .utf8) else { return }
-        let socket = ws
-        socket?.send(.string(text)) { [weak self, weak socket] error in
+              let text = String(data: data, encoding: .utf8) else {
+            if let byteCount = audioEvidenceByteCount {
+                recordAudioNotQueued(
+                    .serializationFailed,
+                    byteCount: byteCount,
+                    sourceGeneration: sourceGeneration,
+                    inputEvidence: audioInputEvidence)
+            }
+            return
+        }
+        guard let socket = sourceSocket ?? ws else {
+            if let byteCount = audioEvidenceByteCount {
+                recordAudioNotQueued(
+                    .socketUnavailable,
+                    byteCount: byteCount,
+                    sourceGeneration: sourceGeneration,
+                    inputEvidence: audioInputEvidence)
+            }
+            return
+        }
+        readinessLock.lock()
+        guard let currentAttempt = validateSocketForSendLocked(
+            socket,
+            requireReady: requireReady),
+              audioSourceAttempt == nil || audioSourceAttempt == currentAttempt else {
+            readinessLock.unlock()
+            if let byteCount = audioEvidenceByteCount {
+                recordAudioNotQueued(
+                    .socketUnavailable,
+                    byteCount: byteCount,
+                    sourceGeneration: sourceGeneration,
+                    inputEvidence: audioInputEvidence)
+            }
+            return
+        }
+        let evidenceSend = audioEvidenceByteCount.map {
+            prepareAudioSendEvidence(
+                for: socket,
+                byteCount: $0,
+                sourceGeneration: sourceGeneration,
+                observedUptime: ProcessInfo.processInfo.systemUptime,
+                inputEvidence: audioInputEvidence)
+        }
+        readinessLock.unlock()
+        socket.send(.string(text)) { [weak self, weak socket] error in
+            if let self, let socket, let evidenceSend,
+               let claim = evidenceSend.claim, evidenceSend.submitted {
+                self.submitAudioSendCompletion(
+                    for: socket,
+                    claim: claim,
+                    succeeded: error == nil,
+                    observedUptime: ProcessInfo.processInfo.systemUptime)
+            }
             if let error {
                 #if DEBUG
                 NSLog("ALMA-VOICE websocket send failed: %@", String(describing: error))
@@ -4571,7 +6664,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // hits a send first) recovers exactly like a failed receive --
                 // never an instant call kill.
                 guard let self, let socket, self.ws === socket else { return }
-                self.recoverConnection()
+                if self.invalidateSocketReadiness(socket: socket) {
+                    self.recoverConnection()
+                }
             }
         }
     }
@@ -4662,6 +6757,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func stop() {
+        _ = invalidateSocketReadiness()
         stopped = true
         stopKeepalive()
         soundAnalyzer?.completeAnalysis()
@@ -4709,7 +6805,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         inputConverter = nil
         inputFormat = nil
         playbackFormat = nil
-        socketReady = false
         reconnecting = false
         mintedSession = nil
         pendingResumptionHandle = nil
@@ -4763,8 +6858,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         NSLog("ALMA-VOICE websocket opened")
         #endif
         guard !stopped, ws === webSocketTask, let minted = mintedSession else { return }
+        if let generation = evidenceGeneration(for: webSocketTask, requireReady: false) {
+            _ = submitEvidence { recorder in
+                recorder.recordSocketOpened(generation: generation)
+            }
+        }
         sendJSON(setupMessage(model: minted.model, voice: minted.voice,
-                              resumptionHandle: pendingResumptionHandle), requireReady: false)
+                              resumptionHandle: pendingResumptionHandle),
+                 requireReady: false,
+                 sourceSocket: webSocketTask)
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
@@ -6433,6 +8535,7 @@ struct AlmaVoiceConsoleView: View {
 struct AlmaLiveSettingsSheet: View {
     let engine: AlmaVoiceEngine
     @Environment(\.dismiss) private var dismiss
+    @State private var recoveryEvidenceURL: URL?
 
     private let ink = Color(red: 0.918, green: 0.949, blue: 0.984)
     private let muted = Color(red: 0.486, green: 0.573, blue: 0.663)
@@ -6507,6 +8610,49 @@ struct AlmaLiveSettingsSheet: View {
                         }
                     }
 
+                    if engine.isRecoveryEvidenceEnabled {
+                        settingsSection(
+                            title: "Privacy-safe evidence",
+                            subtitle: "চলতি call-এর snapshot: app/build, model/voice, call mode/outcome, stage, ordinal, timing, route, byte count ও rounded energy। কোনো recording/PCM, transcript, prompt, tool content, URL, token বা provider call ID নেই।"
+                        ) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Local session ID")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(muted)
+                                Text(engine.recoveryEvidenceSessionID)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(ink)
+                                    .textSelection(.enabled)
+                                    .accessibilityIdentifier("voice.evidence.session-id")
+
+                                Button {
+                                    recoveryEvidenceURL = engine.exportRecoveryEvidence()
+                                } label: {
+                                    Label("Evidence JSON তৈরি করুন", systemImage: "doc.badge.gearshape")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(panel, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                                .strokeBorder(line, lineWidth: 1))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("voice.evidence.export")
+                                .accessibilityHint("চলতি কলের content-free evidence snapshot বানাবে")
+
+                                if let recoveryEvidenceURL {
+                                    ShareLink(item: recoveryEvidenceURL) {
+                                        Label("Evidence share করুন", systemImage: "square.and.arrow.up")
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(good)
+                                    }
+                                    .accessibilityIdentifier("voice.evidence.share")
+                                }
+                            }
+                        }
+                    }
+
                     VStack(spacing: 9) {
                         Button {
                             engine.applySelectedLiveProfileNow()
@@ -6529,6 +8675,7 @@ struct AlmaLiveSettingsSheet: View {
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("voice.settings.scroll")
             .background(bg.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

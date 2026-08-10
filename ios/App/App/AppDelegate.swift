@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import UserNotifications
 import Capacitor
 import CapawesomeCapacitorAppShortcuts
@@ -21,6 +22,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         AlmaPerfLog.event("launch.didFinishLaunching")
+        #if DEBUG
+        if #available(iOS 17.0, *), debugInstallLiveVoiceEvidenceFixtureIfRequested() {
+            return true
+        }
+        #endif
         // Register at the earliest native lifecycle point, per OneSignal's iOS
         // contract. The previous JS-only listener attached after the hidden
         // Capacitor page/auth boot, so a cold-start click could arrive too early
@@ -401,6 +407,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
 
 #if DEBUG
 extension AppDelegate {
+    /// A deterministic UI surface for export/accessibility tests. This bypasses
+    /// the regular app boot and never starts a microphone, token mint, websocket,
+    /// or Gemini session. It is compiled only into DEBUG builds and remains
+    /// additionally environment-gated.
+    @available(iOS 17.0, *)
+    @MainActor
+    func debugInstallLiveVoiceEvidenceFixtureIfRequested() -> Bool {
+        guard ProcessInfo.processInfo.environment["ALMA_LIVE_VOICE_EVIDENCE_SELFTEST"] == "1"
+        else { return false }
+        let engine = AlmaVoiceEngine()
+        engine.debugPrepareRecoveryEvidenceFixture()
+        let host = UIHostingController(rootView: AlmaLiveSettingsSheet(engine: engine))
+        host.view.backgroundColor = UIColor(red: 0.016, green: 0.027, blue: 0.051, alpha: 1)
+        window?.rootViewController = host
+        window?.backgroundColor = host.view.backgroundColor
+        window?.makeKeyAndVisible()
+        return true
+    }
+
     /// IOSP-1 navigation-contract self-test (DEBUG builds only, env-gated — never
     /// compiled into Release/TestFlight). Simulator UI can't be driven headlessly
     /// (SpringBoard's "Open in …?" dialog blocks `simctl openurl`, and taps need a

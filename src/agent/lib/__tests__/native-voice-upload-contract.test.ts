@@ -190,7 +190,11 @@ describe('native voice upload contract', () => {
     expect(stopPlayback).toContain('self?.player.volume = 1')
     expect(voice).toContain('bargeSpeechFrames >= receiverBargeInRequiredFrames')
     expect(voice).toContain('beginLocalBargeIn()')
-    expect(voice).toContain('for chunk in preRoll { sendRealtimeAudio(chunk) }')
+    // Prefix audio must still be forwarded, while the current energy-bearing
+    // frame owns the delivery evidence instead of an older silent pre-roll item.
+    expect(voice).toContain('for chunk in preRoll.dropLast() {')
+    expect(voice).toContain('if let currentChunk = preRoll.last {')
+    expect(voice).toContain('inputEvidence: inputEvidence)')
     expect(voice).toContain('let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled')
     expect(voice).toContain('if serverCanOwnBargeIn {')
     expect(voice).toContain('sendNormally = true')

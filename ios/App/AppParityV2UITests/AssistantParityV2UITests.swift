@@ -21,6 +21,7 @@ final class AssistantParityV2UITests: XCTestCase {
             "testRichOutputGallerySourcesAndSharedViewer",
             "testGeneratedImageFailureRetriesWithoutLosingSettledTurn",
             "testCommandAndSkillAutocompleteUsesSupportedContracts",
+            "testLiveVoiceEvidenceFixtureExportsWithoutNetwork",
         ].contains { name.contains($0) }
         if ownsFixtureLaunch {
             // These tests immediately relaunch with a dedicated fixture. Avoid
@@ -431,6 +432,32 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(app.buttons["Monitor"].exists)
         XCTAssertTrue(app.buttons["Costs"].exists)
         XCTAssertTrue(app.buttons["Hub"].exists)
+    }
+
+    func testLiveVoiceEvidenceFixtureExportsWithoutNetwork() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_SELFTEST"] = "1"
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_V1"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["বাংলা লাইভ ভয়েস"].waitForExistence(timeout: 5))
+        let scroll = app.scrollViews["voice.settings.scroll"]
+        XCTAssertTrue(scroll.exists)
+        let export = app.buttons["voice.evidence.export"]
+        for _ in 0..<7 where !export.isHittable { scroll.swipeUp(velocity: .slow) }
+
+        let sessionID = app.staticTexts["voice.evidence.session-id"]
+        XCTAssertTrue(sessionID.waitForExistence(timeout: 3))
+        XCTAssertEqual(sessionID.label, "voice-debug-no-network")
+        XCTAssertTrue(export.isHittable)
+        export.tap()
+        XCTAssertTrue(app.buttons["voice.evidence.share"].waitForExistence(timeout: 3))
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "live-voice-typed-evidence-offline-fixture"
+        proof.lifetime = .keepAlways
+        add(proof)
     }
 
     private func relaunch(fixture: String, mock: String,

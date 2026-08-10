@@ -58,7 +58,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>ALMA ERP needs photo library access to attach images to the assistant and product records.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>ALMA ERP transcribes your voice on-device so you can talk to the AI assistant without sending audio to a server.</string>
+	<string>ALMA ERP transcribes your voice for assistant features. When you use cloud AI voice, audio is sent to ALMA ERP's configured AI providers for transcription and responses.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
