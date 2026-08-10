@@ -120,12 +120,16 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
     //   going unused for want of a playbook), ios-simulator-verifier (kills the
     //   TestFlight round-trip), mac-backup-verifier (the business documents live
     //   on that Mac).
+    //   2026-08-10: alma-image-generation — rule-routed so creative prompts use
+    //   the existing owner-approved generate_image pipeline instead of losing
+    //   that capability to a coincidental business-skill keyword match.
     expect(selectable).toEqual([
       'alma-agent-incident-diagnosis',
       'alma-audience-builder',
       'alma-browser-operator',
       'alma-customer-support',
       'alma-finance-brief',
+      'alma-image-generation',
       'alma-invoice-to-erp',
       'alma-marketing',
       'alma-meta-campaign-launch',

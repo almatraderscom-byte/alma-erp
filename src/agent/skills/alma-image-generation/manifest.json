@@ -1,6 +1,6 @@
 {
   "name": "alma-image-generation",
-  "description": "Creates one or more new standalone images, posters, illustrations, or visual variations from the owner's prompt. It stages the existing generate_image approval card; generation starts only after approval and the finished image returns to the same chat.",
+  "description": "Use when the owner asks to create one or more new standalone images, posters, illustrations, or visual variations. It stages the existing generate_image approval card; generation starts only after approval and the finished image returns to the same chat.",
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",

@@ -11,6 +11,23 @@ final class AssistantParityV2UITests: XCTestCase {
             // do not make it depend on the Assistant smoke setup below.
             return
         }
+        let ownsFixtureLaunch = [
+            "testNativeActionCardsUseExplicitCleanHierarchy",
+            "testClaudeChatFlowClustersToolsAndKeepsModeBesidePlus",
+            "testClaudeInteractivePreviewSelectsModelAndStreamsArbitraryMessage",
+            "testLiveThoughtSheetUpdatesWithoutReopening",
+            "testCleanEOFWithoutTerminalRecoversSameTurnWithoutNavigation",
+            "testNativeReadingSurfaceUsesSemanticMarkdownAndQuietChrome",
+            "testRichOutputGallerySourcesAndSharedViewer",
+            "testGeneratedImageFailureRetriesWithoutLosingSettledTurn",
+            "testCommandAndSkillAutocompleteUsesSupportedContracts",
+        ].contains { name.contains($0) }
+        if ownsFixtureLaunch {
+            // These tests immediately relaunch with a dedicated fixture. Avoid
+            // an unnecessary first app launch: on iOS 26 it can leave WebKit's
+            // accessibility process racing the real fixture automation session.
+            return
+        }
         app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
         app.launchEnvironment["ALMA_ASSISTANT_PARITY"] = "1"
         app.launchEnvironment["ALMA_MERGE_MOCK"] = "library"
