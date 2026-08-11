@@ -29,7 +29,9 @@ final class LiveVoicePreviewTests: XCTestCase {
 
     func testPreCallDraftRequestsExactSelectedModelVoiceOnlyWhenAdmissionIsIdle() {
         var draft = AlmaLiveVoicePreCallDraft(modelID: models[0], voiceID: "Aoede")
-        draft.selectModel(models[1])
+        XCTAssertTrue(draft.selectModel(
+            models[1],
+            admission: .init(featureEnabled: true, callIsActive: false)))
 
         let shouldRequest = draft.selectVoice(
             "Sulafat",
@@ -51,6 +53,37 @@ final class LiveVoicePreviewTests: XCTestCase {
         XCTAssertFalse(shouldRequest)
         XCTAssertEqual(draft.voiceID, "Charon")
         XCTAssertEqual(draft.previewStatus, .unavailable)
+    }
+
+    func testPreCallModelTapRequestsExactCurrentVoicePreviewWhenIdle() {
+        let coordinator = PreCallPreviewSpy()
+        coordinator.decision = .started(3)
+        let controller = AlmaLiveVoicePreCallSettingsController(
+            modelID: models[0],
+            voiceID: "Charon",
+            coordinator: coordinator,
+            admission: { .init(featureEnabled: true, callIsActive: false) },
+            savePreferences: { _, _ in })
+
+        controller.selectModel(models[1])
+
+        XCTAssertEqual(controller.draft.modelID, models[1])
+        XCTAssertEqual(controller.draft.voiceID, "Charon")
+        XCTAssertEqual(coordinator.playRequests.count, 1)
+        XCTAssertEqual(coordinator.playRequests.first?.modelID, models[1])
+        XCTAssertEqual(coordinator.playRequests.first?.voiceID, "Charon")
+    }
+
+    func testPreCallResearchAndVerifiedBengaliScriptAreComplete() {
+        XCTAssertEqual(AlmaLiveVoicePreviewCatalog.expectedScriptLines.count, 4)
+        XCTAssertTrue(AlmaLiveVoicePreviewCatalog.expectedScriptLines.allSatisfy { !$0.isEmpty })
+        XCTAssertEqual(AlmaLiveVoicePreferences.models.count, 2)
+        for model in AlmaLiveVoicePreferences.models {
+            XCTAssertFalse(model.strengths.isEmpty)
+            XCTAssertFalse(model.limitations.isEmpty)
+            XCTAssertTrue(model.costLifecycle.contains("Preview"))
+            XCTAssertFalse(model.bestUse.isEmpty)
+        }
     }
 
     func testPreCallDraftReflectsVerifiedCoordinatorPlaybackWithoutChangingSelection() {

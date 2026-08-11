@@ -47,6 +47,10 @@ struct AlmaLiveModelChoice: Identifiable, Hashable {
     let title: String
     let detail: String
     let badge: String
+    let strengths: String
+    let limitations: String
+    let costLifecycle: String
+    let bestUse: String
 }
 
 struct AlmaLiveVoiceChoice: Identifiable, Hashable {
@@ -110,10 +114,18 @@ enum AlmaLiveVoicePreferences {
     static let models: [AlmaLiveModelChoice] = [
         .init(id: gemini25, title: "Gemini 2.5 Live",
               detail: "বাংলা কথোপকথন ও আবেগের টোনে বেশি স্বাভাবিক",
-              badge: "Natural"),
+              badge: "Natural",
+              strengths: "স্বাভাবিক pacing, কণ্ঠের mood ও জটিল workflow; synchronous ও asynchronous function calling সমর্থন করে।",
+              limitations: "Preview model; 3.1 হলো Google-এর recommended replacement। Preview behavior ও rate limit বদলাতে পারে।",
+              costLifecycle: "Preview · shutdown date ঘোষণা হয়নি · audio input $3/M token, output $12/M token; transcription text আলাদা bill হয়।",
+              bestUse: "স্বাভাবিক বাংলা আলাপ, দীর্ঘ ব্যাখ্যা এবং non-blocking tool workflow"),
         .init(id: gemini31, title: "Gemini 3.1 Live",
               detail: "নতুন, দ্রুত ও নির্ভুল রিয়েলটাইম কথোপকথন",
-              badge: "Fast"),
+              badge: "Fast",
+              strengths: "Low-latency audio-to-audio, acoustic nuance, numeric precision ও multimodal awareness।",
+              limitations: "Preview model; Live function calling synchronous-only—tool result না আসা পর্যন্ত model অপেক্ষা করে।",
+              costLifecycle: "Preview · shutdown date ঘোষণা হয়নি · audio input $3/M token (~$0.005/min), output $12/M (~$0.018/min); text/transcription extra।",
+              bestUse: "দ্রুত realtime প্রশ্নোত্তর, সংখ্যাভিত্তিক তথ্য ও synchronous ERP lookup"),
     ]
 
     // The display names are ALMA personas; `id` is Google's official voice name.
@@ -10824,10 +10836,19 @@ struct AlmaLiveVoicePreCallDraft: Equatable {
             ? voiceID : "Aoede"
     }
 
-    mutating func selectModel(_ id: String) {
-        guard AlmaLiveVoicePreferences.models.contains(where: { $0.id == id }) else { return }
+    mutating func selectModel(_ id: String, admission: AlmaLiveVoicePreviewGate) -> Bool {
+        guard AlmaLiveVoicePreferences.models.contains(where: { $0.id == id }) else { return false }
         modelID = id
-        previewStatus = .idle
+        guard admission.featureEnabled else {
+            previewStatus = .unavailable
+            return false
+        }
+        guard !admission.callIsActive else {
+            previewStatus = .unavailableDuringCall
+            return false
+        }
+        previewStatus = .loading(voiceID: voiceID)
+        return true
     }
 
     /// Returns `true` only when the caller may ask the verified preview
@@ -10960,21 +10981,26 @@ final class AlmaLiveVoicePreCallSettingsController {
 
     func selectModel(_ id: String) {
         guard !isShutdown else { return }
-        monitorTask?.cancel()
-        monitorTask = nil
-        coordinator?.stop()
-        draft.selectModel(id)
+        guard draft.selectModel(id, admission: admission()) else {
+            stopPreviewMonitoring()
+            coordinator?.stop()
+            return
+        }
+        requestExactPreview()
     }
 
     func selectVoice(_ id: String) {
         guard !isShutdown else { return }
-        monitorTask?.cancel()
-        monitorTask = nil
-
         guard draft.selectVoice(id, admission: admission()) else {
+            stopPreviewMonitoring()
             coordinator?.stop()
             return
         }
+        requestExactPreview()
+    }
+
+    private func requestExactPreview() {
+        stopPreviewMonitoring()
         guard let coordinator else {
             draft.apply(.blockedShutdown)
             return
@@ -10997,6 +11023,11 @@ final class AlmaLiveVoicePreCallSettingsController {
         }
     }
 
+    private func stopPreviewMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = nil
+    }
+
     func save() {
         guard !isShutdown else { return }
         savePreferences(draft.modelID, draft.voiceID)
@@ -11009,8 +11040,7 @@ final class AlmaLiveVoicePreCallSettingsController {
     func shutdown() {
         guard !isShutdown else { return }
         isShutdown = true
-        monitorTask?.cancel()
-        monitorTask = nil
+        stopPreviewMonitoring()
         coordinator?.shutdown()
     }
 }
@@ -11076,12 +11106,44 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                                         Text(model.detail)
                                             .font(.system(size: 12.5))
                                             .foregroundStyle(muted)
+                                        modelFact("শক্তি", model.strengths)
+                                        modelFact("সীমাবদ্ধতা", model.limitations)
+                                        modelFact("খরচ ও lifecycle", model.costLifecycle)
+                                        modelFact("ভালো মানায়", model.bestUse)
                                     }
                                 }
                                 .accessibilityIdentifier("voice.precall.model.\(model.id)")
-                                .accessibilityHint("পরের লাইভ কলের model draft-এ নির্বাচন করবে")
+                                .accessibilityHint("Model draft-এ নির্বাচন করে বর্তমান draft voice-এর exact verified preview চালাবে")
                             }
                         }
+                    }
+
+                    settingsSection(
+                        title: "Verified বাংলা নমুনা",
+                        subtitle: "সব ১২টি immutable preview-তে এই একই script; preview cache hit হলে কোনো নতুন Gemini generation বা generation cost হয় না"
+                    ) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(
+                                Array(AlmaLiveVoicePreviewCatalog.expectedScriptLines.enumerated()),
+                                id: \.offset
+                            ) { index, scriptLine in
+                                HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                    Text("\(index + 1)")
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(gold)
+                                        .frame(width: 16, alignment: .trailing)
+                                    Text(scriptLine)
+                                        .font(.system(size: 13.5))
+                                        .foregroundStyle(ink)
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(line, lineWidth: 1))
+                        .accessibilityIdentifier("voice.precall.verified-script")
                     }
 
                     settingsSection(title: "কণ্ঠ ও Preview", subtitle: "কণ্ঠে tap করলে draft select হবে এবং audio idle থাকলে preview শোনা যাবে") {
@@ -11218,6 +11280,13 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
             Text(subtitle).font(.system(size: 12)).foregroundStyle(muted)
             content()
         }
+    }
+
+    private func modelFact(_ label: String, _ value: String) -> some View {
+        (Text("\(label): ").fontWeight(.semibold) + Text(value))
+            .font(.system(size: 11.5))
+            .foregroundStyle(muted)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func choiceButton<Content: View>(
