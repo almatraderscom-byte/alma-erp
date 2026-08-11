@@ -8,6 +8,10 @@ Recovery base: `origin/main` at `1a51f0356`
 Authoritative recovery contract: commit `8aa1a60a9`,
 `docs/handoffs/IOS_LIVE_VOICE_CLAUDE_RECOVERY_HANDOFF_2026-08-11.md`
 
+Latest local implementation commits covered by this report:
+`ccd5c936a` (truthful Live Activity) and `56ec55b22` (final cross-phase
+safety/evidence closure). Neither commit has been pushed or uploaded.
+
 This file is the phase evidence index and end-to-end flow map required by the
 recovery contract. It deliberately distinguishes simulator evidence from
 real-iPhone evidence. `PASS` is used only for a command or behavior that has
@@ -101,8 +105,12 @@ structures.
 - Technical catalog: 12/12 entries and checksums verified; bundle/cache/offline,
   corrupt asset, rapid selection, lifecycle, takeover, and VoiceOver behavior are
   covered by focused tests.
-- Final exact iPhone 17 Pro simulator evidence: `LiveVoicePreviewTests` 76/76
-  PASS; catalog verifier 83/83 PASS.
+- Exact iPhone 17 Pro simulator evidence: all preview/catalog/audio-admission
+  cases in the 81-test `LiveVoicePreviewTests` class passed. One Phase 2 intent
+  classifier method in that mixed class failed before a one-line Bengali
+  grapheme-boundary fix; the final source compiled, but Xcode did not
+  materialize a post-fix test worker (details below). Catalog verifier 83/83
+  PASS.
 - Audible model×voice approval: **0/12, NOT RUN / OWNER GATE**.
 
 ### Phase 1B — profile, bounded context, and cost
@@ -139,7 +147,7 @@ structures.
 
 ### Phase 4 — truthful Live Activity
 
-- Commits `845ea62b0` and `e8b6deb1a` remove transcript/reply/audio tails,
+- Commits `845ea62b0`, `e8b6deb1a`, and `ccd5c936a` remove transcript/reply/audio tails,
   synthetic waveform state, and periodic synthetic speaking animation; enforce
   90-second stale and 30-minute hard-expiry bounds; and add stale/termination,
   Reduce Motion/Transparency, and accessibility policy coverage. Simulator/unit
@@ -161,36 +169,50 @@ structures.
 
 ## Current automated evidence and limits
 
-These results are evidence for their named scope only. Commit `9df850444` is the
-final executable-code snapshot; the immediately following evidence-only commit
-does not alter executable or test bytes.
+These results are evidence for their named scope only. They deliberately do not
+convert a compile result or an infrastructure-interrupted rerun into a test PASS.
 
 - Exact owner-approved iPhone 17 Pro simulator
-  `D9787ADC-5E93-4D23-86ED-FB497EFEE1FC`: **114/114 focused XCTest PASS**
-  (`LiveVoicePreviewTests` 76 plus Phase 1B/input/lifecycle/PCM/accessibility 38).
-- Fresh exact-device `build-for-testing`: **PASS**, including App, Widget,
-  AppParityV2Tests, and AppParityV2UITests compile/link.
-- Preview catalog Node verifier: **83/83 PASS**; built App product resolves
+  `D9787ADC-5E93-4D23-86ED-FB497EFEE1FC`: final `build-for-testing` **PASS**,
+  including App, Widget, AppParityV2Tests, and AppParityV2UITests compile/link.
+- The combined focused run executed 140 tests. Accessibility 5/5, Live Activity
+  7/7, input 13/13, lifecycle 15/15, rendered-PCM 6/6, and Phase 1B 13/13
+  passed. `LiveVoicePreviewTests` passed 80/81 methods; its only failing method
+  had two assertions for the same Bengali mutation-classification defect.
+- That defect was fixed by matching the complete Bengali mutation stem
+  (`তৈরি`) instead of a substring ending inside the following grapheme. The
+  final source rebuilt successfully. Three post-fix `test-without-building`
+  attempts (including simulator reboot and non-destructive CoreSimulator service
+  restart) stalled before any test process materialized and were terminated;
+  therefore **no post-fix 140/140 PASS is claimed**.
+- The final combined pre-fix result bundle is
+  `/private/tmp/alma-live-voice-final-focused.xcresult`; the successful final
+  build log is `/private/tmp/alma-live-voice-final-build-confirm.log`.
+- Preview catalog Node verifier: **83/83 PASS**; technical verifier resolves
   **12/12 generated+verified**, remains **0/12 owner-approved**.
-- Live voice TypeScript contract/config/usage: **19/19 PASS**; full
-  `tsc --noEmit`: **PASS** after canonical Prisma client generation.
+- Live voice TypeScript contract/config/usage/cancellation/voice-tool tests:
+  **27/27 PASS**; full `tsc --noEmit`: **PASS** after canonical Prisma client
+  generation.
 - Swift parse, PBX plist lint, and repository diff/whitespace checks: **PASS**.
-- Source and built-product provenance:
-  `verified-clean-source-and-bundled-inputs` at the final branch snapshot.
 - Release verifier: **EXPECTED BLOCK** because status is
   `generated_pending_owner_approval`, approvals are 0/12, and `release=false`.
-- An earlier Xcode worker-materialization stall was cleared by a non-destructive
-  CoreSimulator service restart; the final 114-test execution completed green.
 
 Simulator evidence never proves microphone delivery, provider VAD/transcription,
 acoustic echo cancellation, CallKit activation, background/lock execution,
 Bluetooth routing, paid billing reconciliation, or human speech quality.
 
-## Final owner gate (ready; no owner action performed)
+## Remaining release gate (no owner action performed)
 
-All frozen simulator-code rows and the combined exact iPhone 17 Pro
-simulator/TypeScript/catalog/product/provenance/hygiene gate are green. The
-remaining work is intentionally owner/device-only:
+The source compiles and all executed focused rows except the now-fixed intent
+case are green. Release is still blocked by the missing post-fix simulator
+execution, the owner/device rows below, and these lower-severity code-evidence
+follow-ups identified at freeze: preserve preview/compression milestones beyond
+the bounded evidence FIFO, bind send-completion attribution to the captured
+socket attempt, enforce only the current model's declared remote replacement
+(including `retired` lifecycle), and add the accessibility-size/in-call preview
+unavailable UI assertions.
+
+Owner/device-only rows remain:
 
 - listen to and approve all 12 exact preview assets;
 - first-input and scripted tool flows on both provider models;
