@@ -14,6 +14,71 @@ final class LiveVoicePreviewTests: XCTestCase {
         "Charon": "আরিফ", "Orus": "অর্ক", "Sulafat": "সামি",
     ]
 
+    func testLiveProfileKeepsSavedAndActiveDistinctUntilHealthCheckConnects() {
+        let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
+        let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Kore")
+        var transaction = AlmaLiveVoiceProfileTransaction(saved: original)
+
+        XCTAssertTrue(transaction.save(proposed))
+        XCTAssertEqual(transaction.saved, proposed)
+        XCTAssertEqual(transaction.active, original)
+        XCTAssertTrue(transaction.beginApply(proposed))
+        XCTAssertEqual(transaction.requested, proposed)
+        XCTAssertEqual(transaction.active, original)
+
+        XCTAssertTrue(transaction.connected(proposed))
+        XCTAssertEqual(transaction.active, proposed)
+        XCTAssertEqual(transaction.saved, proposed)
+        XCTAssertFalse(transaction.isBusy)
+    }
+
+    func testLiveProfileTransactionRolloutGateCanDisableApplyBehavior() throws {
+        let suite = "alma-live-profile-transaction-gate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .profileTransactionV1, environment: [:], defaults: defaults))
+        AlmaLiveVoiceRecoveryFeatures.set(
+            false, for: .profileTransactionV1, defaults: defaults)
+        XCTAssertFalse(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .profileTransactionV1, environment: [:], defaults: defaults))
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .profileTransactionV1,
+            environment: ["ALMA_LIVE_VOICE_PROFILE_TRANSACTION_V1": "true"],
+            defaults: defaults))
+    }
+
+    func testLiveProfileFailedHealthCheckRollsBackWithoutChangingSavedProfile() {
+        let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
+        let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Sulafat")
+        var transaction = AlmaLiveVoiceProfileTransaction(saved: original)
+
+        XCTAssertTrue(transaction.beginApply(proposed))
+        XCTAssertEqual(transaction.failed(proposed), original)
+        XCTAssertEqual(transaction.requested, original)
+        XCTAssertEqual(transaction.active, original)
+        XCTAssertEqual(transaction.saved, original)
+        XCTAssertTrue(transaction.isBusy)
+
+        XCTAssertTrue(transaction.connected(original))
+        XCTAssertEqual(transaction.active, original)
+        XCTAssertEqual(transaction.saved, original)
+        XCTAssertFalse(transaction.isBusy)
+    }
+
+    func testLiveProfileRollbackFailureEndsTransactionWithoutPromotingRejectedProfile() {
+        let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
+        let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Charon")
+        var transaction = AlmaLiveVoiceProfileTransaction(saved: original)
+
+        XCTAssertTrue(transaction.beginApply(proposed))
+        XCTAssertEqual(transaction.failed(proposed), original)
+        XCTAssertNil(transaction.failed(original))
+        XCTAssertEqual(transaction.active, original)
+        XCTAssertFalse(transaction.isBusy)
+    }
+
     func testPreCallDraftSelectsVoiceButDoesNotRequestPreviewDuringCall() {
         var draft = AlmaLiveVoicePreCallDraft(modelID: models[0], voiceID: "Aoede")
 

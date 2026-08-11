@@ -68,10 +68,12 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case evidenceV1 = "evidence-v1"
     case previewCatalogV1 = "preview-catalog-v1"
     case privateLiveActivityV1 = "private-live-activity-v1"
+    case profileTransactionV1 = "profile-transaction-v1"
 
     var defaultEnabled: Bool {
         switch self {
-        case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1:
+        case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
+             .profileTransactionV1:
             true
         }
     }
@@ -162,6 +164,95 @@ enum AlmaLiveVoicePreferences {
               voices.contains(where: { $0.id == voiceID }) else { return }
         UserDefaults.standard.set(modelID, forKey: modelKey)
         UserDefaults.standard.set(voiceID, forKey: voiceKey)
+    }
+}
+
+struct AlmaLiveVoiceProfile: Equatable, Hashable {
+    let modelID: String
+    let voiceID: String
+
+    var isValid: Bool {
+        AlmaLiveVoicePreferences.models.contains { $0.id == modelID }
+            && AlmaLiveVoicePreferences.voices.contains { $0.id == voiceID }
+    }
+}
+
+struct AlmaLiveVoiceProfileTransaction: Equatable {
+    enum Phase: Equatable {
+        case idle
+        case applying(previous: AlmaLiveVoiceProfile, proposed: AlmaLiveVoiceProfile)
+        case rollingBack(previous: AlmaLiveVoiceProfile, rejected: AlmaLiveVoiceProfile)
+    }
+
+    private(set) var saved: AlmaLiveVoiceProfile
+    private(set) var active: AlmaLiveVoiceProfile
+    private(set) var phase: Phase = .idle
+
+    init(saved: AlmaLiveVoiceProfile) {
+        self.saved = saved
+        active = saved
+    }
+
+    var isBusy: Bool { phase != .idle }
+
+    var requested: AlmaLiveVoiceProfile {
+        switch phase {
+        case .idle: return active
+        case .applying(_, let proposed): return proposed
+        case .rollingBack(let previous, _): return previous
+        }
+    }
+
+    mutating func save(_ profile: AlmaLiveVoiceProfile) -> Bool {
+        guard profile.isValid else { return false }
+        saved = profile
+        return true
+    }
+
+    mutating func beginApply(_ proposed: AlmaLiveVoiceProfile) -> Bool {
+        guard phase == .idle, proposed.isValid else { return false }
+        guard proposed != active else { return true }
+        phase = .applying(previous: active, proposed: proposed)
+        return true
+    }
+
+    mutating func connected(_ profile: AlmaLiveVoiceProfile) -> Bool {
+        switch phase {
+        case .idle:
+            guard profile == active else { return false }
+        case .applying(_, let proposed):
+            guard profile == proposed else { return false }
+            active = proposed
+            phase = .idle
+        case .rollingBack(let previous, _):
+            guard profile == previous else { return false }
+            active = previous
+            phase = .idle
+        }
+        return true
+    }
+
+    mutating func failed(_ profile: AlmaLiveVoiceProfile) -> AlmaLiveVoiceProfile? {
+        switch phase {
+        case .applying(let previous, let proposed) where proposed == profile:
+            phase = .rollingBack(previous: previous, rejected: proposed)
+            return previous
+        case .rollingBack(let previous, _) where previous == profile:
+            phase = .idle
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    mutating func resetForNewCall(saved profile: AlmaLiveVoiceProfile) {
+        saved = profile
+        active = profile
+        phase = .idle
+    }
+
+    mutating func abort() {
+        phase = .idle
     }
 }
 
@@ -2273,42 +2364,64 @@ final class AlmaVoiceEngine {
     var connectionFailureText = ""
     var isMuted = false
     var speakerOn = true
-    private(set) var selectedLiveModelID = AlmaLiveVoicePreferences.modelID
-    private(set) var selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
+    private(set) var liveProfileTransaction = AlmaLiveVoiceProfileTransaction(
+        saved: AlmaLiveVoiceProfile(
+            modelID: AlmaLiveVoicePreferences.modelID,
+            voiceID: AlmaLiveVoicePreferences.voiceID))
+    private(set) var liveProfileStatusText = ""
+    private var currentConnectionProfile = AlmaLiveVoiceProfile(
+        modelID: AlmaLiveVoicePreferences.modelID,
+        voiceID: AlmaLiveVoicePreferences.voiceID)
     private(set) var callStartedAt: Date?
     private let recoveryEvidence: AlmaLiveVoiceEvidenceRecorder
 
     var recoveryEvidenceSessionID: String { recoveryEvidence.sessionID }
     var isRecoveryEvidenceEnabled: Bool { recoveryEvidence.isEnabled }
 
+    var savedLiveModelID: String { liveProfileTransaction.saved.modelID }
+    var savedLiveVoiceID: String { liveProfileTransaction.saved.voiceID }
+    var activeLiveModelID: String { liveProfileTransaction.active.modelID }
+    var activeLiveVoiceID: String { liveProfileTransaction.active.voiceID }
+    var isApplyingLiveProfile: Bool { liveProfileTransaction.isBusy }
+
     var selectedLiveModel: AlmaLiveModelChoice {
-        AlmaLiveVoicePreferences.models.first(where: { $0.id == selectedLiveModelID })
+        AlmaLiveVoicePreferences.models.first(where: { $0.id == savedLiveModelID })
             ?? AlmaLiveVoicePreferences.models[0]
     }
 
     var selectedLiveVoice: AlmaLiveVoiceChoice {
-        AlmaLiveVoicePreferences.voices.first(where: { $0.id == selectedLiveVoiceID })
+        AlmaLiveVoicePreferences.voices.first(where: { $0.id == savedLiveVoiceID })
             ?? AlmaLiveVoicePreferences.voices[0]
     }
 
-    func selectLiveModel(_ id: String) {
-        guard AlmaLiveVoicePreferences.models.contains(where: { $0.id == id }) else { return }
-        selectedLiveModelID = id
-        AlmaLiveVoicePreferences.save(modelID: selectedLiveModelID, voiceID: selectedLiveVoiceID)
+    @discardableResult
+    func saveLiveProfile(modelID: String, voiceID: String) -> Bool {
+        let profile = AlmaLiveVoiceProfile(modelID: modelID, voiceID: voiceID)
+        guard liveProfileTransaction.save(profile) else { return false }
+        AlmaLiveVoicePreferences.save(modelID: modelID, voiceID: voiceID)
+        liveProfileStatusText = "পরের কলের জন্য সেভ হয়েছে।"
         UISelectionFeedbackGenerator().selectionChanged()
+        return true
     }
 
-    func selectLiveVoice(_ id: String) {
-        guard AlmaLiveVoicePreferences.voices.contains(where: { $0.id == id }) else { return }
-        selectedLiveVoiceID = id
-        AlmaLiveVoicePreferences.save(modelID: selectedLiveModelID, voiceID: selectedLiveVoiceID)
-        UISelectionFeedbackGenerator().selectionChanged()
-    }
-
-    func applySelectedLiveProfileNow() {
-        guard callConnection == .live || callConnection == .failed else { return }
-        feedStatus("নতুন মডেল ও কণ্ঠ চালু করা হচ্ছে…")
+    @discardableResult
+    func applyLiveProfileNow(modelID: String, voiceID: String) -> Bool {
+        guard AlmaLiveVoiceRecoveryFeatures.isEnabled(.profileTransactionV1),
+              callConnection == .live || callConnection == .failed,
+              !liveProfileTransaction.isBusy
+        else { return false }
+        let proposed = AlmaLiveVoiceProfile(modelID: modelID, voiceID: voiceID)
+        guard proposed.isValid else { return false }
+        if proposed == liveProfileTransaction.active {
+            liveProfileStatusText = "এই profile-ই এখন সক্রিয়।"
+            return true
+        }
+        guard liveProfileTransaction.beginApply(proposed) else { return false }
+        currentConnectionProfile = proposed
+        liveProfileStatusText = "নতুন profile যাচাই করে চালু করা হচ্ছে…"
+        feedStatus("নতুন মডেল ও কণ্ঠ যাচাই করা হচ্ছে…")
         startLiveConnection(resetAttempts: true)
+        return true
     }
 
     // ── Agent → owner in-app call (plan C2) ──
@@ -2677,11 +2790,15 @@ final class AlmaVoiceEngine {
         hasEverConnected = false
         callStartedAt = nil
         isMuted = false
-        selectedLiveModelID = AlmaLiveVoicePreferences.modelID
-        selectedLiveVoiceID = AlmaLiveVoicePreferences.voiceID
+        let savedProfile = AlmaLiveVoiceProfile(
+            modelID: AlmaLiveVoicePreferences.modelID,
+            voiceID: AlmaLiveVoicePreferences.voiceID)
+        liveProfileTransaction.resetForNewCall(saved: savedProfile)
+        currentConnectionProfile = savedProfile
+        liveProfileStatusText = ""
         recoveryEvidence.beginSession(
-            modelID: selectedLiveModelID,
-            voiceID: selectedLiveVoiceID,
+            modelID: savedProfile.modelID,
+            voiceID: savedProfile.voiceID,
             callMode: callKitManaged ? .callKit : .standalone)
         live.beginEvidenceSession()
         if callKitManaged {
@@ -2855,8 +2972,10 @@ final class AlmaVoiceEngine {
         // stop queued AVAudioSession.setActive(false) directly ahead of the very
         // first configure/start sequence.
         if liveSessionHasStarted { live.stop() }
+        currentConnectionProfile = liveProfileTransaction.requested
         let liveStartAttempt = live.reserveStartAttempt(
-            engineConnectionGeneration: generation)
+            engineConnectionGeneration: generation,
+            profile: currentConnectionProfile)
         liveSessionHasStarted = true
         liveActive = false
         sessionReady = false
@@ -2924,6 +3043,10 @@ final class AlmaVoiceEngine {
             return false
         }()
         if isAuthenticationFailure {
+            if liveProfileTransaction.isBusy {
+                liveProfileTransaction.abort()
+                liveProfileStatusText = "সেশন authentication ব্যর্থ—profile পরিবর্তন করা হয়নি।"
+            }
             connectionFailureText = "সেশন শেষ হয়েছে। অ্যাপে আবার লগইন করে কল চালু করুন।"
             errorToast = connectionFailureText
             callConnection = .failed
@@ -2938,6 +3061,20 @@ final class AlmaVoiceEngine {
             live.recordLifecycleEvidence(.fullRestartScheduled)
             startLiveConnection(resetAttempts: false)
             return
+        }
+
+        let failedProfilePhase = liveProfileTransaction.phase
+        if let rollbackProfile = liveProfileTransaction.failed(currentConnectionProfile) {
+            currentConnectionProfile = rollbackProfile
+            liveProfileStatusText = "নতুন profile health check-এ ব্যর্থ; আগেরটি ফিরিয়ে আনা হচ্ছে…"
+            feedStatus("নতুন profile চালু হয়নি—আগেরটি ফিরিয়ে আনা হচ্ছে…")
+            liveConnectAttempt = 0
+            live.recordLifecycleEvidence(.fullRestartScheduled)
+            startLiveConnection(resetAttempts: true)
+            return
+        }
+        if case .rollingBack = failedProfilePhase {
+            liveProfileStatusText = "নতুন profile ও আগের profile—দুটির সংযোগই ব্যর্থ হয়েছে।"
         }
 
         connectionFailureText = message ?? "লাইভ ভয়েস সংযোগ পাওয়া যাচ্ছে না। ইন্টারনেট দেখে আবার চেষ্টা করুন।"
@@ -3153,11 +3290,14 @@ final class AlmaVoiceEngine {
 
     #if DEBUG
     func debugPrepareRecoveryEvidenceFixture() {
-        selectedLiveModelID = AlmaLiveVoicePreferences.gemini25
-        selectedLiveVoiceID = "Aoede"
+        let fixtureProfile = AlmaLiveVoiceProfile(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede")
+        liveProfileTransaction.resetForNewCall(saved: fixtureProfile)
+        currentConnectionProfile = fixtureProfile
         recoveryEvidence.beginFixtureSession(
-            modelID: selectedLiveModelID,
-            voiceID: selectedLiveVoiceID,
+            modelID: fixtureProfile.modelID,
+            voiceID: fixtureProfile.voiceID,
             callMode: .debugNoNetwork,
             fixture: .noNetwork)
         recoveryEvidence.endSession(.debugFixture)
@@ -3896,6 +4036,21 @@ final class AlmaVoiceEngine {
     func liveDidConnect() {
         liveConnectTask?.cancel()
         liveConnectTask = nil
+        let profilePhase = liveProfileTransaction.phase
+        guard liveProfileTransaction.connected(currentConnectionProfile) else {
+            live.stop()
+            return
+        }
+        switch profilePhase {
+        case .applying:
+            liveProfileStatusText = "যাচাই সফল—নতুন profile এই কলে সক্রিয়।"
+            feedStatus("নতুন মডেল ও কণ্ঠ সক্রিয় হয়েছে।")
+        case .rollingBack:
+            liveProfileStatusText = "নতুন profile চালু হয়নি; আগের সক্রিয় profile ফিরেছে।"
+            feedStatus("আগের মডেল ও কণ্ঠ নিরাপদে ফিরিয়ে আনা হয়েছে।")
+        case .idle:
+            break
+        }
         if !liveActive && liveFeed.isEmpty { feedUserLineId = nil; feedAgentLineId = nil }
         liveActive = true
         sessionReady = true
@@ -4902,6 +5057,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let startAttemptLock = NSCondition()
     private var startAttemptState = AlmaLiveVoiceStartAttemptState()
     private var startAttemptEngineConnectionGeneration: Int?
+    private var startAttemptProfile: AlmaLiveVoiceProfile?
     private var startAttemptTeardownInProgress = false
     /// Protected by `startAttemptLock`; binds the mutable session/socket slots
     /// to the logical attempt that published them.
@@ -5743,14 +5899,27 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     func reserveStartAttempt(
-        engineConnectionGeneration: Int
+        engineConnectionGeneration: Int,
+        profile: AlmaLiveVoiceProfile
     ) -> AlmaLiveVoiceStartAttemptState.Token {
         startAttemptLock.lock()
         while startAttemptTeardownInProgress { startAttemptLock.wait() }
         let token = startAttemptState.reserve()
         startAttemptEngineConnectionGeneration = engineConnectionGeneration
+        startAttemptProfile = profile
         startAttemptLock.unlock()
         return token
+    }
+
+    private func profile(
+        for attempt: AlmaLiveVoiceStartAttemptState.Token
+    ) -> AlmaLiveVoiceProfile? {
+        startAttemptLock.lock()
+        let profile = startAttemptState.acceptsActive(attempt)
+            ? startAttemptProfile
+            : nil
+        startAttemptLock.unlock()
+        return profile
     }
 
     private func activateStartAttempt(
@@ -5853,8 +6022,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         try Task.checkCancellation()
         guard activateStartAttempt(attempt) else { throw CancellationError() }
         trace("transport.start", callKitOwnsAudioSession ? "callkit=1" : "callkit=0")
-        let desiredModel = AlmaLiveVoicePreferences.modelID
-        let desiredVoice = AlmaLiveVoicePreferences.voiceID
+        guard let desiredProfile = profile(for: attempt) else {
+            throw CancellationError()
+        }
+        let desiredModel = desiredProfile.modelID
+        let desiredVoice = desiredProfile.voiceID
         if let warm = Self.takePrewarmed(),
            warm.session.model == desiredModel, warm.session.voice == desiredVoice {
             try Task.checkCancellation()
@@ -8759,6 +8931,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         startAttemptTeardownInProgress = true
         startAttemptState.invalidate()
         startAttemptEngineConnectionGeneration = nil
+        startAttemptProfile = nil
         socketStartAttempt = nil
         let detachedSocket = ws
         let detachedSession = session
@@ -11338,6 +11511,15 @@ struct AlmaLiveSettingsSheet: View {
     let engine: AlmaVoiceEngine
     @Environment(\.dismiss) private var dismiss
     @State private var recoveryEvidenceURL: URL?
+    @State private var draftModelID: String
+    @State private var draftVoiceID: String
+    @State private var localProfileMessage = ""
+
+    init(engine: AlmaVoiceEngine) {
+        self.engine = engine
+        _draftModelID = State(initialValue: engine.savedLiveModelID)
+        _draftVoiceID = State(initialValue: engine.savedLiveVoiceID)
+    }
 
     private let ink = Color(red: 0.918, green: 0.949, blue: 0.984)
     private let muted = Color(red: 0.486, green: 0.573, blue: 0.663)
@@ -11363,19 +11545,30 @@ struct AlmaLiveSettingsSheet: View {
                     settingsSection(title: "মডেল", subtitle: "কথার ধরন ও response speed") {
                         VStack(spacing: 10) {
                             ForEach(AlmaLiveVoicePreferences.models) { model in
-                                choiceButton(selected: engine.selectedLiveModelID == model.id) {
-                                    engine.selectLiveModel(model.id)
+                                choiceButton(selected: draftModelID == model.id) {
+                                    draftModelID = model.id
+                                    localProfileMessage = ""
+                                    UISelectionFeedbackGenerator().selectionChanged()
                                 } content: {
                                     VStack(alignment: .leading, spacing: 5) {
                                         HStack {
                                             Text(model.title).font(.system(size: 16, weight: .semibold))
                                             Spacer()
+                                            if engine.activeLiveModelID == model.id {
+                                                Text("সক্রিয়")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundStyle(good)
+                                            } else if engine.savedLiveModelID == model.id {
+                                                Text("সেভড")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundStyle(muted)
+                                            }
                                             Text(model.badge)
                                                 .font(.system(size: 10, weight: .bold))
                                                 .foregroundStyle(gold)
                                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                                 .background(gold.opacity(0.10), in: Capsule())
-                                            if engine.selectedLiveModelID == model.id {
+                                            if draftModelID == model.id {
                                                 Image(systemName: "checkmark.circle.fill")
                                                     .foregroundStyle(good)
                                             }
@@ -11390,15 +11583,26 @@ struct AlmaLiveSettingsSheet: View {
                     settingsSection(title: "কণ্ঠ", subtitle: "Google-এর official voice থেকে বাংলা-friendly presets") {
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                             ForEach(AlmaLiveVoicePreferences.voices) { voice in
-                                choiceButton(selected: engine.selectedLiveVoiceID == voice.id) {
-                                    engine.selectLiveVoice(voice.id)
+                                choiceButton(selected: draftVoiceID == voice.id) {
+                                    draftVoiceID = voice.id
+                                    localProfileMessage = ""
+                                    UISelectionFeedbackGenerator().selectionChanged()
                                 } content: {
                                     VStack(alignment: .leading, spacing: 8) {
                                         HStack {
                                             Image(systemName: voice.symbol)
-                                                .foregroundStyle(engine.selectedLiveVoiceID == voice.id ? good : gold)
+                                                .foregroundStyle(draftVoiceID == voice.id ? good : gold)
                                             Spacer()
-                                            if engine.selectedLiveVoiceID == voice.id {
+                                            if engine.activeLiveVoiceID == voice.id {
+                                                Text("সক্রিয়")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundStyle(good)
+                                            } else if engine.savedLiveVoiceID == voice.id {
+                                                Text("সেভড")
+                                                    .font(.system(size: 9, weight: .bold))
+                                                    .foregroundStyle(muted)
+                                            }
+                                            if draftVoiceID == voice.id {
                                                 Image(systemName: "checkmark.circle.fill").foregroundStyle(good)
                                             }
                                         }
@@ -11458,22 +11662,68 @@ struct AlmaLiveSettingsSheet: View {
 
                     VStack(spacing: 9) {
                         Button {
-                            engine.applySelectedLiveProfileNow()
-                            dismiss()
+                            if engine.saveLiveProfile(
+                                modelID: draftModelID,
+                                voiceID: draftVoiceID
+                            ) {
+                                localProfileMessage = "পরের কলের জন্য সেভ হয়েছে।"
+                            }
                         } label: {
-                            Label("এই কলেই প্রয়োগ করুন", systemImage: "arrow.triangle.2.circlepath")
+                            Label("পরের কলের জন্য সেভ করুন", systemImage: "square.and.arrow.down")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(bg)
+                                .foregroundStyle(ink)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
-                                .background(good, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                .background(panel, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                        .strokeBorder(line, lineWidth: 1))
                         }
-                        .disabled(engine.callConnection != .live && engine.callConnection != .failed)
-                        .opacity(engine.callConnection == .live || engine.callConnection == .failed ? 1 : 0.45)
-                        Text("প্রয়োগ করলে বর্তমান Gemini session নতুন করে সংযুক্ত হবে। না করলে পরের কল থেকে পছন্দটি চালু হবে।")
+                        .disabled(
+                            draftModelID == engine.savedLiveModelID
+                                && draftVoiceID == engine.savedLiveVoiceID)
+                        .accessibilityIdentifier("voice.settings.save-profile")
+
+                        if AlmaLiveVoiceRecoveryFeatures.isEnabled(.profileTransactionV1) {
+                            Button {
+                                _ = engine.applyLiveProfileNow(
+                                    modelID: draftModelID,
+                                    voiceID: draftVoiceID)
+                                localProfileMessage = ""
+                            } label: {
+                                Label(
+                                    engine.isApplyingLiveProfile
+                                        ? "যাচাই হচ্ছে…"
+                                        : "এই কলেই যাচাই করে প্রয়োগ করুন",
+                                    systemImage: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(bg)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(good, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                            }
+                            .disabled(
+                                engine.isApplyingLiveProfile
+                                    || (engine.callConnection != .live
+                                        && engine.callConnection != .failed))
+                            .opacity(
+                                !engine.isApplyingLiveProfile
+                                    && (engine.callConnection == .live
+                                        || engine.callConnection == .failed)
+                                    ? 1 : 0.45)
+                            .accessibilityIdentifier("voice.settings.apply-profile")
+                        }
+
+                        let statusText = engine.liveProfileStatusText.isEmpty
+                            ? localProfileMessage
+                            : engine.liveProfileStatusText
+                        Text(statusText.isEmpty
+                             ? "Save শুধু পরের কল বদলায়। Apply health check পাস হলে বর্তমান call বদলায়; ব্যর্থ হলে আগের active profile ফিরে আসে।"
+                             : statusText)
                             .font(.system(size: 11.5))
-                            .foregroundStyle(muted)
+                            .foregroundStyle(statusText.isEmpty ? muted : good)
                             .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("voice.settings.profile-status")
                     }
                 }
                 .padding(20)
@@ -11482,7 +11732,7 @@ struct AlmaLiveSettingsSheet: View {
             .background(bg.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("সম্পন্ন") { dismiss() }.foregroundStyle(gold)
+                    Button("বাতিল") { dismiss() }.foregroundStyle(gold)
                 }
             }
         }
