@@ -72,12 +72,13 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case toolOrchestrationV1 = "tool-orchestration-v1"
     case phase1BContractV1 = "phase1b-contract-v1"
     case inputTurnReducerV1 = "input-turn-reducer-v1"
+    case lifecycleReducerV1 = "lifecycle-reducer-v1"
 
     var defaultEnabled: Bool {
         switch self {
         case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
              .profileTransactionV1, .toolOrchestrationV1, .phase1BContractV1,
-             .inputTurnReducerV1:
+             .inputTurnReducerV1, .lifecycleReducerV1:
             true
         }
     }
@@ -2896,6 +2897,7 @@ final class AlmaVoiceEngine {
             observation.sourceToken,
             currentToken: callKitLifecycleToken,
             isClosed: closed) else { return }
+        guard acceptsLifecycleEffect(.callKitActivated) else { return }
         live.callKitAudioActivated(
             lifecycleEvidenceContext: observation.evidenceContext,
             lifecycleEvidenceSubmittedAtSource: observation.evidenceSubmittedAtSource)
@@ -2906,6 +2908,7 @@ final class AlmaVoiceEngine {
             observation.sourceToken,
             currentToken: callKitLifecycleToken,
             isClosed: closed) else { return }
+        guard acceptsLifecycleEffect(.callKitDeactivated) else { return }
         live.callKitAudioDeactivated(
             lifecycleEvidenceContext: observation.evidenceContext,
             lifecycleEvidenceSubmittedAtSource: observation.evidenceSubmittedAtSource)
@@ -3090,6 +3093,8 @@ final class AlmaVoiceEngine {
     /// MainActor behavior fence independent of the optional evidence gate.
     /// The engine object is reused, so every logical call must mint a new epoch.
     private var lifecycleBehaviorEpoch = 0
+    private var lifecycleReducerEnabled = false
+    private var lifecycleReducer: AlmaLiveVoiceLifecycleReducer?
     private var callKitLifecycleToken: AlmaLiveVoiceLifecycleSourceToken?
     /// A system call may preempt standalone Live Voice on PushKit's reporting
     /// deadline. Evidence queues are drained only by the post-report teardown
@@ -3214,6 +3219,30 @@ final class AlmaVoiceEngine {
             return
         }
         lifecycleBehaviorEpoch &+= 1
+        lifecycleReducerEnabled = AlmaLiveVoiceRecoveryFeatures.isEnabled(.lifecycleReducerV1)
+        if lifecycleReducerEnabled,
+           let generation = UInt64(exactly: lifecycleBehaviorEpoch),
+           var reducer = AlmaLiveVoiceLifecycleReducer(
+               generation: generation,
+               backgroundContinuation: callKitManaged
+                   ? .whileCallKitActive
+                   : .foregroundOnly,
+               initialRoute: callKitManaged ? .builtInReceiver : .builtInSpeaker,
+               initialCallKitState: callKitManaged ? .reserved : .notManaged) {
+            // A fresh engine is still connecting. Provider readiness opens only
+            // from this generation's explicit `liveDidConnect` callback.
+            _ = reducer.reduce(.init(generation: generation, event: .providerDisconnected))
+            if UIApplication.shared.applicationState != .active {
+                _ = reducer.reduce(.init(generation: generation, event: .appBackgrounded))
+            }
+            if !UIApplication.shared.isProtectedDataAvailable {
+                _ = reducer.reduce(.init(generation: generation, event: .deviceLocked))
+            }
+            lifecycleReducer = reducer
+        } else {
+            lifecycleReducerEnabled = false
+            lifecycleReducer = nil
+        }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         agentBriefSent = false
         closed = false
@@ -3289,12 +3318,17 @@ final class AlmaVoiceEngine {
             let lifecycleSourceBehaviorEpoch = lifecycleBehaviorEpoch
             recoveryObservers.append(nc.addObserver(
                 forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
-            ) { _ in
+            ) { [weak self] _ in
                 let context = lifecycleEvidenceSource.lifecycleEvidenceContext(
                     localSessionID: lifecycleEvidenceSessionID)
                 lifecycleEvidenceSource.recordLifecycleEvidence(
                     .appBackgrounded,
                     context: context)
+                Task { @MainActor in
+                    _ = self?.reduceLifecycle(
+                        .appBackgrounded,
+                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                }
             })
             recoveryObservers.append(nc.addObserver(
                 forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
@@ -3305,9 +3339,15 @@ final class AlmaVoiceEngine {
                     .appWillEnterForeground,
                     context: context)
                 Task { @MainActor in
-                    self?.recoverAudio(
-                        "foreground",
+                    guard let self else { return }
+                    let transition = self.reduceLifecycle(
+                        .appForegrounded,
                         expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    if self.lifecycleAllowsMediaRecovery(transition) {
+                        self.recoverAudio(
+                            "foreground",
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    }
                 }
             })
             recoveryObservers.append(nc.addObserver(
@@ -3318,6 +3358,34 @@ final class AlmaVoiceEngine {
                 lifecycleEvidenceSource.recordLifecycleEvidence(
                     .appBecameActive,
                     context: context)
+            })
+            recoveryObservers.append(nc.addObserver(
+                forName: UIApplication.protectedDataWillBecomeUnavailableNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    _ = self?.reduceLifecycle(
+                        .deviceLocked,
+                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                }
+            })
+            recoveryObservers.append(nc.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let transition = self.reduceLifecycle(
+                        .deviceUnlocked,
+                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    if self.lifecycleAllowsMediaRecovery(transition) {
+                        self.recoverAudio(
+                            "device-unlocked",
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    }
+                }
             })
             recoveryObservers.append(nc.addObserver(
                 forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
@@ -3411,6 +3479,7 @@ final class AlmaVoiceEngine {
     /// Authentication errors stop immediately because retrying cannot repair them.
     private func startLiveConnection(resetAttempts: Bool) {
         guard !closed, acceptsCallAudioMediaMutation() else { return }
+        _ = reduceLifecycle(.providerDisconnected)
         if resetAttempts { liveConnectAttempt = 0 }
         liveConnectTask?.cancel()
         connectionGeneration += 1
@@ -3571,6 +3640,7 @@ final class AlmaVoiceEngine {
     }
 
     func setMuted(_ muted: Bool) {
+        guard acceptsLifecycleEffect(muted ? .userMuted : .userUnmuted) else { return }
         isMuted = muted
         live.setInputMuted(muted)
         if muted { micLevel = 0 }
@@ -3626,6 +3696,7 @@ final class AlmaVoiceEngine {
 
     private func end(waitForAudioTeardown: Bool) {
         guard !closed else { return }
+        _ = reduceLifecycle(.userEnded)
         let standaloneAdmissionToken = callKitManaged ? nil : callAudioAdmissionToken
         if let standaloneAdmissionToken {
             _ = AlmaCallAudioAdmission.shared.beginTeardown(standaloneAdmissionToken)
@@ -3818,6 +3889,40 @@ final class AlmaVoiceEngine {
         tr("keepAlive off")
     }
 
+    /// All lifecycle callbacks enter the pure reducer with the logical call
+    /// epoch captured at their source. Rollback restores the pre-reducer path.
+    @discardableResult
+    private func reduceLifecycle(
+        _ event: AlmaLiveVoiceLifecycleReducer.Event,
+        expectedLifecycleEpoch: Int? = nil
+    ) -> AlmaLiveVoiceLifecycleReducer.Transition? {
+        guard lifecycleReducerEnabled,
+              var reducer = lifecycleReducer,
+              let generation = UInt64(exactly: expectedLifecycleEpoch ?? lifecycleBehaviorEpoch)
+        else { return nil }
+        let transition = reducer.reduce(.init(generation: generation, event: event))
+        lifecycleReducer = reducer
+        return transition
+    }
+
+    private func acceptsLifecycleEffect(
+        _ event: AlmaLiveVoiceLifecycleReducer.Event,
+        expectedLifecycleEpoch: Int? = nil
+    ) -> Bool {
+        guard lifecycleReducerEnabled else { return true }
+        return reduceLifecycle(
+            event,
+            expectedLifecycleEpoch: expectedLifecycleEpoch)?.mayApplyEffects == true
+    }
+
+    private func lifecycleAllowsMediaRecovery(
+        _ transition: AlmaLiveVoiceLifecycleReducer.Transition?
+    ) -> Bool {
+        guard lifecycleReducerEnabled else { return true }
+        return transition?.mayApplyEffects == true
+            && transition?.decision.ui.session == .ready
+    }
+
     /// Post-background / post-interruption self-heal: reactivate the session and
     /// clear stuck half-state, so the console NEVER needs an app kill again.
     private func recoverAudio(
@@ -3857,10 +3962,14 @@ final class AlmaVoiceEngine {
             expectedLifecycleEpoch,
             currentEpoch: lifecycleBehaviorEpoch,
             isClosed: closed) else { return }
+        let transition = reduceLifecycle(
+            began ? .audioInterruptionBegan : .audioInterruptionEnded,
+            expectedLifecycleEpoch: expectedLifecycleEpoch)
+        if lifecycleReducerEnabled, transition?.mayApplyEffects != true { return }
         if began {
             tr("audio INTERRUPTED")
             keepAlive?.pause()
-        } else {
+        } else if lifecycleAllowsMediaRecovery(transition) {
             recoverAudio("interruption-ended")
             keepAlive?.play()
         }
@@ -4520,6 +4629,7 @@ final class AlmaVoiceEngine {
             live.stop()
             return
         }
+        _ = reduceLifecycle(.providerReconnected)
         switch profilePhase {
         case .applying:
             liveProfileStatusText = "যাচাই সফল—নতুন profile এই কলে সক্রিয়।"
@@ -4572,12 +4682,37 @@ final class AlmaVoiceEngine {
     /// what makes the speaker button truthful when iOS selects a receiver,
     /// Bluetooth HFP device, wired headset, or built-in speaker asynchronously.
     func liveAudioRouteChanged(speaker: Bool, receiver: Bool) {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType)
+        let routeEvent: AlmaLiveVoiceLifecycleReducer.Event
+        if outputs.isEmpty {
+            routeEvent = .routeLost
+        } else if outputs.contains(.builtInSpeaker) {
+            routeEvent = .routeChanged(.builtInSpeaker)
+        } else if outputs.contains(.builtInReceiver) {
+            routeEvent = .routeChanged(.builtInReceiver)
+        } else if outputs.contains(.bluetoothHFP)
+                    || outputs.contains(.bluetoothA2DP)
+                    || outputs.contains(.bluetoothLE) {
+            routeEvent = .routeChanged(.bluetooth)
+        } else if outputs.contains(.headphones)
+                    || outputs.contains(.headsetMic)
+                    || outputs.contains(.usbAudio) {
+            routeEvent = .routeChanged(.wired)
+        } else if outputs.contains(.airPlay) {
+            routeEvent = .routeChanged(.airPlay)
+        } else if outputs.contains(.carAudio) {
+            routeEvent = .routeChanged(.carAudio)
+        } else {
+            routeEvent = .routeChanged(.otherUsable)
+        }
+        _ = reduceLifecycle(routeEvent)
         speakerOn = speaker
         UIDevice.current.isProximityMonitoringEnabled = callConnection == .live && receiver
     }
 
     func liveWillReconnect() {
         guard !closed else { return }
+        _ = reduceLifecycle(.providerDisconnected)
         liveActive = false
         sessionReady = false
         callConnection = .reconnecting
@@ -4788,6 +4923,7 @@ final class AlmaVoiceEngine {
             delivered = true
         }
         guard delivered else { return }
+        _ = reduceLifecycle(.toolCompleted(id: callId))
         self.activeLiveToolInvocation = nil
         liveToolTurnPending = false
         liveStatusNudgeTask?.cancel()
@@ -4887,6 +5023,7 @@ final class AlmaVoiceEngine {
         turnTask?.cancel(); turnTask = nil
         livePollTask?.cancel(); livePollTask = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
+        _ = reduceLifecycle(.toolCompleted(id: invocation.callID))
         activeLiveToolInvocation = nil
         liveToolTurnPending = false
         if state == .thinking { state = liveActive ? .listening : .idle }
@@ -4902,6 +5039,7 @@ final class AlmaVoiceEngine {
             }
             return false
         }
+        guard acceptsLifecycleEffect(.toolPending(id: invocation.callID)) else { return false }
         activeLiveToolInvocation = invocation
         liveToolTurnPending = true
         state = .thinking
