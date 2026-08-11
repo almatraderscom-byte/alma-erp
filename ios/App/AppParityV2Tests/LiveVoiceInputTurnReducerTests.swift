@@ -4,6 +4,34 @@ import XCTest
 final class LiveVoiceInputTurnReducerTests: XCTestCase {
     private let generation: UInt64 = 41
 
+    func testProductionEffectAdapterDeliversEachTransportEffectExactlyOnce() {
+        let frames = [
+            AlmaLiveVoiceInputTurnReducer.AudioFrame(
+                sequence: 1, pcm: pcm(1), rms: 0.02),
+            AlmaLiveVoiceInputTurnReducer.AudioFrame(
+                sequence: 2, pcm: pcm(2), rms: 0.03),
+        ]
+        let transcript = AlmaLiveVoiceInputTurnReducer.TranscriptUpdate(
+            turnOrdinal: 7, text: "ঠিক আছে", finalized: true)
+        var effects = AlmaLiveVoiceInputTurnReducer.Effects()
+        effects.audioFramesToSend = frames
+        effects.sendAudioStreamEnd = true
+        effects.transcriptUpdate = transcript
+        var audioBatches: [[UInt64]] = []
+        var streamEndCount = 0
+        var transcriptUpdates: [AlmaLiveVoiceInputTurnReducer.TranscriptUpdate] = []
+
+        AlmaLiveVoiceInputTurnEffectDelivery.apply(
+            effects,
+            sendAudioFrames: { audioBatches.append($0.map(\.sequence)) },
+            sendAudioStreamEnd: { streamEndCount += 1 },
+            updateTranscript: { transcriptUpdates.append($0) })
+
+        XCTAssertEqual(audioBatches, [[1, 2]])
+        XCTAssertEqual(streamEndCount, 1)
+        XCTAssertEqual(transcriptUpdates, [transcript])
+    }
+
     func testInputTurnReducerRollbackGateHasDeterministicPrecedence() throws {
         let suite = "LiveVoiceInputTurnReducerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -124,7 +152,8 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
                 rms: 0.030,
                 route: .noAECLoudspeaker,
                 ready: true,
-                suppression: .activePlayback)
+                suppression: .activePlayback,
+                ownerSpeechCandidate: sequence == 3)
             XCTAssertTrue(effect.audioFramesToSend.isEmpty)
         }
 
@@ -149,6 +178,83 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
 
         XCTAssertEqual(confirmed.audioFramesToSend.map(\.sequence), [3, 4, 5])
         XCTAssertEqual(continuing.audioFramesToSend.map(\.sequence), [6])
+    }
+
+    func testNoAECCandidateOnsetSurvivesActivePlaybackIntoTailWithoutEchoPrefix() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(
+            generation: generation,
+            maximumSuppressedFrames: 16)
+
+        // Frames 1...4 are model echo. The acoustic discriminator first sees a
+        // plausible owner onset at frame 5; final confirmation lands in the tail.
+        for sequence in 1...6 {
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(sequence),
+                pcm: pcm(UInt64(sequence)),
+                rms: 0.03,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .activePlayback,
+                ownerSpeechCandidate: sequence == 5)
+            XCTAssertTrue(effect.audioFramesToSend.isEmpty)
+        }
+
+        let firstTail = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 7,
+            pcm: pcm(7),
+            rms: 0.025,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .playbackTail)
+        XCTAssertTrue(firstTail.audioFramesToSend.isEmpty)
+
+        let confirmed = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 8,
+            pcm: pcm(8),
+            rms: 0.026,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .playbackTail,
+            ownerSpeechConfirmed: true)
+
+        XCTAssertEqual(confirmed.audioFramesToSend.map(\.sequence), [5, 6, 7, 8])
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
+    func testNoAECActiveEchoIsDiscardedWhenTailBeginsWithoutOwnerCandidate() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        for sequence in 1...4 {
+            _ = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(sequence),
+                pcm: pcm(UInt64(sequence)),
+                rms: 0.03,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .activePlayback)
+        }
+
+        _ = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 5,
+            pcm: pcm(5),
+            rms: 0.01,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .playbackTail)
+        let expired = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 6,
+            pcm: pcm(6),
+            rms: 0.004,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .none)
+
+        XCTAssertEqual(expired.audioFramesToSend.map(\.sequence), [5, 6])
     }
 
     func testMuteEndsOnlyAnOpenAudioStreamAndUnmuteResumes() {

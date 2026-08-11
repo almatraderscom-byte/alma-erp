@@ -63,6 +63,99 @@ const migrationSchema = z.object({
   voiceReplacements: z.record(z.string(), z.string().min(1)),
 }).strict()
 
+const toolStringParameterSchema = z.object({
+  type: z.literal('STRING'),
+  description: z.string().min(1).optional(),
+  enum: z.array(z.string().min(1)).min(1).optional(),
+}).strict().superRefine((parameter, context) => {
+  if (parameter.enum && new Set(parameter.enum).size !== parameter.enum.length) {
+    context.addIssue({ code: 'custom', path: ['enum'], message: 'enum values must be unique' })
+  }
+})
+
+const toolObjectParameterSchema = z.object({
+  type: z.literal('OBJECT'),
+  properties: z.record(z.string().min(1), toolStringParameterSchema),
+  required: z.array(z.string().min(1)).optional(),
+}).strict().superRefine((parameter, context) => {
+  const required = parameter.required ?? []
+  if (new Set(required).size !== required.length) {
+    context.addIssue({ code: 'custom', path: ['required'], message: 'required fields must be unique' })
+  }
+  for (const name of required) {
+    if (!(name in parameter.properties)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['required'],
+        message: `required field is not declared: ${name}`,
+      })
+    }
+  }
+})
+
+const functionDeclarationSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  parameters: toolObjectParameterSchema,
+}).strict()
+
+const quickLookupTools = [
+  'get_attendance',
+  'get_sales_summary',
+  'get_orders',
+  'get_dashboard_snapshot',
+  'get_inventory_status',
+  'get_salah_status',
+  'get_pending_approvals',
+  'get_prayer_times',
+] as const
+
+const sessionProtocolSchema = z.object({
+  systemInstruction: z.string().min(1),
+  functionDeclarations: z.array(functionDeclarationSchema).length(3),
+}).strict().superRefine((protocol, context) => {
+  const names = protocol.functionDeclarations.map((declaration) => declaration.name)
+  const expectedNames = ['quick_erp_lookup', 'end_call', 'run_agent_turn']
+  if (new Set(names).size !== names.length || names.some((name, index) => name !== expectedNames[index])) {
+    context.addIssue({
+      code: 'custom',
+      path: ['functionDeclarations'],
+      message: 'function declarations must use the canonical unique order',
+    })
+  }
+  if (protocol.systemInstruction.includes('STATUS_NOTE')
+    || protocol.systemInstruction.includes('NON_BLOCKING')) {
+    context.addIssue({
+      code: 'custom',
+      path: ['systemInstruction'],
+      message: 'unsupported provider control token',
+    })
+  }
+
+  const [lookup, endCall, agentTurn] = protocol.functionDeclarations
+  const lookupProperty = lookup?.parameters.properties.tool
+  if (lookup?.parameters.type !== 'OBJECT'
+    || Object.keys(lookup.parameters.properties).join(',') !== 'tool'
+    || lookup.parameters.required?.join(',') !== 'tool'
+    || lookupProperty?.type !== 'STRING'
+    || lookupProperty.enum?.join(',') !== quickLookupTools.join(',')) {
+    context.addIssue({ code: 'custom', path: ['functionDeclarations', 0], message: 'quick lookup schema drift' })
+  }
+  if (endCall?.parameters.type !== 'OBJECT'
+    || Object.keys(endCall.parameters.properties).length !== 0
+    || endCall.parameters.required !== undefined) {
+    context.addIssue({ code: 'custom', path: ['functionDeclarations', 1], message: 'end call schema drift' })
+  }
+  const requestProperty = agentTurn?.parameters.properties.request
+  if (agentTurn?.parameters.type !== 'OBJECT'
+    || Object.keys(agentTurn.parameters.properties).join(',') !== 'request'
+    || agentTurn.parameters.required?.join(',') !== 'request'
+    || requestProperty?.type !== 'STRING'
+    || requestProperty.enum !== undefined) {
+    context.addIssue({ code: 'custom', path: ['functionDeclarations', 2], message: 'agent turn schema drift' })
+  }
+})
+
 const contractSchema = z.object({
   schemaVersion: z.number().int().positive(),
   contractVersion: z.string().regex(/^live-voice-\d{4}-\d{2}-\d{2}-v\d+$/),
@@ -82,6 +175,7 @@ const contractSchema = z.object({
     pollIntervalMilliseconds: z.number().int().min(100).max(5_000),
     audioTokensPerSecond: z.number().positive(),
   }).strict(),
+  sessionProtocol: sessionProtocolSchema,
   models: z.array(modelSchema).min(1),
   voices: z.array(voiceSchema).min(1),
   migrations: z.array(migrationSchema),
@@ -153,6 +247,136 @@ export type LiveVoiceModelContract = LiveVoiceContract['models'][number]
 
 export function parseLiveVoiceContract(value: unknown): LiveVoiceContract {
   return contractSchema.parse(value)
+}
+
+/** JSON.parse silently keeps one value for duplicate object keys. Canonical
+ * contracts are security-sensitive executable configuration, so scan the raw
+ * token stream before parsing and reject escaped-equivalent duplicates too. */
+export function decodeLiveVoiceContractStrict(source: string): LiveVoiceContract {
+  assertNoDuplicateJSONKeys(source)
+  return parseLiveVoiceContract(JSON.parse(source) as unknown)
+}
+
+function assertNoDuplicateJSONKeys(source: string): void {
+  let index = 0
+  const whitespace = /\s/u
+
+  function fail(message: string): never {
+    throw new Error(`invalid live voice contract JSON: ${message}`)
+  }
+
+  function skipWhitespace(): void {
+    while (index < source.length && whitespace.test(source[index]!)) index += 1
+  }
+
+  function consume(expected: string): void {
+    if (source[index] !== expected) fail(`expected ${expected}`)
+    index += 1
+  }
+
+  function parseString(): string {
+    const start = index
+    consume('"')
+    while (index < source.length) {
+      const character = source[index]!
+      if (character === '"') {
+        index += 1
+        return JSON.parse(source.slice(start, index)) as string
+      }
+      if (character === '\\') {
+        index += 1
+        const escaped = source[index]
+        if (escaped === undefined) fail('unterminated escape')
+        if (escaped === 'u') {
+          const scalar = source.slice(index + 1, index + 5)
+          if (!/^[0-9a-fA-F]{4}$/u.test(scalar)) fail('invalid unicode escape')
+          index += 5
+        } else {
+          if (!['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(escaped)) {
+            fail('invalid string escape')
+          }
+          index += 1
+        }
+      } else {
+        if (character.charCodeAt(0) < 0x20) fail('control character in string')
+        index += 1
+      }
+    }
+    return fail('unterminated string')
+  }
+
+  function parseObject(): void {
+    consume('{')
+    skipWhitespace()
+    if (source[index] === '}') {
+      index += 1
+      return
+    }
+    const keys = new Set<string>()
+    while (true) {
+      skipWhitespace()
+      if (source[index] !== '"') fail('object key expected')
+      const key = parseString()
+      if (keys.has(key)) fail(`duplicate key: ${key}`)
+      keys.add(key)
+      skipWhitespace()
+      consume(':')
+      parseValue()
+      skipWhitespace()
+      if (source[index] === '}') {
+        index += 1
+        return
+      }
+      consume(',')
+    }
+  }
+
+  function parseArray(): void {
+    consume('[')
+    skipWhitespace()
+    if (source[index] === ']') {
+      index += 1
+      return
+    }
+    while (true) {
+      parseValue()
+      skipWhitespace()
+      if (source[index] === ']') {
+        index += 1
+        return
+      }
+      consume(',')
+    }
+  }
+
+  function parseLiteral(literal: string): void {
+    if (source.slice(index, index + literal.length) !== literal) fail(`expected ${literal}`)
+    index += literal.length
+  }
+
+  function parseNumber(): void {
+    const start = index
+    while (index < source.length && !/[\s,\]}]/u.test(source[index]!)) index += 1
+    const token = source.slice(start, index)
+    if (token.length === 0 || typeof JSON.parse(token) !== 'number') fail('invalid number')
+  }
+
+  function parseValue(): void {
+    skipWhitespace()
+    switch (source[index]) {
+      case '{': parseObject(); return
+      case '[': parseArray(); return
+      case '"': parseString(); return
+      case 't': parseLiteral('true'); return
+      case 'f': parseLiteral('false'); return
+      case 'n': parseLiteral('null'); return
+      default: parseNumber()
+    }
+  }
+
+  parseValue()
+  skipWhitespace()
+  if (index !== source.length) fail('trailing bytes')
 }
 
 export const LIVE_VOICE_CONTRACT = parseLiveVoiceContract(rawContract)

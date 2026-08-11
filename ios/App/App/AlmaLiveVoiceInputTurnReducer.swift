@@ -64,6 +64,12 @@ struct AlmaLiveVoiceInputTurnReducer {
     private var lastAcceptedFrameSequence: UInt64?
     private var suppressedFrames: [AudioFrame] = []
     private var bufferedSuppression: BufferedSuppression?
+    /// First frame that the acoustic discriminator classified as a plausible
+    /// owner onset.  It is intentionally separate from the stronger
+    /// `ownerSpeechConfirmed` signal: confirmation takes several frames, and
+    /// dropping the candidate span at the active-playback -> tail boundary
+    /// clipped the first Bengali syllable.
+    private var activePlaybackCandidateSequence: UInt64?
     private var activePlaybackOwnerConfirmed = false
     private var inputMuted = false
 
@@ -87,6 +93,7 @@ struct AlmaLiveVoiceInputTurnReducer {
         suppressedFrames.removeAll(keepingCapacity: true)
         bufferedSuppression = nil
         bufferedSuppressedFrameCount = 0
+        activePlaybackCandidateSequence = nil
         activePlaybackOwnerConfirmed = false
         inputMuted = false
         isAudioStreamOpen = false
@@ -110,6 +117,7 @@ struct AlmaLiveVoiceInputTurnReducer {
         route: InputRoute,
         ready: Bool,
         suppression: PlaybackSuppression,
+        ownerSpeechCandidate: Bool = false,
         ownerSpeechConfirmed: Bool = false
     ) -> Effects {
         guard eventGeneration == generation,
@@ -124,6 +132,7 @@ struct AlmaLiveVoiceInputTurnReducer {
 
         if route == .trustedAECOrReceiver {
             clearSuppressedFrames()
+            activePlaybackCandidateSequence = nil
             activePlaybackOwnerConfirmed = false
             return sending([frame])
         }
@@ -136,12 +145,18 @@ struct AlmaLiveVoiceInputTurnReducer {
             if bufferedSuppression != .activePlayback {
                 clearSuppressedFrames()
                 bufferedSuppression = .activePlayback
+                activePlaybackCandidateSequence = nil
+            }
+            if ownerSpeechCandidate || ownerSpeechConfirmed {
+                activePlaybackCandidateSequence = activePlaybackCandidateSequence ?? sequence
             }
             if ownerSpeechConfirmed {
                 activePlaybackOwnerConfirmed = true
                 appendSuppressed(frame)
+                retainCandidateSpanIfPresent()
                 let frames = takeSuppressedFrames()
                 activePlaybackOwnerConfirmed = true
+                activePlaybackCandidateSequence = nil
                 return sending(frames)
             }
             appendSuppressed(frame)
@@ -149,14 +164,24 @@ struct AlmaLiveVoiceInputTurnReducer {
 
         case .playbackTail:
             if bufferedSuppression != .playbackTail {
-                // Unconfirmed active-playback frames are model echo. Tail input
-                // begins a new retention window and is released when it expires.
-                clearSuppressedFrames()
+                // Ordinary active-playback frames are model echo.  Preserve only
+                // the span beginning at an explicit acoustic owner candidate;
+                // confirmation may arrive a few frames into the tail.
+                if activePlaybackCandidateSequence != nil {
+                    retainCandidateSpanIfPresent()
+                } else {
+                    clearSuppressedFrames()
+                }
                 bufferedSuppression = .playbackTail
             }
             activePlaybackOwnerConfirmed = false
+            if ownerSpeechCandidate || ownerSpeechConfirmed {
+                activePlaybackCandidateSequence = activePlaybackCandidateSequence ?? sequence
+            }
             appendSuppressed(frame)
             if ownerSpeechConfirmed {
+                retainCandidateSpanIfPresent()
+                activePlaybackCandidateSequence = nil
                 return sending(takeSuppressedFrames())
             }
             return .none
@@ -165,10 +190,13 @@ struct AlmaLiveVoiceInputTurnReducer {
             activePlaybackOwnerConfirmed = false
             if bufferedSuppression == .playbackTail {
                 appendSuppressed(frame)
+                retainCandidateSpanIfPresent()
+                activePlaybackCandidateSequence = nil
                 return sending(takeSuppressedFrames())
             }
             // Never replay unconfirmed model audio retained during playback.
             clearSuppressedFrames()
+            activePlaybackCandidateSequence = nil
             return sending([frame])
         }
     }
@@ -184,6 +212,7 @@ struct AlmaLiveVoiceInputTurnReducer {
 
         inputMuted = muted
         clearSuppressedFrames()
+        activePlaybackCandidateSequence = nil
         activePlaybackOwnerConfirmed = false
         guard muted, isAudioStreamOpen else { return .none }
         isAudioStreamOpen = false
@@ -320,6 +349,17 @@ struct AlmaLiveVoiceInputTurnReducer {
         bufferedSuppressedFrameCount = suppressedFrames.count
     }
 
+    /// Drops every pre-candidate frame.  The candidate itself is produced by a
+    /// content/echo discriminator, not an RMS-only guess, so keeping the exact
+    /// candidate boundary preserves onset without replaying earlier model echo.
+    private mutating func retainCandidateSpanIfPresent() {
+        guard let candidate = activePlaybackCandidateSequence,
+              let index = suppressedFrames.firstIndex(where: { $0.sequence >= candidate })
+        else { return }
+        if index > 0 { suppressedFrames.removeFirst(index) }
+        bufferedSuppressedFrameCount = suppressedFrames.count
+    }
+
     private mutating func takeSuppressedFrames() -> [AudioFrame] {
         let frames = suppressedFrames
         clearSuppressedFrames()
@@ -336,5 +376,23 @@ struct AlmaLiveVoiceInputTurnReducer {
         guard !frames.isEmpty else { return .none }
         isAudioStreamOpen = true
         return Effects(audioFramesToSend: frames)
+    }
+}
+
+/// Single production adapter boundary from reducer decisions to transport/UI
+/// sinks. Keeping it pure makes exact-once delivery testable without opening a
+/// microphone or websocket in the simulator.
+struct AlmaLiveVoiceInputTurnEffectDelivery {
+    static func apply(
+        _ effects: AlmaLiveVoiceInputTurnReducer.Effects,
+        sendAudioFrames: ([AlmaLiveVoiceInputTurnReducer.AudioFrame]) -> Void,
+        sendAudioStreamEnd: () -> Void,
+        updateTranscript: (AlmaLiveVoiceInputTurnReducer.TranscriptUpdate) -> Void
+    ) {
+        if !effects.audioFramesToSend.isEmpty {
+            sendAudioFrames(effects.audioFramesToSend)
+        }
+        if effects.sendAudioStreamEnd { sendAudioStreamEnd() }
+        if let transcript = effects.transcriptUpdate { updateTranscript(transcript) }
     }
 }

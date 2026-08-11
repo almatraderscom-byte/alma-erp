@@ -7,9 +7,11 @@
 
 import Foundation
 
-/// Follows the amplitude of the PCM that is actually queued for model-voice
-/// playback. The reducer owns no timer, oscillator, microphone input, audio
-/// engine, or UI state, so a silent output buffer can never manufacture motion.
+/// Follows the amplitude of PCM observed on the local render path. Provider
+/// receipt and local rendering are deliberately separate events: received or
+/// merely decoded bytes can never make the foreground UI claim audible speech.
+/// The reducer owns no timer, oscillator, microphone input, audio engine, or UI
+/// state, so a silent rendered buffer can never manufacture motion.
 struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
     enum Phase: Equatable, Sendable {
         case listening
@@ -28,9 +30,29 @@ struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
         }
     }
 
+    /// A content-free measurement made by the AVAudioEngine mixer tap. Keeping
+    /// this typed value avoids copying/converting float PCM on Core Audio's
+    /// realtime callback while retaining the exact rendered duration used by
+    /// the attack/release policy.
+    struct RenderedPCMMeasurement: Equatable, Sendable {
+        let rms: Double
+        let durationSeconds: Double
+
+        init(rms: Double, durationSeconds: Double) {
+            self.rms = rms
+            self.durationSeconds = durationSeconds
+        }
+    }
+
     enum Event: Equatable, Sendable {
         case phaseChanged(Phase)
-        case outputPCM(PCM16LEBuffer)
+        /// Network/provider delivery only. This validates the payload shape but
+        /// intentionally leaves every envelope value unchanged.
+        case providerPCMReceived(PCM16LEBuffer)
+        /// Deterministic/test path for PCM known to have reached local render.
+        case renderedPCM(PCM16LEBuffer)
+        /// Production path measured directly by the local mixer render tap.
+        case renderedPCMMeasured(RenderedPCMMeasurement)
     }
 
     struct Input: Equatable, Sendable {
@@ -54,7 +76,8 @@ struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
         case calm
         /// Ordinary presentation may animate from the measured PCM envelope.
         case reactive
-        /// Reduce Motion retains non-spatial emphasis but never changes scale.
+        /// Reduce Motion retains one settled non-spatial indication but never
+        /// varies it with sample amplitude or time.
         case staticSpeaking
     }
 
@@ -155,32 +178,37 @@ struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
             }
             return transition(.applied)
 
-        case .outputPCM(let buffer):
+        case .providerPCMReceived(let buffer):
+            guard Self.measure(buffer) != nil else {
+                return transition(.ignored(.invalidPCM))
+            }
+            // Receipt is not render progress. In particular, do not enter the
+            // speaking phase and do not reuse the payload's amplitude.
+            return transition(.applied)
+
+        case .renderedPCM(let buffer):
             guard phase == .speaking else {
                 return transition(.ignored(.outputWhileListening))
             }
             guard let measurement = Self.measure(buffer) else {
                 return transition(.ignored(.invalidPCM))
             }
+            return applyRenderedMeasurement(.init(
+                rms: measurement.rms,
+                durationSeconds: measurement.durationSeconds))
 
-            measuredRMS = measurement.rms
-            targetLevel = normalizedTarget(for: measurement.rms)
-            let timeConstant = targetLevel > level
-                ? configuration.attackTimeSeconds
-                : configuration.releaseTimeSeconds
-            let coefficient = 1 - exp(-measurement.durationSeconds / timeConstant)
-            level += (targetLevel - level) * coefficient
-            level = min(1, max(0, level))
-            if targetLevel == 0, level <= configuration.zeroSnapLevel {
-                level = 0
+        case .renderedPCMMeasured(let measurement):
+            guard phase == .speaking else {
+                return transition(.ignored(.outputWhileListening))
             }
-            return transition(.applied)
+            return applyRenderedMeasurement(measurement)
         }
     }
 
     /// Maps the same measured envelope to two explicit accessibility paths.
-    /// Reduce Motion holds scale at 1.0; color/luminance may still use `level`
-    /// as a non-spatial indication that model PCM is present.
+    /// Reduce Motion holds scale at 1.0 and maps every positive rendered level
+    /// to one fixed indication. Two PCM amplitudes therefore cannot create a
+    /// time-varying reduced-motion presentation.
     func presentation(reduceMotion: Bool) -> Presentation {
         Self.presentation(level: level, phase: phase, reduceMotion: reduceMotion)
     }
@@ -195,7 +223,7 @@ struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
             return Presentation(level: 0, scale: 1, semantics: .calm)
         }
         if reduceMotion {
-            return Presentation(level: level, scale: 1, semantics: .staticSpeaking)
+            return Presentation(level: 0.35, scale: 1, semantics: .staticSpeaking)
         }
         return Presentation(
             level: level,
@@ -208,6 +236,30 @@ struct AlmaLiveVoiceOutputPCMEnvelopeReducer: Equatable, Sendable {
         let floorRemoved = (rms - configuration.silenceFloorRMS)
             / (1 - configuration.silenceFloorRMS)
         return min(1, max(0, floorRemoved * configuration.visualGain))
+    }
+
+    private mutating func applyRenderedMeasurement(
+        _ measurement: RenderedPCMMeasurement
+    ) -> Transition {
+        guard measurement.rms.isFinite,
+              measurement.rms >= 0,
+              measurement.rms <= 1,
+              measurement.durationSeconds.isFinite,
+              measurement.durationSeconds > 0
+        else { return transition(.ignored(.invalidPCM)) }
+
+        measuredRMS = measurement.rms
+        targetLevel = normalizedTarget(for: measurement.rms)
+        let timeConstant = targetLevel > level
+            ? configuration.attackTimeSeconds
+            : configuration.releaseTimeSeconds
+        let coefficient = 1 - exp(-measurement.durationSeconds / timeConstant)
+        level += (targetLevel - level) * coefficient
+        level = min(1, max(0, level))
+        if targetLevel == 0, level <= configuration.zeroSnapLevel {
+            level = 0
+        }
+        return transition(.applied)
     }
 
     private func transition(_ outcome: Outcome) -> Transition {

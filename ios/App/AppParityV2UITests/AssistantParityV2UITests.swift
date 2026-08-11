@@ -69,6 +69,33 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "Uploaded")).count > 0)
     }
 
+    func testPreCallVoiceSettingsKeepsPrimaryCallEntryAndOpensWithoutStartingCall() {
+        let call = app.buttons["voice.live-call.start"]
+        let settings = app.buttons["voice.precall.settings.open"]
+        XCTAssertTrue(call.waitForExistence(timeout: 3))
+        XCTAssertTrue(settings.waitForExistence(timeout: 3))
+        XCTAssertTrue(call.isHittable)
+        XCTAssertTrue(settings.isHittable)
+
+        settings.tap()
+        XCTAssertTrue(app.scrollViews["voice.precall.settings.scroll"]
+            .waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["voice.precall.cancel"].exists)
+        XCTAssertTrue(app.buttons["voice.precall.save"].exists)
+        XCTAssertTrue(app.buttons[
+            "voice.precall.model.gemini-3.1-flash-live-preview"
+        ].exists)
+        XCTAssertTrue(app.buttons["voice.precall.voice.Aoede"].exists)
+        XCTAssertTrue(app.staticTexts["voice.precall.preview.status"].exists)
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "opening preview settings must not start a call")
+
+        app.buttons["voice.precall.cancel"].tap()
+        XCTAssertTrue(call.waitForExistence(timeout: 3))
+        XCTAssertTrue(call.isHittable,
+                      "Cancel must preserve the primary live-call entry")
+    }
+
     func testPenaltyApprovalSheetKeepsHeaderAndActionReachable() {
         app.terminate()
         app = XCUIApplication()

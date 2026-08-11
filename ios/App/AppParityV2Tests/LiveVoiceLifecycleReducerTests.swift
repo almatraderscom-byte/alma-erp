@@ -120,6 +120,20 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 XCTAssertEqual($0.state.provider, .connected)
                 XCTAssertEqual($0.decision.transport, .maintain)
             },
+            .init(kind: .mediaServicesReset, prepare: [], event: .mediaServicesReset) {
+                XCTAssertEqual($0.state.mediaServices, .awaitingExplicitRecovery)
+                XCTAssertEqual($0.state.provider, .disconnected)
+                XCTAssertEqual($0.decision.microphone, .stop(.mediaServicesReset))
+                XCTAssertEqual($0.decision.playback, .stopAndDiscard(.mediaServicesReset))
+            },
+            .init(
+                kind: .mediaServicesReady,
+                prepare: [.mediaServicesReset, .providerReconnected],
+                event: .mediaServicesReady
+            ) {
+                XCTAssertEqual($0.state.mediaServices, .ready)
+                XCTAssertEqual($0.decision.microphone, .stream)
+            },
             .init(kind: .userMuted, prepare: [], event: .userMuted) {
                 XCTAssertTrue($0.state.isMuted)
                 XCTAssertEqual($0.decision.microphone, .stop(.muted))
@@ -180,6 +194,8 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             .networkUp,
             .providerDisconnected,
             .providerReconnected,
+            .mediaServicesReset,
+            .mediaServicesReady,
             .userMuted,
             .userUnmuted,
             .userEnded,
@@ -205,7 +221,10 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             XCTAssertEqual(transition.decision.playback, .stopAndDiscard(.terminal))
             XCTAssertEqual(
                 transition.decision.tools,
-                .init(execution: .cancel, resultDelivery: .suppress))
+                .init(
+                    execution: .cancel,
+                    resultDelivery: .suppress,
+                    approval: .reject))
             XCTAssertEqual(transition.decision.ui.session, .ended)
             XCTAssertFalse(transition.decision.ui.isTimerRunning)
         }
@@ -219,6 +238,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             .callKitReserved, .callKitActivated, .callKitDeactivated,
             .networkDown, .networkUp,
             .providerDisconnected, .providerReconnected,
+            .mediaServicesReset, .mediaServicesReady,
             .userMuted, .userUnmuted, .userEnded,
             .toolPending(id: "wrong-generation"),
             .toolCompleted(id: "wrong-generation"),
@@ -260,6 +280,133 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
         XCTAssertEqual(reducer.decision.playback, .allow)
     }
 
+    func testMediaServicesResetRequiresProviderAndExplicitMediaReadySignals() {
+        var reducer = makeReducer()
+
+        let reset = apply(.mediaServicesReset, to: &reducer)
+        XCTAssertEqual(reset.decision.microphone, .stop(.mediaServicesReset))
+        XCTAssertEqual(reset.decision.transport, .reconnect)
+        XCTAssertEqual(reset.decision.tools.execution, .hold)
+        XCTAssertEqual(reset.decision.tools.resultDelivery, .holdInOrder)
+        XCTAssertEqual(reset.decision.tools.approval, .hold)
+        XCTAssertEqual(reset.decision.ui.session, .suspended(.mediaServicesReset))
+
+        let prematureReady = reducer.reduce(.init(
+            generation: generation,
+            event: .mediaServicesReady))
+        XCTAssertEqual(prematureReady.outcome, .ignored(.invalidTransition))
+        XCTAssertFalse(prematureReady.mayApplyEffects)
+        XCTAssertEqual(reducer.decision.microphone, .stop(.mediaServicesReset))
+
+        apply(.providerReconnected, to: &reducer)
+        XCTAssertEqual(reducer.state.provider, .connected)
+        XCTAssertEqual(
+            reducer.state.mediaServices,
+            .awaitingExplicitRecovery,
+            "provider readiness must not auto-resume invalid Core Audio objects")
+        XCTAssertEqual(reducer.decision.microphone, .stop(.mediaServicesReset))
+        XCTAssertEqual(reducer.decision.playback, .stopAndDiscard(.mediaServicesReset))
+
+        apply(.mediaServicesReady, to: &reducer)
+        XCTAssertEqual(reducer.state.mediaServices, .ready)
+        XCTAssertEqual(reducer.decision.microphone, .stream)
+        XCTAssertEqual(reducer.decision.playback, .allow)
+        XCTAssertEqual(reducer.decision.tools.approval, .allowInteraction)
+    }
+
+    func testEffectsAdapterBuildsOneGenerationBoundFullPlanPerAppliedTransition() throws {
+        let adapter = Reducer.EffectsAdapter()
+        var reducer = makeReducer()
+
+        let background = apply(.appBackgrounded, to: &reducer)
+        let backgroundPlan = try XCTUnwrap(adapter.plan(for: background))
+        XCTAssertEqual(backgroundPlan.generation, generation)
+        XCTAssertEqual(backgroundPlan.eventKind, .appBackgrounded)
+        XCTAssertEqual(backgroundPlan.microphone, .stop(.background))
+        XCTAssertEqual(backgroundPlan.transport, .maintain)
+        XCTAssertEqual(backgroundPlan.playback, .pause(.background))
+        XCTAssertEqual(backgroundPlan.tools.resultDelivery, .holdInOrder)
+        XCTAssertEqual(backgroundPlan.tools.approval, .hold)
+        XCTAssertEqual(backgroundPlan.ui.session, .suspended(.background))
+        XCTAssertEqual(backgroundPlan.timer, .run)
+        XCTAssertEqual(backgroundPlan.liveActivity, .update(background.decision.ui))
+        XCTAssertEqual(backgroundPlan.recovery, .none)
+
+        let foreground = apply(.appForegrounded, to: &reducer)
+        let foregroundPlan = try XCTUnwrap(adapter.plan(for: foreground))
+        XCTAssertEqual(foregroundPlan.microphone, .stream)
+        XCTAssertEqual(foregroundPlan.playback, .allow)
+        XCTAssertEqual(foregroundPlan.tools.resultDelivery, .deliverInOrder)
+        XCTAssertEqual(foregroundPlan.tools.approval, .allowInteraction)
+
+        let ended = apply(.userEnded, to: &reducer)
+        let terminalPlan = try XCTUnwrap(adapter.plan(for: ended))
+        XCTAssertEqual(terminalPlan.transport, .disconnectAndInvalidateGeneration)
+        XCTAssertEqual(terminalPlan.tools.execution, .cancel)
+        XCTAssertEqual(terminalPlan.tools.resultDelivery, .suppress)
+        XCTAssertEqual(terminalPlan.tools.approval, .reject)
+        XCTAssertEqual(terminalPlan.timer, .stop)
+        XCTAssertEqual(terminalPlan.liveActivity, .end)
+    }
+
+    func testEffectsAdapterRequestsRecoveryOnlyFromExplicitRecoveryInputs() throws {
+        let adapter = Reducer.EffectsAdapter()
+        var reducer = makeReducer()
+
+        let reset = apply(.mediaServicesReset, to: &reducer)
+        XCTAssertEqual(
+            try XCTUnwrap(adapter.plan(for: reset)).recovery,
+            .rebuildAfterMediaServicesReset)
+
+        let provider = apply(.providerReconnected, to: &reducer)
+        XCTAssertEqual(try XCTUnwrap(adapter.plan(for: provider)).recovery, .none)
+        XCTAssertEqual(
+            try XCTUnwrap(adapter.plan(for: provider)).microphone,
+            .stop(.mediaServicesReset))
+
+        let ready = apply(.mediaServicesReady, to: &reducer)
+        XCTAssertEqual(try XCTUnwrap(adapter.plan(for: ready)).recovery, .none)
+        XCTAssertEqual(try XCTUnwrap(adapter.plan(for: ready)).microphone, .stream)
+
+        var networkReducer = makeReducer()
+        let down = apply(.networkDown, to: &networkReducer)
+        XCTAssertEqual(try XCTUnwrap(adapter.plan(for: down)).recovery, .none)
+        let up = apply(.networkUp, to: &networkReducer)
+        XCTAssertEqual(
+            try XCTUnwrap(adapter.plan(for: up)).recovery,
+            .reconnectCurrentGeneration)
+
+        var offlineResetReducer = makeReducer()
+        apply(.networkDown, to: &offlineResetReducer)
+        let offlineReset = apply(.mediaServicesReset, to: &offlineResetReducer)
+        XCTAssertEqual(
+            try XCTUnwrap(adapter.plan(for: offlineReset)).recovery,
+            .none,
+            "an offline reset must not start a provider/audio rebuild")
+        let onlineAfterReset = apply(.networkUp, to: &offlineResetReducer)
+        XCTAssertEqual(
+            try XCTUnwrap(adapter.plan(for: onlineAfterReset)).recovery,
+            .rebuildAfterMediaServicesReset,
+            "network recovery must rebuild invalid media, not resume its socket")
+    }
+
+    func testEffectsAdapterNeverPlansRejectedOrWrongGenerationInput() {
+        let adapter = Reducer.EffectsAdapter()
+        var reducer = makeReducer()
+
+        let noChange = reducer.reduce(.init(
+            generation: generation,
+            event: .appForegrounded))
+        XCTAssertEqual(noChange.outcome, .ignored(.noStateChange))
+        XCTAssertNil(adapter.plan(for: noChange))
+
+        let wrongGeneration = reducer.reduce(.init(
+            generation: generation + 1,
+            event: .mediaServicesReset))
+        XCTAssertEqual(wrongGeneration.outcome, .ignored(.generationMismatch))
+        XCTAssertNil(adapter.plan(for: wrongGeneration))
+    }
+
     func testCompositeBlockersRequireEveryMatchingRecoverySignal() {
         var reducer = makeReducer()
         apply(.appBackgrounded, to: &reducer)
@@ -268,9 +415,13 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
         apply(.audioInterruptionBegan, to: &reducer)
         apply(.callKitReserved, to: &reducer)
         apply(.networkDown, to: &reducer)
+        apply(.mediaServicesReset, to: &reducer)
 
         apply(.networkUp, to: &reducer)
         apply(.providerReconnected, to: &reducer)
+        XCTAssertEqual(reducer.decision.microphone, .stop(.mediaServicesReset))
+
+        apply(.mediaServicesReady, to: &reducer)
         XCTAssertEqual(reducer.decision.microphone, .stop(.audioInterrupted))
 
         apply(.audioInterruptionEnded, to: &reducer)
@@ -316,6 +467,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             let events: [Reducer.Event]
             let execution: Reducer.ToolPolicy.Execution
             let delivery: Reducer.ToolPolicy.ResultDelivery
+            let approval: Reducer.ToolPolicy.Approval
             let playback: Reducer.PlaybackPolicy
             let work: Reducer.UITruth.Work
         }
@@ -326,6 +478,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [],
                 execution: .acceptAndContinue,
                 delivery: .deliverInOrder,
+                approval: .allowInteraction,
                 playback: .pause(.toolPending),
                 work: .pending(count: 1)),
             .init(
@@ -333,6 +486,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.appBackgrounded],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .pause(.background),
                 work: .pending(count: 1)),
             .init(
@@ -340,6 +494,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.deviceLocked],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .pause(.deviceLocked),
                 work: .pending(count: 1)),
             .init(
@@ -347,6 +502,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.routeLost],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .pause(.routeUnavailable),
                 work: .pending(count: 1)),
             .init(
@@ -354,6 +510,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.audioInterruptionBegan],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .pause(.audioInterrupted),
                 work: .pending(count: 1)),
             .init(
@@ -361,6 +518,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.callKitReserved],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .pause(.waitingForCallKit),
                 work: .pending(count: 1)),
             .init(
@@ -368,6 +526,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.providerDisconnected],
                 execution: .acceptAndContinue,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .stopAndDiscard(.providerDisconnected),
                 work: .pending(count: 1)),
             .init(
@@ -375,13 +534,23 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.networkDown],
                 execution: .hold,
                 delivery: .holdInOrder,
+                approval: .hold,
                 playback: .stopAndDiscard(.networkUnavailable),
+                work: .pending(count: 1)),
+            .init(
+                name: "media services reset",
+                events: [.mediaServicesReset],
+                execution: .hold,
+                delivery: .holdInOrder,
+                approval: .hold,
+                playback: .stopAndDiscard(.mediaServicesReset),
                 work: .pending(count: 1)),
             .init(
                 name: "mute",
                 events: [.userMuted],
                 execution: .acceptAndContinue,
                 delivery: .deliverInOrder,
+                approval: .allowInteraction,
                 playback: .pause(.toolPending),
                 work: .pending(count: 1)),
             .init(
@@ -389,6 +558,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
                 events: [.userEnded],
                 execution: .cancel,
                 delivery: .suppress,
+                approval: .reject,
                 playback: .stopAndDiscard(.terminal),
                 work: .idle),
         ]
@@ -400,6 +570,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
 
             XCTAssertEqual(reducer.decision.tools.execution, row.execution, row.name)
             XCTAssertEqual(reducer.decision.tools.resultDelivery, row.delivery, row.name)
+            XCTAssertEqual(reducer.decision.tools.approval, row.approval, row.name)
             XCTAssertEqual(reducer.decision.playback, row.playback, row.name)
             XCTAssertEqual(reducer.decision.ui.work, row.work, row.name)
         }
@@ -442,6 +613,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             (.callKitDeactivated, .invalidTransition),
             (.networkUp, .invalidTransition),
             (.providerReconnected, .invalidTransition),
+            (.mediaServicesReady, .invalidTransition),
             (.userUnmuted, .noStateChange),
             (.toolPending(id: ""), .invalidToolIdentifier),
             (.toolCompleted(id: ""), .invalidToolIdentifier),
@@ -501,6 +673,7 @@ final class LiveVoiceLifecycleReducerTests: XCTestCase {
             .callKitReserved, .callKitActivated, .callKitDeactivated,
             .networkDown, .networkUp,
             .providerDisconnected, .providerReconnected,
+            .mediaServicesReset, .mediaServicesReady,
             .userMuted, .userUnmuted, .userEnded,
             .toolPending(id: "invariant-tool"),
             .toolCompleted(id: "invariant-tool"),

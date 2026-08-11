@@ -38,6 +38,7 @@ import MetalKit
 import Speech
 import SoundAnalysis
 import PhotosUI
+import Network
 import os
 
 // MARK: - Gemini Live models + Bengali voice presets
@@ -125,6 +126,13 @@ enum AlmaLiveVoicePreferences {
     static var activeContract: AlmaLiveVoiceContract? {
         guard AlmaLiveVoiceRecoveryFeatures.isEnabled(.phase1BContractV1) else { return nil }
         return bundledContract
+    }
+
+    /// Session semantics are always sourced from the signed app bundle. The
+    /// Phase-1B flag may roll model-selection behavior back, but must never
+    /// create a second instruction/tool contract that can drift from the server.
+    static var canonicalSessionProtocol: AlmaLiveVoiceContract.SessionProtocol? {
+        bundledContract?.sessionProtocol
     }
 
     static var gemini25: String {
@@ -215,6 +223,42 @@ enum AlmaLiveVoicePreferences {
         if let contract = activeContract {
             UserDefaults.standard.set(contract.schemaVersion, forKey: selectionVersionKey)
         }
+    }
+}
+
+struct AlmaLiveVoiceRemoteModelDisableResponse: Decodable, Equatable {
+    let error: String
+    let replacementModel: String?
+    let contractVersion: String
+}
+
+/// Preserves a typed mint/transport failure across the Live session's callback
+/// boundary. In particular, a reconnect-time 503 must reach the engine with its
+/// JSON body intact so the same remote-model replacement path used on first
+/// connect can run.
+struct AlmaLiveVoiceConnectionFailure: @unchecked Sendable {
+    let message: String
+    let underlyingError: Error?
+}
+
+enum AlmaLiveVoiceRemoteReplacementPolicy {
+    static func replacementModelID(
+        for error: Error?,
+        contract: AlmaLiveVoiceContract?
+    ) -> String? {
+        guard let contract,
+              case AlmaAPIError.http(let status, let body)? = error,
+              status == 503,
+              let data = body.data(using: .utf8),
+              let response = try? JSONDecoder().decode(
+                  AlmaLiveVoiceRemoteModelDisableResponse.self,
+                  from: data),
+              response.error == "live_model_remotely_disabled",
+              response.contractVersion == contract.contractVersion,
+              let replacement = response.replacementModel,
+              contract.model(id: replacement) != nil
+        else { return nil }
+        return replacement
     }
 }
 
@@ -504,6 +548,124 @@ struct AlmaLiveVoiceToolInvocation: Equatable {
     }
 }
 
+/// Local execution identity layered on top of the provider's opaque call ID.
+/// Providers may reuse an ID in a later logical Live session; an async result
+/// from session A must never satisfy the same ID/name in session B.
+struct AlmaLiveVoiceToolExecutionToken: Equatable, Sendable {
+    let sessionEpoch: UInt64
+    let callID: String
+    let functionName: String
+
+    static func accepts(
+        _ token: Self,
+        currentSessionEpoch: UInt64,
+        invocation: AlmaLiveVoiceToolInvocation?
+    ) -> Bool {
+        token.sessionEpoch == currentSessionEpoch
+            && invocation?.callID == token.callID
+            && invocation?.functionName == token.functionName
+    }
+}
+
+enum AlmaLiveVoiceToolIntentRoute: Equatable, Sendable {
+    case casual
+    case quickLookup(tool: String)
+    case runAgentTurn(request: String)
+    case endCall
+    case unclassified
+
+    func accepts(_ invocation: AlmaLiveVoiceToolInvocation) -> Bool {
+        switch (self, invocation.payload) {
+        case (.unclassified, _):
+            return true
+        case (.casual, _):
+            return false
+        case (.quickLookup(let expected), .quickLookup(let actual)):
+            return expected == actual
+                && invocation.functionName == AlmaLiveVoiceToolName.quickLookup.rawValue
+        case (.runAgentTurn(let expected), .runAgentTurn(let actual)):
+            return invocation.functionName == AlmaLiveVoiceToolName.runAgentTurn.rawValue
+                && Self.normalized(expected) == Self.normalized(actual)
+        case (.endCall, .endCall):
+            return invocation.functionName == AlmaLiveVoiceToolName.endCall.rawValue
+        default:
+            return false
+        }
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "।,.!?;:\"' "))
+    }
+}
+
+enum AlmaLiveVoiceToolIntentClassifier {
+    static func classify(_ text: String) -> AlmaLiveVoiceToolIntentRoute {
+        let normalized = text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !normalized.isEmpty else { return .unclassified }
+        let hangupMarkers = [
+            "আল্লাহ হাফেজ", "আল্লাহহাফেজ", "খোদা হাফেজ", "ফোন রাখ", "ফোন কাট",
+            "কল রাখ", "কল কাট", "hang up",
+        ]
+        if hangupMarkers.contains(where: normalized.contains) { return .endCall }
+
+        let mutationMarkers = [
+            "তৈরি", "বানাও", "পাঠাও", "পরিবর্তন", "আপডেট", "অনুমোদন কর",
+            "বাতিল কর", "মুছে", "ডিলিট", "পেমেন্ট", "মনে রাখ", "সেভ কর",
+            "create ", "make ", "send ", "change ", "update ", "approve ",
+            "cancel ", "delete ", "pay ", "remember ", "save ",
+        ]
+        if mutationMarkers.contains(where: normalized.contains) {
+            return .runAgentTurn(request: text)
+        }
+
+        let quickRoutes: [(tool: String, markers: [String])] = [
+            ("get_attendance", ["হাজিরা", "attendance"]),
+            ("get_sales_summary", ["বিক্রি", "sales", "sale "]),
+            ("get_orders", ["অর্ডার", "orders", "order status"]),
+            ("get_inventory_status", ["স্টক", "inventory"]),
+            ("get_pending_approvals", ["পেন্ডিং অনুমোদন", "pending approval"]),
+            ("get_prayer_times", ["নামাজের সময়", "prayer time"]),
+            ("get_salah_status", ["নামাজ পড়", "সালাহ", "salah status"]),
+            ("get_dashboard_snapshot", ["ড্যাশবোর্ড", "dashboard snapshot"]),
+        ]
+        if let route = quickRoutes.first(where: { route in
+            route.markers.contains(where: normalized.contains)
+        }) {
+            return .quickLookup(tool: route.tool)
+        }
+
+        let headMarkers = [
+            "রিপোর্ট", "বিশ্লেষণ", "হিসাব কর", "পরিকল্পনা", "তুলনা কর",
+            "report", "analy", "calculate", "plan ", "compare ",
+        ]
+        if headMarkers.contains(where: normalized.contains) {
+            return .runAgentTurn(request: text)
+        }
+
+        let casualMarkers = [
+            "হ্যালো", "সালাম", "কেমন আছ", "ধন্যবাদ", "thank you", "thanks", "hello", "hi ",
+        ]
+        if casualMarkers.contains(where: normalized.contains) { return .casual }
+        return .unclassified
+    }
+}
+
+enum AlmaLiveVoiceToolWorkModePolicy {
+    static func isPending(
+        activeInvocation: Bool,
+        hasOutstandingCalls: Bool
+    ) -> Bool {
+        activeInvocation || hasOutstandingCalls
+    }
+}
+
 /// Pure ordered reducer for one logical Live session. Execution and response
 /// delivery are both FIFO, but backend completion may arrive in any order. A
 /// physical websocket replacement supersedes only its in-flight send ticket;
@@ -570,17 +732,11 @@ struct AlmaLiveVoiceToolLedger: Equatable {
             }
             return .duplicate(replayScheduled: false)
         }
-        if entries.count >= Self.maximumEntries {
-            guard let retiredID = order.first(where: { id in
-                guard let entry = entries[id] else { return true }
-                switch entry.phase {
-                case .delivered, .cancelled: return true
-                default: return false
-                }
-            }) else { return .capacityExceeded }
-            entries.removeValue(forKey: retiredID)
-            order.removeAll { $0 == retiredID }
-        }
+        // Provider IDs are exactly-once identities for the whole logical Live
+        // session. Evicting a delivered/cancelled tombstone at the capacity
+        // boundary allowed the same old ID to execute again. Fail closed for a
+        // new identity instead; duplicates of any seen ID remain replay/no-op.
+        guard entries.count < Self.maximumEntries else { return .capacityExceeded }
         order.append(invocation.callID)
         entries[invocation.callID] = Entry(invocation: invocation, phase: .queued)
         return .accepted
@@ -986,8 +1142,16 @@ enum AlmaLiveVoiceEvidenceEventName: String, Codable, Sendable {
     case audioSendTrackingUnavailable = "input.audio-send-tracking-unavailable"
     case staleSendCompletionIgnored = "input.stale-send-completion-ignored"
     case providerInputTranscriptionObserved = "provider.input-transcription-observed"
+    case providerActivityObserved = "provider.activity-observed"
     case providerModelAudioObserved = "provider.model-audio-observed"
     case toolCallObserved = "tool.call-observed"
+    case toolExecutionStarted = "tool.execution-started"
+    case toolResponseQueued = "tool.response-queued"
+    case toolResponseSendSucceeded = "tool.response-send-succeeded"
+    case toolResultPlaybackStarted = "tool.result-playback-started"
+    case previewAssetResolved = "preview.asset-resolved"
+    case contextCompressionConfigured = "context.compression-configured"
+    case contextCompressionThresholdObserved = "context.compression-threshold-observed"
 }
 
 enum AlmaLiveVoiceEvidenceRouteReason: String, Codable, Sendable {
@@ -1003,20 +1167,27 @@ enum AlmaLiveVoiceEvidenceInputPolicy: UInt8, Hashable, Sendable {
     case listenCalibration = 1
     case listenGateClosed = 2
     case noAECEchoGuard = 3
+    /// Phase-2 reducer path: tail PCM is withheld from the socket only while it
+    /// remains in the bounded FIFO, then drained exactly once.  Keep the legacy
+    /// discarded policy separate so the exported evidence never claims the
+    /// opposite retention behavior.
+    case playbackTailRetained = 4
 
     var bit: UInt8 { 1 << rawValue }
 
     var retention: AlmaLiveVoiceEvidenceInputRetention {
         switch self {
         case .playbackTailSuppression: return .discarded
-        case .listenCalibration, .listenGateClosed, .noAECEchoGuard:
+        case .listenCalibration, .listenGateClosed, .noAECEchoGuard,
+             .playbackTailRetained:
             return .boundedPreRoll
         }
     }
 
     var evidenceReason: AlmaLiveVoiceEvidenceReason {
         switch self {
-        case .playbackTailSuppression: return .playbackTailSuppression
+        case .playbackTailSuppression, .playbackTailRetained:
+            return .playbackTailSuppression
         case .listenCalibration: return .listenCalibration
         case .listenGateClosed: return .listenGateClosed
         case .noAECEchoGuard: return .noAECEchoGuard
@@ -1667,6 +1838,10 @@ struct AlmaLiveVoiceEvidenceEvent: Codable, Equatable, Sendable {
     let retention: AlmaLiveVoiceEvidenceInputRetention?
     let tool: AlmaLiveVoiceEvidenceTool?
     let resumedTransport: Bool?
+    let previewSource: AlmaLiveVoicePreviewEvidenceSource?
+    let contextTriggerTokens: Int?
+    let contextTargetTokens: Int?
+    let observedContextTokens: Int?
 }
 
 struct AlmaLiveVoiceEvidenceReport: Codable, Equatable, Sendable {
@@ -1781,6 +1956,14 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private var staleCompletionGenerations = Set<Int>()
     private var modelAudioStages = Set<ModelStageKey>()
     private var transportEventStages = Set<TransportEventKey>()
+    private var providerActivityGenerations = Set<Int>()
+    private var toolExecutionStages = Set<Int>()
+    private var toolResponseQueuedStages = Set<Int>()
+    private var toolResponseSentStages = Set<Int>()
+    private var toolPlaybackStages = Set<Int>()
+    private var pendingToolResultPlayback: [(ordinal: Int, tool: AlmaLiveVoiceEvidenceTool)] = []
+    private var contextCompressionConfigured = false
+    private var contextCompressionThresholdRecorded = false
 
     init(
         enabled: Bool,
@@ -1809,11 +1992,14 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         voiceID: String,
         callMode: AlmaLiveVoiceEvidenceCallMode
     ) -> String {
-        beginSession(
+        guard enabled else { return "evidence-disabled" }
+        return beginSession(
             modelID: modelID,
             voiceID: voiceID,
             callMode: callMode,
-            localSessionID: Self.makeLocalSessionID())
+            localSessionID: Self.makeLocalSessionID(),
+            previewSource: AlmaLiveVoiceCrossPhaseEvidenceStore.shared
+                .consumePreviewAssetSource())
     }
 
     #if DEBUG
@@ -1822,13 +2008,15 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         modelID: String,
         voiceID: String,
         callMode: AlmaLiveVoiceEvidenceCallMode,
-        fixture: AlmaLiveVoiceEvidenceFixture
+        fixture: AlmaLiveVoiceEvidenceFixture,
+        previewSource: AlmaLiveVoicePreviewEvidenceSource? = nil
     ) -> String {
         beginSession(
             modelID: modelID,
             voiceID: voiceID,
             callMode: callMode,
-            localSessionID: fixture.rawValue)
+            localSessionID: fixture.rawValue,
+            previewSource: previewSource)
     }
     #endif
 
@@ -1836,7 +2024,8 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         modelID: String,
         voiceID: String,
         callMode: AlmaLiveVoiceEvidenceCallMode,
-        localSessionID: String
+        localSessionID: String,
+        previewSource: AlmaLiveVoicePreviewEvidenceSource?
     ) -> String {
         guard enabled else { return "evidence-disabled" }
         lock.lock()
@@ -1880,7 +2069,18 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         staleCompletionGenerations.removeAll(keepingCapacity: true)
         modelAudioStages.removeAll(keepingCapacity: true)
         transportEventStages.removeAll(keepingCapacity: true)
+        providerActivityGenerations.removeAll(keepingCapacity: true)
+        toolExecutionStages.removeAll(keepingCapacity: true)
+        toolResponseQueuedStages.removeAll(keepingCapacity: true)
+        toolResponseSentStages.removeAll(keepingCapacity: true)
+        toolPlaybackStages.removeAll(keepingCapacity: true)
+        pendingToolResultPlayback.removeAll(keepingCapacity: true)
+        contextCompressionConfigured = false
+        contextCompressionThresholdRecorded = false
         appendLocked(name: .sessionStarted)
+        if let previewSource {
+            appendLocked(name: .previewAssetResolved, previewSource: previewSource)
+        }
         let created = localSessionID
         lock.unlock()
         return created
@@ -2414,6 +2614,56 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         lock.unlock()
     }
 
+    func recordProviderActivityObserved(generation: Int) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              providerActivityGenerations.insert(generation).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(name: .providerActivityObserved, turnOrdinal: activeTurnOrdinal)
+        lock.unlock()
+    }
+
+    func recordContextCompressionConfigured(triggerTokens: Int, targetTokens: Int) {
+        guard enabled, triggerTokens > 0, targetTokens > 0,
+              targetTokens < triggerTokens else { return }
+        lock.lock()
+        guard sessionActive, !contextCompressionConfigured else {
+            lock.unlock()
+            return
+        }
+        contextCompressionConfigured = true
+        appendLocked(
+            name: .contextCompressionConfigured,
+            contextTriggerTokens: triggerTokens,
+            contextTargetTokens: targetTokens)
+        lock.unlock()
+    }
+
+    func recordContextCompressionThresholdObserved(
+        observedTokens: Int,
+        triggerTokens: Int,
+        targetTokens: Int
+    ) {
+        guard enabled, observedTokens >= triggerTokens,
+              triggerTokens > targetTokens, targetTokens > 0 else { return }
+        lock.lock()
+        guard sessionActive, contextCompressionConfigured,
+              !contextCompressionThresholdRecorded else {
+            lock.unlock()
+            return
+        }
+        contextCompressionThresholdRecorded = true
+        appendLocked(
+            name: .contextCompressionThresholdObserved,
+            contextTriggerTokens: triggerTokens,
+            contextTargetTokens: targetTokens,
+            observedContextTokens: observedTokens)
+        lock.unlock()
+    }
+
     /// A locally confirmed interruption starts a new owner input turn even if
     /// the provider never delivered `turnComplete` for the interrupted model
     /// audio. The supplied values are the already-observed current mic RMS and
@@ -2474,6 +2724,17 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             name: .providerModelAudioObserved,
             turnOrdinal: activeTurnOrdinal,
             observedUptime: observedUptime)
+        let pendingPlayback = pendingToolResultPlayback
+        pendingToolResultPlayback.removeAll(keepingCapacity: true)
+        for pending in pendingPlayback {
+            if toolPlaybackStages.insert(pending.ordinal).inserted {
+                appendLocked(
+                    name: .toolResultPlaybackStarted,
+                    toolOrdinal: pending.ordinal,
+                    tool: pending.tool,
+                    observedUptime: observedUptime)
+            }
+        }
         activeTurnOrdinal = nil
         if let nextInputWindowID {
             currentInputWindowID = nextInputWindowID
@@ -2507,6 +2768,58 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             tool: tool)
         lock.unlock()
         return ordinal
+    }
+
+    func recordToolExecutionStarted(
+        ordinal: Int,
+        tool: AlmaLiveVoiceEvidenceTool,
+        generation: Int
+    ) {
+        guard enabled, ordinal > 0 else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              toolExecutionStages.insert(ordinal).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(name: .toolExecutionStarted, toolOrdinal: ordinal, tool: tool)
+        lock.unlock()
+    }
+
+    func recordToolResponseQueued(
+        ordinal: Int,
+        tool: AlmaLiveVoiceEvidenceTool,
+        generation: Int
+    ) {
+        guard enabled, ordinal > 0 else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              toolResponseQueuedStages.insert(ordinal).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(name: .toolResponseQueued, toolOrdinal: ordinal, tool: tool)
+        lock.unlock()
+    }
+
+    func recordToolResponseSendSucceeded(
+        ordinal: Int,
+        tool: AlmaLiveVoiceEvidenceTool,
+        generation: Int
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              toolResponseSentStages.insert(ordinal).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(
+            name: .toolResponseSendSucceeded,
+            toolOrdinal: ordinal,
+            tool: tool)
+        pendingToolResultPlayback.append((ordinal, tool))
+        lock.unlock()
     }
 
     func report() -> AlmaLiveVoiceEvidenceReport {
@@ -2610,6 +2923,10 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         retention: AlmaLiveVoiceEvidenceInputRetention? = nil,
         tool: AlmaLiveVoiceEvidenceTool? = nil,
         resumedTransport: Bool? = nil,
+        previewSource: AlmaLiveVoicePreviewEvidenceSource? = nil,
+        contextTriggerTokens: Int? = nil,
+        contextTargetTokens: Int? = nil,
+        observedContextTokens: Int? = nil,
         observedUptime: TimeInterval? = nil
     ) {
         sequence += 1
@@ -2636,7 +2953,11 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             reason: reason,
             retention: retention,
             tool: tool,
-            resumedTransport: resumedTransport)
+            resumedTransport: resumedTransport,
+            previewSource: previewSource,
+            contextTriggerTokens: contextTriggerTokens,
+            contextTargetTokens: contextTargetTokens,
+            observedContextTokens: observedContextTokens)
         events.append(event)
         if events.count > Self.maximumEvents {
             events.removeFirst(events.count - Self.maximumEvents)
@@ -2898,10 +3219,17 @@ final class AlmaVoiceEngine {
             observation.sourceToken,
             currentToken: callKitLifecycleToken,
             isClosed: closed) else { return }
-        guard acceptsLifecycleEffect(.callKitActivated) else { return }
+        let transition: AlmaLiveVoiceLifecycleReducer.Transition?
+        if lifecycleReducerEnabled {
+            transition = reduceLifecycle(.callKitActivated)
+            guard transition?.mayApplyEffects == true else { return }
+        } else {
+            transition = nil
+        }
         live.callKitAudioActivated(
             lifecycleEvidenceContext: observation.evidenceContext,
             lifecycleEvidenceSubmittedAtSource: observation.evidenceSubmittedAtSource)
+        if let transition { _ = applyLifecycleTransition(transition) }
     }
 
     func callKitAudioDeactivated(_ observation: AlmaLiveVoiceLifecycleObservation) {
@@ -2909,10 +3237,17 @@ final class AlmaVoiceEngine {
             observation.sourceToken,
             currentToken: callKitLifecycleToken,
             isClosed: closed) else { return }
-        guard acceptsLifecycleEffect(.callKitDeactivated) else { return }
+        let transition: AlmaLiveVoiceLifecycleReducer.Transition?
+        if lifecycleReducerEnabled {
+            transition = reduceLifecycle(.callKitDeactivated)
+            guard transition?.mayApplyEffects == true else { return }
+        } else {
+            transition = nil
+        }
         live.callKitAudioDeactivated(
             lifecycleEvidenceContext: observation.evidenceContext,
             lifecycleEvidenceSubmittedAtSource: observation.evidenceSubmittedAtSource)
+        if let transition { _ = applyLifecycleTransition(transition) }
     }
 
     /// CallKit activates the category that exists when CXAnswerCallAction is
@@ -3032,12 +3367,24 @@ final class AlmaVoiceEngine {
     private var liveSessionHasStarted = false
     private var liveToolTurnPending = false
     private var activeLiveToolInvocation: AlmaLiveVoiceToolInvocation?
+    private var activeLiveToolExecutionToken: AlmaLiveVoiceToolExecutionToken?
+    private var expectedLiveToolRoute = AlmaLiveVoiceToolIntentRoute.unclassified
+    private var liveToolSessionEpoch: UInt64 = 0
     private var quickLookupTask: Task<Void, Never>?
 
     /// Never advertise realtime until the Gemini socket has actually completed its
     /// setup handshake. AI Call does not silently downgrade to normal STT/TTS: a
     /// failure is shown honestly, retried, and then left recoverable via one button.
     var transportBadgeText: String {
+        if callConnection == .failed { return "সংযোগ হয়নি" }
+        if lifecycleReducerEnabled, let truth = lifecycleUITruth {
+            switch truth.session {
+            case .ready: break
+            case .reconnecting: return "পুনঃসংযোগ"
+            case .suspended: return "অডিও বিরত"
+            case .ended: return "কল শেষ"
+            }
+        }
         switch callConnection {
         case .idle, .connecting: return "সংযোগ হচ্ছে"
         case .live: return "রিয়েলটাইম"
@@ -3046,10 +3393,40 @@ final class AlmaVoiceEngine {
         }
     }
 
-    var transportReady: Bool { callConnection == .live }
+    var transportReady: Bool {
+        guard lifecycleReducerEnabled, let truth = lifecycleUITruth else {
+            return callConnection == .live
+        }
+        return callConnection == .live && truth.session == .ready
+    }
     var isCallRunning: Bool { callConnection != .idle }
 
     var visibleStatusText: String {
+        if callConnection == .failed { return "কলটি সংযুক্ত হয়নি" }
+        if lifecycleReducerEnabled, let truth = lifecycleUITruth {
+            switch truth.session {
+            case .ready:
+                break
+            case .reconnecting(.networkUnavailable):
+                return "ইন্টারনেট সংযোগের অপেক্ষায়…"
+            case .reconnecting:
+                return "সংযোগ ফিরিয়ে আনা হচ্ছে…"
+            case .suspended(.mediaServicesReset):
+                return "অডিও সেবা নিরাপদে পুনরায় প্রস্তুত হচ্ছে…"
+            case .suspended(.audioInterrupted):
+                return "অন্য অডিও শেষ হওয়ার অপেক্ষায়…"
+            case .suspended(.waitingForCallKit):
+                return "কলের অডিও সক্রিয় হওয়ার অপেক্ষায়…"
+            case .suspended(.routeUnavailable):
+                return "অডিও ডিভাইসের অপেক্ষায়…"
+            case .suspended(.deviceLocked), .suspended(.background):
+                return "কলের অডিও সাময়িকভাবে বিরত"
+            case .suspended:
+                return "কলের অডিও সাময়িকভাবে বিরত"
+            case .ended:
+                return "কল শেষ হয়েছে"
+            }
+        }
         switch callConnection {
         case .idle, .connecting: return "নিরাপদ লাইভ সংযোগ তৈরি হচ্ছে…"
         case .reconnecting: return "সংযোগ ফিরিয়ে আনা হচ্ছে…"
@@ -3063,6 +3440,7 @@ final class AlmaVoiceEngine {
     }
 
     func callElapsedText(at now: Date) -> String {
+        if lifecycleReducerEnabled, lifecycleTimerPolicy == .stop { return "00:00" }
         guard let callStartedAt else { return "00:00" }
         let seconds = max(0, Int(now.timeIntervalSince(callStartedAt)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
@@ -3096,6 +3474,14 @@ final class AlmaVoiceEngine {
     private var lifecycleBehaviorEpoch = 0
     private var lifecycleReducerEnabled = false
     private var lifecycleReducer: AlmaLiveVoiceLifecycleReducer?
+    private let lifecycleEffectsAdapter = AlmaLiveVoiceLifecycleReducer.EffectsAdapter()
+    private var lifecycleUITruth: AlmaLiveVoiceLifecycleReducer.UITruth?
+    private var lifecycleTimerPolicy: AlmaLiveVoiceLifecycleReducer.EffectsAdapter.Timer = .stop
+    private var lifecycleApprovalPolicy: AlmaLiveVoiceLifecycleReducer.ToolPolicy.Approval = .reject
+    private var lifecycleAppliedPlayback: AlmaLiveVoiceLifecycleReducer.PlaybackPolicy?
+    @ObservationIgnored
+    private var lifecyclePathMonitor: NWPathMonitor?
+    private var lifecycleObservedNetworkDown = false
     private var callKitLifecycleToken: AlmaLiveVoiceLifecycleSourceToken?
     /// A system call may preempt standalone Live Voice on PushKit's reporting
     /// deadline. Evidence queues are drained only by the post-report teardown
@@ -3240,9 +3626,17 @@ final class AlmaVoiceEngine {
                 _ = reducer.reduce(.init(generation: generation, event: .deviceLocked))
             }
             lifecycleReducer = reducer
+            lifecycleUITruth = reducer.decision.ui
+            lifecycleTimerPolicy = reducer.decision.ui.isTimerRunning ? .run : .stop
+            lifecycleApprovalPolicy = reducer.decision.tools.approval
+            lifecycleAppliedPlayback = reducer.decision.playback
         } else {
             lifecycleReducerEnabled = false
             lifecycleReducer = nil
+            lifecycleUITruth = nil
+            lifecycleTimerPolicy = .stop
+            lifecycleApprovalPolicy = .reject
+            lifecycleAppliedPlayback = nil
         }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         agentBriefSent = false
@@ -3268,6 +3662,11 @@ final class AlmaVoiceEngine {
             modelID: savedProfile.modelID,
             voiceID: savedProfile.voiceID,
             callMode: callKitManaged ? .callKit : .standalone)
+        if let compression = AlmaLiveVoicePreferences.activeContract?.contextCompression {
+            recoveryEvidence.recordContextCompressionConfigured(
+                triggerTokens: compression.triggerTokens,
+                targetTokens: compression.targetTokens)
+        }
         live.beginEvidenceSession()
         if let activeAgentCallId, !activeAgentCallId.isEmpty {
             liveUsageCallID = activeAgentCallId.lowercased()
@@ -3276,6 +3675,10 @@ final class AlmaVoiceEngine {
         }
         live.beginUsageSession(callID: liveUsageCallID)
         startLiveBudgetMonitor()
+        liveToolSessionEpoch &+= 1
+        if liveToolSessionEpoch == 0 { liveToolSessionEpoch = 1 }
+        activeLiveToolExecutionToken = nil
+        expectedLiveToolRoute = .unclassified
         live.beginToolOrchestrationSession(
             enabled: AlmaLiveVoiceRecoveryFeatures.isEnabled(.toolOrchestrationV1))
         if callKitManaged {
@@ -3296,6 +3699,7 @@ final class AlmaVoiceEngine {
         // almaVoiceEndRequested (AlmaVoiceEndIntent runs in this process).
         liveActivity.engine = self
         liveActivity.start()
+        if let lifecycleUITruth { liveActivity.applyLifecycle(lifecycleUITruth) }
         if liveActivityEndObserver == nil {
             let liveActivitySourceBehaviorEpoch = lifecycleBehaviorEpoch
             liveActivityEndObserver = NotificationCenter.default.addObserver(
@@ -3326,7 +3730,7 @@ final class AlmaVoiceEngine {
                     .appBackgrounded,
                     context: context)
                 Task { @MainActor in
-                    _ = self?.reduceLifecycle(
+                    _ = self?.applyLifecycleEvent(
                         .appBackgrounded,
                         expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
                 }
@@ -3341,10 +3745,11 @@ final class AlmaVoiceEngine {
                     context: context)
                 Task { @MainActor in
                     guard let self else { return }
-                    let transition = self.reduceLifecycle(
-                        .appForegrounded,
-                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
-                    if self.lifecycleAllowsMediaRecovery(transition) {
+                    if self.lifecycleReducerEnabled {
+                        _ = self.applyLifecycleEvent(
+                            .appForegrounded,
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    } else {
                         self.recoverAudio(
                             "foreground",
                             expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
@@ -3366,7 +3771,7 @@ final class AlmaVoiceEngine {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
-                    _ = self?.reduceLifecycle(
+                    _ = self?.applyLifecycleEvent(
                         .deviceLocked,
                         expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
                 }
@@ -3378,10 +3783,11 @@ final class AlmaVoiceEngine {
             ) { [weak self] _ in
                 Task { @MainActor in
                     guard let self else { return }
-                    let transition = self.reduceLifecycle(
-                        .deviceUnlocked,
-                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
-                    if self.lifecycleAllowsMediaRecovery(transition) {
+                    if self.lifecycleReducerEnabled {
+                        _ = self.applyLifecycleEvent(
+                            .deviceUnlocked,
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    } else {
                         self.recoverAudio(
                             "device-unlocked",
                             expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
@@ -3414,9 +3820,16 @@ final class AlmaVoiceEngine {
                     .mediaServicesReset,
                     context: context)
                 Task { @MainActor in
-                    self?.recoverAudio(
-                        "mediaReset",
-                        expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    guard let self else { return }
+                    if self.lifecycleReducerEnabled {
+                        _ = self.applyLifecycleEvent(
+                            .mediaServicesReset,
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    } else {
+                        self.recoverAudio(
+                            "mediaReset",
+                            expectedLifecycleEpoch: lifecycleSourceBehaviorEpoch)
+                    }
                 }
             })
             recoveryObservers.append(nc.addObserver(
@@ -3436,6 +3849,7 @@ final class AlmaVoiceEngine {
             })
             #endif
         }
+        startLifecyclePathMonitoring(expectedLifecycleEpoch: lifecycleBehaviorEpoch)
         let micPermissionBehaviorEpoch = lifecycleBehaviorEpoch
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
@@ -3480,7 +3894,7 @@ final class AlmaVoiceEngine {
     /// Authentication errors stop immediately because retrying cannot repair them.
     private func startLiveConnection(resetAttempts: Bool) {
         guard !closed, acceptsCallAudioMediaMutation() else { return }
-        _ = reduceLifecycle(.providerDisconnected)
+        _ = applyLifecycleEvent(.providerDisconnected)
         if resetAttempts { liveConnectAttempt = 0 }
         liveConnectTask?.cancel()
         connectionGeneration += 1
@@ -3500,7 +3914,7 @@ final class AlmaVoiceEngine {
         ttsLevel = 0
         state = .idle
         callConnection = hasEverConnected || liveConnectAttempt > 0 ? .reconnecting : .connecting
-        live.setInputMuted(isMuted)
+        live.setInputMuted(effectiveLiveInputMuted)
         try? live.setSpeakerEnabled(speakerOn)
 
         liveConnectTask = Task { [weak self] in
@@ -3553,6 +3967,27 @@ final class AlmaVoiceEngine {
         micLevel = 0
         ttsLevel = 0
 
+        if let replacementModelID = AlmaLiveVoiceRemoteReplacementPolicy
+            .replacementModelID(
+                for: error,
+                contract: AlmaLiveVoicePreferences.activeContract),
+           replacementModelID != currentConnectionProfile.modelID
+        {
+            let replacement = AlmaLiveVoiceProfile(
+                modelID: replacementModelID,
+                voiceID: currentConnectionProfile.voiceID)
+            AlmaLiveVoicePreferences.save(
+                modelID: replacement.modelID,
+                voiceID: replacement.voiceID)
+            currentConnectionProfile = replacement
+            liveProfileTransaction.resetForNewCall(saved: replacement)
+            liveProfileStatusText = "এই Live model বন্ধ হয়েছে—নিরাপদ replacement চালু হচ্ছে…"
+            feedStatus(liveProfileStatusText)
+            liveConnectAttempt = 0
+            startLiveConnection(resetAttempts: true)
+            return
+        }
+
         let isAuthenticationFailure: Bool = {
             guard let apiError = error as? AlmaAPIError else { return false }
             if case .notAuthenticated = apiError { return true }
@@ -3568,6 +4003,7 @@ final class AlmaVoiceEngine {
             errorToast = connectionFailureText
             callConnection = .failed
             state = .error
+            liveActivity.stateChanged()
             failActiveAgentCallTerminally("live authentication failed")
             return
         }
@@ -3598,6 +4034,7 @@ final class AlmaVoiceEngine {
         errorToast = connectionFailureText
         callConnection = .failed
         state = .error
+        liveActivity.stateChanged()
         // Agent call on a real device: send the reason to the server so it is
         // diagnosable without a console (TestFlight builds log nowhere).
         if activeAgentCallId != nil {
@@ -3642,8 +4079,12 @@ final class AlmaVoiceEngine {
 
     func setMuted(_ muted: Bool) {
         guard acceptsLifecycleEffect(muted ? .userMuted : .userUnmuted) else { return }
+        if lifecycleReducerEnabled {
+            if muted { micLevel = 0 }
+            return
+        }
         isMuted = muted
-        live.setInputMuted(muted)
+        live.setInputMuted(effectiveLiveInputMuted)
         if muted { micLevel = 0 }
         liveActivity.stateChanged()
     }
@@ -3697,7 +4138,8 @@ final class AlmaVoiceEngine {
 
     private func end(waitForAudioTeardown: Bool) {
         guard !closed else { return }
-        _ = reduceLifecycle(.userEnded)
+        _ = applyLifecycleEvent(.userEnded)
+        stopLifecyclePathMonitoring()
         let standaloneAdmissionToken = callKitManaged ? nil : callAudioAdmissionToken
         if let standaloneAdmissionToken {
             _ = AlmaCallAudioAdmission.shared.beginTeardown(standaloneAdmissionToken)
@@ -3766,6 +4208,8 @@ final class AlmaVoiceEngine {
         turnTask?.cancel(); turnTask = nil
         quickLookupTask?.cancel(); quickLookupTask = nil
         livePollTask?.cancel(); livePollTask = nil
+        let canceledLiveTurnID = liveTurnId
+        liveTurnId = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
@@ -3813,10 +4257,19 @@ final class AlmaVoiceEngine {
         connectionFailureText = ""
         callStartedAt = nil
         isMuted = false
+        lifecycleUITruth = nil
+        lifecycleTimerPolicy = .stop
+        lifecycleApprovalPolicy = .reject
+        lifecycleAppliedPlayback = nil
         speakerOn = true
         UIDevice.current.isProximityMonitoringEnabled = false
         liveToolTurnPending = false
         activeLiveToolInvocation = nil
+        activeLiveToolExecutionToken = nil
+        expectedLiveToolRoute = .unclassified
+        liveToolSessionEpoch &+= 1
+        if liveToolSessionEpoch == 0 { liveToolSessionEpoch = 1 }
+        if let canceledLiveTurnID { requestBackendLiveTurnCancellation(canceledLiveTurnID) }
         state = .idle
         if let standaloneAdmissionToken {
             AlmaCallAudioAdmission.shared.release(standaloneAdmissionToken)
@@ -3890,6 +4343,51 @@ final class AlmaVoiceEngine {
         tr("keepAlive off")
     }
 
+    private func startLifecyclePathMonitoring(expectedLifecycleEpoch: Int) {
+        lifecyclePathMonitor?.cancel()
+        lifecyclePathMonitor = nil
+        lifecycleObservedNetworkDown = false
+        guard lifecycleReducerEnabled else { return }
+
+        let monitor = NWPathMonitor()
+        lifecyclePathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self, weak monitor] path in
+            guard monitor != nil else { return }
+            let isAvailable = path.status == .satisfied
+            Task { @MainActor in
+                guard let self, let monitor,
+                      self.lifecyclePathMonitor === monitor,
+                      AlmaLiveVoiceLifecycleSessionFence.acceptsBehaviorEpoch(
+                        expectedLifecycleEpoch,
+                        currentEpoch: self.lifecycleBehaviorEpoch,
+                        isClosed: self.closed)
+                else { return }
+
+                if isAvailable {
+                    guard self.lifecycleObservedNetworkDown else { return }
+                    self.lifecycleObservedNetworkDown = false
+                    _ = self.applyLifecycleEvent(
+                        .networkUp,
+                        expectedLifecycleEpoch: expectedLifecycleEpoch)
+                } else {
+                    guard !self.lifecycleObservedNetworkDown else { return }
+                    self.lifecycleObservedNetworkDown = true
+                    _ = self.applyLifecycleEvent(
+                        .networkDown,
+                        expectedLifecycleEpoch: expectedLifecycleEpoch)
+                }
+            }
+        }
+        monitor.start(queue: DispatchQueue(
+            label: "com.almatraders.erp.live-voice.lifecycle-network"))
+    }
+
+    private func stopLifecyclePathMonitoring() {
+        lifecyclePathMonitor?.cancel()
+        lifecyclePathMonitor = nil
+        lifecycleObservedNetworkDown = false
+    }
+
     /// All lifecycle callbacks enter the pure reducer with the logical call
     /// epoch captured at their source. Rollback restores the pre-reducer path.
     @discardableResult
@@ -3911,17 +4409,115 @@ final class AlmaVoiceEngine {
         expectedLifecycleEpoch: Int? = nil
     ) -> Bool {
         guard lifecycleReducerEnabled else { return true }
-        return reduceLifecycle(
+        guard let transition = reduceLifecycle(
             event,
-            expectedLifecycleEpoch: expectedLifecycleEpoch)?.mayApplyEffects == true
+            expectedLifecycleEpoch: expectedLifecycleEpoch)
+        else { return false }
+        return applyLifecycleTransition(transition)
     }
 
-    private func lifecycleAllowsMediaRecovery(
-        _ transition: AlmaLiveVoiceLifecycleReducer.Transition?
+    private var effectiveLiveInputMuted: Bool {
+        guard lifecycleReducerEnabled, let decision = lifecycleReducer?.decision else {
+            return isMuted
+        }
+        return isMuted || decision.microphone != .stream
+    }
+
+    var lifecycleAllowsApprovalInteraction: Bool {
+        !lifecycleReducerEnabled || lifecycleApprovalPolicy == .allowInteraction
+    }
+
+    @discardableResult
+    private func applyLifecycleEvent(
+        _ event: AlmaLiveVoiceLifecycleReducer.Event,
+        expectedLifecycleEpoch: Int? = nil
     ) -> Bool {
         guard lifecycleReducerEnabled else { return true }
-        return transition?.mayApplyEffects == true
-            && transition?.decision.ui.session == .ready
+        guard let transition = reduceLifecycle(
+            event,
+            expectedLifecycleEpoch: expectedLifecycleEpoch)
+        else { return false }
+        return applyLifecycleTransition(transition)
+    }
+
+    /// The only production consumer of reducer output. It applies the complete
+    /// steady-state plan after rechecking the logical call generation. OS,
+    /// provider, network, tool, UI/timer, and ActivityKit callbacks all converge
+    /// here; a rejected transition has no path to a side effect.
+    @discardableResult
+    private func applyLifecycleTransition(
+        _ transition: AlmaLiveVoiceLifecycleReducer.Transition
+    ) -> Bool {
+        guard let plan = lifecycleEffectsAdapter.plan(for: transition),
+              let currentGeneration = UInt64(exactly: lifecycleBehaviorEpoch),
+              plan.generation == currentGeneration,
+              !closed || plan.eventKind == .userEnded
+        else { return false }
+
+        let priorPlayback = lifecycleAppliedPlayback
+        lifecycleUITruth = plan.ui
+        lifecycleTimerPolicy = plan.timer
+        lifecycleApprovalPolicy = plan.tools.approval
+        isMuted = plan.ui.isMuted
+
+        live.setInputMuted(plan.microphone != .stream || plan.ui.isMuted)
+        live.setLifecycleToolResultsHeld(
+            plan.tools.resultDelivery != .deliverInOrder)
+
+        if priorPlayback != plan.playback {
+            live.applyLifecyclePlaybackPolicy(
+                plan.playback,
+                engineConnectionGeneration: connectionGeneration)
+            lifecycleAppliedPlayback = plan.playback
+        }
+
+        switch plan.ui.session {
+        case .ready:
+            keepAlive?.play()
+            switch plan.ui.work {
+            case .pending:
+                if state != .speaking { state = .thinking }
+            case .idle:
+                if liveActive, state == .idle || state == .error {
+                    state = .listening
+                }
+            }
+        case .reconnecting, .suspended:
+            keepAlive?.pause()
+            micLevel = 0
+            ttsLevel = 0
+            if case .pending = plan.ui.work {
+                if state != .speaking { state = .thinking }
+            } else {
+                state = .idle
+            }
+        case .ended:
+            keepAliveStop()
+            micLevel = 0
+            ttsLevel = 0
+            state = .idle
+        }
+
+        switch plan.liveActivity {
+        case .update(let truth):
+            liveActivity.applyLifecycle(truth)
+        case .end:
+            liveActivity.end()
+        }
+
+        switch plan.recovery {
+        case .none:
+            break
+        case .reconnectCurrentGeneration:
+            guard liveSessionHasStarted else { break }
+            _ = live.requestLifecycleReconnect(
+                engineConnectionGeneration: connectionGeneration)
+        case .rebuildAfterMediaServicesReset:
+            guard liveSessionHasStarted else { break }
+            live.recordLifecycleEvidence(.fullRestartScheduled)
+            startLiveConnection(resetAttempts: true)
+        }
+        return true
     }
 
     /// Post-background / post-interruption self-heal: reactivate the session and
@@ -3937,6 +4533,9 @@ final class AlmaVoiceEngine {
                 isClosed: closed) else { return }
         }
         guard !closed else { return }
+        if lifecycleReducerEnabled {
+            guard lifecycleUITruth?.session == .ready else { return }
+        }
         if liveActive {
             live.recoverAudio()
             tr("recoverAudio live(\(why))")
@@ -3963,14 +4562,16 @@ final class AlmaVoiceEngine {
             expectedLifecycleEpoch,
             currentEpoch: lifecycleBehaviorEpoch,
             isClosed: closed) else { return }
-        let transition = reduceLifecycle(
-            began ? .audioInterruptionBegan : .audioInterruptionEnded,
-            expectedLifecycleEpoch: expectedLifecycleEpoch)
-        if lifecycleReducerEnabled, transition?.mayApplyEffects != true { return }
-        if began {
+        if lifecycleReducerEnabled {
+            guard applyLifecycleEvent(
+                began ? .audioInterruptionBegan : .audioInterruptionEnded,
+                expectedLifecycleEpoch: expectedLifecycleEpoch)
+            else { return }
+            if began { tr("audio INTERRUPTED") }
+        } else if began {
             tr("audio INTERRUPTED")
             keepAlive?.pause()
-        } else if lifecycleAllowsMediaRecovery(transition) {
+        } else {
             recoverAudio("interruption-ended")
             keepAlive?.play()
         }
@@ -3986,6 +4587,9 @@ final class AlmaVoiceEngine {
                 isClosed: closed) else { return }
         }
         guard !closed else { return }
+        if lifecycleReducerEnabled {
+            guard lifecycleUITruth?.session == .ready else { return }
+        }
         if liveActive {
             if state == .speaking { live.interruptPlayback() }
             return
@@ -4630,7 +5234,6 @@ final class AlmaVoiceEngine {
             live.stop()
             return
         }
-        _ = reduceLifecycle(.providerReconnected)
         switch profilePhase {
         case .applying:
             liveProfileStatusText = "যাচাই সফল—নতুন profile এই কলে সক্রিয়।"
@@ -4650,11 +5253,18 @@ final class AlmaVoiceEngine {
         hasEverConnected = true
         liveConnectAttempt = 0
         if callStartedAt == nil { callStartedAt = Date() }
-        live.setInputMuted(isMuted)
+        live.setInputMuted(effectiveLiveInputMuted)
         try? live.setSpeakerEnabled(speakerOn)
         wake.stop()
         state = liveToolTurnPending ? .thinking : .listening
         keepAliveStart()
+        _ = applyLifecycleEvent(.providerReconnected)
+        if lifecycleReducer?.state.mediaServices == .awaitingExplicitRecovery {
+            // `liveDidConnect` is emitted only after provider setup and the audio
+            // graph have both completed. This is the sole production signal that
+            // may reopen media after Core Audio invalidated the prior graph.
+            _ = applyLifecycleEvent(.mediaServicesReady)
+        }
         // Agent call route diagnostics. Do not force a CallKit-managed receiver
         // back to speaker: receiver-first is intentional and leaves the locked
         // system Speaker button in control of the route.
@@ -4706,18 +5316,18 @@ final class AlmaVoiceEngine {
         } else {
             routeEvent = .routeChanged(.otherUsable)
         }
-        _ = reduceLifecycle(routeEvent)
         speakerOn = speaker
+        _ = applyLifecycleEvent(routeEvent)
         UIDevice.current.isProximityMonitoringEnabled = callConnection == .live && receiver
     }
 
     func liveWillReconnect() {
         guard !closed else { return }
-        _ = reduceLifecycle(.providerDisconnected)
         liveActive = false
         sessionReady = false
         callConnection = .reconnecting
         state = liveToolTurnPending ? .thinking : .idle
+        _ = applyLifecycleEvent(.providerDisconnected)
     }
 
     #if DEBUG
@@ -4824,7 +5434,10 @@ final class AlmaVoiceEngine {
             scheduleModelRequestedEnd(hardFallback: 20)
         }
         if state != .speaking { state = .listening }
-        if finalized { feedFinalizeUser() }
+        if finalized {
+            expectedLiveToolRoute = AlmaLiveVoiceToolIntentClassifier.classify(transcript)
+            feedFinalizeUser()
+        }
     }
 
     /// BROAD corroboration signal (weaker than hangupIntent): any word family a
@@ -4893,7 +5506,9 @@ final class AlmaVoiceEngine {
                 }
             }
             feedFinalizeAgent()         // agent turn ended — next reply is a new line
-            liveToolTurnPending = activeLiveToolInvocation != nil || live.hasOutstandingToolCalls
+            liveToolTurnPending = AlmaLiveVoiceToolWorkModePolicy.isPending(
+                activeInvocation: activeLiveToolInvocation != nil,
+                hasOutstandingCalls: live.hasOutstandingToolCalls)
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
             #if DEBUG
             debugInjectNextQueuedTurnAfterPlayback()
@@ -4915,11 +5530,17 @@ final class AlmaVoiceEngine {
     private func deliverLiveToolResult(
         callId: String,
         functionName: String,
-        text: String
+        text: String,
+        executionToken: AlmaLiveVoiceToolExecutionToken
     ) {
-        guard let activeLiveToolInvocation,
-              activeLiveToolInvocation.callID == callId,
-              activeLiveToolInvocation.functionName == functionName else { return }
+        guard executionToken.callID == callId,
+              executionToken.functionName == functionName,
+              activeLiveToolExecutionToken == executionToken,
+              AlmaLiveVoiceToolExecutionToken.accepts(
+                executionToken,
+                currentSessionEpoch: liveToolSessionEpoch,
+                invocation: activeLiveToolInvocation)
+        else { return }
         let delivered: Bool
         if live.usesToolOrchestration {
             delivered = live.completeToolCall(
@@ -4931,11 +5552,14 @@ final class AlmaVoiceEngine {
             delivered = true
         }
         guard delivered else { return }
-        _ = reduceLifecycle(.toolCompleted(id: callId))
+        _ = applyLifecycleEvent(.toolCompleted(id: callId))
         self.activeLiveToolInvocation = nil
-        liveToolTurnPending = false
+        self.activeLiveToolExecutionToken = nil
+        liveToolTurnPending = AlmaLiveVoiceToolWorkModePolicy.isPending(
+            activeInvocation: false,
+            hasOutstandingCalls: live.hasOutstandingToolCalls)
         liveStatusNudgeTask?.cancel()
-        if state == .thinking { state = .listening }
+        if state == .thinking, !liveToolTurnPending { state = .listening }
     }
 
     func liveWasInterrupted() {
@@ -4989,55 +5613,96 @@ final class AlmaVoiceEngine {
         }
     }
 
-    func liveDidFail(_ message: String) {
+    func liveDidFail(_ failure: AlmaLiveVoiceConnectionFailure) {
         guard !closed else { return }
-        liveConnectionFailed(error: nil, message: message)
+        liveConnectionFailed(
+            error: failure.underlyingError,
+            message: failure.message)
     }
 
     func handleLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) {
+        guard expectedLiveToolRoute.accepts(invocation) else {
+            // The provider may speak an acknowledgement and then choose a tool
+            // that contradicts the deterministic transcript route. Never execute
+            // that backend work. Complete the exact provider call with a bounded
+            // refusal so its synchronous tool turn cannot remain wedged.
+            guard let executionToken = beginLiveToolInvocation(invocation) else { return }
+            deliverLiveToolResult(
+                callId: invocation.callID,
+                functionName: invocation.functionName,
+                text: "অনুরোধটির নির্ধারিত tool route-এর সঙ্গে এই call মেলেনি; কোনো backend কাজ চালানো হয়নি।",
+                executionToken: executionToken)
+            return
+        }
         switch invocation.payload {
         case .quickLookup(let tool):
             runQuickLookup(tool: tool, callId: invocation.callID)
         case .runAgentTurn(let request):
             runLiveAgentTurn(request: request, callId: invocation.callID)
         case .endCall:
-            guard beginLiveToolInvocation(invocation) else { return }
+            guard let executionToken = beginLiveToolInvocation(invocation) else { return }
             let result = approveModelRequestedEnd()
                 ? "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।"
                 : "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।"
             deliverLiveToolResult(
                 callId: invocation.callID,
                 functionName: invocation.functionName,
-                text: result)
+                text: result,
+                executionToken: executionToken)
         case .malformed:
-            guard beginLiveToolInvocation(invocation) else { return }
+            guard let executionToken = beginLiveToolInvocation(invocation) else { return }
             deliverLiveToolResult(
                 callId: invocation.callID,
                 functionName: invocation.functionName,
-                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।")
+                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।",
+                executionToken: executionToken)
         case .unsupported:
-            guard beginLiveToolInvocation(invocation) else { return }
+            guard let executionToken = beginLiveToolInvocation(invocation) else { return }
             deliverLiveToolResult(
                 callId: invocation.callID,
                 functionName: invocation.functionName,
-                text: "এই function এই client সমর্থন করে না।")
+                text: "এই function এই client সমর্থন করে না।",
+                executionToken: executionToken)
         }
     }
 
     func cancelLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) {
         guard activeLiveToolInvocation?.callID == invocation.callID,
-              activeLiveToolInvocation?.functionName == invocation.functionName else { return }
+              activeLiveToolInvocation?.functionName == invocation.functionName,
+              let executionToken = activeLiveToolExecutionToken,
+              AlmaLiveVoiceToolExecutionToken.accepts(
+                executionToken,
+                currentSessionEpoch: liveToolSessionEpoch,
+                invocation: activeLiveToolInvocation)
+        else { return }
         quickLookupTask?.cancel(); quickLookupTask = nil
         turnTask?.cancel(); turnTask = nil
         livePollTask?.cancel(); livePollTask = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
-        _ = reduceLifecycle(.toolCompleted(id: invocation.callID))
+        let canceledTurnID = liveTurnId
+        liveTurnId = nil
+        _ = applyLifecycleEvent(.toolCompleted(id: invocation.callID))
         activeLiveToolInvocation = nil
+        activeLiveToolExecutionToken = nil
         liveToolTurnPending = false
         if state == .thinking { state = liveActive ? .listening : .idle }
+        if let canceledTurnID { requestBackendLiveTurnCancellation(canceledTurnID) }
     }
 
-    private func beginLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) -> Bool {
+    private func requestBackendLiveTurnCancellation(_ turnID: String) {
+        guard !turnID.isEmpty else { return }
+        Task {
+            struct CancelResponse: Decodable { let ok: Bool? }
+            await AlmaAPI.shared.syncCookies()
+            let _: CancelResponse? = try? await AlmaAPI.shared.send(
+                "POST",
+                "/api/assistant/turn/\(turnID)/cancel")
+        }
+    }
+
+    private func beginLiveToolInvocation(
+        _ invocation: AlmaLiveVoiceToolInvocation
+    ) -> AlmaLiveVoiceToolExecutionToken? {
         guard activeLiveToolInvocation == nil else {
             if !live.usesToolOrchestration {
                 live.sendToolResponse(
@@ -5045,18 +5710,32 @@ final class AlmaVoiceEngine {
                     result: "আগের কাজটি এখনো চলছে; নতুন করে কিছু শুরু করা হয়নি।",
                     name: invocation.functionName)
             }
-            return false
+            return nil
         }
-        guard acceptsLifecycleEffect(.toolPending(id: invocation.callID)) else { return false }
+        guard acceptsLifecycleEffect(.toolPending(id: invocation.callID)) else { return nil }
+        let executionToken = AlmaLiveVoiceToolExecutionToken(
+            sessionEpoch: liveToolSessionEpoch,
+            callID: invocation.callID,
+            functionName: invocation.functionName)
         activeLiveToolInvocation = invocation
+        activeLiveToolExecutionToken = executionToken
         liveToolTurnPending = true
         state = .thinking
-        return true
+        return executionToken
     }
 
-    private func isActiveLiveTool(callID: String, functionName: String) -> Bool {
-        activeLiveToolInvocation?.callID == callID
-            && activeLiveToolInvocation?.functionName == functionName
+    private func isActiveLiveTool(
+        callID: String,
+        functionName: String,
+        executionToken: AlmaLiveVoiceToolExecutionToken
+    ) -> Bool {
+        executionToken.callID == callID
+            && executionToken.functionName == functionName
+            && activeLiveToolExecutionToken == executionToken
+            && AlmaLiveVoiceToolExecutionToken.accepts(
+                executionToken,
+                currentSessionEpoch: liveToolSessionEpoch,
+                invocation: activeLiveToolInvocation)
     }
 
     /// FAST LANE (owner spec 2026-07-23): simple read-only lookups skip the head
@@ -5067,12 +5746,13 @@ final class AlmaVoiceEngine {
             callID: callId,
             functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
             payload: tool.isEmpty ? .malformed : .quickLookup(tool: tool))
-        guard beginLiveToolInvocation(invocation) else { return }
+        guard let executionToken = beginLiveToolInvocation(invocation) else { return }
         guard !tool.isEmpty else {
             deliverLiveToolResult(
                 callId: callId,
                 functionName: invocation.functionName,
-                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।")
+                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।",
+                executionToken: executionToken)
             return
         }
         let started = Date()
@@ -5096,12 +5776,14 @@ final class AlmaVoiceEngine {
                     self.deliverLiveToolResult(
                         callId: callId,
                         functionName: invocation.functionName,
-                        text: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
+                        text: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।",
+                        executionToken: executionToken)
                 } else {
                     self.deliverLiveToolResult(
                         callId: callId,
                         functionName: invocation.functionName,
-                        text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
+                        text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।",
+                        executionToken: executionToken)
                 }
             } catch is CancellationError {
                 return
@@ -5109,7 +5791,8 @@ final class AlmaVoiceEngine {
                 self.deliverLiveToolResult(
                     callId: callId,
                     functionName: invocation.functionName,
-                    text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
+                    text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।",
+                    executionToken: executionToken)
             }
         }
     }
@@ -5123,13 +5806,14 @@ final class AlmaVoiceEngine {
             callID: callId,
             functionName: AlmaLiveVoiceToolName.runAgentTurn.rawValue,
             payload: clean.isEmpty ? .malformed : .runAgentTurn(request: request))
-        guard beginLiveToolInvocation(invocation) else { return }
+        guard let executionToken = beginLiveToolInvocation(invocation) else { return }
         lastToolCallAt = Date()
         guard !clean.isEmpty else {
             deliverLiveToolResult(
                 callId: callId,
                 functionName: invocation.functionName,
-                text: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।")
+                text: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।",
+                executionToken: executionToken)
             return
         }
         emptyListens = 0
@@ -5178,7 +5862,13 @@ final class AlmaVoiceEngine {
                     #if DEBUG
                     NSLog("ALMA-VOICE sse %@", ev.type)
                     #endif
-                    self?.handle(ev, speak: false)
+                    guard let self,
+                          self.isActiveLiveTool(
+                            callID: callId,
+                            functionName: invocation.functionName,
+                            executionToken: executionToken)
+                    else { return }
+                    self.handle(ev, speak: false)
                 }
                 // Deadline-cut turn (chat parity): the head asks for a machine
                 // continuation instead of finishing — chat auto-continues, so
@@ -5187,7 +5877,8 @@ final class AlmaVoiceEngine {
                 while self.lastDoneNeedContinue, continues < 3,
                       self.isActiveLiveTool(
                         callID: callId,
-                        functionName: invocation.functionName),
+                        functionName: invocation.functionName,
+                        executionToken: executionToken),
                       let fromTurn = self.liveTurnId {
                     continues += 1
                     self.lastDoneNeedContinue = false
@@ -5203,7 +5894,13 @@ final class AlmaVoiceEngine {
                     contReq.httpBody = try JSONEncoder().encode(contBody)
                     try await AssistantNet.streamEvents(request: contReq,
                                                         stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
-                        self?.handle(ev, speak: false)
+                        guard let self,
+                              self.isActiveLiveTool(
+                                callID: callId,
+                                functionName: invocation.functionName,
+                                executionToken: executionToken)
+                        else { return }
+                        self.handle(ev, speak: false)
                     }
                 }
                 #if DEBUG
@@ -5218,12 +5915,14 @@ final class AlmaVoiceEngine {
                 #endif
                 guard self.isActiveLiveTool(
                     callID: callId,
-                    functionName: invocation.functionName) else { return }
+                    functionName: invocation.functionName,
+                    executionToken: executionToken) else { return }
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.deliverLiveToolResult(
                     callId: callId,
                     functionName: invocation.functionName,
-                    text: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
+                    text: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result,
+                    executionToken: executionToken
                 )
                 self.livePollTask?.cancel()
             } catch is CancellationError {
@@ -5249,11 +5948,16 @@ final class AlmaVoiceEngine {
             while let self, !Task.isCancelled,
                   self.isActiveLiveTool(
                     callID: callId,
-                    functionName: invocation.functionName) {
-                if let outcome = await self.pollHeadTurnOutcome(requestStart: started) {
+                    functionName: invocation.functionName,
+                    executionToken: executionToken) {
+                if let outcome = await self.pollHeadTurnOutcome(
+                    requestStart: started,
+                    executionToken: executionToken)
+                {
                     guard self.isActiveLiveTool(
                         callID: callId,
-                        functionName: invocation.functionName),
+                        functionName: invocation.functionName,
+                        executionToken: executionToken),
                           !Task.isCancelled else { return }
                     self.liveStatusNudgeTask?.cancel()
                     #if DEBUG
@@ -5264,7 +5968,8 @@ final class AlmaVoiceEngine {
                     self.deliverLiveToolResult(
                         callId: callId,
                         functionName: invocation.functionName,
-                        text: outcome)
+                        text: outcome,
+                        executionToken: executionToken)
                     self.turnTask?.cancel()
                     return
                 }
@@ -5275,7 +5980,15 @@ final class AlmaVoiceEngine {
 
     /// One poll round: DB turn status for the live conversation. Returns the
     /// spoken-result payload once OUR turn reached a terminal state, else nil.
-    private func pollHeadTurnOutcome(requestStart: Date) async -> String? {
+    private func pollHeadTurnOutcome(
+        requestStart: Date,
+        executionToken: AlmaLiveVoiceToolExecutionToken
+    ) async -> String? {
+        guard isActiveLiveTool(
+            callID: executionToken.callID,
+            functionName: executionToken.functionName,
+            executionToken: executionToken)
+        else { return nil }
         guard let convId = chatVM?.conversationId, !convId.isEmpty else {
             #if DEBUG
             NSLog("ALMA-VOICE poll: no conversationId yet")
@@ -5299,6 +6012,11 @@ final class AlmaVoiceEngine {
             #endif
             return nil
         }
+        guard isActiveLiveTool(
+            callID: executionToken.callID,
+            functionName: executionToken.functionName,
+            executionToken: executionToken)
+        else { return nil }
         #if DEBUG
         NSLog("ALMA-VOICE poll: status=%@ turn=%@ ourTurn=%@ msg=%@",
               st.status ?? "nil", st.turnId ?? "nil", liveTurnId ?? "nil",
@@ -5334,7 +6052,9 @@ final class AlmaVoiceEngine {
             #if DEBUG
             NSLog("ALMA-VOICE poller triggering continuation (budget %d)", liveContinueBudget)
             #endif
-            startVoiceContinuation(fromTurn: fromTurn)
+            startVoiceContinuation(
+                fromTurn: fromTurn,
+                executionToken: executionToken)
             return nil
         }
         if status == "error" || status == "canceled" {
@@ -5348,7 +6068,15 @@ final class AlmaVoiceEngine {
 
     /// Fire a server-claimed machine continuation for a deadline-cut turn whose
     /// stream is gone. Events flow through handle(); the poller keeps watching.
-    private func startVoiceContinuation(fromTurn: String) {
+    private func startVoiceContinuation(
+        fromTurn: String,
+        executionToken: AlmaLiveVoiceToolExecutionToken
+    ) {
+        guard isActiveLiveTool(
+            callID: executionToken.callID,
+            functionName: executionToken.functionName,
+            executionToken: executionToken)
+        else { return }
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
                                  message: "",
                                  modelId: chatVM?.modelId ?? "auto",
@@ -5358,7 +6086,12 @@ final class AlmaVoiceEngine {
                                  autoContinueFromTurnId: fromTurn)
         liveTurnId = nil
         Task { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.isActiveLiveTool(
+                    callID: executionToken.callID,
+                    functionName: executionToken.functionName,
+                    executionToken: executionToken)
+            else { return }
             do {
                 await AlmaAPI.shared.syncCookies()
                 var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
@@ -5367,7 +6100,13 @@ final class AlmaVoiceEngine {
                 req.httpBody = try JSONEncoder().encode(body)
                 try await AssistantNet.streamEvents(request: req,
                                                     stopOn: { $0.type == "done" || $0.type == "error" }) { [weak self] ev in
-                    self?.handle(ev, speak: false)
+                    guard let self,
+                          self.isActiveLiveTool(
+                            callID: executionToken.callID,
+                            functionName: executionToken.functionName,
+                            executionToken: executionToken)
+                    else { return }
+                    self.handle(ev, speak: false)
                 }
             } catch {
                 // Poller keeps watching the successor turn regardless.
@@ -5432,11 +6171,13 @@ final class AlmaVoiceEngine {
                    Date().timeIntervalSince(self.lastEventAt) > stallLimit {
                     self.turnTask?.cancel()
                     if self.liveActive {
-                        if let invocation = self.activeLiveToolInvocation {
+                        if let invocation = self.activeLiveToolInvocation,
+                           let executionToken = self.activeLiveToolExecutionToken {
                             self.deliverLiveToolResult(
                                 callId: invocation.callID,
                                 functionName: invocation.functionName,
-                                text: "কাজটির উত্তর আসতে সমস্যা হচ্ছে। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।")
+                                text: "কাজটির উত্তর আসতে সমস্যা হচ্ছে। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।",
+                                executionToken: executionToken)
                         } else {
                             self.liveToolTurnPending = false
                             self.state = .listening
@@ -5461,7 +6202,8 @@ final class AlmaVoiceEngine {
     // ── Card actions ───────────────────────────────────────────────────────
 
     func approve(_ card: Card, yes: Bool) {
-        guard let pid = card.pendingActionId else { return }
+        guard lifecycleAllowsApprovalInteraction,
+              let pid = card.pendingActionId else { return }
         if let i = cards.firstIndex(where: { $0.id == card.id }) {
             cards[i].status = yes ? "অনুমোদিত" : "বাতিল"
         }
@@ -5475,7 +6217,8 @@ final class AlmaVoiceEngine {
     }
 
     func answer(_ card: Card, option: String) {
-        guard let aid = card.askCardId else { return }
+        guard lifecycleAllowsApprovalInteraction,
+              let aid = card.askCardId else { return }
         // Persist first, then let the voice engine own exactly ONE spoken turn.
         // The chat VM must not also start its default text continuation here.
         Task { [weak self] in
@@ -5496,6 +6239,7 @@ final class AlmaVoiceEngine {
 
     /// Premium-model permission — approve re-runs the SAME question with resume.
     func resolveModelSwitch(_ card: Card, approve: Bool) {
+        guard lifecycleAllowsApprovalInteraction else { return }
         if let i = cards.firstIndex(where: { $0.id == card.id }) {
             cards[i].status = approve ? "অনুমোদিত" : "বাতিল"
         }
@@ -5588,6 +6332,19 @@ final class AlmaVoiceEngine {
 
 enum AlmaLiveVoiceError: Error { case badSession, badURL, noMic, noConverter, audioStart }
 
+enum AlmaLiveVoiceAcousticOutputClass: Equatable {
+    case exposedLoudspeaker
+    case privateOrExternal
+
+    static func classify(_ ports: [AVAudioSession.Port]) -> Self {
+        ports.contains(.builtInSpeaker) ? .exposedLoudspeaker : .privateOrExternal
+    }
+
+    func needsNoAECProtection(voiceProcessingUnavailable: Bool) -> Bool {
+        voiceProcessingUnavailable && self == .exposedLoudspeaker
+    }
+}
+
 /// One persistent websocket + one AVAudioEngine for BOTH capture and playback.
 /// VoiceProcessingIO is enabled on that single engine, so the owner can interrupt
 /// naturally without the old multi-engine crash/feedback-loop failure mode.
@@ -5635,6 +6392,16 @@ struct AlmaLiveVoiceStartAttemptState {
 
 @available(iOS 17.0, *)
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
+    private struct ToolEvidenceIdentity: Hashable {
+        let callID: String
+        let functionName: String
+    }
+
+    private struct ToolEvidenceStage {
+        let ordinal: Int
+        let tool: AlmaLiveVoiceEvidenceTool
+    }
+
     weak var engine: AlmaVoiceEngine?
     private let evidenceRecorder: AlmaLiveVoiceEvidenceRecorder
     private let usageMeter = AlmaLiveVoiceUsageMeter()
@@ -5642,7 +6409,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var toolLedger = AlmaLiveVoiceToolLedger()
     private var toolOrchestrationEnabled = false
     private var toolResponsePlaybackBlocked = false
+    private var lifecycleToolResultsHeld = false
     private var toolEngineConnectionGeneration: Int?
+    private var toolEvidenceStages: [ToolEvidenceIdentity: ToolEvidenceStage] = [:]
     private let traceID = String(UUID().uuidString.prefix(8))
 
     init(evidenceRecorder: AlmaLiveVoiceEvidenceRecorder) {
@@ -5659,7 +6428,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         toolLedger.reset()
         toolOrchestrationEnabled = enabled
         toolResponsePlaybackBlocked = false
+        lifecycleToolResultsHeld = false
         toolEngineConnectionGeneration = nil
+        toolEvidenceStages.removeAll(keepingCapacity: true)
         toolLedgerLock.unlock()
     }
 
@@ -5668,7 +6439,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         toolLedger.reset()
         toolOrchestrationEnabled = false
         toolResponsePlaybackBlocked = false
+        lifecycleToolResultsHeld = false
         toolEngineConnectionGeneration = nil
+        toolEvidenceStages.removeAll(keepingCapacity: true)
         toolLedgerLock.unlock()
     }
 
@@ -5693,6 +6466,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if !blocked { drainToolResponses() }
     }
 
+    func setLifecycleToolResultsHeld(_ held: Bool) {
+        toolLedgerLock.lock()
+        lifecycleToolResultsHeld = held
+        toolLedgerLock.unlock()
+        if !held { drainToolResponses() }
+    }
+
     @discardableResult
     func completeToolCall(callID: String, functionName: String, result: String) -> Bool {
         toolLedgerLock.lock()
@@ -5702,6 +6482,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             result: result)
         toolLedgerLock.unlock()
         guard completed else { return false }
+        let evidence = toolEvidenceStage(callID: callID, functionName: functionName)
+        if let evidence {
+            evidenceRecorder.recordToolResponseQueued(
+                ordinal: evidence.ordinal,
+                tool: evidence.tool,
+                generation: evidenceTransportGenerationSnapshot())
+        }
         dispatchNextToolExecution()
         drainToolResponses()
         return true
@@ -5959,6 +6746,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private let audioQueue = DispatchQueue(label: "alma.voice.audio")
     private var inputMuted = false
     private var speakerEnabled = true
+    /// Actual acoustic output, independent of the owner's last built-in route
+    /// preference. Bluetooth/wired/AirPlay must never inherit a stale speaker
+    /// boolean and be treated as an exposed loudspeaker.
+    private var acousticOutputClass = AlmaLiveVoiceAcousticOutputClass.exposedLoudspeaker
     /// VoiceProcessingIO can emit one last asynchronous receiver reset while the
     /// graph is coming up. During this short window we defend the requested route;
     /// afterwards CallKit owns all built-in route changes. The locked system call
@@ -6674,9 +7465,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         outputEnvelopeLock.lock()
         outputEnvelopeEnabled = AlmaLiveVoiceRecoveryFeatures.isEnabled(
             .outputPCMEnvelopeV1)
-        outputEnvelopeReducer = outputEnvelopeEnabled
-            ? AlmaLiveVoiceOutputPCMEnvelopeReducer(generation: attempt)
-            : nil
+        // A session attempt is not a render generation. The reducer is created
+        // only when a concrete local playback turn opens, then reset for every
+        // subsequent playback generation.
+        outputEnvelopeReducer = nil
         outputEnvelopeLock.unlock()
         firstInputFrameTraced = false
         firstModelPCMTraced = false
@@ -6774,6 +7566,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         hasOwnerEnergy: Bool,
         route: AlmaLiveVoiceInputTurnReducer.InputRoute,
         suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression,
+        ownerSpeechCandidate: Bool,
         ownerSpeechConfirmed: Bool,
         attempt: AlmaLiveVoiceSocketAttempt
     ) -> AlmaLiveVoiceInputTurnReducer.Effects {
@@ -6796,19 +7589,60 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             route: route,
             ready: true,
             suppression: suppression,
+            ownerSpeechCandidate: ownerSpeechCandidate,
             ownerSpeechConfirmed: ownerSpeechConfirmed)
         inputTurnReducerLock.unlock()
         return effects
     }
 
-    /// Accept only PCM from the active logical start attempt. The bytes are the
-    /// same decoded PCM16LE payload queued on `player`; microphone and timers do
-    /// not enter this path.
-    private func reduceOutputEnvelope(
+    private func prepareOutputEnvelope(
+        playbackGeneration: Int
+    ) {
+        guard let generation = UInt64(exactly: playbackGeneration),
+              generation != 0 else { return }
+        outputEnvelopeLock.lock()
+        guard outputEnvelopeEnabled else {
+            outputEnvelopeLock.unlock()
+            return
+        }
+        if var reducer = outputEnvelopeReducer {
+            _ = reducer.reset(generation: generation)
+            outputEnvelopeReducer = reducer
+        } else {
+            outputEnvelopeReducer = AlmaLiveVoiceOutputPCMEnvelopeReducer(
+                generation: generation)
+        }
+        outputEnvelopeLock.unlock()
+    }
+
+    /// Provider receipt is tracked explicitly, but it never advances the UI
+    /// envelope. Only the mixer render tap may do that.
+    private func observeProviderOutputPCM(
         pcm: Data,
         sampleRate: Double,
-        generation: AlmaLiveVoiceStartAttemptState.Token
+        playbackGeneration: Int
+    ) {
+        guard let generation = UInt64(exactly: playbackGeneration) else { return }
+        outputEnvelopeLock.lock()
+        guard outputEnvelopeEnabled,
+              var reducer = outputEnvelopeReducer,
+              reducer.generation == generation else {
+            outputEnvelopeLock.unlock()
+            return
+        }
+        _ = reducer.reduce(.init(
+            generation: generation,
+            event: .providerPCMReceived(.init(
+                data: pcm,
+                sampleRate: sampleRate))))
+        outputEnvelopeReducer = reducer
+        outputEnvelopeLock.unlock()
+    }
+
+    private func beginOutputEnvelopePlayback(
+        playbackGeneration: Int
     ) -> Double? {
+        guard let generation = UInt64(exactly: playbackGeneration) else { return nil }
         outputEnvelopeLock.lock()
         guard outputEnvelopeEnabled,
               var reducer = outputEnvelopeReducer,
@@ -6816,38 +7650,55 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             outputEnvelopeLock.unlock()
             return nil
         }
-        if reducer.phase != .speaking {
-            _ = reducer.reduce(.init(
-                generation: generation,
-                event: .phaseChanged(.speaking)))
-        }
         let transition = reducer.reduce(.init(
             generation: generation,
-            event: .outputPCM(.init(data: pcm, sampleRate: sampleRate))))
+            event: .phaseChanged(.speaking)))
         outputEnvelopeReducer = reducer
         outputEnvelopeLock.unlock()
         return transition.mayApplyEffects ? transition.level : nil
     }
 
-    private func outputEnvelopeLevel(
-        generation: AlmaLiveVoiceStartAttemptState.Token
+    /// Accept a content-free RMS measurement only from the exact local playback
+    /// generation whose PCM reached the AVAudioEngine mixer render tap.
+    private func reduceRenderedOutputEnvelope(
+        rms: Double,
+        durationSeconds: Double,
+        playbackGeneration: Int
     ) -> Double? {
+        guard let generation = UInt64(exactly: playbackGeneration) else { return nil }
         outputEnvelopeLock.lock()
-        let level: Double?
-        if outputEnvelopeEnabled,
-           let reducer = outputEnvelopeReducer,
-           reducer.generation == generation {
-            level = reducer.level
-        } else {
-            level = nil
+        guard outputEnvelopeEnabled,
+              var reducer = outputEnvelopeReducer,
+              reducer.generation == generation else {
+            outputEnvelopeLock.unlock()
+            return nil
         }
+        let transition = reducer.reduce(.init(
+            generation: generation,
+            event: .renderedPCMMeasured(.init(
+                rms: rms,
+                durationSeconds: durationSeconds))))
+        outputEnvelopeReducer = reducer
         outputEnvelopeLock.unlock()
-        return level
+        return transition.mayApplyEffects ? transition.level : nil
+    }
+
+    private func outputEnvelopeAccepts(
+        playbackGeneration: Int
+    ) -> Bool {
+        guard let generation = UInt64(exactly: playbackGeneration) else { return false }
+        outputEnvelopeLock.lock()
+        let accepts = outputEnvelopeEnabled
+            && outputEnvelopeReducer?.generation == generation
+            && outputEnvelopeReducer?.phase == .speaking
+        outputEnvelopeLock.unlock()
+        return accepts
     }
 
     private func settleOutputEnvelope(
-        generation: AlmaLiveVoiceStartAttemptState.Token
+        playbackGeneration: Int
     ) {
+        guard let generation = UInt64(exactly: playbackGeneration) else { return }
         outputEnvelopeLock.lock()
         guard outputEnvelopeEnabled,
               var reducer = outputEnvelopeReducer,
@@ -6866,15 +7717,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         _ effects: AlmaLiveVoiceInputTurnReducer.Effects,
         attempt: AlmaLiveVoiceSocketAttempt
     ) {
-        if !effects.audioFramesToSend.isEmpty {
-            sendCapturedInputChunks(
-                effects.audioFramesToSend.map(\.pcm),
-                sourceAttempt: attempt)
-        }
-        if effects.sendAudioStreamEnd {
-            sendInputStreamEnd(sourceAttempt: attempt)
-        }
-        if let transcript = effects.transcriptUpdate {
+        AlmaLiveVoiceInputTurnEffectDelivery.apply(
+            effects,
+            sendAudioFrames: { [weak self] frames in
+                self?.sendCapturedInputChunks(
+                    frames.map(\.pcm),
+                    sourceAttempt: attempt)
+            },
+            sendAudioStreamEnd: { [weak self] in
+                self?.sendInputStreamEnd(sourceAttempt: attempt)
+            },
+            updateTranscript: { [weak self] transcript in
+                guard let self else { return }
             dispatchEngineCallback(
                 engineConnectionGeneration: attempt.engineConnectionGeneration,
                 requiring: attempt
@@ -6883,7 +7737,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     transcript.text,
                     finalized: transcript.finalized)
             }
-        }
+            })
     }
 
     private func commitMintedSession(
@@ -7006,24 +7860,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func setupMessage(model: String, voice: String, resumptionHandle: String?) -> [String: Any] {
-        let instruction = """
-        **Persona**
-        তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। unmistakably প্রমিত বাংলাদেশি বাংলা ও বাংলাদেশি উচ্চারণে একজন মনোযোগী, উষ্ণ, স্বাভাবিক মানুষের মতো কথা বলবে; হিন্দি বা ভারতীয় বাংলা টান আনবে না। কণ্ঠকে scripted announcer বা customer-service bot-এর মতো শোনাবে না।
-
-        **Conversation**
-        Boss কী বলছে এবং যে আবেগে বলছে—দুটোই শুনে delivery স্বাভাবিকভাবে মিলাবে। দুঃখ বা খারাপ খবরে আন্তরিক ও নরম হবে; চাপ, রাগ বা হতাশায় শান্ত ও স্থির হবে; সুখবর বা রসিকতায় স্বতঃস্ফূর্ত উষ্ণতা থাকবে। জোর করে হাসি, আশাবাদ, উপদেশ, “হুম”, দীর্ঘশ্বাস বা অভিনয় করবে না।
-        একবারে একটি সম্পূর্ণ ভাব conversationalভাবে বলবে, তারপর স্বাভাবিকভাবে থেমে শুনবে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সঙ্গে সঙ্গে চুপ করবে। Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না, ফাঁকা ভূমিকা দেবে না, এবং প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “কেমন হলো?”, “ঠিক আছে?” ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য কম থাকলেই শুধু একটি ছোট clarification প্রশ্ন করবে।
-
-        **Tool flow**
-        কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন নির্দিষ্ট read-only তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: quick_erp_lookup-এর নির্দিষ্ট তালিকার বাইরে হিসাব/বিশ্লেষণ, রিপোর্ট, মেমরি, বা কোনো কাজ করা/পরিবর্তনের অনুরোধে run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
-        Boss স্পষ্টভাবে কলটি শেষ করতে চাইলে ("ফোন রাখো", "কল কাটো", "এখন রাখি", বিদায়ী সালাম "আল্লাহ হাফেজ"): এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে — শুধু মুখে বিদায় বললে কল কাটে না। সাবধান: কিছু মনে রাখতে বা সেভ করতে বলা (যেমন "এই কথাটা মনে রেখে দাও") কল রাখার অনুরোধ নয় — তখন end_call একদম নয়।
-        ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, system, agent — এগুলো কখনো উচ্চারণ করবে না।
-        Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
-        Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
-        **Guardrails**
-        মালিককে শুধু "Boss" বলবে, তবে প্রতি বাক্যে নয়। ভয়েসে emoji পড়বে না; ইসলামি আদব বজায় রাখবে। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার ও পেশাদার থাকবে। প্রচলিত technical শব্দ ইংরেজিতে বলা স্বাভাবিক হলে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে। লিখিত রিপোর্ট বা তালিকা আবৃত্তি করবে না—Boss চাইলে তবেই তালিকা দেবে।
-        """
+        guard let sessionProtocol = AlmaLiveVoicePreferences.canonicalSessionProtocol else {
+            return [:]
+        }
         let resumption: [String: Any] = resumptionHandle.map { ["handle": $0] } ?? [:]
         var generationConfig: [String: Any] = [
             "responseModalities": ["AUDIO"],
@@ -7058,7 +7897,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": generationConfig,
-            "systemInstruction": ["parts": [["text": instruction]]],
+            "systemInstruction": ["parts": [["text": sessionProtocol.systemInstruction]]],
             "inputAudioTranscription": [:],
             "outputAudioTranscription": [:],
             "sessionResumption": resumption,
@@ -7074,30 +7913,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
             ],
-            "tools": [["functionDeclarations": [[
-                "name": "quick_erp_lookup",
-                "description": "সাধারণ ব্যবসার তথ্য কয়েক সেকেন্ডে দেখার দ্রুত পথ — আজকের হাজিরা/উপস্থিতি (get_attendance), বিক্রির সারাংশ (get_sales_summary), অর্ডার তালিকা (get_orders), ব্যবসার সার্বিক চিত্র (get_dashboard_snapshot), স্টক (get_inventory_status), নামাজের অবস্থা (get_salah_status), পেন্ডিং অনুমোদন (get_pending_approvals), নামাজের সময় (get_prayer_times)। শুধু তথ্য পড়া — কোনো কাজ, পরিবর্তন, বার্তা পাঠানো বা মেমরি নয়।",
-                "parameters": [
-                    "type": "OBJECT",
-                    "properties": ["tool": [
-                        "type": "STRING",
-                        "enum": ["get_attendance", "get_sales_summary", "get_orders", "get_dashboard_snapshot", "get_inventory_status", "get_salah_status", "get_pending_approvals", "get_prayer_times"],
-                    ]],
-                    "required": ["tool"],
-                ],
-            ], [
-                "name": "end_call",
-                "description": "কলটি সত্যিই কেটে দেয়। Boss 'রাখি/রেখে দাও/কল কাটো/আল্লাহ হাফেজ' বলে কল শেষ করতে চাইলে — ছোট্ট সালাম-বিদায় বলার সাথে সাথে এটা চালাবে। মুখে বিদায় বললে কল কাটে না; এই tool না চালালে Boss-কে নিজ হাতে কাটতে হয়।",
-                "parameters": ["type": "OBJECT", "properties": [:]],
-            ], [
-                "name": "run_agent_turn",
-                "description": "Boss-এর অনুরোধ ALMA head agent-এ পাঠায় — শুধু কাজ করা, কিছু পাঠানো/পরিবর্তন, অনুমোদন, মেমরি বা জটিল বিশ্লেষণের জন্য। সাধারণ তথ্য দেখার জন্য এটা নয় — সেগুলোতে quick_erp_lookup ব্যবহার করবে (অনেক দ্রুত)। request-টি Boss-এর কথার হুবহু বাংলা/বাংলিশ রূপে দেবে — ইংরেজিতে অনুবাদ একদম নয়।",
-                "parameters": [
-                    "type": "OBJECT",
-                    "properties": ["request": ["type": "STRING"]],
-                    "required": ["request"],
-                ],
-            ]]]],
+            "tools": [[
+                "functionDeclarations": sessionProtocol.geminiFunctionDeclarations,
+            ]],
         ]
         return ["setup": setup]
     }
@@ -7303,6 +8121,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
 
         audioLock.lock()
+        acousticOutputClass = .classify(outputs.map(\.portType))
         let bootstrapProtected = Date() < bootstrapRouteProtectionUntil
         let nativeCallKitSelection = callKitOwnsAudioSession
             && !bootstrapProtected
@@ -7510,12 +8329,19 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         sourceStartAttempt: AlmaLiveVoiceStartAttemptState.Token
     ) {
         audioLock.lock()
-        let sourceIsCurrent = captureSocketAttempt?.startAttempt == sourceStartAttempt
-        let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled
+        let sourceSocketAttempt = captureSocketAttempt
+        let sourceIsCurrent = sourceSocketAttempt?.startAttempt == sourceStartAttempt
+        let renderedPlaybackGeneration = playbackGeneration
+        let isRenderingModelOutput = modelAudioTurnOpen && playbackStarted
+        let needsNoAECDetector = acousticOutputClass.needsNoAECProtection(
+            voiceProcessingUnavailable: voiceProcessingUnavailable)
         audioLock.unlock()
-        guard !stopped, sourceIsCurrent, needsNoAECDetector else { return }
+        guard !stopped, sourceIsCurrent else { return }
         let frames = Int(buffer.frameLength)
-        guard frames > 0, let channels = buffer.floatChannelData else { return }
+        guard frames > 0,
+              buffer.format.sampleRate.isFinite,
+              buffer.format.sampleRate > 0,
+              let channels = buffer.floatChannelData else { return }
         let channelCount = max(1, Int(buffer.format.channelCount))
         var sum = 0.0
         for channel in 0..<channelCount {
@@ -7525,6 +8351,35 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         let rms = (sum / Double(frames * channelCount)).squareRoot()
+        let durationSeconds = Double(frames) / buffer.format.sampleRate
+
+        if isRenderingModelOutput,
+           let socketAttempt = sourceSocketAttempt,
+           let outputLevel = reduceRenderedOutputEnvelope(
+                rms: rms,
+                durationSeconds: durationSeconds,
+                playbackGeneration: renderedPlaybackGeneration) {
+            dispatchEngineCallback(
+                engineConnectionGeneration: socketAttempt.engineConnectionGeneration,
+                requiring: socketAttempt
+            ) { [weak self] engine in
+                guard let self else { return }
+                self.audioLock.lock()
+                let isCurrentRender = self.modelAudioTurnOpen
+                    && self.playbackStarted
+                    && self.playbackGeneration == renderedPlaybackGeneration
+                self.audioLock.unlock()
+                guard isCurrentRender,
+                      self.outputEnvelopeAccepts(
+                        playbackGeneration: renderedPlaybackGeneration)
+                else { return }
+                engine.liveOutputPCMLevelChanged(outputLevel)
+            }
+        }
+
+        // Echo-reference history is needed only on acoustic routes without
+        // hardware AEC. The foreground envelope above runs on every route.
+        guard needsNoAECDetector else { return }
         let wave = Self.correlationSamples(buffer)
         let capturedAt = ProcessInfo.processInfo.systemUptime
         audioLock.lock()
@@ -7861,7 +8716,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // energy before conversion, but the barge-in analyzer runs only when a
         // converter/output format is actually available.
         audioLock.lock()
-        let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled
+        let needsNoAECDetector = acousticOutputClass.needsNoAECProtection(
+            voiceProcessingUnavailable: voiceProcessingUnavailable)
         audioLock.unlock()
         if needsNoAECDetector, let analyzer = soundAnalyzer {
             analyzer.analyze(buffer, atAudioFramePosition: soundAnalysisFramePosition)
@@ -7946,8 +8802,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let inputReducerEnabled = usesInputTurnReducer()
         var reducerRoute = AlmaLiveVoiceInputTurnReducer.InputRoute.trustedAECOrReceiver
         var reducerSuppression = AlmaLiveVoiceInputTurnReducer.PlaybackSuppression.none
+        var reducerOwnerSpeechCandidate = false
         audioLock.lock()
-        let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+        let echoExposedLoudspeaker = acousticOutputClass.needsNoAECProtection(
+            voiceProcessingUnavailable: voiceProcessingUnavailable)
         reducerRoute = echoExposedLoudspeaker ? .noAECLoudspeaker : .trustedAECOrReceiver
         if modelAudioTurnOpen && !bargeInPending {
             reducerSuppression = .activePlayback
@@ -7965,7 +8823,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // microphone is safe to forward even while ALMA speaks; withholding
             // it behind the old local RMS threshold made short Bengali barge-ins
             // (especially "থামো") invisible to the model on real iPhones.
-            let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled
+            let serverCanOwnBargeIn = !echoExposedLoudspeaker
             if serverCanOwnBargeIn {
                 resetLoudspeakerProbeLocked()
                 micPreRoll.removeAll(keepingCapacity: true)
@@ -8005,7 +8863,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 // ALMA never stopped her. Receiver/AEC keeps the direct gate.
                 // Echo-exposed loudspeaker instead ducks ALMA briefly and only
                 // confirms speech that remains after her own echo has decayed.
-                let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+                let echoExposedLoudspeaker = acousticOutputClass.needsNoAECProtection(
+                    voiceProcessingUnavailable: voiceProcessingUnavailable)
                 if echoExposedLoudspeaker {
                     let playbackReferenceReady = playbackReferenceReadyFrames
                         >= playbackReferenceReadyRequiredFrames
@@ -8026,6 +8885,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                             speechConfidence: soundSpeechConfidence,
                             musicConfidence: soundMusicConfidence,
                             noiseConfidence: soundNoiseConfidence)
+                        reducerOwnerSpeechCandidate = humanSpeech
                         bargeInEvidenceTraceFrames += 1
                         if bargeInEvidenceTraceFrames >= 25 {
                             bargeInEvidenceTraceFrames = 0
@@ -8074,6 +8934,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                                         * loudspeakerProbeRetainedEnergyRatio
                                 )
                                 if rms >= voiceThreshold {
+                                    reducerOwnerSpeechCandidate = true
                                     loudspeakerProbeVoiceFrames += 1
                                 }
                                 if loudspeakerProbeVoiceFrames
@@ -8104,6 +8965,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                             echoFloorRMS * 1.12 + 0.003
                         )
                         if rms >= candidateThreshold {
+                            reducerOwnerSpeechCandidate = true
                             loudspeakerProbeCandidateFrames += 1
                             loudspeakerProbeCandidatePeakRMS = max(
                                 loudspeakerProbeCandidatePeakRMS, rms)
@@ -8160,7 +9022,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 listenSilenceFrames = 0
                 listenContinuousLoudFrames = 0
                 if reducerSuppression == .playbackTail {
-                    withheldPolicy = .playbackTailSuppression
+                    withheldPolicy = .playbackTailRetained
                 }
             } else {
             if Date() < listenSuppressedUntil {
@@ -8320,6 +9182,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 hasOwnerEnergy: hasInputEvidenceEnergy,
                 route: reducerRoute,
                 suppression: reducerSuppression,
+                ownerSpeechCandidate: reducerOwnerSpeechCandidate,
                 ownerSpeechConfirmed: startBargeIn,
                 attempt: sourceAttempt)
             : AlmaLiveVoiceInputTurnReducer.Effects.none
@@ -8559,6 +9422,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         toolLedgerLock.unlock()
+        if let evidence = toolEvidenceStage(
+            callID: invocation.callID,
+            functionName: invocation.functionName)
+        {
+            evidenceRecorder.recordToolExecutionStarted(
+                ordinal: evidence.ordinal,
+                tool: evidence.tool,
+                generation: evidenceTransportGenerationSnapshot())
+        }
         // Accepted work belongs to the logical call, not the physical socket.
         // A reconnect after admission therefore cannot suppress its execution.
         dispatchEngineCallback(engineConnectionGeneration: generation) {
@@ -8568,7 +9440,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func drainToolResponses() {
         toolLedgerLock.lock()
-        let canDrain = toolOrchestrationEnabled && !toolResponsePlaybackBlocked
+        let canDrain = toolOrchestrationEnabled
+            && !toolResponsePlaybackBlocked
+            && !lifecycleToolResultsHeld
         toolLedgerLock.unlock()
         guard canDrain else { return }
 
@@ -8598,11 +9472,63 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             self.toolLedgerLock.lock()
             let accepted = self.toolLedger.finishSend(ticket, succeeded: error == nil)
             self.toolLedgerLock.unlock()
-            if accepted && error == nil { self.drainToolResponses() }
+            if accepted && error == nil {
+                if let evidence = self.toolEvidenceStage(
+                    callID: ticket.callID,
+                    functionName: ticket.functionName)
+                {
+                    self.evidenceRecorder.recordToolResponseSendSucceeded(
+                        ordinal: evidence.ordinal,
+                        tool: evidence.tool,
+                        generation: self.evidenceTransportGenerationSnapshot())
+                }
+                self.drainToolResponses()
+            }
         }
         guard !queued else { return }
         toolLedgerLock.lock()
         _ = toolLedger.finishSend(ticket, succeeded: false)
+        toolLedgerLock.unlock()
+    }
+
+    private func toolEvidenceStage(
+        callID: String,
+        functionName: String
+    ) -> ToolEvidenceStage? {
+        toolLedgerLock.lock()
+        let value = toolEvidenceStages[ToolEvidenceIdentity(
+            callID: callID,
+            functionName: functionName)]
+        toolLedgerLock.unlock()
+        return value
+    }
+
+    private func observeToolEvidence(
+        _ call: [String: Any],
+        generation: Int
+    ) {
+        let tool = AlmaLiveVoiceEvidenceTool(providerName: call["name"] as? String)
+        guard let invocation = AlmaLiveVoiceToolInvocation.decode(call) else {
+            _ = evidenceRecorder.recordToolCallObserved(tool, generation: generation)
+            return
+        }
+        let identity = ToolEvidenceIdentity(
+            callID: invocation.callID,
+            functionName: invocation.functionName)
+        toolLedgerLock.lock()
+        let alreadyObserved = toolEvidenceStages[identity] != nil
+        toolLedgerLock.unlock()
+        guard !alreadyObserved,
+              let ordinal = evidenceRecorder.recordToolCallObserved(
+                tool,
+                generation: generation)
+        else { return }
+        toolLedgerLock.lock()
+        if toolEvidenceStages[identity] == nil {
+            toolEvidenceStages[identity] = ToolEvidenceStage(
+                ordinal: ordinal,
+                tool: tool)
+        }
         toolLedgerLock.unlock()
     }
 
@@ -8615,11 +9541,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let observedUptime = ProcessInfo.processInfo.systemUptime
-        if let metadata = root["usageMetadata"] as? [String: Any],
-           let usageProfile = profile(for: attempt.startAttempt) {
-            usageMeter.recordProviderUsage(
-                AlmaLiveVoiceProviderUsageParser.parse(metadata),
-                profile: usageProfile)
+        if let metadata = root["usageMetadata"] as? [String: Any] {
+            let providerUsage = AlmaLiveVoiceProviderUsageParser.parse(metadata)
+            if let usageProfile = profile(for: attempt.startAttempt) {
+                usageMeter.recordProviderUsage(providerUsage, profile: usageProfile)
+            }
+            if let compression = AlmaLiveVoicePreferences.activeContract?.contextCompression {
+                evidenceRecorder.recordContextCompressionThresholdObserved(
+                    observedTokens: providerUsage.inputTotalTokens,
+                    triggerTokens: compression.triggerTokens,
+                    targetTokens: compression.targetTokens)
+            }
         }
         if let error = root["error"] as? [String: Any] {
             // The attempt may have been invalidated after the receive-loop guard.
@@ -8739,6 +9671,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
         }
         if let content = root["serverContent"] as? [String: Any] {
+            submitEvidenceSync { recorder in
+                recorder.recordProviderActivityObserved(
+                    generation: evidenceGeneration)
+            }
             handleServerContent(
                 content,
                 attempt: attempt,
@@ -8755,13 +9691,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 applyInputTurnEffects(effects, attempt: attempt)
             }
             for call in calls {
-                let evidenceTool = AlmaLiveVoiceEvidenceTool(
-                    providerName: call["name"] as? String)
-                _ = submitEvidence { recorder in
-                    _ = recorder.recordToolCallObserved(
-                        evidenceTool,
-                        generation: evidenceGeneration)
-                }
+                observeToolEvidence(call, generation: evidenceGeneration)
             }
             if usesToolOrchestration {
                 handleOrchestratedToolCalls(calls, attempt: attempt)
@@ -8929,6 +9859,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     /// a resumed connect is rejected) mint a fresh token instead of dying, so a long
     /// AI call survives every rotation. Attempts are capped so a hard outage still
     /// fails loud instead of looping.
+    @discardableResult
+    func requestLifecycleReconnect(engineConnectionGeneration expectedGeneration: Int) -> Bool {
+        readinessLock.lock()
+        let sourceAttempt = readiness.socketAttempt
+        readinessLock.unlock()
+        guard let sourceAttempt,
+              sourceAttempt.engineConnectionGeneration == expectedGeneration,
+              invalidateSocketReadiness(attempt: sourceAttempt) else { return false }
+        recoverConnection(from: sourceAttempt)
+        return true
+    }
+
     private func recoverConnection(
         from sourceAttempt: AlmaLiveVoiceSocketAttempt,
         forceFreshToken: Bool = false,
@@ -9066,6 +10008,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 self.startAttemptLock.unlock()
                 self.fail(
                     "লাইভ ভয়েস সংযোগ বিচ্ছিন্ন হয়েছে।",
+                    underlyingError: error,
                     ifCurrentStartAttempt: startAttempt)
             }
         }
@@ -9297,16 +10240,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if serializesEvidenceBoundary { evidenceSubmissionLock.unlock() }
         startAttemptLock.unlock()
 
-        let outputLevel = reduceOutputEnvelope(
+        if newTurn {
+            prepareOutputEnvelope(playbackGeneration: scheduledGeneration)
+        }
+        observeProviderOutputPCM(
             pcm: pcm,
             sampleRate: format.sampleRate,
-            generation: attempt.startAttempt)
-        if alreadyStarted, let outputLevel {
-            dispatchEngineCallback(
-                engineConnectionGeneration: attempt.engineConnectionGeneration,
-                requiring: attempt
-            ) { $0.liveOutputPCMLevelChanged(outputLevel) }
-        }
+            playbackGeneration: scheduledGeneration)
 
         audioQueue.async { [weak self, attempt] in
             guard let self, !self.stopped,
@@ -9325,19 +10265,31 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
 
         if shouldStart {
-            startBufferedPlayback(generation: scheduledGeneration, force: false)
+            startBufferedPlayback(
+                generation: scheduledGeneration,
+                startAttempt: attempt.startAttempt,
+                force: false)
         } else if newTurn {
             // A short answer can be smaller than the target prebuffer. Never make it
             // wait indefinitely for another frame.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-                self?.startBufferedPlayback(generation: scheduledGeneration, force: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                [weak self, attempt] in
+                self?.startBufferedPlayback(
+                    generation: scheduledGeneration,
+                    startAttempt: attempt.startAttempt,
+                    force: true)
             }
         } else if alreadyStarted {
             armPlaybackDrainFallback(generation: scheduledGeneration, deadline: fallbackDeadline)
         }
     }
 
-    private func startBufferedPlayback(generation: Int, force: Bool) {
+    private func startBufferedPlayback(
+        generation: Int,
+        startAttempt: AlmaLiveVoiceStartAttemptState.Token,
+        force: Bool
+    ) {
+        guard acceptsStartAttempt(startAttempt) else { return }
         audioLock.lock()
         guard !stopped, modelAudioTurnOpen, playbackGeneration == generation,
               !playbackStarted, !pendingPlaybackBuffers.isEmpty,
@@ -9357,8 +10309,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let prebufferDuration = bufferedPlaybackDuration
         audioLock.unlock()
 
+        // Enter speaking with a calm level. The first non-zero level can come
+        // only from the mixer render tap after `player.play()` advances output.
+        let outputLevel = beginOutputEnvelopePlayback(
+            playbackGeneration: generation) ?? 0
+
         audioQueue.async { [weak self] in
-            guard let self, !self.stopped else { return }
+            guard let self, !self.stopped,
+                  self.acceptsStartAttempt(startAttempt) else { return }
             self.audioLock.lock()
             let stillCurrent = self.playbackGeneration == generation
                 && self.modelAudioTurnOpen
@@ -9427,11 +10385,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
         #endif
-        let outputLevel = activeStartAttempt().flatMap {
-            outputEnvelopeLevel(generation: $0)
-        } ?? 0
-        dispatchEngineCallbackForActiveAttempt {
-            $0.livePlaybackChanged(active: true, level: outputLevel)
+        dispatchEngineCallbackForActiveAttempt { [weak self] engine in
+            guard let self,
+                  self.outputEnvelopeAccepts(playbackGeneration: generation)
+            else { return }
+            engine.livePlaybackChanged(active: true, level: outputLevel)
         }
         armPlaybackDrainFallback(generation: generation, deadline: deadline)
     }
@@ -9538,7 +10496,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
         audioLock.unlock()
         startAttemptLock.unlock()
-        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if needsStart {
+            startBufferedPlayback(
+                generation: generation,
+                startAttempt: attempt.startAttempt,
+                force: true)
+        }
         if shouldFinish { finishModelPlayback(generation: generation) }
     }
 
@@ -9571,7 +10534,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let shouldFinish = modelAudioTurnOpen && pendingPlaybackBuffers.isEmpty
         audioLock.unlock()
         startAttemptLock.unlock()
-        if needsStart { startBufferedPlayback(generation: generation, force: true) }
+        if needsStart {
+            startBufferedPlayback(
+                generation: generation,
+                startAttempt: attempt.startAttempt,
+                force: true)
+        }
         if shouldFinish { finishModelPlayback(generation: generation) }
     }
 
@@ -9599,7 +10567,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         // Simulator / speaker fallback has no VPIO cancellation and showed a
         // real 650ms post-playback echo re-opening the gate. Give that route a
         // full 1.2s; AEC/receiver routes need only a short render-tail guard.
-        let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+        let echoExposedLoudspeaker = acousticOutputClass.needsNoAECProtection(
+            voiceProcessingUnavailable: voiceProcessingUnavailable)
         listenSuppressedUntil = Date().addingTimeInterval(
             echoExposedLoudspeaker ? 1.2 : 0.25)
         listenTailSuppressionLogged = false
@@ -9616,8 +10585,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             _ = reduceInputTurn(generation: attempt) {
                 $0.observeResponseCompleted(generation: attempt)
             }
-            settleOutputEnvelope(generation: attempt)
         }
+        settleOutputEnvelope(playbackGeneration: generation)
         dispatchEngineCallbackForActiveAttempt {
             $0.livePlaybackChanged(active: false, level: 0)
         }
@@ -9632,6 +10601,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         engineConnectionGeneration: Int? = nil
     ) {
         audioLock.lock()
+        let interruptedPlaybackGeneration = playbackGeneration
         let wasActive = modelAudioTurnOpen || playbackStarted || !pendingPlaybackBuffers.isEmpty
         pendingPlaybackBuffers.removeAll(keepingCapacity: true)
         modelAudioTurnOpen = false
@@ -9662,9 +10632,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
         #endif
-        if let attempt = activeStartAttempt() {
-            settleOutputEnvelope(generation: attempt)
-        }
+        settleOutputEnvelope(
+            playbackGeneration: interruptedPlaybackGeneration)
         if wasActive {
             if let engineConnectionGeneration {
                 dispatchEngineCallback(
@@ -10035,8 +11004,47 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         stopModelPlayback(interrupted: false)
     }
 
-    func recoverAudio() {
-        guard configured else { return }
+    /// Apply only the playback portion of a generation-checked lifecycle plan.
+    /// Pauses preserve queued buffers; fail-closed transport/media resets discard
+    /// them and clear barge-in state so stale model audio cannot resurrect.
+    @MainActor
+    func applyLifecyclePlaybackPolicy(
+        _ policy: AlmaLiveVoiceLifecycleReducer.PlaybackPolicy,
+        engineConnectionGeneration expectedGeneration: Int
+    ) {
+        guard let attempt = activeStartAttempt(),
+              engineConnectionGeneration(for: attempt) == expectedGeneration
+        else { return }
+
+        switch policy {
+        case .allow:
+            recoverAudio(ifCurrentEngineConnectionGeneration: expectedGeneration)
+        case .pause:
+            audioLock.lock()
+            let expectedPlaybackGeneration = playbackGeneration
+            audioLock.unlock()
+            audioQueue.async { [weak self] in
+                guard let self, !self.stopped,
+                      self.acceptsStartAttempt(attempt) else { return }
+                self.audioLock.lock()
+                let isCurrent = self.playbackGeneration == expectedPlaybackGeneration
+                self.audioLock.unlock()
+                guard isCurrent else { return }
+                if self.player.isPlaying { self.player.pause() }
+            }
+        case .stopAndDiscard:
+            stopModelPlayback(
+                interrupted: true,
+                engineConnectionGeneration: expectedGeneration)
+        }
+    }
+
+    @MainActor
+    func recoverAudio(ifCurrentEngineConnectionGeneration expectedGeneration: Int? = nil) {
+        guard configured, let attempt = activeStartAttempt() else { return }
+        if let expectedGeneration {
+            guard engineConnectionGeneration(for: attempt) == expectedGeneration else { return }
+        }
         let gate = readinessSnapshot()
         if gate.callKitManaged {
             guard gate.callKitAudioActive else { return }
@@ -10045,9 +11053,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         audioLock.lock()
         let shouldPlay = playbackStarted
+        let expectedPlaybackGeneration = playbackGeneration
         audioLock.unlock()
         audioQueue.async { [weak self] in
-            guard let self, !self.stopped else { return }
+            guard let self, !self.stopped,
+                  self.acceptsStartAttempt(attempt) else { return }
+            self.audioLock.lock()
+            let isCurrent = self.playbackGeneration == expectedPlaybackGeneration
+            self.audioLock.unlock()
+            guard isCurrent else { return }
             if !self.audioEngine.isRunning { try? self.audioEngine.start() }
             if shouldPlay, !self.player.isPlaying { self.player.play() }
         }
@@ -10200,6 +11214,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     private func fail(
         _ message: String,
+        underlyingError: Error? = nil,
         ifCurrentStartAttempt expectedStartAttempt:
             AlmaLiveVoiceStartAttemptState.Token? = nil,
         ifCurrentSocketAttempt expectedSocketAttempt:
@@ -10215,8 +11230,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             ifCurrentStartAttempt: attempt,
             ifCurrentSocketAttempt: expectedSocketAttempt)
         else { return }
+        let failure = AlmaLiveVoiceConnectionFailure(
+            message: message,
+            underlyingError: underlyingError)
         dispatchEngineCallback(engineConnectionGeneration: generation) {
-            $0.liveDidFail(message)
+            $0.liveDidFail(failure)
         }
     }
 
@@ -12651,6 +13669,7 @@ final class AlmaLiveVoicePreCallSettingsController {
 @available(iOS 17.0, *)
 struct AlmaLiveVoicePreCallSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var controller: AlmaLiveVoicePreCallSettingsController
     @State private var accessibilityAnnouncementTask: Task<Void, Never>?
 
@@ -12672,10 +13691,10 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 26) {
                     VStack(alignment: .leading, spacing: 7) {
                         Text("কলের আগে ভয়েস বেছে নিন")
-                            .font(.system(size: 26, weight: .bold))
+                            .font(.title.bold())
                             .foregroundStyle(ink)
                         Text("Save না করা পর্যন্ত মডেল ও কণ্ঠের পছন্দ বদলাবে না। Preview শুধু যাচাইকৃত local audio চালায়।")
-                            .font(.system(size: 14))
+                            .font(.subheadline)
                             .foregroundStyle(muted)
                     }
 
@@ -12691,10 +13710,10 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                                     VStack(alignment: .leading, spacing: 5) {
                                         HStack {
                                             Text(model.title)
-                                                .font(.system(size: 16, weight: .semibold))
+                                                .font(.headline)
                                             Spacer()
                                             Text(model.badge)
-                                                .font(.system(size: 10, weight: .bold))
+                                                .font(.caption2.bold())
                                                 .foregroundStyle(gold)
                                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                                 .background(gold.opacity(0.10), in: Capsule())
@@ -12704,7 +13723,7 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                                             }
                                         }
                                         Text(model.detail)
-                                            .font(.system(size: 12.5))
+                                            .font(.subheadline)
                                             .foregroundStyle(muted)
                                         modelFact("শক্তি", model.strengths)
                                         modelFact("সীমাবদ্ধতা", model.limitations)
@@ -12729,11 +13748,11 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                             ) { index, scriptLine in
                                 HStack(alignment: .firstTextBaseline, spacing: 9) {
                                     Text("\(index + 1)")
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .font(.caption2.bold().monospaced())
                                         .foregroundStyle(gold)
                                         .frame(width: 16, alignment: .trailing)
                                     Text(scriptLine)
-                                        .font(.system(size: 13.5))
+                                        .font(.subheadline)
                                         .foregroundStyle(ink)
                                 }
                             }
@@ -12748,7 +13767,9 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
 
                     settingsSection(title: "কণ্ঠ ও Preview", subtitle: "কণ্ঠে tap করলে draft select হবে এবং audio idle থাকলে preview শোনা যাবে") {
                         LazyVGrid(
-                            columns: [GridItem(.flexible()), GridItem(.flexible())],
+                            columns: dynamicTypeSize.isAccessibilitySize
+                                ? [GridItem(.flexible())]
+                                : [GridItem(.flexible()), GridItem(.flexible())],
                             spacing: 10
                         ) {
                             ForEach(AlmaLiveVoicePreferences.voices) { voice in
@@ -12765,10 +13786,10 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                                             Spacer()
                                             previewGlyph(for: voice.id)
                                         }
-                                        Text(voice.name).font(.system(size: 16, weight: .semibold))
-                                        Text(voice.detail).font(.system(size: 11.5)).foregroundStyle(muted)
+                                        Text(voice.name).font(.headline)
+                                        Text(voice.detail).font(.caption).foregroundStyle(muted)
                                         Text(voice.id)
-                                            .font(.system(size: 10, design: .monospaced))
+                                            .font(.caption2.monospaced())
                                             .foregroundStyle(muted.opacity(0.72))
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -12865,7 +13886,7 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                     .foregroundStyle(gold)
             }
         }
-        .font(.system(size: 12.5, weight: .medium))
+        .font(.footnote.weight(.medium))
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier("voice.precall.preview.status")
     }
@@ -12876,15 +13897,15 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(ink)
-            Text(subtitle).font(.system(size: 12)).foregroundStyle(muted)
+            Text(title).font(.title3.weight(.semibold)).foregroundStyle(ink)
+            Text(subtitle).font(.footnote).foregroundStyle(muted)
             content()
         }
     }
 
     private func modelFact(_ label: String, _ value: String) -> some View {
         (Text("\(label): ").fontWeight(.semibold) + Text(value))
-            .font(.system(size: 11.5))
+            .font(.caption)
             .foregroundStyle(muted)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -13045,6 +14066,13 @@ struct AlmaLiveSettingsSheet: View {
                                 }
                             }
                         }
+                        Label(
+                            "চলতি call-এর audio নিরাপদ রাখতে এখানে preview বাজে না; নির্বাচন Save বা Apply করলে তবেই বদলাবে।",
+                            systemImage: "speaker.slash.fill")
+                            .font(.footnote)
+                            .foregroundStyle(muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("voice.settings.preview-unavailable-during-call")
                     }
 
                     if engine.isRecoveryEvidenceEnabled {
@@ -13270,27 +14298,57 @@ struct AlmaGlobalCallBar: View {
 @available(iOS 17.0, *)
 struct AlmaCallMiniWave: View {
     let engine: AlmaVoiceEngine
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { ctx in
-            let t = ctx.date.timeIntervalSinceReferenceDate
-            let agent = engine.state == .speaking || engine.ttsLevel > 0.03
-            let ownerTalking = !agent && engine.micLevel > 0.10
-            let level = agent ? max(engine.ttsLevel, 0.2) : engine.micLevel
-            let color = agent
-                ? Color(red: 0.231, green: 0.878, blue: 0.561)
-                : Color(red: 0.878, green: 0.478, blue: 0.373)   // ALMA coral
-            HStack(spacing: 2.5) {
-                ForEach(0..<5, id: \.self) { i in
-                    let phase = sin(t * (agent ? 8.0 : 13.0) + Double(i) * 1.15) * 0.5 + 0.5
-                    let active = agent || ownerTalking
-                    let h: CGFloat = active ? 6 + CGFloat(min(1, level) * phase) * 16 : 4
-                    Capsule()
-                        .fill(active ? color : Color.white.opacity(0.28))
-                        .frame(width: 3, height: h)
+        Group {
+            if reduceMotion {
+                // No animation timeline and no amplitude-varying bar heights.
+                // Speech changes only between settled inactive/active states.
+                wave(at: 0, reduceMotion: true)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { ctx in
+                    wave(
+                        at: ctx.date.timeIntervalSinceReferenceDate,
+                        reduceMotion: false)
                 }
             }
-            .frame(width: 30, height: 24)
         }
+    }
+
+    private func wave(
+        at time: TimeInterval,
+        reduceMotion: Bool
+    ) -> some View {
+        let output = AlmaLiveVoiceOutputPCMEnvelopeReducer.presentation(
+            level: engine.ttsLevel,
+            phase: engine.state == .speaking ? .speaking : .listening,
+            reduceMotion: reduceMotion)
+        // Phase alone is never enough to claim agent speech. A positive level
+        // can originate only from locally rendered output PCM.
+        let agentTalking = output.level > 0
+        let ownerTalking = !agentTalking && engine.micLevel > 0.10
+        let active = agentTalking || ownerTalking
+        let level = agentTalking ? output.level : engine.micLevel
+        let color = agentTalking
+            ? Color(red: 0.231, green: 0.878, blue: 0.561)
+            : Color(red: 0.878, green: 0.478, blue: 0.373)   // ALMA coral
+        return HStack(spacing: 2.5) {
+            ForEach(0..<5, id: \.self) { index in
+                let phase = sin(
+                    time * (agentTalking ? 8.0 : 13.0)
+                        + Double(index) * 1.15) * 0.5 + 0.5
+                let reactiveHeight = 6 + CGFloat(min(1, level) * phase) * 16
+                let height: CGFloat = active
+                    ? (reduceMotion ? 12 : reactiveHeight)
+                    : 4
+                Capsule()
+                    .fill(active ? color : Color.white.opacity(0.28))
+                    .frame(width: 3, height: height)
+            }
+        }
+        .frame(width: 30, height: 24)
     }
 }
 
@@ -13322,7 +14380,8 @@ struct AlmaVoiceCallMiniBar: View {
                             .font(.system(size: 13.5, weight: .semibold))
                             .foregroundStyle(Color(red: 0.918, green: 0.949, blue: 0.984))
                         TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                            let agentTalking = engine.state == .speaking || engine.ttsLevel > 0.03
+                            let agentTalking = engine.state == .speaking
+                                && engine.ttsLevel > 0.03
                             let ownerTalking = !agentTalking && engine.micLevel > 0.10
                             Text(agentTalking ? "ALMA বলছে…"
                                  : ownerTalking ? "আপনি বলছেন…"
@@ -13973,8 +15032,13 @@ struct AlmaMetalOrbView: UIViewRepresentable {
             let dt = Float(min(0.05, now - last))
             last = now
             let t = motionEnabled ? Float(now - start) : 0
-            // web frame(): hue eases at 4.2/s, activity at 5.5/s
-            hue += (hueTarget - hue) * min(1, dt * 4.2)
+            // Reduce Motion snaps to one settled hue. The ordinary path keeps
+            // the owner-approved reactive easing.
+            if motionEnabled {
+                hue += (hueTarget - hue) * min(1, dt * 4.2)
+            } else {
+                hue = hueTarget
+            }
             let target: Float
             switch state {
             case "thinking", "transcribing": target = 0.85

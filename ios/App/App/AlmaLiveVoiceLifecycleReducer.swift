@@ -51,6 +51,14 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         case disconnected
     }
 
+    enum MediaServicesState: Equatable, Sendable {
+        case ready
+        /// Core Audio objects are invalid after a media-services reset. Provider
+        /// reconnection alone cannot reopen capture or playback; the rebuilt
+        /// graph must publish an explicit `mediaServicesReady` event.
+        case awaitingExplicitRecovery
+    }
+
     /// Background/lock continuation is deliberately opt-in and narrow. The
     /// default is fail-closed until real-device evidence proves a wider policy.
     enum BackgroundContinuation: Equatable, Sendable {
@@ -72,6 +80,7 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         var callKit: CallKitState
         var network: NetworkState
         var provider: ProviderState
+        var mediaServices: MediaServicesState
         var isMuted: Bool
         var pendingToolIDs: [String]
         var terminalReason: TerminalReason?
@@ -96,6 +105,8 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             case networkUp
             case providerDisconnected
             case providerReconnected
+            case mediaServicesReset
+            case mediaServicesReady
             case userMuted
             case userUnmuted
             case userEnded
@@ -118,6 +129,8 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         case networkUp
         case providerDisconnected
         case providerReconnected
+        case mediaServicesReset
+        case mediaServicesReady
         case userMuted
         case userUnmuted
         case userEnded
@@ -141,6 +154,8 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             case .networkUp: return .networkUp
             case .providerDisconnected: return .providerDisconnected
             case .providerReconnected: return .providerReconnected
+            case .mediaServicesReset: return .mediaServicesReset
+            case .mediaServicesReady: return .mediaServicesReady
             case .userMuted: return .userMuted
             case .userUnmuted: return .userUnmuted
             case .userEnded: return .userEnded
@@ -177,6 +192,7 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         case terminal
         case networkUnavailable
         case providerDisconnected
+        case mediaServicesReset
         case audioInterrupted
         case waitingForCallKit
         case routeUnavailable
@@ -226,8 +242,29 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             case suppress
         }
 
+        enum Approval: Equatable, Sendable {
+            /// A visible approval may be submitted only while every lifecycle
+            /// gate is open for this exact logical generation.
+            case allowInteraction
+            /// Preserve the approval identity and UI, but reject submission.
+            case hold
+            /// Terminal sessions must reject and dismiss approval interaction.
+            case reject
+        }
+
         let execution: Execution
         let resultDelivery: ResultDelivery
+        let approval: Approval
+
+        init(
+            execution: Execution,
+            resultDelivery: ResultDelivery,
+            approval: Approval = .allowInteraction
+        ) {
+            self.execution = execution
+            self.resultDelivery = resultDelivery
+            self.approval = approval
+        }
     }
 
     struct UITruth: Equatable, Sendable {
@@ -255,6 +292,83 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         let playback: PlaybackPolicy
         let tools: ToolPolicy
         let ui: UITruth
+    }
+
+    /// A pure, injected seam between lifecycle policy and production side
+    /// effects. Plans are full steady-state instructions (not callback-specific
+    /// guesses), so applying the same accepted plan is idempotent. Rejected or
+    /// wrong-generation transitions never produce a plan.
+    struct EffectsAdapter: Equatable, Sendable {
+        enum Timer: Equatable, Sendable {
+            case run
+            case stop
+        }
+
+        enum LiveActivity: Equatable, Sendable {
+            /// Publish only the privacy-safe lifecycle snapshot.
+            case update(UITruth)
+            case end
+        }
+
+        enum Recovery: Equatable, Sendable {
+            case none
+            /// The path monitor observed a real down -> up transition.
+            case reconnectCurrentGeneration
+            /// Rebuild audio/provider resources; media remains closed until the
+            /// rebuilt graph emits `mediaServicesReady`.
+            case rebuildAfterMediaServicesReset
+        }
+
+        struct Plan: Equatable, Sendable {
+            let generation: UInt64
+            let eventKind: Event.Kind
+            let microphone: MicrophonePolicy
+            let transport: TransportPolicy
+            let playback: PlaybackPolicy
+            let tools: ToolPolicy
+            let ui: UITruth
+            let timer: Timer
+            let liveActivity: LiveActivity
+            let recovery: Recovery
+        }
+
+        func plan(for transition: Transition) -> Plan? {
+            guard transition.mayApplyEffects,
+                  transition.input.generation > 0,
+                  transition.input.generation == transition.state.generation
+            else { return nil }
+
+            let recovery: Recovery
+            switch transition.input.event {
+            case .networkUp:
+                recovery = transition.state.mediaServices == .awaitingExplicitRecovery
+                    ? .rebuildAfterMediaServicesReset
+                    : .reconnectCurrentGeneration
+            case .mediaServicesReset:
+                // A reset observed while offline still closes every media gate,
+                // but starting a replacement graph cannot succeed until the
+                // path monitor publishes the matching down -> up transition.
+                recovery = transition.state.network == .up
+                    ? .rebuildAfterMediaServicesReset
+                    : .none
+            default:
+                recovery = .none
+            }
+
+            return Plan(
+                generation: transition.state.generation,
+                eventKind: transition.input.event.kind,
+                microphone: transition.decision.microphone,
+                transport: transition.decision.transport,
+                playback: transition.decision.playback,
+                tools: transition.decision.tools,
+                ui: transition.decision.ui,
+                timer: transition.decision.ui.isTimerRunning ? .run : .stop,
+                liveActivity: transition.state.isTerminal
+                    ? .end
+                    : .update(transition.decision.ui),
+                recovery: recovery)
+        }
     }
 
     struct Transition: Equatable, Sendable {
@@ -290,6 +404,7 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             callKit: initialCallKitState,
             network: .up,
             provider: .connected,
+            mediaServices: .ready,
             isMuted: false,
             pendingToolIDs: [],
             terminalReason: nil)
@@ -408,6 +523,28 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             state.provider = .connected
             outcome = .applied
 
+        case .mediaServicesReset:
+            guard state.mediaServices == .ready else {
+                outcome = .ignored(.noStateChange)
+                break
+            }
+            state.mediaServices = .awaitingExplicitRecovery
+            // Core Audio reset invalidates the media graph associated with the
+            // current provider attempt. A new provider setup and an explicit
+            // graph-ready signal are both required before media can reopen.
+            state.provider = .disconnected
+            outcome = .applied
+
+        case .mediaServicesReady:
+            guard state.mediaServices == .awaitingExplicitRecovery,
+                  state.network == .up,
+                  state.provider == .connected else {
+                outcome = .ignored(.invalidTransition)
+                break
+            }
+            state.mediaServices = .ready
+            outcome = .applied
+
         case .userMuted:
             outcome = assign(&state.isMuted, true)
 
@@ -484,7 +621,10 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
                 microphone: .stop(.terminal),
                 transport: .disconnectAndInvalidateGeneration,
                 playback: .stopAndDiscard(.terminal),
-                tools: ToolPolicy(execution: .cancel, resultDelivery: .suppress),
+                tools: ToolPolicy(
+                    execution: .cancel,
+                    resultDelivery: .suppress,
+                    approval: .reject),
                 ui: UITruth(
                     session: .ended,
                     work: .idle,
@@ -514,6 +654,8 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
         let playback: PlaybackPolicy
         if state.network == .down {
             playback = .stopAndDiscard(.networkUnavailable)
+        } else if state.mediaServices == .awaitingExplicitRecovery {
+            playback = .stopAndDiscard(.mediaServicesReset)
         } else if state.provider == .disconnected {
             playback = .stopAndDiscard(.providerDisconnected)
         } else if let blocker = mediaBlocker {
@@ -526,7 +668,7 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
 
         let toolExecution: ToolPolicy.Execution
         let toolDelivery: ToolPolicy.ResultDelivery
-        if state.network == .down {
+        if state.network == .down || state.mediaServices == .awaitingExplicitRecovery {
             toolExecution = .hold
             toolDelivery = .holdInOrder
         } else if state.provider == .disconnected {
@@ -544,9 +686,15 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             toolDelivery = .deliverInOrder
         }
 
+        let approval: ToolPolicy.Approval = mediaBlocker == nil
+            ? .allowInteraction
+            : .hold
+
         let uiSession: UITruth.Session
         if state.network == .down {
             uiSession = .reconnecting(.networkUnavailable)
+        } else if state.mediaServices == .awaitingExplicitRecovery {
+            uiSession = .suspended(.mediaServicesReset)
         } else if state.provider == .disconnected {
             uiSession = .reconnecting(.providerDisconnected)
         } else if let blocker = mediaBlocker {
@@ -565,7 +713,8 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
             playback: playback,
             tools: ToolPolicy(
                 execution: toolExecution,
-                resultDelivery: toolDelivery),
+                resultDelivery: toolDelivery,
+                approval: approval),
             ui: UITruth(
                 session: uiSession,
                 work: work,
@@ -575,6 +724,7 @@ struct AlmaLiveVoiceLifecycleReducer: Equatable, Sendable {
 
     private static func mediaBlockReason(for state: State) -> BlockReason? {
         if state.network == .down { return .networkUnavailable }
+        if state.mediaServices == .awaitingExplicitRecovery { return .mediaServicesReset }
         if state.provider == .disconnected { return .providerDisconnected }
         if state.isAudioInterrupted { return .audioInterrupted }
         if state.callKit == .reserved || state.callKit == .deactivated {

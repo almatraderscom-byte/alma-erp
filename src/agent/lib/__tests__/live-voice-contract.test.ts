@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  decodeLiveVoiceContractStrict,
   LIVE_VOICE_CONTRACT,
   liveVoiceRemoteModelAvailability,
   liveVoiceRolloutDefaults,
@@ -9,6 +12,11 @@ import {
 import { buildLiveVoiceConfig } from '@/agent/lib/live-voice-config'
 
 describe('versioned live voice contract', () => {
+  const source = () => readFileSync(
+    join(process.cwd(), 'config/live-voice/live-voice-v1.json'),
+    'utf8',
+  )
+
   it('has one enabled default and an explicit bounded compression window', () => {
     const contract = LIVE_VOICE_CONTRACT
     expect(contract.contractVersion).toBe('live-voice-2026-08-11-v1')
@@ -51,6 +59,40 @@ describe('versioned live voice contract', () => {
       functionCallingMode: 'synchronous-only',
       thinking: { mode: 'level', level: 'MINIMAL' },
     })
+  })
+
+  it('keeps decoded canonical session semantics identical to the TypeScript runtime payload', () => {
+    const decoded = decodeLiveVoiceContractStrict(source())
+    const config = buildLiveVoiceConfig()
+    const declarations = (config.tools?.[0] as {
+      functionDeclarations?: unknown[]
+    }).functionDeclarations
+
+    expect({
+      systemInstruction: config.systemInstruction,
+      functionDeclarations: declarations,
+    }).toEqual(decoded.sessionProtocol)
+    expect(decoded.sessionProtocol.functionDeclarations.map((item) => item.name)).toEqual([
+      'quick_erp_lookup',
+      'end_call',
+      'run_agent_turn',
+    ])
+  })
+
+  it('strictly rejects lexical duplicates and semantic tool-contract drift', () => {
+    const duplicate = source().replace(
+      '"sessionProtocol": {',
+      '"sessionProtocol": { "system\\u0049nstruction": "shadow",',
+    )
+    expect(() => decodeLiveVoiceContractStrict(duplicate)).toThrow(/duplicate key/)
+
+    const duplicateTool = structuredClone(LIVE_VOICE_CONTRACT)
+    duplicateTool.sessionProtocol.functionDeclarations[1]!.name = 'quick_erp_lookup'
+    expect(() => parseLiveVoiceContract(duplicateTool)).toThrow(/canonical unique order/)
+
+    const schemaDrift = structuredClone(LIVE_VOICE_CONTRACT)
+    schemaDrift.sessionProtocol.functionDeclarations[0]!.parameters.required = ['missing']
+    expect(() => parseLiveVoiceContract(schemaDrift)).toThrow(/required field|quick lookup schema/)
   })
 
   it('migrates legacy valid choices and rolls unknown choices back to defaults', () => {

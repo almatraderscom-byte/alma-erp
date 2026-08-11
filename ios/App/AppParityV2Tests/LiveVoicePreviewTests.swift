@@ -242,6 +242,117 @@ final class LiveVoicePreviewTests: XCTestCase {
         XCTAssertNil(ledger.nextResponse(transportOrdinal: 9))
     }
 
+    func testToolLedgerNeverEvictsExactlyOnceIdentityAtCapacity() throws {
+        var ledger = AlmaLiveVoiceToolLedger()
+        var first: AlmaLiveVoiceToolInvocation?
+
+        for index in 0..<128 {
+            let invocation = AlmaLiveVoiceToolInvocation(
+                callID: "lifetime-id-\(index)",
+                functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
+                payload: .quickLookup(tool: "get_orders"))
+            if index == 0 { first = invocation }
+            XCTAssertEqual(ledger.admit(invocation), .accepted)
+            XCTAssertEqual(ledger.nextExecution(), invocation)
+            XCTAssertTrue(ledger.complete(
+                callID: invocation.callID,
+                functionName: invocation.functionName,
+                result: "result-\(index)"))
+            let ticket = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 1))
+            XCTAssertTrue(ledger.finishSend(ticket, succeeded: true))
+        }
+
+        let overflow = AlmaLiveVoiceToolInvocation(
+            callID: "new-after-capacity",
+            functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
+            payload: .quickLookup(tool: "get_orders"))
+        XCTAssertEqual(ledger.admit(overflow), .capacityExceeded)
+
+        let original = try XCTUnwrap(first)
+        XCTAssertEqual(ledger.admit(original), .duplicate(replayScheduled: true))
+        XCTAssertNil(ledger.nextExecution(), "a seen provider ID must never execute twice")
+        let replay = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 2))
+        XCTAssertEqual(replay.callID, original.callID)
+        XCTAssertEqual(replay.result, "result-0")
+    }
+
+    func testToolExecutionTokenRejectsLateResultAfterSessionResetAndIDReuse() {
+        let reusedInvocation = AlmaLiveVoiceToolInvocation(
+            callID: "provider-reused-id",
+            functionName: AlmaLiveVoiceToolName.runAgentTurn.rawValue,
+            payload: .runAgentTurn(request: "বর্তমান সেশনের কাজ"))
+        let oldSession = AlmaLiveVoiceToolExecutionToken(
+            sessionEpoch: 41,
+            callID: reusedInvocation.callID,
+            functionName: reusedInvocation.functionName)
+        let currentSession = AlmaLiveVoiceToolExecutionToken(
+            sessionEpoch: 42,
+            callID: reusedInvocation.callID,
+            functionName: reusedInvocation.functionName)
+
+        XCTAssertFalse(AlmaLiveVoiceToolExecutionToken.accepts(
+            oldSession,
+            currentSessionEpoch: 42,
+            invocation: reusedInvocation))
+        XCTAssertTrue(AlmaLiveVoiceToolExecutionToken.accepts(
+            currentSession,
+            currentSessionEpoch: 42,
+            invocation: reusedInvocation))
+    }
+
+    func testToolWorkModeStaysPendingAcrossAcceptedBatchUntilLastTerminal() {
+        XCTAssertTrue(AlmaLiveVoiceToolWorkModePolicy.isPending(
+            activeInvocation: true,
+            hasOutstandingCalls: true))
+        XCTAssertTrue(AlmaLiveVoiceToolWorkModePolicy.isPending(
+            activeInvocation: false,
+            hasOutstandingCalls: true),
+            "finishing the first call must not expose a false listening interval")
+        XCTAssertFalse(AlmaLiveVoiceToolWorkModePolicy.isPending(
+            activeInvocation: false,
+            hasOutstandingCalls: false))
+    }
+
+    func testToolIntentClassifierRoutesScriptedBanglaAndBanglishDeterministically() {
+        for _ in models {
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("আজকের বিক্রি কত দেখাও"),
+                .quickLookup(tool: "get_sales_summary"))
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("pending approval gula dekhao"),
+                .quickLookup(tool: "get_pending_approvals"))
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("নতুন অর্ডার তৈরি করো"),
+                .runAgentTurn(request: "নতুন অর্ডার তৈরি করো"))
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("sales report analyse করে পাঠাও"),
+                .runAgentTurn(request: "sales report analyse করে পাঠাও"))
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("আল্লাহ হাফেজ, কল কাটো"),
+                .endCall)
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify("ধন্যবাদ Boss"),
+                .casual)
+        }
+    }
+
+    func testToolIntentRouteRejectsProviderMismatchWithoutChangingOpaqueIdentity() {
+        let expected = AlmaLiveVoiceToolIntentRoute.quickLookup(
+            tool: "get_sales_summary")
+        let matching = AlmaLiveVoiceToolInvocation(
+            callID: "opaque/provider:id-9",
+            functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
+            payload: .quickLookup(tool: "get_sales_summary"))
+        let mismatched = AlmaLiveVoiceToolInvocation(
+            callID: "opaque/provider:id-9",
+            functionName: AlmaLiveVoiceToolName.runAgentTurn.rawValue,
+            payload: .runAgentTurn(request: "আজকের বিক্রি কত দেখাও"))
+
+        XCTAssertTrue(expected.accepts(matching))
+        XCTAssertFalse(expected.accepts(mismatched))
+        XCTAssertEqual(matching.callID, "opaque/provider:id-9")
+    }
+
     func testLiveProfileFailedHealthCheckRollsBackWithoutChangingSavedProfile() {
         let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
         let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Sulafat")

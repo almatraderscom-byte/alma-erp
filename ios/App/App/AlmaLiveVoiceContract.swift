@@ -20,6 +20,53 @@ struct AlmaLiveVoiceContract: Decodable, Equatable {
         let audioTokensPerSecond: Double
     }
 
+    struct ToolParameter: Codable, Equatable {
+        let type: String
+        let description: String?
+        let enumeration: [String]?
+        let properties: [String: ToolParameter]?
+        let required: [String]?
+
+        private enum CodingKeys: String, CodingKey {
+            case type, description, properties, required
+            case enumeration = "enum"
+        }
+
+        var geminiObject: [String: Any] {
+            var object: [String: Any] = ["type": type]
+            if let description { object["description"] = description }
+            if let enumeration { object["enum"] = enumeration }
+            if let properties {
+                object["properties"] = properties.mapValues(\.geminiObject)
+            }
+            if let required { object["required"] = required }
+            return object
+        }
+    }
+
+    struct FunctionDeclaration: Codable, Equatable {
+        let name: String
+        let description: String
+        let parameters: ToolParameter
+
+        var geminiObject: [String: Any] {
+            [
+                "name": name,
+                "description": description,
+                "parameters": parameters.geminiObject,
+            ]
+        }
+    }
+
+    struct SessionProtocol: Codable, Equatable {
+        let systemInstruction: String
+        let functionDeclarations: [FunctionDeclaration]
+
+        var geminiFunctionDeclarations: [[String: Any]] {
+            functionDeclarations.map(\.geminiObject)
+        }
+    }
+
     struct Thinking: Decodable, Equatable {
         let mode: String
         let budget: Int?
@@ -85,6 +132,7 @@ struct AlmaLiveVoiceContract: Decodable, Equatable {
     let defaults: Defaults
     let contextCompression: ContextCompression
     let localBudget: LocalBudget
+    let sessionProtocol: SessionProtocol
     let models: [Model]
     let voices: [Voice]
     let migrations: [Migration]
@@ -316,7 +364,7 @@ extension AlmaLiveVoiceContract {
             raw,
             allowed: [
                 "schemaVersion", "contractVersion", "defaults", "contextCompression",
-                "localBudget", "models", "voices", "migrations",
+                "localBudget", "sessionProtocol", "models", "voices", "migrations",
             ],
             path: "contract")
         _ = try object(
@@ -334,6 +382,23 @@ extension AlmaLiveVoiceContract {
                 "audioTokensPerSecond",
             ],
             path: "localBudget")
+
+        let sessionProtocol = try object(
+            root["sessionProtocol"],
+            allowed: ["systemInstruction", "functionDeclarations"],
+            path: "sessionProtocol")
+        for (index, rawDeclaration) in try array(
+            sessionProtocol["functionDeclarations"],
+            path: "sessionProtocol.functionDeclarations"
+        ).enumerated() {
+            let declaration = try object(
+                rawDeclaration,
+                allowed: ["name", "description", "parameters"],
+                path: "sessionProtocol.functionDeclarations[\(index)]")
+            try validateToolParameterShape(
+                declaration["parameters"],
+                path: "sessionProtocol.functionDeclarations[\(index)].parameters")
+        }
 
         for (index, rawModel) in try array(root["models"], path: "models").enumerated() {
             let model = try object(
@@ -391,6 +456,31 @@ extension AlmaLiveVoiceContract {
         }
     }
 
+    private static func validateToolParameterShape(
+        _ raw: Any?,
+        path: String
+    ) throws {
+        let parameter = try object(
+            raw,
+            allowed: ["type", "description", "enum", "properties", "required"],
+            path: path)
+        if let rawProperties = parameter["properties"] {
+            guard let properties = rawProperties as? [String: Any] else {
+                throw AlmaLiveVoiceContractError.malformed(
+                    "expected object at \(path).properties")
+            }
+            for (name, property) in properties {
+                try validateToolParameterShape(property, path: "\(path).properties.\(name)")
+            }
+        }
+        if let rawEnumeration = parameter["enum"] {
+            _ = try array(rawEnumeration, path: "\(path).enum")
+        }
+        if let rawRequired = parameter["required"] {
+            _ = try array(rawRequired, path: "\(path).required")
+        }
+    }
+
     private static func object(
         _ raw: Any?,
         allowed: Set<String>,
@@ -434,6 +524,7 @@ extension AlmaLiveVoiceContract {
               localBudget.audioTokensPerSecond.isFinite,
               localBudget.audioTokensPerSecond > 0
         else { throw AlmaLiveVoiceContractError.invalid("local budget bounds") }
+        try validateSessionProtocol()
 
         let modelIDs = Set(models.map(\.id))
         let voiceIDs = Set(voices.map(\.id))
@@ -471,6 +562,96 @@ extension AlmaLiveVoiceContract {
             guard [pricing.inputText, pricing.inputAudio, pricing.outputText, pricing.outputAudio]
                 .allSatisfy({ $0.isFinite && $0 >= 0 })
             else { throw AlmaLiveVoiceContractError.invalid("model pricing") }
+        }
+    }
+
+    private func validateSessionProtocol() throws {
+        let instruction = sessionProtocol.systemInstruction
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let declarations = sessionProtocol.functionDeclarations
+        let names = declarations.map(\.name)
+        guard !instruction.isEmpty,
+              !instruction.contains("STATUS_NOTE"),
+              !instruction.contains("NON_BLOCKING"),
+              names == ["quick_erp_lookup", "end_call", "run_agent_turn"],
+              Set(names).count == names.count,
+              declarations.allSatisfy({
+                  !$0.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              })
+        else { throw AlmaLiveVoiceContractError.invalid("session protocol") }
+
+        for declaration in declarations {
+            try validateToolParameter(
+                declaration.parameters,
+                path: "functionDeclarations.\(declaration.name).parameters")
+        }
+
+        let lookup = declarations[0].parameters
+        let lookupProperty = lookup.properties?["tool"]
+        guard lookup.type == "OBJECT",
+              Set(lookup.properties?.keys.map { $0 } ?? []) == ["tool"],
+              lookup.required == ["tool"],
+              lookupProperty?.type == "STRING",
+              lookupProperty?.enumeration == [
+                  "get_attendance",
+                  "get_sales_summary",
+                  "get_orders",
+                  "get_dashboard_snapshot",
+                  "get_inventory_status",
+                  "get_salah_status",
+                  "get_pending_approvals",
+                  "get_prayer_times",
+              ]
+        else { throw AlmaLiveVoiceContractError.invalid("quick lookup schema") }
+
+        let endCall = declarations[1].parameters
+        guard endCall.type == "OBJECT",
+              endCall.properties?.isEmpty == true,
+              endCall.required == nil
+        else { throw AlmaLiveVoiceContractError.invalid("end call schema") }
+
+        let agent = declarations[2].parameters
+        let requestProperty = agent.properties?["request"]
+        guard agent.type == "OBJECT",
+              Set(agent.properties?.keys.map { $0 } ?? []) == ["request"],
+              agent.required == ["request"],
+              requestProperty?.type == "STRING",
+              requestProperty?.enumeration == nil
+        else { throw AlmaLiveVoiceContractError.invalid("agent turn schema") }
+    }
+
+    private func validateToolParameter(
+        _ parameter: ToolParameter,
+        path: String
+    ) throws {
+        if let description = parameter.description,
+           description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw AlmaLiveVoiceContractError.invalid("empty description at \(path)")
+        }
+        switch parameter.type {
+        case "OBJECT":
+            guard let properties = parameter.properties,
+                  parameter.enumeration == nil
+            else { throw AlmaLiveVoiceContractError.invalid("object schema at \(path)") }
+            let required = parameter.required ?? []
+            guard Set(required).count == required.count,
+                  Set(required).isSubset(of: Set(properties.keys))
+            else { throw AlmaLiveVoiceContractError.invalid("required schema at \(path)") }
+            for (name, child) in properties {
+                try validateToolParameter(child, path: "\(path).\(name)")
+            }
+        case "STRING":
+            guard parameter.properties == nil, parameter.required == nil else {
+                throw AlmaLiveVoiceContractError.invalid("string schema at \(path)")
+            }
+            if let enumeration = parameter.enumeration {
+                guard !enumeration.isEmpty,
+                      Set(enumeration).count == enumeration.count,
+                      enumeration.allSatisfy({ !$0.isEmpty })
+                else { throw AlmaLiveVoiceContractError.invalid("enum schema at \(path)") }
+            }
+        default:
+            throw AlmaLiveVoiceContractError.invalid("unsupported type at \(path)")
         }
     }
 }

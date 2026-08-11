@@ -520,6 +520,43 @@ struct AlmaLiveVoicePreviewAsset: Sendable {
     let source: Source
 }
 
+enum AlmaLiveVoicePreviewEvidenceSource: String, Codable, Equatable, Sendable {
+    case memory, disk, bundle, cdn
+
+    init(_ source: AlmaLiveVoicePreviewAsset.Source) {
+        switch source {
+        case .memory: self = .memory
+        case .disk: self = .disk
+        case .bundle: self = .bundle
+        case .cdn: self = .cdn
+        }
+    }
+}
+
+/// The pre-call preview finishes before a Live session exists. Retain only its
+/// latest allow-listed cache tier so the next privacy-safe session report can
+/// distinguish preview cache, context compression, and transport resumption.
+final class AlmaLiveVoiceCrossPhaseEvidenceStore: @unchecked Sendable {
+    static let shared = AlmaLiveVoiceCrossPhaseEvidenceStore()
+
+    private let lock = NSLock()
+    private var pendingPreviewSource: AlmaLiveVoicePreviewEvidenceSource?
+
+    func recordPreviewAssetResolved(_ source: AlmaLiveVoicePreviewEvidenceSource) {
+        lock.lock()
+        pendingPreviewSource = source
+        lock.unlock()
+    }
+
+    func consumePreviewAssetSource() -> AlmaLiveVoicePreviewEvidenceSource? {
+        lock.lock()
+        let source = pendingPreviewSource
+        pendingPreviewSource = nil
+        lock.unlock()
+        return source
+    }
+}
+
 actor AlmaLiveVoicePreviewAssetStore {
     private let catalog: AlmaLiveVoicePreviewCatalog
     private let diskRoot: URL
@@ -1486,6 +1523,8 @@ final class AlmaLiveVoicePreviewCoordinator {
                       self.state == .loading(requestGeneration)
                 else { return }
                 self.lastResolvedSource = asset.source
+                AlmaLiveVoiceCrossPhaseEvidenceStore.shared.recordPreviewAssetResolved(
+                    AlmaLiveVoicePreviewEvidenceSource(asset.source))
 
                 let latestAdmission = self.currentAdmission()
                 guard latestAdmission.featureEnabled, !latestAdmission.callIsActive else {

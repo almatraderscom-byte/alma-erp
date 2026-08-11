@@ -44,8 +44,37 @@ final class LiveVoicePhase1BTests: XCTestCase {
             try contract())
     }
 
+    func testDecodedCanonicalSessionSemanticsMatchSwiftRuntimePayload() throws {
+        let protocolContract = try contract().sessionProtocol
+        let canonicalData = try JSONEncoder().encode(protocolContract)
+        let canonicalObject = try JSONSerialization.jsonObject(with: canonicalData)
+        let runtimeObject: [String: Any] = [
+            "systemInstruction": protocolContract.systemInstruction,
+            "functionDeclarations": protocolContract.geminiFunctionDeclarations,
+        ]
+
+        XCTAssertEqual(
+            try JSONSerialization.data(withJSONObject: runtimeObject, options: [.sortedKeys]),
+            try JSONSerialization.data(withJSONObject: canonicalObject, options: [.sortedKeys]))
+        XCTAssertEqual(
+            protocolContract.functionDeclarations.map(\.name),
+            ["quick_erp_lookup", "end_call", "run_agent_turn"])
+        XCTAssertFalse(protocolContract.systemInstruction.contains("STATUS_NOTE"))
+        XCTAssertFalse(protocolContract.systemInstruction.contains("NON_BLOCKING"))
+    }
+
     func testSelectionMigrationPreservesValidLegacyAndBoundsUnknownValues() throws {
         let contract = try contract()
+        let firstInstall = contract.migrate(.init(
+            selectionVersion: nil,
+            modelID: nil,
+            voiceID: nil))
+        XCTAssertEqual(firstInstall.selectionVersion, contract.schemaVersion)
+        XCTAssertEqual(firstInstall.modelID, contract.defaults.modelID)
+        XCTAssertEqual(firstInstall.voiceID, contract.defaults.voiceID)
+        XCTAssertTrue(firstInstall.migrated,
+                      "first install must persist one canonical selection version")
+
         let preserved = contract.migrate(.init(
             selectionVersion: 0,
             modelID: "gemini-3.1-flash-live-preview",
@@ -61,6 +90,96 @@ final class LiveVoicePhase1BTests: XCTestCase {
             voiceID: "removed-voice"))
         XCTAssertEqual(bounded.modelID, contract.defaults.modelID)
         XCTAssertEqual(bounded.voiceID, contract.defaults.voiceID)
+    }
+
+    func testSelectionMigrationReplacesAContractDeclaredRetiredModel() throws {
+        var source = try XCTUnwrap(String(data: contractData(), encoding: .utf8))
+        let legacyID = "gemini-2.5-flash-native-audio-preview-12-2025"
+        let replacementID = "gemini-3.1-flash-live-preview"
+        let defaultNeedle = #""modelID": "gemini-2.5-flash-native-audio-preview-12-2025""#
+        let modelNeedle = "\"id\": \"gemini-2.5-flash-native-audio-preview-12-2025\",\n      \"enabled\": true"
+        let defaultRange = try XCTUnwrap(source.range(of: defaultNeedle))
+        source.replaceSubrange(
+            defaultRange,
+            with: #""modelID": "gemini-3.1-flash-live-preview""#)
+        let modelRange = try XCTUnwrap(source.range(of: modelNeedle))
+        source.replaceSubrange(
+            modelRange,
+            with: "\"id\": \"gemini-2.5-flash-native-audio-preview-12-2025\",\n      \"enabled\": false")
+        let retiredContract = try AlmaLiveVoiceContract.decodeStrict(Data(source.utf8))
+
+        let migrated = retiredContract.migrate(.init(
+            selectionVersion: retiredContract.schemaVersion,
+            modelID: legacyID,
+            voiceID: "Kore"))
+        XCTAssertEqual(migrated.modelID, replacementID)
+        XCTAssertEqual(migrated.voiceID, "Kore")
+        XCTAssertTrue(migrated.migrated)
+    }
+
+    func testRemoteKillAcceptsOnlyExactContractDeclaredReplacement() throws {
+        let contract = try contract()
+        let replacement = "gemini-3.1-flash-live-preview"
+        func failure(
+            status: Int = 503,
+            contractVersion: String? = nil,
+            replacementModel: String? = replacement
+        ) throws -> AlmaAPIError {
+            var body: [String: Any] = [
+                "error": "live_model_remotely_disabled",
+                "contractVersion": contractVersion ?? contract.contractVersion,
+            ]
+            body["replacementModel"] = replacementModel ?? NSNull()
+            let data = try JSONSerialization.data(withJSONObject: body)
+            return .http(
+                status: status,
+                body: try XCTUnwrap(String(data: data, encoding: .utf8)))
+        }
+
+        XCTAssertEqual(
+            AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+                for: try failure(),
+                contract: contract),
+            replacement)
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(status: 500),
+            contract: contract))
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(contractVersion: "stale-contract"),
+            contract: contract))
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(replacementModel: "unknown-model"),
+            contract: contract))
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(replacementModel: nil),
+            contract: contract))
+    }
+
+    func testReconnectFailurePreservesTypedRemoteKillBodyForEnginePolicy() throws {
+        let contract = try contract()
+        let replacement = "gemini-3.1-flash-live-preview"
+        let body = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: [
+                "error": "live_model_remotely_disabled",
+                "replacementModel": replacement,
+                "contractVersion": contract.contractVersion,
+            ]),
+            encoding: .utf8))
+        let delivery = AlmaLiveVoiceConnectionFailure(
+            message: "reconnect failed",
+            underlyingError: AlmaAPIError.http(status: 503, body: body))
+
+        guard case AlmaAPIError.http(let status, let deliveredBody)? =
+                delivery.underlyingError else {
+            return XCTFail("typed HTTP failure was erased at the callback boundary")
+        }
+        XCTAssertEqual(status, 503)
+        XCTAssertEqual(deliveredBody, body)
+        XCTAssertEqual(
+            AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+                for: delivery.underlyingError,
+                contract: contract),
+            replacement)
     }
 
     func testRolloutGateAndMalformedContractAtomicallyReturnLegacyPath() throws {
@@ -93,6 +212,31 @@ final class LiveVoicePhase1BTests: XCTestCase {
                     "unexpected error: \($0)")
             }
         }
+    }
+
+    func testStrictContractRejectsNestedDuplicateAndToolSchemaDrift() throws {
+        let source = try XCTUnwrap(String(data: contractData(), encoding: .utf8))
+        let nestedDuplicate = source.replacingOccurrences(
+            of: #""sessionProtocol": {"#,
+            with: #""sessionProtocol": { "system\u0049nstruction": "shadow","#)
+        XCTAssertThrowsError(
+            try AlmaLiveVoiceContract.decodeStrict(Data(nestedDuplicate.utf8))) {
+            XCTAssertTrue(String(describing: $0).contains("duplicate key"))
+        }
+
+        let duplicateTool = source.replacingOccurrences(
+            of: #""name": "end_call""#,
+            with: #""name": "quick_erp_lookup""#)
+        XCTAssertThrowsError(
+            try AlmaLiveVoiceContract.decodeStrict(Data(duplicateTool.utf8))) {
+            XCTAssertTrue(String(describing: $0).contains("session protocol"))
+        }
+
+        let requiredDrift = source.replacingOccurrences(
+            of: #""required": ["tool"]"#,
+            with: #""required": ["missing"]"#)
+        XCTAssertThrowsError(
+            try AlmaLiveVoiceContract.decodeStrict(Data(requiredDrift.utf8)))
     }
 
     func testBudgetUsesProviderTokensAndTransitionsAtExactBounds() throws {
