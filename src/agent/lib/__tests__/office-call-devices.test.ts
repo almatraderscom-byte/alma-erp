@@ -107,6 +107,24 @@ describe('encrypted Office call device registry', () => {
     expect(mocks.transaction).not.toHaveBeenCalled()
   })
 
+  it('shares the strict call installation-id contract with lifecycle ownership', async () => {
+    await expect(registerOfficeCallDevice({
+      userId: 'user-1',
+      businessId: 'ALMA_LIFESTYLE',
+      installationId: 'contains whitespace',
+      platform: 'ios',
+      environment: 'production',
+      provider: 'apns_voip',
+      token: IOS_TOKEN,
+    })).resolves.toEqual({ ok: false, error: 'invalid_installation_id' })
+    await expect(unregisterOfficeCallInstallation({
+      userId: 'user-1',
+      installationId: 'contains whitespace',
+    })).resolves.toBe(0)
+    expect(mocks.transaction).not.toHaveBeenCalled()
+    expect(mocks.deleteMany).not.toHaveBeenCalled()
+  })
+
   it('scopes logout deletion to the authenticated user and installation', async () => {
     mocks.deleteMany.mockResolvedValue({ count: 2 })
     await expect(unregisterOfficeCallInstallation({

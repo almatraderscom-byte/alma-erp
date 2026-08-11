@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { normalizeCallInstallationId } from '@/agent/lib/call-installation-id'
 
 export const OFFICE_CALL_DEVICE_PROVIDERS = ['apns_voip', 'fcm'] as const
 export type OfficeCallDeviceProvider = (typeof OFFICE_CALL_DEVICE_PROVIDERS)[number]
@@ -59,8 +60,8 @@ export async function registerOfficeCallDevice(args: {
   buildSha?: string | null
 }) {
   const token = args.token.trim()
-  const installationId = args.installationId.trim()
-  if (!installationId || installationId.length > 180) return { ok: false, error: 'invalid_installation_id' } as const
+  const installationId = normalizeCallInstallationId(args.installationId)
+  if (!installationId) return { ok: false, error: 'invalid_installation_id' } as const
   if (!validateToken(args.provider, token)) return { ok: false, error: 'invalid_provider_token' } as const
   if ((args.platform === 'ios') !== (args.provider === 'apns_voip')) {
     return { ok: false, error: 'provider_platform_mismatch' } as const
@@ -118,12 +119,20 @@ export async function unregisterOfficeCallInstallation(args: {
   userId: string
   installationId: string
 }) {
+  const installationId = normalizeCallInstallationId(args.installationId)
+  if (!installationId) return 0
   const result = await prisma.officeCallDevice.deleteMany({
-    where: { userId: args.userId, installationId: args.installationId },
+    where: { userId: args.userId, installationId },
   })
   return result.count
 }
 
+/**
+ * Bind lifecycle ownership claims to a call-capable installation that this
+ * authenticated user actually registered. The opaque installation id remains
+ * a concurrency token, but an arbitrary owner-session string can no longer
+ * manufacture a v2 call owner.
+ */
 export async function invalidateOfficeCallDeviceToken(provider: OfficeCallDeviceProvider, token: string) {
   const now = new Date()
   await prisma.officeCallDevice.updateMany({
@@ -146,6 +155,7 @@ export async function getOfficeCallDeliveryDevices(args: {
     },
     select: {
       id: true,
+      installationId: true,
       platform: true,
       environment: true,
       provider: true,
@@ -158,6 +168,7 @@ export async function getOfficeCallDeliveryDevices(args: {
     try {
       return [{
         id: row.id,
+        installationId: row.installationId,
         platform: row.platform as OfficeCallDevicePlatform,
         environment: row.environment as OfficeCallDeviceEnvironment,
         provider: row.provider as OfficeCallDeviceProvider,
@@ -191,6 +202,7 @@ export async function getOfficeCallDeliveryDevicesForUsers(userIds: string[]) {
     },
     select: {
       id: true,
+      installationId: true,
       platform: true,
       environment: true,
       provider: true,
@@ -203,6 +215,7 @@ export async function getOfficeCallDeliveryDevicesForUsers(userIds: string[]) {
     try {
       return [{
         id: row.id,
+        installationId: row.installationId,
         platform: row.platform as OfficeCallDevicePlatform,
         environment: row.environment as OfficeCallDeviceEnvironment,
         provider: row.provider as OfficeCallDeviceProvider,

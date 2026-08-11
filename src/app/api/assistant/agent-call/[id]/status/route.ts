@@ -3,18 +3,26 @@
  * The iOS/Android app posts here from the CallKit answer/decline/hangup path
  * using the owner's own session cookie (same auth as the rest of the app).
  *
- * POST { status: 'answered' | 'declined' | 'completed', summary? }
+ * POST v2 { contractVersion: 2, status, deviceId, summary?, note? }
+ * Missing contractVersion temporarily maps to an authenticated-owner legacy
+ * identity until AGENT_APP_CALL_LEGACY_V1_SUNSET_AT; all unknown versions fail.
  * GET  → { status, purpose }   (the app fetches the brief while connecting)
  */
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { prisma } from '@/lib/prisma'
 import {
+  AGENT_APP_CALL_LEGACY_V1_SUNSET_AT,
+  AGENT_APP_CALL_STATUS_CONTRACT_VERSION,
+  agentAppCallLegacyV1Allowed,
+  appendAgentAppCallDeviceNote,
   getAgentAppCallStatus,
   getAgentAppCallBrief,
+  legacyAgentAppCallDeviceId,
   markAgentAppCall,
+  normalizeAgentAppCallDeviceId,
+  type AgentAppCallDeviceStatus,
 } from '@/agent/lib/agent-app-call'
 
 export const runtime = 'nodejs'
@@ -26,7 +34,69 @@ async function requireOwner(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return { error: Response.json({ error: 'unauthorized' }, { status: 401 }) }
   if (!isSystemOwner(token)) return { error: Response.json({ error: 'forbidden' }, { status: 403 }) }
-  return { ok: true as const }
+  return { ok: true as const, ownerUserId: token.sub }
+}
+
+type DeviceContract = {
+  deviceId: string
+  legacyV1: boolean
+  responseVersion: 1 | 2
+}
+
+function transitionSummary(rawSummary: unknown, note?: string): string | undefined {
+  const summary = typeof rawSummary === 'string' && rawSummary.length > 0
+    ? rawSummary
+    : undefined
+  if (!note) return summary
+  const line = `[device] ${note}`
+  if (!summary) return line
+  // Preserve the diagnostic at the end of the same atomic lifecycle write.
+  // markAgentAppCall caps at 4,000 UTF-16 code units, so reserve the line's
+  // exact space here instead of letting an explicit summary truncate it away.
+  const maxPriorLength = Math.max(0, 4000 - line.length - 1)
+  let prior = summary.slice(0, maxPriorLength)
+  if (/[\uD800-\uDBFF]$/.test(prior)) prior = prior.slice(0, -1)
+  return prior ? `${prior}\n${line}` : line
+}
+
+function lifecycleError(error: string, httpStatus: number) {
+  return Response.json(
+    {
+      ok: false,
+      changed: false,
+      error,
+      retryable: false,
+      status: null,
+      supportedContractVersion: AGENT_APP_CALL_STATUS_CONTRACT_VERSION,
+      ...(error === 'legacy_contract_sunset'
+        ? { legacySunsetAt: AGENT_APP_CALL_LEGACY_V1_SUNSET_AT }
+        : {}),
+    },
+    { status: httpStatus },
+  )
+}
+
+function resolveDeviceContract(
+  contractVersion: unknown,
+  rawDeviceId: unknown,
+  authenticatedOwnerId: string,
+): DeviceContract | Response {
+  if (contractVersion === undefined) {
+    if (!agentAppCallLegacyV1Allowed()) {
+      return lifecycleError('legacy_contract_sunset', 426)
+    }
+    return {
+      deviceId: legacyAgentAppCallDeviceId(authenticatedOwnerId),
+      legacyV1: true,
+      responseVersion: 1,
+    }
+  }
+  if (contractVersion !== AGENT_APP_CALL_STATUS_CONTRACT_VERSION) {
+    return lifecycleError('unsupported_contract_version', 400)
+  }
+  const deviceId = normalizeAgentAppCallDeviceId(rawDeviceId)
+  if (!deviceId) return lifecycleError('device_id_required', 400)
+  return { deviceId, legacyV1: false, responseVersion: 2 }
 }
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -47,44 +117,106 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const auth = await requireOwner(req)
   if ('error' in auth && auth.error) return auth.error
 
-  let body: { status?: unknown; summary?: unknown; note?: unknown }
+  let body: {
+    contractVersion?: unknown
+    status?: unknown
+    summary?: unknown
+    note?: unknown
+    deviceId?: unknown
+    claimReceipt?: unknown
+  }
   try {
     body = await req.json()
   } catch {
-    return Response.json({ error: 'invalid_json' }, { status: 400 })
+    return lifecycleError('invalid_json', 400)
   }
   const status = body.status
-  const noteOnly = typeof body.note === 'string' && typeof body.status !== 'string'
-  if (!noteOnly && status !== 'answered' && status !== 'declined' && status !== 'completed') {
-    return Response.json({ error: 'status must be answered|declined|completed' }, { status: 400 })
+  const hasNote = typeof body.note === 'string' && body.note.trim().length > 0
+  const noteOnly = hasNote && (body.status === undefined || body.status === null)
+  if (!noteOnly && status !== 'answered' && status !== 'declined'
+      && status !== 'completed' && status !== 'failed') {
+    return lifecycleError('invalid_status', 400)
   }
+  const contract = resolveDeviceContract(
+    body.contractVersion,
+    body.deviceId,
+    auth.ownerUserId,
+  )
+  if (contract instanceof Response) return contract
+
   // `note` carries an on-device diagnostic (e.g. why live audio never started).
-  // TestFlight builds have no console access, so without this a device-only
-  // failure is invisible on the server and can only be guessed at — which is
-  // exactly what cost the owner two broken builds (89, 90).
-  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : undefined
-  const summary = typeof body.summary === 'string'
-    ? body.summary
-    : note
-      ? `[device] ${note}`
-      : undefined
+  // It is logged only after the ownership-gated database write succeeds.
+  const note = hasNote ? (body.note as string).trim().slice(0, 500) : undefined
+  const summary = transitionSummary(body.summary, note)
+  if (noteOnly && note) {
+    const result = await appendAgentAppCallDeviceNote(params.id, {
+      deviceId: contract.deviceId,
+      legacyV1: contract.legacyV1,
+      note,
+    })
+    if (contract.legacyV1) {
+      console.warn('[agent-call] legacy-v1 status contract', {
+        callId: params.id,
+        legacyDeviceId: contract.deviceId,
+        accepted: result.ok,
+        sunsetAt: AGENT_APP_CALL_LEGACY_V1_SUNSET_AT,
+      })
+    }
+    if (result.ok && result.changed) {
+      console.warn('[agent-call] accepted device note', params.id, note)
+    }
+    if (!result.ok) {
+      const httpStatus = result.error === 'not_found' ? 404
+        : result.error === 'legacy_contract_sunset' ? 426
+          : 409
+      return Response.json({ ...result, contractVersion: contract.responseVersion }, { status: httpStatus })
+    }
+    return Response.json({ ...result, contractVersion: contract.responseVersion, noteSaved: true })
+  }
+
+  const result = await markAgentAppCall(params.id, {
+    status: status as AgentAppCallDeviceStatus,
+    deviceId: contract.deviceId,
+    legacyV1: contract.legacyV1,
+    ...(typeof body.claimReceipt === 'string'
+      ? { claimReceipt: body.claimReceipt }
+      : {}),
+    summary,
+  })
+  if (contract.legacyV1) {
+    console.warn('[agent-call] legacy-v1 status contract', {
+      callId: params.id,
+      legacyDeviceId: contract.deviceId,
+      accepted: result.ok,
+      sunsetAt: AGENT_APP_CALL_LEGACY_V1_SUNSET_AT,
+    })
+  }
+  if (!result.ok) {
+    const httpStatus = result.error === 'not_found' ? 404
+      : result.error === 'legacy_contract_sunset' ? 426
+        : 409
+    return Response.json({ ...result, contractVersion: contract.responseVersion }, { status: httpStatus })
+  }
+  let noteSaved: boolean | undefined
   if (note) {
-    console.warn('[agent-call] device note', params.id, note)
-    // Written DIRECTLY, never through the status transition: a diagnostic must
-    // land whatever the row's state is (review-bot P2 — routing it through an
-    // 'answered' transition 409'd on an already-answered row and dropped the
-    // note, defeating the whole point).
-    await prisma.agentAppCall.update({
-      where: { id: params.id },
-      data: { summary: `[device] ${note}` },
-    }).catch(() => {})
-    if (noteOnly) return Response.json({ ok: true, noteSaved: true })
+    if (result.changed) {
+      noteSaved = true
+      console.warn('[agent-call] accepted device note', params.id, note)
+    } else {
+      const appended = await appendAgentAppCallDeviceNote(params.id, {
+        deviceId: contract.deviceId,
+        legacyV1: contract.legacyV1,
+        note,
+      })
+      noteSaved = appended.ok
+      if (appended.ok && appended.changed) {
+        console.warn('[agent-call] accepted device note', params.id, note)
+      }
+    }
   }
-  const ok = await markAgentAppCall(params.id, status as 'answered' | 'declined' | 'completed', summary)
-  if (!ok) {
-    // Not an error worth failing the app over — the row may already be swept.
-    const current = await getAgentAppCallStatus(params.id)
-    return Response.json({ ok: false, status: current ?? 'not_found' }, { status: 409 })
-  }
-  return Response.json({ ok: true, status })
+  return Response.json({
+    ...result,
+    contractVersion: contract.responseVersion,
+    ...(noteSaved === undefined ? {} : { noteSaved }),
+  })
 }
