@@ -802,6 +802,33 @@ final class LiveVoicePreviewTests: XCTestCase {
             defaults: defaults))
     }
 
+    func testPrivateLiveActivityGateAndPayloadExcludeTranscriptAndWaveform() throws {
+        let suite = "alma-live-voice-private-activity-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .privateLiveActivityV1, environment: [:], defaults: defaults))
+        AlmaLiveVoiceRecoveryFeatures.set(
+            false, for: .privateLiveActivityV1, defaults: defaults)
+        XCTAssertFalse(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .privateLiveActivityV1, environment: [:], defaults: defaults))
+
+        #if canImport(ActivityKit)
+        let state = AlmaVoiceActivityAttributes.ContentState(
+            phase: "listening",
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            isMuted: true)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["phase", "startedAt", "isMuted"])
+        XCTAssertEqual(object["phase"] as? String, "listening")
+        XCTAssertEqual(object["isMuted"] as? Bool, true)
+        XCTAssertNil(object["captionTail"])
+        XCTAssertNil(object["levels"])
+        #endif
+    }
+
     func testDisablingFeatureStopsAnExistingPreviewAndReleasesItsSession() async throws {
         let fixture = try makeFixture()
         let entry = try fixture.catalog.entry(modelID: models[0], voiceID: "Aoede")

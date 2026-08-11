@@ -132,67 +132,23 @@ private struct AlmaIslandOrb: View {
     }
 }
 
-// MARK: - Iridescent ribbon wave (owner's reference: braided silk strands)
+// MARK: - Privacy-safe state line
 
 @available(iOS 17.0, *)
-private struct RibbonWave: View {
-    var levels: [Double]
-    var hue: Double
+private struct VoiceStateLine: View {
+    let phase: String
+    let isMuted: Bool
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.4)) { tl in
-            Canvas { ctx, sz in
-                draw(ctx: &ctx, sz: sz, t: tl.date.timeIntervalSinceReferenceDate)
-            }
+        HStack(spacing: 7) {
+            Image(systemName: isMuted ? "mic.slash.fill" : "waveform")
+                .foregroundStyle(isMuted ? VoiceHue.coral : hcol(VoiceHue.hue(phase), 0.8, 0.9))
+            Text(isMuted ? "মাইক বন্ধ" : "ব্যক্তিগত ভয়েস সেশন")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(VoiceHue.textSecondary)
+                .lineLimit(1)
         }
-    }
-
-    private func draw(ctx: inout GraphicsContext, sz: CGSize, t: Double) {
-        let mid = sz.height / 2
-        let energy = levels.suffix(6).max() ?? 0.1
-        // demo parity: the braid stays clearly visible even at idle
-        let A = (0.38 + energy * 0.62) * (sz.height / 2 - 1)
-        ctx.blendMode = .plusLighter
-
-        // faint center axis the strands melt into at both ends
-        var axis = Path()
-        axis.move(to: CGPoint(x: 0, y: mid)); axis.addLine(to: CGPoint(x: sz.width, y: mid))
-        ctx.stroke(axis, with: .color(hcol(hue, 0.8, 0.75, 0.28)), lineWidth: 0.6)
-
-        for s in 0..<6 {
-            let pair: Double = s % 2 == 0 ? -1 : 1
-            let hs = hue + (Double(s) / 5.0 - 0.5) * 200          // রামধনু, state-রঙ কেন্দ্রে
-            let f = 1.5 + Double(s % 3) * 0.8
-            let ph = t * (1.0 + Double(s) * 0.17) * pair + Double(s) * 1.9
-            let n = 40
-            var top: [CGPoint] = []; var bot: [CGPoint] = []
-            top.reserveCapacity(n + 1); bot.reserveCapacity(n + 1)
-            for i in 0...n {
-                let k = Double(i) / Double(n)
-                let x = k * sz.width
-                let env = pow(sin(k * .pi), 1.2)
-                let li = min(levels.count - 1, Int(k * Double(levels.count - 1)))
-                let shape = 0.72 + levels[li] * 0.7               // waveform snapshot bends the braid
-                let y = mid + env * A * sin(k * f * 6.283 + ph) * cos(k * 2.6 + t * 0.8 * pair) * shape
-                let th = 0.7 + env * (1.4 + energy * 3.0) * (1 + 0.55 * sin(k * 9 + t * 2.2 + Double(s) * 1.3))
-                top.append(CGPoint(x: x, y: y - th))
-                bot.append(CGPoint(x: x, y: y + th))
-            }
-            var ribbon = Path()
-            ribbon.move(to: top[0])
-            for p in top.dropFirst() { ribbon.addLine(to: p) }
-            for p in bot.reversed() { ribbon.addLine(to: p) }
-            ribbon.closeSubpath()
-            ctx.fill(ribbon, with: .color(hcol(hs, 0.92, 0.65, 0.42)))
-
-            var core = Path()
-            core.move(to: CGPoint(x: top[0].x, y: (top[0].y + bot[0].y) / 2))
-            for i in 1...n {
-                core.addLine(to: CGPoint(x: top[i].x, y: (top[i].y + bot[i].y) / 2))
-            }
-            ctx.stroke(core, with: .color(hcol(hs, 1.0, 0.85, 0.65)), lineWidth: 1.0)
-        }
-        ctx.blendMode = .normal
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -305,14 +261,8 @@ private struct VoiceLockScreenView: View {
                 Spacer(minLength: 6)
                 ElapsedTimer(startedAt: context.state.startedAt, fontSize: 16)
             }
-            RibbonWave(levels: context.state.levels, hue: hue)
-                .frame(height: 26)
             HStack(spacing: 10) {
-                goldCaption(context.state.captionTail.isEmpty ? "ভয়েস কথোপকথন" : context.state.captionTail)
-                    .font(.system(size: 12))
-                    .foregroundColor(VoiceHue.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+                VoiceStateLine(phase: phase, isMuted: context.state.isMuted)
                 Spacer(minLength: 8)
                 EndButton()
             }
@@ -361,18 +311,15 @@ struct AlmaVoiceLiveActivity: Widget {
                                 .foregroundColor(hcol(hue, 0.8, 0.9))
                                 .lineLimit(1)
                         }
-                        RibbonWave(levels: context.state.levels, hue: hue)
-                            .frame(height: 30)
-                            .frame(maxWidth: .infinity)
+                        VoiceStateLine(phase: phase, isMuted: context.state.isMuted)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(alignment: .center, spacing: 10) {
-                        goldCaption(context.state.captionTail.isEmpty ? "ভয়েস কথোপকথন" : context.state.captionTail)
-                            .font(.system(size: 12))
+                        Text("কথোপকথনের লেখা শুধু অ্যাপের ভেতরে")
+                            .font(.system(size: 11))
                             .foregroundColor(VoiceHue.textSecondary)
                             .lineLimit(1)
-                            .truncationMode(.head)
                         Spacer(minLength: 8)
                         EndButton()
                     }
@@ -387,9 +334,10 @@ struct AlmaVoiceLiveActivity: Widget {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(VoiceHue.status(phase))
             } compactTrailing: {
-                RibbonWave(levels: Array(context.state.levels.suffix(8)), hue: hue)
-                    .frame(width: 34, height: 20)
-                    .padding(.trailing, 2)
+                Image(systemName: context.state.isMuted ? "mic.slash.fill" : "waveform")
+                    .foregroundStyle(context.state.isMuted ? VoiceHue.coral : hcol(hue, 0.8, 0.9))
+                    .frame(width: 28, height: 20)
+                    .accessibilityLabel(context.state.isMuted ? "মাইক বন্ধ" : VoiceHue.status(phase))
             } minimal: {
                 OfficeRobotLiveGlyph(
                     context: .voice(phase: phase),

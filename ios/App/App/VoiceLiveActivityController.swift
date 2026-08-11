@@ -5,10 +5,9 @@
 //  Drives the ALMA voice-session Live Activity (Dynamic Island + Lock Screen)
 //  from AlmaVoiceEngine state. docs/alma-live-activity-PLAN.md §2.
 //
-//  Update-budget strategy: ActivityKit has no per-frame updates, so we sample
-//  the engine's mic/TTS level at 80ms into a rolling 12-bar buffer and push a
-//  snapshot roughly every 0.9s (phase flips may push after 0.35s). The widget
-//  side spring-animates between snapshots — alive but budget-safe.
+//  Privacy contract: the activity receives only phase, mute state, and the
+//  session start time. Transcript tails and audio-derived/synthetic levels stay
+//  in the foreground voice surface and are never serialized to ActivityKit.
 //
 //  Stale guards: 30-min hard timeout (forgotten session ≠ battery drain), and
 //  every push carries staleDate = now+90s so the island dims quickly if the
@@ -28,13 +27,11 @@ final class VoiceLiveActivityController {
     #if canImport(ActivityKit)
     private var activity: Activity<AlmaVoiceActivityAttributes>?
     #endif
-    private var loop: Task<Void, Never>?
-    private var levels: [Double] = VoiceLiveActivityController.flatLevels
-    private var lastPush = Date.distantPast
+    private var expiryTask: Task<Void, Never>?
     private var lastPushedPhase = ""
+    private var lastPushedMuted = false
     private var startedAt = Date()
 
-    private static let flatLevels = [Double](repeating: 0.08, count: 12)
     private static let maxSession: TimeInterval = 30 * 60
 
     // MARK: - Lifecycle
@@ -43,6 +40,10 @@ final class VoiceLiveActivityController {
     /// leftover one from a previous session, then start the sampler loop.
     func start() {
         #if canImport(ActivityKit)
+        guard AlmaLiveVoiceRecoveryFeatures.isEnabled(.privateLiveActivityV1) else {
+            end()
+            return
+        }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         // Voice owns the island while a session runs: a live "Business Pulse"
         // activity would win the compact slot and hide the voice UI — end it.
@@ -51,7 +52,6 @@ final class VoiceLiveActivityController {
             Task { await pulse.end(nil, dismissalPolicy: .immediate) }
         }
         startedAt = Date()
-        levels = Self.flatLevels
         let state = contentState()
         if let existing = Activity<AlmaVoiceActivityAttributes>.activities.first {
             activity = existing
@@ -63,30 +63,29 @@ final class VoiceLiveActivityController {
                 pushType: nil
             )
         }
-        lastPush = Date()
         lastPushedPhase = state.phase
-        loop?.cancel()
-        loop = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                guard let self, !Task.isCancelled else { return }
-                self.sampleLevel()
-                if Date().timeIntervalSince(self.startedAt) > Self.maxSession {
-                    self.end()
-                    return
-                }
-                if Date().timeIntervalSince(self.lastPush) >= 0.9 { self.push() }
-            }
+        lastPushedMuted = state.isMuted
+        expiryTask?.cancel()
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.maxSession * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.end()
         }
         #endif
     }
 
-    /// Engine state flipped (listening/thinking/speaking) — refresh the island
-    /// sooner than the regular tick, still throttled.
+    /// Engine state flipped (listening/thinking/speaking) — publish only when
+    /// the privacy-safe phase or mute value actually changed.
     func phaseChanged() {
+        stateChanged()
+    }
+
+    func stateChanged() {
         #if canImport(ActivityKit)
-        guard activity != nil, currentPhase() != lastPushedPhase,
-              Date().timeIntervalSince(lastPush) >= 0.35 else { return }
+        guard activity != nil else { return }
+        let phase = currentPhase()
+        let muted = engine?.isMuted ?? false
+        guard phase != lastPushedPhase || muted != lastPushedMuted else { return }
         push()
         #endif
     }
@@ -97,7 +96,7 @@ final class VoiceLiveActivityController {
     /// is free) — start() ended it, and the web layer can't restart it while
     /// the app is backgrounded.
     func end() {
-        loop?.cancel(); loop = nil
+        expiryTask?.cancel(); expiryTask = nil
         #if canImport(ActivityKit)
         activity = nil
         let leftovers = Activity<AlmaVoiceActivityAttributes>.activities
@@ -123,28 +122,6 @@ final class VoiceLiveActivityController {
         #endif
     }
 
-    // MARK: - Sampling + snapshot
-
-    /// 80ms tick: roll the engine's live audio level (TTS metering while
-    /// speaking, mic RMS otherwise) into the 12-bar history.
-    private func sampleLevel() {
-        guard let e = engine else { return }
-        let raw: Double
-        switch e.state {
-        case .speaking: raw = e.ttsLevel
-        case .listening: raw = e.micLevel
-        case .transcribing, .thinking:
-            // gentle synthetic pulse — "ভাবছি" has no audio to meter
-            raw = 0.18 + 0.14 * (0.5 + 0.5 * sin(Date().timeIntervalSinceReferenceDate * 2.4))
-        default:
-            // idle: soft traveling wave so the island ribbon never lies dead
-            // (LOCKED demo behavior — quiet braid keeps breathing)
-            raw = 0.10 + 0.06 * (0.5 + 0.5 * sin(Date().timeIntervalSinceReferenceDate * 1.7))
-        }
-        levels.removeFirst()
-        levels.append(min(1, max(0.08, raw)))
-    }
-
     private func currentPhase() -> String {
         switch engine?.state {
         case .listening: return "listening"
@@ -154,45 +131,28 @@ final class VoiceLiveActivityController {
         }
     }
 
-    /// Last ~60 chars, head-truncated (tail visible), emoji-free — the same
-    /// caption rule the in-app voice console follows.
-    private func captionTail() -> String {
-        guard let e = engine else { return "" }
-        let raw: String
-        switch e.state {
-        case .speaking: raw = e.nowLine.isEmpty ? e.replyText : e.nowLine
-        case .listening: raw = e.transcript
-        default: raw = e.transcript
-        }
-        let scalars = raw.unicodeScalars.filter {
-            !($0.properties.isEmojiPresentation || $0.value >= 0x1F000)
-        }
-        var s = String(String.UnicodeScalarView(scalars))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if s.count > 60 { s = "…" + s.suffix(60) }
-        return s
-    }
-
     #if canImport(ActivityKit)
     private func contentState() -> AlmaVoiceActivityAttributes.ContentState {
         AlmaVoiceActivityAttributes.ContentState(
             phase: currentPhase(),
-            captionTail: captionTail(),
-            levels: levels,
-            startedAt: startedAt
+            startedAt: startedAt,
+            isMuted: engine?.isMuted ?? false
         )
     }
 
     private func content(_ state: AlmaVoiceActivityAttributes.ContentState)
         -> ActivityContent<AlmaVoiceActivityAttributes.ContentState> {
-        ActivityContent(state: state, staleDate: Date().addingTimeInterval(90))
+        ActivityContent(
+            state: state,
+            staleDate: startedAt.addingTimeInterval(Self.maxSession)
+        )
     }
 
     private func push() {
         guard let activity else { return }
-        lastPush = Date()
         let state = contentState()
         lastPushedPhase = state.phase
+        lastPushedMuted = state.isMuted
         Task { await activity.update(content(state)) }
     }
     #else

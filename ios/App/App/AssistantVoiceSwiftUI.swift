@@ -67,10 +67,11 @@ struct AlmaLiveVoiceChoice: Identifiable, Hashable {
 enum AlmaLiveVoiceRecoveryFeature: String {
     case evidenceV1 = "evidence-v1"
     case previewCatalogV1 = "preview-catalog-v1"
+    case privateLiveActivityV1 = "private-live-activity-v1"
 
     var defaultEnabled: Bool {
         switch self {
-        case .evidenceV1, .previewCatalogV1:
+        case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1:
             true
         }
     }
@@ -2989,6 +2990,7 @@ final class AlmaVoiceEngine {
         isMuted = muted
         live.setInputMuted(muted)
         if muted { micLevel = 0 }
+        liveActivity.stateChanged()
     }
 
     func toggleSpeaker() {

@@ -21,15 +21,11 @@ struct AlmaVoiceActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         /// listening | thinking | speaking | idle — drives island tint + Bangla status.
         var phase: String
-        /// Last ~60 chars of the live caption, head-truncated + emoji-free
-        /// (tail always visible — same rule as the in-app voice caption).
-        var captionTail: String
-        /// 12-bar waveform snapshot (0…1). Updated ~1/s; the island view
-        /// spring-interpolates between snapshots so it reads as alive while
-        /// staying inside the ActivityKit update budget.
-        var levels: [Double]
         /// Session start — renders the elapsed timer without further updates.
         var startedAt: Date
+        /// Truthful microphone state. No transcript, audio sample, or synthetic
+        /// level ever leaves the foreground voice surface.
+        var isMuted: Bool
     }
 
     var sessionTitle: String
