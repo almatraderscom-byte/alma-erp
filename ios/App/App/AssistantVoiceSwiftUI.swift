@@ -73,12 +73,13 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case phase1BContractV1 = "phase1b-contract-v1"
     case inputTurnReducerV1 = "input-turn-reducer-v1"
     case lifecycleReducerV1 = "lifecycle-reducer-v1"
+    case outputPCMEnvelopeV1 = "output-pcm-envelope-v1"
 
     var defaultEnabled: Bool {
         switch self {
         case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
              .profileTransactionV1, .toolOrchestrationV1, .phase1BContractV1,
-             .inputTurnReducerV1, .lifecycleReducerV1:
+             .inputTurnReducerV1, .lifecycleReducerV1, .outputPCMEnvelopeV1:
             true
         }
     }
@@ -4900,6 +4901,13 @@ final class AlmaVoiceEngine {
         }
     }
 
+    /// PCM-derived level changes never own phase transitions. They may update
+    /// only while the exact current playback has already entered `.speaking`.
+    func liveOutputPCMLevelChanged(_ level: Double) {
+        guard state == .speaking else { return }
+        ttsLevel = min(1, max(0, level))
+    }
+
     private var lastToolCallAt = Date.distantPast
     private var lastUserTurnAt = Date.distantPast
     private var ackNudgesThisUserTurn = 0
@@ -5819,6 +5827,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var inputTurnReducer = AlmaLiveVoiceInputTurnReducer(generation: 0)
     private var inputTurnReducerEnabled = false
     private var nextInputFrameSequence: UInt64 = 0
+    private let outputEnvelopeLock = NSLock()
+    private var outputEnvelopeReducer: AlmaLiveVoiceOutputPCMEnvelopeReducer?
+    private var outputEnvelopeEnabled = false
 
     // Gemini emits native audio as many tiny PCM frames. A player callback for one
     // frame is NOT the end of the model's turn: treating it that way made the UI
@@ -6660,6 +6671,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         inputTurnReducer.reset(generation: attempt)
         nextInputFrameSequence = 0
         inputTurnReducerLock.unlock()
+        outputEnvelopeLock.lock()
+        outputEnvelopeEnabled = AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .outputPCMEnvelopeV1)
+        outputEnvelopeReducer = outputEnvelopeEnabled
+            ? AlmaLiveVoiceOutputPCMEnvelopeReducer(generation: attempt)
+            : nil
+        outputEnvelopeLock.unlock()
         firstInputFrameTraced = false
         firstModelPCMTraced = false
         firstPlaybackPrimed = false
@@ -6781,6 +6799,67 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             ownerSpeechConfirmed: ownerSpeechConfirmed)
         inputTurnReducerLock.unlock()
         return effects
+    }
+
+    /// Accept only PCM from the active logical start attempt. The bytes are the
+    /// same decoded PCM16LE payload queued on `player`; microphone and timers do
+    /// not enter this path.
+    private func reduceOutputEnvelope(
+        pcm: Data,
+        sampleRate: Double,
+        generation: AlmaLiveVoiceStartAttemptState.Token
+    ) -> Double? {
+        outputEnvelopeLock.lock()
+        guard outputEnvelopeEnabled,
+              var reducer = outputEnvelopeReducer,
+              reducer.generation == generation else {
+            outputEnvelopeLock.unlock()
+            return nil
+        }
+        if reducer.phase != .speaking {
+            _ = reducer.reduce(.init(
+                generation: generation,
+                event: .phaseChanged(.speaking)))
+        }
+        let transition = reducer.reduce(.init(
+            generation: generation,
+            event: .outputPCM(.init(data: pcm, sampleRate: sampleRate))))
+        outputEnvelopeReducer = reducer
+        outputEnvelopeLock.unlock()
+        return transition.mayApplyEffects ? transition.level : nil
+    }
+
+    private func outputEnvelopeLevel(
+        generation: AlmaLiveVoiceStartAttemptState.Token
+    ) -> Double? {
+        outputEnvelopeLock.lock()
+        let level: Double?
+        if outputEnvelopeEnabled,
+           let reducer = outputEnvelopeReducer,
+           reducer.generation == generation {
+            level = reducer.level
+        } else {
+            level = nil
+        }
+        outputEnvelopeLock.unlock()
+        return level
+    }
+
+    private func settleOutputEnvelope(
+        generation: AlmaLiveVoiceStartAttemptState.Token
+    ) {
+        outputEnvelopeLock.lock()
+        guard outputEnvelopeEnabled,
+              var reducer = outputEnvelopeReducer,
+              reducer.generation == generation else {
+            outputEnvelopeLock.unlock()
+            return
+        }
+        _ = reducer.reduce(.init(
+            generation: generation,
+            event: .phaseChanged(.listening)))
+        outputEnvelopeReducer = reducer
+        outputEnvelopeLock.unlock()
     }
 
     private func applyInputTurnEffects(
@@ -9218,6 +9297,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         if serializesEvidenceBoundary { evidenceSubmissionLock.unlock() }
         startAttemptLock.unlock()
 
+        let outputLevel = reduceOutputEnvelope(
+            pcm: pcm,
+            sampleRate: format.sampleRate,
+            generation: attempt.startAttempt)
+        if alreadyStarted, let outputLevel {
+            dispatchEngineCallback(
+                engineConnectionGeneration: attempt.engineConnectionGeneration,
+                requiring: attempt
+            ) { $0.liveOutputPCMLevelChanged(outputLevel) }
+        }
+
         audioQueue.async { [weak self, attempt] in
             guard let self, !self.stopped,
                   self.acceptsStartAttempt(attempt.startAttempt),
@@ -9337,8 +9427,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         NSLog("ALMA-VOICE playback turn started prebuffer=%.3fs", prebufferDuration)
         #endif
+        let outputLevel = activeStartAttempt().flatMap {
+            outputEnvelopeLevel(generation: $0)
+        } ?? 0
         dispatchEngineCallbackForActiveAttempt {
-            $0.livePlaybackChanged(active: true, level: 0.65)
+            $0.livePlaybackChanged(active: true, level: outputLevel)
         }
         armPlaybackDrainFallback(generation: generation, deadline: deadline)
     }
@@ -9523,6 +9616,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             _ = reduceInputTurn(generation: attempt) {
                 $0.observeResponseCompleted(generation: attempt)
             }
+            settleOutputEnvelope(generation: attempt)
         }
         dispatchEngineCallbackForActiveAttempt {
             $0.livePlaybackChanged(active: false, level: 0)
@@ -9568,6 +9662,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         if interrupted { NSLog("ALMA-VOICE server confirmed interruption") }
         #endif
+        if let attempt = activeStartAttempt() {
+            settleOutputEnvelope(generation: attempt)
+        }
         if wasActive {
             if let engineConnectionGeneration {
                 dispatchEngineCallback(
@@ -9992,6 +10089,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         session = nil
         stopped = true
         startAttemptLock.unlock()
+        outputEnvelopeLock.lock()
+        outputEnvelopeReducer = nil
+        outputEnvelopeEnabled = false
+        outputEnvelopeLock.unlock()
         _ = invalidateSocketReadiness()
         stopKeepalive()
         soundAnalyzer?.completeAnalysis()
@@ -11466,9 +11567,9 @@ struct AlmaVoiceConsoleView: View {
                 Spacer(minLength: 4)
                 stateBadge
                     .padding(.bottom, 10)
-                AlmaFluidOrbView(state: engine.state,
-                                 micLevel: engine.micLevel,
-                                 ttsLevel: engine.ttsLevel)
+                AlmaFluidOrbView(
+                    state: engine.state,
+                    ttsLevel: engine.ttsLevel)
                     .frame(width: orbSide, height: orbSide)
                     .contentShape(Circle())
                     .onTapGesture { engine.tapOrb() }
@@ -13178,49 +13279,12 @@ struct AlmaStarfieldView: View {
 // Plus: breathing bloom, spinning conic accent ring, 5 orbiting energy motes,
 // 3 thinking satellites, and the v2 floor reflection.
 
-/// ChatGPT-voice-mode LIVING SCALE (owner video analysis 2026-07-31, frame
-/// measurements): the reference orb keeps a PERFECT circular silhouette — its
-/// life comes from the whole sphere breathing with the conversation. Baseline
-/// while idle; it RECEDES ~10% while Boss speaks (attentive, trembling gently
-/// with his real voice envelope) and SWELLS ~13% while the agent speaks
-/// (pulsing with the real speech envelope). Reference-type scratchpad mutated
-/// from the TimelineView tick — nothing here is observed state.
-@available(iOS 17.0, *)
-private final class AlmaOrbLife {
-    var lastT: Double = 0
-    var mic: Double = 0        // smoothed real mic envelope
-    var tts: Double = 0        // smoothed real speech envelope
-    var userP: Double = 0      // "Boss is talking" presence 0…1
-    var agentP: Double = 0     // "agent is talking" presence 0…1
-
-    func step(t: Double, state: AlmaVoiceState, micIn: Double, ttsIn: Double) {
-        if lastT == 0 { lastT = t }
-        let dt = min(0.1, max(0, t - lastT))
-        lastT = t
-        // Envelope followers — instant attack, musical release.
-        mic += (micIn - mic) * min(1, dt * (micIn > mic ? 14 : 3.2))
-        tts += (ttsIn - tts) * min(1, dt * (ttsIn > tts ? 16 : 2.8))
-        // Presences ease in fast, linger briefly (no flicker between words).
-        let userTarget: Double = (state == .listening && mic > 0.05) ? 1 : 0
-        userP += (userTarget - userP) * min(1, dt * (userTarget > userP ? 5.0 : 1.4))
-        let agentTarget: Double = state == .speaking ? 1 : 0
-        agentP += (agentTarget - agentP) * min(1, dt * (agentTarget > agentP ? 5.0 : 1.6))
-    }
-
-    /// The living scale for the sphere cluster.
-    var scale: Double {
-        1 - userP * (0.10 - min(0.045, mic * 0.09))     // recede, tremble with Boss
-        + agentP * (0.09 + min(0.07, tts * 0.11))       // swell, pulse with speech
-    }
-}
-
 @available(iOS 17.0, *)
 struct AlmaFluidOrbView: View {
     let state: AlmaVoiceState
-    let micLevel: Double
     let ttsLevel: Double
 
-    @State private var life = AlmaOrbLife()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var breathe: Double {
         switch state {
@@ -13231,13 +13295,11 @@ struct AlmaFluidOrbView: View {
         }
     }
 
-    private func activity(t: Double, level: Double) -> Double {
+    private func activity(level: Double) -> Double {
         switch state {
         case .transcribing, .thinking: return 0.85
-        case .listening: return 0.45 + level * 0.3
-        case .speaking:
-            let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
-            return 0.25 + max(env * 0.65, level * 0.5)
+        case .listening: return 0
+        case .speaking: return level
         case .error: return 0.32
         case .idle: return 0.12
         }
@@ -13249,10 +13311,20 @@ struct AlmaFluidOrbView: View {
             let h = state.hue
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
-                let _ = life.step(t: t, state: state, micIn: micLevel, ttsIn: ttsLevel)
-                let level = state == .speaking ? ttsLevel : micLevel
-                let act = activity(t: t, level: level)
-                let scale = (1 + 0.028 * (1 - cos(2 * .pi * t / breathe))) * life.scale
+                let output = AlmaLiveVoiceOutputPCMEnvelopeReducer.presentation(
+                    level: ttsLevel,
+                    phase: state == .speaking ? .speaking : .listening,
+                    reduceMotion: reduceMotion)
+                let level = output.level
+                let motionEnabled = !reduceMotion
+                    && state != .listening
+                    && (state != .speaking || level > 0)
+                let motionTime = motionEnabled ? t : 0
+                let act = activity(level: level)
+                let ambientScale = reduceMotion || state == .listening
+                    ? 1
+                    : 1 + 0.028 * (1 - cos(2 * .pi * motionTime / breathe))
+                let scale = state == .speaking ? output.scale : ambientScale
                 ZStack {
                     // breathing bloom (web .orb-bloom)
                     Circle()
@@ -13284,7 +13356,8 @@ struct AlmaFluidOrbView: View {
                             .init(color: .clear, location: 1),
                         ], center: .center), lineWidth: 1)
                         .frame(width: side * 0.92, height: side * 0.92)
-                        .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 14) / 14 * 360))
+                        .rotationEffect(.degrees(
+                            motionTime.truncatingRemainder(dividingBy: 14) / 14 * 360))
 
                     // 72-bar reactive waveform ring + 5 energy motes (one canvas)
                     Canvas { ctx, size in
@@ -13299,13 +13372,13 @@ struct AlmaFluidOrbView: View {
                                     var amp = 1.5
                                     switch state {
                                     case .listening:
-                                        amp = 3 + abs(sin(t * 2.1 + Double(i) * 0.7)) * 9
-                                            + Double.random(in: 0...7) + level * 10
+                                        amp = 1.5
                                     case .speaking:
-                                        let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
-                                        amp = 2 + max(env, level) * (7 + abs(sin(Double(i) * 1.3 + t * 5)) * 13)
+                                        amp = 1.5 + level
+                                            * (7 + abs(sin(Double(i) * 1.3)) * 13)
                                     default:
-                                        amp = 1.2 + sin(t * 0.9 + Double(i) * 0.35) * 0.8
+                                        amp = 1.2
+                                            + sin(motionTime * 0.9 + Double(i) * 0.35) * 0.8
                                     }
                                     let r1 = base, r2 = base + amp
                                     var p = Path()
@@ -13320,8 +13393,10 @@ struct AlmaFluidOrbView: View {
                         ctx.drawLayer { layer in
                             layer.addFilter(.shadow(color: almaHSL(h, 0.95, 0.72, 0.8), radius: 9))
                             for mi in 0..<5 {
-                                let ma = t * (0.22 + Double(mi) * 0.06) + Double(mi) * 2.51
-                                let mr = base * (1.16 + 0.09 * sin(t * 0.7 + Double(mi) * 1.7))
+                                let ma = motionTime * (0.22 + Double(mi) * 0.06)
+                                    + Double(mi) * 2.51
+                                let mr = base * (1.16
+                                    + 0.09 * sin(motionTime * 0.7 + Double(mi) * 1.7))
                                 let ms = 1.3 + act * 1.9
                                 let mx = cx + cos(ma) * mr, my = cy + sin(ma) * mr
                                 layer.fill(Path(ellipseIn: CGRect(x: mx - ms, y: my - ms, width: ms * 2, height: ms * 2)),
@@ -13334,14 +13409,16 @@ struct AlmaFluidOrbView: View {
                     // THE ORB — Metal port of the exact WebGL fluid shader;
                     // SwiftUI-gradient fallback if Metal is unavailable.
                     if AlmaOrbRenderer.shared != nil {
-                        AlmaMetalOrbView(hue: h, stateKey: state.rawValue, level: level)
+                        AlmaMetalOrbView(
+                            hue: h,
+                            stateKey: state.rawValue,
+                            level: level,
+                            motionEnabled: motionEnabled)
                             .frame(width: side * 1.24, height: side * 1.24)
-                            // The living conversation scale (video-matched):
-                            // recede while Boss talks, swell while ALMA talks.
-                            .scaleEffect(life.scale)
+                            .scaleEffect(scale)
                             .allowsHitTesting(false)
                     } else {
-                        fallbackSphere(side: side, h: h, t: t)
+                        fallbackSphere(side: side, h: h, t: motionTime)
                             .frame(width: side * 0.62, height: side * 0.62)
                             .clipShape(Circle())
                             .shadow(color: almaHSL(h, 0.90, 0.45, 0.35), radius: 30, y: 18)
@@ -13354,11 +13431,12 @@ struct AlmaFluidOrbView: View {
                         satDot(h).offset(x: -side * 0.44, y: side * 0.40)
                         satDot(h).offset(x: side * 0.44, y: side * 0.40)
                     }
-                    .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 3.6) / 3.6 * 360))
+                    .rotationEffect(.degrees(
+                        motionTime.truncatingRemainder(dividingBy: 3.6) / 3.6 * 360))
                     .opacity(state == .thinking || state == .transcribing ? 1 : 0)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
-                .animation(.easeInOut(duration: 0.5), value: h)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.5), value: h)
             }
         }
     }
@@ -13530,6 +13608,7 @@ struct AlmaMetalOrbView: UIViewRepresentable {
     var hue: Double
     var stateKey: String
     var level: Double
+    var motionEnabled: Bool
 
     func makeCoordinator() -> Coord { Coord() }
 
@@ -13541,12 +13620,20 @@ struct AlmaMetalOrbView: UIViewRepresentable {
         v.backgroundColor = .clear
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         v.isUserInteractionEnabled = false
-        context.coordinator.apply(hue: hue, state: stateKey, level: level)
+        context.coordinator.apply(
+            hue: hue,
+            state: stateKey,
+            level: level,
+            motionEnabled: motionEnabled)
         return v
     }
 
     func updateUIView(_ v: MTKView, context: Context) {
-        context.coordinator.apply(hue: hue, state: stateKey, level: level)
+        context.coordinator.apply(
+            hue: hue,
+            state: stateKey,
+            level: level,
+            motionEnabled: motionEnabled)
     }
 
     final class Coord: NSObject, MTKViewDelegate {
@@ -13557,11 +13644,18 @@ struct AlmaMetalOrbView: UIViewRepresentable {
         private var amp: Float = 0.12
         private var state = "idle"
         private var level: Float = 0
+        private var motionEnabled = true
 
-        func apply(hue: Double, state: String, level: Double) {
+        func apply(
+            hue: Double,
+            state: String,
+            level: Double,
+            motionEnabled: Bool
+        ) {
             hueTarget = Float(hue)
             self.state = state
             self.level = Float(level)
+            self.motionEnabled = motionEnabled
         }
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -13575,19 +13669,24 @@ struct AlmaMetalOrbView: UIViewRepresentable {
             let now = CACurrentMediaTime()
             let dt = Float(min(0.05, now - last))
             last = now
-            let t = Float(now - start)
+            let t = motionEnabled ? Float(now - start) : 0
             // web frame(): hue eases at 4.2/s, activity at 5.5/s
             hue += (hueTarget - hue) * min(1, dt * 4.2)
-            let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
             let target: Float
             switch state {
             case "thinking", "transcribing": target = 0.85
-            case "listening": target = 0.45 + level * 0.3
-            case "speaking": target = 0.25 + max(env * 0.65, level * 0.5)
+            case "listening": target = 0
+            case "speaking": target = level
             case "error": target = 0.32
             default: target = 0.12
             }
-            amp += (target - amp) * min(1, dt * 5.5)
+            if !motionEnabled || state == "listening" || state == "speaking" {
+                // Voice-state amplitude is already smoothed from real output
+                // PCM. A render timer must not manufacture another envelope.
+                amp = target
+            } else {
+                amp += (target - amp) * min(1, dt * 5.5)
+            }
             var u = AlmaOrbUniforms(resX: Float(view.drawableSize.width),
                                     resY: Float(view.drawableSize.height),
                                     time: t, hue: hue, amp: amp)
