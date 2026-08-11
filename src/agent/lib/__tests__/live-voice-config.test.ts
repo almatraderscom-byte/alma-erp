@@ -13,6 +13,7 @@ import {
   LIVE_VOICE_MODEL_IDS,
   LIVE_VOICE_NAMES,
   LIVE_VOICE_SYSTEM_INSTRUCTION,
+  LIVE_VOICE_TOOL_NAMES,
 } from '@/agent/lib/live-voice-config'
 
 describe('live voice configuration', () => {
@@ -55,6 +56,28 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('লিখিত রিপোর্ট বা তালিকা আবৃত্তি করবে না')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('বাক্য শেষ করার চেষ্টা না করে')
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
+  })
+
+  it('advertises the same synchronous exact tool contract for both live models', () => {
+    for (const model of LIVE_VOICE_MODEL_IDS) {
+      const config = buildLiveVoiceConfig('Aoede', model)
+      const declarations = (config.tools?.[0] as {
+        functionDeclarations?: Array<{
+          name?: string
+          behavior?: string
+          parameters?: { required?: string[] }
+        }>
+      })?.functionDeclarations ?? []
+
+      expect(declarations.map((item) => item.name)).toEqual(LIVE_VOICE_TOOL_NAMES)
+      expect(declarations.find((item) => item.name === 'quick_erp_lookup')?.parameters?.required)
+        .toEqual(['tool'])
+      expect(declarations.find((item) => item.name === 'run_agent_turn')?.parameters?.required)
+        .toEqual(['request'])
+      expect(declarations.every((item) => item.behavior === undefined)).toBe(true)
+      expect(JSON.stringify(config.tools)).not.toContain('NON_BLOCKING')
+    }
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('STATUS_NOTE')
   })
 
   it('offers exactly two Gemini Native Audio models and a validated voice catalog', () => {

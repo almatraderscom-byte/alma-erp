@@ -102,6 +102,146 @@ final class LiveVoicePreviewTests: XCTestCase {
             defaults: defaults))
     }
 
+    func testToolOrchestrationRolloutGateDefaultsOnAndEnvironmentWins() throws {
+        let suite = "alma-live-tool-orchestration-gate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .toolOrchestrationV1, environment: [:], defaults: defaults))
+        AlmaLiveVoiceRecoveryFeatures.set(
+            false, for: .toolOrchestrationV1, defaults: defaults)
+        XCTAssertFalse(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .toolOrchestrationV1, environment: [:], defaults: defaults))
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .toolOrchestrationV1,
+            environment: ["ALMA_LIVE_VOICE_TOOL_ORCHESTRATION_V1": "true"],
+            defaults: defaults))
+    }
+
+    func testToolInvocationRequiresAndPreservesExactProviderIdentity() throws {
+        let decoded = try XCTUnwrap(AlmaLiveVoiceToolInvocation.decode([
+            "id": " provider/id:007 ",
+            "name": "run_agent_turn",
+            "args": ["request": "বিক্রির রিপোর্ট দেখাও"],
+        ]))
+
+        XCTAssertEqual(decoded.callID, " provider/id:007 ")
+        XCTAssertEqual(decoded.functionName, "run_agent_turn")
+        XCTAssertEqual(decoded.payload, .runAgentTurn(request: "বিক্রির রিপোর্ট দেখাও"))
+        XCTAssertNil(AlmaLiveVoiceToolInvocation.decode([
+            "name": "run_agent_turn",
+            "args": ["request": "missing id"],
+        ]))
+    }
+
+    func testToolLedgerPreservesProviderExecutionAndResponseFIFO() throws {
+        let first = AlmaLiveVoiceToolInvocation(
+            callID: "call-1", functionName: "quick_erp_lookup",
+            payload: .quickLookup(tool: "get_orders"))
+        let second = AlmaLiveVoiceToolInvocation(
+            callID: "call-2", functionName: "run_agent_turn",
+            payload: .runAgentTurn(request: "রিপোর্ট বানাও"))
+        var ledger = AlmaLiveVoiceToolLedger()
+
+        XCTAssertEqual(ledger.admit(first), .accepted)
+        XCTAssertEqual(ledger.admit(second), .accepted)
+        XCTAssertEqual(ledger.nextExecution(), first)
+        XCTAssertNil(ledger.nextExecution())
+        XCTAssertTrue(ledger.complete(
+            callID: first.callID, functionName: first.functionName, result: "first-result"))
+        XCTAssertEqual(ledger.nextExecution(), second)
+        XCTAssertTrue(ledger.complete(
+            callID: second.callID, functionName: second.functionName, result: "second-result"))
+
+        let firstTicket = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 4))
+        XCTAssertEqual(firstTicket.callID, first.callID)
+        XCTAssertEqual(firstTicket.functionName, first.functionName)
+        XCTAssertEqual(firstTicket.result, "first-result")
+        XCTAssertTrue(ledger.finishSend(firstTicket, succeeded: true))
+        let secondTicket = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 4))
+        XCTAssertEqual(secondTicket.callID, second.callID)
+        XCTAssertTrue(ledger.finishSend(secondTicket, succeeded: true))
+        XCTAssertNil(ledger.nextResponse(transportOrdinal: 4))
+    }
+
+    func testToolLedgerDuplicateNeverReexecutesAndReplaysExactDeliveredResult() throws {
+        let invocation = AlmaLiveVoiceToolInvocation(
+            callID: "opaque-duplicate", functionName: "run_agent_turn",
+            payload: .runAgentTurn(request: "স্টক বিশ্লেষণ করো"))
+        var ledger = AlmaLiveVoiceToolLedger()
+
+        XCTAssertEqual(ledger.admit(invocation), .accepted)
+        XCTAssertEqual(ledger.nextExecution(), invocation)
+        XCTAssertEqual(ledger.admit(invocation), .duplicate(replayScheduled: false))
+        XCTAssertNil(ledger.nextExecution())
+        XCTAssertTrue(ledger.complete(
+            callID: invocation.callID,
+            functionName: invocation.functionName,
+            result: "exact-result"))
+        let original = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 1))
+        XCTAssertTrue(ledger.finishSend(original, succeeded: true))
+
+        XCTAssertEqual(ledger.admit(invocation), .duplicate(replayScheduled: true))
+        XCTAssertNil(ledger.nextExecution())
+        let replay = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 1))
+        XCTAssertEqual(replay.callID, original.callID)
+        XCTAssertEqual(replay.functionName, original.functionName)
+        XCTAssertEqual(replay.result, original.result)
+    }
+
+    func testToolLedgerRejectsDuplicateIDWithAlteredPayload() {
+        let original = AlmaLiveVoiceToolInvocation(
+            callID: "same-id", functionName: "run_agent_turn",
+            payload: .runAgentTurn(request: "প্রথম অনুরোধ"))
+        let altered = AlmaLiveVoiceToolInvocation(
+            callID: "same-id", functionName: "run_agent_turn",
+            payload: .runAgentTurn(request: "পরিবর্তিত অনুরোধ"))
+        var ledger = AlmaLiveVoiceToolLedger()
+
+        XCTAssertEqual(ledger.admit(original), .accepted)
+        XCTAssertEqual(ledger.admit(altered), .conflictingIdentity)
+        XCTAssertEqual(ledger.nextExecution(), original)
+        XCTAssertNil(ledger.nextExecution())
+    }
+
+    func testToolLedgerCancellationSuppressesLateCompletionAndAdvancesFIFO() {
+        let first = AlmaLiveVoiceToolInvocation(
+            callID: "cancel-me", functionName: "run_agent_turn",
+            payload: .runAgentTurn(request: "দীর্ঘ কাজ"))
+        let second = AlmaLiveVoiceToolInvocation(
+            callID: "run-next", functionName: "quick_erp_lookup",
+            payload: .quickLookup(tool: "get_attendance"))
+        var ledger = AlmaLiveVoiceToolLedger()
+        _ = ledger.admit(first)
+        _ = ledger.admit(second)
+        XCTAssertEqual(ledger.nextExecution(), first)
+
+        XCTAssertEqual(ledger.cancel(callIDs: [first.callID]), [first])
+        XCTAssertFalse(ledger.complete(
+            callID: first.callID, functionName: first.functionName, result: "late"))
+        XCTAssertEqual(ledger.nextExecution(), second)
+    }
+
+    func testToolLedgerReconnectSupersedesStaleSendAndReplaysOnce() throws {
+        let invocation = AlmaLiveVoiceToolInvocation(
+            callID: "reconnect-id", functionName: "quick_erp_lookup",
+            payload: .quickLookup(tool: "get_sales_summary"))
+        var ledger = AlmaLiveVoiceToolLedger()
+        _ = ledger.admit(invocation)
+        _ = ledger.nextExecution()
+        XCTAssertTrue(ledger.complete(
+            callID: invocation.callID,
+            functionName: invocation.functionName,
+            result: "cached-result"))
+
+        let stale = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 8))
+        let replacement = try XCTUnwrap(ledger.nextResponse(transportOrdinal: 9))
+        XCTAssertFalse(ledger.finishSend(stale, succeeded: true))
+        XCTAssertTrue(ledger.finishSend(replacement, succeeded: true))
+        XCTAssertNil(ledger.nextResponse(transportOrdinal: 9))
+    }
+
     func testLiveProfileFailedHealthCheckRollsBackWithoutChangingSavedProfile() {
         let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
         let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Sulafat")

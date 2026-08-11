@@ -69,11 +69,12 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case previewCatalogV1 = "preview-catalog-v1"
     case privateLiveActivityV1 = "private-live-activity-v1"
     case profileTransactionV1 = "profile-transaction-v1"
+    case toolOrchestrationV1 = "tool-orchestration-v1"
 
     var defaultEnabled: Bool {
         switch self {
         case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
-             .profileTransactionV1:
+             .profileTransactionV1, .toolOrchestrationV1:
             true
         }
     }
@@ -396,6 +397,247 @@ final class AlmaLiveVoiceUsageMeter: @unchecked Sendable {
         body(&segment)
         segments[profile] = segment
         lock.unlock()
+    }
+}
+
+// MARK: - Deterministic Gemini Live tool orchestration
+
+enum AlmaLiveVoiceToolName: String, CaseIterable {
+    case quickLookup = "quick_erp_lookup"
+    case endCall = "end_call"
+    case runAgentTurn = "run_agent_turn"
+}
+
+struct AlmaLiveVoiceToolInvocation: Equatable {
+    enum Payload: Equatable {
+        case quickLookup(tool: String)
+        case endCall
+        case runAgentTurn(request: String)
+        case malformed
+        case unsupported
+    }
+
+    let callID: String
+    let functionName: String
+    let payload: Payload
+
+    /// Provider call IDs are opaque wire identities. Never synthesize, trim, or
+    /// normalize them: a response must echo the exact ID and invoked name.
+    static func decode(_ value: [String: Any]) -> AlmaLiveVoiceToolInvocation? {
+        guard let callID = value["id"] as? String,
+              !callID.isEmpty,
+              callID.count <= 512,
+              let functionName = value["name"] as? String,
+              !functionName.isEmpty,
+              functionName.count <= 128 else { return nil }
+        let args = value["args"] as? [String: Any]
+        let payload: Payload
+        switch functionName {
+        case AlmaLiveVoiceToolName.quickLookup.rawValue:
+            if let tool = args?["tool"] as? String, !tool.isEmpty {
+                payload = .quickLookup(tool: tool)
+            } else {
+                payload = .malformed
+            }
+        case AlmaLiveVoiceToolName.endCall.rawValue:
+            payload = .endCall
+        case AlmaLiveVoiceToolName.runAgentTurn.rawValue:
+            if let request = args?["request"] as? String, !request.isEmpty {
+                payload = .runAgentTurn(request: request)
+            } else {
+                payload = .malformed
+            }
+        default:
+            payload = .unsupported
+        }
+        return .init(callID: callID, functionName: functionName, payload: payload)
+    }
+}
+
+/// Pure ordered reducer for one logical Live session. Execution and response
+/// delivery are both FIFO, but backend completion may arrive in any order. A
+/// physical websocket replacement supersedes only its in-flight send ticket;
+/// accepted calls and exact completed payloads remain available for replay.
+struct AlmaLiveVoiceToolLedger: Equatable {
+    enum Admission: Equatable {
+        case accepted
+        case duplicate(replayScheduled: Bool)
+        case conflictingIdentity
+        case capacityExceeded
+    }
+
+    struct ResponseTicket: Equatable {
+        let ticketID: Int
+        let transportOrdinal: Int
+        let callID: String
+        let functionName: String
+        let result: String
+    }
+
+    private enum Phase: Equatable {
+        case queued
+        case executing
+        case completed(result: String)
+        case sending(result: String, ticketID: Int, transportOrdinal: Int)
+        case delivered(result: String)
+        case cancelled
+    }
+
+    private struct Entry: Equatable {
+        let invocation: AlmaLiveVoiceToolInvocation
+        var phase: Phase
+    }
+
+    private static let maximumEntries = 128
+    private var order: [String] = []
+    private var entries: [String: Entry] = [:]
+    private var nextTicketID = 0
+
+    var hasOutstandingCalls: Bool {
+        entries.values.contains {
+            switch $0.phase {
+            case .delivered, .cancelled: return false
+            default: return true
+            }
+        }
+    }
+
+    mutating func reset() {
+        order.removeAll(keepingCapacity: true)
+        entries.removeAll(keepingCapacity: true)
+        nextTicketID = 0
+    }
+
+    mutating func admit(_ invocation: AlmaLiveVoiceToolInvocation) -> Admission {
+        if var existing = entries[invocation.callID] {
+            guard existing.invocation == invocation else {
+                return .conflictingIdentity
+            }
+            if case .delivered(let result) = existing.phase {
+                existing.phase = .completed(result: result)
+                entries[invocation.callID] = existing
+                return .duplicate(replayScheduled: true)
+            }
+            return .duplicate(replayScheduled: false)
+        }
+        if entries.count >= Self.maximumEntries {
+            guard let retiredID = order.first(where: { id in
+                guard let entry = entries[id] else { return true }
+                switch entry.phase {
+                case .delivered, .cancelled: return true
+                default: return false
+                }
+            }) else { return .capacityExceeded }
+            entries.removeValue(forKey: retiredID)
+            order.removeAll { $0 == retiredID }
+        }
+        order.append(invocation.callID)
+        entries[invocation.callID] = Entry(invocation: invocation, phase: .queued)
+        return .accepted
+    }
+
+    /// At most one provider call executes at a time. This preserves provider
+    /// order even when one frame contains several heterogeneous function calls.
+    mutating func nextExecution() -> AlmaLiveVoiceToolInvocation? {
+        guard !entries.values.contains(where: {
+            if case .executing = $0.phase { return true }
+            return false
+        }) else { return nil }
+        guard let id = order.first(where: {
+            guard let entry = entries[$0] else { return false }
+            if case .queued = entry.phase { return true }
+            return false
+        }), var entry = entries[id] else { return nil }
+        entry.phase = .executing
+        entries[id] = entry
+        return entry.invocation
+    }
+
+    @discardableResult
+    mutating func complete(callID: String, functionName: String, result: String) -> Bool {
+        guard var entry = entries[callID],
+              entry.invocation.functionName == functionName,
+              case .executing = entry.phase else { return false }
+        entry.phase = .completed(result: result)
+        entries[callID] = entry
+        return true
+    }
+
+    /// Returns only executing calls, whose local/backend Tasks must be cancelled.
+    /// Queued/completed responses are suppressed without starting new work.
+    mutating func cancel(callIDs: [String]) -> [AlmaLiveVoiceToolInvocation] {
+        var executing: [AlmaLiveVoiceToolInvocation] = []
+        for id in callIDs {
+            guard var entry = entries[id] else { continue }
+            if case .executing = entry.phase { executing.append(entry.invocation) }
+            switch entry.phase {
+            case .delivered, .cancelled:
+                continue
+            default:
+                entry.phase = .cancelled
+                entries[id] = entry
+            }
+        }
+        return executing
+    }
+
+    /// The earliest nonterminal call is a strict response barrier. A later,
+    /// faster tool can complete first, but its wire response cannot overtake it.
+    mutating func nextResponse(transportOrdinal: Int) -> ResponseTicket? {
+        for id in order {
+            guard var entry = entries[id] else { continue }
+            switch entry.phase {
+            case .cancelled, .delivered:
+                continue
+            case .queued, .executing:
+                return nil
+            case .completed(let result):
+                nextTicketID &+= 1
+                if nextTicketID == 0 { nextTicketID = 1 }
+                let ticket = ResponseTicket(
+                    ticketID: nextTicketID,
+                    transportOrdinal: transportOrdinal,
+                    callID: entry.invocation.callID,
+                    functionName: entry.invocation.functionName,
+                    result: result)
+                entry.phase = .sending(
+                    result: result,
+                    ticketID: ticket.ticketID,
+                    transportOrdinal: transportOrdinal)
+                entries[id] = entry
+                return ticket
+            case .sending(let result, _, let sourceTransport):
+                guard sourceTransport != transportOrdinal else { return nil }
+                // A replacement transport supersedes the old ticket. Its later
+                // completion cannot retire this newly minted replay ticket.
+                entry.phase = .completed(result: result)
+                entries[id] = entry
+                return nextResponse(transportOrdinal: transportOrdinal)
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    mutating func finishSend(_ ticket: ResponseTicket, succeeded: Bool) -> Bool {
+        guard var entry = entries[ticket.callID],
+              entry.invocation.functionName == ticket.functionName,
+              case .sending(let result, let ticketID, let transportOrdinal) = entry.phase,
+              ticketID == ticket.ticketID,
+              transportOrdinal == ticket.transportOrdinal else { return false }
+        entry.phase = succeeded ? .delivered(result: result) : .completed(result: result)
+        entries[ticket.callID] = entry
+        return true
+    }
+
+    mutating func invalidateTransport(_ transportOrdinal: Int) {
+        for id in order {
+            guard var entry = entries[id],
+                  case .sending(let result, _, let sourceTransport) = entry.phase,
+                  sourceTransport == transportOrdinal else { continue }
+            entry.phase = .completed(result: result)
+            entries[id] = entry
+        }
     }
 }
 
@@ -2570,7 +2812,7 @@ final class AlmaVoiceEngine {
 
     // ── Agent → owner in-app call (plan C2) ──
     // Set by the CallKit answer hand-off BEFORE begin(). On live connect the brief
-    // is sent as the opening STATUS_NOTE so the agent SPEAKS FIRST with the reason
+    // is sent as realtime text so the agent SPEAKS FIRST with the reason
     // it called; on end() the CallKit system call is closed alongside the session.
     var activeAgentCallId: String?
     var pendingAgentCallBrief: String?
@@ -2646,8 +2888,8 @@ final class AlmaVoiceEngine {
     }
 
     private func sendAgentBriefNote(_ brief: String) {
-        live.sendTextTurn(
-            "STATUS_NOTE: তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
+        live.sendRealtimeText(
+            "তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
             "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
     }
 
@@ -2735,6 +2977,8 @@ final class AlmaVoiceEngine {
     private var hasEverConnected = false
     private var liveSessionHasStarted = false
     private var liveToolTurnPending = false
+    private var activeLiveToolInvocation: AlmaLiveVoiceToolInvocation?
+    private var quickLookupTask: Task<Void, Never>?
 
     /// Never advertise realtime until the Gemini socket has actually completed its
     /// setup handshake. AI Call does not silently downgrade to normal STT/TTS: a
@@ -2951,6 +3195,8 @@ final class AlmaVoiceEngine {
             liveUsageCallID = UUID().uuidString.lowercased()
         }
         live.beginUsageSession(callID: liveUsageCallID)
+        live.beginToolOrchestrationSession(
+            enabled: AlmaLiveVoiceRecoveryFeatures.isEnabled(.toolOrchestrationV1))
         if callKitManaged {
             callKitLifecycleToken = CallKitVoIP.shared.bindAgentLifecycleEvidence(live)
         } else {
@@ -3363,6 +3609,9 @@ final class AlmaVoiceEngine {
         wake.stop()
         vadTask?.cancel(); vadTask = nil
         turnTask?.cancel(); turnTask = nil
+        quickLookupTask?.cancel(); quickLookupTask = nil
+        livePollTask?.cancel(); livePollTask = nil
+        liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
         listenGeneration &+= 1
@@ -3375,6 +3624,7 @@ final class AlmaVoiceEngine {
         // teardown has completed. Otherwise a newly admitted preview can activate
         // and then be deactivated by this call's stale audioQueue cleanup.
         live.stop(waitForAudioTeardown: waitForAudioTeardown); liveActive = false
+        live.endToolOrchestrationSession()
         // Snapshot after socket/input shutdown so the report has a closed local
         // measurement boundary. No transcript text leaves the device.
         let usageReport = live.usageReport(conversationID: chatVM?.conversationId)
@@ -3411,6 +3661,7 @@ final class AlmaVoiceEngine {
         speakerOn = true
         UIDevice.current.isProximityMonitoringEnabled = false
         liveToolTurnPending = false
+        activeLiveToolInvocation = nil
         state = .idle
         if let standaloneAdmissionToken {
             AlmaCallAudioAdmission.shared.release(standaloneAdmissionToken)
@@ -3636,7 +3887,7 @@ final class AlmaVoiceEngine {
     func runChip(_ text: String) {
         guard state == .idle || state == .error else { return }
         if liveActive {
-            live.sendTextTurn(text)
+            live.sendRealtimeText(text)
             return
         }
         tts.stopAll()
@@ -4203,13 +4454,12 @@ final class AlmaVoiceEngine {
         connectionFailureText = ""
         errorToast = nil
         hasEverConnected = true
-        liveToolTurnPending = false
         liveConnectAttempt = 0
         if callStartedAt == nil { callStartedAt = Date() }
         live.setInputMuted(isMuted)
         try? live.setSpeakerEnabled(speakerOn)
         wake.stop()
-        state = .listening
+        state = liveToolTurnPending ? .thinking : .listening
         keepAliveStart()
         // Agent call route diagnostics. Do not force a CallKit-managed receiver
         // back to speaker: receiver-first is intentional and leaves the locked
@@ -4245,12 +4495,10 @@ final class AlmaVoiceEngine {
 
     func liveWillReconnect() {
         guard !closed else { return }
-        // A drop can orphan a pending tool turn — never leave "thinking" stuck.
-        liveToolTurnPending = false
         liveActive = false
         sessionReady = false
         callConnection = .reconnecting
-        state = .idle
+        state = liveToolTurnPending ? .thinking : .idle
     }
 
     #if DEBUG
@@ -4266,7 +4514,7 @@ final class AlmaVoiceEngine {
         lastUserText = text
         _ = feedUpsert(id: nil, kind: .user, text: text)
         feedFinalizeUser()
-        live.sendTextTurn(text)
+        live.sendRealtimeText(text)
     }
 
     /// Deterministic Simulator regression harness. Wait for the real Live socket
@@ -4398,9 +4646,9 @@ final class AlmaVoiceEngine {
     }
 
     func livePlaybackChanged(active: Bool, level: Double) {
+        live.setToolResponsePlaybackBlocked(active)
         ttsLevel = level
         if active {
-            lastPlaybackStartAt = Date()
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
@@ -4413,109 +4661,41 @@ final class AlmaVoiceEngine {
                 }
             }
             feedFinalizeAgent()         // agent turn ended — next reply is a new line
+            liveToolTurnPending = activeLiveToolInvocation != nil || live.hasOutstandingToolCalls
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
-            // A tool result that arrived MID-SPEECH was held back (Gemini drops
-            // function responses landing during its own audio turn — sim repro
-            // 2026-07-24); the moment the mouth is free, deliver it.
-            if let held = pendingLiveToolResult {
-                sendLiveToolResultNow(callId: held.callId, text: held.text)
-            }
-            armAckWithoutToolWatch()
             #if DEBUG
             debugInjectNextQueuedTurnAfterPlayback()
             #endif
         }
     }
 
-    /// Gemini Live sometimes SAYS "এক্ষুনি দেখছি / চেক করছি" and then never calls
-    /// the tool (sim repro 2026-07-24: ads question — ack spoken, zero toolCall,
-    /// owner waits forever). Enforcement, not hope: if a spoken turn ends with an
-    /// ack phrase, no tool is pending, and no tool has run since Boss's last
-    /// sentence, a 5s watch orders it to run run_agent_turn NOW. Max twice per
-    /// user turn so a stubborn model can't loop us.
     private var lastToolCallAt = Date.distantPast
     private var lastUserTurnAt = Date.distantPast
     private var ackNudgesThisUserTurn = 0
-    private static let businessMarkers = ["বিক্রি", "অর্ডার", "স্টক", "ইনভেন্টরি", "টাকা",
-                                          "খরচ", "বেতন", "হাজিরা", "স্টাফ", "staff",
-                                          "অ্যাড", "ads", "Ads", "ক্যাম্পেইন", "রিপোর্ট",
-                                          "কাস্টমার", "ডেলিভারি", "পেন্ডিং", "অনুমোদন",
-                                          "approval", "টুডু", "todo", "মনে রাখ", "লিখে রাখ",
-                                          "চেক", "হিসাব", "ব্যালেন্স", "মেমরি", "রিমাইন্ডার"]
-    private static let ackMarkers = ["দেখছি", "চেক কর", "সময় দিন", "দেখে নিচ্ছি",
-                                     "আনিয়ে দিচ্ছি", "খোঁজ নিচ্ছি", "জানাচ্ছি"]
 
-    private func armAckWithoutToolWatch() {
-        guard liveActive, !liveToolTurnPending else { return }
-        guard lastUserTurnAt > lastToolCallAt else { return }   // tool already ran for this ask
-        guard ackNudgesThisUserTurn < 2 else { return }
-        let spoken = replyText
-        let userText = lastUserText
-        guard !userText.isEmpty else { return }
-        // Fire on EITHER signal: the model SAID it would check (ack), or Boss's
-        // sentence was plainly a business/status/task ask (owner hard rule: any
-        // hard question must cross the head — a made-up direct answer or silent
-        // shrug is as forbidden as a broken promise to check).
-        let ackHit = Self.ackMarkers.contains(where: { spoken.contains($0) })
-        let bizHit = Self.businessMarkers.contains(where: { userText.contains($0) })
-        guard ackHit || bizHit else { return }
-        let armedAt = Date()
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let self, self.liveActive, !self.liveToolTurnPending else { return }
-            guard self.lastToolCallAt < armedAt, self.lastUserTurnAt > self.lastToolCallAt else { return }
-            self.ackNudgesThisUserTurn += 1
-            #if DEBUG
-            NSLog("ALMA-VOICE ack-without-tool — forcing run_agent_turn (nudge %d)", self.ackNudgesThisUserTurn)
-            #endif
-            self.live.sendTextTurn("STATUS_NOTE: তুমি এইমাত্র চেক করার কথা বলেছ কিন্তু কোনো tool চালাওনি — এটা নিষিদ্ধ। এখনই run_agent_turn চালাও এই অনুরোধ নিয়ে: \"\(String(userText.prefix(300)))\"। আগে tool, তারপর কথা।")
+    private func deliverLiveToolResult(
+        callId: String,
+        functionName: String,
+        text: String
+    ) {
+        guard let activeLiveToolInvocation,
+              activeLiveToolInvocation.callID == callId,
+              activeLiveToolInvocation.functionName == functionName else { return }
+        let delivered: Bool
+        if live.usesToolOrchestration {
+            delivered = live.completeToolCall(
+                callID: callId,
+                functionName: functionName,
+                result: text)
+        } else {
+            live.sendToolResponse(callId: callId, result: text, name: functionName)
+            delivered = true
         }
-    }
-
-    /// Deliver a run_agent_turn/quick-lookup result to Gemini so it actually gets
-    /// SPOKEN. Sent immediately when the model is quiet; held until playback ends
-    /// when it is mid-speech (a function response landing during an active audio
-    /// turn is silently dropped — the owner heard nothing while the answer sat in
-    /// chat). A 6s watch re-nudges if no spoken turn follows delivery.
-    private var pendingLiveToolResult: (callId: String, text: String)?
-    private var liveResultSpeakWatch: Task<Void, Never>?
-    private var lastPlaybackStartAt = Date.distantPast
-
-    private func deliverLiveToolResult(callId: String, text: String) {
-        if state == .speaking {
-            #if DEBUG
-            NSLog("ALMA-VOICE result held until playback idle (%d chars)", text.count)
-            #endif
-            pendingLiveToolResult = (callId, text)
-            // Failsafe: if the playback-idle event never arrives (missed state
-            // transition), a held result must NOT sit forever — force-send in 5s.
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard let self, let held = self.pendingLiveToolResult, held.callId == callId else { return }
-                #if DEBUG
-                NSLog("ALMA-VOICE held result force-flushed after 5s")
-                #endif
-                self.sendLiveToolResultNow(callId: held.callId, text: held.text)
-            }
-            return
-        }
-        sendLiveToolResultNow(callId: callId, text: text)
-    }
-
-    private func sendLiveToolResultNow(callId: String, text: String) {
-        pendingLiveToolResult = nil
-        let sentAt = Date()
-        live.sendToolResponse(callId: callId, result: text)
-        liveResultSpeakWatch?.cancel()
-        liveResultSpeakWatch = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard let self, !Task.isCancelled, self.liveActive else { return }
-            guard self.lastPlaybackStartAt < sentAt else { return }   // it spoke
-            #if DEBUG
-            NSLog("ALMA-VOICE result unspoken after 6s — nudging Gemini to say it")
-            #endif
-            self.live.sendTextTurn("STATUS_NOTE: কাজের ফল এসে গেছে — এখনই Boss-কে সংক্ষেপে নিজের ভাষায় বলো: \(String(text.prefix(400)))")
-        }
+        guard delivered else { return }
+        self.activeLiveToolInvocation = nil
+        liveToolTurnPending = false
+        liveStatusNudgeTask?.cancel()
+        if state == .thinking { state = .listening }
     }
 
     func liveWasInterrupted() {
@@ -4523,9 +4703,8 @@ final class AlmaVoiceEngine {
         nowLine = ""
         // NOTE: deliberately NOT clearing liveToolTurnPending — an interruption
         // only stops the AUDIO, the head/tool turn keeps running. Clearing it here
-        // (old behavior) made our own STATUS_NOTE nudges kill the working state:
-        // Gemini reports "interrupted" for any new user-role content, so the first
-        // nudge silently erased the pending flag (sim finding 2026-07-23).
+        // Gemini reports "interrupted" for any new user-role content, but that
+        // only stops audio; accepted backend work continues under its call ID.
         feedFinalizeAgent()
         state = liveToolTurnPending ? .thinking : .listening
     }
@@ -4575,17 +4754,92 @@ final class AlmaVoiceEngine {
         liveConnectionFailed(error: nil, message: message)
     }
 
+    func handleLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) {
+        switch invocation.payload {
+        case .quickLookup(let tool):
+            runQuickLookup(tool: tool, callId: invocation.callID)
+        case .runAgentTurn(let request):
+            runLiveAgentTurn(request: request, callId: invocation.callID)
+        case .endCall:
+            guard beginLiveToolInvocation(invocation) else { return }
+            let result = approveModelRequestedEnd()
+                ? "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।"
+                : "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।"
+            deliverLiveToolResult(
+                callId: invocation.callID,
+                functionName: invocation.functionName,
+                text: result)
+        case .malformed:
+            guard beginLiveToolInvocation(invocation) else { return }
+            deliverLiveToolResult(
+                callId: invocation.callID,
+                functionName: invocation.functionName,
+                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।")
+        case .unsupported:
+            guard beginLiveToolInvocation(invocation) else { return }
+            deliverLiveToolResult(
+                callId: invocation.callID,
+                functionName: invocation.functionName,
+                text: "এই function এই client সমর্থন করে না।")
+        }
+    }
+
+    func cancelLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) {
+        guard activeLiveToolInvocation?.callID == invocation.callID,
+              activeLiveToolInvocation?.functionName == invocation.functionName else { return }
+        quickLookupTask?.cancel(); quickLookupTask = nil
+        turnTask?.cancel(); turnTask = nil
+        livePollTask?.cancel(); livePollTask = nil
+        liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
+        activeLiveToolInvocation = nil
+        liveToolTurnPending = false
+        if state == .thinking { state = liveActive ? .listening : .idle }
+    }
+
+    private func beginLiveToolInvocation(_ invocation: AlmaLiveVoiceToolInvocation) -> Bool {
+        guard activeLiveToolInvocation == nil else {
+            if !live.usesToolOrchestration {
+                live.sendToolResponse(
+                    callId: invocation.callID,
+                    result: "আগের কাজটি এখনো চলছে; নতুন করে কিছু শুরু করা হয়নি।",
+                    name: invocation.functionName)
+            }
+            return false
+        }
+        activeLiveToolInvocation = invocation
+        liveToolTurnPending = true
+        state = .thinking
+        return true
+    }
+
+    private func isActiveLiveTool(callID: String, functionName: String) -> Bool {
+        activeLiveToolInvocation?.callID == callID
+            && activeLiveToolInvocation?.functionName == functionName
+    }
+
     /// FAST LANE (owner spec 2026-07-23): simple read-only lookups skip the head
     /// entirely — one whitelisted ERP tool over /api/assistant/voice-tool, answer
     /// in seconds. Actions/memory/complex work still cross the head route.
     func runQuickLookup(tool: String, callId: String) {
+        let invocation = AlmaLiveVoiceToolInvocation(
+            callID: callId,
+            functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
+            payload: tool.isEmpty ? .malformed : .quickLookup(tool: tool))
+        guard beginLiveToolInvocation(invocation) else { return }
+        guard !tool.isEmpty else {
+            deliverLiveToolResult(
+                callId: callId,
+                functionName: invocation.functionName,
+                text: "Tool arguments সঠিক ছিল না; Boss-কে আবার বলতে অনুরোধ করুন।")
+            return
+        }
         let started = Date()
         lastToolCallAt = started
         feedStatus("তথ্য দেখা হচ্ছে…")
         state = .thinking
-        Task { [weak self] in
+        quickLookupTask?.cancel()
+        quickLookupTask = Task { [weak self] in
             guard let self else { return }
-            defer { if self.state == .thinking && !self.liveToolTurnPending { self.state = .listening } }
             do {
                 await AlmaAPI.shared.syncCookies()
                 struct QuickResp: Decodable { let ok: Bool?; let ms: Int?; let result: String?; let error: String? }
@@ -4597,12 +4851,23 @@ final class AlmaVoiceEngine {
                       tool, Int(Date().timeIntervalSince(started) * 1000), resp.ms ?? -1, (resp.ok ?? false) ? 1 : 0)
                 #endif
                 if resp.ok == true, let payload = resp.result {
-                    self.deliverLiveToolResult(callId: callId, text: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
+                    self.deliverLiveToolResult(
+                        callId: callId,
+                        functionName: invocation.functionName,
+                        text: "তথ্য (JSON): \(payload)। এখান থেকে Boss-এর প্রশ্নের উত্তরটুকু সংক্ষেপে স্বাভাবিক বাংলায় বলুন।")
                 } else {
-                    self.deliverLiveToolResult(callId: callId, text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
+                    self.deliverLiveToolResult(
+                        callId: callId,
+                        functionName: invocation.functionName,
+                        text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।")
                 }
+            } catch is CancellationError {
+                return
             } catch {
-                self.deliverLiveToolResult(callId: callId, text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
+                self.deliverLiveToolResult(
+                    callId: callId,
+                    functionName: invocation.functionName,
+                    text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।")
             }
         }
     }
@@ -4611,18 +4876,18 @@ final class AlmaVoiceEngine {
     /// still crosses the existing head route, preserving memory, tools, approvals,
     /// claim verification, and the durable call workflow.
     func runLiveAgentTurn(request: String, callId: String) {
-        lastToolCallAt = Date()
-        // Boss repeating himself while a head turn is ALREADY running must not
-        // cancel-and-restart it — the server refuses a second concurrent turn on
-        // the same conversation and 30s of tool work gets thrown away (owner
-        // finding 2026-07-23: this produced the "সংযোগে সমস্যা" dead-end).
-        if liveToolTurnPending {
-            live.sendToolResponse(callId: callId, result: "আগের কাজটাই এখনো চলছে — Boss-কে এক বাক্যে জানান যে কাজটা চলছে, শেষ হলেই ফল বলবেন। নতুন করে কিছু শুরু করবেন না।")
-            return
-        }
         let clean = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invocation = AlmaLiveVoiceToolInvocation(
+            callID: callId,
+            functionName: AlmaLiveVoiceToolName.runAgentTurn.rawValue,
+            payload: clean.isEmpty ? .malformed : .runAgentTurn(request: request))
+        guard beginLiveToolInvocation(invocation) else { return }
+        lastToolCallAt = Date()
         guard !clean.isEmpty else {
-            live.sendToolResponse(callId: callId, result: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।")
+            deliverLiveToolResult(
+                callId: callId,
+                functionName: invocation.functionName,
+                text: "Boss-এর বক্তব্য খালি ছিল; আবার বলতে অনুরোধ করুন।")
             return
         }
         emptyListens = 0
@@ -4630,7 +4895,6 @@ final class AlmaVoiceEngine {
         lastUserText = clean
         replyText = ""
         cards.removeAll { $0.kind == .tool }
-        liveToolTurnPending = true
         state = .thinking
         // Feed: lock Boss's final sentence in place; Gemini's STT is authoritative.
         // The streaming line may ALREADY be finalized (ack playback started before
@@ -4645,22 +4909,9 @@ final class AlmaVoiceEngine {
         }
         feedFinalizeUser()
         feedFinalizeAgent()
-        // Dead-air killer (owner spec): while the head/tool turn runs, feed
-        // Gemini CONTEXT (Boss's request, the running tool, elapsed time) and let
-        // it phrase a fresh, human one-liner each time — never a canned template.
         liveStatusNudgeTask?.cancel()
         let started = Date()
-        liveStatusNudgeTask = Task { [weak self] in
-            for delay in [12.0, 12.0, 15.0] {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                guard let self, !Task.isCancelled, self.liveToolTurnPending else { return }
-                let tool = self.cards.last(where: { $0.kind == .tool })?.title ?? ""
-                let secs = Int(Date().timeIntervalSince(started))
-                var context = "Boss-এর চলমান অনুরোধ: \"\(clean)\"। প্রায় \(secs) সেকেন্ড ধরে কাজ চলছে"
-                if !tool.isEmpty { context += "; এই মুহূর্তে চলছে: \(tool)" }
-                self.live.sendTextTurn("STATUS_NOTE: \(context)। Boss-কে এক ছোট বাক্যে স্বাভাবিক মানুষের মতো অগ্রগতি জানাও — নিজের ভাষায়, আগে যা বলেছ তার পুনরাবৃত্তি একদম নয়; নতুন তথ্য বানাবে না।")
-            }
-        }
+        liveStatusNudgeTask = nil
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
                                  message: clean,
                                  modelId: chatVM?.modelId ?? "auto",
@@ -4691,7 +4942,10 @@ final class AlmaVoiceEngine {
                 // continuation instead of finishing — chat auto-continues, so
                 // voice must too, else Boss gets HALF an answer for a hard task.
                 var continues = 0
-                while self.lastDoneNeedContinue, continues < 3, self.liveToolTurnPending,
+                while self.lastDoneNeedContinue, continues < 3,
+                      self.isActiveLiveTool(
+                        callID: callId,
+                        functionName: invocation.functionName),
                       let fromTurn = self.liveTurnId {
                     continues += 1
                     self.lastDoneNeedContinue = false
@@ -4720,21 +4974,21 @@ final class AlmaVoiceEngine {
                     return
                 }
                 #endif
-                guard self.liveToolTurnPending else { return }   // poller already delivered
+                guard self.isActiveLiveTool(
+                    callID: callId,
+                    functionName: invocation.functionName) else { return }
                 let result = self.replyText.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.deliverLiveToolResult(
                     callId: callId,
+                    functionName: invocation.functionName,
                     text: result.isEmpty ? "Head agent কোনো কথ্য উত্তর দেয়নি। স্ক্রিনের approval বা প্রশ্নের card দেখুন।" : result
                 )
-                self.liveToolTurnPending = false
                 self.livePollTask?.cancel()
             } catch is CancellationError {
-                // Cancelled by the owner OR because the poller won the race — in
-                // the latter case the answer is already delivered; stay silent.
-                guard self.liveToolTurnPending else { return }
-                self.live.sendToolResponse(callId: callId, result: "আগের অনুরোধটি বাতিল হয়েছে।")
-                self.liveToolTurnPending = false
+                // Provider cancellation and a competing poller both suppress
+                // late results. The ledger is the only response authority.
                 self.livePollTask?.cancel()
+                return
             } catch {
                 // Stream transport died. Do NOT give up: the turn keeps running
                 // server-side and the DB poller below fetches its result. pending
@@ -4750,18 +5004,26 @@ final class AlmaVoiceEngine {
         livePollTask?.cancel()
         livePollTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 6_000_000_000)
-            while let self, !Task.isCancelled, self.liveToolTurnPending {
+            while let self, !Task.isCancelled,
+                  self.isActiveLiveTool(
+                    callID: callId,
+                    functionName: invocation.functionName) {
                 if let outcome = await self.pollHeadTurnOutcome(requestStart: started) {
-                    guard self.liveToolTurnPending, !Task.isCancelled else { return }
-                    self.liveToolTurnPending = false
+                    guard self.isActiveLiveTool(
+                        callID: callId,
+                        functionName: invocation.functionName),
+                          !Task.isCancelled else { return }
                     self.liveStatusNudgeTask?.cancel()
-                    self.turnTask?.cancel()
                     #if DEBUG
                     NSLog("ALMA-VOICE poller delivered turn outcome (%d chars)", outcome.count)
                     #endif
                     self.replyText = outcome
                     self.lastEventAt = Date()
-                    self.deliverLiveToolResult(callId: callId, text: outcome)
+                    self.deliverLiveToolResult(
+                        callId: callId,
+                        functionName: invocation.functionName,
+                        text: outcome)
+                    self.turnTask?.cancel()
                     return
                 }
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
@@ -4928,9 +5190,15 @@ final class AlmaVoiceEngine {
                    Date().timeIntervalSince(self.lastEventAt) > stallLimit {
                     self.turnTask?.cancel()
                     if self.liveActive {
-                        self.liveToolTurnPending = false
-                        self.state = .listening
-                        self.live.sendTextTurn("STATUS_NOTE: কাজটির উত্তর আসতে সমস্যা হচ্ছে। Boss-কে ছোট করে দুঃখপ্রকাশ করে বলো একটু পরে আবার চেষ্টা করা যাবে।")
+                        if let invocation = self.activeLiveToolInvocation {
+                            self.deliverLiveToolResult(
+                                callId: invocation.callID,
+                                functionName: invocation.functionName,
+                                text: "কাজটির উত্তর আসতে সমস্যা হচ্ছে। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।")
+                        } else {
+                            self.liveToolTurnPending = false
+                            self.state = .listening
+                        }
                     } else {
                         self.tts.stopAll()
                         self.state = .idle
@@ -4959,7 +5227,7 @@ final class AlmaVoiceEngine {
             await self?.chatVM?.approveAction(pid, approve: yes)
             guard let self else { return }
             let message = yes ? "অনুমোদন হয়েছে; কাজের আসল ফল এলে জানাব।" : "কাজটি বাতিল হয়েছে।"
-            if self.liveActive { self.live.sendTextTurn(message) }
+            if self.liveActive { self.live.sendRealtimeText(message) }
             else { self.tts.sayNow(yes ? "অনুমোদন করে দিয়েছি Boss, কাজ এগোচ্ছে।" : "বাতিল করে দিয়েছি Boss।") }
         }
     }
@@ -5128,6 +5396,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
     private let evidenceRecorder: AlmaLiveVoiceEvidenceRecorder
     private let usageMeter = AlmaLiveVoiceUsageMeter()
+    private let toolLedgerLock = NSLock()
+    private var toolLedger = AlmaLiveVoiceToolLedger()
+    private var toolOrchestrationEnabled = false
+    private var toolResponsePlaybackBlocked = false
+    private var toolEngineConnectionGeneration: Int?
     private let traceID = String(UUID().uuidString.prefix(8))
 
     init(evidenceRecorder: AlmaLiveVoiceEvidenceRecorder) {
@@ -5137,6 +5410,59 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
     func beginUsageSession(callID: String) {
         usageMeter.begin(callID: callID)
+    }
+
+    func beginToolOrchestrationSession(enabled: Bool) {
+        toolLedgerLock.lock()
+        toolLedger.reset()
+        toolOrchestrationEnabled = enabled
+        toolResponsePlaybackBlocked = false
+        toolEngineConnectionGeneration = nil
+        toolLedgerLock.unlock()
+    }
+
+    func endToolOrchestrationSession() {
+        toolLedgerLock.lock()
+        toolLedger.reset()
+        toolOrchestrationEnabled = false
+        toolResponsePlaybackBlocked = false
+        toolEngineConnectionGeneration = nil
+        toolLedgerLock.unlock()
+    }
+
+    var usesToolOrchestration: Bool {
+        toolLedgerLock.lock()
+        let enabled = toolOrchestrationEnabled
+        toolLedgerLock.unlock()
+        return enabled
+    }
+
+    var hasOutstandingToolCalls: Bool {
+        toolLedgerLock.lock()
+        let outstanding = toolLedger.hasOutstandingCalls
+        toolLedgerLock.unlock()
+        return outstanding
+    }
+
+    func setToolResponsePlaybackBlocked(_ blocked: Bool) {
+        toolLedgerLock.lock()
+        toolResponsePlaybackBlocked = blocked
+        toolLedgerLock.unlock()
+        if !blocked { drainToolResponses() }
+    }
+
+    @discardableResult
+    func completeToolCall(callID: String, functionName: String, result: String) -> Bool {
+        toolLedgerLock.lock()
+        let completed = toolLedger.complete(
+            callID: callID,
+            functionName: functionName,
+            result: result)
+        toolLedgerLock.unlock()
+        guard completed else { return false }
+        dispatchNextToolExecution()
+        drainToolResponses()
+        return true
     }
 
     func usageReport(conversationID: String?) -> AlmaLiveVoiceUsageReport? {
@@ -6032,6 +6358,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             readinessLock.unlock()
             return false
         }
+        let invalidatedTransportOrdinal = readiness.socketAttempt?.ordinal
         evidenceTransportLock.lock()
         evidenceTransportBinding.markNotReady()
         socketReady = false
@@ -6042,6 +6369,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         readiness.beginSocketAttempt()
         audioConfigPending = false
         readinessLock.unlock()
+        if let invalidatedTransportOrdinal {
+            toolLedgerLock.lock()
+            toolLedger.invalidateTransport(invalidatedTransportOrdinal)
+            toolLedgerLock.unlock()
+        }
         return true
     }
 
@@ -6284,10 +6616,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
 
         **Tool flow**
         কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
+        কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন নির্দিষ্ট read-only তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: quick_erp_lookup-এর নির্দিষ্ট তালিকার বাইরে হিসাব/বিশ্লেষণ, রিপোর্ট, মেমরি, বা কোনো কাজ করা/পরিবর্তনের অনুরোধে run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে — ইংরেজিতে অনুবাদ করলে ভেতরের রাউটিং ভুল মডেলে যায়।
         Boss স্পষ্টভাবে কলটি শেষ করতে চাইলে ("ফোন রাখো", "কল কাটো", "এখন রাখি", বিদায়ী সালাম "আল্লাহ হাফেজ"): এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে — শুধু মুখে বিদায় বললে কল কাটে না। সাবধান: কিছু মনে রাখতে বা সেভ করতে বলা (যেমন "এই কথাটা মনে রেখে দাও") কল রাখার অনুরোধ নয় — তখন end_call একদম নয়।
-        ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
-        STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
+        ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, system, agent — এগুলো কখনো উচ্চারণ করবে না।
         Boss-এর কথা সত্যিই অস্পষ্ট হলে কেবল তখনই ছোট প্রশ্নে পরিষ্কার করে নেবে; পরিষ্কার অনুরোধে পাল্টা নিশ্চিতকরণ প্রশ্ন করবে না — ছোট্ট এক কথা বলে সাথে সাথে run_agent_turn চালাবে। ack বলার পর tool চালানো কখনো ভুলবে না।
         Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
         **Guardrails**
@@ -6405,9 +6736,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ) { $0.liveDidConnect() }
         if !hasConnectedOnce {
             hasConnectedOnce = true
-            sendTextTurn("OPENING_GREETING: Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
+            sendRealtimeText("Boss-কে সময় অনুযায়ী খুব সংক্ষিপ্ত বাংলায় অভিবাদন জানিয়ে বলুন, কী করতে হবে। কোনো tool চালাবেন না।")
         }
         startAttemptLock.unlock()
+        drainToolResponses()
     }
 
     /// CallKit activated the shared audio session (CXProviderDelegate didActivate).
@@ -7706,6 +8038,121 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    private func handleOrchestratedToolCalls(
+        _ calls: [[String: Any]],
+        attempt: AlmaLiveVoiceSocketAttempt
+    ) {
+        toolLedgerLock.lock()
+        guard toolOrchestrationEnabled else {
+            toolLedgerLock.unlock()
+            return
+        }
+        var admittedAny = false
+        for call in calls {
+            guard let invocation = AlmaLiveVoiceToolInvocation.decode(call) else {
+                #if DEBUG
+                NSLog("ALMA-VOICE rejected tool call without exact provider id/name")
+                #endif
+                continue
+            }
+            switch toolLedger.admit(invocation) {
+            case .accepted, .duplicate(replayScheduled: true):
+                admittedAny = true
+            case .duplicate(replayScheduled: false):
+                break
+            case .conflictingIdentity:
+                #if DEBUG
+                NSLog("ALMA-VOICE rejected conflicting duplicate tool id=%@", invocation.callID)
+                #endif
+            case .capacityExceeded:
+                #if DEBUG
+                NSLog("ALMA-VOICE tool ledger capacity reached")
+                #endif
+            }
+        }
+        if admittedAny { toolEngineConnectionGeneration = attempt.engineConnectionGeneration }
+        toolLedgerLock.unlock()
+        dispatchNextToolExecution()
+        drainToolResponses()
+    }
+
+    private func handleOrchestratedToolCancellation(
+        _ callIDs: [String],
+        attempt: AlmaLiveVoiceSocketAttempt
+    ) {
+        toolLedgerLock.lock()
+        guard toolOrchestrationEnabled,
+              toolEngineConnectionGeneration == attempt.engineConnectionGeneration else {
+            toolLedgerLock.unlock()
+            return
+        }
+        let executing = toolLedger.cancel(callIDs: callIDs)
+        toolLedgerLock.unlock()
+        for invocation in executing {
+            dispatchEngineCallback(
+                engineConnectionGeneration: attempt.engineConnectionGeneration
+            ) { $0.cancelLiveToolInvocation(invocation) }
+        }
+        dispatchNextToolExecution()
+        drainToolResponses()
+    }
+
+    private func dispatchNextToolExecution() {
+        toolLedgerLock.lock()
+        guard toolOrchestrationEnabled,
+              let generation = toolEngineConnectionGeneration,
+              let invocation = toolLedger.nextExecution() else {
+            toolLedgerLock.unlock()
+            return
+        }
+        toolLedgerLock.unlock()
+        // Accepted work belongs to the logical call, not the physical socket.
+        // A reconnect after admission therefore cannot suppress its execution.
+        dispatchEngineCallback(engineConnectionGeneration: generation) {
+            $0.handleLiveToolInvocation(invocation)
+        }
+    }
+
+    private func drainToolResponses() {
+        toolLedgerLock.lock()
+        let canDrain = toolOrchestrationEnabled && !toolResponsePlaybackBlocked
+        toolLedgerLock.unlock()
+        guard canDrain else { return }
+
+        readinessLock.lock()
+        let attempt = socketReady ? readiness.socketAttempt : nil
+        let socket = attempt?.socketIdentity == ws.map(ObjectIdentifier.init) ? ws : nil
+        readinessLock.unlock()
+        guard let attempt, let socket else { return }
+
+        toolLedgerLock.lock()
+        guard let ticket = toolLedger.nextResponse(transportOrdinal: attempt.ordinal) else {
+            toolLedgerLock.unlock()
+            return
+        }
+        toolLedgerLock.unlock()
+
+        let queued = sendJSON(
+            ["toolResponse": ["functionResponses": [[
+                "id": ticket.callID,
+                "name": ticket.functionName,
+                "response": ["result": ticket.result],
+            ]]]],
+            sourceSocket: socket,
+            audioSourceAttempt: attempt
+        ) { [weak self] error in
+            guard let self else { return }
+            self.toolLedgerLock.lock()
+            let accepted = self.toolLedger.finishSend(ticket, succeeded: error == nil)
+            self.toolLedgerLock.unlock()
+            if accepted && error == nil { self.drainToolResponses() }
+        }
+        guard !queued else { return }
+        toolLedgerLock.lock()
+        _ = toolLedger.finishSend(ticket, succeeded: false)
+        toolLedgerLock.unlock()
+    }
+
     private func onMessage(
         _ text: String,
         attempt: AlmaLiveVoiceSocketAttempt,
@@ -7855,53 +8302,49 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                         generation: evidenceGeneration)
                 }
             }
-            for call in calls where call["name"] as? String == "quick_erp_lookup" {
-                let id = call["id"] as? String ?? UUID().uuidString
-                let toolName = (call["args"] as? [String: Any])?["tool"] as? String ?? ""
-                #if DEBUG
-                NSLog("ALMA-VOICE quick_erp_lookup: %@", toolName)
-                #endif
-                dispatchEngineCallback(
-                    engineConnectionGeneration: attempt.engineConnectionGeneration,
-                    requiring: attempt
-                ) { $0.runQuickLookup(tool: toolName, callId: id) }
-            }
-            for call in calls where call["name"] as? String == "end_call" {
-                let id = call["id"] as? String ?? UUID().uuidString
-                // The model can fire this spuriously (sim 2026-07-30: a long
-                // overlapping utterance with no goodbye in it triggered
-                // end_call). Boss's OWN recent words must corroborate — the
-                // engine approves only when hang-up context was actually heard.
-                dispatchEngineCallback(
-                    engineConnectionGeneration: attempt.engineConnectionGeneration,
-                    requiring: attempt
-                ) { [weak self] engine in
-                    guard let self else { return }
-                    if engine.approveModelRequestedEnd() {
-                        #if DEBUG
-                        NSLog("ALMA-VOICE toolCall end_call approved — hanging up after goodbye")
-                        #endif
-                        self.sendToolResponse(callId: id, result: "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।", name: "end_call")
-                    } else {
-                        #if DEBUG
-                        NSLog("ALMA-VOICE toolCall end_call REFUSED — no hang-up context from Boss")
-                        #endif
-                        self.sendToolResponse(callId: id, result: "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।", name: "end_call")
+            if usesToolOrchestration {
+                handleOrchestratedToolCalls(calls, attempt: attempt)
+            } else {
+                // Rollback path retains the pre-ledger dispatcher, but never
+                // invents a provider identity or replies under the wrong name.
+                for call in calls where call["name"] as? String == AlmaLiveVoiceToolName.quickLookup.rawValue {
+                    guard let id = call["id"] as? String, !id.isEmpty else { continue }
+                    let toolName = (call["args"] as? [String: Any])?["tool"] as? String ?? ""
+                    dispatchEngineCallback(
+                        engineConnectionGeneration: attempt.engineConnectionGeneration,
+                        requiring: attempt
+                    ) { $0.runQuickLookup(tool: toolName, callId: id) }
+                }
+                for call in calls where call["name"] as? String == AlmaLiveVoiceToolName.endCall.rawValue {
+                    guard let id = call["id"] as? String, !id.isEmpty else { continue }
+                    dispatchEngineCallback(
+                        engineConnectionGeneration: attempt.engineConnectionGeneration,
+                        requiring: attempt
+                    ) { [weak self] engine in
+                        guard let self else { return }
+                        let result = engine.approveModelRequestedEnd()
+                            ? "ঠিক আছে — বিদায় বলা শেষ হলেই কল কেটে যাবে।"
+                            : "Boss কল শেষ করতে বলেননি — কল কাটা হয়নি, স্বাভাবিকভাবে কথা চালিয়ে যাও।"
+                        self.sendToolResponse(
+                            callId: id,
+                            result: result,
+                            name: AlmaLiveVoiceToolName.endCall.rawValue)
                     }
                 }
+                for call in calls where call["name"] as? String == AlmaLiveVoiceToolName.runAgentTurn.rawValue {
+                    guard let id = call["id"] as? String, !id.isEmpty else { continue }
+                    let request = (call["args"] as? [String: Any])?["request"] as? String ?? ""
+                    dispatchEngineCallback(
+                        engineConnectionGeneration: attempt.engineConnectionGeneration,
+                        requiring: attempt
+                    ) { $0.runLiveAgentTurn(request: request, callId: id) }
+                }
             }
-            for call in calls where call["name"] as? String == "run_agent_turn" {
-                let id = call["id"] as? String ?? UUID().uuidString
-                let args = call["args"] as? [String: Any]
-                let request = args?["request"] as? String ?? ""
-                #if DEBUG
-                NSLog("ALMA-VOICE toolCall run_agent_turn: %@", String(request.prefix(80)))
-                #endif
-                dispatchEngineCallback(
-                    engineConnectionGeneration: attempt.engineConnectionGeneration,
-                    requiring: attempt
-                ) { $0.runLiveAgentTurn(request: request, callId: id) }
-            }
+        }
+        if usesToolOrchestration,
+           let cancellation = root["toolCallCancellation"] as? [String: Any],
+           let ids = cancellation["ids"] as? [String] {
+            handleOrchestratedToolCancellation(ids, attempt: attempt)
         }
         if root["goAway"] != nil {
             recordTransportEvidence(.goAwayObserved, generation: evidenceGeneration)
@@ -8712,7 +9155,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    func sendToolResponse(callId: String, result: String, name: String = "run_agent_turn") {
+    func sendToolResponse(callId: String, result: String, name: String) {
         sendJSON(["toolResponse": ["functionResponses": [[
             "id": callId,
             // The response must carry the INVOKED function's name — answering
@@ -8722,11 +9165,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         ]]]])
     }
 
-    func sendTextTurn(_ text: String) {
-        sendJSON(["clientContent": [
-            "turns": [["role": "user", "parts": [["text": text]]]],
-            "turnComplete": true,
-        ]])
+    func sendRealtimeText(_ text: String) {
+        sendJSON(["realtimeInput": ["text": text]])
     }
 
     private func recordAudioNotQueued(
@@ -8892,6 +9332,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         evidenceSubmissionLock.unlock()
     }
 
+    @discardableResult
     private func sendJSON(
         _ object: [String: Any],
         requireReady: Bool = true,
@@ -8901,9 +9342,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioSourceAttempt: AlmaLiveVoiceSocketAttempt? = nil,
         audioInputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil,
         usageInputAudioByteCount: Int? = nil,
-        usageProfile: AlmaLiveVoiceProfile? = nil
-    ) {
-        guard !stopped else { return }
+        usageProfile: AlmaLiveVoiceProfile? = nil,
+        completion: ((Error?) -> Void)? = nil
+    ) -> Bool {
+        guard !stopped else { return false }
         let sourceGeneration = audioEvidenceGeneration
             ?? evidenceTransportGenerationSnapshot()
         guard JSONSerialization.isValidJSONObject(object),
@@ -8916,7 +9358,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     sourceGeneration: sourceGeneration,
                     inputEvidence: audioInputEvidence)
             }
-            return
+            return false
         }
         guard let socket = sourceSocket ?? ws else {
             if let byteCount = audioEvidenceByteCount {
@@ -8926,7 +9368,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     sourceGeneration: sourceGeneration,
                     inputEvidence: audioInputEvidence)
             }
-            return
+            return false
         }
         readinessLock.lock()
         let notQueuedReason = AlmaLiveVoiceAudioSendValidation.notQueuedReason(
@@ -8944,7 +9386,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     sourceGeneration: sourceGeneration,
                     inputEvidence: audioInputEvidence)
             }
-            return
+            return false
         }
         let evidenceSend = audioEvidenceByteCount.map {
             prepareAudioSendEvidence(
@@ -8959,6 +9401,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         readinessLock.unlock()
         socket.send(.string(text)) { [weak self, weak socket] error in
+            completion?(error)
             if let self, let socket, let evidenceSend,
                let claim = evidenceSend.claim, evidenceSend.submitted {
                 self.submitAudioSendCompletion(
@@ -8993,6 +9436,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 }
             }
         }
+        return true
     }
 
     func setInputMuted(_ muted: Bool) {

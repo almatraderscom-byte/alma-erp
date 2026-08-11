@@ -6,6 +6,7 @@ import {
   ThinkingLevel,
   TurnCoverage,
   Type,
+  type FunctionDeclaration,
   type LiveConnectConfig,
 } from '@google/genai'
 
@@ -23,6 +24,49 @@ export const LIVE_VOICE_NAMES = [
 
 export const DEFAULT_LIVE_VOICE_MODEL = GEMINI_25_LIVE_MODEL
 export const DEFAULT_LIVE_VOICE_NAME = 'Aoede'
+export const LIVE_VOICE_TOOL_NAMES = [
+  'quick_erp_lookup',
+  'end_call',
+  'run_agent_turn',
+] as const
+
+export const LIVE_VOICE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [{
+  name: 'quick_erp_lookup',
+  description: 'সাধারণ ব্যবসার তথ্য কয়েক সেকেন্ডে দেখার read-only পথ। কোনো কাজ, পরিবর্তন, বার্তা পাঠানো বা মেমরি নয়।',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      tool: {
+        type: Type.STRING,
+        enum: [
+          'get_attendance',
+          'get_sales_summary',
+          'get_orders',
+          'get_dashboard_snapshot',
+          'get_inventory_status',
+          'get_salah_status',
+          'get_pending_approvals',
+          'get_prayer_times',
+        ],
+      },
+    },
+    required: ['tool'],
+  },
+}, {
+  name: 'end_call',
+  description: 'Boss স্পষ্টভাবে কল শেষ করতে চাইলে বিদায় বলার সাথে সাথে কলটি সত্যিই শেষ করে।',
+  parameters: { type: Type.OBJECT, properties: {} },
+}, {
+  name: 'run_agent_turn',
+  description: 'Boss-এর অনুরোধ ALMA head agent-এ পাঠায়—কাজ, পরিবর্তন, approval, memory বা quick lookup-এর বাইরের জটিল বিশ্লেষণের জন্য। request Boss-এর ভাষায় হুবহু থাকবে।',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      request: { type: Type.STRING, description: 'Boss-এর সম্পূর্ণ বক্তব্য বা অনুরোধ' },
+    },
+    required: ['request'],
+  },
+}]
 
 export function isSupportedLiveVoiceModel(value: string): boolean {
   return (LIVE_VOICE_MODEL_IDS as readonly string[]).includes(value)
@@ -41,9 +85,9 @@ Boss কী বলছে এবং যে আবেগে বলছে—দু�
 
 **Tool flow**
 কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
-ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
-STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
+কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন নির্দিষ্ট read-only তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: quick_erp_lookup-এর নির্দিষ্ট তালিকার বাইরে হিসাব/বিশ্লেষণ, রিপোর্ট, মেমরি, বা কোনো কাজ করা/পরিবর্তনের অনুরোধে run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না। run_agent_turn-এর request সবসময় Boss-এর নিজের ভাষায় (বাংলা/বাংলিশ) হুবহু দেবে।
+Boss স্পষ্টভাবে কলটি শেষ করতে চাইলে এক ছোট্ট বাক্যে সালাম-বিদায় বলবে এবং সাথে সাথে end_call চালাবে; মনে রাখতে বলা কল শেষের অনুরোধ নয়।
+ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, system, agent — এগুলো কখনো উচ্চারণ করবে না।
 Boss-এর কথা অস্পষ্ট হলে সাথে সাথে ছোট প্রশ্নে পরিষ্কার করে নেবে; চুপ করে থাকবে না।
 Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
 **Guardrails**
@@ -78,19 +122,7 @@ export function buildLiveVoiceConfig(
       activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
       turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
     },
-    tools: [{
-      functionDeclarations: [{
-        name: 'run_agent_turn',
-        description: 'Boss-এর কথাটি ALMA head agent-এ পাঠায়। ব্যবসার তথ্য, memory, tool use, approval এবং সব owner-facing action এই head agent-ই পরিচালনা করে।',
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            request: { type: Type.STRING, description: 'Boss-এর সম্পূর্ণ বক্তব্য বা অনুরোধ' },
-          },
-          required: ['request'],
-        },
-      }],
-    }],
+    tools: [{ functionDeclarations: LIVE_VOICE_FUNCTION_DECLARATIONS }],
   }
 
   if (model === GEMINI_25_LIVE_MODEL) {
