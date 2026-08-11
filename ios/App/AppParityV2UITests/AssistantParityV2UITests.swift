@@ -450,6 +450,14 @@ final class AssistantParityV2UITests: XCTestCase {
         let sessionID = app.staticTexts["voice.evidence.session-id"]
         XCTAssertTrue(sessionID.waitForExistence(timeout: 3))
         XCTAssertEqual(sessionID.label, "voice-debug-no-network")
+        let disclosure = app.staticTexts["voice.evidence.privacy-disclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 3))
+        XCTAssertTrue(disclosure.label.contains("typed lifecycle/transport/tool identity"))
+        XCTAssertTrue(disclosure.label.contains("কোনো recording/PCM"))
+        XCTAssertTrue(disclosure.label.contains("transcript, prompt, tool arguments/results"))
+        XCTAssertTrue(disclosure.label.contains("Raw energy মানেই owner speech নয়"))
+        XCTAssertTrue(disclosure.label.contains("queued মানেই sent নয়"))
+        XCTAssertTrue(disclosure.label.contains("local send completion Gemini receipt নয়"))
         XCTAssertTrue(export.isHittable)
         export.tap()
         XCTAssertTrue(app.buttons["voice.evidence.share"].waitForExistence(timeout: 3))

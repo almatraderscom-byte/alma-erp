@@ -192,9 +192,10 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('beginLocalBargeIn()')
     // Prefix audio must still be forwarded, while the current energy-bearing
     // frame owns the delivery evidence instead of an older silent pre-roll item.
-    expect(voice).toContain('for chunk in preRoll.dropLast() {')
-    expect(voice).toContain('if let currentChunk = preRoll.last {')
-    expect(voice).toContain('inputEvidence: inputEvidence)')
+    expect(voice).toContain('static func deliveryTokenForSending(')
+    expect(voice).toContain('index == trackedIndex ? chunk.deliveryToken : nil')
+    expect(voice).toContain('for (index, chunk) in chunks.enumerated() {')
+    expect(voice).toContain('inputEvidence: AlmaLiveVoiceCapturedInputPCM.deliveryTokenForSending(')
     expect(voice).toContain('let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled')
     expect(voice).toContain('if serverCanOwnBargeIn {')
     expect(voice).toContain('sendNormally = true')

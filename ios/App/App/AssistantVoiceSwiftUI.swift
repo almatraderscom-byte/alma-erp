@@ -427,6 +427,8 @@ enum AlmaLiveVoiceEvidenceEventName: String, Codable, Sendable {
     case rawFirstEnergy = "input.raw-first-energy"
     case conversionFirstSucceeded = "input.conversion-first-succeeded"
     case conversionFailed = "input.conversion-failed"
+    case audioWithheldByPolicy = "input.audio-withheld-by-policy"
+    case audioNotQueued = "input.audio-not-queued"
     case audioFirstQueued = "input.audio-first-queued"
     case audioFirstSendSucceeded = "input.audio-first-send-succeeded"
     case audioSendFailed = "input.audio-send-failed"
@@ -440,6 +442,125 @@ enum AlmaLiveVoiceEvidenceEventName: String, Codable, Sendable {
 enum AlmaLiveVoiceEvidenceRouteReason: String, Codable, Sendable {
     case systemNotification = "system-notification"
     case verification
+}
+
+/// Content-free reasons why a successfully converted, energy-bearing capture
+/// was not queued at that observation. Raw values are fixed report vocabulary;
+/// no runtime/provider/user string can enter the ledger through this type.
+enum AlmaLiveVoiceEvidenceInputPolicy: UInt8, Hashable, Sendable {
+    case playbackTailSuppression = 0
+    case listenCalibration = 1
+    case listenGateClosed = 2
+    case noAECEchoGuard = 3
+
+    var bit: UInt8 { 1 << rawValue }
+
+    var retention: AlmaLiveVoiceEvidenceInputRetention {
+        switch self {
+        case .playbackTailSuppression: return .discarded
+        case .listenCalibration, .listenGateClosed, .noAECEchoGuard:
+            return .boundedPreRoll
+        }
+    }
+
+    var evidenceReason: AlmaLiveVoiceEvidenceReason {
+        switch self {
+        case .playbackTailSuppression: return .playbackTailSuppression
+        case .listenCalibration: return .listenCalibration
+        case .listenGateClosed: return .listenGateClosed
+        case .noAECEchoGuard: return .noAECEchoGuard
+        }
+    }
+}
+
+enum AlmaLiveVoiceEvidenceInputRetention: String, Codable, Sendable {
+    case boundedPreRoll = "bounded-pre-roll"
+    case discarded
+}
+
+enum AlmaLiveVoiceEvidenceConversionFailure: Sendable {
+    case converterUnavailable
+    case outputBufferUnavailable
+    case conversionError
+    case emptyOutput
+
+    var evidenceReason: AlmaLiveVoiceEvidenceReason {
+        switch self {
+        case .converterUnavailable: return .converterUnavailable
+        case .outputBufferUnavailable: return .outputBufferUnavailable
+        case .conversionError: return .conversionError
+        case .emptyOutput: return .emptyConvertedAudio
+        }
+    }
+}
+
+enum AlmaLiveVoiceEvidenceNotQueuedReason: Equatable, Sendable {
+    case serializationFailed
+    case socketUnavailable
+    case socketNotReady
+    case sourceAttemptMismatch
+
+    var evidenceReason: AlmaLiveVoiceEvidenceReason {
+        switch self {
+        case .serializationFailed: return .serializationFailed
+        case .socketUnavailable: return .socketUnavailable
+        case .socketNotReady: return .socketNotReady
+        case .sourceAttemptMismatch: return .sourceAttemptMismatch
+        }
+    }
+}
+
+enum AlmaLiveVoiceAudioSendValidation {
+    static func notQueuedReason(
+        socketIdentity: ObjectIdentifier,
+        currentAttempt: AlmaLiveVoiceSocketAttempt?,
+        socketReady: Bool,
+        requireReady: Bool,
+        sourceAttempt: AlmaLiveVoiceSocketAttempt?
+    ) -> AlmaLiveVoiceEvidenceNotQueuedReason? {
+        guard let currentAttempt,
+              currentAttempt.socketIdentity == socketIdentity else {
+            return .sourceAttemptMismatch
+        }
+        if requireReady && !socketReady { return .socketNotReady }
+        if let sourceAttempt, sourceAttempt != currentAttempt {
+            return .sourceAttemptMismatch
+        }
+        return nil
+    }
+}
+
+struct AlmaLiveVoiceEvidenceInputWindowID: Hashable, Sendable {
+    let localSessionID: String
+    let transportGeneration: Int
+    let windowOrdinal: Int
+}
+
+/// Recorder-minted identity carried beside the exact converted PCM chunk. It
+/// contains no audio or owner content and cannot be moved to another pre-roll
+/// frame without moving the chunk value itself.
+struct AlmaLiveVoiceEvidenceInputDeliveryToken: Equatable, Sendable {
+    let windowID: AlmaLiveVoiceEvidenceInputWindowID
+}
+
+struct AlmaLiveVoiceCapturedInputPCM: Equatable, Sendable {
+    let data: Data
+    let deliveryToken: AlmaLiveVoiceEvidenceInputDeliveryToken?
+
+    static func trackedEvidenceIndex(in chunks: [Self]) -> Int? {
+        chunks.lastIndex { $0.deliveryToken != nil }
+    }
+
+    /// Retains evidence only for the selected exact PCM chunk. Callers keep the
+    /// original buffer and FIFO iteration, avoiding a temporary array on the
+    /// realtime capture path and never transplanting a token to other bytes.
+    static func deliveryTokenForSending(
+        _ chunk: Self,
+        at index: Int,
+        trackedIndex: Int?
+    ) -> AlmaLiveVoiceEvidenceInputDeliveryToken? {
+        index == trackedIndex ? chunk.deliveryToken : nil
+    }
 }
 
 enum AlmaLiveVoiceEvidenceTransportEvent: String, Codable, Hashable, Sendable {
@@ -713,16 +834,23 @@ enum AlmaLiveVoiceEvidenceRevisionStatus: String, Codable, Sendable {
 }
 
 enum AlmaLiveVoiceEvidenceReason: String, Codable, Sendable {
-    case converterOutputUnavailable = "converter-output-unavailable"
+    case converterUnavailable = "converter-unavailable"
+    case outputBufferUnavailable = "output-buffer-unavailable"
     case conversionError = "conversion-error"
     case emptyConvertedAudio = "empty-converted-audio"
     case socketUnavailable = "socket-unavailable"
+    case socketNotReady = "socket-not-ready"
+    case sourceAttemptMismatch = "source-attempt-mismatch"
     case serializationFailed = "serialization-failed"
     case socketSendFailed = "socket-send-failed"
     case socketReceiveFailed = "socket-receive-failed"
     case socketPingTimedOut = "socket-ping-timed-out"
     case socketPingFailed = "socket-ping-failed"
     case evidenceBindingUnavailable = "evidence-binding-unavailable"
+    case playbackTailSuppression = "playback-tail-suppression"
+    case listenCalibration = "listen-calibration"
+    case listenGateClosed = "listen-gate-closed"
+    case noAECEchoGuard = "no-aec-echo-guard"
 }
 
 enum AlmaLiveVoiceEvidenceSessionOutcome: String, Codable, Sendable {
@@ -757,9 +885,26 @@ enum AlmaLiveVoiceEvidenceTool: String, Codable, Sendable {
 struct AlmaLiveVoiceEvidenceSendContext: Equatable, Sendable {
     let localSessionID: String
     let transportGeneration: Int
+    let inputWindowOrdinal: Int?
     let turnOrdinal: Int
     let audioChunkOrdinal: Int
     let byteCount: Int
+
+    fileprivate init(
+        localSessionID: String,
+        transportGeneration: Int,
+        inputWindowOrdinal: Int?,
+        turnOrdinal: Int,
+        audioChunkOrdinal: Int,
+        byteCount: Int
+    ) {
+        self.localSessionID = localSessionID
+        self.transportGeneration = transportGeneration
+        self.inputWindowOrdinal = inputWindowOrdinal
+        self.turnOrdinal = turnOrdinal
+        self.audioChunkOrdinal = audioChunkOrdinal
+        self.byteCount = byteCount
+    }
 }
 
 /// Pure identity/generation/ready reducer. Callers synchronize mutations; the
@@ -821,88 +966,135 @@ struct AlmaLiveVoiceEvidenceTransportBinding: Equatable {
     }
 }
 
-/// Pure one-shot reducer for the first energy-bearing capture in each local
-/// input window. Digital silence is deliberately ignored; raw energy and PCM
-/// conversion become claimable together so the ledger cannot emit a later raw
-/// event after conversion/queue success.
+/// Pure fixed-size reducer for the first capture stages in each local input
+/// window. It separates raw observation from conversion and local withholding,
+/// while enforcing raw → conversion → policy/queue ordering.
 struct AlmaLiveVoiceEvidenceInputStageState: Equatable {
+    struct Snapshot: Equatable {
+        let windowID: AlmaLiveVoiceEvidenceInputWindowID
+        let intakeComplete: Bool
+        let needsRaw: Bool
+        let needsConversion: Bool
+        let needsConversionFailure: Bool
+        let pendingPolicyMask: UInt8
+    }
+
+    private(set) var localSessionID = "not-started"
     private(set) var transportGeneration = 0
     private(set) var windowEpoch = 0
+    private(set) var active = false
     private(set) var rawEnergyRecorded = false
     private(set) var conversionRecorded = false
     private(set) var conversionFailureRecorded = false
+    private(set) var policyWithheldMask: UInt8 = 0
     private(set) var intakeComplete = false
 
-    mutating func reset(transportGeneration: Int) {
+    mutating func reset(localSessionID: String, transportGeneration: Int) {
+        self.localSessionID = localSessionID
         self.transportGeneration = transportGeneration
-        rearm(transportGeneration: transportGeneration)
+        windowEpoch = 0
+        active = transportGeneration > 0
+        _ = rearm(transportGeneration: transportGeneration)
     }
 
-    mutating func rearm(transportGeneration: Int) {
-        guard transportGeneration == self.transportGeneration else { return }
+    @discardableResult
+    mutating func rearm(transportGeneration: Int) -> Bool {
+        guard active, transportGeneration == self.transportGeneration else { return false }
         windowEpoch += 1
         rawEnergyRecorded = false
         conversionRecorded = false
         conversionFailureRecorded = false
+        policyWithheldMask = 0
         intakeComplete = false
+        return true
     }
 
-    mutating func claimInput(
-        transportGeneration: Int,
-        windowEpoch: Int,
+    mutating func deactivate() {
+        active = false
+    }
+
+    func snapshot() -> Snapshot {
+        Snapshot(
+            windowID: .init(
+                localSessionID: localSessionID,
+                transportGeneration: transportGeneration,
+                windowOrdinal: windowEpoch),
+            intakeComplete: intakeComplete,
+            needsRaw: !rawEnergyRecorded && !intakeComplete,
+            needsConversion: !conversionRecorded && !intakeComplete,
+            needsConversionFailure: !conversionFailureRecorded && !conversionRecorded,
+            pendingPolicyMask: ~policyWithheldMask)
+    }
+
+    mutating func claimRaw(
+        windowID: AlmaLiveVoiceEvidenceInputWindowID,
         hasEnergy: Bool
-    ) -> (raw: Bool, conversion: Bool) {
-        guard transportGeneration == self.transportGeneration,
-              windowEpoch == self.windowEpoch,
+    ) -> Bool {
+        guard matches(windowID),
               !intakeComplete,
-              hasEnergy else {
-            return (false, false)
-        }
-        let raw = !rawEnergyRecorded
-        let conversion = !conversionRecorded
+              hasEnergy,
+              !rawEnergyRecorded else { return false }
         rawEnergyRecorded = true
+        return true
+    }
+
+    mutating func claimConversionSucceeded(
+        windowID: AlmaLiveVoiceEvidenceInputWindowID,
+        hasEnergy: Bool,
+        byteCount: Int
+    ) -> Bool {
+        guard matches(windowID),
+              !intakeComplete,
+              hasEnergy,
+              byteCount > 0,
+              rawEnergyRecorded,
+              !conversionRecorded else { return false }
         conversionRecorded = true
-        return (raw, conversion)
+        return true
     }
 
     mutating func claimConversionFailure(
-        transportGeneration: Int,
-        windowEpoch: Int
+        windowID: AlmaLiveVoiceEvidenceInputWindowID
     ) -> Bool {
-        guard transportGeneration == self.transportGeneration,
-              windowEpoch == self.windowEpoch,
+        guard matches(windowID),
+              rawEnergyRecorded,
+              !conversionRecorded,
               !conversionFailureRecorded else { return false }
         conversionFailureRecorded = true
         return true
     }
 
-    func chainReady(transportGeneration: Int, windowEpoch: Int) -> Bool {
-        matches(transportGeneration: transportGeneration, windowEpoch: windowEpoch)
+    mutating func claimPolicyWithheld(
+        _ policy: AlmaLiveVoiceEvidenceInputPolicy,
+        windowID: AlmaLiveVoiceEvidenceInputWindowID
+    ) -> Bool {
+        guard chainReady(windowID),
+              !intakeComplete,
+              policyWithheldMask & policy.bit == 0 else { return false }
+        policyWithheldMask |= policy.bit
+        return true
+    }
+
+    func chainReady(_ windowID: AlmaLiveVoiceEvidenceInputWindowID) -> Bool {
+        matches(windowID)
             && rawEnergyRecorded
             && conversionRecorded
     }
 
-    func matches(transportGeneration: Int, windowEpoch: Int) -> Bool {
-        transportGeneration == self.transportGeneration
-            && windowEpoch == self.windowEpoch
+    func matches(_ windowID: AlmaLiveVoiceEvidenceInputWindowID) -> Bool {
+        active
+            && windowID.localSessionID == localSessionID
+            && windowID.transportGeneration == transportGeneration
+            && windowID.windowOrdinal == windowEpoch
     }
 
-    mutating func markIntakeComplete(
-        transportGeneration: Int,
-        windowEpoch: Int
-    ) {
-        guard chainReady(
-            transportGeneration: transportGeneration,
-            windowEpoch: windowEpoch) else { return }
+    mutating func markIntakeComplete(_ windowID: AlmaLiveVoiceEvidenceInputWindowID) {
+        guard chainReady(windowID) else { return }
         intakeComplete = true
     }
 
-    mutating func markIntakeNeedsRetry(
-        transportGeneration: Int,
-        windowEpoch: Int
-    ) {
-        guard transportGeneration == self.transportGeneration,
-              windowEpoch == self.windowEpoch else { return }
+    mutating func markIntakeNeedsRetry(_ windowID: AlmaLiveVoiceEvidenceInputWindowID) {
+        guard matches(windowID) else { return }
         intakeComplete = false
     }
 }
@@ -914,6 +1106,7 @@ struct AlmaLiveVoiceEvidenceEvent: Codable, Equatable, Sendable {
     let localSessionID: String
     let transportGeneration: Int
     let sourceTransportGeneration: Int?
+    let inputWindowOrdinal: Int?
     let turnOrdinal: Int?
     let toolOrdinal: Int?
     let audioChunkOrdinal: Int?
@@ -922,6 +1115,7 @@ struct AlmaLiveVoiceEvidenceEvent: Codable, Equatable, Sendable {
     let route: AlmaLiveVoiceEvidenceRoute?
     let routeReason: AlmaLiveVoiceEvidenceRouteReason?
     let reason: AlmaLiveVoiceEvidenceReason?
+    let retention: AlmaLiveVoiceEvidenceInputRetention?
     let tool: AlmaLiveVoiceEvidenceTool?
     let resumedTransport: Bool?
 }
@@ -974,6 +1168,11 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         let playbackGeneration: Int
     }
 
+    private struct PolicyWindowKey: Hashable {
+        let windowID: AlmaLiveVoiceEvidenceInputWindowID
+        let policy: AlmaLiveVoiceEvidenceInputPolicy
+    }
+
     private struct TransportEventKey: Hashable {
         let transportGeneration: Int
         let event: AlmaLiveVoiceEvidenceTransportEvent
@@ -1011,16 +1210,24 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private var toolOrdinal = 0
     private var audioChunkOrdinal = 0
     private var activeTurnOrdinal: Int?
+    private var currentInputWindowID: AlmaLiveVoiceEvidenceInputWindowID?
+    private var inputWindowTurns: [AlmaLiveVoiceEvidenceInputWindowID: Int] = [:]
     private var events: [AlmaLiveVoiceEvidenceEvent] = []
+    private var rawEnergyWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
+    private var conversionSucceededWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
+    private var conversionFailureWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
     private var rawEnergyStages = Set<StageKey>()
     private var conversionSucceededStages = Set<StageKey>()
+    private var conversionFailureStages = Set<StageKey>()
+    private var policyWithheldWindows = Set<PolicyWindowKey>()
+    private var notQueuedStages = Set<StageKey>()
     private var queuedStages = Set<StageKey>()
     private var sendSucceededStages = Set<StageKey>()
     private var sendFailedStages = Set<StageKey>()
+    private var outstandingAudioSends: [Int: AlmaLiveVoiceEvidenceSendContext] = [:]
     private var untrackedSendStages = Set<StageKey>()
     private var transcriptionStages = Set<StageKey>()
     private var ambiguousTranscriptionGenerations = Set<Int>()
-    private var conversionFailureGenerations = Set<Int>()
     private var staleCompletionGenerations = Set<Int>()
     private var modelAudioStages = Set<ModelStageKey>()
     private var transportEventStages = Set<TransportEventKey>()
@@ -1098,16 +1305,24 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         toolOrdinal = 0
         audioChunkOrdinal = 0
         activeTurnOrdinal = nil
+        currentInputWindowID = nil
+        inputWindowTurns.removeAll(keepingCapacity: true)
         events.removeAll(keepingCapacity: true)
+        rawEnergyWindows.removeAll(keepingCapacity: true)
+        conversionSucceededWindows.removeAll(keepingCapacity: true)
+        conversionFailureWindows.removeAll(keepingCapacity: true)
         rawEnergyStages.removeAll(keepingCapacity: true)
         conversionSucceededStages.removeAll(keepingCapacity: true)
+        conversionFailureStages.removeAll(keepingCapacity: true)
+        policyWithheldWindows.removeAll(keepingCapacity: true)
+        notQueuedStages.removeAll(keepingCapacity: true)
         queuedStages.removeAll(keepingCapacity: true)
         sendSucceededStages.removeAll(keepingCapacity: true)
         sendFailedStages.removeAll(keepingCapacity: true)
+        outstandingAudioSends.removeAll(keepingCapacity: true)
         untrackedSendStages.removeAll(keepingCapacity: true)
         transcriptionStages.removeAll(keepingCapacity: true)
         ambiguousTranscriptionGenerations.removeAll(keepingCapacity: true)
-        conversionFailureGenerations.removeAll(keepingCapacity: true)
         staleCompletionGenerations.removeAll(keepingCapacity: true)
         modelAudioStages.removeAll(keepingCapacity: true)
         transportEventStages.removeAll(keepingCapacity: true)
@@ -1126,6 +1341,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         endedAt = Date()
         sessionActive = false
         transportActive = false
+        currentInputWindowID = nil
         lock.unlock()
     }
 
@@ -1150,10 +1366,34 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         nextTransportGeneration += 1
         transportGeneration = nextTransportGeneration
         transportActive = true
+        currentInputWindowID = nil
         appendLocked(name: .transportStarted, resumedTransport: resuming)
         let generation = transportGeneration
         lock.unlock()
         return generation
+    }
+
+    /// Activates the recorder-minted prospective window for this exact logical
+    /// session and transport. Capture observations carrying an older/future
+    /// ordinal are rejected instead of being attributed to the current call.
+    @discardableResult
+    func activateInputWindow(
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID,
+        generation: Int
+    ) -> Bool {
+        guard enabled else { return false }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              currentInputWindowID == nil,
+              windowID.localSessionID == localSessionID,
+              windowID.transportGeneration == generation,
+              windowID.windowOrdinal == 1 else {
+            lock.unlock()
+            return false
+        }
+        currentInputWindowID = windowID
+        lock.unlock()
+        return true
     }
 
     func recordSocketOpened(generation: Int) {
@@ -1259,11 +1499,26 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     func recordRawEnergy(
         rms: Double,
         generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
         observedUptime: TimeInterval? = nil
     ) {
         guard enabled, Self.isFirstEnergyCandidate(rms) else { return }
         lock.lock()
         guard acceptsTransportLocked(generation) else { lock.unlock(); return }
+        if let inputWindowID {
+            guard acceptsInputWindowLocked(inputWindowID),
+                  rawEnergyWindows.insert(inputWindowID).inserted else {
+                lock.unlock()
+                return
+            }
+            appendLocked(
+                name: .rawFirstEnergy,
+                inputWindowOrdinal: inputWindowID.windowOrdinal,
+                rmsMilli: min(1_000, max(0, Int((rms * 1_000).rounded()))),
+                observedUptime: observedUptime)
+            lock.unlock()
+            return
+        }
         let turn = ensureActiveTurnLocked()
         let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
         guard rawEnergyStages.insert(key).inserted else { lock.unlock(); return }
@@ -1278,11 +1533,27 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     func recordConversionSucceeded(
         byteCount: Int,
         generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
         observedUptime: TimeInterval? = nil
     ) {
         guard enabled, byteCount > 0 else { return }
         lock.lock()
         guard acceptsTransportLocked(generation) else {
+            lock.unlock()
+            return
+        }
+        if let inputWindowID {
+            guard acceptsInputWindowLocked(inputWindowID),
+                  rawEnergyWindows.contains(inputWindowID),
+                  conversionSucceededWindows.insert(inputWindowID).inserted else {
+                lock.unlock()
+                return
+            }
+            appendLocked(
+                name: .conversionFirstSucceeded,
+                inputWindowOrdinal: inputWindowID.windowOrdinal,
+                byteCount: byteCount,
+                observedUptime: observedUptime)
             lock.unlock()
             return
         }
@@ -1298,21 +1569,75 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     }
 
     func recordConversionFailed(
-        _ reason: AlmaLiveVoiceEvidenceReason,
+        _ failure: AlmaLiveVoiceEvidenceConversionFailure,
         generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
         observedUptime: TimeInterval? = nil
     ) {
         guard enabled else { return }
         lock.lock()
-        guard acceptsTransportLocked(generation),
-              conversionFailureGenerations.insert(generation).inserted else {
+        guard acceptsTransportLocked(generation) else {
+            lock.unlock()
+            return
+        }
+        if let inputWindowID {
+            guard acceptsInputWindowLocked(inputWindowID),
+                  rawEnergyWindows.contains(inputWindowID),
+                  conversionFailureWindows.insert(inputWindowID).inserted else {
+                lock.unlock()
+                return
+            }
+            appendLocked(
+                name: .conversionFailed,
+                inputWindowOrdinal: inputWindowID.windowOrdinal,
+                reason: failure.evidenceReason,
+                observedUptime: observedUptime)
+            lock.unlock()
+            return
+        }
+        guard let turn = activeTurnOrdinal else {
+            lock.unlock()
+            return
+        }
+        let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        guard rawEnergyStages.contains(key),
+              conversionFailureStages.insert(key).inserted else {
             lock.unlock()
             return
         }
         appendLocked(
             name: .conversionFailed,
-            turnOrdinal: activeTurnOrdinal,
-            reason: reason,
+            turnOrdinal: turn,
+            reason: failure.evidenceReason,
+            observedUptime: observedUptime)
+        lock.unlock()
+    }
+
+    func recordInputWithheldByPolicy(
+        _ policy: AlmaLiveVoiceEvidenceInputPolicy,
+        generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID,
+        observedUptime: TimeInterval? = nil
+    ) {
+        guard enabled else { return }
+        lock.lock()
+        guard acceptsTransportLocked(generation),
+              acceptsInputWindowLocked(inputWindowID) else {
+            lock.unlock()
+            return
+        }
+        let policyKey = PolicyWindowKey(windowID: inputWindowID, policy: policy)
+        guard rawEnergyWindows.contains(inputWindowID),
+              conversionSucceededWindows.contains(inputWindowID),
+              policyWithheldWindows.insert(policyKey).inserted else {
+            lock.unlock()
+            return
+        }
+        appendLocked(
+            name: .audioWithheldByPolicy,
+            inputWindowOrdinal: inputWindowID.windowOrdinal,
+            reason: policy.evidenceReason,
+            retention: policy.retention,
             observedUptime: observedUptime)
         lock.unlock()
     }
@@ -1320,18 +1645,31 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     func recordAudioQueued(
         byteCount: Int,
         generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
         observedUptime: TimeInterval? = nil
     ) -> AlmaLiveVoiceEvidenceSendContext? {
         guard enabled, byteCount > 0 else { return nil }
         lock.lock()
         guard acceptsTransportLocked(generation) else { lock.unlock(); return nil }
-        let turn = ensureActiveTurnLocked()
+        let turn: Int
+        if let inputWindowID {
+            guard rawEnergyWindows.contains(inputWindowID),
+                  conversionSucceededWindows.contains(inputWindowID),
+                  let correlated = turnForInputWindowLocked(inputWindowID) else {
+                lock.unlock()
+                return nil
+            }
+            turn = correlated
+        } else {
+            turn = ensureActiveTurnLocked()
+        }
         let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
         audioChunkOrdinal += 1
         let chunk = audioChunkOrdinal
         if queuedStages.insert(key).inserted {
             appendLocked(
                 name: .audioFirstQueued,
+                inputWindowOrdinal: inputWindowID?.windowOrdinal,
                 turnOrdinal: turn,
                 audioChunkOrdinal: chunk,
                 byteCount: byteCount,
@@ -1340,9 +1678,11 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         let context = AlmaLiveVoiceEvidenceSendContext(
             localSessionID: localSessionID,
             transportGeneration: generation,
+            inputWindowOrdinal: inputWindowID?.windowOrdinal,
             turnOrdinal: turn,
             audioChunkOrdinal: chunk,
             byteCount: byteCount)
+        outstandingAudioSends[chunk] = context
         lock.unlock()
         return context
     }
@@ -1360,6 +1700,11 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             lock.unlock()
             return
         }
+        guard outstandingAudioSends[context.audioChunkOrdinal] == context else {
+            lock.unlock()
+            return
+        }
+        outstandingAudioSends.removeValue(forKey: context.audioChunkOrdinal)
         let isCurrent = context.transportGeneration == transportGeneration
             && context.transportGeneration == currentGeneration
             && isCurrentReadySocket
@@ -1368,6 +1713,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
                 appendLocked(
                     name: .staleSendCompletionIgnored,
                     sourceTransportGeneration: context.transportGeneration,
+                    inputWindowOrdinal: context.inputWindowOrdinal,
                     turnOrdinal: context.turnOrdinal,
                     audioChunkOrdinal: context.audioChunkOrdinal,
                     byteCount: context.byteCount,
@@ -1386,6 +1732,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             }
             appendLocked(
                 name: .audioFirstSendSucceeded,
+                inputWindowOrdinal: context.inputWindowOrdinal,
                 turnOrdinal: context.turnOrdinal,
                 audioChunkOrdinal: context.audioChunkOrdinal,
                 byteCount: context.byteCount,
@@ -1393,6 +1740,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         } else if sendFailedStages.insert(key).inserted {
             appendLocked(
                 name: .audioSendFailed,
+                inputWindowOrdinal: context.inputWindowOrdinal,
                 turnOrdinal: context.turnOrdinal,
                 audioChunkOrdinal: context.audioChunkOrdinal,
                 byteCount: context.byteCount,
@@ -1403,21 +1751,48 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     }
 
     func recordAudioNotQueued(
-        _ reason: AlmaLiveVoiceEvidenceReason,
+        _ reason: AlmaLiveVoiceEvidenceNotQueuedReason,
         byteCount: Int,
-        generation: Int
+        generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
+        observedUptime: TimeInterval? = nil
     ) {
-        guard enabled else { return }
+        guard enabled, byteCount > 0 else { return }
         lock.lock()
-        guard acceptsTransportLocked(generation) else { lock.unlock(); return }
-        let turn = ensureActiveTurnLocked()
+        guard acceptsTransportLocked(generation) else {
+            lock.unlock()
+            return
+        }
+        let turn: Int
+        if let inputWindowID {
+            guard rawEnergyWindows.contains(inputWindowID),
+                  conversionSucceededWindows.contains(inputWindowID),
+                  let correlated = turnForInputWindowLocked(inputWindowID) else {
+                lock.unlock()
+                return
+            }
+            turn = correlated
+            activeTurnOrdinal = correlated
+        } else if let activeTurnOrdinal {
+            turn = activeTurnOrdinal
+        } else {
+            lock.unlock()
+            return
+        }
         let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
-        guard sendFailedStages.insert(key).inserted else { lock.unlock(); return }
+        if inputWindowID == nil,
+           !(rawEnergyStages.contains(key) && conversionSucceededStages.contains(key)) {
+            lock.unlock()
+            return
+        }
+        guard notQueuedStages.insert(key).inserted else { lock.unlock(); return }
         appendLocked(
-            name: .audioSendFailed,
+            name: .audioNotQueued,
+            inputWindowOrdinal: inputWindowID?.windowOrdinal,
             turnOrdinal: turn,
-            byteCount: max(0, byteCount),
-            reason: reason)
+            byteCount: byteCount,
+            reason: reason.evidenceReason,
+            observedUptime: observedUptime)
         lock.unlock()
     }
 
@@ -1426,19 +1801,40 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     /// binding, so no local completion/provider receipt claim will be made.
     func recordAudioSendTrackingUnavailable(
         byteCount: Int,
-        generation: Int
+        generation: Int,
+        inputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
+        observedUptime: TimeInterval? = nil
     ) {
-        guard enabled else { return }
+        guard enabled, byteCount > 0 else { return }
         lock.lock()
         guard acceptsTransportLocked(generation) else { lock.unlock(); return }
-        let turn = ensureActiveTurnLocked()
+        let turn: Int
+        if let inputWindowID {
+            guard rawEnergyWindows.contains(inputWindowID),
+                  conversionSucceededWindows.contains(inputWindowID),
+                  let correlated = turnForInputWindowLocked(inputWindowID) else {
+                lock.unlock()
+                return
+            }
+            turn = correlated
+            activeTurnOrdinal = correlated
+        } else {
+            turn = ensureActiveTurnLocked()
+        }
         let key = StageKey(transportGeneration: generation, turnOrdinal: turn)
+        if inputWindowID == nil,
+           !(rawEnergyStages.contains(key) && conversionSucceededStages.contains(key)) {
+            lock.unlock()
+            return
+        }
         guard untrackedSendStages.insert(key).inserted else { lock.unlock(); return }
         appendLocked(
             name: .audioSendTrackingUnavailable,
+            inputWindowOrdinal: inputWindowID?.windowOrdinal,
             turnOrdinal: turn,
-            byteCount: max(0, byteCount),
-            reason: .evidenceBindingUnavailable)
+            byteCount: byteCount,
+            reason: .evidenceBindingUnavailable,
+            observedUptime: observedUptime)
         lock.unlock()
     }
 
@@ -1503,6 +1899,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     func recordProviderModelAudioObserved(
         generation: Int,
         playbackGeneration: Int,
+        nextInputWindowID: AlmaLiveVoiceEvidenceInputWindowID? = nil,
         observedUptime: TimeInterval? = nil
     ) {
         guard enabled else { return }
@@ -1510,7 +1907,11 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         let key = ModelStageKey(
             transportGeneration: generation,
             playbackGeneration: playbackGeneration)
+        let nextWindowAccepted = nextInputWindowID.map {
+            acceptsNextInputWindowLocked($0, generation: generation)
+        } ?? true
         guard acceptsTransportLocked(generation),
+              nextWindowAccepted,
               modelAudioStages.insert(key).inserted else {
             lock.unlock()
             return
@@ -1520,6 +1921,9 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             turnOrdinal: activeTurnOrdinal,
             observedUptime: observedUptime)
         activeTurnOrdinal = nil
+        if let nextInputWindowID {
+            currentInputWindowID = nextInputWindowID
+        }
         lock.unlock()
     }
 
@@ -1598,9 +2002,49 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         return turnOrdinal
     }
 
+    private func acceptsInputWindowLocked(
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
+    ) -> Bool {
+        acceptsTransportLocked(windowID.transportGeneration)
+            && currentInputWindowID == windowID
+            && windowID.localSessionID == localSessionID
+            && windowID.windowOrdinal > 0
+    }
+
+    private func acceptsNextInputWindowLocked(
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID,
+        generation: Int
+    ) -> Bool {
+        guard windowID.localSessionID == localSessionID,
+              windowID.transportGeneration == generation,
+              windowID.windowOrdinal > 0 else { return false }
+        if let currentInputWindowID {
+            return currentInputWindowID.localSessionID == localSessionID
+                && currentInputWindowID.transportGeneration == generation
+                && windowID.windowOrdinal == currentInputWindowID.windowOrdinal + 1
+        }
+        return windowID.windowOrdinal == 1
+    }
+
+    private func turnForInputWindowLocked(
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
+    ) -> Int? {
+        guard acceptsInputWindowLocked(windowID) else { return nil }
+        if let turn = inputWindowTurns[windowID] {
+            activeTurnOrdinal = turn
+            return turn
+        }
+        turnOrdinal += 1
+        let turn = turnOrdinal
+        inputWindowTurns[windowID] = turn
+        activeTurnOrdinal = turn
+        return turn
+    }
+
     private func appendLocked(
         name: AlmaLiveVoiceEvidenceEventName,
         sourceTransportGeneration: Int? = nil,
+        inputWindowOrdinal: Int? = nil,
         turnOrdinal: Int? = nil,
         toolOrdinal: Int? = nil,
         audioChunkOrdinal: Int? = nil,
@@ -1609,6 +2053,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         route: AlmaLiveVoiceEvidenceRoute? = nil,
         routeReason: AlmaLiveVoiceEvidenceRouteReason? = nil,
         reason: AlmaLiveVoiceEvidenceReason? = nil,
+        retention: AlmaLiveVoiceEvidenceInputRetention? = nil,
         tool: AlmaLiveVoiceEvidenceTool? = nil,
         resumedTransport: Bool? = nil,
         observedUptime: TimeInterval? = nil
@@ -1626,6 +2071,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             localSessionID: localSessionID,
             transportGeneration: transportGeneration,
             sourceTransportGeneration: sourceTransportGeneration,
+            inputWindowOrdinal: inputWindowOrdinal,
             turnOrdinal: turnOrdinal,
             toolOrdinal: toolOrdinal,
             audioChunkOrdinal: audioChunkOrdinal,
@@ -1634,6 +2080,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             route: route,
             routeReason: routeReason,
             reason: reason,
+            retention: retention,
             tool: tool,
             resumedTransport: resumedTransport)
         events.append(event)
@@ -1646,7 +2093,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private func reportLocked() -> AlmaLiveVoiceEvidenceReport {
         let info = Bundle.main.infoDictionary
         return AlmaLiveVoiceEvidenceReport(
-            schemaVersion: 1,
+            schemaVersion: 2,
             generatedAt: Self.iso(Date()),
             privacyContract: [
                 "no-pcm-or-audio-payload",
@@ -1654,6 +2101,9 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
                 "no-tool-arguments-results-or-provider-call-id",
                 "no-url-token-cookie-credential-or-content-hash",
                 "typed-allowlisted-fields-only",
+                "raw-energy-is-not-proof-of-owner-speech",
+                "queue-is-not-send-and-local-send-is-not-provider-receipt",
+                "policy-is-a-local-app-decision-at-that-observation",
             ],
             featureEnabled: enabled,
             app: .init(
@@ -4123,23 +4573,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var evidenceAudioSendPending = false
     private var evidenceAudioSendSucceeded = false
     private var nextEvidenceSendClaimID = 0
-    private struct PendingInputEvidence {
-        let rms: Double
-        let convertedByteCount: Int
-        let transportGeneration: Int
-        let inputWindowEpoch: Int
-        let observedUptime: TimeInterval
-        let confirmedBargeIn: Bool
-    }
-    private struct ClaimedInputEvidence {
-        let pending: PendingInputEvidence
-        let recordRaw: Bool
-        let recordConversion: Bool
-
-        var shouldSubmit: Bool {
-            pending.confirmedBargeIn || recordRaw || recordConversion
-        }
-    }
     private enum AudioSendEvidenceClaimResult {
         case claimed(generation: Int, turnEpoch: Int, claimID: Int)
         case alreadyCovered
@@ -4195,7 +4628,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var bargeSpeechFrames = 0
     private var echoCalibrationFrames = 0
     private var echoFloorRMS = 0.008
-    private var micPreRoll: [Data] = []
+    private var micPreRoll: [AlmaLiveVoiceCapturedInputPCM] = []
     // When hardware echo cancellation is unavailable on loudspeaker, RMS alone
     // cannot tell ALMA's own voice from Boss speaking over it. A short side-chain
     // probe ducks only ALMA's player (never the microphone): acoustic echo then
@@ -4227,7 +4660,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var soundNoiseConfidence = 0.0
     private var soundClassificationAt = Date.distantPast
     // Listening-path noise gate (protected by audioLock, see capture()).
-    private var listenPreRoll: [Data] = []
+    private var listenPreRoll: [AlmaLiveVoiceCapturedInputPCM] = []
     private var listenGateOpen = false
     private var listenSpeechFrames = 0
     private var listenSilenceFrames = 0
@@ -4327,6 +4760,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func beginEvidenceSession() {
         evidenceSubmissionLock.lock()
         evidenceSessionAccepting = false
+        audioLock.lock()
+        evidenceInputStageState.deactivate()
+        audioLock.unlock()
         evidenceSubmissionLock.unlock()
         evidenceQueue.sync { evidenceSendContexts.removeAll(keepingCapacity: true) }
         evidenceSubmissionLock.lock()
@@ -4337,6 +4773,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func finishEvidenceSession() {
         evidenceSubmissionLock.lock()
         evidenceSessionAccepting = false
+        audioLock.lock()
+        evidenceInputStageState.deactivate()
+        audioLock.unlock()
         evidenceSubmissionLock.unlock()
         _ = invalidateSocketReadiness()
         evidenceQueue.sync { evidenceSendContexts.removeAll(keepingCapacity: true) }
@@ -4438,8 +4877,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return 0
         }
         var generation = 0
+        var localSessionID = "not-started"
         evidenceQueue.sync {
             generation = evidenceRecorder.beginTransportAttempt(resuming: resuming)
+            localSessionID = evidenceRecorder.sessionID
         }
         evidenceTransportLock.lock()
         evidenceTransportBinding.begin(generation: generation)
@@ -4449,7 +4890,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         evidenceTransportLock.unlock()
 
         audioLock.lock()
-        evidenceInputStageState.reset(transportGeneration: generation)
+        evidenceInputStageState.reset(
+            localSessionID: localSessionID,
+            transportGeneration: generation)
+        let inputWindowID = evidenceInputStageState.snapshot().windowID
+        evidenceQueue.sync {
+            _ = evidenceRecorder.activateInputWindow(
+                inputWindowID,
+                generation: generation)
+        }
         audioLock.unlock()
         evidenceSubmissionLock.unlock()
         return generation
@@ -4555,55 +5004,135 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         evidenceTransportLock.unlock()
     }
 
-    /// Establish the next local input window before capture can submit its first
-    /// evidence stage. Only fixed-size state and queue submission happen inline;
-    /// recorder collections/JSON timing/OSLog run on `evidenceQueue`.
-    /// Caller holds `evidenceSubmissionLock`, so model-boundary publication,
-    /// send-epoch rotation, and first-stage rearming cannot interleave with a
-    /// capture evidence batch.
+    /// Caller holds `evidenceSubmissionLock` and `audioLock`. Rearming and
+    /// enqueueing while the behavioral model turn opens makes the boundary
+    /// indivisible: capture can only publish fully before or fully after it.
     private func beginModelEvidenceEpochLocked(
         transportGeneration: Int,
         playbackGeneration: Int,
         observedUptime: TimeInterval
     ) {
         guard evidenceRecorder.isEnabled, evidenceSessionAccepting else { return }
+        guard evidenceInputStageState.rearm(
+            transportGeneration: transportGeneration) else { return }
+        let nextInputWindowID = evidenceInputStageState.snapshot().windowID
         _ = submitEvidenceLocked { recorder in
             recorder.recordProviderModelAudioObserved(
                 generation: transportGeneration,
                 playbackGeneration: playbackGeneration,
+                nextInputWindowID: nextInputWindowID,
                 observedUptime: observedUptime)
         }
-        beginNextEvidenceAudioTurn(generation: transportGeneration)
+    }
+
+    /// Claims the first content-free source observations as one ordered batch.
+    /// The conversion result may arrive after raw measurement, but its original
+    /// callback uptimes are retained. No recorder collection or logging work is
+    /// performed on the realtime audio callback.
+    private func submitCaptureStageEvidence(
+        rms: Double,
+        convertedByteCount: Int?,
+        failureReason: AlmaLiveVoiceEvidenceConversionFailure?,
+        snapshot: AlmaLiveVoiceEvidenceInputStageState.Snapshot,
+        rawObservedUptime: TimeInterval,
+        conversionObservedUptime: TimeInterval
+    ) {
+        guard evidenceRecorder.isEnabled else { return }
+        let hasEnergy = AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
+        let mayClaimSource: Bool
+        if convertedByteCount != nil {
+            mayClaimSource = hasEnergy && (snapshot.needsRaw || snapshot.needsConversion)
+        } else {
+            // A persistent converter failure must not reacquire the audio lock
+            // on every callback after its one raw/failure observation was taken.
+            mayClaimSource = hasEnergy && snapshot.needsRaw
+        }
+        let mayClaimFailure = failureReason != nil
+            && hasEnergy
+            && snapshot.needsConversionFailure
+        guard mayClaimSource || mayClaimFailure else { return }
+
         audioLock.lock()
-        evidenceInputStageState.rearm(transportGeneration: transportGeneration)
+        let recordRaw = evidenceInputStageState.claimRaw(
+            windowID: snapshot.windowID,
+            hasEnergy: hasEnergy)
+        let recordConversion: Bool
+        let recordFailure: Bool
+        if let convertedByteCount {
+            recordConversion = evidenceInputStageState.claimConversionSucceeded(
+                windowID: snapshot.windowID,
+                hasEnergy: hasEnergy,
+                byteCount: convertedByteCount)
+            recordFailure = false
+        } else if failureReason != nil {
+            recordConversion = false
+            recordFailure = evidenceInputStageState.claimConversionFailure(
+                windowID: snapshot.windowID)
+        } else {
+            recordConversion = false
+            recordFailure = false
+        }
+        if recordRaw || recordConversion || recordFailure {
+            let recorder = evidenceRecorder
+            evidenceQueue.async {
+                if recordRaw {
+                    recorder.recordRawEnergy(
+                        rms: rms,
+                        generation: snapshot.windowID.transportGeneration,
+                        inputWindowID: snapshot.windowID,
+                        observedUptime: rawObservedUptime)
+                }
+                if recordConversion, let convertedByteCount {
+                    recorder.recordConversionSucceeded(
+                        byteCount: convertedByteCount,
+                        generation: snapshot.windowID.transportGeneration,
+                        inputWindowID: snapshot.windowID,
+                        observedUptime: conversionObservedUptime)
+                }
+                if recordFailure, let failureReason {
+                    recorder.recordConversionFailed(
+                        failureReason,
+                        generation: snapshot.windowID.transportGeneration,
+                        inputWindowID: snapshot.windowID,
+                        observedUptime: conversionObservedUptime)
+                }
+            }
+        }
         audioLock.unlock()
     }
 
-    private func submitConversionFailureEvidence(
-        _ reason: AlmaLiveVoiceEvidenceReason,
-        generation: Int,
-        inputWindowEpoch: Int,
+    /// Caller holds `audioLock`. The current frame must itself carry energy;
+    /// otherwise a later silent frame could inherit an earlier frame's chain
+    /// and falsely become the policy observation.
+    private func claimInputPolicyWithheldEvidenceLocked(
+        _ policy: AlmaLiveVoiceEvidenceInputPolicy,
+        snapshot: AlmaLiveVoiceEvidenceInputStageState.Snapshot,
+        hasEnergy: Bool
+    ) -> Bool {
+        guard evidenceRecorder.isEnabled,
+              hasEnergy,
+              snapshot.pendingPolicyMask & policy.bit != 0 else { return false }
+        return evidenceInputStageState.claimPolicyWithheld(
+            policy,
+            windowID: snapshot.windowID)
+    }
+
+    /// Caller holds `audioLock`; enqueue only fixed typed/numeric data before
+    /// releasing it so model rearm/session finish cannot overtake the claim.
+    /// Recorder collection and logging still run later on `evidenceQueue`.
+    private func enqueueInputPolicyWithheldEvidence(
+        _ policy: AlmaLiveVoiceEvidenceInputPolicy,
+        snapshot: AlmaLiveVoiceEvidenceInputStageState.Snapshot,
         observedUptime: TimeInterval
     ) {
-        guard evidenceRecorder.isEnabled else { return }
-        evidenceSubmissionLock.lock()
-        guard evidenceSessionAccepting else {
-            evidenceSubmissionLock.unlock()
-            return
-        }
-        guard claimFirstConversionFailureEvidence(
-            generation: generation,
-            inputWindowEpoch: inputWindowEpoch) else {
-            evidenceSubmissionLock.unlock()
-            return
-        }
-        _ = submitEvidenceLocked { recorder in
-            recorder.recordConversionFailed(
-                reason,
-                generation: generation,
+        let recorder = evidenceRecorder
+        evidenceQueue.async {
+            recorder.recordInputWithheldByPolicy(
+                policy,
+                generation: snapshot.windowID.transportGeneration,
+                inputWindowID: snapshot.windowID,
                 observedUptime: observedUptime)
         }
-        evidenceSubmissionLock.unlock()
     }
 
     private func evidenceRoute(_ session: AVAudioSession = .sharedInstance()) -> AlmaLiveVoiceEvidenceRoute {
@@ -4822,21 +5351,6 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let value = socketReady
         readinessLock.unlock()
         return value
-    }
-
-    /// Caller holds `readinessLock`. Audio sends keep that lock through their
-    /// evidence claim, so reconnect invalidation cannot land between runtime
-    /// validation and the current-ready transport decision.
-    private func validateSocketForSendLocked(
-        _ socket: URLSessionWebSocketTask,
-        requireReady: Bool
-    ) -> AlmaLiveVoiceSocketAttempt? {
-        guard let attempt = readiness.socketAttempt,
-              attempt.socketIdentity == ObjectIdentifier(socket),
-              !requireReady || socketReady else {
-            return nil
-        }
-        return attempt
     }
 
     func start() async throws {
@@ -5607,127 +6121,78 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func claimFirstInputEvidence(
-        generation: Int,
-        inputWindowEpoch: Int,
-        rms: Double
-    ) -> (raw: Bool, conversion: Bool) {
-        guard evidenceRecorder.isEnabled else { return (false, false) }
-        audioLock.lock()
-        // A continuously open VPIO path often forwards digital silence before
-        // the owner speaks. Do not let that produce a misleading
-        // conversion→queued→success chain with raw energy appended later.
-        // The first energy-bearing converted frame claims both stages together.
-        let hasEnergy = AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
-        let claim = evidenceInputStageState.claimInput(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch,
-            hasEnergy: hasEnergy)
-        audioLock.unlock()
-        return claim
-    }
-
     private func inputEvidenceChainReady(
-        generation: Int,
-        inputWindowEpoch: Int
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
     ) -> Bool {
         guard evidenceRecorder.isEnabled else { return false }
         audioLock.lock()
-        let ready = evidenceInputStageState.chainReady(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch)
+        let ready = evidenceInputStageState.chainReady(windowID)
         audioLock.unlock()
         return ready
     }
 
     private func inputEvidenceWindowMatches(
-        generation: Int,
-        inputWindowEpoch: Int
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
     ) -> Bool {
         guard evidenceRecorder.isEnabled else { return false }
         audioLock.lock()
-        let matches = evidenceInputStageState.matches(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch)
+        let matches = evidenceInputStageState.matches(windowID)
         audioLock.unlock()
         return matches
     }
 
-    private func claimFirstConversionFailureEvidence(
-        generation: Int,
-        inputWindowEpoch: Int
-    ) -> Bool {
-        guard evidenceRecorder.isEnabled else { return false }
-        audioLock.lock()
-        let claim = evidenceInputStageState.claimConversionFailure(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch)
-        audioLock.unlock()
-        return claim
-    }
-
     private func markInputEvidenceIntakeComplete(
-        generation: Int,
-        inputWindowEpoch: Int
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
     ) {
         guard evidenceRecorder.isEnabled else { return }
         audioLock.lock()
-        evidenceInputStageState.markIntakeComplete(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch)
+        evidenceInputStageState.markIntakeComplete(windowID)
         audioLock.unlock()
     }
 
     private func markInputEvidenceIntakeNeedsRetry(
-        generation: Int,
-        inputWindowEpoch: Int
+        _ windowID: AlmaLiveVoiceEvidenceInputWindowID
     ) {
         guard evidenceRecorder.isEnabled else { return }
         audioLock.lock()
-        evidenceInputStageState.markIntakeNeedsRetry(
-            transportGeneration: generation,
-            windowEpoch: inputWindowEpoch)
+        evidenceInputStageState.markIntakeNeedsRetry(windowID)
         audioLock.unlock()
     }
 
     private func capture(_ buffer: AVAudioPCMBuffer, nativeFormat: AVAudioFormat) {
         audioLock.lock()
         let muted = inputMuted
-        let evidenceGeneration = evidenceInputStageState.transportGeneration
-        let evidenceInputWindowEpoch = evidenceInputStageState.windowEpoch
-        let evidenceIntakeComplete = evidenceInputStageState.intakeComplete
+        let evidenceSnapshot = evidenceInputStageState.snapshot()
+        let evidenceGeneration = evidenceSnapshot.windowID.transportGeneration
+        let evidenceIntakeComplete = evidenceSnapshot.intakeComplete
         let sourceSocketAttempt = captureSocketAttempt
         audioLock.unlock()
         guard let sourceSocketAttempt else { return }
         guard !muted, !stopped,
               !evidenceRecorder.isEnabled
                 || sourceSocketAttempt.evidenceGeneration == evidenceGeneration else { return }
-        guard let converter = inputConverter, let outFormat = inputFormat else {
-            submitConversionFailureEvidence(
-                .converterOutputUnavailable,
-                generation: evidenceGeneration,
-                inputWindowEpoch: evidenceInputWindowEpoch,
-                observedUptime: ProcessInfo.processInfo.systemUptime)
-            return
-        }
         let frames = Int(buffer.frameLength)
         guard frames > 0 else { return }
-        audioLock.lock()
-        let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled
-        audioLock.unlock()
-        if needsNoAECDetector, let analyzer = soundAnalyzer {
-            analyzer.analyze(buffer, atAudioFramePosition: soundAnalysisFramePosition)
-            soundAnalysisFramePosition += AVAudioFramePosition(buffer.frameLength)
-        }
-        let micCorrelationSamples = needsNoAECDetector
-            ? Self.correlationSamples(buffer)
-            : []
         var rms = 0.0
         if let samples = buffer.floatChannelData?[0] {
             var sum = 0.0
             for i in 0..<frames { let x = Double(samples[i]); sum += x * x }
             rms = (sum / Double(frames)).squareRoot()
         }
+        let rawObservedUptime = ProcessInfo.processInfo.systemUptime
+        let hasInputEvidenceEnergy = AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
+
+        guard let converter = inputConverter, let outFormat = inputFormat else {
+            submitCaptureStageEvidence(
+                rms: rms,
+                convertedByteCount: nil,
+                failureReason: .converterUnavailable,
+                snapshot: evidenceSnapshot,
+                rawObservedUptime: rawObservedUptime,
+                conversionObservedUptime: ProcessInfo.processInfo.systemUptime)
+            return
+        }
+
         if !firstInputFrameTraced {
             firstInputFrameTraced = true
             trace("input.firstFrame", "frames=\(frames) rms=\(String(format: "%.5f", rms))")
@@ -5740,13 +6205,29 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         #endif
 
+        // Preserve the prior failure-path behavior: diagnostics may observe raw
+        // energy before conversion, but the barge-in analyzer runs only when a
+        // converter/output format is actually available.
+        audioLock.lock()
+        let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled
+        audioLock.unlock()
+        if needsNoAECDetector, let analyzer = soundAnalyzer {
+            analyzer.analyze(buffer, atAudioFramePosition: soundAnalysisFramePosition)
+            soundAnalysisFramePosition += AVAudioFramePosition(buffer.frameLength)
+        }
+        let micCorrelationSamples = needsNoAECDetector
+            ? Self.correlationSamples(buffer)
+            : []
+
         let capacity = AVAudioFrameCount(Double(frames) * outFormat.sampleRate / nativeFormat.sampleRate + 32)
         guard let output = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
-            submitConversionFailureEvidence(
-                .converterOutputUnavailable,
-                generation: evidenceGeneration,
-                inputWindowEpoch: evidenceInputWindowEpoch,
-                observedUptime: ProcessInfo.processInfo.systemUptime)
+            submitCaptureStageEvidence(
+                rms: rms,
+                convertedByteCount: nil,
+                failureReason: .outputBufferUnavailable,
+                snapshot: evidenceSnapshot,
+                rawObservedUptime: rawObservedUptime,
+                conversionObservedUptime: ProcessInfo.processInfo.systemUptime)
             return
         }
         var supplied = false
@@ -5758,23 +6239,42 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return buffer
         }
         guard conversionError == nil else {
-            submitConversionFailureEvidence(
-                .conversionError,
-                generation: evidenceGeneration,
-                inputWindowEpoch: evidenceInputWindowEpoch,
-                observedUptime: ProcessInfo.processInfo.systemUptime)
+            submitCaptureStageEvidence(
+                rms: rms,
+                convertedByteCount: nil,
+                failureReason: .conversionError,
+                snapshot: evidenceSnapshot,
+                rawObservedUptime: rawObservedUptime,
+                conversionObservedUptime: ProcessInfo.processInfo.systemUptime)
             return
         }
         guard output.frameLength > 0, let samples = output.int16ChannelData?[0] else {
-            submitConversionFailureEvidence(
-                .emptyConvertedAudio,
-                generation: evidenceGeneration,
-                inputWindowEpoch: evidenceInputWindowEpoch,
-                observedUptime: ProcessInfo.processInfo.systemUptime)
+            submitCaptureStageEvidence(
+                rms: rms,
+                convertedByteCount: nil,
+                failureReason: .emptyOutput,
+                snapshot: evidenceSnapshot,
+                rawObservedUptime: rawObservedUptime,
+                conversionObservedUptime: ProcessInfo.processInfo.systemUptime)
             return
         }
         let bytes = Data(bytes: samples, count: Int(output.frameLength) * MemoryLayout<Int16>.size)
         let captureUptime = ProcessInfo.processInfo.systemUptime
+        submitCaptureStageEvidence(
+            rms: rms,
+            convertedByteCount: bytes.count,
+            failureReason: nil,
+            snapshot: evidenceSnapshot,
+            rawObservedUptime: rawObservedUptime,
+            conversionObservedUptime: captureUptime)
+        let capturedInputChunk = AlmaLiveVoiceCapturedInputPCM(
+            data: bytes,
+            deliveryToken: evidenceRecorder.isEnabled
+                    && !evidenceIntakeComplete
+                    && hasInputEvidenceEnergy
+                ? AlmaLiveVoiceEvidenceInputDeliveryToken(
+                    windowID: evidenceSnapshot.windowID)
+                : nil)
 
         var sendNormally = false
         var startBargeIn = false
@@ -5789,7 +6289,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var referenceLogSpeechConfidence = 0.0
         var referenceLogMusicConfidence = 0.0
         var bargeInTraceDetail: String?
-        var preRoll: [Data] = []
+        var withheldPolicy: AlmaLiveVoiceEvidenceInputPolicy?
+        var preRoll: [AlmaLiveVoiceCapturedInputPCM] = []
         audioLock.lock()
         if modelAudioTurnOpen && !bargeInPending {
             // Re-arm the listening gate for the next turn.
@@ -5809,7 +6310,8 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 bargeSpeechFrames = 0
                 sendNormally = true
             } else {
-                micPreRoll.append(bytes)
+                withheldPolicy = .noAECEchoGuard
+                micPreRoll.append(capturedInputChunk)
                 if micPreRoll.count > bargeInPreRollChunks {
                     micPreRoll.removeFirst(micPreRoll.count - bargeInPreRollChunks)
                 }
@@ -6001,6 +6503,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     NSLog("ALMA-VOICE listening suppressed for playback echo tail")
                 }
                 #endif
+                let policyClaimed = claimInputPolicyWithheldEvidenceLocked(
+                    .playbackTailSuppression,
+                    snapshot: evidenceSnapshot,
+                    hasEnergy: hasInputEvidenceEnergy)
+                if policyClaimed {
+                    enqueueInputPolicyWithheldEvidence(
+                        .playbackTailSuppression,
+                        snapshot: evidenceSnapshot,
+                        observedUptime: captureUptime)
+                }
                 audioLock.unlock()
                 return
             }
@@ -6013,7 +6525,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // server's 1200 ms silenceDuration so endpointing still belongs to
             // the server VAD, never to this gate. Bonus on weak abroad
             // networks: idle uplink drops to zero.
-            listenPreRoll.append(bytes)
+            listenPreRoll.append(capturedInputChunk)
             if listenPreRoll.count > 15 { listenPreRoll.removeFirst(listenPreRoll.count - 15) }
             // Floor learns upward WITHOUT ever eating live speech (Codex rounds
             // 4+5): the calibration window uses the MINIMUM rms it saw — steady
@@ -6031,6 +6543,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     listenCalibMinRMS = .greatestFiniteMagnitude
                 }
                 listenSpeechFrames = 0
+                let policyClaimed = claimInputPolicyWithheldEvidenceLocked(
+                    .listenCalibration,
+                    snapshot: evidenceSnapshot,
+                    hasEnergy: hasInputEvidenceEnergy)
+                if policyClaimed {
+                    enqueueInputPolicyWithheldEvidence(
+                        .listenCalibration,
+                        snapshot: evidenceSnapshot,
+                        observedUptime: captureUptime)
+                }
                 audioLock.unlock()
                 return
             }
@@ -6101,6 +6623,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 #endif
             }
             sendNormally = listenGateOpen
+            if !sendNormally { withheldPolicy = .listenGateClosed }
+        }
+        if startBargeIn { withheldPolicy = nil }
+        let claimedWithheldPolicy = withheldPolicy.flatMap { policy in
+            claimInputPolicyWithheldEvidenceLocked(
+                policy,
+                snapshot: evidenceSnapshot,
+                hasEnergy: hasInputEvidenceEnergy) ? policy : nil
+        }
+        if let claimedWithheldPolicy {
+            enqueueInputPolicyWithheldEvidence(
+                claimedWithheldPolicy,
+                snapshot: evidenceSnapshot,
+                observedUptime: captureUptime)
         }
         audioLock.unlock()
 
@@ -6147,67 +6683,51 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             #endif
             beginLocalBargeIn()
-            let inputEvidence = evidenceRecorder.isEnabled && !evidenceIntakeComplete
-                    && AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
-                ? PendingInputEvidence(
-                    rms: rms,
-                    convertedByteCount: bytes.count,
-                    transportGeneration: evidenceGeneration,
-                    inputWindowEpoch: evidenceInputWindowEpoch,
-                    observedUptime: captureUptime,
-                    confirmedBargeIn: true)
-                : nil
-            if let currentChunk = preRoll.last {
-                // The current energy-bearing frame is the LAST pre-roll item.
-                // Older silence/noise may still be forwarded for prefix audio,
-                // but it cannot satisfy this frame's delivery evidence.
-                for chunk in preRoll.dropLast() {
-                    sendRealtimeAudio(chunk, sourceAttempt: sourceSocketAttempt)
-                }
-                sendRealtimeAudio(
-                    currentChunk,
-                    sourceAttempt: sourceSocketAttempt,
-                    inputEvidence: inputEvidence)
+            if !preRoll.isEmpty {
+                sendCapturedInputChunks(preRoll, sourceAttempt: sourceSocketAttempt)
             } else {
                 sendRealtimeAudio(
-                    bytes,
+                    capturedInputChunk.data,
                     sourceAttempt: sourceSocketAttempt,
-                    inputEvidence: inputEvidence)
+                    inputEvidence: capturedInputChunk.deliveryToken)
             }
         } else if sendNormally {
-            let inputEvidence = evidenceRecorder.isEnabled && !evidenceIntakeComplete
-                    && AlmaLiveVoiceEvidenceRecorder.isFirstEnergyCandidate(rms)
-                ? PendingInputEvidence(
-                    rms: rms,
-                    convertedByteCount: bytes.count,
-                    transportGeneration: evidenceGeneration,
-                    inputWindowEpoch: evidenceInputWindowEpoch,
-                    observedUptime: captureUptime,
-                    confirmedBargeIn: false)
-                : nil
             if !preRoll.isEmpty {
                 // Listen gate just opened: the pre-roll already contains this
                 // frame — flush it instead of sending `bytes` twice.
-                for chunk in preRoll.dropLast() {
-                    sendRealtimeAudio(chunk, sourceAttempt: sourceSocketAttempt)
-                }
-                sendRealtimeAudio(
-                    preRoll[preRoll.count - 1],
-                    sourceAttempt: sourceSocketAttempt,
-                    inputEvidence: inputEvidence)
+                sendCapturedInputChunks(preRoll, sourceAttempt: sourceSocketAttempt)
             } else {
                 sendRealtimeAudio(
-                    bytes,
+                    capturedInputChunk.data,
                     sourceAttempt: sourceSocketAttempt,
-                    inputEvidence: inputEvidence)
+                    inputEvidence: capturedInputChunk.deliveryToken)
             }
+        }
+    }
+
+    /// Sends every buffered PCM frame in FIFO order, while tracking only the
+    /// latest exact energy-bearing frame. Older silence/noise never inherits
+    /// its token, and a large pre-roll cannot add evidence-lock work per chunk.
+    private func sendCapturedInputChunks(
+        _ chunks: [AlmaLiveVoiceCapturedInputPCM],
+        sourceAttempt: AlmaLiveVoiceSocketAttempt
+    ) {
+        let trackedIndex = AlmaLiveVoiceCapturedInputPCM.trackedEvidenceIndex(in: chunks)
+        for (index, chunk) in chunks.enumerated() {
+            sendRealtimeAudio(
+                chunk.data,
+                sourceAttempt: sourceAttempt,
+                inputEvidence: AlmaLiveVoiceCapturedInputPCM.deliveryTokenForSending(
+                    chunk,
+                    at: index,
+                    trackedIndex: trackedIndex))
         }
     }
 
     private func sendRealtimeAudio(
         _ bytes: Data,
         sourceAttempt: AlmaLiveVoiceSocketAttempt,
-        inputEvidence: PendingInputEvidence? = nil
+        inputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil
     ) {
         sendJSON(["realtimeInput": ["audio": [
             "mimeType": "audio/pcm;rate=16000",
@@ -6696,6 +7216,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             resetPlaybackReferenceLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             newTurn = true
+            if serializesEvidenceBoundary {
+                beginModelEvidenceEpochLocked(
+                    transportGeneration: evidenceGeneration,
+                    playbackGeneration: playbackGeneration,
+                    observedUptime: ProcessInfo.processInfo.systemUptime)
+            }
         }
         generation = playbackGeneration
         nextPlaybackBufferID += 1
@@ -6714,10 +7240,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let scheduledGeneration = generation
 
         if newTurn, serializesEvidenceBoundary {
-            beginModelEvidenceEpochLocked(
-                transportGeneration: evidenceGeneration,
-                playbackGeneration: scheduledGeneration,
-                observedUptime: ProcessInfo.processInfo.systemUptime)
+            beginNextEvidenceAudioTurn(generation: evidenceGeneration)
         }
         if serializesEvidenceBoundary { evidenceSubmissionLock.unlock() }
 
@@ -7062,89 +7585,40 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func recordAudioNotQueued(
-        _ reason: AlmaLiveVoiceEvidenceReason,
+        _ reason: AlmaLiveVoiceEvidenceNotQueuedReason,
         byteCount: Int,
         sourceGeneration: Int,
-        inputEvidence: PendingInputEvidence? = nil
+        inputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil,
+        observedUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
-        guard evidenceRecorder.isEnabled else { return }
+        guard evidenceRecorder.isEnabled, byteCount > 0 else { return }
         evidenceSubmissionLock.lock()
         guard evidenceSessionAccepting else {
             evidenceSubmissionLock.unlock()
             return
         }
-        let claimedInput = claimPendingInputEvidence(
-            inputEvidence,
-            sourceGeneration: sourceGeneration)
-        guard inputEvidence == nil || claimedInput != nil else {
+        guard let inputEvidence,
+              inputEvidence.windowID.transportGeneration == sourceGeneration,
+              inputEvidenceWindowMatches(inputEvidence.windowID),
+              inputEvidenceChainReady(inputEvidence.windowID) else {
             evidenceSubmissionLock.unlock()
             return
         }
         let submitted = submitEvidenceLocked { recorder in
-            if let claimedInput, claimedInput.shouldSubmit {
-                Self.recordClaimedInputEvidence(claimedInput, recorder: recorder)
-            }
             recorder.recordAudioNotQueued(
                 reason,
                 byteCount: byteCount,
-                generation: sourceGeneration)
-        }
-        if submitted, let claimedInput, claimedInput.shouldSubmit {
-            markInputEvidenceIntakeComplete(
                 generation: sourceGeneration,
-                inputWindowEpoch: claimedInput.pending.inputWindowEpoch)
+                inputWindowID: inputEvidence.windowID,
+                observedUptime: observedUptime)
+        }
+        if submitted {
+            // This typed local disposition is one-shot for the window. A later
+            // transport/model window can retry; this failed disposition must
+            // not make every subsequent capture re-enter evidence locks.
+            markInputEvidenceIntakeComplete(inputEvidence.windowID)
         }
         evidenceSubmissionLock.unlock()
-    }
-
-    /// Caller holds `evidenceSubmissionLock`. Model-epoch rotation takes the
-    /// same lock before rearming these one-shot flags, so a capture can never
-    /// publish raw/conversion under one input window and queue its first chunk
-    /// under another.
-    private func claimPendingInputEvidence(
-        _ pending: PendingInputEvidence?,
-        sourceGeneration: Int
-    ) -> ClaimedInputEvidence? {
-        guard let pending,
-              pending.transportGeneration == sourceGeneration,
-              inputEvidenceWindowMatches(
-                generation: pending.transportGeneration,
-                inputWindowEpoch: pending.inputWindowEpoch) else { return nil }
-        let claims = claimFirstInputEvidence(
-            generation: pending.transportGeneration,
-            inputWindowEpoch: pending.inputWindowEpoch,
-            rms: pending.rms)
-        return ClaimedInputEvidence(
-            pending: pending,
-            recordRaw: claims.raw,
-            recordConversion: claims.conversion)
-    }
-
-    private static func recordClaimedInputEvidence(
-        _ claimed: ClaimedInputEvidence,
-        recorder: AlmaLiveVoiceEvidenceRecorder
-    ) {
-        let pending = claimed.pending
-        if pending.confirmedBargeIn {
-            recorder.recordConfirmedBargeInInputBoundary(
-                rms: pending.rms,
-                convertedByteCount: pending.convertedByteCount,
-                generation: pending.transportGeneration,
-                observedUptime: pending.observedUptime)
-            return
-        }
-        if claimed.recordRaw {
-            recorder.recordRawEnergy(
-                rms: pending.rms,
-                generation: pending.transportGeneration,
-                observedUptime: pending.observedUptime)
-        }
-        if claimed.recordConversion {
-            recorder.recordConversionSucceeded(
-                byteCount: pending.convertedByteCount,
-                generation: pending.transportGeneration,
-                observedUptime: pending.observedUptime)
-        }
     }
 
     private func prepareAudioSendEvidence(
@@ -7152,13 +7626,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         byteCount: Int,
         sourceGeneration: Int,
         observedUptime: TimeInterval,
-        inputEvidence: PendingInputEvidence?
+        inputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken?
     ) -> (
         claim: (
             generation: Int,
             turnEpoch: Int,
             claimID: Int,
-            inputWindowEpoch: Int
+            windowID: AlmaLiveVoiceEvidenceInputWindowID
         )?,
         submitted: Bool
     ) {
@@ -7172,12 +7646,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             evidenceSubmissionLock.unlock()
             return (nil, true)
         }
-        let claimedInput = claimPendingInputEvidence(
-            inputEvidence,
-            sourceGeneration: sourceGeneration)
-        let chainReady = inputEvidenceChainReady(
-            generation: sourceGeneration,
-            inputWindowEpoch: inputEvidence.inputWindowEpoch)
+        guard inputEvidence.windowID.transportGeneration == sourceGeneration,
+              inputEvidenceWindowMatches(inputEvidence.windowID) else {
+            evidenceSubmissionLock.unlock()
+            return (nil, true)
+        }
+        let chainReady = inputEvidenceChainReady(inputEvidence.windowID)
         let claimResult: AudioSendEvidenceClaimResult = chainReady
             ? claimEvidenceAudioSend(for: socket, sourceGeneration: sourceGeneration)
             : .alreadyCovered
@@ -7185,7 +7659,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             generation: Int,
             turnEpoch: Int,
             claimID: Int,
-            inputWindowEpoch: Int
+            windowID: AlmaLiveVoiceEvidenceInputWindowID
         )?
         let bindingUnavailable: Bool
         switch claimResult {
@@ -7194,7 +7668,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 generation,
                 turnEpoch,
                 claimID,
-                inputEvidence.inputWindowEpoch)
+                inputEvidence.windowID)
             bindingUnavailable = false
         case .alreadyCovered:
             claim = nil
@@ -7203,18 +7677,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             claim = nil
             bindingUnavailable = true
         }
-        guard claimedInput?.shouldSubmit == true || claim != nil || bindingUnavailable else {
+        guard claim != nil || bindingUnavailable else {
             evidenceSubmissionLock.unlock()
             return (nil, true)
         }
         let submitted = submitEvidenceLocked { [weak self] recorder in
-            if let claimedInput, claimedInput.shouldSubmit {
-                Self.recordClaimedInputEvidence(claimedInput, recorder: recorder)
-            }
             if bindingUnavailable {
                 recorder.recordAudioSendTrackingUnavailable(
                     byteCount: byteCount,
-                    generation: sourceGeneration)
+                    generation: sourceGeneration,
+                    inputWindowID: inputEvidence.windowID,
+                    observedUptime: observedUptime)
                 return
             }
             guard let claim,
@@ -7222,15 +7695,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                   let context = recorder.recordAudioQueued(
                     byteCount: byteCount,
                     generation: claim.generation,
+                    inputWindowID: claim.windowID,
                     observedUptime: observedUptime) else { return }
             self.evidenceSendContexts[claim.claimID] = context
         }
         if !submitted, let claim {
             abandonEvidenceAudioSendClaim(turnEpoch: claim.turnEpoch)
         } else if submitted, claim != nil || bindingUnavailable {
-            markInputEvidenceIntakeComplete(
-                generation: sourceGeneration,
-                inputWindowEpoch: inputEvidence.inputWindowEpoch)
+            markInputEvidenceIntakeComplete(inputEvidence.windowID)
         }
         evidenceSubmissionLock.unlock()
         return (claim, submitted)
@@ -7242,7 +7714,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             generation: Int,
             turnEpoch: Int,
             claimID: Int,
-            inputWindowEpoch: Int
+            windowID: AlmaLiveVoiceEvidenceInputWindowID
         ),
         succeeded: Bool,
         observedUptime: TimeInterval
@@ -7259,9 +7731,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             turnEpoch: claim.turnEpoch,
             succeeded: succeeded)
         if !succeeded || !state.isCurrentReadySocket {
-            markInputEvidenceIntakeNeedsRetry(
-                generation: claim.generation,
-                inputWindowEpoch: claim.inputWindowEpoch)
+            markInputEvidenceIntakeNeedsRetry(claim.windowID)
         }
         _ = submitEvidenceLocked { [weak self] recorder in
             guard let self,
@@ -7284,7 +7754,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioEvidenceByteCount: Int? = nil,
         audioEvidenceGeneration: Int? = nil,
         audioSourceAttempt: AlmaLiveVoiceSocketAttempt? = nil,
-        audioInputEvidence: PendingInputEvidence? = nil
+        audioInputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil
     ) {
         guard !stopped else { return }
         let sourceGeneration = audioEvidenceGeneration
@@ -7312,14 +7782,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return
         }
         readinessLock.lock()
-        guard let currentAttempt = validateSocketForSendLocked(
-            socket,
-            requireReady: requireReady),
-              audioSourceAttempt == nil || audioSourceAttempt == currentAttempt else {
+        let notQueuedReason = AlmaLiveVoiceAudioSendValidation.notQueuedReason(
+            socketIdentity: ObjectIdentifier(socket),
+            currentAttempt: readiness.socketAttempt,
+            socketReady: socketReady,
+            requireReady: requireReady,
+            sourceAttempt: audioSourceAttempt)
+        guard notQueuedReason == nil else {
             readinessLock.unlock()
-            if let byteCount = audioEvidenceByteCount {
+            if let byteCount = audioEvidenceByteCount, let notQueuedReason {
                 recordAudioNotQueued(
-                    .socketUnavailable,
+                    notQueuedReason,
                     byteCount: byteCount,
                     sourceGeneration: sourceGeneration,
                     inputEvidence: audioInputEvidence)
@@ -9316,7 +9789,8 @@ struct AlmaLiveSettingsSheet: View {
                     if engine.isRecoveryEvidenceEnabled {
                         settingsSection(
                             title: "Privacy-safe evidence",
-                            subtitle: "চলতি call-এর snapshot: app/build, model/voice, call mode/outcome, stage, ordinal, timing, route, byte count ও rounded energy। কোনো recording/PCM, transcript, prompt, tool content, URL, token বা provider call ID নেই।"
+                            subtitle: "চলতি call-এর local snapshot: app/build, model/voice, call mode/outcome, input-window, typed lifecycle/transport/tool identity, withholding/not-queued/send outcome, timing, route, byte count ও rounded energy। Raw energy মানেই owner speech নয়; queued মানেই sent নয়; local send completion Gemini receipt নয়। Share চাপার আগে JSON device-এই থাকে। কোনো recording/PCM, transcript, prompt, tool arguments/results, URL, token বা provider call ID নেই।",
+                            subtitleAccessibilityIdentifier: "voice.evidence.privacy-disclosure"
                         ) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Local session ID")
@@ -9391,11 +9865,21 @@ struct AlmaLiveSettingsSheet: View {
     }
 
     private func settingsSection<Content: View>(
-        title: String, subtitle: String, @ViewBuilder content: () -> Content
+        title: String,
+        subtitle: String,
+        subtitleAccessibilityIdentifier: String? = nil,
+        @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
             Text(title).font(.system(size: 18, weight: .semibold)).foregroundStyle(ink)
-            Text(subtitle).font(.system(size: 12)).foregroundStyle(muted)
+            if let subtitleAccessibilityIdentifier {
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(muted)
+                    .accessibilityIdentifier(subtitleAccessibilityIdentifier)
+            } else {
+                Text(subtitle).font(.system(size: 12)).foregroundStyle(muted)
+            }
             content()
         }
     }

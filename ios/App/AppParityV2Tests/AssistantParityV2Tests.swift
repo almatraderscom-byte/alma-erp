@@ -1017,66 +1017,417 @@ final class AssistantParityV2Tests: XCTestCase {
             defaults: defaults))
     }
 
-    func testLiveVoiceEvidenceInputStagesIgnoreSilenceAndClaimAsOneWindow() {
+    func testLiveVoiceEvidenceInputStagesSeparateRawConversionPolicyAndSessionFence() {
         var state = AlmaLiveVoiceEvidenceInputStageState()
-        state.reset(transportGeneration: 7)
-        let firstEpoch = state.windowEpoch
+        state.reset(localSessionID: "voice-test-0001", transportGeneration: 7)
+        let firstWindow = state.snapshot().windowID
 
-        let silence = state.claimInput(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch,
-            hasEnergy: false)
-        XCTAssertFalse(silence.raw)
-        XCTAssertFalse(silence.conversion)
-        XCTAssertFalse(state.chainReady(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch))
+        XCTAssertFalse(state.claimRaw(windowID: firstWindow, hasEnergy: false))
+        XCTAssertFalse(state.claimConversionSucceeded(
+            windowID: firstWindow,
+            hasEnergy: true,
+            byteCount: 640), "conversion cannot precede raw energy")
+        XCTAssertFalse(state.claimConversionFailure(windowID: firstWindow),
+                       "conversion failure cannot claim a silent/raw-unobserved window")
+        XCTAssertFalse(state.chainReady(firstWindow))
 
-        let speech = state.claimInput(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch,
-            hasEnergy: true)
-        XCTAssertTrue(speech.raw)
-        XCTAssertTrue(speech.conversion)
-        XCTAssertTrue(state.chainReady(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch))
-        XCTAssertEqual(
-            state.claimInput(
-                transportGeneration: 7,
-                windowEpoch: firstEpoch,
-                hasEnergy: true).raw,
-            false,
-            "one input window must not append raw energy after its queued chain")
-        state.markIntakeComplete(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch)
+        XCTAssertTrue(state.claimRaw(windowID: firstWindow, hasEnergy: true))
+        XCTAssertFalse(state.claimPolicyWithheld(
+            .listenCalibration,
+            windowID: firstWindow), "policy requires successful conversion")
+        XCTAssertTrue(state.claimConversionFailure(windowID: firstWindow))
+        XCTAssertTrue(state.claimConversionSucceeded(
+            windowID: firstWindow,
+            hasEnergy: true,
+            byteCount: 640), "a failure must not block a later valid conversion")
+        XCTAssertTrue(state.chainReady(firstWindow))
+        XCTAssertTrue(state.claimPolicyWithheld(.listenCalibration, windowID: firstWindow))
+        XCTAssertFalse(state.claimPolicyWithheld(.listenCalibration, windowID: firstWindow))
+        XCTAssertTrue(state.claimPolicyWithheld(.listenGateClosed, windowID: firstWindow))
+        XCTAssertFalse(state.claimRaw(windowID: firstWindow, hasEnergy: true))
+
+        state.markIntakeComplete(firstWindow)
         XCTAssertTrue(state.intakeComplete)
-        state.markIntakeNeedsRetry(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch)
+        state.markIntakeNeedsRetry(firstWindow)
         XCTAssertFalse(state.intakeComplete)
+        XCTAssertFalse(state.claimPolicyWithheld(.listenGateClosed, windowID: firstWindow),
+                       "retry does not duplicate completed source/policy stages")
 
-        state.rearm(transportGeneration: 6)
-        XCTAssertTrue(state.chainReady(
-            transportGeneration: 7,
-            windowEpoch: firstEpoch),
+        XCTAssertFalse(state.rearm(transportGeneration: 6))
+        XCTAssertTrue(state.chainReady(firstWindow),
                       "a stale model boundary cannot rearm the current transport")
-        state.rearm(transportGeneration: 7)
-        let secondEpoch = state.windowEpoch
-        XCTAssertNotEqual(secondEpoch, firstEpoch)
-        XCTAssertFalse(state.chainReady(
-            transportGeneration: 7,
-            windowEpoch: secondEpoch))
-        XCTAssertFalse(state.claimConversionFailure(
-            transportGeneration: 6,
-            windowEpoch: secondEpoch))
-        XCTAssertTrue(state.claimConversionFailure(
-            transportGeneration: 7,
-            windowEpoch: secondEpoch))
-        XCTAssertFalse(state.claimConversionFailure(
-            transportGeneration: 7,
-            windowEpoch: secondEpoch))
+        XCTAssertTrue(state.rearm(transportGeneration: 7))
+        let secondWindow = state.snapshot().windowID
+        XCTAssertNotEqual(secondWindow, firstWindow)
+        XCTAssertFalse(state.chainReady(secondWindow))
+        XCTAssertFalse(state.claimRaw(windowID: firstWindow, hasEnergy: true))
+        XCTAssertFalse(state.claimRaw(
+            windowID: .init(
+                localSessionID: "voice-debug-no-network",
+                transportGeneration: 7,
+                windowOrdinal: secondWindow.windowOrdinal),
+            hasEnergy: true), "session identity is part of every capture claim")
+        XCTAssertFalse(state.claimConversionFailure(windowID: secondWindow))
+        XCTAssertTrue(state.claimRaw(windowID: secondWindow, hasEnergy: true))
+        XCTAssertTrue(state.claimConversionFailure(windowID: secondWindow))
+        XCTAssertFalse(state.claimConversionFailure(windowID: secondWindow))
+        XCTAssertTrue(state.claimConversionSucceeded(
+            windowID: secondWindow,
+            hasEnergy: true,
+            byteCount: 640))
+        state.deactivate()
+        XCTAssertFalse(state.claimPolicyWithheld(.listenGateClosed, windowID: secondWindow))
+    }
+
+    func testLiveVoiceEvidenceDistinguishesPolicyNotQueuedAndRealSendFailure() throws {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        let generation = recorder.beginTransportAttempt(resuming: false)
+        let firstWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 1)
+        XCTAssertTrue(recorder.activateInputWindow(firstWindow, generation: generation))
+
+        recorder.recordInputWithheldByPolicy(
+            .listenCalibration,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordRawEnergy(
+            rms: 0.006,
+            generation: generation,
+            inputWindowID: firstWindow,
+            observedUptime: ProcessInfo.processInfo.systemUptime + 0.01)
+        recorder.recordConversionSucceeded(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow,
+            observedUptime: ProcessInfo.processInfo.systemUptime + 0.02)
+        recorder.recordInputWithheldByPolicy(
+            .listenCalibration,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordInputWithheldByPolicy(
+            .listenCalibration,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordInputWithheldByPolicy(
+            .listenGateClosed,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordInputWithheldByPolicy(
+            .playbackTailSuppression,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordAudioNotQueued(
+            .socketNotReady,
+            byteCount: 0,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordAudioNotQueued(
+            .socketUnavailable,
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow)
+        let successful = try XCTUnwrap(recorder.recordAudioQueued(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow))
+        recorder.recordAudioSendCompletion(
+            successful,
+            succeeded: true,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+        recorder.recordAudioSendCompletion(
+            successful,
+            succeeded: false,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+
+        let secondWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 2)
+        let skippedWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 3)
+        recorder.recordProviderModelAudioObserved(
+            generation: generation,
+            playbackGeneration: 1,
+            nextInputWindowID: skippedWindow)
+        recorder.recordProviderModelAudioObserved(
+            generation: generation,
+            playbackGeneration: 1,
+            nextInputWindowID: secondWindow)
+        recorder.recordRawEnergy(
+            rms: 0.01,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordConversionFailed(
+            .conversionError,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordConversionFailed(
+            .conversionError,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordConversionSucceeded(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordInputWithheldByPolicy(
+            .noAECEchoGuard,
+            generation: generation,
+            inputWindowID: secondWindow)
+        let failed = try XCTUnwrap(recorder.recordAudioQueued(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: secondWindow))
+        recorder.recordAudioSendCompletion(
+            failed,
+            succeeded: false,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+        recorder.recordAudioSendCompletion(
+            failed,
+            succeeded: true,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+
+        let events = recorder.report().events
+        XCTAssertEqual(events.filter { $0.name == .audioWithheldByPolicy }.map(\.reason),
+                       [.listenCalibration, .listenGateClosed, .playbackTailSuppression,
+                        .noAECEchoGuard])
+        XCTAssertEqual(events.filter { $0.name == .audioWithheldByPolicy }.map(\.retention),
+                       [.boundedPreRoll, .boundedPreRoll, .discarded, .boundedPreRoll])
+        XCTAssertEqual(events.filter { $0.name == .audioNotQueued }.count, 1)
+        XCTAssertEqual(events.filter { $0.name == .audioSendFailed }.count, 1)
+        XCTAssertEqual(events.filter { $0.name == .conversionFailed }.count, 1,
+                       "conversion failures dedupe per input window, not generation")
+        XCTAssertEqual(
+            Set(events.filter { $0.inputWindowOrdinal == 1 }.compactMap(\.turnOrdinal)),
+            Set([1]))
+        XCTAssertEqual(
+            Set(events.filter { $0.inputWindowOrdinal == 2 }.compactMap(\.turnOrdinal)),
+            Set([2]))
+        let failedIndex = try XCTUnwrap(events.firstIndex { $0.name == .audioSendFailed })
+        let queuedIndex = try XCTUnwrap(events.firstIndex {
+            $0.name == .audioFirstQueued && $0.inputWindowOrdinal == 2
+        })
+        XCTAssertLessThan(queuedIndex, failedIndex,
+                          "a real send failure must follow its exact queued claim")
+        XCTAssertEqual(recorder.report().schemaVersion, 2)
+    }
+
+    func testLiveVoiceEvidenceInputWindowRejectsOldFutureAndReusedSessionClaims() {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        let firstGeneration = recorder.beginTransportAttempt(resuming: false)
+        let oldWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: firstGeneration,
+            windowOrdinal: 1)
+        XCTAssertTrue(recorder.activateInputWindow(oldWindow, generation: firstGeneration))
+        recorder.recordRawEnergy(
+            rms: 0.01,
+            generation: firstGeneration,
+            inputWindowID: oldWindow)
+        recorder.endSession(.ownerEnded)
+
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        let currentGeneration = recorder.beginTransportAttempt(resuming: false)
+        XCTAssertGreaterThan(currentGeneration, firstGeneration)
+        let currentWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: currentGeneration,
+            windowOrdinal: 1)
+        let futureWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: currentGeneration,
+            windowOrdinal: 2)
+        XCTAssertTrue(recorder.activateInputWindow(currentWindow, generation: currentGeneration))
+        XCTAssertFalse(recorder.activateInputWindow(currentWindow, generation: currentGeneration),
+                       "only the recorder's initial activation path may install window 1")
+        XCTAssertFalse(recorder.activateInputWindow(futureWindow, generation: currentGeneration),
+                       "callers cannot advance the recorder window directly")
+
+        recorder.recordRawEnergy(
+            rms: 0.02,
+            generation: firstGeneration,
+            inputWindowID: oldWindow)
+        recorder.recordRawEnergy(
+            rms: 0.03,
+            generation: currentGeneration,
+            inputWindowID: futureWindow)
+        recorder.recordRawEnergy(
+            rms: 0.04,
+            generation: currentGeneration,
+            inputWindowID: currentWindow)
+
+        let raw = recorder.report().events.filter { $0.name == .rawFirstEnergy }
+        XCTAssertEqual(raw.count, 1)
+        XCTAssertEqual(raw.first?.inputWindowOrdinal, currentWindow.windowOrdinal)
+        XCTAssertNil(raw.first?.turnOrdinal,
+                     "raw energy is a prospective local window, not proof of owner speech")
+    }
+
+    func testLiveVoiceEvidenceAcceptsOutstandingPriorWindowCompletionAfterRearm() throws {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        let generation = recorder.beginTransportAttempt(resuming: false)
+        let firstWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 1)
+        XCTAssertTrue(recorder.activateInputWindow(firstWindow, generation: generation))
+        recorder.recordRawEnergy(
+            rms: 0.01,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordConversionSucceeded(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow)
+        let outstanding = try XCTUnwrap(recorder.recordAudioQueued(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow))
+
+        let secondWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 2)
+        recorder.recordProviderModelAudioObserved(
+            generation: generation,
+            playbackGeneration: 1,
+            nextInputWindowID: secondWindow)
+        recorder.recordAudioSendCompletion(
+            outstanding,
+            succeeded: true,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+        recorder.recordAudioSendCompletion(
+            outstanding,
+            succeeded: false,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+
+        let completions = recorder.report().events.filter {
+            $0.name == .audioFirstSendSucceeded || $0.name == .audioSendFailed
+        }
+        XCTAssertEqual(completions.count, 1)
+        XCTAssertEqual(completions.first?.name, .audioFirstSendSucceeded)
+        XCTAssertEqual(completions.first?.inputWindowOrdinal, 1)
+    }
+
+    func testLiveVoiceCapturedInputPCMKeepsDeliveryTokenOnItsExactBytes() {
+        let firstWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: "voice-test-0001",
+            transportGeneration: 9,
+            windowOrdinal: 1)
+        let secondWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: "voice-test-0001",
+            transportGeneration: 9,
+            windowOrdinal: 2)
+        let chunks = [
+            AlmaLiveVoiceCapturedInputPCM(data: Data([0x00]), deliveryToken: nil),
+            AlmaLiveVoiceCapturedInputPCM(
+                data: Data([0x11]),
+                deliveryToken: .init(windowID: firstWindow)),
+            AlmaLiveVoiceCapturedInputPCM(
+                data: Data([0x22]),
+                deliveryToken: .init(windowID: secondWindow)),
+        ]
+
+        XCTAssertNil(chunks[0].deliveryToken)
+        XCTAssertEqual(chunks[1].data, Data([0x11]))
+        XCTAssertEqual(chunks[1].deliveryToken?.windowID, firstWindow)
+        XCTAssertEqual(chunks[2].data, Data([0x22]))
+        XCTAssertEqual(chunks[2].deliveryToken?.windowID, secondWindow)
+        XCTAssertNotEqual(chunks[1].deliveryToken, chunks[2].deliveryToken)
+
+        let sameWindowPreRoll = [
+            AlmaLiveVoiceCapturedInputPCM(data: Data([0x00]), deliveryToken: nil),
+            AlmaLiveVoiceCapturedInputPCM(
+                data: Data([0x31]),
+                deliveryToken: .init(windowID: firstWindow)),
+            AlmaLiveVoiceCapturedInputPCM(
+                data: Data([0x32]),
+                deliveryToken: .init(windowID: firstWindow)),
+        ]
+        let tracked = AlmaLiveVoiceCapturedInputPCM.trackedEvidenceIndex(in: sameWindowPreRoll)
+        XCTAssertEqual(tracked, 2,
+                       "only the latest exact energy-bearing pre-roll chunk is tracked")
+        XCTAssertEqual(sameWindowPreRoll[tracked!].data, Data([0x32]))
+        XCTAssertEqual(sameWindowPreRoll.indices.filter {
+            $0 == tracked && sameWindowPreRoll[$0].deliveryToken != nil
+        }.count, 1)
+
+        let preparedTokens = sameWindowPreRoll.enumerated().map { index, chunk in
+            AlmaLiveVoiceCapturedInputPCM.deliveryTokenForSending(
+                chunk,
+                at: index,
+                trackedIndex: tracked)
+        }
+        XCTAssertEqual(sameWindowPreRoll.map(\.data), [Data([0x00]), Data([0x31]), Data([0x32])],
+                       "pre-roll PCM bytes and FIFO order must not change")
+        XCTAssertEqual(preparedTokens, [nil, nil, sameWindowPreRoll[2].deliveryToken],
+                       "only the selected exact chunk may carry evidence into the send path")
+    }
+
+    func testLiveVoiceAudioSendValidationSeparatesReadinessFromAttemptMismatch() {
+        let currentSocket = NSObject()
+        let staleSocket = NSObject()
+        let current = AlmaLiveVoiceSocketAttempt(
+            ordinal: 1,
+            socketIdentity: ObjectIdentifier(currentSocket),
+            evidenceGeneration: 7)
+        let stale = AlmaLiveVoiceSocketAttempt(
+            ordinal: 0,
+            socketIdentity: ObjectIdentifier(staleSocket),
+            evidenceGeneration: 6)
+
+        XCTAssertEqual(AlmaLiveVoiceAudioSendValidation.notQueuedReason(
+            socketIdentity: ObjectIdentifier(currentSocket),
+            currentAttempt: current,
+            socketReady: false,
+            requireReady: true,
+            sourceAttempt: current), .socketNotReady)
+        XCTAssertEqual(AlmaLiveVoiceAudioSendValidation.notQueuedReason(
+            socketIdentity: ObjectIdentifier(currentSocket),
+            currentAttempt: current,
+            socketReady: true,
+            requireReady: true,
+            sourceAttempt: stale), .sourceAttemptMismatch)
+        XCTAssertEqual(AlmaLiveVoiceAudioSendValidation.notQueuedReason(
+            socketIdentity: ObjectIdentifier(staleSocket),
+            currentAttempt: current,
+            socketReady: true,
+            requireReady: true,
+            sourceAttempt: stale), .sourceAttemptMismatch)
+        XCTAssertNil(AlmaLiveVoiceAudioSendValidation.notQueuedReason(
+            socketIdentity: ObjectIdentifier(currentSocket),
+            currentAttempt: current,
+            socketReady: false,
+            requireReady: false,
+            sourceAttempt: current))
     }
 
     func testLiveVoiceEvidenceRecordsTypedLifecycleAndTransportRecoveryEvents() throws {
@@ -1505,7 +1856,36 @@ final class AssistantParityV2Tests: XCTestCase {
             callMode: .standalone)
         recorder.endSession(.failed)
         let report = recorder.report()
-        let json = try XCTUnwrap(String(data: recorder.encodedReport(), encoding: .utf8))
+        let encoded = try recorder.encodedReport()
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let jsonObject = try JSONSerialization.jsonObject(with: encoded)
+        let allowedJSONKeys: Set<String> = [
+            "schemaVersion", "generatedAt", "privacyContract", "featureEnabled",
+            "app", "session", "events", "version", "build", "commit",
+            "revisionStatus", "id", "startedAt", "endedAt", "callMode",
+            "requestedModelID", "requestedVoiceID", "activeModelID", "activeVoiceID",
+            "outcome", "sequence", "elapsedMilliseconds", "name", "localSessionID",
+            "transportGeneration", "sourceTransportGeneration", "inputWindowOrdinal",
+            "turnOrdinal", "toolOrdinal", "audioChunkOrdinal", "byteCount", "rmsMilli",
+            "route", "routeReason", "reason", "retention", "tool", "resumedTransport",
+        ]
+        func assertAllowlistedJSON(_ value: Any, file: StaticString = #filePath, line: UInt = #line) {
+            if let dictionary = value as? [String: Any] {
+                for (key, nested) in dictionary {
+                    XCTAssertTrue(allowedJSONKeys.contains(key),
+                                  "unexpected evidence JSON key: \(key)",
+                                  file: file, line: line)
+                    assertAllowlistedJSON(nested, file: file, line: line)
+                }
+            } else if let array = value as? [Any] {
+                array.forEach { assertAllowlistedJSON($0, file: file, line: line) }
+            } else {
+                XCTAssertTrue(value is String || value is NSNumber || value is NSNull,
+                              "unexpected evidence JSON value type: \(type(of: value))",
+                              file: file, line: line)
+            }
+        }
+        assertAllowlistedJSON(jsonObject)
 
         XCTAssertTrue(localID.hasPrefix("voice-"))
         XCTAssertNotEqual(localID, "voice-secret-token")
@@ -1517,7 +1897,17 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(report.app.revisionStatus, .unavailableUntrustedBundleStamp)
         XCTAssertFalse(json.contains("private.example"))
         XCTAssertFalse(json.contains("secret-token"))
-        XCTAssertEqual(report.privacyContract.count, 5)
+        XCTAssertEqual(report.privacyContract, [
+            "no-pcm-or-audio-payload",
+            "no-transcript-prompt-or-user-content",
+            "no-tool-arguments-results-or-provider-call-id",
+            "no-url-token-cookie-credential-or-content-hash",
+            "typed-allowlisted-fields-only",
+            "raw-energy-is-not-proof-of-owner-speech",
+            "queue-is-not-send-and-local-send-is-not-provider-receipt",
+            "policy-is-a-local-app-decision-at-that-observation",
+        ])
+        XCTAssertEqual(report.schemaVersion, 2)
 
         let disabled = AlmaLiveVoiceEvidenceRecorder(enabled: false)
         XCTAssertEqual(disabled.beginSession(
@@ -1527,6 +1917,289 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(disabled.report().featureEnabled)
         XCTAssertTrue(disabled.report().events.isEmpty)
         XCTAssertThrowsError(try disabled.encodedReport())
+    }
+
+    func testLiveVoiceEvidenceSchemaV2Phase0CEventContract() throws {
+        let canary = "owner-phase0c-secret@example.com"
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: canary,
+            voiceID: canary,
+            callMode: .standalone,
+            fixture: .unitTest)
+        let generation = recorder.beginTransportAttempt(resuming: false)
+        let firstWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 1)
+        XCTAssertTrue(recorder.activateInputWindow(firstWindow, generation: generation))
+        recorder.recordRawEnergy(
+            rms: 0.012,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordConversionFailed(
+            .converterUnavailable,
+            generation: generation,
+            inputWindowID: firstWindow)
+        recorder.recordConversionSucceeded(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow)
+        for policy in [
+            AlmaLiveVoiceEvidenceInputPolicy.playbackTailSuppression,
+            .listenCalibration,
+            .listenGateClosed,
+            .noAECEchoGuard,
+        ] {
+            recorder.recordInputWithheldByPolicy(
+                policy,
+                generation: generation,
+                inputWindowID: firstWindow)
+        }
+        recorder.recordAudioNotQueued(
+            .socketNotReady,
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow)
+        let failed = try XCTUnwrap(recorder.recordAudioQueued(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: firstWindow))
+        recorder.recordAudioSendCompletion(
+            failed,
+            succeeded: false,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+
+        let secondWindow = AlmaLiveVoiceEvidenceInputWindowID(
+            localSessionID: recorder.sessionID,
+            transportGeneration: generation,
+            windowOrdinal: 2)
+        recorder.recordProviderModelAudioObserved(
+            generation: generation,
+            playbackGeneration: 1,
+            nextInputWindowID: secondWindow)
+        recorder.recordRawEnergy(
+            rms: 0.02,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordConversionSucceeded(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: secondWindow)
+        recorder.recordAudioSendTrackingUnavailable(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: secondWindow)
+        let successful = try XCTUnwrap(recorder.recordAudioQueued(
+            byteCount: 640,
+            generation: generation,
+            inputWindowID: secondWindow))
+        recorder.recordAudioSendCompletion(
+            successful,
+            succeeded: true,
+            currentGeneration: generation,
+            isCurrentReadySocket: true)
+        _ = recorder.recordToolCallObserved(
+            AlmaLiveVoiceEvidenceTool(providerName: canary),
+            generation: generation)
+        recorder.endSession(.ownerEnded)
+
+        let encoded = try recorder.encodedReport()
+        let plaintext = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        XCTAssertFalse(plaintext.contains(canary))
+        let root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(Set(root.keys), [
+            "schemaVersion", "generatedAt", "privacyContract", "featureEnabled",
+            "app", "session", "events",
+        ])
+        XCTAssertEqual(root["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(root["featureEnabled"] as? Bool, true)
+        XCTAssertEqual(root["privacyContract"] as? [String], [
+            "no-pcm-or-audio-payload",
+            "no-transcript-prompt-or-user-content",
+            "no-tool-arguments-results-or-provider-call-id",
+            "no-url-token-cookie-credential-or-content-hash",
+            "typed-allowlisted-fields-only",
+            "raw-energy-is-not-proof-of-owner-speech",
+            "queue-is-not-send-and-local-send-is-not-provider-receipt",
+            "policy-is-a-local-app-decision-at-that-observation",
+        ])
+
+        let app = try XCTUnwrap(root["app"] as? [String: Any])
+        XCTAssertEqual(Set(app.keys), ["version", "build", "commit", "revisionStatus"])
+        XCTAssertTrue(app.values.allSatisfy { $0 is String })
+        let session = try XCTUnwrap(root["session"] as? [String: Any])
+        XCTAssertEqual(Set(session.keys), [
+            "id", "startedAt", "endedAt", "callMode", "requestedModelID",
+            "requestedVoiceID", "activeModelID", "activeVoiceID", "outcome",
+        ])
+        XCTAssertTrue(session.values.allSatisfy { $0 is String })
+
+        let events = try XCTUnwrap(root["events"] as? [[String: Any]])
+        let baseKeys: Set<String> = [
+            "sequence", "elapsedMilliseconds", "name", "localSessionID",
+            "transportGeneration",
+        ]
+        let exactKeys: [String: Set<String>] = [
+            "input.raw-first-energy": baseKeys.union(["inputWindowOrdinal", "rmsMilli"]),
+            "input.conversion-failed": baseKeys.union(["inputWindowOrdinal", "reason"]),
+            "input.conversion-first-succeeded": baseKeys.union(["inputWindowOrdinal", "byteCount"]),
+            "input.audio-withheld-by-policy": baseKeys.union([
+                "inputWindowOrdinal", "reason", "retention",
+            ]),
+            "input.audio-not-queued": baseKeys.union([
+                "inputWindowOrdinal", "turnOrdinal", "byteCount", "reason",
+            ]),
+            "input.audio-first-queued": baseKeys.union([
+                "inputWindowOrdinal", "turnOrdinal", "audioChunkOrdinal", "byteCount",
+            ]),
+            "input.audio-send-failed": baseKeys.union([
+                "inputWindowOrdinal", "turnOrdinal", "audioChunkOrdinal", "byteCount", "reason",
+            ]),
+            "input.audio-send-tracking-unavailable": baseKeys.union([
+                "inputWindowOrdinal", "turnOrdinal", "byteCount", "reason",
+            ]),
+            "input.audio-first-send-succeeded": baseKeys.union([
+                "inputWindowOrdinal", "turnOrdinal", "audioChunkOrdinal", "byteCount",
+            ]),
+        ]
+        var observedPhase0CNames = Set<String>()
+        for event in events {
+            guard let name = event["name"] as? String,
+                  let expected = exactKeys[name] else { continue }
+            observedPhase0CNames.insert(name)
+            XCTAssertEqual(Set(event.keys), expected, "schema mismatch for \(name)")
+            for key in expected.intersection([
+                "sequence", "elapsedMilliseconds", "transportGeneration",
+                "inputWindowOrdinal", "turnOrdinal", "audioChunkOrdinal",
+                "byteCount", "rmsMilli",
+            ]) {
+                XCTAssertNotNil(event[key] as? Int, "\(name).\(key) must be an integer")
+            }
+            XCTAssertNotNil(event["localSessionID"] as? String)
+        }
+        XCTAssertEqual(observedPhase0CNames, Set(exactKeys.keys))
+
+        let policyEvents = events.filter {
+            $0["name"] as? String == "input.audio-withheld-by-policy"
+        }
+        XCTAssertEqual(Set(policyEvents.compactMap { $0["reason"] as? String }), [
+            "playback-tail-suppression", "listen-calibration", "listen-gate-closed",
+            "no-aec-echo-guard",
+        ])
+        XCTAssertEqual(Set(policyEvents.compactMap { $0["retention"] as? String }), [
+            "bounded-pre-roll", "discarded",
+        ])
+        XCTAssertEqual(Set(policyEvents.compactMap { event -> String? in
+            guard let reason = event["reason"] as? String,
+                  let retention = event["retention"] as? String else { return nil }
+            return "\(reason)|\(retention)"
+        }), [
+            "playback-tail-suppression|discarded",
+            "listen-calibration|bounded-pre-roll",
+            "listen-gate-closed|bounded-pre-roll",
+            "no-aec-echo-guard|bounded-pre-roll",
+        ])
+        XCTAssertEqual(events.first {
+            $0["name"] as? String == "input.audio-not-queued"
+        }?["reason"] as? String, "socket-not-ready")
+        XCTAssertEqual(events.first {
+            $0["name"] as? String == "input.audio-send-failed"
+        }?["reason"] as? String, "socket-send-failed")
+        XCTAssertEqual(events.first {
+            $0["name"] as? String == "input.audio-send-tracking-unavailable"
+        }?["reason"] as? String, "evidence-binding-unavailable")
+
+        func encodedConversionReason(
+            _ failure: AlmaLiveVoiceEvidenceConversionFailure
+        ) throws -> String? {
+            let isolated = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+            isolated.beginFixtureSession(
+                modelID: AlmaLiveVoicePreferences.gemini25,
+                voiceID: "Aoede",
+                callMode: .standalone,
+                fixture: .unitTest)
+            let generation = isolated.beginTransportAttempt(resuming: false)
+            let window = AlmaLiveVoiceEvidenceInputWindowID(
+                localSessionID: isolated.sessionID,
+                transportGeneration: generation,
+                windowOrdinal: 1)
+            XCTAssertTrue(isolated.activateInputWindow(window, generation: generation))
+            isolated.recordRawEnergy(rms: 0.01, generation: generation, inputWindowID: window)
+            isolated.recordConversionFailed(
+                failure,
+                generation: generation,
+                inputWindowID: window)
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: isolated.encodedReport())
+                    as? [String: Any])
+            let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+            return events.first {
+                $0["name"] as? String == "input.conversion-failed"
+            }?["reason"] as? String
+        }
+
+        func encodedNotQueuedReason(
+            _ reason: AlmaLiveVoiceEvidenceNotQueuedReason
+        ) throws -> String? {
+            let isolated = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+            isolated.beginFixtureSession(
+                modelID: AlmaLiveVoicePreferences.gemini25,
+                voiceID: "Aoede",
+                callMode: .standalone,
+                fixture: .unitTest)
+            let generation = isolated.beginTransportAttempt(resuming: false)
+            let window = AlmaLiveVoiceEvidenceInputWindowID(
+                localSessionID: isolated.sessionID,
+                transportGeneration: generation,
+                windowOrdinal: 1)
+            XCTAssertTrue(isolated.activateInputWindow(window, generation: generation))
+            isolated.recordRawEnergy(rms: 0.01, generation: generation, inputWindowID: window)
+            isolated.recordConversionSucceeded(
+                byteCount: 640,
+                generation: generation,
+                inputWindowID: window)
+            isolated.recordAudioNotQueued(
+                reason,
+                byteCount: 0,
+                generation: generation,
+                inputWindowID: window)
+            isolated.recordAudioNotQueued(
+                reason,
+                byteCount: 640,
+                generation: generation,
+                inputWindowID: window)
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: isolated.encodedReport())
+                    as? [String: Any])
+            let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+            let notQueued = events.filter {
+                $0["name"] as? String == "input.audio-not-queued"
+            }
+            XCTAssertEqual(notQueued.count, 1, "zero-byte observations must be rejected")
+            return notQueued.first?["reason"] as? String
+        }
+
+        for (failure, expected) in [
+            (AlmaLiveVoiceEvidenceConversionFailure.converterUnavailable,
+             "converter-unavailable"),
+            (.outputBufferUnavailable, "output-buffer-unavailable"),
+            (.conversionError, "conversion-error"),
+            (.emptyOutput, "empty-converted-audio"),
+        ] {
+            XCTAssertEqual(try encodedConversionReason(failure), expected)
+        }
+        for (reason, expected) in [
+            (AlmaLiveVoiceEvidenceNotQueuedReason.serializationFailed,
+             "serialization-failed"),
+            (.socketUnavailable, "socket-unavailable"),
+            (.socketNotReady, "socket-not-ready"),
+            (.sourceAttemptMismatch, "source-attempt-mismatch"),
+        ] {
+            XCTAssertEqual(try encodedNotQueuedReason(reason), expected)
+        }
     }
 
     func testLiveVoiceEvidenceBindingDivergenceIsNotReportedAsDeliveryFailure() {
