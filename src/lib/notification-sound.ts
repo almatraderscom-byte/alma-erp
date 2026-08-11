@@ -1,5 +1,7 @@
 /** Alma ERP custom notification sound — Web, PWA, and in-app playback. */
 
+import { isCapacitorNative } from '@/lib/capacitor-native'
+
 export const NOTIFICATION_SOUND_PATH = '/sounds/alma-notification.mp3'
 
 /** Android res/raw resource name (no extension) — see AlmaPushChannels.java */
@@ -16,6 +18,10 @@ export const ANDROID_NOTIFICATION_CHANNEL_ID = 'alma_alerts_v2'
 
 let audio: HTMLAudioElement | null = null
 
+export function webNotificationAudioAllowed(): boolean {
+  return typeof window !== 'undefined' && !isCapacitorNative()
+}
+
 export function notificationSoundUrl(baseUrl?: string): string {
   const origin =
     baseUrl
@@ -28,7 +34,10 @@ export function notificationSoundUrl(baseUrl?: string): string {
 
 /** Play Alma notification tone (Web/PWA foreground + service worker relay). */
 export function playAlmaNotificationSound(): void {
-  if (typeof window === 'undefined') return
+  // The native iOS shell owns the process-wide AVAudioSession. A hidden,
+  // always-mounted WKWebView must never create an independent HTMLAudio owner
+  // underneath Live Voice, CallKit, PTT, or a verified preview.
+  if (!webNotificationAudioAllowed()) return
   try {
     if (!audio) {
       audio = new Audio(NOTIFICATION_SOUND_PATH)

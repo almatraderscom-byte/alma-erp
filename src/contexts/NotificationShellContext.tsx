@@ -19,6 +19,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { cn } from '@/lib/utils'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import { PLATFORM_Z } from '@/lib/platform-z-index'
+import { webNotificationAudioAllowed } from '@/lib/notification-sound'
 
 type Priority = 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL'
 
@@ -55,6 +56,10 @@ function vibrate(priority: Priority) {
 }
 
 function playTone() {
+  // Native notification sound/routing is owned by the shell. Keeping this Web
+  // Audio oscillator web-only prevents the retained dashboard WKWebView from
+  // taking AVAudioSession while a native voice owner is active.
+  if (!webNotificationAudioAllowed()) return
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
