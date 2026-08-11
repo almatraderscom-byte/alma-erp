@@ -20,6 +20,38 @@ import ActivityKit
 #endif
 
 @available(iOS 17.0, *)
+enum AlmaVoiceActivityLifecyclePhasePolicy {
+    /// A terminal engine fallback wins even if lifecycle delivery stopped on
+    /// an older reconnecting value. Otherwise lifecycle truth outranks the
+    /// conversational fallback only when it has a distinct visible meaning.
+    static func resolve(
+        _ truth: AlmaLiveVoiceLifecycleReducer.UITruth,
+        conversationalFallback: String
+    ) -> String {
+        let fallback = AlmaVoiceActivityPrivacyPolicy.normalizedPhase(
+            conversationalFallback)
+        if fallback == "ended" { return "ended" }
+
+        switch truth.session {
+        case .ended:
+            return "ended"
+        case .reconnecting:
+            // The reducer starts from provider-disconnected. While the engine
+            // is actually making its first connection, do not turn that seed
+            // into a false reconnecting claim.
+            return fallback == "connecting" ? "connecting" : "reconnecting"
+        case .suspended:
+            return "idle"
+        case .ready:
+            if case .pending(let count) = truth.work, count > 0 {
+                return "working"
+            }
+            return fallback
+        }
+    }
+}
+
+@available(iOS 17.0, *)
 @MainActor
 final class VoiceLiveActivityController {
     weak var engine: AlmaVoiceEngine?
@@ -28,9 +60,11 @@ final class VoiceLiveActivityController {
     private var activity: Activity<AlmaVoiceActivityAttributes>?
     #endif
     private var expiryTask: Task<Void, Never>?
+    private var freshnessTask: Task<Void, Never>?
     private var lastPushedPhase = ""
     private var lastPushedMuted = false
     private var startedAt = Date()
+    private var lifecycleTruth: AlmaLiveVoiceLifecycleReducer.UITruth?
 
     // MARK: - Lifecycle
 
@@ -49,6 +83,7 @@ final class VoiceLiveActivityController {
         for pulse in Activity<PulseActivityAttributes>.activities {
             Task { await pulse.end(nil, dismissalPolicy: .immediate) }
         }
+        lifecycleTruth = nil
         startedAt = Date()
         let state = contentState()
         let existingActivities = Activity<AlmaVoiceActivityAttributes>.activities
@@ -76,6 +111,19 @@ final class VoiceLiveActivityController {
             guard !Task.isCancelled else { return }
             self?.end()
         }
+        freshnessTask?.cancel()
+        freshnessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(
+                        AlmaVoiceActivityPrivacyPolicy.freshnessRefreshSeconds
+                            * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                // This is a low-frequency liveness refresh only. It carries the
+                // same privacy-safe state and cannot resemble realtime audio.
+                self.push()
+            }
+        }
         #endif
     }
 
@@ -93,7 +141,7 @@ final class VoiceLiveActivityController {
         }
         guard activity != nil else { return }
         let phase = currentPhase()
-        let muted = engine?.isMuted ?? false
+        let muted = currentMuted()
         guard AlmaVoiceActivityPrivacyPolicy.shouldPublish(
             previousPhase: lastPushedPhase,
             previousMuted: lastPushedMuted,
@@ -103,14 +151,34 @@ final class VoiceLiveActivityController {
         #endif
     }
 
-    /// Session over (engine.end / stale timeout) — island disappears at once.
-    /// After the voice activity is gone, the Business Pulse activity is
-    /// restored from its cached last state (~1.5s later, once the island slot
-    /// is free) — start() ended it, and the web layer can't restart it while
-    /// the app is backgrounded.
+    /// Consumes the generation-bound lifecycle reducer's accepted UI truth.
+    /// The production adapter calls this for every `.update` plan; no raw
+    /// provider, transcript, tool argument/result, or audio value crosses into
+    /// ActivityKit.
+    func applyLifecycle(_ truth: AlmaLiveVoiceLifecycleReducer.UITruth) {
+        lifecycleTruth = truth
+        if case .ended = truth.session {
+            end()
+            return
+        }
+        stateChanged()
+    }
+
+    /// Session over (engine.end / hard timeout) — hand ActivityKit a terminal
+    /// state and delayed dismissal in one call. After that system-owned grace
+    /// period, restore Business Pulse once the island slot is free.
     func end() {
         expiryTask?.cancel(); expiryTask = nil
+        freshnessTask?.cancel(); freshnessTask = nil
         #if canImport(ActivityKit)
+        let endedAt = Date()
+        let terminalState = AlmaVoiceActivityAttributes.ContentState(
+            phase: "ended",
+            startedAt: startedAt,
+            isMuted: currentMuted())
+        let terminalContent = ActivityContent(
+            state: terminalState,
+            staleDate: endedAt)
         activity = nil
         let leftovers = Activity<AlmaVoiceActivityAttributes>.activities
         guard !leftovers.isEmpty else {
@@ -118,32 +186,60 @@ final class VoiceLiveActivityController {
             return
         }
         Task {
-            for a in leftovers { await a.end(nil, dismissalPolicy: .immediate) }
-            self.schedulePulseRestore()
+            let dismissalDate = endedAt.addingTimeInterval(
+                AlmaVoiceActivityPrivacyPolicy.endedDismissalSeconds)
+            for a in leftovers {
+                await a.end(
+                    terminalContent,
+                    dismissalPolicy: .after(dismissalDate))
+            }
+            self.schedulePulseRestore(
+                after: AlmaVoiceActivityPrivacyPolicy.endedDismissalSeconds + 1.5)
         }
         #endif
     }
 
     /// Bring back the Business Pulse island after ~1.5s (lets the voice
     /// activity's dismissal settle so the compact slot is free).
-    private func schedulePulseRestore() {
+    private func schedulePulseRestore(after delay: TimeInterval = 1.5) {
         #if canImport(ActivityKit)
         Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await Task.sleep(
+                nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
             PulseRestore.restartFromCache()
         }
         #endif
     }
 
     private func currentPhase() -> String {
-        let phase: String
-        switch engine?.state {
-        case .listening: phase = "listening"
-        case .transcribing, .thinking: phase = "thinking"
-        case .speaking: phase = "speaking"
-        default: phase = "idle"
+        let conversationalPhase: String
+        switch engine?.callConnection {
+        case .connecting:
+            conversationalPhase = "connecting"
+        case .reconnecting:
+            conversationalPhase = "reconnecting"
+        case .failed:
+            conversationalPhase = "ended"
+        default:
+            switch engine?.state {
+            case .listening: conversationalPhase = "listening"
+            case .transcribing, .thinking: conversationalPhase = "thinking"
+            case .speaking: conversationalPhase = "speaking"
+            case .error: conversationalPhase = "reconnecting"
+            default: conversationalPhase = "idle"
+            }
         }
-        return AlmaVoiceActivityPrivacyPolicy.normalizedPhase(phase)
+        guard let lifecycleTruth else {
+            return AlmaVoiceActivityPrivacyPolicy.normalizedPhase(
+                conversationalPhase)
+        }
+        return AlmaVoiceActivityLifecyclePhasePolicy.resolve(
+            lifecycleTruth,
+            conversationalFallback: conversationalPhase)
+    }
+
+    private func currentMuted() -> Bool {
+        lifecycleTruth?.isMuted ?? engine?.isMuted ?? false
     }
 
     #if canImport(ActivityKit)
@@ -151,7 +247,7 @@ final class VoiceLiveActivityController {
         AlmaVoiceActivityAttributes.ContentState(
             phase: currentPhase(),
             startedAt: startedAt,
-            isMuted: engine?.isMuted ?? false
+            isMuted: currentMuted()
         )
     }
 
@@ -159,7 +255,9 @@ final class VoiceLiveActivityController {
         -> ActivityContent<AlmaVoiceActivityAttributes.ContentState> {
         ActivityContent(
             state: state,
-            staleDate: AlmaVoiceActivityPrivacyPolicy.staleDate(now: Date())
+            staleDate: AlmaVoiceActivityPrivacyPolicy.staleDate(
+                now: Date(),
+                startedAt: state.startedAt)
         )
     }
 
