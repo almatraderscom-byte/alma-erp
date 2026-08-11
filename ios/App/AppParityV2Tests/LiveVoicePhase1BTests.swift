@@ -139,20 +139,71 @@ final class LiveVoicePhase1BTests: XCTestCase {
         XCTAssertEqual(
             AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
                 for: try failure(),
+                currentModelID: contract.defaults.modelID,
                 contract: contract),
             replacement)
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(status: 500),
+            currentModelID: contract.defaults.modelID,
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(contractVersion: "stale-contract"),
+            currentModelID: contract.defaults.modelID,
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(replacementModel: "unknown-model"),
+            currentModelID: contract.defaults.modelID,
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(replacementModel: nil),
+            currentModelID: contract.defaults.modelID,
             contract: contract))
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(replacementModel: contract.defaults.modelID),
+            currentModelID: contract.defaults.modelID,
+            contract: contract),
+            "a known enabled model is not selectable unless it is the declared replacement")
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: try failure(),
+            currentModelID: replacement,
+            contract: contract),
+            "a response declared for another current model must be rejected")
+    }
+
+    func testRetiredLifecycleIsNeverSelectableEvenWhenEnabled() throws {
+        var source = try XCTUnwrap(String(data: contractData(), encoding: .utf8))
+        let retiredID = "gemini-3.1-flash-live-preview"
+        let selectableNeedle = "\"id\": \"\(retiredID)\",\n      \"enabled\": true,\n      \"lifecycle\": \"preview\""
+        let retiredRange = try XCTUnwrap(source.range(of: selectableNeedle))
+        source.replaceSubrange(
+            retiredRange,
+            with: "\"id\": \"\(retiredID)\",\n      \"enabled\": true,\n      \"lifecycle\": \"retired\"")
+        let retiredContract = try AlmaLiveVoiceContract.decodeStrict(Data(source.utf8))
+        let retiredModel = try XCTUnwrap(
+            retiredContract.models.first(where: { $0.id == retiredID }))
+
+        XCTAssertTrue(retiredModel.enabled, "the negative fixture must remain enabled")
+        XCTAssertEqual(retiredModel.lifecycle, "retired")
+        XCTAssertNil(retiredContract.model(id: retiredID))
+        XCTAssertFalse(retiredContract.enabledModels.contains(where: { $0.id == retiredID }))
+        XCTAssertEqual(
+            retiredContract.migrate(.init(
+                selectionVersion: retiredContract.schemaVersion,
+                modelID: retiredID,
+                voiceID: retiredContract.defaults.voiceID)).modelID,
+            retiredContract.defaults.modelID)
+
+        let body = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: [
+                "error": "live_model_remotely_disabled",
+                "replacementModel": retiredID,
+                "contractVersion": retiredContract.contractVersion,
+            ]),
+            encoding: .utf8))
+        XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
+            for: AlmaAPIError.http(status: 503, body: body),
+            currentModelID: retiredContract.defaults.modelID,
+            contract: retiredContract))
     }
 
     func testReconnectFailurePreservesTypedRemoteKillBodyForEnginePolicy() throws {
@@ -178,6 +229,7 @@ final class LiveVoicePhase1BTests: XCTestCase {
         XCTAssertEqual(
             AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
                 for: delivery.underlyingError,
+                currentModelID: contract.defaults.modelID,
                 contract: contract),
             replacement)
     }

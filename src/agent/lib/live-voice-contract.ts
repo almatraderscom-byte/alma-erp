@@ -204,7 +204,7 @@ const contractSchema = z.object({
     context.addIssue({ code: 'custom', path: ['voices'], message: 'voice IDs must be unique' })
   }
   if (!contract.models.some((model) => (
-    model.id === contract.defaults.modelID && model.enabled
+    model.id === contract.defaults.modelID && isSelectableLiveVoiceModel(model)
   ))) {
     context.addIssue({
       code: 'custom',
@@ -244,6 +244,10 @@ const contractSchema = z.object({
 
 export type LiveVoiceContract = z.infer<typeof contractSchema>
 export type LiveVoiceModelContract = LiveVoiceContract['models'][number]
+
+export function isSelectableLiveVoiceModel(model: LiveVoiceModelContract): boolean {
+  return model.enabled && model.lifecycle !== 'retired'
+}
 
 export function parseLiveVoiceContract(value: unknown): LiveVoiceContract {
   return contractSchema.parse(value)
@@ -393,7 +397,9 @@ export function liveVoiceModelContract(
   modelID: string,
   contract: LiveVoiceContract = LIVE_VOICE_CONTRACT,
 ): LiveVoiceModelContract | undefined {
-  return contract.models.find((model) => model.id === modelID && model.enabled)
+  return contract.models.find((model) => (
+    model.id === modelID && isSelectableLiveVoiceModel(model)
+  ))
 }
 
 export type LiveVoiceRemoteModelAvailability = {
@@ -403,7 +409,8 @@ export type LiveVoiceRemoteModelAvailability = {
 
 /** Server-owned emergency model kill switch. The environment value is a
  * comma-separated list of exact contract model IDs; replacement remains
- * constrained to an enabled model declared by this same versioned contract. */
+ * constrained to the current model's selectable replacement declared by this
+ * same versioned contract. */
 export function liveVoiceRemoteModelAvailability(
   modelID: string,
   remotelyDisabledModelIDs: string | undefined,
@@ -413,13 +420,14 @@ export function liveVoiceRemoteModelAvailability(
   const remotelyDisabled = new Set(
     (remotelyDisabledModelIDs ?? '').split(',').map((value) => value.trim()).filter(Boolean),
   )
-  const enabled = Boolean(model?.enabled) && !remotelyDisabled.has(modelID)
+  const enabled = Boolean(model && isSelectableLiveVoiceModel(model))
+    && !remotelyDisabled.has(modelID)
   if (enabled) return { enabled: true, replacementModelID: null }
 
   const replacement = model?.replacementModelID
     ? contract.models.find((candidate) => (
       candidate.id === model.replacementModelID
-        && candidate.enabled
+        && isSelectableLiveVoiceModel(candidate)
         && !remotelyDisabled.has(candidate.id)
     ))
     : undefined
@@ -467,7 +475,7 @@ export function migrateLiveVoiceSelection(
   }
 
   const selectedModel = contract.models.find((model) => model.id === modelID)
-  if (!selectedModel?.enabled) {
+  if (!selectedModel || !isSelectableLiveVoiceModel(selectedModel)) {
     const replacement = selectedModel?.replacementModelID
       ? liveVoiceModelContract(selectedModel.replacementModelID, contract)
       : undefined

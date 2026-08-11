@@ -106,6 +106,8 @@ struct AlmaLiveVoiceContract: Decodable, Equatable {
         let capabilities: Capabilities
         let pricingUSDPerMillionTokens: Pricing
         let display: ModelDisplay
+
+        var isSelectable: Bool { enabled && lifecycle != "retired" }
     }
 
     struct VoiceDisplay: Decodable, Equatable {
@@ -137,11 +139,11 @@ struct AlmaLiveVoiceContract: Decodable, Equatable {
     let voices: [Voice]
     let migrations: [Migration]
 
-    var enabledModels: [Model] { models.filter(\.enabled) }
+    var enabledModels: [Model] { models.filter(\.isSelectable) }
     var enabledVoices: [Voice] { voices.filter(\.enabled) }
 
     func model(id: String) -> Model? {
-        models.first { $0.id == id && $0.enabled }
+        models.first { $0.id == id && $0.isSelectable }
     }
 
     func voice(id: String) -> Voice? {

@@ -9,9 +9,13 @@ import {
   type FunctionDeclaration,
   type LiveConnectConfig,
 } from '@google/genai'
-import { LIVE_VOICE_CONTRACT, liveVoiceModelContract } from '@/agent/lib/live-voice-contract'
+import {
+  isSelectableLiveVoiceModel,
+  LIVE_VOICE_CONTRACT,
+  liveVoiceModelContract,
+} from '@/agent/lib/live-voice-contract'
 
-const enabledModels = LIVE_VOICE_CONTRACT.models.filter((model) => model.enabled)
+const enabledModels = LIVE_VOICE_CONTRACT.models.filter(isSelectableLiveVoiceModel)
 export const GEMINI_25_LIVE_MODEL = enabledModels.find(
   (model) => model.capabilities.affectiveDialog,
 )!.id

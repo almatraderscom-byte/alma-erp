@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeLiveVoiceContractStrict,
   LIVE_VOICE_CONTRACT,
+  liveVoiceModelContract,
   liveVoiceRemoteModelAvailability,
   liveVoiceRolloutDefaults,
   migrateLiveVoiceSelection,
@@ -137,6 +138,35 @@ describe('versioned live voice contract', () => {
       natural.id,
       `${natural.id},${fast.id}`,
     )).toEqual({ enabled: false, replacementModelID: null })
+    expect(liveVoiceRemoteModelAvailability(
+      fast.id,
+      fast.id,
+    )).toEqual({ enabled: false, replacementModelID: null })
+    expect(liveVoiceRemoteModelAvailability(
+      fast.id,
+      natural.id,
+    )).toEqual({ enabled: true, replacementModelID: null })
+  })
+
+  it('never selects a retired model even when its enabled flag remains true', () => {
+    const [natural, fast] = LIVE_VOICE_CONTRACT.models
+    const fixture = structuredClone(LIVE_VOICE_CONTRACT)
+    fixture.models[1]!.enabled = true
+    fixture.models[1]!.lifecycle = 'retired'
+    const contract = parseLiveVoiceContract(fixture)
+
+    expect(contract.models[1]).toMatchObject({ id: fast.id, enabled: true, lifecycle: 'retired' })
+    expect(liveVoiceModelContract(fast.id, contract)).toBeUndefined()
+    expect(liveVoiceRemoteModelAvailability(
+      natural.id,
+      natural.id,
+      contract,
+    )).toEqual({ enabled: false, replacementModelID: null })
+    expect(migrateLiveVoiceSelection({
+      selectionVersion: contract.schemaVersion,
+      modelID: fast.id,
+      voiceID: contract.defaults.voiceID,
+    }, contract).modelID).toBe(contract.defaults.modelID)
   })
 
   it('rejects unknown fields, unbounded compression, and unsafe budget ordering', () => {

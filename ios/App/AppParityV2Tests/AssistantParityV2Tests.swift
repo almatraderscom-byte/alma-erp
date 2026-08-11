@@ -2006,7 +2006,23 @@ final class AssistantParityV2Tests: XCTestCase {
         let generation = recorder.beginTransportAttempt(resuming: true)
         recorder.recordTransportEvent(.resumptionAccepted, generation: generation)
 
-        let events = recorder.report().events
+        // Deterministically exceed the production ledger cap. These ordinary
+        // lifecycle observations must roll over while the fixed cross-phase
+        // milestones remain distinguishable in the same encoded artifact.
+        for index in 0..<625 {
+            recorder.recordLifecycleEvent(
+                index.isMultiple(of: 2) ? .appBackgrounded : .appBecameActive)
+        }
+
+        let artifact = try recorder.encodedReport()
+        let events = try JSONDecoder().decode(
+            AlmaLiveVoiceEvidenceReport.self,
+            from: artifact).events
+        XCTAssertEqual(events.count, 600, "runtime evidence must remain strictly bounded")
+        XCTAssertGreaterThan(
+            try XCTUnwrap(events.last?.sequence),
+            events.count,
+            "a sequence beyond the cap proves deterministic FIFO rollover occurred")
         let preview = try XCTUnwrap(events.first { $0.name == .previewAssetResolved })
         XCTAssertEqual(preview.previewSource, .disk)
         let configured = try XCTUnwrap(events.first {
@@ -2018,8 +2034,15 @@ final class AssistantParityV2Tests: XCTestCase {
             $0.name == .contextCompressionThresholdObserved
         }
         XCTAssertEqual(threshold.count, 1, "one session records the first crossing only")
-        XCTAssertEqual(threshold.first?.observedContextTokens, 25_000)
-        XCTAssertTrue(events.contains { $0.name == .resumptionAccepted })
+        let thresholdEvent = try XCTUnwrap(threshold.first)
+        XCTAssertEqual(thresholdEvent.observedContextTokens, 25_000)
+        let resumed = try XCTUnwrap(events.first { $0.name == .resumptionAccepted })
+        XCTAssertEqual(resumed.transportGeneration, generation)
+        XCTAssertEqual(
+            Set([preview.sequence, configured.sequence,
+                 thresholdEvent.sequence, resumed.sequence]).count,
+            4,
+            "preview, compression, threshold, and resumption must remain separate milestones")
         XCTAssertNotEqual(
             AlmaLiveVoiceEvidenceEventName.previewAssetResolved.rawValue,
             AlmaLiveVoiceEvidenceEventName.contextCompressionThresholdObserved.rawValue)
@@ -2120,6 +2143,89 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(playback.map(\.sequence), playback.map(\.sequence).sorted())
         XCTAssertEqual(playback.count, 2,
                        "later unrelated model audio must not consume a stale tool")
+    }
+
+    func testLiveVoiceToolSendCompletionKeepsCapturedAttemptAcrossReconnect() throws {
+        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+
+        let firstGeneration = recorder.beginTransportAttempt(resuming: false)
+        let firstSocket = NSObject()
+        let firstAttempt = AlmaLiveVoiceSocketAttempt(
+            ordinal: 41,
+            socketIdentity: ObjectIdentifier(firstSocket),
+            evidenceGeneration: firstGeneration)
+
+        let invocation = AlmaLiveVoiceToolInvocation(
+            callID: "provider-call-1",
+            functionName: AlmaLiveVoiceToolName.quickLookup.rawValue,
+            payload: .quickLookup(tool: "get_sales_summary"))
+        var ledger = AlmaLiveVoiceToolLedger()
+        XCTAssertEqual(ledger.admit(invocation), .accepted)
+        XCTAssertEqual(ledger.nextExecution(), invocation)
+        XCTAssertTrue(ledger.complete(
+            callID: invocation.callID,
+            functionName: invocation.functionName,
+            result: "ok"))
+        let firstTicket = try XCTUnwrap(
+            ledger.nextResponse(transportOrdinal: firstAttempt.ordinal))
+        let firstSend = try XCTUnwrap(
+            AlmaLiveVoiceToolResponseSendEvidenceContext(
+                attempt: firstAttempt,
+                ticketTransportOrdinal: firstTicket.transportOrdinal))
+        XCTAssertNil(AlmaLiveVoiceToolResponseSendEvidenceContext(
+            attempt: firstAttempt,
+            ticketTransportOrdinal: firstAttempt.ordinal + 1))
+
+        let toolOrdinal = try XCTUnwrap(recorder.recordToolCallObserved(
+            .quickLookup,
+            generation: firstGeneration))
+        recorder.recordToolResponseQueued(
+            ordinal: toolOrdinal,
+            tool: .quickLookup,
+            generation: firstGeneration)
+
+        let replacementGeneration = recorder.beginTransportAttempt(resuming: true)
+        let replacementSocket = NSObject()
+        let replacementAttempt = AlmaLiveVoiceSocketAttempt(
+            ordinal: 42,
+            socketIdentity: ObjectIdentifier(replacementSocket),
+            evidenceGeneration: replacementGeneration)
+        ledger.invalidateTransport(firstAttempt.ordinal)
+        XCTAssertFalse(
+            ledger.finishSend(firstTicket, succeeded: true),
+            "socket A's late callback cannot retire the replay on socket B")
+        let replacementTicket = try XCTUnwrap(
+            ledger.nextResponse(transportOrdinal: replacementAttempt.ordinal))
+        let replacementSend = try XCTUnwrap(
+            AlmaLiveVoiceToolResponseSendEvidenceContext(
+                attempt: replacementAttempt,
+                ticketTransportOrdinal: replacementTicket.transportOrdinal))
+
+        recorder.recordToolResponseSendSucceeded(
+            ordinal: toolOrdinal,
+            tool: .quickLookup,
+            sendContext: firstSend)
+        XCTAssertFalse(recorder.report().events.contains {
+            $0.name == .toolResponseSendSucceeded
+        }, "socket A's completion must not borrow socket B's generation")
+
+        recorder.recordToolResponseSendSucceeded(
+            ordinal: toolOrdinal,
+            tool: .quickLookup,
+            sendContext: replacementSend)
+        XCTAssertTrue(ledger.finishSend(replacementTicket, succeeded: true))
+        let success = try XCTUnwrap(recorder.report().events.first {
+            $0.name == .toolResponseSendSucceeded
+        })
+        XCTAssertEqual(firstSend.socketAttemptOrdinal, firstAttempt.ordinal)
+        XCTAssertEqual(firstSend.transportGeneration, firstGeneration)
+        XCTAssertEqual(success.transportGeneration, replacementGeneration)
+        XCTAssertEqual(success.toolOrdinal, toolOrdinal)
     }
 
     func testBuildProvenanceAcceptsOnlyExactVerifiedCommitContract() throws {

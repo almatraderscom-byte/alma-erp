@@ -22,6 +22,7 @@ final class AssistantParityV2UITests: XCTestCase {
             "testGeneratedImageFailureRetriesWithoutLosingSettledTurn",
             "testCommandAndSkillAutocompleteUsesSupportedContracts",
             "testLiveVoiceEvidenceFixtureExportsWithoutNetwork",
+            "testAccessibilityDynamicTypeKeepsVoiceEntryAndSettingsUsableWithoutAudio",
         ].contains { name.contains($0) }
         if ownsFixtureLaunch {
             // These tests immediately relaunch with a dedicated fixture. Avoid
@@ -94,6 +95,72 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(call.waitForExistence(timeout: 3))
         XCTAssertTrue(call.isHittable,
                       "Cancel must preserve the primary live-call entry")
+    }
+
+    func testAccessibilityDynamicTypeKeepsVoiceEntryAndSettingsUsableWithoutAudio() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
+        app.launchEnvironment["ALMA_ASSISTANT_PARITY"] = "1"
+        app.launchEnvironment["ALMA_MERGE_MOCK"] = "library"
+        app.launchEnvironment["ALMA_UI_TEST_DISABLE_BIOMETRIC_LOCK"] = "1"
+        configureAccessibilityDynamicType(for: app)
+        app.launch()
+
+        let call = app.buttons["voice.live-call.start"]
+        if !call.waitForExistence(timeout: 8) {
+            let assistantTab = app.tabBars.buttons["Assistant"]
+            XCTAssertTrue(assistantTab.waitForExistence(timeout: 3))
+            assistantTab.tap()
+        }
+
+        let settings = app.buttons["voice.precall.settings.open"]
+        XCTAssertTrue(call.waitForExistence(timeout: 8))
+        XCTAssertTrue(settings.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntilHittable(call, timeout: 12),
+                      "the primary call entry must remain usable at accessibility Dynamic Type")
+        XCTAssertTrue(waitUntilHittable(settings, timeout: 4),
+                      "pre-call settings must remain usable at accessibility Dynamic Type")
+
+        settings.tap()
+        let preCallScroll = app.scrollViews["voice.precall.settings.scroll"]
+        XCTAssertTrue(preCallScroll.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["voice.precall.cancel"].isHittable)
+        XCTAssertTrue(app.buttons["voice.precall.save"].isHittable)
+        let footer = app.staticTexts["voice.precall.footer"]
+        XCTAssertTrue(footer.waitForExistence(timeout: 3))
+        for _ in 0..<24 where !footer.isHittable {
+            preCallScroll.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(footer.isHittable,
+                      "the semantic pre-call footer must wrap and remain reachable")
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "pre-call settings must not start microphone or call audio")
+
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_SELFTEST"] = "1"
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_V1"] = "1"
+        app.launchEnvironment["ALMA_UI_TEST_DISABLE_BIOMETRIC_LOCK"] = "1"
+        configureAccessibilityDynamicType(for: app)
+        app.launch()
+
+        // This DEBUG fixture installs the real active-call settings sheet while
+        // explicitly bypassing microphone, token mint, websocket, and provider audio.
+        XCTAssertTrue(app.staticTexts["বাংলা লাইভ ভয়েস"].waitForExistence(timeout: 5))
+        let liveSettingsScroll = app.scrollViews["voice.settings.scroll"]
+        XCTAssertTrue(liveSettingsScroll.waitForExistence(timeout: 3))
+        let unavailable = app.staticTexts[
+            "voice.settings.preview-unavailable-during-call"
+        ]
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 3))
+        for _ in 0..<24 where !unavailable.isHittable {
+            liveSettingsScroll.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(unavailable.isHittable)
+        XCTAssertTrue(unavailable.label.contains("preview বাজে না"))
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "the no-audio settings fixture must not create an active audio console")
     }
 
     func testPenaltyApprovalSheetKeepsHeaderAndActionReachable() {
@@ -511,5 +578,23 @@ final class AssistantParityV2UITests: XCTestCase {
             assistantTab.tap()
         }
         XCTAssertTrue(title.waitForExistence(timeout: 5))
+    }
+
+    private func configureAccessibilityDynamicType(for application: XCUIApplication) {
+        application.launchArguments += [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+    }
+
+    private func waitUntilHittable(
+        _ element: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 }

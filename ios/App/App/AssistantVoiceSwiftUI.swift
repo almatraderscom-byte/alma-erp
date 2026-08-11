@@ -244,9 +244,12 @@ struct AlmaLiveVoiceConnectionFailure: @unchecked Sendable {
 enum AlmaLiveVoiceRemoteReplacementPolicy {
     static func replacementModelID(
         for error: Error?,
+        currentModelID: String,
         contract: AlmaLiveVoiceContract?
     ) -> String? {
         guard let contract,
+              let currentModel = contract.models.first(where: { $0.id == currentModelID }),
+              let declaredReplacement = currentModel.replacementModelID,
               case AlmaAPIError.http(let status, let body)? = error,
               status == 503,
               let data = body.data(using: .utf8),
@@ -256,9 +259,10 @@ enum AlmaLiveVoiceRemoteReplacementPolicy {
               response.error == "live_model_remotely_disabled",
               response.contractVersion == contract.contractVersion,
               let replacement = response.replacementModel,
-              contract.model(id: replacement) != nil
+              replacement == declaredReplacement,
+              contract.model(id: declaredReplacement) != nil
         else { return nil }
-        return replacement
+        return declaredReplacement
     }
 }
 
@@ -1087,6 +1091,25 @@ struct AlmaLiveVoiceSocketAttempt: Equatable {
     }
 }
 
+/// Immutable evidence identity captured at the same boundary that chooses the
+/// physical websocket for a tool response. The response ticket already fences
+/// delivery by socket-attempt ordinal; carrying that ordinal together with the
+/// recorder generation prevents a late completion from borrowing a replacement
+/// transport's global generation snapshot.
+struct AlmaLiveVoiceToolResponseSendEvidenceContext: Equatable, Sendable {
+    let socketAttemptOrdinal: Int
+    let transportGeneration: Int
+
+    init?(
+        attempt: AlmaLiveVoiceSocketAttempt,
+        ticketTransportOrdinal: Int
+    ) {
+        guard ticketTransportOrdinal == attempt.ordinal else { return nil }
+        socketAttemptOrdinal = attempt.ordinal
+        transportGeneration = attempt.evidenceGeneration
+    }
+}
+
 // MARK: - Phase 0A typed, privacy-safe evidence
 
 enum AlmaLiveVoiceEvidenceCallMode: String, Codable, Sendable {
@@ -1908,6 +1931,28 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private static let firstEnergyEvidenceFloor = 0.000_001
     private static let maximumEvents = 600
 
+    /// Preserve the first content-free cross-phase milestone of each kind when
+    /// ordinary runtime observations roll through the bounded FIFO. Keeping a
+    /// small, fixed set of sequence identities retains the distinction between
+    /// preview provenance, context compression, and transport resumption in one
+    /// exported artifact without allowing the ledger to grow past its cap.
+    private static func isRetainedCrossPhaseMilestone(
+        _ name: AlmaLiveVoiceEvidenceEventName
+    ) -> Bool {
+        switch name {
+        case .previewAssetResolved,
+             .contextCompressionConfigured,
+             .contextCompressionThresholdObserved,
+             .resumptionHandleObserved,
+             .resumptionUnavailable,
+             .resumptionAttemptFailed,
+             .resumptionAccepted:
+            return true
+        default:
+            return false
+        }
+    }
+
     private let enabled: Bool
     private let buildProvenance: AlmaBuildProvenance
     private let lock = NSLock()
@@ -1938,6 +1983,8 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private var currentInputWindowID: AlmaLiveVoiceEvidenceInputWindowID?
     private var inputWindowTurns: [AlmaLiveVoiceEvidenceInputWindowID: Int] = [:]
     private var events: [AlmaLiveVoiceEvidenceEvent] = []
+    private var retainedCrossPhaseMilestoneNames = Set<String>()
+    private var retainedCrossPhaseMilestoneSequences = Set<Int>()
     private var rawEnergyWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
     private var conversionSucceededWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
     private var conversionFailureWindows = Set<AlmaLiveVoiceEvidenceInputWindowID>()
@@ -2051,6 +2098,8 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         currentInputWindowID = nil
         inputWindowTurns.removeAll(keepingCapacity: true)
         events.removeAll(keepingCapacity: true)
+        retainedCrossPhaseMilestoneNames.removeAll(keepingCapacity: true)
+        retainedCrossPhaseMilestoneSequences.removeAll(keepingCapacity: true)
         rawEnergyWindows.removeAll(keepingCapacity: true)
         conversionSucceededWindows.removeAll(keepingCapacity: true)
         conversionFailureWindows.removeAll(keepingCapacity: true)
@@ -2822,6 +2871,17 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
         lock.unlock()
     }
 
+    func recordToolResponseSendSucceeded(
+        ordinal: Int,
+        tool: AlmaLiveVoiceEvidenceTool,
+        sendContext: AlmaLiveVoiceToolResponseSendEvidenceContext
+    ) {
+        recordToolResponseSendSucceeded(
+            ordinal: ordinal,
+            tool: tool,
+            generation: sendContext.transportGeneration)
+    }
+
     func report() -> AlmaLiveVoiceEvidenceReport {
         lock.lock()
         let report = reportLocked()
@@ -2958,9 +3018,19 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
             contextTriggerTokens: contextTriggerTokens,
             contextTargetTokens: contextTargetTokens,
             observedContextTokens: observedContextTokens)
+        if Self.isRetainedCrossPhaseMilestone(name),
+           retainedCrossPhaseMilestoneNames.insert(name.rawValue).inserted {
+            retainedCrossPhaseMilestoneSequences.insert(event.sequence)
+        }
         events.append(event)
-        if events.count > Self.maximumEvents {
-            events.removeFirst(events.count - Self.maximumEvents)
+        while events.count > Self.maximumEvents {
+            let removableIndex = events.firstIndex {
+                !retainedCrossPhaseMilestoneSequences.contains($0.sequence)
+            }
+            // There are only seven retained milestone kinds and the cap is 600,
+            // so a removable event always exists. Keep the fallback fail-bounded
+            // if that invariant changes in a future schema revision.
+            events.remove(at: removableIndex ?? events.startIndex)
         }
         Self.logger.info("session=\(self.localSessionID, privacy: .public) sequence=\(self.sequence) event=\(name.rawValue, privacy: .public) transport=\(self.transportGeneration)")
     }
@@ -3970,6 +4040,7 @@ final class AlmaVoiceEngine {
         if let replacementModelID = AlmaLiveVoiceRemoteReplacementPolicy
             .replacementModelID(
                 for: error,
+                currentModelID: currentConnectionProfile.modelID,
                 contract: AlmaLiveVoicePreferences.activeContract),
            replacementModelID != currentConnectionProfile.modelID
         {
@@ -9459,6 +9530,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         toolLedgerLock.unlock()
 
+        guard let evidenceSendContext = AlmaLiveVoiceToolResponseSendEvidenceContext(
+            attempt: attempt,
+            ticketTransportOrdinal: ticket.transportOrdinal
+        ) else {
+            toolLedgerLock.lock()
+            _ = toolLedger.finishSend(ticket, succeeded: false)
+            toolLedgerLock.unlock()
+            return
+        }
+
         let queued = sendJSON(
             ["toolResponse": ["functionResponses": [[
                 "id": ticket.callID,
@@ -9480,7 +9561,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     self.evidenceRecorder.recordToolResponseSendSucceeded(
                         ordinal: evidence.ordinal,
                         tool: evidence.tool,
-                        generation: self.evidenceTransportGenerationSnapshot())
+                        sendContext: evidenceSendContext)
                 }
                 self.drainToolResponses()
             }
@@ -13803,10 +13884,12 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
                     }
 
                     Text("Save করলে এই পছন্দ পরের কল শুরু হওয়ার সময় নেওয়া হবে। Cancel করলে আগের পছন্দই থাকবে।")
-                        .font(.system(size: 11.5))
+                        .font(.footnote)
                         .foregroundStyle(muted)
                         .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("voice.precall.footer")
                 }
                 .padding(20)
             }
