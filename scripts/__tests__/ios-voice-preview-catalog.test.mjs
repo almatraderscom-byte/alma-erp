@@ -212,14 +212,17 @@ function commitCatalogFixture(fixture) {
 
 function createProductCopy(fixture) {
   const productRoot = join(fixture.root, 'Build', 'App.app')
+  const productVoicePreviewsRoot = join(productRoot, 'VoicePreviews')
+  const productManifestPath = join(productVoicePreviewsRoot, `${catalogVersion}.json`)
   const productCatalogRoot = join(productRoot, 'VoicePreviews', catalogVersion)
+  write(productManifestPath, readFileSync(fixture.manifestPath))
   for (const entry of fixture.manifest.entries) {
     write(
       join(productCatalogRoot, entry.filename),
       readFileSync(join(fixture.bundleRoot, entry.filename)),
     )
   }
-  return { productCatalogRoot, productRoot }
+  return { productCatalogRoot, productManifestPath, productRoot, productVoicePreviewsRoot }
 }
 
 function createCommittedReleaseFixture() {
@@ -487,6 +490,48 @@ test('product mode proves the exact built App.app catalog copy', async (t) => {
     )
   })
 
+  await t.test('missing product manifest', () => {
+    const fixture = createFixture()
+    const product = createProductCopy(fixture)
+    unlinkSync(product.productManifestPath)
+    const result = invoke(fixture, ['--product-root', product.productRoot])
+    assertFailure(result, /product VoicePreviews entry missing: "live-bn-v1\.json"/)
+    assert.match(result.stderr, /product manifest missing\/unreadable:/)
+  })
+
+  await t.test('corrupt product manifest', () => {
+    const fixture = createFixture()
+    const product = createProductCopy(fixture)
+    write(product.productManifestPath, '{"different":true}\n')
+    assertFailure(
+      invoke(fixture, ['--product-root', product.productRoot]),
+      /source\/product manifest copy mismatch/,
+    )
+  })
+
+  await t.test('symlinked product manifest', () => {
+    const fixture = createFixture()
+    const product = createProductCopy(fixture)
+    const target = join(fixture.root, 'product-manifest-target.json')
+    write(target, readFileSync(product.productManifestPath))
+    unlinkSync(product.productManifestPath)
+    symlinkSync(target, product.productManifestPath)
+    assertFailure(
+      invoke(fixture, ['--product-root', product.productRoot]),
+      /product manifest path must not contain a symlink:/,
+    )
+  })
+
+  await t.test('extra product VoicePreviews entry', () => {
+    const fixture = createFixture()
+    const product = createProductCopy(fixture)
+    write(join(product.productVoicePreviewsRoot, 'unexpected.json'), '{}\n')
+    assertFailure(
+      invoke(fixture, ['--product-root', product.productRoot]),
+      /product VoicePreviews unexpected entry: "unexpected\.json"/,
+    )
+  })
+
   await t.test('extra product asset', () => {
     const fixture = createFixture()
     const product = createProductCopy(fixture)
@@ -728,5 +773,23 @@ test('Xcode verifies the copied App.app catalog and requires release approval fo
   assert.match(
     phase,
     /\$\(TARGET_BUILD_DIR\)\/\$\(UNLOCALIZED_RESOURCES_FOLDER_PATH\)\/VoicePreviews\/live-bn-v1/,
+  )
+  assert.match(
+    phase,
+    /\$\(TARGET_BUILD_DIR\)\/\$\(UNLOCALIZED_RESOURCES_FOLDER_PATH\)\/VoicePreviews\/live-bn-v1\.json/,
+  )
+
+  const copyPhase = project.match(
+    /A7C100000000000000000005 \/\* Copy Voice Preview Manifest \*\/ = \{[\s\S]*?\n\t\t\};/,
+  )?.[0]
+  assert.ok(copyPhase, 'Copy Voice Preview Manifest phase is missing')
+  assert.match(copyPhase, /isa = PBXShellScriptBuildPhase;/)
+  assert.match(copyPhase, /inputPaths = \([\s\S]*?config\/voice-preview-catalog\/live-bn-v1\.json/)
+  assert.match(copyPhase, /outputPaths = \([\s\S]*?VoicePreviews\/live-bn-v1\.json/)
+  assert.match(copyPhase, /\/usr\/bin\/install -m 0644/)
+  assert.doesNotMatch(project, /PBXFileReference;[^\n]*live-bn-v1\.json/)
+  assert.match(
+    project,
+    /504EC3021FED79650016851F \/\* Resources \*\/,[\s\S]*?A7C100000000000000000005 \/\* Copy Voice Preview Manifest \*\/,[\s\S]*?C8A0D1000000000000000012 \/\* Generate Build Provenance \*\//,
   )
 })

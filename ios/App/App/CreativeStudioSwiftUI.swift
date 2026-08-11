@@ -3685,8 +3685,17 @@ struct CSAudioPlayerBar: View {
     var body: some View {
         Button {
             if player == nil { player = AVPlayer(url: url) }
-            if playing { player?.pause() } else { player?.play() }
-            playing.toggle(); CSHaptic.tap()
+            if playing {
+                player?.pause()
+                playing = false
+            } else {
+                guard AlmaLiveVoicePreviewTakeoverRelay.shared
+                    .stopAndRestoreBeforeAudioTakeover()
+                else { return }
+                player?.play()
+                playing = true
+            }
+            CSHaptic.tap()
         } label: {
             Label(playing ? "থামাও" : "বাজাও", systemImage: playing ? "pause.fill" : "play.fill")
                 .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)

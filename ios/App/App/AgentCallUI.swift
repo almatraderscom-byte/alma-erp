@@ -28,12 +28,24 @@ import UIKit
 final class AgentCallController: NSObject {
     static let shared = AgentCallController()
 
+    /// A CallKit UUID identifies the OS transaction while `generation` prevents a
+    /// delayed engine callback from authenticating against a later logical call,
+    /// even if a server ever reuses the same canonical call id.
+    struct SessionIdentity: Equatable {
+        let callId: String
+        let generation: UInt64
+        let callKitUUID: UUID?
+        let admissionToken: AlmaCallAudioAdmission.Token?
+    }
+
     /// Dedicated engine so an agent call never depends on the assistant tab
     /// having been built. chatVM stays nil — the engine treats it as optional
     /// everywhere (conversation defaults to "general").
     private(set) var engine: AlmaVoiceEngine?
     private(set) var activeCallId: String?
     private(set) var startedAt: Date?
+    private(set) var activeSession: SessionIdentity?
+    private var nextGeneration: UInt64 = 0
     private var window: UIWindow?
 
     var isActive: Bool { activeCallId != nil }
@@ -44,42 +56,110 @@ final class AgentCallController: NSObject {
     /// path). The sim harness has no CallKit, so it must configure the session
     /// itself — passing true there would wait forever for didActivate.
     @discardableResult
-    func start(callId: String, purpose: String, callKitManaged: Bool = true) -> Bool {
-        guard activeCallId == nil else { return false }
-        activeCallId = callId
+    func start(
+        callId: String,
+        purpose: String,
+        callKitManaged: Bool = true,
+        callKitUUID: UUID? = nil,
+        admissionToken: AlmaCallAudioAdmission.Token? = nil
+    ) -> SessionIdentity? {
+        guard activeSession == nil else { return nil }
+        if callKitManaged {
+            guard callKitUUID != nil,
+                  let admissionToken,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else { return nil }
+        }
+        nextGeneration &+= 1
+        let session = SessionIdentity(
+            callId: callId.lowercased(),
+            generation: nextGeneration,
+            callKitUUID: callKitUUID,
+            admissionToken: admissionToken)
+        activeSession = session
+        activeCallId = session.callId
         startedAt = Date()
         let eng = AlmaVoiceEngine()
         engine = eng
         eng.callKitManaged = callKitManaged
-        eng.activeAgentCallId = callId
+        eng.callAudioAdmissionToken = session.admissionToken
+        eng.activeAgentCallId = session.callId
+        eng.agentCallEndRequest = { [weak self, weak eng] in
+            guard let self, let eng else { return }
+            self.handleEngineEndRequest(session: session, engine: eng)
+        }
+        eng.agentCallTerminalFailure = { [weak self, weak eng] reason in
+            guard let self, let eng else { return }
+            self.handleTerminalFailure(
+                session: session,
+                engine: eng,
+                reason: reason)
+        }
         if callKitManaged {
             do {
                 // This must precede CXAnswerCallAction.fulfill(): CallKit
                 // activates the category/route that is configured at fulfil.
                 try eng.prepareCallKitAudioSession()
+                guard let admissionToken = session.admissionToken,
+                      AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+                else { throw CancellationError() }
             } catch {
                 AlmaVoiceAudioTrace.event("callkit.preflight.failed", String(describing: error))
+                eng.agentCallTerminalFailure = nil
+                eng.agentCallEndRequest = nil
                 eng.activeAgentCallId = nil
-                engine = nil
-                activeCallId = nil
-                startedAt = nil
-                return false
+                // `prepareCallKitAudioSession()` may have configured part of the
+                // graph/session before throwing. Close that exact engine before
+                // releasing the reservation; clearing the agent id first avoids
+                // recursively requesting a CXEnd transaction.
+                eng.end()
+                teardown(expectedSession: session)
+                return nil
             }
         }
         // Empty purpose = brief still in flight (deliverBrief will inject it,
         // pre- or post-connect). Never seed an empty note.
         if !purpose.isEmpty { eng.pendingAgentCallBrief = purpose }
+        if callKitManaged {
+            guard let admissionToken = session.admissionToken,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else {
+                eng.agentCallTerminalFailure = nil
+                eng.agentCallEndRequest = nil
+                eng.activeAgentCallId = nil
+                eng.end()
+                teardown(expectedSession: session)
+                return nil
+            }
+        }
         eng.begin()
+        // `begin()` can reject synchronously at the audio-admission boundary.
+        // Never fulfil a system answer for an engine that did not enter startup.
+        guard eng.callConnection != .idle else {
+            eng.agentCallTerminalFailure = nil
+            eng.agentCallEndRequest = nil
+            eng.activeAgentCallId = nil
+            eng.end()
+            teardown(expectedSession: session)
+            return nil
+        }
         presentWindowIfForeground()
         NotificationCenter.default.addObserver(
             self, selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
-        return true
+        return session
+    }
+
+    func owns(_ session: SessionIdentity) -> Bool {
+        activeSession == session && activeCallId == session.callId
     }
 
     /// CallKit activated the shared audio session — the live engine can start
     /// capture/playback now (it must never activate the session itself).
     func audioSessionActivated(_ observation: AlmaLiveVoiceLifecycleObservation) {
+        guard let token = activeSession?.admissionToken,
+              AlmaCallAudioAdmission.shared.acceptsMediaMutation(token)
+        else { return }
         engine?.callKitAudioActivated(observation)
     }
 
@@ -96,6 +176,8 @@ final class AgentCallController: NSObject {
     /// provider to perform another end transaction.
     func systemReset() {
         guard isActive else { return }
+        engine?.agentCallTerminalFailure = nil
+        engine?.agentCallEndRequest = nil
         engine?.activeAgentCallId = nil
         engine?.end()
         teardown()
@@ -117,11 +199,32 @@ final class AgentCallController: NSObject {
         engine?.deliverAgentBrief(purpose)
     }
 
-    /// End from OUR UI (red button) — engine.end() closes the CallKit call too,
-    /// and its CXEndCallAction posts 'completed' to the server.
+    /// End from OUR UI (red button): silence locally first, then close the exact
+    /// CallKit generation with a deterministic failure fallback.
     func endFromUI() {
+        guard let session = activeSession else { return }
+        // Local privacy is synchronous; do not rely on CX transaction latency.
+        // Clear the engine's automatic request hook so exactly this generation
+        // owns the transaction/fallback below.
+        engine?.agentCallTerminalFailure = nil
+        engine?.agentCallEndRequest = nil
+        engine?.activeAgentCallId = nil
         engine?.end()
-        teardown()
+        teardown(expectedSession: session)
+        guard let callKitUUID = session.callKitUUID else { return }
+        Task {
+            let accepted = await CallKitVoIP.shared.requestEnd(
+                callId: session.callId,
+                reason: "agent_call_done")
+            guard !accepted else { return }
+            // A rejected CX transaction must not leave a ghost OS call or its
+            // admission token pinned after the local graph has gone.
+            CallKitVoIP.shared.finishFailedAgentStartup(
+                callId: session.callId,
+                callUUID: callKitUUID,
+                expectedGeneration: session.generation,
+                note: "CallKit end transaction failed after local hangup")
+        }
     }
 
     /// CallKit ended the call (system UI / remote cancel) — engine may still be
@@ -129,12 +232,102 @@ final class AgentCallController: NSObject {
     /// first so engine.end() skips its requestEnd).
     func callKitEnded(callId: String) {
         guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else { return }
+        engine?.agentCallTerminalFailure = nil
+        engine?.agentCallEndRequest = nil
         engine?.activeAgentCallId = nil
         engine?.end()
         teardown()
     }
 
-    private func teardown() {
+    /// A timed-out CXStart/CXAnswer action is a privacy boundary. The concrete
+    /// CallKit UUID plus the current logical generation must both match before
+    /// this method can silence and retire the agent engine.
+    @discardableResult
+    func cancelCallKitOperation(
+        callId: String,
+        callKitUUID: UUID,
+        expectedGeneration: UInt64?
+    ) -> Bool {
+        guard let expectedGeneration,
+              let session = activeSession,
+              session.generation == expectedGeneration,
+              session.callKitUUID == callKitUUID,
+              session.callId.caseInsensitiveCompare(callId) == .orderedSame,
+              let eng = engine
+        else { return false }
+        eng.agentCallTerminalFailure = nil
+        eng.agentCallEndRequest = nil
+        eng.activeAgentCallId = nil
+        eng.end()
+        teardown(expectedSession: session)
+        return true
+    }
+
+    private func handleTerminalFailure(
+        session: SessionIdentity,
+        engine expectedEngine: AlmaVoiceEngine,
+        reason: String
+    ) {
+        guard owns(session), engine === expectedEngine else { return }
+        expectedEngine.agentCallTerminalFailure = nil
+        expectedEngine.agentCallEndRequest = nil
+        // Clear this before `end()` so terminal startup failure cannot recursively
+        // enqueue CXEndCallAction and race the exact provider report below.
+        expectedEngine.activeAgentCallId = nil
+        expectedEngine.end()
+        teardown(expectedSession: session)
+
+        if let uuid = session.callKitUUID {
+            CallKitVoIP.shared.finishFailedAgentStartup(
+                callId: session.callId,
+                callUUID: uuid,
+                expectedGeneration: session.generation,
+                note: reason)
+        } else {
+            Task {
+                await CallKitVoIP.postAgentCallStatus(
+                    session.callId,
+                    // A direct/simulator engine startup failure carries the same
+                    // v2 terminal truth as CallKit: it is never a normal hangup.
+                    status: "failed",
+                    note: reason)
+            }
+        }
+    }
+
+    /// Engine-originated terminal paths (model hangup, Live Activity, lifecycle)
+    /// must close the exact CallKit generation just like the red in-call button.
+    /// The engine has already stopped its local graph before invoking this hook;
+    /// this method only retires controller state and performs the exact OS request.
+    private func handleEngineEndRequest(
+        session: SessionIdentity,
+        engine expectedEngine: AlmaVoiceEngine
+    ) {
+        guard owns(session), engine === expectedEngine else { return }
+        expectedEngine.agentCallTerminalFailure = nil
+        expectedEngine.agentCallEndRequest = nil
+        expectedEngine.activeAgentCallId = nil
+        teardown(expectedSession: session)
+
+        guard let callKitUUID = session.callKitUUID else { return }
+        Task {
+            let accepted = await CallKitVoIP.shared.requestEnd(
+                callId: session.callId,
+                reason: "agent_call_done")
+            guard !accepted else { return }
+            CallKitVoIP.shared.finishFailedAgentStartup(
+                callId: session.callId,
+                callUUID: callKitUUID,
+                expectedGeneration: session.generation,
+                note: "CallKit end transaction failed after engine hangup")
+        }
+    }
+
+    private func teardown(expectedSession: SessionIdentity? = nil) {
+        if let expectedSession, activeSession != expectedSession { return }
+        engine?.agentCallTerminalFailure = nil
+        engine?.agentCallEndRequest = nil
+        activeSession = nil
         activeCallId = nil
         startedAt = nil
         engine = nil

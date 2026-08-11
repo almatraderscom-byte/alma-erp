@@ -916,7 +916,6 @@ private final class ApprovalRobotSound {
     private var player: AVAudioPlayer?
 
     func play(_ decision: GlobalOfficeRobotStore.ApprovalDecision) {
-        player?.stop()
         let name = decision == .approve ? "RobotApproveSFX" : "RobotRejectSFX"
         guard let url = Bundle.main.url(
             forResource: name,
@@ -927,6 +926,10 @@ private final class ApprovalRobotSound {
             #endif
             return
         }
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared
+            .stopAndRestoreBeforeAudioTakeover()
+        else { return }
+        player?.stop()
         nextPlayer.volume = decision == .approve ? 0.88 : 0.82
         nextPlayer.prepareToPlay()
         let started = nextPlayer.play()

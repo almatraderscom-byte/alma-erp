@@ -97,6 +97,202 @@ private struct CanonicalTransitionResponse: Decodable {
     let terminalReason: String?
 }
 
+/// A narrow lease for app-owned, non-CallKit AVAudioSession mutations. Cleanup
+/// restores the captured configuration only while the session still exactly
+/// matches this owner, so a newer CallKit/Agora owner is never overwritten.
+private struct IntercomAudioSessionLease {
+    let previousCategory: AVAudioSession.Category
+    let previousMode: AVAudioSession.Mode
+    let previousOptions: AVAudioSession.CategoryOptions
+    let ownedCategory: AVAudioSession.Category
+    let ownedMode: AVAudioSession.Mode
+    let ownedOptions: AVAudioSession.CategoryOptions
+
+    static func capture(
+        session: AVAudioSession,
+        ownedCategory: AVAudioSession.Category,
+        ownedMode: AVAudioSession.Mode,
+        ownedOptions: AVAudioSession.CategoryOptions
+    ) -> Self {
+        Self(
+            previousCategory: session.category,
+            previousMode: session.mode,
+            previousOptions: session.categoryOptions,
+            ownedCategory: ownedCategory,
+            ownedMode: ownedMode,
+            ownedOptions: ownedOptions)
+    }
+
+    func updatingOwnedConfiguration(
+        category: AVAudioSession.Category,
+        mode: AVAudioSession.Mode,
+        options: AVAudioSession.CategoryOptions
+    ) -> Self {
+        Self(
+            previousCategory: previousCategory,
+            previousMode: previousMode,
+            previousOptions: previousOptions,
+            ownedCategory: category,
+            ownedMode: mode,
+            ownedOptions: options)
+    }
+
+    func releaseIfStillOwned(session: AVAudioSession) {
+        guard session.category == ownedCategory,
+              session.mode == ownedMode,
+              session.categoryOptions == ownedOptions
+        else { return }
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        try? session.setCategory(
+            previousCategory,
+            mode: previousMode,
+            options: previousOptions)
+    }
+}
+
+/// Immutable authority carried by one logical Agora join. Agora's engine
+/// delegate does not put a channel on most callbacks, so a channel string in
+/// mutable coordinator state is not enough to distinguish a late callback from
+/// the channel that produced it. Every delegate proxy captures one of these.
+struct AlmaAgoraJoinIdentity: Equatable {
+    let epoch: UInt64
+    let engineIdentity: ObjectIdentifier
+    let channel: String
+    let admissionToken: AlmaCallAudioAdmission.Token
+    let operationGeneration: UInt64
+}
+
+/// Small, deterministic epoch fence kept separate from the SDK so its stale
+/// callback and same-channel idempotence rules can be unit tested.
+struct AlmaAgoraJoinEpochFence {
+    private(set) var active: AlmaAgoraJoinIdentity?
+    private var nextEpoch: UInt64 = 0
+
+    mutating func activate(
+        engineIdentity: ObjectIdentifier,
+        channel: String,
+        admissionToken: AlmaCallAudioAdmission.Token,
+        operationGeneration: UInt64
+    ) -> AlmaAgoraJoinIdentity {
+        if let active,
+           active.engineIdentity == engineIdentity,
+           active.channel == channel,
+           active.admissionToken == admissionToken,
+           active.operationGeneration == operationGeneration {
+            return active
+        }
+        precondition(active == nil, "Agora channel replacement must finish leave before rejoin")
+        nextEpoch &+= 1
+        let identity = AlmaAgoraJoinIdentity(
+            epoch: nextEpoch,
+            engineIdentity: engineIdentity,
+            channel: channel,
+            admissionToken: admissionToken,
+            operationGeneration: operationGeneration)
+        active = identity
+        return identity
+    }
+
+    @discardableResult
+    mutating func retire(_ identity: AlmaAgoraJoinIdentity) -> Bool {
+        guard active == identity else { return false }
+        active = nil
+        return true
+    }
+
+    func requiresSerializedLeave(
+        engineIdentity: ObjectIdentifier,
+        channel: String,
+        admissionToken: AlmaCallAudioAdmission.Token,
+        operationGeneration: UInt64
+    ) -> Bool {
+        guard let active else { return false }
+        return active.engineIdentity != engineIdentity
+            || active.channel != channel
+            || active.admissionToken != admissionToken
+            || active.operationGeneration != operationGeneration
+    }
+
+    func accepts(
+        _ identity: AlmaAgoraJoinIdentity,
+        engineIdentity: ObjectIdentifier,
+        reportedChannel: String? = nil
+    ) -> Bool {
+        guard active == identity,
+              identity.engineIdentity == engineIdentity
+        else { return false }
+        return reportedChannel == nil || reportedChannel == identity.channel
+    }
+}
+
+enum AlmaAgoraJoinSubmissionDisposition: Equatable {
+    case accepted
+    case failedRetired
+    case staleFailureIgnored
+}
+
+struct AlmaAgoraJoinSubmissionTransition {
+    static func apply(
+        result: Int32,
+        identity: AlmaAgoraJoinIdentity,
+        fence: inout AlmaAgoraJoinEpochFence
+    ) -> AlmaAgoraJoinSubmissionDisposition {
+        guard result < 0 else { return .accepted }
+        return fence.retire(identity) ? .failedRetired : .staleFailureIgnored
+    }
+}
+
+enum AlmaAgoraChannelSwitchOperation: Equatable {
+    case mutePublication
+    case retireAuthority
+    case leaveChannel
+}
+
+struct AlmaAgoraChannelSwitchOperationPlan {
+    static let privacyOrdered: [AlmaAgoraChannelSwitchOperation] = [
+        .mutePublication,
+        .retireAuthority,
+        .leaveChannel,
+    ]
+
+    static func performPrivacyBoundary(
+        _ operation: (AlmaAgoraChannelSwitchOperation) -> Void
+    ) {
+        privacyOrdered.forEach(operation)
+    }
+}
+
+/// `leaveChannel` is asynchronous in Agora 4.6.2. The completion block and the
+/// SDK's disconnected/did-leave callbacks race legitimately, so this one-shot
+/// barrier accepts the first confirmation and supports concurrent join callers
+/// waiting on the same in-flight channel switch.
+private final class AgoraChannelLeaveBarrier: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Bool?
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+
+    func wait() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let completed: Bool? = lock.withLock {
+                if let result { return result }
+                waiters.append(continuation)
+                return nil
+            }
+            if let completed { continuation.resume(returning: completed) }
+        }
+    }
+
+    func finish(confirmed: Bool) {
+        let continuations: [CheckedContinuation<Bool, Never>] = lock.withLock {
+            guard result == nil else { return [] }
+            result = confirmed
+            defer { waiters.removeAll() }
+            return waiters
+        }
+        continuations.forEach { $0.resume(returning: confirmed) }
+    }
+}
+
 // MARK: - Manager
 
 @available(iOS 17.0, *)
@@ -108,6 +304,11 @@ final class OfficeCallCoordinator: NSObject {
     /// (WhatsApp-style — no call timer until both are actually on the channel).
     enum Mode: Equatable { case idle, listening, broadcasting, calling, ringing, reconnecting }
     enum Direction: Equatable { case incoming, outgoing }
+    private enum AudioTeardownOwner { case appOwned, callKit }
+    private struct PendingAgoraChannelSwitch {
+        let identity: AlmaAgoraJoinIdentity
+        let barrier: AgoraChannelLeaveBarrier
+    }
 
     var mode: Mode = .idle
     var connected = false
@@ -135,6 +336,9 @@ final class OfficeCallCoordinator: NSObject {
     var hasActiveCall: Bool {
         activeCallId != nil && (mode == .ringing || mode == .calling || mode == .reconnecting)
     }
+
+    var isPTTActiveOrStarting: Bool { recording || pttStarting || pttPressActive }
+    private(set) var audioTeardownPending = false
 
     // IOSP-4 crash fix: `engine`'s type lives in the dynamically-linked
     // AgoraRtcKit.framework. On an @Observable class, a stored property is read
@@ -165,15 +369,54 @@ final class OfficeCallCoordinator: NSObject {
     private var recorder: AVAudioRecorder?
     private var recordURL: URL?
     private var recordStart: Date?
+    private var pttAudioSessionLease: IntercomAudioSessionLease?
+    private var officeAudioSessionLease: IntercomAudioSessionLease?
+    @ObservationIgnored private var pttRequestGeneration: UInt64 = 0
+    @ObservationIgnored private var pttStarting = false
+    @ObservationIgnored private var pttPressActive = false
+    @ObservationIgnored private var safetyObserverTokens: [NSObjectProtocol] = []
+    @ObservationIgnored private var mediaOperationGeneration: UInt64 = 0
+    @ObservationIgnored private var audioTeardownGeneration: UInt64 = 0
+    @ObservationIgnored private var audioTeardownOwner: AudioTeardownOwner?
+    @ObservationIgnored private var officeAudioConfigured = false
+    @ObservationIgnored private var agoraJoinSubmitted = false
+    @ObservationIgnored private var agoraJoinFence = AlmaAgoraJoinEpochFence()
+    @ObservationIgnored private var agoraDelegateProxy: AgoraJoinDelegateProxy?
+    @ObservationIgnored private var pendingAgoraChannelSwitch: PendingAgoraChannelSwitch?
+    @ObservationIgnored private var officeCallAudioAdmissionToken: AlmaCallAudioAdmission.Token?
+    @ObservationIgnored private var officeCallAudioAdmissionOperation: UInt64?
+    @ObservationIgnored private var appOwnedAudioTeardownAdmissionToken: AlmaCallAudioAdmission.Token?
+    @ObservationIgnored private var pttCallAudioAdmissionToken: AlmaCallAudioAdmission.Token?
+    @ObservationIgnored private var systemAudioPreemptionPending = false
+    @ObservationIgnored private var systemAudioPreemptionEndReceipt: CallKitEndReceipt?
+    @ObservationIgnored private var callKitAudioTeardownAdmissionToken: AlmaCallAudioAdmission.Token?
+    @ObservationIgnored private var callKitAudioTeardownCallID: String?
 
     private override init() {
         super.init()
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(audioRouteChanged),
-            name: AVAudioSession.routeChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(audioInterrupted),
-            name: AVAudioSession.interruptionNotification, object: nil)
+        let center = NotificationCenter.default
+        safetyObserverTokens.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated { self?.handleAudioRouteChanged(note) }
+        })
+        safetyObserverTokens.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated { self?.handleAudioInterruption(note) }
+        })
+        for name in [
+            UIApplication.willResignActiveNotification,
+            UIApplication.didEnterBackgroundNotification,
+            AVAudioSession.mediaServicesWereLostNotification,
+            AVAudioSession.mediaServicesWereResetNotification,
+        ] {
+            safetyObserverTokens.append(center.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cancelPTTWithoutUpload() }
+            })
+        }
     }
 
     // ── Public API ──────────────────────────────────────────────────────────
@@ -193,16 +436,54 @@ final class OfficeCallCoordinator: NSObject {
     /// Join the shared walkie-talkie channel. Owner → broadcaster (open mic), staff → listener.
     @MainActor
     func joinLive(asBroadcaster: Bool) async {
+        guard !audioTeardownPending else {
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
+        let operationGeneration = mediaOperationGeneration &+ 1
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
+        guard let admissionToken = claimOfficeCallAudio(
+            .officeMedia(operation: operationGeneration, callID: nil))
+        else {
+            error = "আরেকটি কল বা অডিও সেশন চলছে"
+            return
+        }
+        mediaOperationGeneration = operationGeneration
         error = nil
         statusText = "সংযোগ হচ্ছে…"
         do {
-            if asBroadcaster { try await ensureMicPermission() }
+            if asBroadcaster {
+                try await ensureMicPermission()
+                try requireCurrentMediaOperation(
+                    operationGeneration,
+                    admissionToken: admissionToken)
+            }
             let ch = try await resolveLiveChannel()
-            try await join(channel: ch, publishMic: asBroadcaster)
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                admissionToken: admissionToken)
+            try await join(
+                channel: ch,
+                publishMic: asBroadcaster,
+                operationGeneration: operationGeneration,
+                admissionToken: admissionToken)
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                admissionToken: admissionToken)
             mode = asBroadcaster ? .broadcasting : .listening
             micMuted = false
             statusText = asBroadcaster ? "লাইভ — আপনি বলছেন" : "লাইভ — শুনছেন"
+        } catch is CancellationError {
+            stopOfficeCallAudioIfOwned(admissionToken)
+            return
         } catch {
+            guard operationGeneration == mediaOperationGeneration else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                return
+            }
             self.error = message(for: error)
             statusText = ""
             leave()
@@ -215,8 +496,63 @@ final class OfficeCallCoordinator: NSObject {
     /// exactly like WhatsApp/Messenger. `mode` is set to `.ringing` BEFORE joining so the
     /// join-completion delegate can flip us to `.calling` without a race.
     @MainActor
-    func startCall(channel ch: String, outgoing: Bool) async {
-        let callId = Self.callId(from: ch)
+    func startCall(
+        channel ch: String,
+        outgoing: Bool,
+        admissionToken suppliedAdmissionToken: AlmaCallAudioAdmission.Token? = nil
+    ) async {
+        guard !audioTeardownPending else { return }
+        guard let callId = Self.callId(from: ch) else { return }
+        let candidateOperationGeneration = mediaOperationGeneration &+ 1
+        if let suppliedAdmissionToken {
+            guard AlmaCallAudioAdmission.shared.acceptsMediaMutation(
+                    suppliedAdmissionToken),
+                  officeCallAudioAdmissionToken == nil
+                    || officeCallAudioAdmissionToken == suppliedAdmissionToken
+            else { return }
+            // Adopt the system reservation before any fallible local handoff so
+            // a pre-media failure can still clear the exact CallKit teardown.
+            officeCallAudioAdmissionToken = suppliedAdmissionToken
+            officeCallAudioAdmissionOperation = candidateOperationGeneration
+            mediaOperationGeneration = candidateOperationGeneration
+            activeCallId = callId
+            callDirection = outgoing ? .outgoing : .incoming
+        }
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            if let suppliedAdmissionToken {
+                stopOfficeCallAudioIfOwned(suppliedAdmissionToken)
+            }
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
+        let admissionToken: AlmaCallAudioAdmission.Token
+        let operationGeneration: UInt64
+        if let suppliedAdmissionToken {
+            admissionToken = suppliedAdmissionToken
+            operationGeneration = candidateOperationGeneration
+            officeCallAudioAdmissionOperation = operationGeneration
+        } else if let existingToken = officeCallAudioAdmissionToken,
+                  let existingOperation = officeCallAudioAdmissionOperation,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(existingToken),
+                  AlmaCallAudioAdmission.shared.activeOwner == .officeMedia(
+                    operation: existingOperation,
+                    callID: callId) {
+            // Legacy in-app ringing already owns the exact call media token.
+            // Answering advances that same operation without releasing a gap in
+            // which preview/another call could mutate AVAudioSession.
+            admissionToken = existingToken
+            operationGeneration = existingOperation
+        } else {
+            guard let claimed = claimOfficeCallAudio(
+                .officeMedia(operation: candidateOperationGeneration, callID: callId))
+            else {
+                error = "আরেকটি কল বা অডিও সেশন চলছে"
+                return
+            }
+            admissionToken = claimed
+            operationGeneration = candidateOperationGeneration
+        }
+        mediaOperationGeneration = operationGeneration
         activeCallId = callId
         callDirection = outgoing ? .outgoing : .incoming
         joinStartedAt = Date()
@@ -230,27 +566,70 @@ final class OfficeCallCoordinator: NSObject {
         ringtone.stop()                          // any incoming ring stops the moment we act
         do {
             try await ensureMicPermission()
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                expectedCallID: callId,
+                admissionToken: admissionToken)
             if !outgoing {
                 guard await transitionCanonical(to: "ANSWERED") else {
                     throw IntercomError.canonicalRejected
                 }
+                try requireCurrentMediaOperation(
+                    operationGeneration,
+                    expectedCallID: callId,
+                    admissionToken: admissionToken)
                 guard await transitionCanonical(to: "CONNECTING") else {
                     throw IntercomError.canonicalRejected
                 }
+                try requireCurrentMediaOperation(
+                    operationGeneration,
+                    expectedCallID: callId,
+                    admissionToken: admissionToken)
             }
-            try await join(channel: ch, publishMic: true)
+            try await join(
+                channel: ch,
+                publishMic: true,
+                operationGeneration: operationGeneration,
+                expectedCallID: callId,
+                admissionToken: admissionToken)
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                expectedCallID: callId,
+                admissionToken: admissionToken)
             micMuted = false
             startCanonicalReconciliation()
             if outgoing {
                 startRingTimeout()               // "কেউ ধরেনি" if unanswered
                 ringtone.play(.ringback)         // caller hears the soft ring-back tone
             }
+        } catch is CancellationError {
+            stopOfficeCallAudioIfOwned(admissionToken)
+            return
         } catch {
+            guard operationGeneration == mediaOperationGeneration,
+                  activeCallId?.caseInsensitiveCompare(callId) == .orderedSame
+            else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                return
+            }
             self.error = message(for: error)
             emitTelemetry("client.media_error", state: "error", detail: message(for: error))
             statusText = ""
-            if activeCallId != nil { _ = await transitionCanonical(to: "ENDED", reason: "FAILED") }
+            let receipt = CallKitEndReceipt(
+                callId: callId,
+                reason: "FAILED",
+                expectedVersion: currentCallVersion)
             leave()
+            if suppliedAdmissionToken != nil {
+                // CXStart/CXAnswer must resolve without waiting on canonical
+                // network latency. The immutable receipt was captured only after
+                // the local mic/Agora graph crossed its terminal boundary.
+                Task { @MainActor [weak self] in
+                    await self?.finishCallKitEndOnServer(receipt)
+                }
+            } else {
+                await finishCallKitEndOnServer(receipt)
+            }
         }
     }
 
@@ -258,6 +637,18 @@ final class OfficeCallCoordinator: NSObject {
     /// We RING (no timer) until the staff actually joins the channel.
     @MainActor
     func ownerCall(staffId: String) async {
+        let operationGeneration = mediaOperationGeneration &+ 1
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
+        guard let admissionToken = claimOfficeCallAudio(
+            .officeIntent(operation: operationGeneration, callID: nil))
+        else {
+            error = "আরেকটি কল বা অডিও সেশন চলছে"
+            return
+        }
+        mediaOperationGeneration = operationGeneration
         error = nil
         statusText = "কল দিচ্ছি…"
         struct Body: Encodable {
@@ -272,16 +663,70 @@ final class OfficeCallCoordinator: NSObject {
                 "POST", "/api/assistant/office/intercom",
                 body: Body(targetStaffId: staffId, idempotencyKey: UUID().uuidString))
             guard let id = r.id, !id.isEmpty else { throw IntercomError.callFailed }
+            guard !Task.isCancelled,
+                  operationGeneration == mediaOperationGeneration,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
+                  AlmaCallAudioAdmission.shared.transition(
+                    admissionToken,
+                    to: .officeIntent(
+                        operation: operationGeneration,
+                        callID: id.lowercased()))
+            else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                await finishCallKitEndOnServer(.init(
+                    callId: id.lowercased(),
+                    reason: "CANCELLED",
+                    expectedVersion: nil))
+                return
+            }
             activeCallId = id.lowercased()
             callDirection = .outgoing
             canonicalState = "RINGING"
-            guard await refreshCanonical(callId: id) else { throw IntercomError.canonicalRejected }
+            guard await refreshCanonical(
+                callId: id,
+                expectedMediaOperationGeneration: operationGeneration)
+            else { throw IntercomError.canonicalRejected }
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                expectedCallID: id,
+                admissionToken: admissionToken)
             try await CallKitVoIP.shared.startOutgoing(
-                callId: id, channel: "itc_\(id)", peer: callPeer)
+                callId: id,
+                channel: "itc_\(id)",
+                peer: callPeer,
+                admissionToken: admissionToken)
+            guard !Task.isCancelled,
+                  activeCallId?.caseInsensitiveCompare(id) == .orderedSame,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else {
+                CallKitVoIP.shared.cancelReservedOutgoingCall(callId: id)
+                stopOfficeCallAudioIfOwned(admissionToken)
+                await finishCallKitEndOnServer(.init(
+                    callId: id.lowercased(),
+                    reason: "CANCELLED",
+                    expectedVersion: currentCallVersion))
+                return
+            }
+        } catch is CancellationError {
+            stopOfficeCallAudioIfOwned(admissionToken)
+            return
         } catch {
+            guard operationGeneration == mediaOperationGeneration else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                return
+            }
             self.error = message(for: error)
             statusText = ""
-            await endActiveCall(reason: "FAILED", requestSystemEnd: false)
+            if let callId = activeCallId {
+                let receipt = CallKitEndReceipt(
+                    callId: callId,
+                    reason: "FAILED",
+                    expectedVersion: currentCallVersion)
+                leave()
+                await finishCallKitEndOnServer(receipt)
+            } else {
+                leave()
+            }
         }
     }
 
@@ -289,6 +734,18 @@ final class OfficeCallCoordinator: NSObject {
     /// business owner and the native CallKit path owns the complete lifecycle.
     @MainActor
     func staffCallOwner() async {
+        let operationGeneration = mediaOperationGeneration &+ 1
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
+        guard let admissionToken = claimOfficeCallAudio(
+            .officeIntent(operation: operationGeneration, callID: nil))
+        else {
+            error = "আরেকটি কল বা অডিও সেশন চলছে"
+            return
+        }
+        mediaOperationGeneration = operationGeneration
         error = nil
         statusText = "কল দিচ্ছি…"
         callPeer = "বস — মারুফ"
@@ -299,38 +756,273 @@ final class OfficeCallCoordinator: NSObject {
                 "POST", "/api/assistant/office/intercom",
                 body: Body(idempotencyKey: UUID().uuidString))
             guard let id = r.id, !id.isEmpty else { throw IntercomError.callFailed }
+            guard !Task.isCancelled,
+                  operationGeneration == mediaOperationGeneration,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken),
+                  AlmaCallAudioAdmission.shared.transition(
+                    admissionToken,
+                    to: .officeIntent(
+                        operation: operationGeneration,
+                        callID: id.lowercased()))
+            else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                await finishCallKitEndOnServer(.init(
+                    callId: id.lowercased(),
+                    reason: "CANCELLED",
+                    expectedVersion: nil))
+                return
+            }
             activeCallId = id.lowercased()
             callDirection = .outgoing
             canonicalState = "RINGING"
-            guard await refreshCanonical(callId: id) else { throw IntercomError.canonicalRejected }
+            guard await refreshCanonical(
+                callId: id,
+                expectedMediaOperationGeneration: operationGeneration)
+            else { throw IntercomError.canonicalRejected }
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                expectedCallID: id,
+                admissionToken: admissionToken)
             try await CallKitVoIP.shared.startOutgoing(
-                callId: id, channel: "itc_\(id)", peer: callPeer)
+                callId: id,
+                channel: "itc_\(id)",
+                peer: callPeer,
+                admissionToken: admissionToken)
+            guard !Task.isCancelled,
+                  activeCallId?.caseInsensitiveCompare(id) == .orderedSame,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else {
+                CallKitVoIP.shared.cancelReservedOutgoingCall(callId: id)
+                stopOfficeCallAudioIfOwned(admissionToken)
+                await finishCallKitEndOnServer(.init(
+                    callId: id.lowercased(),
+                    reason: "CANCELLED",
+                    expectedVersion: currentCallVersion))
+                return
+            }
+        } catch is CancellationError {
+            stopOfficeCallAudioIfOwned(admissionToken)
+            return
         } catch {
+            guard operationGeneration == mediaOperationGeneration else {
+                stopOfficeCallAudioIfOwned(admissionToken)
+                return
+            }
             self.error = message(for: error)
             statusText = ""
-            await endActiveCall(reason: "FAILED", requestSystemEnd: false)
+            if let callId = activeCallId {
+                let receipt = CallKitEndReceipt(
+                    callId: callId,
+                    reason: "FAILED",
+                    expectedVersion: currentCallVersion)
+                leave()
+                await finishCallKitEndOnServer(receipt)
+            } else {
+                leave()
+            }
         }
     }
 
+    @MainActor
     func toggleMute() {
-        micMuted.toggle()
-        engine?.muteLocalAudioStream(micMuted)
+        let nextMuted = !micMuted
+        if !nextMuted, !acceptsOfficeMediaMutation() {
+            micMuted = true
+            engine?.muteLocalAudioStream(true)
+            return
+        }
+        micMuted = nextMuted
+        engine?.muteLocalAudioStream(nextMuted)
     }
 
     /// Set mute explicitly (CallKit's mute button routes here so the two UIs agree).
     @MainActor func setMuted(_ muted: Bool) {
+        if !muted, !acceptsOfficeMediaMutation() {
+            micMuted = true
+            engine?.muteLocalAudioStream(true)
+            return
+        }
         micMuted = muted
         engine?.muteLocalAudioStream(muted)
+    }
+
+    @MainActor
+    func ownsCallIntent(callId: String, channel expectedChannel: String) -> Bool {
+        guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else {
+            return false
+        }
+        return channel == nil || channel == expectedChannel
+    }
+
+    struct CallKitEndReceipt: Sendable {
+        let callId: String
+        let reason: String
+        let expectedVersion: Int?
+    }
+
+    /// End local media synchronously for a CallKit end action. Network truth is
+    /// posted separately so an offline request can never keep the mic/Agora graph
+    /// alive or delay CXEndCallAction fulfilment.
+    @MainActor
+    func takeCallKitEnd(
+        callId: String,
+        requestedReason: String?
+    ) -> CallKitEndReceipt? {
+        guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else {
+            return nil
+        }
+        let receipt = CallKitEndReceipt(
+            callId: callId.lowercased(),
+            reason: requestedReason ?? localEndReason(),
+            expectedVersion: currentCallVersion)
+        engine?.muteLocalAudioStream(true)
+        leave()
+        return receipt
+    }
+
+    @MainActor
+    func finishCallKitEndOnServer(_ receipt: CallKitEndReceipt) async {
+        struct Body: Encodable {
+            let state: String
+            let reason: String?
+            let expectedVersion: Int?
+        }
+        let _: CanonicalTransitionResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/office/calls/\(receipt.callId)/transition",
+            body: Body(
+                state: "ENDED",
+                reason: receipt.reason,
+                expectedVersion: receipt.expectedVersion))
+    }
+
+    /// Remote cancel must stop the matching local media path immediately; the
+    /// canonical reconciliation leg remains best-effort and must not gate privacy.
+    @MainActor
+    func remoteCallEndedLocally(callId: String) {
+        guard activeCallId?.caseInsensitiveCompare(callId) == .orderedSame else { return }
+        engine?.muteLocalAudioStream(true)
+        leave()
     }
 
     /// CallKit finished activating the shared audio session — make sure Agora routes
     /// call audio to the loud speaker (CallKit already owns activation/teardown).
     @MainActor func audioSessionActivated() {
+        guard acceptsOfficeMediaMutation() else { return }
         engine?.setEnableSpeakerphone(speakerEnabled)
         updateAudioRoute()
     }
 
+    @MainActor
+    func audioSessionDeactivated(
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) {
+        guard audioTeardownPending,
+              audioTeardownOwner == .callKit,
+              mode == .idle,
+              activeCallId == nil,
+              callKitAudioTeardownAdmissionToken == admissionToken
+        else { return }
+        audioTeardownPending = false
+        audioTeardownOwner = nil
+        callKitManaged = false
+        callKitAudioTeardownAdmissionToken = nil
+        callKitAudioTeardownCallID = nil
+    }
+
+    /// Provider reset is the sole force path. The caller first snapshots any
+    /// canonical receipt, then this method synchronously closes the exact local
+    /// graph and completes whichever teardown owner `leave()` established.
+    @MainActor
+    func finishAudioTeardownAfterProviderReset() {
+        // `providerDidReset` snapshots and posts its own canonical receipt after
+        // local teardown, so a displaced app-owned call must not post a duplicate
+        // from the normal post-report completion path.
+        systemAudioPreemptionPending = false
+        systemAudioPreemptionEndReceipt = nil
+        invalidateAgoraJoinAuthority()
+        if let engine {
+            engine.muteLocalAudioStream(true)
+            engine.leaveChannel(nil)
+            self.engine = nil
+            appId = nil
+            AgoraRtcEngineKit.destroy()
+        }
+        connected = false
+        switch audioTeardownOwner {
+        case .appOwned:
+            finishAppOwnedAudioTeardown(generation: audioTeardownGeneration)
+        case .callKit:
+            audioTeardownPending = false
+            audioTeardownOwner = nil
+            callKitManaged = false
+            callKitAudioTeardownAdmissionToken = nil
+            callKitAudioTeardownCallID = nil
+        case nil:
+            break
+        }
+    }
+
+    /// CXStart/CXAnswer can fail before CallKit ever activates AVAudioSession, so
+    /// no didDeactivate callback is guaranteed. Clear only the exact terminal
+    /// call/token after its local graph has already been stopped.
+    @MainActor
+    func callKitAudioNeverActivatedAndEnded(
+        callID: String,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) {
+        guard audioTeardownPending,
+              audioTeardownOwner == .callKit,
+              mode == .idle,
+              activeCallId == nil,
+              AlmaCallKitPreActivationTerminalFence.accepts(
+                pendingCallID: callKitAudioTeardownCallID,
+                pendingToken: callKitAudioTeardownAdmissionToken,
+                terminalCallID: callID,
+                terminalToken: admissionToken)
+        else { return }
+        audioTeardownPending = false
+        audioTeardownOwner = nil
+        callKitManaged = false
+        callKitAudioTeardownAdmissionToken = nil
+        callKitAudioTeardownCallID = nil
+    }
+
+    /// A new app-owned audio owner is about to mutate the shared session. Finish
+    /// a pending standalone Agora lease now; no delayed callback may touch it later.
+    @MainActor func finishPendingAudioTeardownBeforeNewOwner() -> Bool {
+        guard audioTeardownPending else { return true }
+        guard audioTeardownOwner == .appOwned else { return false }
+        let generation = audioTeardownGeneration
+        finishAppOwnedAudioTeardown(generation: generation)
+        return !audioTeardownPending
+    }
+
+    /// CallKit has already activated the shared session, so only invalidate stale
+    /// app-owned callbacks; never restore/deactivate underneath the OS owner.
+    @MainActor func relinquishPendingAudioTeardownWithoutMutation() {
+        guard audioTeardownPending else { return }
+        audioTeardownGeneration &+= 1
+        audioTeardownPending = false
+        audioTeardownOwner = nil
+        officeAudioSessionLease = nil
+        if let admissionToken = appOwnedAudioTeardownAdmissionToken {
+            appOwnedAudioTeardownAdmissionToken = nil
+            AlmaCallAudioAdmission.shared.release(admissionToken)
+        }
+    }
+
+    @MainActor func prepareForSystemAudioTakeover() {
+        if mode != .idle || channel != nil || connected {
+            engine?.muteLocalAudioStream(true)
+            leave()
+        }
+        cancelPTTWithoutUpload()
+        ringtone.stop()
+        _ = finishPendingAudioTeardownBeforeNewOwner()
+    }
+
     @MainActor func toggleSpeaker() {
+        guard acceptsOfficeMediaMutation() else { return }
         speakerEnabled.toggle()
         engine?.setEnableSpeakerphone(speakerEnabled)
         updateAudioRoute()
@@ -338,8 +1030,81 @@ final class OfficeCallCoordinator: NSObject {
 
     @MainActor
     func leave() {
+        // Canonical ENDED may re-enter through CallKit after the first local
+        // stop has already established an exact teardown receipt. Preserve that
+        // call/token/owner identity until didDeactivate (or the explicit
+        // never-activated/reset terminal hook) consumes it.
+        guard !(audioTeardownPending && mode == .idle && activeCallId == nil) else {
+            engine?.muteLocalAudioStream(true)
+            ringtone.stop()
+            return
+        }
+        mediaOperationGeneration &+= 1
+        cancelPTTWithoutUpload()
         emitTelemetry("client.leave_started", state: "leaving")
-        engine?.leaveChannel(nil)
+        // Privacy boundary: silence publication synchronously. Agora's
+        // `leaveChannel` completion is asynchronous and must never define when
+        // the microphone stops carrying user audio.
+        engine?.muteLocalAudioStream(true)
+        audioTeardownGeneration &+= 1
+        let teardownGeneration = audioTeardownGeneration
+        let wasCallKitManaged = callKitManaged
+        let endingCallID = activeCallId?.lowercased()
+        let endingAdmissionToken = officeCallAudioAdmissionToken
+        officeCallAudioAdmissionToken = nil
+        officeCallAudioAdmissionOperation = nil
+        let hadAgoraMedia = agoraJoinSubmitted || connected
+        let hadOfficeAudioConfiguration = officeAudioConfigured
+            || officeAudioSessionLease != nil
+        audioTeardownPending = hadAgoraMedia || hadOfficeAudioConfiguration
+            || wasCallKitManaged
+        audioTeardownOwner = audioTeardownPending
+            ? (wasCallKitManaged ? .callKit : .appOwned)
+            : nil
+        if audioTeardownPending, wasCallKitManaged {
+            callKitAudioTeardownAdmissionToken = endingAdmissionToken
+            callKitAudioTeardownCallID = endingCallID
+        } else if !wasCallKitManaged {
+            callKitAudioTeardownAdmissionToken = nil
+            callKitAudioTeardownCallID = nil
+        }
+        if let endingAdmissionToken, !wasCallKitManaged,
+           AlmaCallAudioAdmission.shared.beginTeardown(endingAdmissionToken),
+           audioTeardownPending {
+            appOwnedAudioTeardownAdmissionToken = endingAdmissionToken
+        }
+        officeAudioConfigured = false
+        invalidateAgoraJoinAuthority()
+        if let engine {
+            engine.setAudioSessionOperationRestriction(.deactivateSession)
+            if wasCallKitManaged {
+                // didDeactivate is an AVAudioSession barrier, not an Agora
+                // socket/engine barrier. Destroy synchronously so releasing the
+                // CallKit token later can never overlap a replacement channel.
+                // Destroy even if join was not submitted: a failed preflight may
+                // already have created/configured an SDK audio graph.
+                engine.leaveChannel(nil)
+                self.engine = nil
+                appId = nil
+                AgoraRtcEngineKit.destroy()
+            } else if hadAgoraMedia {
+                engine.leaveChannel { [weak self] _ in
+                    Task { @MainActor in
+                        self?.finishAppOwnedAudioTeardown(generation: teardownGeneration)
+                    }
+                }
+            }
+        } else if !wasCallKitManaged, officeAudioSessionLease == nil {
+            audioTeardownPending = false
+            audioTeardownOwner = nil
+        }
+        if audioTeardownPending, !wasCallKitManaged {
+            // Restricting SDK deactivation makes this bounded fallback safe if
+            // Agora never invokes its normal leave completion.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.finishAppOwnedAudioTeardown(generation: teardownGeneration)
+            }
+        }
         stopCallTimer()
         stopRingTimeout()
         stopCanonicalReconciliation()
@@ -364,11 +1129,42 @@ final class OfficeCallCoordinator: NSObject {
         reconnectCount = 0
         UIDevice.current.isProximityMonitoringEnabled = false
         NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
+        if let endingAdmissionToken,
+           !wasCallKitManaged,
+           appOwnedAudioTeardownAdmissionToken != endingAdmissionToken {
+            AlmaCallAudioAdmission.shared.release(endingAdmissionToken)
+        }
+    }
+
+    @MainActor
+    private func finishAppOwnedAudioTeardown(generation: UInt64) {
+        guard audioTeardownPending,
+              generation == audioTeardownGeneration,
+              mode == .idle,
+              activeCallId == nil
+        else { return }
+        if let lease = officeAudioSessionLease {
+            officeAudioSessionLease = nil
+            lease.releaseIfStillOwned(session: .sharedInstance())
+        } else {
+            try? AVAudioSession.sharedInstance().setActive(
+                false, options: .notifyOthersOnDeactivation)
+        }
+        audioTeardownPending = false
+        audioTeardownOwner = nil
+        if let admissionToken = appOwnedAudioTeardownAdmissionToken {
+            appOwnedAudioTeardownAdmissionToken = nil
+            AlmaCallAudioAdmission.shared.release(admissionToken)
+        }
     }
 
     @MainActor
     func reconcileIncoming(callId: String, channel: String, caller: String) async -> Bool {
-        guard await refreshCanonical(callId: callId),
+        let expectedGeneration = mediaOperationGeneration
+        guard await refreshCanonical(
+            callId: callId,
+            expectedMediaOperationGeneration: expectedGeneration),
+              expectedGeneration == mediaOperationGeneration,
               activeCallId == callId.lowercased(),
               canonicalState == "RINGING",
               callDirection == .incoming,
@@ -386,16 +1182,27 @@ final class OfficeCallCoordinator: NSObject {
 
     @MainActor
     func endActiveCall(reason explicitReason: String? = nil, requestSystemEnd: Bool = true) async {
+        mediaOperationGeneration &+= 1
         guard let callId = activeCallId else { leave(); return }
         let reason = explicitReason ?? localEndReason()
-        if requestSystemEnd, CallKitVoIP.shared.hasCall(callId: callId) {
-            // If the OS transaction fails, fall through and terminate canonical
-            // state directly so a UI tap can never leave a ghost call behind.
-            if await CallKitVoIP.shared.requestEnd(callId: callId, reason: reason) { return }
-        }
-        _ = await transitionCanonical(to: "ENDED", reason: reason)
-        CallKitVoIP.shared.finishReportedCall(callId: callId, reason: .remoteEnded)
+        let receipt = CallKitEndReceipt(
+            callId: callId.lowercased(),
+            reason: reason,
+            expectedVersion: currentCallVersion)
+        let hasSystemCall = requestSystemEnd && CallKitVoIP.shared.hasCall(callId: callId)
+        // Local privacy is terminal and synchronous. The immutable receipt owns
+        // all later network work, so offline/canonical latency cannot retain a
+        // microphone, ringtone, or Agora graph.
+        engine?.muteLocalAudioStream(true)
         leave()
+        if hasSystemCall {
+            let accepted = await CallKitVoIP.shared.requestEnd(callId: callId, reason: reason)
+            await finishCallKitEndOnServer(receipt)
+            if accepted { return }
+        } else {
+            await finishCallKitEndOnServer(receipt)
+        }
+        CallKitVoIP.shared.finishReportedCall(callId: callId, reason: .remoteEnded)
     }
 
     @MainActor
@@ -404,10 +1211,17 @@ final class OfficeCallCoordinator: NSObject {
         await endActiveCall(reason: requestedReason, requestSystemEnd: false)
     }
 
+    /// Provider reset is a local privacy boundary, not a network transaction.
+    /// Capture the exact canonical call/version first, then invalidate every
+    /// in-flight media operation and leave Agora synchronously. The immutable
+    /// receipt can be posted after CallKit's audio ownership has been cleared.
     @MainActor
-    func systemReset() async {
-        guard activeCallId != nil else { leave(); return }
-        await endActiveCall(reason: "FAILED", requestSystemEnd: false)
+    func systemReset() -> CallKitEndReceipt? {
+        guard let callId = activeCallId else {
+            leave()
+            return nil
+        }
+        return takeCallKitEnd(callId: callId, requestedReason: "FAILED")
     }
 
     private func localEndReason() -> String {
@@ -419,12 +1233,25 @@ final class OfficeCallCoordinator: NSObject {
 
     @MainActor
     @discardableResult
-    private func refreshCanonical(callId: String? = nil) async -> Bool {
+    private func refreshCanonical(
+        callId: String? = nil,
+        expectedMediaOperationGeneration: UInt64? = nil,
+        expectedAgoraJoin: AlmaAgoraJoinIdentity? = nil
+    ) async -> Bool {
+        guard acceptsExpectedAgoraJoin(expectedAgoraJoin) else { return false }
         guard let id = (callId ?? activeCallId)?.lowercased() else { return false }
+        let expectedGeneration = expectedMediaOperationGeneration ?? mediaOperationGeneration
+        let expectedActiveCallID = activeCallId?.lowercased()
+        guard expectedActiveCallID == nil || expectedActiveCallID == id else { return false }
         do {
             let envelope: CanonicalCallEnvelope = try await AlmaAPI.shared.get(
                 "/api/assistant/office/calls/\(id)")
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedActiveCallID,
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             let call = envelope.call
+            guard call.id.caseInsensitiveCompare(id) == .orderedSame else { return false }
             activeCallId = call.id.lowercased()
             currentCallVersion = call.version
             canonicalState = call.state
@@ -438,6 +1265,10 @@ final class OfficeCallCoordinator: NSObject {
             }
             return true
         } catch {
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedActiveCallID,
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             emitTelemetry("client.reconcile_failed", state: canonicalState.lowercased(), detail: message(for: error))
             return false
         }
@@ -445,8 +1276,15 @@ final class OfficeCallCoordinator: NSObject {
 
     @MainActor
     @discardableResult
-    private func transitionCanonical(to state: String, reason: String? = nil) async -> Bool {
+    private func transitionCanonical(
+        to state: String,
+        reason: String? = nil,
+        expectedAgoraJoin: AlmaAgoraJoinIdentity? = nil
+    ) async -> Bool {
+        guard acceptsExpectedAgoraJoin(expectedAgoraJoin) else { return false }
         guard let callId = activeCallId else { return false }
+        let expectedGeneration = mediaOperationGeneration
+        let expectedCallID = callId.lowercased()
         struct Body: Encodable {
             let state: String
             let reason: String?
@@ -456,21 +1294,45 @@ final class OfficeCallCoordinator: NSObject {
             let response: CanonicalTransitionResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/office/calls/\(callId)/transition",
                 body: Body(state: state, reason: reason, expectedVersion: currentCallVersion))
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedCallID,
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             canonicalState = response.state ?? state
             currentCallVersion = response.version ?? currentCallVersion
             return response.ok ?? true
         } catch {
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedCallID,
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             // Version conflicts and duplicate actions reconcile against server truth.
-            guard await refreshCanonical(callId: callId) else { return state == "ENDED" && activeCallId == nil }
+            guard await refreshCanonical(
+                callId: callId,
+                expectedMediaOperationGeneration: expectedGeneration,
+                expectedAgoraJoin: expectedAgoraJoin)
+            else { return state == "ENDED" && activeCallId == nil }
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedCallID,
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             if canonicalState == state || (state == "ENDED" && canonicalState == "ENDED") { return true }
             do {
                 let retry: CanonicalTransitionResponse = try await AlmaAPI.shared.send(
                     "POST", "/api/assistant/office/calls/\(callId)/transition",
                     body: Body(state: state, reason: reason, expectedVersion: currentCallVersion))
+                guard expectedGeneration == mediaOperationGeneration,
+                      activeCallId?.lowercased() == expectedCallID,
+                      acceptsExpectedAgoraJoin(expectedAgoraJoin)
+                else { return false }
                 canonicalState = retry.state ?? state
                 currentCallVersion = retry.version ?? currentCallVersion
                 return retry.ok ?? true
             } catch {
+                guard expectedGeneration == mediaOperationGeneration,
+                      activeCallId?.lowercased() == expectedCallID,
+                      acceptsExpectedAgoraJoin(expectedAgoraJoin)
+                else { return false }
                 emitTelemetry("client.transition_failed", state: state.lowercased(), detail: message(for: error))
                 return false
             }
@@ -481,18 +1343,30 @@ final class OfficeCallCoordinator: NSObject {
     /// milliseconds. Promote only through legal server states instead of attempting
     /// RINGING → CONNECTED and leaving the two clients with different truths.
     @MainActor
-    private func promoteCanonicalToConnected() async -> Bool {
+    private func promoteCanonicalToConnected(
+        expectedAgoraJoin: AlmaAgoraJoinIdentity
+    ) async -> Bool {
         for attempt in 0..<8 {
-            guard await refreshCanonical() else { return false }
+            guard acceptsExpectedAgoraJoin(expectedAgoraJoin),
+                  await refreshCanonical(expectedAgoraJoin: expectedAgoraJoin),
+                  acceptsExpectedAgoraJoin(expectedAgoraJoin)
+            else { return false }
             if canonicalState == "CONNECTED" { return true }
             if canonicalState == "ANSWERED" {
-                guard await transitionCanonical(to: "CONNECTING") else { return false }
+                guard await transitionCanonical(
+                    to: "CONNECTING",
+                    expectedAgoraJoin: expectedAgoraJoin),
+                      acceptsExpectedAgoraJoin(expectedAgoraJoin)
+                else { return false }
             }
             if canonicalState == "CONNECTING" || canonicalState == "RECONNECTING" {
-                return await transitionCanonical(to: "CONNECTED")
+                return await transitionCanonical(
+                    to: "CONNECTED",
+                    expectedAgoraJoin: expectedAgoraJoin)
             }
             guard canonicalState == "RINGING", attempt < 7 else { return false }
             try? await Task.sleep(nanoseconds: 300_000_000)
+            guard acceptsExpectedAgoraJoin(expectedAgoraJoin) else { return false }
         }
         return false
     }
@@ -514,7 +1388,10 @@ final class OfficeCallCoordinator: NSObject {
     }
 
     @MainActor
-    private func beginReconnectGrace() async {
+    private func beginReconnectGrace(
+        expectedAgoraJoin: AlmaAgoraJoinIdentity? = nil
+    ) async {
+        guard acceptsExpectedAgoraJoin(expectedAgoraJoin) else { return }
         guard activeCallId != nil else { return }
         // Agora may emit several reconnecting/failed callbacks for one outage. Never
         // restart the deadline on each callback or a broken call can live forever.
@@ -526,12 +1403,22 @@ final class OfficeCallCoordinator: NSObject {
         reconnectDeadline = Date().addingTimeInterval(15)
         emitTelemetry("client.reconnect_started", state: "reconnecting",
                       metrics: ["reconnectCount": Double(reconnectCount)])
-        _ = await transitionCanonical(to: "RECONNECTING")
+        _ = await transitionCanonical(
+            to: "RECONNECTING",
+            expectedAgoraJoin: expectedAgoraJoin)
         // A connected callback may have won while the server write was in flight.
-        guard reconnectDeadline != nil, hasActiveCall, mode == .reconnecting else { return }
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+        guard acceptsExpectedAgoraJoin(expectedAgoraJoin),
+              reconnectDeadline != nil,
+              hasActiveCall,
+              mode == .reconnecting
+        else { return }
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
+            [weak self, expectedAgoraJoin] timer in
             Task { @MainActor in
-                guard let self, let deadline = self.reconnectDeadline else { timer.invalidate(); return }
+                guard let self,
+                      self.acceptsExpectedAgoraJoin(expectedAgoraJoin),
+                      let deadline = self.reconnectDeadline
+                else { timer.invalidate(); return }
                 self.reconnectSeconds = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
                 if Date() >= deadline {
                     timer.invalidate()
@@ -627,7 +1514,28 @@ final class OfficeCallCoordinator: NSObject {
     }
 
     /// Start the loud incoming ring (callee side). Stopped by answering/declining/leave.
-    @MainActor func ringIncoming() { ringtone.play(.incoming) }
+    @MainActor
+    func ringIncoming() {
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            return
+        }
+        guard let callID = activeCallId?.lowercased() else { return }
+        if officeCallAudioAdmissionToken == nil {
+            let operation = mediaOperationGeneration &+ 1
+            guard claimOfficeCallAudio(
+                .officeMedia(operation: operation, callID: callID)) != nil
+            else {
+                // A native CallKit reservation already owns this or another
+                // call; its system ringtone is the only ring allowed.
+                return
+            }
+            mediaOperationGeneration = operation
+        }
+        guard let admissionToken = officeCallAudioAdmissionToken,
+              AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+        else { return }
+        ringtone.play(.incoming)
+    }
     @MainActor func stopRinging() { ringtone.stop() }
 
     // ── PTT persistent voice-note (walkie-talkie that actually reaches staff) ──
@@ -637,15 +1545,106 @@ final class OfficeCallCoordinator: NSObject {
     // instead records the press, uploads it, and it shows as a voice message the staff
     // poll + auto-play (online or not). This mirrors that: press → record → upload.
 
+    /// Reserve the press synchronously before permission can suspend. SwiftUI's
+    /// DragGesture may emit many onChanged callbacks; only this reservation may
+    /// launch a recorder, and release invalidates it before any deferred work runs.
+    @discardableResult
+    @MainActor
+    func pttPressBegan() -> Bool {
+        guard !pttPressActive, !pttStarting, !recording else { return false }
+        // Complete the previous preview owner's restore before publishing PTT
+        // admission. Otherwise a preview finishing in this tiny gap can abandon
+        // its lease and make PTT snapshot the preview category as the prior state.
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared
+            .stopAndRestoreBeforeAudioTakeover()
+        else {
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return false
+        }
+        pttPressActive = true
+        pttStarting = true
+        pttRequestGeneration &+= 1
+        let requestGeneration = pttRequestGeneration
+        guard let admissionToken = AlmaCallAudioAdmission.shared.claimNormal(
+            .ptt(generation: requestGeneration),
+            stop: { [weak self] in self?.cancelPTTWithoutUpload() })
+        else {
+            pttPressActive = false
+            pttStarting = false
+            error = "আরেকটি কল বা অডিও সেশন চলছে"
+            return false
+        }
+        pttCallAudioAdmissionToken = admissionToken
+        Task { @MainActor [weak self] in
+            await self?.startPTT(
+                requestGeneration: requestGeneration,
+                admissionToken: admissionToken)
+        }
+        return true
+    }
+
+    @MainActor
+    func pttPressEnded() {
+        guard pttPressActive || pttStarting || recording else { return }
+        pttPressActive = false
+        pttStarting = false
+        pttRequestGeneration &+= 1
+        let endGeneration = pttRequestGeneration
+        Task { @MainActor [weak self] in
+            await self?.pttStop(expectedGeneration: endGeneration)
+        }
+    }
+
     /// Begin recording the owner's press-and-hold voice note.
     @MainActor
-    func pttStart() async {
+    private func startPTT(
+        requestGeneration: UInt64,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) async {
+        guard pttPressActive,
+              pttStarting,
+              requestGeneration == pttRequestGeneration,
+              pttCallAudioAdmissionToken == admissionToken,
+              AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+        else { return }
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            cancelPTTWithoutUpload()
+            error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+            return
+        }
         error = nil
         do {
             try await ensureMicPermission()
+            guard pttPressActive,
+                  pttStarting,
+                  requestGeneration == pttRequestGeneration,
+                  pttCallAudioAdmissionToken == admissionToken,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else { return }
+            // Permission can suspend long enough for a preview to start after the
+            // first admission check. Relinquish again at the actual session handoff.
+            guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+                cancelPTTWithoutUpload()
+                error = "আগের অডিও সেশন বন্ধ হচ্ছে — একটু পরে আবার চেষ্টা করুন"
+                return
+            }
+            guard pttCallAudioAdmissionToken == admissionToken,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else { throw CancellationError() }
             let s = AVAudioSession.sharedInstance()
-            try s.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-            try s.setActive(true)
+            let ownedOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker]
+            pttAudioSessionLease = .capture(
+                session: s,
+                ownedCategory: .playAndRecord,
+                ownedMode: .default,
+                ownedOptions: ownedOptions)
+            do {
+                try s.setCategory(.playAndRecord, mode: .default, options: ownedOptions)
+                try s.setActive(true)
+            } catch {
+                releasePTTAudioSession()
+                throw error
+            }
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("itc-\(UUID().uuidString).m4a")
             let settings: [String: Any] = [
@@ -660,24 +1659,40 @@ final class OfficeCallCoordinator: NSObject {
             recordURL = url
             recordStart = Date()
             recording = true
+            pttStarting = false
             localSpeaking = true
             statusText = "🔴 রেকর্ড হচ্ছে — বলুন"
         } catch {
+            guard requestGeneration == pttRequestGeneration else { return }
+            releasePTTAudioSession()
+            releasePTTCallAudioAdmission()
             self.error = message(for: error)
+            pttStarting = false
+            pttPressActive = false
             recording = false
         }
     }
 
     /// Stop the press, upload the clip as a group voice message. `minSec` guards taps.
     @MainActor
-    func pttStop() async {
+    private func pttStop(expectedGeneration: UInt64) async {
+        guard expectedGeneration == pttRequestGeneration else { return }
+        pttPressActive = false
+        pttStarting = false
         guard recording, let rec = recorder, let url = recordURL else {
-            recording = false; localSpeaking = false; return
+            recording = false
+            localSpeaking = false
+            releasePTTAudioSession()
+            releasePTTCallAudioAdmission()
+            return
         }
         rec.stop()
         recorder = nil
         recording = false
         localSpeaking = false
+        // Release microphone/session ownership before the potentially long upload.
+        releasePTTAudioSession()
+        releasePTTCallAudioAdmission()
         let dur = max(1, Int((recordStart.map { Date().timeIntervalSince($0) } ?? 1).rounded()))
         recordURL = nil
         recordStart = nil
@@ -701,7 +1716,133 @@ final class OfficeCallCoordinator: NSObject {
         try? FileManager.default.removeItem(at: url)
     }
 
+    @MainActor
+    private func releasePTTAudioSession() {
+        guard let lease = pttAudioSessionLease else { return }
+        pttAudioSessionLease = nil
+        lease.releaseIfStillOwned(session: .sharedInstance())
+    }
+
+    @MainActor
+    private func cancelPTTWithoutUpload() {
+        pttRequestGeneration &+= 1
+        pttPressActive = false
+        pttStarting = false
+        recorder?.stop()
+        recorder = nil
+        recording = false
+        localSpeaking = false
+        releasePTTAudioSession()
+        releasePTTCallAudioAdmission()
+        if let recordURL { try? FileManager.default.removeItem(at: recordURL) }
+        recordURL = nil
+        recordStart = nil
+        if statusText.hasPrefix("🔴") { statusText = "" }
+    }
+
+    @MainActor
+    private func releasePTTCallAudioAdmission() {
+        guard let admissionToken = pttCallAudioAdmissionToken else { return }
+        pttCallAudioAdmissionToken = nil
+        _ = AlmaCallAudioAdmission.shared.beginTeardown(admissionToken)
+        AlmaCallAudioAdmission.shared.release(admissionToken)
+    }
+
     // ── Internals ───────────────────────────────────────────────────────────
+
+    @MainActor
+    private func claimOfficeCallAudio(
+        _ owner: AlmaCallAudioAdmission.Owner
+    ) -> AlmaCallAudioAdmission.Token? {
+        guard officeCallAudioAdmissionToken == nil,
+              appOwnedAudioTeardownAdmissionToken == nil,
+              pttCallAudioAdmissionToken == nil
+        else { return nil }
+        let token = AlmaCallAudioAdmission.shared.claimNormal(
+            owner,
+            stop: { [weak self] in
+                // System preemption installs its owner before this callback.
+                // Meet the privacy boundary immediately, while deferring the
+                // blocking Agora destruction until after PushKit reports.
+                self?.stopAdmittedOfficeCallAudio()
+            },
+            finishTeardown: { [weak self] in
+                self?.finishSystemAudioPreemptionAfterRequiredReport()
+            })
+        officeCallAudioAdmissionToken = token
+        switch owner {
+        case let .officeIntent(operation, _), let .officeMedia(operation, _):
+            officeCallAudioAdmissionOperation = operation
+        default:
+            officeCallAudioAdmissionOperation = nil
+        }
+        return token
+    }
+
+    @MainActor
+    private func stopAdmittedOfficeCallAudio() {
+        guard officeCallAudioAdmissionToken != nil else { return }
+        // PushKit must report the incoming system call immediately. The
+        // reservation callback therefore performs only the privacy boundary;
+        // CallKitVoIP invokes the blocking graph teardown immediately after its
+        // required report call returns.
+        engine?.muteLocalAudioStream(true)
+        mediaOperationGeneration &+= 1
+        if systemAudioPreemptionEndReceipt == nil, let callID = activeCallId {
+            systemAudioPreemptionEndReceipt = CallKitEndReceipt(
+                callId: callID.lowercased(),
+                reason: "FAILED",
+                expectedVersion: currentCallVersion)
+        }
+        systemAudioPreemptionPending = true
+    }
+
+    /// Complete an Office graph displaced by a system reservation. For incoming
+    /// PushKit calls this is invoked immediately *after* reportNewIncomingCall;
+    /// outgoing calls have no reporting deadline and invoke it before requesting
+    /// the CX transaction. Return only after the old Agora resources are gone.
+    @MainActor
+    func finishSystemAudioPreemptionAfterRequiredReport() {
+        guard systemAudioPreemptionPending else { return }
+        systemAudioPreemptionPending = false
+        let endReceipt = systemAudioPreemptionEndReceipt
+        systemAudioPreemptionEndReceipt = nil
+        ringtone.stop()
+        invalidateAgoraJoinAuthority()
+        if let engine {
+            engine.muteLocalAudioStream(true)
+            engine.leaveChannel(nil)
+            self.engine = nil
+            appId = nil
+            AgoraRtcEngineKit.destroy()
+        }
+        connected = false
+        if let lease = officeAudioSessionLease {
+            officeAudioSessionLease = nil
+            lease.releaseIfStillOwned(session: .sharedInstance())
+        }
+        officeAudioConfigured = false
+        audioTeardownPending = false
+        audioTeardownOwner = nil
+        leave()
+        if let endReceipt {
+            // The local mic/socket graph is already terminal. Post canonical
+            // truth asynchronously so neither PushKit reporting nor admission
+            // mutation ever waits on the network.
+            Task { @MainActor [weak self] in
+                await self?.finishCallKitEndOnServer(endReceipt)
+            }
+        }
+    }
+
+    @MainActor
+    private func stopOfficeCallAudioIfOwned(
+        _ admissionToken: AlmaCallAudioAdmission.Token
+    ) {
+        guard officeCallAudioAdmissionToken == admissionToken else { return }
+        engine?.muteLocalAudioStream(true)
+        leave()
+    }
 
     private func resolveLiveChannel() async throws -> String {
         let feed: IntercomFeedLite = try await AlmaAPI.shared.get("/api/assistant/office/intercom")
@@ -718,17 +1859,84 @@ final class OfficeCallCoordinator: NSObject {
     }
 
     @MainActor
-    private func join(channel ch: String, publishMic: Bool) async throws {
+    private func join(
+        channel ch: String,
+        publishMic: Bool,
+        operationGeneration: UInt64,
+        expectedCallID: String? = nil,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) async throws {
+        try await awaitPendingAgoraChannelSwitch(
+            operationGeneration: operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
+        if applyIdempotentAgoraJoinIfCurrent(
+            channel: ch,
+            publishMic: publishMic,
+            admissionToken: admissionToken) {
+            return
+        }
+
         let tok = try await token(for: ch)
+        try requireCurrentMediaOperation(
+            operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
         tokenExpiry = tok.expiresAt.flatMap(Self.parseISO)
+        // Token acquisition suspends; make the shared-session handoff atomic with
+        // the mutation below instead of relying only on the public entry check.
+        guard AlmaLiveVoicePreviewTakeoverRelay.shared.stopAndRestoreBeforeAudioTakeover() else {
+            throw CancellationError()
+        }
+        try requireCurrentMediaOperation(
+            operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
+
+        // A different join may have advanced while token acquisition was in
+        // flight. Await its SDK-confirmed leave and then inspect the exact epoch
+        // again before touching the singleton engine.
+        try await awaitPendingAgoraChannelSwitch(
+            operationGeneration: operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
+        if applyIdempotentAgoraJoinIfCurrent(
+            channel: ch,
+            publishMic: publishMic,
+            admissionToken: admissionToken) {
+            return
+        }
+        if let currentJoin = agoraJoinFence.active {
+            try await retireAgoraJoinForChannelSwitch(
+                currentJoin,
+                operationGeneration: operationGeneration,
+                expectedCallID: expectedCallID,
+                admissionToken: admissionToken)
+            try requireCurrentMediaOperation(
+                operationGeneration,
+                expectedCallID: expectedCallID,
+                admissionToken: admissionToken)
+        }
+
         try configureAudioSession()
+        try requireCurrentMediaOperation(
+            operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
         let e = engineFor(appId: tok.appId)
-        // Under CallKit, don't let Agora deactivate the shared session on leave — CallKit
-        // owns the session lifecycle and would otherwise get its audio killed under it.
-        if callKitManaged { e.setAudioSessionOperationRestriction(.deactivateSession) }
-        // Agora is single-channel per engine: if we were live-listening, leave that
-        // channel before joining the call channel (otherwise joinChannel errors -17).
-        if let prev = channel, prev != ch { e.leaveChannel(nil) }
+        // The coordinator owns deactivation. A delayed Agora leave must never
+        // deactivate a newer preview/call after admission turns idle.
+        e.setAudioSessionOperationRestriction(.deactivateSession)
+        let joinIdentity = agoraJoinFence.activate(
+            engineIdentity: ObjectIdentifier(e),
+            channel: ch,
+            admissionToken: admissionToken,
+            operationGeneration: operationGeneration)
+        let delegateProxy = AgoraJoinDelegateProxy(
+            coordinator: self,
+            identity: joinIdentity)
+        agoraDelegateProxy = delegateProxy
+        e.delegate = delegateProxy
         channel = ch
         e.setChannelProfile(.communication)
         e.enableAudio()
@@ -737,16 +1945,260 @@ final class OfficeCallCoordinator: NSObject {
         e.setEnableSpeakerphone(speakerEnabled)       // private calls default to earpiece
         UIDevice.current.isProximityMonitoringEnabled = privateCall && !speakerEnabled
         e.muteLocalAudioStream(!publishMic)           // listeners don't publish
-        e.joinChannel(byToken: tok.token, channelId: ch, info: nil, uid: tok.uid, joinSuccess: nil)
+        let submissionResult = e.joinChannel(
+            byToken: tok.token,
+            channelId: ch,
+            info: nil,
+            uid: tok.uid,
+            joinSuccess: nil)
+        let submissionDisposition = AlmaAgoraJoinSubmissionTransition.apply(
+            result: submissionResult,
+            identity: joinIdentity,
+            fence: &agoraJoinFence)
+        guard submissionDisposition == .accepted else {
+            rollbackFailedAgoraJoinSubmission(
+                joinIdentity,
+                sourceEngine: e,
+                delegateProxy: delegateProxy,
+                disposition: submissionDisposition)
+            throw CancellationError()
+        }
+        agoraJoinSubmitted = true
+    }
+
+    @MainActor
+    private func rollbackFailedAgoraJoinSubmission(
+        _ identity: AlmaAgoraJoinIdentity,
+        sourceEngine: AgoraRtcEngineKit,
+        delegateProxy: AgoraJoinDelegateProxy,
+        disposition: AlmaAgoraJoinSubmissionDisposition
+    ) {
+        // `failedRetired` proves this exact identity owned the fence at the
+        // submission boundary. Recheck every mutable SDK/coordinator handle so
+        // a stale failure can never clear a replacement installed later.
+        guard disposition == .failedRetired,
+              engine === sourceEngine,
+              identity.engineIdentity == ObjectIdentifier(sourceEngine),
+              agoraDelegateProxy === delegateProxy,
+              delegateProxy.identity == identity,
+              channel == identity.channel
+        else { return }
+        sourceEngine.muteLocalAudioStream(true)
+        if sourceEngine.delegate === delegateProxy {
+            sourceEngine.delegate = nil
+        }
+        agoraDelegateProxy = nil
+        channel = nil
+        agoraJoinSubmitted = false
+        connected = false
+        remoteSpeaking = false
+        localSpeaking = false
+        remoteUids.removeAll()
+    }
+
+    @MainActor
+    private func applyIdempotentAgoraJoinIfCurrent(
+        channel expectedChannel: String,
+        publishMic: Bool,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) -> Bool {
+        guard let currentJoin = agoraJoinFence.active,
+              currentJoin.channel == expectedChannel,
+              currentJoin.admissionToken == admissionToken,
+              let sourceEngine = engine,
+              agoraJoinFence.accepts(
+                currentJoin,
+                engineIdentity: ObjectIdentifier(sourceEngine),
+                reportedChannel: expectedChannel),
+              currentJoin.operationGeneration == mediaOperationGeneration,
+              agoraJoinSubmitted,
+              !audioTeardownPending,
+              officeCallAudioAdmissionToken == admissionToken,
+              AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+        else { return false }
+        sourceEngine.muteLocalAudioStream(!publishMic)
+        return true
+    }
+
+    @MainActor
+    private func awaitPendingAgoraChannelSwitch(
+        operationGeneration: UInt64,
+        expectedCallID: String?,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) async throws {
+        guard let pending = pendingAgoraChannelSwitch else { return }
+        let confirmed = await pending.barrier.wait()
+        try requireCurrentMediaOperation(
+            operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
+        guard confirmed else { throw CancellationError() }
+        finishPendingAgoraChannelSwitchIfCurrent(pending.identity)
+    }
+
+    @MainActor
+    private func retireAgoraJoinForChannelSwitch(
+        _ identity: AlmaAgoraJoinIdentity,
+        operationGeneration: UInt64,
+        expectedCallID: String?,
+        admissionToken: AlmaCallAudioAdmission.Token
+    ) async throws {
+        guard let sourceEngine = engine,
+              agoraJoinFence.accepts(
+                identity,
+                engineIdentity: ObjectIdentifier(sourceEngine))
+        else { throw CancellationError() }
+
+        let barrier = AgoraChannelLeaveBarrier()
+        pendingAgoraChannelSwitch = .init(identity: identity, barrier: barrier)
+        var leaveSubmissionFailed = false
+        // Meet the microphone privacy boundary first, synchronously. Only then
+        // retire callback authority and submit Agora's asynchronous leave for
+        // this exact epoch.
+        AlmaAgoraChannelSwitchOperationPlan.performPrivacyBoundary { operation in
+            switch operation {
+            case .mutePublication:
+                sourceEngine.muteLocalAudioStream(true)
+            case .retireAuthority:
+                _ = agoraJoinFence.retire(identity)
+            case .leaveChannel:
+                let result = sourceEngine.leaveChannel { _ in
+                    barrier.finish(confirmed: true)
+                }
+                if result < 0 {
+                    leaveSubmissionFailed = true
+                    barrier.finish(confirmed: false)
+                }
+            }
+        }
+        agoraJoinSubmitted = false
+        connected = false
+        remoteSpeaking = false
+        localSpeaking = false
+        remoteUids.removeAll()
+        stopCallTimer()
+        stopRingTimeout()
+        stopReconnectGrace()
+        ringtone.stop()
+        channel = nil
+        if leaveSubmissionFailed { throw CancellationError() }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+            // A timeout fails the replacement join closed; it never authorizes
+            // overlapping channels on the singleton engine.
+            barrier.finish(confirmed: false)
+        }
+
+        let confirmed = await barrier.wait()
+        try requireCurrentMediaOperation(
+            operationGeneration,
+            expectedCallID: expectedCallID,
+            admissionToken: admissionToken)
+        guard confirmed else { throw CancellationError() }
+        finishPendingAgoraChannelSwitchIfCurrent(identity)
+    }
+
+    @MainActor
+    private func finishPendingAgoraChannelSwitchIfCurrent(
+        _ identity: AlmaAgoraJoinIdentity
+    ) {
+        guard pendingAgoraChannelSwitch?.identity == identity else { return }
+        pendingAgoraChannelSwitch = nil
+        if agoraDelegateProxy?.identity == identity {
+            agoraDelegateProxy = nil
+            if let sourceEngine = engine,
+               ObjectIdentifier(sourceEngine) == identity.engineIdentity {
+                sourceEngine.delegate = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func confirmAgoraChannelSwitchLeave(
+        identity: AlmaAgoraJoinIdentity,
+        sourceEngine: AgoraRtcEngineKit
+    ) {
+        guard let pending = pendingAgoraChannelSwitch,
+              pending.identity == identity,
+              identity.engineIdentity == ObjectIdentifier(sourceEngine),
+              engine === sourceEngine
+        else { return }
+        pending.barrier.finish(confirmed: true)
+    }
+
+    @MainActor
+    private func requireCurrentMediaOperation(
+        _ generation: UInt64,
+        expectedCallID: String? = nil,
+        admissionToken: AlmaCallAudioAdmission.Token? = nil
+    ) throws {
+        try Task.checkCancellation()
+        guard generation == mediaOperationGeneration else { throw CancellationError() }
+        if let admissionToken {
+            guard officeCallAudioAdmissionToken == admissionToken,
+                  AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+            else { throw CancellationError() }
+        }
+        if let expectedCallID {
+            guard activeCallId?.caseInsensitiveCompare(expectedCallID) == .orderedSame else {
+                throw CancellationError()
+            }
+        }
+    }
+
+    @MainActor
+    private func acceptsOfficeMediaMutation() -> Bool {
+        guard let admissionToken = officeCallAudioAdmissionToken else { return false }
+        return AlmaCallAudioAdmission.shared.acceptsMediaMutation(admissionToken)
+    }
+
+    @MainActor
+    private func acceptsAgoraCallback(
+        _ identity: AlmaAgoraJoinIdentity,
+        from sourceEngine: AgoraRtcEngineKit,
+        reportedChannel: String? = nil
+    ) -> Bool {
+        guard engine === sourceEngine,
+              agoraJoinFence.accepts(
+                identity,
+                engineIdentity: ObjectIdentifier(sourceEngine),
+                reportedChannel: reportedChannel),
+              channel == identity.channel,
+              mediaOperationGeneration == identity.operationGeneration,
+              agoraJoinSubmitted,
+              !audioTeardownPending,
+              officeCallAudioAdmissionToken == identity.admissionToken,
+              AlmaCallAudioAdmission.shared.acceptsMediaMutation(identity.admissionToken)
+        else { return false }
+        return true
+    }
+
+    @MainActor
+    private func acceptsExpectedAgoraJoin(
+        _ identity: AlmaAgoraJoinIdentity?
+    ) -> Bool {
+        guard let identity else { return true }
+        guard let sourceEngine = engine else { return false }
+        return acceptsAgoraCallback(identity, from: sourceEngine)
+    }
+
+    @MainActor
+    private func invalidateAgoraJoinAuthority() {
+        if let current = agoraJoinFence.active { _ = agoraJoinFence.retire(current) }
+        pendingAgoraChannelSwitch?.barrier.finish(confirmed: false)
+        pendingAgoraChannelSwitch = nil
+        agoraDelegateProxy = nil
+        engine?.delegate = nil
+        agoraJoinSubmitted = false
     }
 
     private func engineFor(appId newId: String) -> AgoraRtcEngineKit {
         if let e = engine, appId == newId { return e }
+        engine?.delegate = nil
         engine?.leaveChannel(nil)
         AgoraRtcEngineKit.destroy()
         let cfg = AgoraRtcEngineConfig()
         cfg.appId = newId
-        let e = AgoraRtcEngineKit.sharedEngine(with: cfg, delegate: self)
+        let e = AgoraRtcEngineKit.sharedEngine(with: cfg, delegate: nil)
         e.setChannelProfile(.communication)
         e.enableAudio()
         // HD voice — 48 kHz mono, high bitrate. Matches the web side's
@@ -765,41 +2217,100 @@ final class OfficeCallCoordinator: NSObject {
         // raw option (0x4), available since iOS 1.0, so this is a rename only.
         var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP]
         if activeCallId == nil { options.insert(.defaultToSpeaker) }
-        try s.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+        if callKitManaged, let lease = officeAudioSessionLease {
+            officeAudioSessionLease = nil
+            lease.releaseIfStillOwned(session: s)
+        }
+        if !callKitManaged {
+            if let lease = officeAudioSessionLease {
+                officeAudioSessionLease = lease.updatingOwnedConfiguration(
+                    category: .playAndRecord,
+                    mode: .voiceChat,
+                    options: options)
+            } else {
+                officeAudioSessionLease = .capture(
+                    session: s,
+                    ownedCategory: .playAndRecord,
+                    ownedMode: .voiceChat,
+                    ownedOptions: options)
+            }
+        }
+        do {
+            try s.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+        } catch {
+            if !callKitManaged, let lease = officeAudioSessionLease {
+                officeAudioSessionLease = nil
+                lease.releaseIfStillOwned(session: s)
+            }
+            throw error
+        }
         // Under CallKit, the framework activates the session in `didActivate` — us
         // calling setActive(true) here races/​fights it, so skip when CallKit-managed.
         if !callKitManaged {
-            try s.setActive(true)
+            do {
+                try s.setActive(true)
+            } catch {
+                if let lease = officeAudioSessionLease {
+                    officeAudioSessionLease = nil
+                    lease.releaseIfStillOwned(session: s)
+                }
+                throw error
+            }
+        }
+        officeAudioConfigured = true
+        updateAudioRoute()
+    }
+
+    @MainActor
+    private func renewAgoraToken(
+        expectedJoin: AlmaAgoraJoinIdentity,
+        sourceEngine: AgoraRtcEngineKit
+    ) async {
+        guard acceptsAgoraCallback(expectedJoin, from: sourceEngine) else { return }
+        let expectedGeneration = mediaOperationGeneration
+        let expectedCallID = activeCallId?.lowercased()
+        do {
+            let renewed = try await token(for: expectedJoin.channel, renewal: true)
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedCallID,
+                  acceptsAgoraCallback(expectedJoin, from: sourceEngine)
+            else { return }
+            sourceEngine.renewToken(renewed.token)
+            tokenExpiry = renewed.expiresAt.flatMap(Self.parseISO)
+            emitTelemetry("client.token_renewed", state: canonicalState.lowercased())
+        } catch {
+            guard expectedGeneration == mediaOperationGeneration,
+                  activeCallId?.lowercased() == expectedCallID,
+                  acceptsAgoraCallback(expectedJoin, from: sourceEngine)
+            else { return }
+            emitTelemetry("client.token_renew_failed", state: canonicalState.lowercased(), detail: message(for: error))
+        }
+    }
+
+    @MainActor
+    private func handleAudioRouteChanged(_ notification: Notification) {
+        if let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+           let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+           reason == .oldDeviceUnavailable || reason == .noSuitableRouteForCategory {
+                cancelPTTWithoutUpload()
         }
         updateAudioRoute()
     }
 
     @MainActor
-    private func renewAgoraToken() async {
-        guard let channel, activeCallId != nil else { return }
-        do {
-            let renewed = try await token(for: channel, renewal: true)
-            engine?.renewToken(renewed.token)
-            tokenExpiry = renewed.expiresAt.flatMap(Self.parseISO)
-            emitTelemetry("client.token_renewed", state: canonicalState.lowercased())
-        } catch {
-            emitTelemetry("client.token_renew_failed", state: canonicalState.lowercased(), detail: message(for: error))
-        }
-    }
-
-    @objc private func audioRouteChanged(_ notification: Notification) {
-        Task { @MainActor in self.updateAudioRoute() }
-    }
-
-    @objc private func audioInterrupted(_ notification: Notification) {
+    private func handleAudioInterruption(_ notification: Notification) {
         guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-        Task { @MainActor in
+        if type == .began { cancelPTTWithoutUpload() }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             if type == .began, self.hasActiveCall {
                 self.emitTelemetry("client.audio_interrupted", state: "reconnecting")
                 await self.beginReconnectGrace()
             } else if type == .ended, self.hasActiveCall {
-                try? AVAudioSession.sharedInstance().setActive(true)
+                if !self.callKitManaged {
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                }
                 self.updateAudioRoute()
                 if self.mode == .reconnecting, !self.remoteUids.isEmpty {
                     self.stopReconnectGrace()
@@ -831,11 +2342,20 @@ final class OfficeCallCoordinator: NSObject {
         if !granted { throw IntercomError.micDenied }
     }
 
-    private func startCallTimer() {
+    private func startCallTimer(expectedAgoraJoin: AlmaAgoraJoinIdentity) {
         stopCallTimer()
         callSeconds = 0
-        callTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.callSeconds += 1 }
+        callTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
+            [weak self, expectedAgoraJoin] timer in
+            Task { @MainActor in
+                guard let self,
+                      self.acceptsExpectedAgoraJoin(expectedAgoraJoin)
+                else {
+                    timer.invalidate()
+                    return
+                }
+                self.callSeconds += 1
+            }
         }
     }
     private func stopCallTimer() { callTimer?.invalidate(); callTimer = nil; callSeconds = 0 }
@@ -985,41 +2505,68 @@ typealias AgoraIntercom = OfficeCallCoordinator
 // MARK: - Agora delegate
 
 @available(iOS 17.0, *)
-extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
+private extension OfficeCallCoordinator {
+final class AgoraJoinDelegateProxy: NSObject, AgoraRtcEngineDelegate {
+    weak var coordinator: OfficeCallCoordinator?
+    let identity: AlmaAgoraJoinIdentity
+
+    init(coordinator: OfficeCallCoordinator, identity: AlmaAgoraJoinIdentity) {
+        self.coordinator = coordinator
+        self.identity = identity
+    }
+
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinChannel channel: String, withUid uid: UInt, elapsed: Int) {
-        Task { @MainActor in
-            self.connected = true
-            let latency = self.joinStartedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) }
-            self.emitTelemetry("client.local_joined", state: "connecting", latencyMs: latency)
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(
+                    identity, from: engine, reportedChannel: channel)
+            else { return }
+            coordinator.connected = true
+            let latency = coordinator.joinStartedAt.map {
+                max(0, Int(Date().timeIntervalSince($0) * 1_000))
+            }
+            coordinator.emitTelemetry("client.local_joined", state: "connecting", latencyMs: latency)
         }
     }
 
     /// A REMOTE party joined the channel. For a 1:1 call this is "the other side answered" —
     /// the ONLY moment the WhatsApp-style call timer is allowed to start.
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
-        Task { @MainActor in
-            self.remoteUids.insert(uid)
-            self.stopReconnectGrace()
-            if self.reconnectCount > 0 {
-                self.emitTelemetry("client.reconnect_recovered", state: "in-call",
-                                   metrics: ["reconnectCount": Double(self.reconnectCount)])
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            coordinator.remoteUids.insert(uid)
+            coordinator.stopReconnectGrace()
+            if coordinator.reconnectCount > 0 {
+                coordinator.emitTelemetry(
+                    "client.reconnect_recovered",
+                    state: "in-call",
+                    metrics: ["reconnectCount": Double(coordinator.reconnectCount)])
             }
-            if self.mode == .ringing || self.mode == .reconnecting {
-                guard await self.promoteCanonicalToConnected() else {
-                    self.emitTelemetry("client.transition_failed", state: "connected", detail: "peer_join_before_answer")
+            if coordinator.mode == .ringing || coordinator.mode == .reconnecting {
+                let promoted = await coordinator.promoteCanonicalToConnected(
+                    expectedAgoraJoin: identity)
+                guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+                guard promoted else {
+                    coordinator.emitTelemetry(
+                        "client.transition_failed",
+                        state: "connected",
+                        detail: "peer_join_before_answer")
                     return
                 }
-                self.mode = .calling
-                self.statusText = "কল চলছে"
-                self.stopRingTimeout()
-                self.ringtone.stop()          // both sides connected — silence the ring
-                self.startCallTimer()
-                if let callId = self.activeCallId {
+                coordinator.mode = .calling
+                coordinator.statusText = "কল চলছে"
+                coordinator.stopRingTimeout()
+                coordinator.ringtone.stop()
+                coordinator.startCallTimer(expectedAgoraJoin: identity)
+                if let callId = coordinator.activeCallId {
                     CallKitVoIP.shared.reportConnected(callId: callId)
                 }
                 NotificationCenter.default.post(name: .officeCallCoordinatorDidChange, object: nil)
             }
-            self.emitTelemetry("client.peer_joined", state: "in-call")
+            guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+            coordinator.emitTelemetry("client.peer_joined", state: "in-call")
         }
     }
 
@@ -1027,90 +2574,153 @@ extension OfficeCallCoordinator: AgoraRtcEngineDelegate {
         // uid 0 == the local user; a remote speaker with voice-activity means "someone's talking".
         let remote = speakers.contains { $0.uid != 0 && ($0.vad == 1 || $0.volume > 8) }
         let local = speakers.contains { $0.uid == 0 && $0.volume > 12 }
-        Task { @MainActor in
-            if self.remoteSpeaking != remote { self.remoteSpeaking = remote }
-            if self.localSpeaking != local { self.localSpeaking = local }
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            if coordinator.remoteSpeaking != remote { coordinator.remoteSpeaking = remote }
+            if coordinator.localSpeaking != local { coordinator.localSpeaking = local }
         }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, remoteAudioStateChangedOfUid uid: UInt, state: AgoraAudioRemoteState, reason: AgoraAudioRemoteReason, elapsed: Int) {
         if state == .stopped || state == .failed {
-            Task { @MainActor in self.remoteSpeaking = false }
+            Task { @MainActor [weak coordinator, identity] in
+                guard let coordinator,
+                      coordinator.acceptsAgoraCallback(identity, from: engine)
+                else { return }
+                coordinator.remoteSpeaking = false
+            }
         }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOfflineOfUid uid: UInt, reason: AgoraUserOfflineReason) {
-        Task { @MainActor in
-            self.remoteUids.remove(uid)
-            self.remoteSpeaking = false
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            coordinator.remoteUids.remove(uid)
+            coordinator.remoteSpeaking = false
             // Agora presence is not call truth. Give transient network loss a bounded
             // reconnect window; canonical reconciliation decides remote hang-up.
-            if (self.mode == .calling || self.mode == .ringing), self.remoteUids.isEmpty {
-                self.emitTelemetry("client.peer_left", state: "reconnecting")
-                await self.beginReconnectGrace()
+            if (coordinator.mode == .calling || coordinator.mode == .ringing),
+               coordinator.remoteUids.isEmpty {
+                coordinator.emitTelemetry("client.peer_left", state: "reconnecting")
+                await coordinator.beginReconnectGrace(expectedAgoraJoin: identity)
+                guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
             }
         }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, tokenPrivilegeWillExpire token: String) {
-        Task { @MainActor in await self.renewAgoraToken() }
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            await coordinator.renewAgoraToken(expectedJoin: identity, sourceEngine: engine)
+        }
     }
 
     func rtcEngineRequestToken(_ engine: AgoraRtcEngineKit) {
-        Task { @MainActor in await self.renewAgoraToken() }
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            await coordinator.renewAgoraToken(expectedJoin: identity, sourceEngine: engine)
+        }
+    }
+
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didLeaveChannelWith stats: AgoraChannelStats) {
+        Task { @MainActor [weak coordinator, identity] in
+            coordinator?.confirmAgoraChannelSwitchLeave(
+                identity: identity,
+                sourceEngine: engine)
+        }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit,
                    connectionChangedTo state: AgoraConnectionState,
                    reason: AgoraConnectionChangedReason) {
-        Task { @MainActor in
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator else { return }
+            if state == .disconnected {
+                coordinator.confirmAgoraChannelSwitchLeave(
+                    identity: identity,
+                    sourceEngine: engine)
+            }
+            guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
             switch state {
             case .reconnecting:
-                if self.hasActiveCall { await self.beginReconnectGrace() }
+                if coordinator.hasActiveCall {
+                    await coordinator.beginReconnectGrace(expectedAgoraJoin: identity)
+                    guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+                }
             case .connected:
-                if self.mode == .reconnecting && !self.remoteUids.isEmpty {
-                    self.stopReconnectGrace()
-                    _ = await self.transitionCanonical(to: "CONNECTED")
-                    self.mode = .calling
-                    self.emitTelemetry("client.reconnect_recovered", state: "in-call",
-                                       metrics: ["reconnectCount": Double(self.reconnectCount)])
+                if coordinator.mode == .reconnecting && !coordinator.remoteUids.isEmpty {
+                    coordinator.stopReconnectGrace()
+                    _ = await coordinator.transitionCanonical(
+                        to: "CONNECTED",
+                        expectedAgoraJoin: identity)
+                    guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+                    coordinator.mode = .calling
+                    coordinator.emitTelemetry(
+                        "client.reconnect_recovered",
+                        state: "in-call",
+                        metrics: ["reconnectCount": Double(coordinator.reconnectCount)])
                 }
             case .failed:
-                if self.hasActiveCall { await self.beginReconnectGrace() }
+                if coordinator.hasActiveCall {
+                    await coordinator.beginReconnectGrace(expectedAgoraJoin: identity)
+                    guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+                }
             default:
                 break
             }
-            self.emitTelemetry("client.connection_changed", state: String(describing: state),
-                               detail: String(describing: reason))
+            guard coordinator.acceptsAgoraCallback(identity, from: engine) else { return }
+            coordinator.emitTelemetry(
+                "client.connection_changed",
+                state: String(describing: state),
+                detail: String(describing: reason))
         }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, reportRtcStats stats: AgoraChannelStats) {
-        Task { @MainActor in
-            guard self.hasActiveCall else { return }
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine),
+                  coordinator.hasActiveCall
+            else { return }
             let now = Date()
-            if let last = self.lastQualityTelemetryAt, now.timeIntervalSince(last) < 10 { return }
-            self.lastQualityTelemetryAt = now
-            self.emitTelemetry(
+            if let last = coordinator.lastQualityTelemetryAt,
+               now.timeIntervalSince(last) < 10 { return }
+            coordinator.lastQualityTelemetryAt = now
+            coordinator.emitTelemetry(
                 "client.quality_sample",
-                state: self.canonicalState.lowercased(),
+                state: coordinator.canonicalState.lowercased(),
                 metrics: [
                     "rttMs": Double(stats.lastmileDelay),
                     "packetLossPct": Double(max(stats.txPacketLossRate, stats.rxPacketLossRate)),
                     "txAudioKbps": Double(stats.txAudioKBitrate),
                     "rxAudioKbps": Double(stats.rxAudioKBitrate),
-                    "reconnectCount": Double(self.reconnectCount),
+                    "reconnectCount": Double(coordinator.reconnectCount),
                 ]
             )
         }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
-        Task { @MainActor in
-            self.error = "Agora ত্রুটি (\(errorCode.rawValue))"
-            self.emitTelemetry("client.media_error", state: "error", detail: "agora_\(errorCode.rawValue)")
+        Task { @MainActor [weak coordinator, identity] in
+            guard let coordinator,
+                  coordinator.acceptsAgoraCallback(identity, from: engine)
+            else { return }
+            coordinator.error = "Agora ত্রুটি (\(errorCode.rawValue))"
+            coordinator.emitTelemetry(
+                "client.media_error",
+                state: "error",
+                detail: "agora_\(errorCode.rawValue)")
         }
     }
+}
 }
 
 extension Notification.Name {
@@ -1124,6 +2734,7 @@ extension Notification.Name {
 final class IntercomRingtone {
     enum Kind { case ringback, incoming }
     private var player: AVAudioPlayer?
+    private var incomingAudioSessionLease: IntercomAudioSessionLease?
 
     func play(_ kind: Kind) {
         stop()
@@ -1133,23 +2744,45 @@ final class IntercomRingtone {
             // plays into Agora's already-active call session, so we don't reconfigure it.
             if kind == .incoming {
                 let s = AVAudioSession.sharedInstance()
-                try s.setCategory(.playback, options: [.duckOthers])
-                try s.setActive(true)
+                let ownedOptions = AlmaOwnedAudioSessionOptions.duckingPlayback
+                incomingAudioSessionLease = .capture(
+                    session: s,
+                    ownedCategory: .playback,
+                    ownedMode: .default,
+                    ownedOptions: ownedOptions)
+                do {
+                    try s.setCategory(.playback, mode: .default, options: ownedOptions)
+                    try s.setActive(true)
+                } catch {
+                    releaseIncomingAudioSession()
+                    throw error
+                }
             }
             let p = try AVAudioPlayer(data: IntercomRingtone.wav(for: kind))
             p.numberOfLoops = -1
             p.volume = kind == .incoming ? 1.0 : 0.55
             p.prepareToPlay()
-            p.play()
+            guard p.play() else {
+                releaseIncomingAudioSession()
+                return
+            }
             player = p
         } catch {
             player = nil
+            releaseIncomingAudioSession()
         }
     }
 
     func stop() {
         player?.stop()
         player = nil
+        releaseIncomingAudioSession()
+    }
+
+    private func releaseIncomingAudioSession() {
+        guard let lease = incomingAudioSessionLease else { return }
+        incomingAudioSessionLease = nil
+        lease.releaseIfStillOwned(session: .sharedInstance())
     }
 
     /// One loop of the ring cadence as a 16-bit mono PCM WAV.

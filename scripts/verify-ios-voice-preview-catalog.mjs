@@ -10,7 +10,9 @@ const CATALOG_VERSION = 'live-bn-v1'
 const MANIFEST_RELATIVE_PATH = `config/voice-preview-catalog/${CATALOG_VERSION}.json`
 const PUBLIC_RELATIVE_ROOT = `public/voice-previews/${CATALOG_VERSION}`
 const BUNDLE_RELATIVE_ROOT = `ios/App/App/VoicePreviews/${CATALOG_VERSION}`
+const PRODUCT_RESOURCE_RELATIVE_ROOT = 'VoicePreviews'
 const PRODUCT_RELATIVE_ROOT = `VoicePreviews/${CATALOG_VERSION}`
+const PRODUCT_MANIFEST_RELATIVE_PATH = `VoicePreviews/${CATALOG_VERSION}.json`
 const PENDING_STATUS = 'generated_pending_owner_approval'
 const RELEASE_READY_STATUS = 'owner_approved_release_ready'
 const MANIFEST_KEYS = [
@@ -404,6 +406,37 @@ async function inspectAssetDirectory(repositoryRoot, relativeRoot, label, errors
   return verified
 }
 
+async function inspectExactDirectoryEntries(baseRoot, relativeRoot, expectedNames, label, errors) {
+  const absoluteRoot = path.join(baseRoot, relativeRoot)
+  if (!await validatePathChain(baseRoot, relativeRoot, 'directory', label, errors)) return
+
+  let names
+  try {
+    names = await readdir(absoluteRoot)
+  } catch (error) {
+    errors.push(`${label} directory unreadable: ${relativeRoot} (${error.code ?? error.message})`)
+    return
+  }
+
+  const actualSet = new Set(names)
+  for (const name of [...expectedNames].sort()) {
+    if (!actualSet.has(name)) errors.push(`${label} entry missing: ${printable(name)}`)
+  }
+  for (const name of [...actualSet].sort()) {
+    if (!expectedNames.has(name)) errors.push(`${label} unexpected entry: ${printable(name)}`)
+  }
+}
+
+async function readVerifiedFile(baseRoot, relativePath, label, errors) {
+  if (!await validatePathChain(baseRoot, relativePath, 'file', label, errors)) return null
+  try {
+    return await readFile(path.join(baseRoot, relativePath))
+  } catch (error) {
+    errors.push(`${label} unreadable: ${relativePath} (${error.code ?? error.message})`)
+    return null
+  }
+}
+
 function validateManifest(manifest, release, errors) {
   if (!hasExactKeys(manifest, MANIFEST_KEYS, 'manifest', errors)) return new Map()
 
@@ -578,6 +611,7 @@ async function main() {
   }
 
   let manifest
+  let manifestBytes = null
   let entriesByKey = new Map()
   let publicAssets = new Map()
   let bundledAssets = new Map()
@@ -588,7 +622,8 @@ async function main() {
     const manifestPath = path.join(options.repositoryRoot, MANIFEST_RELATIVE_PATH)
     if (await validatePathChain(options.repositoryRoot, MANIFEST_RELATIVE_PATH, 'file', 'manifest', errors)) {
       try {
-        const manifestSource = await readFile(manifestPath, 'utf8')
+        manifestBytes = await readFile(manifestPath)
+        const manifestSource = manifestBytes.toString('utf8')
         manifest = JSON.parse(manifestSource)
         const canonicalSource = `${JSON.stringify(manifest, null, 2)}\n`
         if (manifestSource !== canonicalSource) {
@@ -609,6 +644,22 @@ async function main() {
     if (options.productRoot !== null) {
       const physicalProductRoot = await validatePhysicalProductRoot(options.productRoot, errors)
       if (physicalProductRoot) {
+        await inspectExactDirectoryEntries(
+          physicalProductRoot,
+          PRODUCT_RESOURCE_RELATIVE_ROOT,
+          new Set([CATALOG_VERSION, `${CATALOG_VERSION}.json`]),
+          'product VoicePreviews',
+          errors,
+        )
+        const productManifestBytes = await readVerifiedFile(
+          physicalProductRoot,
+          PRODUCT_MANIFEST_RELATIVE_PATH,
+          'product manifest',
+          errors,
+        )
+        if (manifestBytes && productManifestBytes && !manifestBytes.equals(productManifestBytes)) {
+          errors.push('source/product manifest copy mismatch')
+        }
         productAssets = await inspectAssetDirectory(
           physicalProductRoot,
           PRODUCT_RELATIVE_ROOT,

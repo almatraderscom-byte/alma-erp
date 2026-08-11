@@ -8,13 +8,65 @@
 import SwiftUI
 import AVFoundation
 
+/// A narrow lease for a downloaded intercom voice note's app-owned audio
+/// session. Cleanup restores the captured configuration only while every
+/// category component still matches this player, so a newer owner is never
+/// deactivated or overwritten.
+private struct IntercomVoiceNoteAudioSessionLease {
+    let previousCategory: AVAudioSession.Category
+    let previousMode: AVAudioSession.Mode
+    let previousOptions: AVAudioSession.CategoryOptions
+    let ownedCategory: AVAudioSession.Category
+    let ownedMode: AVAudioSession.Mode
+    let ownedOptions: AVAudioSession.CategoryOptions
+
+    static func capture(
+        session: AVAudioSession,
+        ownedCategory: AVAudioSession.Category,
+        ownedMode: AVAudioSession.Mode,
+        ownedOptions: AVAudioSession.CategoryOptions
+    ) -> Self {
+        Self(
+            previousCategory: session.category,
+            previousMode: session.mode,
+            previousOptions: session.categoryOptions,
+            ownedCategory: ownedCategory,
+            ownedMode: ownedMode,
+            ownedOptions: ownedOptions)
+    }
+
+    func releaseIfStillOwned(session: AVAudioSession) {
+        guard session.category == ownedCategory,
+              session.mode == ownedMode,
+              session.categoryOptions == ownedOptions
+        else { return }
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        try? session.setCategory(
+            previousCategory,
+            mode: previousMode,
+            options: previousOptions)
+    }
+}
+
 @available(iOS 17.0, *)
 struct IntercomView: View {
+    private enum VoiceNoteAudioPath: Equatable {
+        case appOwnedIdle
+        case officeListening
+    }
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var vm = PortalOfficeVM()
     private let ic = AgoraIntercom.shared
     @State private var voicePlayer: AVPlayer? = nil
+    @State private var voicePlayerCompletionObserver: NSObjectProtocol? = nil
+    @State private var voicePlayerFailureObserver: NSObjectProtocol? = nil
+    @State private var voiceAudioSessionLease: IntercomVoiceNoteAudioSessionLease? = nil
+    @State private var voiceAudioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token? = nil
+    @State private var voiceAudioClaimGeneration: UUID? = nil
+    @State private var voicePlaybackGeneration = 0
+    @State private var voicePlaybackViewIsActive = false
     @State private var playedVoiceIds = Set<String>()
 
     private var isOwner: Bool { vm.selfRole == "owner" }
@@ -179,14 +231,13 @@ struct IntercomView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
-                        if !ic.recording {
+                        if !ic.recording, ic.pttPressBegan() {
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            Task { await ic.pttStart() }
                         }
                     }
                     .onEnded { _ in
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                        Task { await ic.pttStop() }
+                        ic.pttPressEnded()
                     }
             )
             .accessibilityLabel(ic.recording ? "রেকর্ডিং চলছে, ছেড়ে দিলে পাঠাবে" : "চেপে ধরে voice message রেকর্ড করুন")
@@ -237,6 +288,29 @@ struct IntercomView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(18).portalOfficeGlass(scheme, corner: 22)
+        .onAppear {
+            voicePlaybackGeneration &+= 1
+            voicePlaybackViewIsActive = true
+        }
+        .onDisappear {
+            voicePlaybackViewIsActive = false
+            voicePlaybackGeneration &+= 1
+            stopVoiceNotePlayback()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.willResignActiveNotification)
+        ) { _ in
+            voicePlaybackViewIsActive = false
+            voicePlaybackGeneration &+= 1
+            stopVoiceNotePlayback()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didEnterBackgroundNotification)
+        ) { _ in
+            voicePlaybackViewIsActive = false
+            voicePlaybackGeneration &+= 1
+            stopVoiceNotePlayback()
+        }
         .task {
             await ic.joinLive(asBroadcaster: false)
             // Incoming CALLS are handled app-wide by FloatingChatHead; here we only
@@ -251,17 +325,304 @@ struct IntercomView: View {
     /// Auto-play any voice note the boss sent that I haven't heard yet (online or not).
     @MainActor
     private func playPendingVoiceNotes() async {
+        guard voicePlaybackViewIsActive, voicePlayer == nil else { return }
+        let generation = voicePlaybackGeneration
         let pending = await ic.pendingVoiceNotes()
+        guard !Task.isCancelled,
+              voicePlaybackViewIsActive,
+              generation == voicePlaybackGeneration,
+              voicePlayer == nil
+        else { return }
+
         for v in pending where !playedVoiceIds.contains(v.id) {
             guard let url = URL(string: v.url) else { continue }
-            playedVoiceIds.insert(v.id)
-            try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.defaultToSpeaker])
-            try? AVAudioSession.sharedInstance().setActive(true)
-            let p = AVPlayer(url: url)
+            guard let audioPath = admittedVoiceNoteAudioPath() else { return }
+
+            guard !Task.isCancelled,
+                  voicePlaybackViewIsActive,
+                  generation == voicePlaybackGeneration,
+                  voicePlayer == nil
+            else { return }
+
+            // Defensive replacement cleanup also removes any observer/lease a
+            // failed prior attempt may have left behind.
+            stopVoiceNotePlayback(mode: audioPath == .officeListening
+                ? .relinquishAfterActivatedSystemTakeover
+                : .restoreBeforeNextAppMutation)
+            guard admittedVoiceNoteAudioPath() == audioPath else { return }
+
+            let claimGeneration = UUID()
+            let stopForTakeover: AlmaLiveVoiceNonCallAudioRegistry.StopHandler = { mode in
+                stopVoiceNotePlaybackForAudioTakeover(
+                    claimGeneration: claimGeneration,
+                    mode: mode)
+            }
+            let claimToken: AlmaLiveVoiceNonCallAudioRegistry.Token
+            switch audioPath {
+            case .officeListening:
+                // The Office listener already owns the live Agora audio session.
+                // Register the note directly only when the non-call registry is
+                // empty; claiming through the relay would reject the intentional
+                // Office listener, while replacing another entry could restore a
+                // stale session over Agora.
+                guard !AlmaLiveVoiceNonCallAudioRegistry.shared.isBusy,
+                      admittedVoiceNoteAudioPath() == .officeListening
+                else { return }
+                claimToken = AlmaLiveVoiceNonCallAudioRegistry.shared.claim(
+                    .intercomVoiceNote,
+                    stop: stopForTakeover)
+                // The live listener already owns an active
+                // playAndRecord/voiceChat session. AVPlayer can render through
+                // that session; taking a nested playback lease would deactivate
+                // Agora when the note ends.
+                voiceAudioSessionLease = nil
+
+            case .appOwnedIdle:
+                // This is the final suspension-free admission point. The relay
+                // stops/restores an older app owner and rechecks every call owner
+                // before returning the exact registry token for this note.
+                guard let token = AlmaLiveVoicePreviewTakeoverRelay.shared
+                    .claimNonCallAudio(.intercomVoiceNote, stop: stopForTakeover)
+                else { return }
+                claimToken = token
+            }
+            voiceAudioClaimToken = claimToken
+            voiceAudioClaimGeneration = claimGeneration
+
+            guard admittedVoiceNoteAudioPath() == audioPath,
+                  voiceAudioClaimToken == claimToken,
+                  voiceAudioClaimGeneration == claimGeneration
+            else {
+                stopVoiceNotePlayback(
+                    claimGeneration: claimGeneration,
+                    mode: .relinquishAfterActivatedSystemTakeover)
+                return
+            }
+
+            if audioPath == .appOwnedIdle {
+                let session = AVAudioSession.sharedInstance()
+                let ownedCategory: AVAudioSession.Category = .playback
+                let ownedMode: AVAudioSession.Mode = .default
+                let ownedOptions: AVAudioSession.CategoryOptions = []
+                let lease = IntercomVoiceNoteAudioSessionLease.capture(
+                    session: session,
+                    ownedCategory: ownedCategory,
+                    ownedMode: ownedMode,
+                    ownedOptions: ownedOptions)
+                voiceAudioSessionLease = lease
+                do {
+                    try session.setCategory(
+                        ownedCategory,
+                        mode: ownedMode,
+                        options: ownedOptions)
+                    try session.setActive(true)
+                } catch {
+                    stopVoiceNotePlayback(
+                        claimGeneration: claimGeneration,
+                        mode: .restoreBeforeNextAppMutation)
+                    return
+                }
+            }
+
+            guard !Task.isCancelled,
+                  voicePlaybackViewIsActive,
+                  generation == voicePlaybackGeneration,
+                  admittedVoiceNoteAudioPath() == audioPath,
+                  voiceAudioClaimToken == claimToken,
+                  voiceAudioClaimGeneration == claimGeneration
+            else {
+                stopVoiceNotePlayback(
+                    claimGeneration: claimGeneration,
+                    mode: admittedVoiceNoteAudioPath() == audioPath
+                        ? .restoreBeforeNextAppMutation
+                        : .relinquishAfterActivatedSystemTakeover)
+                return
+            }
+
+            let item = AVPlayerItem(url: url)
+            let p = AVPlayer(playerItem: item)
             voicePlayer = p
+            installVoiceNoteObservers(for: p, item: item, generation: generation)
+
+            // Player construction/observer installation is synchronous, but a
+            // CallKit reservation can arrive on its own queue. Recheck every
+            // owner plus this exact view/player/token immediately before play.
+            guard !Task.isCancelled,
+                  voicePlaybackViewIsActive,
+                  generation == voicePlaybackGeneration,
+                  voicePlayer === p,
+                  admittedVoiceNoteAudioPath() == audioPath,
+                  voiceAudioClaimToken == claimToken,
+                  voiceAudioClaimGeneration == claimGeneration
+            else {
+                stopVoiceNotePlayback(
+                    claimGeneration: claimGeneration,
+                    mode: admittedVoiceNoteAudioPath() == audioPath
+                        ? .restoreBeforeNextAppMutation
+                        : .relinquishAfterActivatedSystemTakeover)
+                return
+            }
             p.play()
+
+            guard await waitForVoiceNotePlaybackStart(
+                    p,
+                    generation: generation,
+                    audioPath: audioPath,
+                    claimToken: claimToken,
+                    claimGeneration: claimGeneration),
+                  !Task.isCancelled,
+                  voicePlaybackViewIsActive,
+                  generation == voicePlaybackGeneration,
+                  voicePlayer === p,
+                  admittedVoiceNoteAudioPath() == audioPath,
+                  voiceAudioClaimToken == claimToken,
+                  voiceAudioClaimGeneration == claimGeneration
+            else {
+                stopVoiceNotePlayback(
+                    claimGeneration: claimGeneration,
+                    mode: admittedVoiceNoteAudioPath() == audioPath
+                        ? .restoreBeforeNextAppMutation
+                        : .relinquishAfterActivatedSystemTakeover)
+                return
+            }
+
+            // A receipt is advanced only after AVPlayer is actually playing and
+            // this view generation still owns that exact player.
+            playedVoiceIds.insert(v.id)
             await ic.markVoicePlayed(v.id)
             break   // one at a time — the next poll picks up the rest
+        }
+    }
+
+    @MainActor
+    private func waitForVoiceNotePlaybackStart(
+        _ player: AVPlayer,
+        generation: Int,
+        audioPath: VoiceNoteAudioPath,
+        claimToken: AlmaLiveVoiceNonCallAudioRegistry.Token,
+        claimGeneration: UUID
+    ) async -> Bool {
+        // Remote items may spend a short period buffering. A bounded wait keeps
+        // an unreachable item from owning the audio session indefinitely.
+        for _ in 0..<100 {
+            guard !Task.isCancelled,
+                  voicePlaybackViewIsActive,
+                  generation == voicePlaybackGeneration,
+                  voicePlayer === player,
+                  admittedVoiceNoteAudioPath() == audioPath,
+                  voiceAudioClaimToken == claimToken,
+                  voiceAudioClaimGeneration == claimGeneration
+            else { return false }
+            if player.error != nil || player.currentItem?.status == .failed { return false }
+            if player.timeControlStatus == .playing { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
+    }
+
+    @MainActor
+    private func installVoiceNoteObservers(
+        for player: AVPlayer,
+        item: AVPlayerItem,
+        generation: Int
+    ) {
+        removeVoiceNoteObservers()
+        let center = NotificationCenter.default
+        voicePlayerCompletionObserver = center.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification,
+            object: item,
+            queue: .main
+        ) { [weak player] _ in
+            MainActor.assumeIsolated {
+                guard let player else { return }
+                finishVoiceNotePlayback(player, generation: generation)
+            }
+        }
+        voicePlayerFailureObserver = center.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: item,
+            queue: .main
+        ) { [weak player] _ in
+            MainActor.assumeIsolated {
+                guard let player else { return }
+                finishVoiceNotePlayback(player, generation: generation)
+            }
+        }
+    }
+
+    @MainActor
+    private func finishVoiceNotePlayback(_ player: AVPlayer, generation: Int) {
+        guard generation == voicePlaybackGeneration, voicePlayer === player else { return }
+        stopVoiceNotePlayback()
+    }
+
+    @MainActor
+    private func stopVoiceNotePlaybackForAudioTakeover(
+        claimGeneration: UUID,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard voiceAudioClaimGeneration == claimGeneration,
+              voiceAudioClaimToken != nil
+        else { return }
+        // Invalidate the in-flight poll before touching its exact player. Any
+        // post-await continuation from that poll is now permanently stale.
+        voicePlaybackGeneration &+= 1
+        stopVoiceNotePlayback(claimGeneration: claimGeneration, mode: mode)
+    }
+
+    @MainActor
+    private func stopVoiceNotePlayback(
+        claimGeneration expectedClaimGeneration: UUID? = nil,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode = .restoreBeforeNextAppMutation
+    ) {
+        if let expectedClaimGeneration {
+            guard voiceAudioClaimGeneration == expectedClaimGeneration else { return }
+        }
+        removeVoiceNoteObservers()
+        voicePlayer?.pause()
+        voicePlayer?.replaceCurrentItem(with: nil)
+        voicePlayer = nil
+        let claimToken = voiceAudioClaimToken
+        let lease = voiceAudioSessionLease
+        voiceAudioClaimToken = nil
+        voiceAudioClaimGeneration = nil
+        voiceAudioSessionLease = nil
+        if mode == .restoreBeforeNextAppMutation {
+            lease?.releaseIfStillOwned(session: .sharedInstance())
+        }
+        if let claimToken {
+            AlmaLiveVoiceNonCallAudioRegistry.shared.release(claimToken)
+        }
+    }
+
+    @MainActor
+    private func admittedVoiceNoteAudioPath() -> VoiceNoteAudioPath? {
+        guard !CallKitVoIP.shared.hasPendingOrActiveCall,
+              !AgentCallController.shared.isActive,
+              !(AlmaCallBarBridge.shared.engine?.isCallRunning ?? false),
+              !ic.isPTTActiveOrStarting,
+              !ic.audioTeardownPending
+        else { return nil }
+        switch ic.mode {
+        case .idle:
+            return .appOwnedIdle
+        case .listening:
+            return .officeListening
+        case .broadcasting, .calling, .ringing, .reconnecting:
+            return nil
+        }
+    }
+
+    @MainActor
+    private func removeVoiceNoteObservers() {
+        let center = NotificationCenter.default
+        if let observer = voicePlayerCompletionObserver {
+            center.removeObserver(observer)
+            voicePlayerCompletionObserver = nil
+        }
+        if let observer = voicePlayerFailureObserver {
+            center.removeObserver(observer)
+            voicePlayerFailureObserver = nil
         }
     }
 

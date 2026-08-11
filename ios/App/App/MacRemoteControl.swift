@@ -150,6 +150,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
             options.clientRoleType = .audience
             options.autoSubscribeVideo = true
             options.autoSubscribeAudio = false
+            options.enableAudioRecordingOrPlayout = false
             options.publishCameraTrack = false
             options.publishMicrophoneTrack = false
             engine.joinChannelEx(byToken: resp.token, connection: conn,
@@ -310,6 +311,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.publishMicrophoneTrack = false
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
+        options.enableAudioRecordingOrPlayout = false
         guard engine.updateChannelEx(with: options, connection: conn) == 0 else { return false }
         // Wait for Agora to CONFIRM the broadcaster role before creating the
         // data streams — a stream made while still an audience is accepted
@@ -364,6 +366,7 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         options.clientRoleType = .audience
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
+        options.enableAudioRecordingOrPlayout = false
         options.publishCameraTrack = false
         options.publishMicrophoneTrack = false
         if let viewToken { options.token = viewToken }
@@ -635,6 +638,7 @@ final class MacRemoteControlStore {
             options.publishMicrophoneTrack = false
             options.autoSubscribeVideo = true
             options.autoSubscribeAudio = false
+            options.enableAudioRecordingOrPlayout = false
             _ = engine.updateChannelEx(with: options, connection: conn)
         }
     }
@@ -653,6 +657,7 @@ final class MacRemoteControlStore {
         options.publishMicrophoneTrack = false
         options.autoSubscribeVideo = true
         options.autoSubscribeAudio = false
+        options.enableAudioRecordingOrPlayout = false
         _ = engine.updateChannelEx(with: options, connection: conn)
     }
 

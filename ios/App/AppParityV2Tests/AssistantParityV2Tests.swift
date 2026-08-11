@@ -1079,6 +1079,33 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(state.claimPolicyWithheld(.listenGateClosed, windowID: secondWindow))
     }
 
+    func testLiveVoiceStartAttemptRejectsDeferredWorkAcrossStopAndReplacement() {
+        var state = AlmaLiveVoiceStartAttemptState()
+        let first = state.reserve()
+
+        state.invalidate()
+        XCTAssertFalse(state.activate(first),
+                       "a queued start cannot activate after terminal stop")
+        XCTAssertNil(state.activeToken)
+
+        let second = state.reserve()
+        XCTAssertNotEqual(second, first)
+        XCTAssertTrue(state.activate(second))
+        XCTAssertTrue(state.acceptsActive(second))
+        XCTAssertFalse(state.acceptsActive(first))
+        XCTAssertFalse(state.activate(second),
+                       "one reserved attempt may activate only once")
+
+        state.invalidate()
+        XCTAssertFalse(state.acceptsActive(second),
+                       "a published attempt is rejected immediately at stop")
+        let third = state.reserve()
+        XCTAssertNotEqual(third, second)
+        XCTAssertFalse(state.acceptsActive(third),
+                       "reservation alone cannot publish a socket")
+        XCTAssertTrue(state.activate(third))
+    }
+
     func testLiveVoiceEvidenceDistinguishesPolicyNotQueuedAndRealSendFailure() throws {
         let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
         recorder.beginFixtureSession(
@@ -2631,5 +2658,170 @@ final class AssistantParityV2Tests: XCTestCase {
     func testSyntaxHighlighterPreservesSourceText() {
         let source = "let amount = 5000 // whole taka"
         XCTAssertEqual(String(AgentSyntaxHighlighter.highlight(source, language: "swift").characters), source)
+    }
+
+    func testAgoraJoinEpochFenceKeepsExactSameJoinIdempotent() throws {
+        let registry = AlmaCallAudioAdmission()
+        let engine = NSObject()
+        let token = try XCTUnwrap(registry.claimNormal(
+            .assistant(engine: ObjectIdentifier(engine)),
+            stop: {}))
+        defer { registry.release(token) }
+        var fence = AlmaAgoraJoinEpochFence()
+
+        let first = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_same",
+            admissionToken: token,
+            operationGeneration: 7)
+        let duplicate = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_same",
+            admissionToken: token,
+            operationGeneration: 7)
+
+        XCTAssertEqual(duplicate, first)
+        XCTAssertEqual(fence.active, first)
+    }
+
+    func testAgoraJoinEpochFenceChangedOperationRequiresRetire() throws {
+        let registry = AlmaCallAudioAdmission()
+        let engine = NSObject()
+        let token = try XCTUnwrap(registry.claimNormal(
+            .assistant(engine: ObjectIdentifier(engine)),
+            stop: {}))
+        defer { registry.release(token) }
+        var fence = AlmaAgoraJoinEpochFence()
+        let original = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_call",
+            admissionToken: token,
+            operationGeneration: 20)
+
+        XCTAssertTrue(fence.requiresSerializedLeave(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_call",
+            admissionToken: token,
+            operationGeneration: 21))
+        XCTAssertEqual(fence.active, original)
+        XCTAssertTrue(fence.retire(original))
+        let replacement = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_call",
+            admissionToken: token,
+            operationGeneration: 21)
+        XCTAssertNotEqual(replacement.epoch, original.epoch)
+    }
+
+    func testAgoraJoinEpochFenceRejectsRetiredIdentityAfterReplacement() throws {
+        let registry = AlmaCallAudioAdmission()
+        let engine = NSObject()
+        let token = try XCTUnwrap(registry.claimNormal(
+            .assistant(engine: ObjectIdentifier(engine)),
+            stop: {}))
+        defer { registry.release(token) }
+        var fence = AlmaAgoraJoinEpochFence()
+        let stale = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_old",
+            admissionToken: token,
+            operationGeneration: 1)
+        XCTAssertTrue(fence.retire(stale))
+        let current = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_new",
+            admissionToken: token,
+            operationGeneration: 2)
+
+        XCTAssertFalse(fence.accepts(
+            stale,
+            engineIdentity: ObjectIdentifier(engine),
+            reportedChannel: "itc_old"))
+        XCTAssertTrue(fence.accepts(
+            current,
+            engineIdentity: ObjectIdentifier(engine),
+            reportedChannel: "itc_new"))
+    }
+
+    func testAgoraJoinEpochFenceRejectsWrongEngineAndReportedChannel() throws {
+        let registry = AlmaCallAudioAdmission()
+        let engine = NSObject()
+        let wrongEngine = NSObject()
+        let token = try XCTUnwrap(registry.claimNormal(
+            .assistant(engine: ObjectIdentifier(engine)),
+            stop: {}))
+        defer { registry.release(token) }
+        var fence = AlmaAgoraJoinEpochFence()
+        let identity = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_bound",
+            admissionToken: token,
+            operationGeneration: 3)
+
+        XCTAssertFalse(fence.accepts(
+            identity,
+            engineIdentity: ObjectIdentifier(wrongEngine),
+            reportedChannel: "itc_bound"))
+        XCTAssertFalse(fence.accepts(
+            identity,
+            engineIdentity: ObjectIdentifier(engine),
+            reportedChannel: "itc_other"))
+        XCTAssertTrue(fence.accepts(
+            identity,
+            engineIdentity: ObjectIdentifier(engine),
+            reportedChannel: "itc_bound"))
+    }
+
+    func testAgoraFailedSubmissionRetiresIdentityAndAllowsCleanRetry() throws {
+        let registry = AlmaCallAudioAdmission()
+        let engine = NSObject()
+        let token = try XCTUnwrap(registry.claimNormal(
+            .assistant(engine: ObjectIdentifier(engine)),
+            stop: {}))
+        defer { registry.release(token) }
+        var fence = AlmaAgoraJoinEpochFence()
+        let failed = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_retry",
+            admissionToken: token,
+            operationGeneration: 40)
+
+        XCTAssertEqual(
+            AlmaAgoraJoinSubmissionTransition.apply(
+                result: -17,
+                identity: failed,
+                fence: &fence),
+            .failedRetired)
+        XCTAssertNil(fence.active)
+        XCTAssertFalse(fence.requiresSerializedLeave(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_retry",
+            admissionToken: token,
+            operationGeneration: 40))
+
+        let retry = fence.activate(
+            engineIdentity: ObjectIdentifier(engine),
+            channel: "itc_retry",
+            admissionToken: token,
+            operationGeneration: 40)
+        XCTAssertNotEqual(retry.epoch, failed.epoch)
+        XCTAssertTrue(fence.accepts(
+            retry,
+            engineIdentity: ObjectIdentifier(engine),
+            reportedChannel: "itc_retry"))
+    }
+
+    func testAgoraChannelSwitchPlanMutesBeforeRetireAndLeave() {
+        var operations: [AlmaAgoraChannelSwitchOperation] = []
+
+        AlmaAgoraChannelSwitchOperationPlan.performPrivacyBoundary {
+            operations.append($0)
+        }
+
+        XCTAssertEqual(operations, [
+            .mutePublication,
+            .retireAuthority,
+            .leaveChannel,
+        ])
     }
 }
