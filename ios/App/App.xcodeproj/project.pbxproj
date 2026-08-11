@@ -48,6 +48,8 @@
 		A7C100000000000000000009 /* LiveVoicePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000008 /* LiveVoicePreviewTests.swift */; };
 		B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */; };
 		B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */; };
+		C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */; };
+		C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
 		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
 		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
@@ -255,6 +257,8 @@
 		A7C100000000000000000008 /* LiveVoicePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePreviewTests.swift; sourceTree = "<group>"; };
 		B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceContract.swift; sourceTree = "<group>"; };
 		B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePhase1BTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceInputTurnReducer.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceInputTurnReducerTests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
@@ -482,6 +486,7 @@
 				F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
 				B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */,
+				C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */,
 				A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */,
 				A7C100000000000000000001 /* VoicePreviews */,
 				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
@@ -590,6 +595,7 @@
 				A9F000000000000000000002 /* AssistantParityV2Tests.swift */,
 				A7C100000000000000000008 /* LiveVoicePreviewTests.swift */,
 				B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */,
+				C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */,
 				AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */,
 				A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */,
 			);
@@ -1005,6 +1011,7 @@
 				F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
 				B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */,
+				C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */,
 				A7C100000000000000000007 /* AlmaLiveVoicePreview.swift in Sources */,
 				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,
 				F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */,
@@ -1094,6 +1101,7 @@
 				A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */,
 				A7C100000000000000000009 /* LiveVoicePreviewTests.swift in Sources */,
 				B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */,
+				C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */,
 				AC570000000000000000C001 /* AgentCallStatusOutboxTests.swift in Sources */,
 				A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */,
 			);

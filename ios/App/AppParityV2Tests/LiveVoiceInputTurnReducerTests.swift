@@ -1,0 +1,306 @@
+import XCTest
+@testable import App
+
+final class LiveVoiceInputTurnReducerTests: XCTestCase {
+    private let generation: UInt64 = 41
+
+    func testInputTurnReducerRollbackGateHasDeterministicPrecedence() throws {
+        let suite = "LiveVoiceInputTurnReducerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .inputTurnReducerV1,
+            environment: [:],
+            defaults: defaults))
+        AlmaLiveVoiceRecoveryFeatures.set(
+            false,
+            for: .inputTurnReducerV1,
+            defaults: defaults)
+        XCTAssertFalse(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .inputTurnReducerV1,
+            environment: [:],
+            defaults: defaults))
+        XCTAssertTrue(AlmaLiveVoiceRecoveryFeatures.isEnabled(
+            .inputTurnReducerV1,
+            environment: ["ALMA_LIVE_VOICE_INPUT_TURN_REDUCER_V1": "true"],
+            defaults: defaults))
+    }
+
+    func testTrustedRouteContinuouslyEmitsQuietNormalAndPausedPCMExactlyOnce() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        let levels = [0.006, 0.030, 0.000, 0.011, 0.004] + Array(repeating: 0.018, count: 220)
+        var emitted: [UInt64] = []
+
+        for (offset, level) in levels.enumerated() {
+            let sequence = UInt64(offset + 1)
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: sequence,
+                pcm: pcm(sequence),
+                rms: level,
+                route: .trustedAECOrReceiver,
+                ready: true,
+                suppression: offset < 2 ? .activePlayback : .none)
+            emitted += effect.audioFramesToSend.map(\.sequence)
+        }
+
+        let duplicate = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: UInt64(levels.count),
+            pcm: pcm(UInt64(levels.count)),
+            rms: 0.030,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .none)
+
+        XCTAssertEqual(emitted, (1...UInt64(levels.count)).map { $0 })
+        XCTAssertTrue(duplicate.audioFramesToSend.isEmpty)
+    }
+
+    func testTrustedRouteDoesNotLoseImmediatePostGreetingPCM() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        let duringPlayback = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 1,
+            pcm: pcm(1),
+            rms: 0.006,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .activePlayback)
+        let playbackTail = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 2,
+            pcm: pcm(2),
+            rms: 0.030,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .playbackTail)
+
+        XCTAssertEqual(duringPlayback.audioFramesToSend.map(\.sequence), [1])
+        XCTAssertEqual(playbackTail.audioFramesToSend.map(\.sequence), [2])
+    }
+
+    func testNoAECLoudspeakerRetainsCompleteShortUtteranceAcrossPlaybackTail() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        let shortUtteranceFrames = 100
+
+        for sequence in 1...shortUtteranceFrames {
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(sequence),
+                pcm: pcm(UInt64(sequence)),
+                rms: sequence < 15 ? 0.006 : 0.030,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .playbackTail)
+            XCTAssertTrue(effect.audioFramesToSend.isEmpty)
+        }
+
+        let released = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 101,
+            pcm: pcm(101),
+            rms: 0.004,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .none)
+
+        XCTAssertEqual(released.audioFramesToSend.map(\.sequence), (1...101).map(UInt64.init))
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
+    func testNoAECActivePlaybackBufferIsBoundedAndDrainsFIFOAfterConfirmation() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(
+            generation: generation,
+            maximumSuppressedFrames: 3)
+
+        for sequence in 1...4 {
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(sequence),
+                pcm: pcm(UInt64(sequence)),
+                rms: 0.030,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .activePlayback)
+            XCTAssertTrue(effect.audioFramesToSend.isEmpty)
+        }
+
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 3)
+        let confirmed = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 5,
+            pcm: pcm(5),
+            rms: 0.030,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .activePlayback,
+            ownerSpeechConfirmed: true)
+        let continuing = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 6,
+            pcm: pcm(6),
+            rms: 0.012,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .activePlayback)
+
+        XCTAssertEqual(confirmed.audioFramesToSend.map(\.sequence), [3, 4, 5])
+        XCTAssertEqual(continuing.audioFramesToSend.map(\.sequence), [6])
+    }
+
+    func testMuteEndsOnlyAnOpenAudioStreamAndUnmuteResumes() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        XCTAssertFalse(reducer.setMuted(true, generation: generation).sendAudioStreamEnd)
+        XCTAssertTrue(reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 1,
+            pcm: pcm(1),
+            rms: 0.006,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .none
+        ).audioFramesToSend.isEmpty)
+
+        _ = reducer.setMuted(false, generation: generation)
+        XCTAssertEqual(reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 2,
+            pcm: pcm(2),
+            rms: 0.006,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .none
+        ).audioFramesToSend.map(\.sequence), [2])
+        XCTAssertTrue(reducer.setMuted(true, generation: generation).sendAudioStreamEnd)
+        XCTAssertFalse(reducer.setMuted(true, generation: generation).sendAudioStreamEnd)
+    }
+
+    func testTranscriptionAndEnergyOrderingShareOneExactlyFinalizedTurn() {
+        var transcriptionFirst = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        XCTAssertEqual(transcriptionFirst.observeInputTranscription(
+            generation: generation,
+            text: "আমি ",
+            finished: false
+        ).transcriptUpdate, .init(turnOrdinal: 1, text: "আমি ", finalized: false))
+        _ = transcriptionFirst.observeOwnerEnergy(generation: generation)
+        XCTAssertEqual(transcriptionFirst.observeInputTranscription(
+            generation: generation,
+            text: "যাই",
+            finished: true
+        ).transcriptUpdate, .init(turnOrdinal: 1, text: "আমি যাই", finalized: true))
+
+        var energyFirst = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = energyFirst.observeOwnerEnergy(generation: generation)
+        XCTAssertEqual(energyFirst.observeInputTranscription(
+            generation: generation,
+            text: "আমি যাই",
+            finished: true
+        ).transcriptUpdate, .init(turnOrdinal: 1, text: "আমি যাই", finalized: true))
+        XCTAssertNil(energyFirst.observeInputTranscription(
+            generation: generation,
+            text: nil,
+            finished: true
+        ).transcriptUpdate)
+    }
+
+    func testMarkerOnlyFinishedAndMissingFinishedFallbackFinalizeExactlyOnce() {
+        var marker = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = marker.observeInputTranscription(
+            generation: generation,
+            text: "শেষ করি",
+            finished: false)
+        XCTAssertEqual(marker.observeInputTranscription(
+            generation: generation,
+            text: nil,
+            finished: true
+        ).transcriptUpdate, .init(turnOrdinal: 1, text: "শেষ করি", finalized: true))
+        XCTAssertNil(marker.observeInputTranscription(
+            generation: generation,
+            text: nil,
+            finished: true
+        ).transcriptUpdate)
+
+        var fallback = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = fallback.observeInputTranscription(
+            generation: generation,
+            text: "বলুন",
+            finished: false)
+        XCTAssertEqual(fallback.observeResponseBoundary(
+            generation: generation,
+            .modelAudio
+        ).transcriptUpdate, .init(turnOrdinal: 1, text: "বলুন", finalized: true))
+        XCTAssertNil(fallback.observeResponseBoundary(
+            generation: generation,
+            .turnComplete
+        ).transcriptUpdate)
+    }
+
+    func testLateToolOnlyAndDelayedActivityFragmentsDoNotCreateOwnerTurns() {
+        var toolOnly = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        XCTAssertNil(toolOnly.observeResponseBoundary(
+            generation: generation,
+            .toolCall
+        ).transcriptUpdate)
+        XCTAssertNil(toolOnly.observeInputTranscription(
+            generation: generation,
+            text: "late tool fragment",
+            finished: true
+        ).transcriptUpdate)
+        XCTAssertEqual(toolOnly.currentOwnerTurnOrdinal, 0)
+
+        var delayedActivity = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = delayedActivity.observeInputTranscription(
+            generation: generation,
+            text: "সম্পূর্ণ",
+            finished: true)
+        _ = delayedActivity.observeResponseBoundary(generation: generation, .modelAudio)
+        _ = delayedActivity.observeActivityStarted(generation: generation)
+        _ = delayedActivity.observeActivityEnded(generation: generation)
+        XCTAssertEqual(delayedActivity.currentOwnerTurnOrdinal, 1)
+        XCTAssertNil(delayedActivity.observeInputTranscription(
+            generation: generation,
+            text: "late",
+            finished: true
+        ).transcriptUpdate)
+    }
+
+    func testQuickBargeInCreatesNewOwnerTurnAndStaleGenerationIsIgnored() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = reducer.observeInputTranscription(
+            generation: generation,
+            text: "প্রথম",
+            finished: true)
+        _ = reducer.observeResponseBoundary(generation: generation, .modelAudio)
+        _ = reducer.observeLocalBargeIn(generation: generation)
+
+        XCTAssertEqual(reducer.observeInputTranscription(
+            generation: generation,
+            text: "থামো",
+            finished: true
+        ).transcriptUpdate, .init(turnOrdinal: 2, text: "থামো", finalized: true))
+        XCTAssertNil(reducer.observeInputTranscription(
+            generation: generation - 1,
+            text: "stale",
+            finished: true
+        ).transcriptUpdate)
+        XCTAssertTrue(reducer.acceptAudioFrame(
+            generation: generation - 1,
+            sequence: 99,
+            pcm: pcm(99),
+            rms: 0.030,
+            route: .trustedAECOrReceiver,
+            ready: true,
+            suppression: .none
+        ).audioFramesToSend.isEmpty)
+    }
+
+    private func pcm(_ sequence: UInt64) -> AlmaLiveVoiceCapturedInputPCM {
+        AlmaLiveVoiceCapturedInputPCM(
+            data: Data([UInt8(truncatingIfNeeded: sequence), 0]),
+            deliveryToken: nil)
+    }
+}

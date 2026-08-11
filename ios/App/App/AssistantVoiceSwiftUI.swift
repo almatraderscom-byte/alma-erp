@@ -71,11 +71,13 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case profileTransactionV1 = "profile-transaction-v1"
     case toolOrchestrationV1 = "tool-orchestration-v1"
     case phase1BContractV1 = "phase1b-contract-v1"
+    case inputTurnReducerV1 = "input-turn-reducer-v1"
 
     var defaultEnabled: Bool {
         switch self {
         case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
-             .profileTransactionV1, .toolOrchestrationV1, .phase1BContractV1:
+             .profileTransactionV1, .toolOrchestrationV1, .phase1BContractV1,
+             .inputTurnReducerV1:
             true
         }
     }
@@ -4650,12 +4652,24 @@ final class AlmaVoiceEngine {
     #endif
 
     func liveInputTranscript(_ text: String) {
+        applyLiveInputTranscript(text, replacingAggregate: false, finalized: false)
+    }
+
+    func liveInputTranscriptSnapshot(_ text: String, finalized: Bool) {
+        applyLiveInputTranscript(text, replacingAggregate: true, finalized: finalized)
+    }
+
+    private func applyLiveInputTranscript(
+        _ text: String,
+        replacingAggregate: Bool,
+        finalized: Bool
+    ) {
         // Gemini sends input transcription as incremental fragments — build the
         // full sentence for the live feed line (and the legacy MIC strip).
         lastUserTurnAt = Date()
         ackNudgesThisUserTurn = 0
         if let id = feedUserLineId, let i = liveFeed.firstIndex(where: { $0.id == id }) {
-            let joined = (liveFeed[i].text + text)
+            let joined = replacingAggregate ? text : (liveFeed[i].text + text)
             transcript = joined
             feedUserLineId = feedUpsert(id: id, kind: .user, text: joined)
         } else {
@@ -4674,6 +4688,7 @@ final class AlmaVoiceEngine {
             scheduleModelRequestedEnd(hardFallback: 20)
         }
         if state != .speaking { state = .listening }
+        if finalized { feedFinalizeUser() }
     }
 
     /// BROAD corroboration signal (weaker than hangupIntent): any word family a
@@ -5662,6 +5677,10 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     private var pendingResumptionHandle: String?
     private var latestResumptionHandle: String?
     private var outputTranscript = ""
+    private let inputTurnReducerLock = NSLock()
+    private var inputTurnReducer = AlmaLiveVoiceInputTurnReducer(generation: 0)
+    private var inputTurnReducerEnabled = false
+    private var nextInputFrameSequence: UInt64 = 0
 
     // Gemini emits native audio as many tiny PCM frames. A player callback for one
     // frame is NOT the end of the model's turn: treating it that way made the UI
@@ -6498,6 +6517,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             return false
         }
         stopped = false
+        inputTurnReducerLock.lock()
+        inputTurnReducerEnabled = AlmaLiveVoiceRecoveryFeatures.isEnabled(.inputTurnReducerV1)
+        inputTurnReducer.reset(generation: attempt)
+        nextInputFrameSequence = 0
+        inputTurnReducerLock.unlock()
         firstInputFrameTraced = false
         firstModelPCMTraced = false
         firstPlaybackPrimed = false
@@ -6565,6 +6589,84 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         dispatchEngineCallback(
             engineConnectionGeneration: generation,
             callback)
+    }
+
+    private func usesInputTurnReducer() -> Bool {
+        inputTurnReducerLock.lock()
+        let enabled = inputTurnReducerEnabled
+        inputTurnReducerLock.unlock()
+        return enabled
+    }
+
+    private func reduceInputTurn(
+        generation: AlmaLiveVoiceStartAttemptState.Token,
+        _ update: (inout AlmaLiveVoiceInputTurnReducer) -> AlmaLiveVoiceInputTurnReducer.Effects
+    ) -> AlmaLiveVoiceInputTurnReducer.Effects {
+        inputTurnReducerLock.lock()
+        guard inputTurnReducerEnabled else {
+            inputTurnReducerLock.unlock()
+            return .none
+        }
+        let effects = update(&inputTurnReducer)
+        inputTurnReducerLock.unlock()
+        return effects
+    }
+
+    private func reduceCapturedInput(
+        _ chunk: AlmaLiveVoiceCapturedInputPCM,
+        rms: Double,
+        hasOwnerEnergy: Bool,
+        route: AlmaLiveVoiceInputTurnReducer.InputRoute,
+        suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression,
+        ownerSpeechConfirmed: Bool,
+        attempt: AlmaLiveVoiceSocketAttempt
+    ) -> AlmaLiveVoiceInputTurnReducer.Effects {
+        inputTurnReducerLock.lock()
+        guard inputTurnReducerEnabled else {
+            inputTurnReducerLock.unlock()
+            return .none
+        }
+        nextInputFrameSequence &+= 1
+        if ownerSpeechConfirmed {
+            _ = inputTurnReducer.observeLocalBargeIn(generation: attempt.startAttempt)
+        } else if hasOwnerEnergy, suppression != .activePlayback {
+            _ = inputTurnReducer.observeOwnerEnergy(generation: attempt.startAttempt)
+        }
+        let effects = inputTurnReducer.acceptAudioFrame(
+            generation: attempt.startAttempt,
+            sequence: nextInputFrameSequence,
+            pcm: chunk,
+            rms: rms,
+            route: route,
+            ready: true,
+            suppression: suppression,
+            ownerSpeechConfirmed: ownerSpeechConfirmed)
+        inputTurnReducerLock.unlock()
+        return effects
+    }
+
+    private func applyInputTurnEffects(
+        _ effects: AlmaLiveVoiceInputTurnReducer.Effects,
+        attempt: AlmaLiveVoiceSocketAttempt
+    ) {
+        if !effects.audioFramesToSend.isEmpty {
+            sendCapturedInputChunks(
+                effects.audioFramesToSend.map(\.pcm),
+                sourceAttempt: attempt)
+        }
+        if effects.sendAudioStreamEnd {
+            sendInputStreamEnd(sourceAttempt: attempt)
+        }
+        if let transcript = effects.transcriptUpdate {
+            dispatchEngineCallback(
+                engineConnectionGeneration: attempt.engineConnectionGeneration,
+                requiring: attempt
+            ) {
+                $0.liveInputTranscriptSnapshot(
+                    transcript.text,
+                    finalized: transcript.finalized)
+            }
+        }
     }
 
     private func commitMintedSession(
@@ -7624,7 +7726,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         var bargeInTraceDetail: String?
         var withheldPolicy: AlmaLiveVoiceEvidenceInputPolicy?
         var preRoll: [AlmaLiveVoiceCapturedInputPCM] = []
+        let inputReducerEnabled = usesInputTurnReducer()
+        var reducerRoute = AlmaLiveVoiceInputTurnReducer.InputRoute.trustedAECOrReceiver
+        var reducerSuppression = AlmaLiveVoiceInputTurnReducer.PlaybackSuppression.none
         audioLock.lock()
+        let echoExposedLoudspeaker = voiceProcessingUnavailable && speakerEnabled
+        reducerRoute = echoExposedLoudspeaker ? .noAECLoudspeaker : .trustedAECOrReceiver
+        if modelAudioTurnOpen && !bargeInPending {
+            reducerSuppression = .activePlayback
+        } else if Date() < listenSuppressedUntil {
+            reducerSuppression = .playbackTail
+        }
         if modelAudioTurnOpen && !bargeInPending {
             // Re-arm the listening gate for the next turn.
             listenGateOpen = false
@@ -7824,6 +7936,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             resetLoudspeakerProbeLocked()
             micPreRoll.removeAll(keepingCapacity: true)
             bargeSpeechFrames = 0
+            if inputReducerEnabled {
+                listenPreRoll.removeAll(keepingCapacity: true)
+                listenGateOpen = false
+                listenSpeechFrames = 0
+                listenSilenceFrames = 0
+                listenContinuousLoudFrames = 0
+                if reducerSuppression == .playbackTail {
+                    withheldPolicy = .playbackTailSuppression
+                }
+            } else {
             if Date() < listenSuppressedUntil {
                 listenPreRoll.removeAll(keepingCapacity: true)
                 listenGateOpen = false
@@ -7957,6 +8079,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             sendNormally = listenGateOpen
             if !sendNormally { withheldPolicy = .listenGateClosed }
+            }
         }
         if startBargeIn { withheldPolicy = nil }
         let claimedWithheldPolicy = withheldPolicy.flatMap { policy in
@@ -7973,11 +8096,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         audioLock.unlock()
 
+        let reducerEffects = inputReducerEnabled
+            ? reduceCapturedInput(
+                capturedInputChunk,
+                rms: rms,
+                hasOwnerEnergy: hasInputEvidenceEnergy,
+                route: reducerRoute,
+                suppression: reducerSuppression,
+                ownerSpeechConfirmed: startBargeIn,
+                attempt: sourceAttempt)
+            : AlmaLiveVoiceInputTurnReducer.Effects.none
+
         if let bargeInTraceDetail {
             AlmaVoiceAudioTrace.event("bargeIn.evidence", bargeInTraceDetail)
         }
 
-        if flushAutomaticVADStream {
+        if !inputReducerEnabled, flushAutomaticVADStream {
             sendInputStreamEnd(sourceAttempt: sourceAttempt)
             #if DEBUG
             NSLog("ALMA-VOICE input stream flushed after listen gate close")
@@ -8016,7 +8150,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             }
             #endif
             beginLocalBargeIn()
-            if !preRoll.isEmpty {
+            if inputReducerEnabled {
+                // The reducer owns the larger bounded FIFO and exact-once drain.
+            } else if !preRoll.isEmpty {
                 sendCapturedInputChunks(preRoll, sourceAttempt: sourceAttempt)
             } else {
                 sendRealtimeAudio(
@@ -8024,7 +8160,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     sourceAttempt: sourceAttempt,
                     inputEvidence: capturedInputChunk.deliveryToken)
             }
-        } else if sendNormally {
+        } else if !inputReducerEnabled, sendNormally {
             if !preRoll.isEmpty {
                 // Listen gate just opened: the pre-roll already contains this
                 // frame — flush it instead of sending `bytes` twice.
@@ -8035,6 +8171,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     sourceAttempt: sourceAttempt,
                     inputEvidence: capturedInputChunk.deliveryToken)
             }
+        }
+        if inputReducerEnabled {
+            applyInputTurnEffects(reducerEffects, attempt: sourceAttempt)
         }
     }
 
@@ -8390,6 +8529,14 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if let tool = root["toolCall"] as? [String: Any],
            let calls = tool["functionCalls"] as? [[String: Any]] {
+            if !calls.isEmpty {
+                let effects = reduceInputTurn(generation: attempt.startAttempt) {
+                    $0.observeResponseBoundary(
+                        generation: attempt.startAttempt,
+                        .toolCall)
+                }
+                applyInputTurnEffects(effects, attempt: attempt)
+            }
             for call in calls {
                 let evidenceTool = AlmaLiveVoiceEvidenceTool(
                     providerName: call["name"] as? String)
@@ -8716,6 +8863,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
               isCurrentSocketAttempt(attempt)
         else { return }
         if content["interrupted"] as? Bool == true {
+            _ = reduceInputTurn(generation: attempt.startAttempt) {
+                $0.observeLocalBargeIn(generation: attempt.startAttempt)
+            }
             #if DEBUG
             NSLog("ALMA-VOICE server INTERRUPTED model turn")
             #endif
@@ -8744,10 +8894,22 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     generation: evidenceGeneration,
                     correlateToActiveInput: !modelPlaybackStillActive)
             }
-            if let text = input["text"] as? String {
+            let text = input["text"] as? String
+            let finished = input["finished"] as? Bool ?? false
+            if let text, !text.isEmpty {
                 if let usageProfile = profile(for: attempt.startAttempt) {
                     usageMeter.recordInputTranscription(text, profile: usageProfile)
                 }
+            }
+            if usesInputTurnReducer() {
+                let effects = reduceInputTurn(generation: attempt.startAttempt) {
+                    $0.observeInputTranscription(
+                        generation: attempt.startAttempt,
+                        text: text,
+                        finished: finished)
+                }
+                applyInputTurnEffects(effects, attempt: attempt)
+            } else if let text {
                 dispatchEngineCallback(
                     engineConnectionGeneration: attempt.engineConnectionGeneration,
                     requiring: attempt
@@ -8776,10 +8938,20 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if let turn = content["modelTurn"] as? [String: Any],
            let parts = turn["parts"] as? [[String: Any]] {
+            var observedInputBoundary = false
             for part in parts {
                 guard let inline = part["inlineData"] as? [String: Any],
                       let encoded = inline["data"] as? String,
                       let pcm = Data(base64Encoded: encoded) else { continue }
+                if !observedInputBoundary {
+                    observedInputBoundary = true
+                    let effects = reduceInputTurn(generation: attempt.startAttempt) {
+                        $0.observeResponseBoundary(
+                            generation: attempt.startAttempt,
+                            .modelAudio)
+                    }
+                    applyInputTurnEffects(effects, attempt: attempt)
+                }
                 playPCM(
                     pcm,
                     attempt: attempt,
@@ -8790,9 +8962,23 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             completeModelGeneration(attempt: attempt)
         }
         if content["turnComplete"] as? Bool == true {
+            audioLock.lock()
+            let responseHasLocalPlayback = modelAudioTurnOpen
+            audioLock.unlock()
+            let effects = reduceInputTurn(generation: attempt.startAttempt) {
+                $0.observeResponseBoundary(
+                    generation: attempt.startAttempt,
+                    .turnComplete)
+            }
+            applyInputTurnEffects(effects, attempt: attempt)
             completeModelTurn(
                 attempt: attempt,
                 evidenceGeneration: evidenceGeneration)
+            if !responseHasLocalPlayback {
+                _ = reduceInputTurn(generation: attempt.startAttempt) {
+                    $0.observeResponseCompleted(generation: attempt.startAttempt)
+                }
+            }
         }
     }
 
@@ -9195,6 +9381,11 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         #if DEBUG
         NSLog("ALMA-VOICE playback turn finished")
         #endif
+        if let attempt = activeStartAttempt() {
+            _ = reduceInputTurn(generation: attempt) {
+                $0.observeResponseCompleted(generation: attempt)
+            }
+        }
         dispatchEngineCallbackForActiveAttempt {
             $0.livePlaybackChanged(active: false, level: 0)
         }
@@ -9539,6 +9730,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     func setInputMuted(_ muted: Bool) {
         audioLock.lock()
         let flushAutomaticVADStream = muted && listenGateOpen
+        let reducerAttempt = captureSocketAttempt
         inputMuted = muted
         let restoreProbeVolume = loudspeakerProbeActive
         resetLoudspeakerProbeLocked()
@@ -9562,7 +9754,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         listenSuppressedUntil = .distantPast
         listenTailSuppressionLogged = false
         audioLock.unlock()
-        if flushAutomaticVADStream {
+        if let reducerAttempt, usesInputTurnReducer() {
+            let effects = reduceInputTurn(generation: reducerAttempt.startAttempt) {
+                $0.setMuted(muted, generation: reducerAttempt.startAttempt)
+            }
+            applyInputTurnEffects(effects, attempt: reducerAttempt)
+        } else if flushAutomaticVADStream {
             sendJSON(["realtimeInput": ["audioStreamEnd": true]])
         }
         if restoreProbeVolume { setLoudspeakerProbeMuted(false) }
