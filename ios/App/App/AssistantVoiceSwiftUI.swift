@@ -11477,6 +11477,7 @@ struct AlmaVoiceEdgeGlow: View {
     var hue: Double
     var level: Double
     var active: Bool
+    var motionEnabled: Bool
 
     var body: some View {
         let tint = Color(hue: hue / 360.0, saturation: 0.9, brightness: 0.95)
@@ -11496,8 +11497,8 @@ struct AlmaVoiceEdgeGlow: View {
                 .blur(radius: 60)
         }
         .opacity(strength)
-        .animation(.easeOut(duration: 0.12), value: level)
-        .animation(.easeInOut(duration: 0.5), value: active)
+        .animation(motionEnabled ? .easeOut(duration: 0.12) : nil, value: level)
+        .animation(motionEnabled ? .easeInOut(duration: 0.5) : nil, value: active)
     }
 }
 
@@ -11506,6 +11507,11 @@ struct AlmaVoiceConsoleView: View {
     let vm: AssistantVM
     let engine: AlmaVoiceEngine
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @State private var liveBlink = false
     @State private var photoItem: PhotosPickerItem?
     @State private var minimizing = false
@@ -11552,41 +11558,31 @@ struct AlmaVoiceConsoleView: View {
     }()
 
     var body: some View {
-        ZStack {
-            bg0.ignoresSafeArea()
-                // Shell-level floating bar coordination: hide it while the full
-                // console is on screen, restore it on minimize.
-                .onAppear { AlmaCallBarBridge.shared.consoleVisible = true }
-                .onDisappear { AlmaCallBarBridge.shared.consoleVisible = false }
-            aurora.ignoresSafeArea()
-            AlmaStarfieldView().ignoresSafeArea().allowsHitTesting(false)
-            dotGrid.ignoresSafeArea().allowsHitTesting(false)
-
-            VStack(spacing: 0) {
-                topBar
-                Spacer(minLength: 4)
-                stateBadge
-                    .padding(.bottom, 10)
-                AlmaFluidOrbView(
-                    state: engine.state,
-                    ttsLevel: engine.ttsLevel)
-                    .frame(width: orbSide, height: orbSide)
-                    .contentShape(Circle())
-                    .onTapGesture { engine.tapOrb() }
-                voiceZone
-                    .padding(.top, 16)
-                feedSection
-                Spacer(minLength: 4)
-                dock
-            }
-
-            // LOCKED (owner demo 2026-07-08): speech-synced edge glow — the whole
-            // screen's rim breathes with the live mic/TTS level in the state hue.
-            AlmaVoiceEdgeGlow(hue: hue,
-                              level: max(engine.micLevel, engine.ttsLevel),
-                              active: engine.state != .idle)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+        GeometryReader { proxy in
+            let presentation = accessibilityPresentation(in: proxy.size)
+            consoleSurface(
+                presentation,
+                viewportHeight: proxy.size.height)
+                .overlay(alignment: .top) {
+                    if let t = engine.errorToast {
+                        Text(t)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(muted)
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .frame(minHeight: presentation.geometry.minimumHitTargetPoints)
+                            .background(
+                                presentation.surface == .opaqueHighContrast
+                                    ? AnyShapeStyle(bg0)
+                                    : AnyShapeStyle(.ultraThinMaterial),
+                                in: Capsule())
+                            .padding(.top, 54)
+                            .onAppear {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                                    if engine.errorToast == t { engine.errorToast = nil }
+                                }
+                            }
+                    }
+                }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showLiveSettings) {
@@ -11649,27 +11645,124 @@ struct AlmaVoiceConsoleView: View {
                 dismiss()
             }
         }
-        .overlay(alignment: .top) {
-            if let t = engine.errorToast {
-                Text(t)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(muted)
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.top, 54)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                            if engine.errorToast == t { engine.errorToast = nil }
-                        }
+        .onChange(of: reduceMotion) { _, isEnabled in
+            if isEnabled { liveBlink = false }
+        }
+    }
+
+    private func consoleSurface(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation,
+        viewportHeight: CGFloat
+    ) -> some View {
+        ZStack {
+            bg0.ignoresSafeArea()
+                // Shell-level floating bar coordination: hide it while the full
+                // console is on screen, restore it on minimize.
+                .onAppear { AlmaCallBarBridge.shared.consoleVisible = true }
+                .onDisappear { AlmaCallBarBridge.shared.consoleVisible = false }
+            aurora(presentation).ignoresSafeArea()
+            AlmaStarfieldView(
+                motionEnabled: presentation.motion == .outputPCMReactive)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            dotGrid.ignoresSafeArea().allowsHitTesting(false)
+
+            Group {
+                if presentation.geometry.scrollsVertically {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        consoleContent(presentation)
+                            .frame(minHeight: viewportHeight)
                     }
+                } else {
+                    consoleContent(presentation)
+                }
+            }
+
+            // LOCKED (owner demo 2026-07-08): speech-synced edge glow — the whole
+            // screen's rim breathes with the live mic/TTS level in the state hue.
+            AlmaVoiceEdgeGlow(hue: hue,
+                              level: max(engine.micLevel, engine.ttsLevel),
+                              active: engine.state != .idle,
+                              motionEnabled: presentation.motion == .outputPCMReactive)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func consoleContent(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
+        VStack(spacing: 0) {
+            topBar(presentation)
+            Spacer(minLength: 4)
+            stateBadge(presentation)
+                .padding(.bottom, 10)
+            AlmaFluidOrbView(
+                state: engine.state,
+                ttsLevel: engine.ttsLevel)
+                .frame(
+                    width: CGFloat(presentation.geometry.maximumOrbDiameterPoints),
+                    height: CGFloat(presentation.geometry.maximumOrbDiameterPoints))
+                .contentShape(Circle())
+                .onTapGesture { engine.tapOrb() }
+                .accessibilityElement()
+                .accessibilityLabel("লাইভ ভয়েস অর্ব")
+                .accessibilityHint("ALMA বললে থামাবে; অন্য অবস্থায় শোনা শুরু করবে")
+                .accessibilityValue(engine.visibleStatusText)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { engine.tapOrb() }
+                .accessibilitySortPriority(85)
+            voiceZone
+                .padding(.top, 16)
+            feedSection
+            Spacer(minLength: 4)
+            dock(presentation)
+        }
+        .frame(maxWidth: CGFloat(presentation.geometry.maximumContentWidthPoints))
+        .frame(maxWidth: .infinity)
+        .fontWeight(
+            presentation.typography.emphasis == .boldTextEnabled ? .bold : nil)
+        .transaction { transaction in
+            if presentation.motion == .staticStateChanges {
+                transaction.animation = nil
             }
         }
     }
 
-    private var orbSide: CGFloat { min(300, max(220, UIScreen.main.bounds.width * 0.72)) }
+    private func accessibilityPresentation(
+        in size: CGSize
+    ) -> AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation {
+        AlmaLiveVoiceAccessibilityLayoutPolicy.presentation(for: .init(
+            viewport: .init(width: size.width, height: size.height),
+            textSize: liveVoiceTextSize,
+            isBoldTextEnabled: legibilityWeight == .bold,
+            isReduceMotionEnabled: reduceMotion,
+            isReduceTransparencyEnabled: reduceTransparency,
+            isIncreaseContrastEnabled: colorSchemeContrast == .increased))
+    }
+
+    private var liveVoiceTextSize: AlmaLiveVoiceAccessibilityLayoutPolicy.TextSize {
+        switch dynamicTypeSize {
+        case .xSmall: return .extraSmall
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .xLarge: return .extraLarge
+        case .xxLarge: return .extraExtraLarge
+        case .xxxLarge: return .extraExtraExtraLarge
+        case .accessibility1: return .accessibility1
+        case .accessibility2: return .accessibility2
+        case .accessibility3: return .accessibility3
+        case .accessibility4: return .accessibility4
+        case .accessibility5: return .accessibility5
+        @unknown default: return .large
+        }
+    }
 
     // ── Background: state-hued aurora + dot grid (web .aurora / .dotgrid) ──
-    private var aurora: some View {
+    private func aurora(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
         GeometryReader { geo in
             ZStack {
                 RadialGradient(colors: [almaHSL(hue, 0.80, 0.55, 0.13), .clear],
@@ -11679,7 +11772,11 @@ struct AlmaVoiceConsoleView: View {
                                center: .init(x: 0.85, y: 0.95),
                                startRadius: 0, endRadius: max(geo.size.width, geo.size.height) * 0.9)
             }
-            .animation(.easeInOut(duration: 0.6), value: hue)
+            .animation(
+                presentation.motion == .outputPCMReactive
+                    ? .easeInOut(duration: 0.6)
+                    : nil,
+                value: hue)
         }
     }
 
@@ -11715,16 +11812,48 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
+    private var accessibilitySessionPhase:
+        AlmaLiveVoiceAccessibilityLayoutPolicy.SessionPhase {
+        switch engine.callConnection {
+        case .connecting:
+            return .connecting
+        case .reconnecting, .failed:
+            return .reconnecting
+        case .idle:
+            return endingCall ? .ended : .connecting
+        case .live:
+            switch engine.state {
+            case .speaking: return .speaking
+            case .thinking, .transcribing: return .working
+            case .listening, .idle: return .listening
+            case .error: return .reconnecting
+            }
+        }
+    }
+
+    private func controlSurface(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> Color {
+        presentation.surface == .opaqueHighContrast
+            ? Color(red: 0.055, green: 0.082, blue: 0.118)
+            : glass.opacity(0.09)
+    }
+
     // ── Top bar: minimize · call identity/timer · truthful connection ──
-    private var topBar: some View {
-        ZStack {
+    private func topBar(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
+        let settingsAccessibility = AlmaLiveVoiceAccessibilityLayoutPolicy
+            .voiceOverDescriptor(for: .voiceSettings(
+                selectedVoice: engine.selectedLiveVoice.name))
+        return ZStack {
             VStack(spacing: 2) {
                 Text("ALMA AI Call")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.headline)
                     .foregroundStyle(ink)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(engine.callElapsedText(at: context.date))
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.caption.monospacedDigit())
                         .monospacedDigit()
                         .foregroundStyle(muted)
                 }
@@ -11734,18 +11863,22 @@ struct AlmaVoiceConsoleView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(muted)
-                        .frame(width: 38, height: 38)
-                        .background(glass.opacity(0.06), in: Circle())
+                        .frame(
+                            minWidth: presentation.geometry.minimumHitTargetPoints,
+                            minHeight: presentation.geometry.minimumHitTargetPoints)
+                        .background(controlSurface(presentation), in: Circle())
                         .overlay(Circle().strokeBorder(line, lineWidth: 1))
                 }
                 .accessibilityLabel("কল ছোট করুন")
+                .accessibilityHint("কল চালু রেখে চ্যাটে ফিরে যাবে")
+                .accessibilitySortPriority(90)
                 Spacer(minLength: 8)
                 HStack(spacing: 6) {
                     Circle().fill(connectionColor).frame(width: 7, height: 7)
                     .shadow(color: connectionColor, radius: 5)
                     .opacity(liveBlink ? 0.35 : 1)
                     .onAppear {
-                        guard !UIAccessibility.isReduceMotionEnabled else { return }
+                        guard presentation.motion == .outputPCMReactive else { return }
                         withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
                     }
                     Text(engine.transportBadgeText)
@@ -11755,40 +11888,70 @@ struct AlmaVoiceConsoleView: View {
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(connectionColor.opacity(0.08), in: Capsule())
                 .overlay(Capsule().strokeBorder(connectionColor.opacity(0.25), lineWidth: 1))
+                .accessibilityHidden(true)
                 Button { showLiveSettings = true } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(muted)
-                        .frame(width: 38, height: 38)
-                        .background(glass.opacity(0.06), in: Circle())
+                        .frame(
+                            minWidth: presentation.geometry.minimumHitTargetPoints,
+                            minHeight: presentation.geometry.minimumHitTargetPoints)
+                        .background(controlSurface(presentation), in: Circle())
                         .overlay(Circle().strokeBorder(line, lineWidth: 1))
                 }
-                .accessibilityLabel("লাইভ মডেল ও কণ্ঠ নির্বাচন")
+                .accessibilityLabel(settingsAccessibility.label)
+                .accessibilityHint(settingsAccessibility.hint)
+                .accessibilityValue(settingsAccessibility.value ?? "")
+                .accessibilitySortPriority(
+                    Double(100 - settingsAccessibility.readingOrder))
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, presentation.geometry.outerPaddingPoints)
         .padding(.top, 8)
     }
 
     // ── State badge: glass pill + glowing state-hued dot (web .statebadge) ──
-    private var stateBadge: some View {
-        HStack(spacing: 8) {
+    private func stateBadge(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
+        let accessibility = AlmaLiveVoiceAccessibilityLayoutPolicy
+            .voiceOverDescriptor(for: .sessionStatus(
+                phase: accessibilitySessionPhase,
+                isMuted: engine.isMuted))
+        return HStack(spacing: 8) {
             Circle()
                 .fill(almaHSL(hue, 0.85, 0.62))
                 .frame(width: 8, height: 8)
                 .shadow(color: almaHSL(hue, 0.85, 0.62), radius: 6)
             Text(engine.visibleStatusText)
-                .font(.system(size: 13))
+                .font(.callout)
                 .foregroundStyle(engine.callConnection == .failed
                                  ? Color(red: 0.949, green: 0.627, blue: 0.557) : muted)
+                .lineLimit(presentation.geometry.statusLineLimit)
+                .fixedSize(
+                    horizontal: false,
+                    vertical: presentation.typography.allowsMultilineControlTitles)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(
-            LinearGradient(colors: [glass.opacity(0.08), glass.opacity(0.02)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            presentation.surface == .opaqueHighContrast
+                ? AnyShapeStyle(bg0)
+                : AnyShapeStyle(LinearGradient(
+                    colors: [glass.opacity(0.08), glass.opacity(0.02)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)),
             in: Capsule())
         .overlay(Capsule().strokeBorder(line, lineWidth: 1))
-        .animation(.easeInOut(duration: 0.4), value: hue)
+        .animation(
+            presentation.motion == .outputPCMReactive
+                ? .easeInOut(duration: 0.4)
+                : nil,
+            value: hue)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibility.label)
+        .accessibilityHint(accessibility.hint)
+        .accessibilityValue(accessibility.value ?? "")
+        .accessibilitySortPriority(Double(100 - accessibility.readingOrder))
     }
 
     // ── Kimi-style rolling call feed: Boss dim, ALMA bright, tools as steps ──
@@ -11988,7 +12151,9 @@ struct AlmaVoiceConsoleView: View {
     }
 
     // ── Call controls: mute · speaker · chat/minimize · hang up ──
-    private var dock: some View {
+    private func dock(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
         VStack(spacing: 10) {
             if engine.state == .speaking {
                 Text("কথা শুরু করলেই ALMA থেমে শুনবে")
@@ -12016,6 +12181,9 @@ struct AlmaVoiceConsoleView: View {
                                     Image(systemName: "xmark.circle.fill")
                                         .accessibilityLabel("ছবি সরান")
                                         .font(.system(size: 15)).foregroundStyle(.white, .black.opacity(0.5))
+                                        .frame(
+                                            minWidth: presentation.geometry.minimumHitTargetPoints,
+                                            minHeight: presentation.geometry.minimumHitTargetPoints)
                                 }
                                 .offset(x: 5, y: -5)
                             }
@@ -12031,55 +12199,25 @@ struct AlmaVoiceConsoleView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(bg0)
                             .padding(.horizontal, 18).padding(.vertical, 11)
+                            .frame(minHeight: presentation.geometry.minimumHitTargetPoints)
                             .background(good, in: Capsule())
                     }
+                    .accessibilityLabel("আবার সংযোগ করুন")
+                    .accessibilityHint("লাইভ ভয়েস সংযোগ পুনরায় চেষ্টা করবে")
                     Button { endCall() } label: {
                         Text("কল শেষ করুন")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(muted)
                             .padding(.horizontal, 18).padding(.vertical, 11)
-                            .background(glass.opacity(0.06), in: Capsule())
+                            .frame(minHeight: presentation.geometry.minimumHitTargetPoints)
+                            .background(controlSurface(presentation), in: Capsule())
                             .overlay(Capsule().strokeBorder(line, lineWidth: 1))
                     }
+                    .accessibilityLabel("কল শেষ করুন")
+                    .accessibilityHint("লাইভ ভয়েস সেশন শেষ হবে")
                 }
             } else {
-                HStack(spacing: 18) {
-                    callControl(
-                        icon: engine.isMuted ? "mic.slash.fill" : "mic.fill",
-                        label: engine.isMuted ? "মাইক চালু" : "মিউট",
-                        active: engine.isMuted,
-                        enabled: engine.callConnection == .live
-                    ) { engine.toggleMute() }
-
-                    callControl(
-                        icon: engine.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
-                        label: "স্পিকার",
-                        active: engine.speakerOn,
-                        enabled: engine.callConnection == .live
-                    ) { engine.toggleSpeaker() }
-
-                    callControl(
-                        icon: "message.fill",
-                        label: "চ্যাট",
-                        active: false,
-                        enabled: true
-                    ) { minimizeCall() }
-
-                    Button { endCall() } label: {
-                        VStack(spacing: 7) {
-                            Image(systemName: "phone.down.fill")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 58, height: 58)
-                                .background(Color(red: 0.91, green: 0.20, blue: 0.24), in: Circle())
-                                .shadow(color: Color.red.opacity(0.28), radius: 12, y: 5)
-                            Text("শেষ")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(muted)
-                        }
-                    }
-                    .accessibilityLabel("কল শেষ করুন")
-                }
+                liveCallControls(presentation)
             }
 
             PhotosPicker(selection: $photoItem, matching: .images) {
@@ -12088,26 +12226,159 @@ struct AlmaVoiceConsoleView: View {
                     .foregroundStyle(faint)
             }
         }
+        .padding(.horizontal, presentation.geometry.outerPaddingPoints)
         .padding(.bottom, 22)
     }
 
-    private func callControl(icon: String, label: String, active: Bool,
-                             enabled: Bool, action: @escaping () -> Void) -> some View {
+    @ViewBuilder private func liveCallControls(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
+        let micAccessibility = AlmaLiveVoiceAccessibilityLayoutPolicy
+            .voiceOverDescriptor(for: .microphone(isMuted: engine.isMuted))
+        let speakerAccessibility = AlmaLiveVoiceAccessibilityLayoutPolicy.VoiceOverDescriptor(
+            label: "স্পিকার",
+            hint: engine.speakerOn
+                ? "কলের অডিও রিসিভারে যাবে"
+                : "কলের অডিও স্পিকারে যাবে",
+            value: engine.speakerOn ? "চালু" : "বন্ধ",
+            readingOrder: 20)
+        let chatAccessibility = AlmaLiveVoiceAccessibilityLayoutPolicy.VoiceOverDescriptor(
+            label: "চ্যাটে ফিরুন",
+            hint: "কল চালু রেখে চ্যাট খুলবে",
+            value: nil,
+            readingOrder: 30)
+
+        Group {
+            if presentation.geometry.controlAxis == .vertical {
+                VStack(spacing: presentation.geometry.controlSpacingPoints) {
+                    callControl(
+                        icon: engine.isMuted ? "mic.slash.fill" : "mic.fill",
+                        label: engine.isMuted ? "মাইক চালু" : "মিউট",
+                        active: engine.isMuted,
+                        enabled: engine.callConnection == .live,
+                        accessibility: micAccessibility,
+                        presentation: presentation
+                    ) { engine.toggleMute() }
+                    callControl(
+                        icon: engine.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
+                        label: "স্পিকার",
+                        active: engine.speakerOn,
+                        enabled: engine.callConnection == .live,
+                        accessibility: speakerAccessibility,
+                        presentation: presentation
+                    ) { engine.toggleSpeaker() }
+                    callControl(
+                        icon: "message.fill",
+                        label: "চ্যাট",
+                        active: false,
+                        enabled: true,
+                        accessibility: chatAccessibility,
+                        presentation: presentation
+                    ) { minimizeCall() }
+                    endCallControl(presentation)
+                }
+            } else {
+                HStack(spacing: presentation.geometry.controlSpacingPoints) {
+                    callControl(
+                        icon: engine.isMuted ? "mic.slash.fill" : "mic.fill",
+                        label: engine.isMuted ? "মাইক চালু" : "মিউট",
+                        active: engine.isMuted,
+                        enabled: engine.callConnection == .live,
+                        accessibility: micAccessibility,
+                        presentation: presentation
+                    ) { engine.toggleMute() }
+                    callControl(
+                        icon: engine.speakerOn ? "speaker.wave.2.fill" : "speaker.fill",
+                        label: "স্পিকার",
+                        active: engine.speakerOn,
+                        enabled: engine.callConnection == .live,
+                        accessibility: speakerAccessibility,
+                        presentation: presentation
+                    ) { engine.toggleSpeaker() }
+                    callControl(
+                        icon: "message.fill",
+                        label: "চ্যাট",
+                        active: false,
+                        enabled: true,
+                        accessibility: chatAccessibility,
+                        presentation: presentation
+                    ) { minimizeCall() }
+                    endCallControl(presentation)
+                }
+            }
+        }
+    }
+
+    private func callControl(
+        icon: String,
+        label: String,
+        active: Bool,
+        enabled: Bool,
+        accessibility: AlmaLiveVoiceAccessibilityLayoutPolicy.VoiceOverDescriptor,
+        presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             VStack(spacing: 7) {
                 Image(systemName: icon)
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(active ? bg0 : ink)
-                    .frame(width: 54, height: 54)
-                    .background(active ? ink : glass.opacity(0.09), in: Circle())
+                    .frame(
+                        width: presentation.geometry.preferredControlDiameterPoints,
+                        height: presentation.geometry.preferredControlDiameterPoints)
+                    .background(active ? ink : controlSurface(presentation), in: Circle())
                     .overlay(Circle().strokeBorder(active ? Color.clear : line, lineWidth: 1))
                 Text(label)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(muted)
+                    .lineLimit(presentation.geometry.statusLineLimit)
+                    .fixedSize(
+                        horizontal: false,
+                        vertical: presentation.typography.allowsMultilineControlTitles)
             }
         }
+        .frame(
+            minWidth: presentation.geometry.minimumHitTargetPoints,
+            minHeight: presentation.geometry.minimumHitTargetPoints)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.38)
+        .accessibilityLabel(accessibility.label)
+        .accessibilityHint(accessibility.hint)
+        .accessibilityValue(accessibility.value ?? "")
+        .accessibilitySortPriority(Double(100 - accessibility.readingOrder))
+    }
+
+    private func endCallControl(
+        _ presentation: AlmaLiveVoiceAccessibilityLayoutPolicy.Presentation
+    ) -> some View {
+        let accessibility = AlmaLiveVoiceAccessibilityLayoutPolicy
+            .voiceOverDescriptor(for: .endCall)
+        return Button { endCall() } label: {
+            VStack(spacing: 7) {
+                Image(systemName: "phone.down.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(
+                        width: max(
+                            58,
+                            presentation.geometry.preferredControlDiameterPoints),
+                        height: max(
+                            58,
+                            presentation.geometry.preferredControlDiameterPoints))
+                    .background(Color(red: 0.91, green: 0.20, blue: 0.24), in: Circle())
+                    .shadow(color: Color.red.opacity(0.28), radius: 12, y: 5)
+                Text("শেষ")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(muted)
+                    .lineLimit(presentation.geometry.statusLineLimit)
+            }
+        }
+        .frame(
+            minWidth: presentation.geometry.minimumHitTargetPoints,
+            minHeight: presentation.geometry.minimumHitTargetPoints)
+        .accessibilityLabel(accessibility.label)
+        .accessibilityHint(accessibility.hint)
+        .accessibilitySortPriority(Double(100 - accessibility.readingOrder))
     }
 
     private func minimizeCall() {
@@ -12664,6 +12935,7 @@ struct AlmaLiveVoicePreCallSettingsSheet: View {
 struct AlmaLiveSettingsSheet: View {
     let engine: AlmaVoiceEngine
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var recoveryEvidenceURL: URL?
     @State private var draftModelID: String
     @State private var draftVoiceID: String
@@ -12735,7 +13007,12 @@ struct AlmaLiveSettingsSheet: View {
                     }
 
                     settingsSection(title: "কণ্ঠ", subtitle: "Google-এর official voice থেকে বাংলা-friendly presets") {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        LazyVGrid(
+                            columns: dynamicTypeSize.isAccessibilitySize
+                                ? [GridItem(.flexible())]
+                                : [GridItem(.flexible()), GridItem(.flexible())],
+                            spacing: 10
+                        ) {
                             ForEach(AlmaLiveVoicePreferences.voices) { voice in
                                 choiceButton(selected: draftVoiceID == voice.id) {
                                     draftVoiceID = voice.id
@@ -12837,6 +13114,10 @@ struct AlmaLiveSettingsSheet: View {
                             draftModelID == engine.savedLiveModelID
                                 && draftVoiceID == engine.savedLiveVoiceID)
                         .accessibilityIdentifier("voice.settings.save-profile")
+                        .accessibilityLabel(saveAccessibility.label)
+                        .accessibilityHint(saveAccessibility.hint)
+                        .accessibilitySortPriority(
+                            Double(100 - saveAccessibility.readingOrder))
 
                         if AlmaLiveVoiceRecoveryFeatures.isEnabled(.profileTransactionV1) {
                             Button {
@@ -12866,6 +13147,11 @@ struct AlmaLiveSettingsSheet: View {
                                         || engine.callConnection == .failed)
                                     ? 1 : 0.45)
                             .accessibilityIdentifier("voice.settings.apply-profile")
+                            .accessibilityLabel(applyAccessibility.label)
+                            .accessibilityHint(applyAccessibility.hint)
+                            .accessibilityValue(applyAccessibility.value ?? "")
+                            .accessibilitySortPriority(
+                                Double(100 - applyAccessibility.readingOrder))
                         }
 
                         let statusText = engine.liveProfileStatusText.isEmpty
@@ -12892,6 +13178,21 @@ struct AlmaLiveSettingsSheet: View {
         }
         .presentationDetents([.large])
         .preferredColorScheme(.dark)
+    }
+
+    private var saveAccessibility:
+        AlmaLiveVoiceAccessibilityLayoutPolicy.VoiceOverDescriptor {
+        AlmaLiveVoiceAccessibilityLayoutPolicy.voiceOverDescriptor(
+            for: .saveForNextCall)
+    }
+
+    private var applyAccessibility:
+        AlmaLiveVoiceAccessibilityLayoutPolicy.VoiceOverDescriptor {
+        AlmaLiveVoiceAccessibilityLayoutPolicy.voiceOverDescriptor(
+            for: .applyToCurrentCall(isEnabled:
+                !engine.isApplyingLiveProfile
+                    && (engine.callConnection == .live
+                        || engine.callConnection == .failed)))
     }
 
     private func settingsSection<Content: View>(
@@ -13223,6 +13524,8 @@ struct AlmaFeedCard: View {
 
 @available(iOS 17.0, *)
 struct AlmaStarfieldView: View {
+    let motionEnabled: Bool
+
     private func rnd(_ i: Int, _ k: Double) -> Double {
         let v = sin(Double(i) * 127.1 + k * 311.7) * 43758.5453
         return v - v.rounded(.down)
@@ -13230,7 +13533,7 @@ struct AlmaStarfieldView: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 20)) { tl in
-            let t = tl.date.timeIntervalSinceReferenceDate
+            let t = motionEnabled ? tl.date.timeIntervalSinceReferenceDate : 0
             Canvas { ctx, size in
                 let starColor = Color(red: 0.745, green: 0.863, blue: 0.980)
                 let n = min(170, Int(size.width * size.height / 14000))
