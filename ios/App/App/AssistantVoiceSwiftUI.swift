@@ -256,6 +256,149 @@ struct AlmaLiveVoiceProfileTransaction: Equatable {
     }
 }
 
+struct AlmaLiveVoiceProviderUsage: Codable, Equatable {
+    var inputAudioTokens = 0
+    var outputAudioTokens = 0
+    var inputTextTokens = 0
+    var outputTextTokens = 0
+    var inputTotalTokens = 0
+    var outputTotalTokens = 0
+
+    mutating func mergeCumulative(_ newer: AlmaLiveVoiceProviderUsage) {
+        inputAudioTokens = max(inputAudioTokens, newer.inputAudioTokens)
+        outputAudioTokens = max(outputAudioTokens, newer.outputAudioTokens)
+        inputTextTokens = max(inputTextTokens, newer.inputTextTokens)
+        outputTextTokens = max(outputTextTokens, newer.outputTextTokens)
+        inputTotalTokens = max(inputTotalTokens, newer.inputTotalTokens)
+        outputTotalTokens = max(outputTotalTokens, newer.outputTotalTokens)
+    }
+}
+
+enum AlmaLiveVoiceProviderUsageParser {
+    static func parse(_ metadata: [String: Any]) -> AlmaLiveVoiceProviderUsage {
+        var usage = AlmaLiveVoiceProviderUsage()
+        usage.inputTotalTokens = nonNegativeInt(metadata["promptTokenCount"])
+        usage.outputTotalTokens = nonNegativeInt(
+            metadata["responseTokenCount"] ?? metadata["candidatesTokenCount"])
+        for detail in details(
+            metadata["promptTokensDetails"] ?? metadata["promptTokenDetails"]
+        ) {
+            switch modality(detail) {
+            case "AUDIO": usage.inputAudioTokens += nonNegativeInt(detail["tokenCount"])
+            case "TEXT": usage.inputTextTokens += nonNegativeInt(detail["tokenCount"])
+            default: break
+            }
+        }
+        for detail in details(
+            metadata["responseTokensDetails"] ?? metadata["responseTokenDetails"]
+        ) {
+            switch modality(detail) {
+            case "AUDIO": usage.outputAudioTokens += nonNegativeInt(detail["tokenCount"])
+            case "TEXT": usage.outputTextTokens += nonNegativeInt(detail["tokenCount"])
+            default: break
+            }
+        }
+        return usage
+    }
+
+    private static func details(_ value: Any?) -> [[String: Any]] {
+        value as? [[String: Any]] ?? []
+    }
+
+    private static func modality(_ detail: [String: Any]) -> String {
+        (detail["modality"] as? String ?? "").uppercased()
+    }
+
+    private static func nonNegativeInt(_ value: Any?) -> Int {
+        guard let number = value as? NSNumber else { return 0 }
+        return max(0, number.intValue)
+    }
+}
+
+struct AlmaLiveVoiceUsageSegment: Codable, Equatable {
+    let model: String
+    let voice: String
+    var inputAudioQueuedBytes = 0
+    var outputAudioReceivedBytes = 0
+    var inputTranscriptionCharacters = 0
+    var outputTranscriptionCharacters = 0
+    var providerUsage = AlmaLiveVoiceProviderUsage()
+}
+
+struct AlmaLiveVoiceUsageReport: Codable, Equatable {
+    let callId: String
+    let conversationId: String?
+    let segments: [AlmaLiveVoiceUsageSegment]
+}
+
+final class AlmaLiveVoiceUsageMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callID = ""
+    private var order: [AlmaLiveVoiceProfile] = []
+    private var segments: [AlmaLiveVoiceProfile: AlmaLiveVoiceUsageSegment] = [:]
+
+    func begin(callID: String) {
+        lock.lock()
+        self.callID = callID
+        order.removeAll(keepingCapacity: true)
+        segments.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    func recordInputAudio(byteCount: Int, profile: AlmaLiveVoiceProfile) {
+        mutate(profile) { $0.inputAudioQueuedBytes += max(0, byteCount) }
+    }
+
+    func recordOutputAudio(byteCount: Int, profile: AlmaLiveVoiceProfile) {
+        mutate(profile) { $0.outputAudioReceivedBytes += max(0, byteCount) }
+    }
+
+    func recordInputTranscription(_ text: String, profile: AlmaLiveVoiceProfile) {
+        mutate(profile) { $0.inputTranscriptionCharacters += text.count }
+    }
+
+    func recordOutputTranscription(_ text: String, profile: AlmaLiveVoiceProfile) {
+        mutate(profile) { $0.outputTranscriptionCharacters += text.count }
+    }
+
+    func recordProviderUsage(
+        _ usage: AlmaLiveVoiceProviderUsage,
+        profile: AlmaLiveVoiceProfile
+    ) {
+        mutate(profile) { $0.providerUsage.mergeCumulative(usage) }
+    }
+
+    func report(conversationID: String?) -> AlmaLiveVoiceUsageReport? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !callID.isEmpty else { return nil }
+        let rows = order.compactMap { segments[$0] }
+        guard !rows.isEmpty else { return nil }
+        return AlmaLiveVoiceUsageReport(
+            callId: callID,
+            conversationId: conversationID,
+            segments: rows)
+    }
+
+    private func mutate(
+        _ profile: AlmaLiveVoiceProfile,
+        _ body: (inout AlmaLiveVoiceUsageSegment) -> Void
+    ) {
+        guard profile.isValid else { return }
+        lock.lock()
+        if segments[profile] == nil {
+            order.append(profile)
+            segments[profile] = AlmaLiveVoiceUsageSegment(
+                model: profile.modelID,
+                voice: profile.voiceID)
+        }
+        var segment = segments[profile]!
+        body(&segment)
+        segments[profile] = segment
+        lock.unlock()
+    }
+}
+
 // MARK: - Full-duplex barge-in evidence
 
 /// Pure decision math for the no-AEC loudspeaker path.  Volume by itself cannot
@@ -2372,6 +2515,7 @@ final class AlmaVoiceEngine {
     private var currentConnectionProfile = AlmaLiveVoiceProfile(
         modelID: AlmaLiveVoicePreferences.modelID,
         voiceID: AlmaLiveVoicePreferences.voiceID)
+    private var liveUsageCallID = UUID().uuidString.lowercased()
     private(set) var callStartedAt: Date?
     private let recoveryEvidence: AlmaLiveVoiceEvidenceRecorder
 
@@ -2801,6 +2945,12 @@ final class AlmaVoiceEngine {
             voiceID: savedProfile.voiceID,
             callMode: callKitManaged ? .callKit : .standalone)
         live.beginEvidenceSession()
+        if let activeAgentCallId, !activeAgentCallId.isEmpty {
+            liveUsageCallID = activeAgentCallId.lowercased()
+        } else {
+            liveUsageCallID = UUID().uuidString.lowercased()
+        }
+        live.beginUsageSession(callID: liveUsageCallID)
         if callKitManaged {
             callKitLifecycleToken = CallKitVoIP.shared.bindAgentLifecycleEvidence(live)
         } else {
@@ -3182,34 +3332,6 @@ final class AlmaVoiceEngine {
             _ = terminalEvidenceFinalizer.finish()
         }
         callKitLifecycleToken = nil
-        // Cost visibility + cost-gated compaction (owner 2026-07-24): report the
-        // call's duration so voice spend shows on the cost dashboard, then let
-        // the server fold this conversation ONLY if it crossed the compaction
-        // cost threshold (AGENT_COMPACT_THRESHOLD_USD) — cheap no-op otherwise.
-        if let startedAt = callStartedAt {
-            let secs = Int(Date().timeIntervalSince(startedAt))
-            let convId = chatVM?.conversationId
-            if secs >= 5 {
-                Task {
-                    struct UsageBody: Encodable { let seconds: Int; let conversationId: String? }
-                    struct UsageResp: Decodable { let ok: Bool? }
-                    let _: UsageResp? = try? await AlmaAPI.shared.send(
-                        "POST", "/api/assistant/live-session/usage",
-                        body: UsageBody(seconds: secs, conversationId: convId))
-                    if let convId, !convId.isEmpty {
-                        struct CompactBody: Encodable { let conversationId: String; let ifNeeded: Bool }
-                        struct CompactResp: Decodable { let compacted: Bool? }
-                        let resp: CompactResp? = try? await AlmaAPI.shared.send(
-                            "POST", "/api/assistant/internal/compact-conversation",
-                            body: CompactBody(conversationId: convId, ifNeeded: true))
-                        #if DEBUG
-                        NSLog("ALMA-VOICE call end: usage %ds logged, compacted=%@",
-                              secs, (resp?.compacted ?? false) ? "yes" : "no")
-                        #endif
-                    }
-                }
-            }
-        }
         closed = true
         // Agent call: closing the session must also close the CallKit system call
         // (the CXEndCallAction it triggers posts 'completed' to the server).
@@ -3253,6 +3375,29 @@ final class AlmaVoiceEngine {
         // teardown has completed. Otherwise a newly admitted preview can activate
         // and then be deactivated by this call's stale audioQueue cleanup.
         live.stop(waitForAudioTeardown: waitForAudioTeardown); liveActive = false
+        // Snapshot after socket/input shutdown so the report has a closed local
+        // measurement boundary. No transcript text leaves the device.
+        let usageReport = live.usageReport(conversationID: chatVM?.conversationId)
+        if let usageReport {
+            Task {
+                struct UsageResp: Decodable { let ok: Bool? }
+                let _: UsageResp? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/live-session/usage",
+                    body: usageReport)
+                if let convId = usageReport.conversationId, !convId.isEmpty {
+                    struct CompactBody: Encodable { let conversationId: String; let ifNeeded: Bool }
+                    struct CompactResp: Decodable { let compacted: Bool? }
+                    let resp: CompactResp? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/internal/compact-conversation",
+                        body: CompactBody(conversationId: convId, ifNeeded: true))
+                    #if DEBUG
+                    NSLog("ALMA-VOICE call end: usage segments=%d compacted=%@",
+                          usageReport.segments.count,
+                          (resp?.compacted ?? false) ? "yes" : "no")
+                    #endif
+                }
+            }
+        }
         tts.stopAll()
         if #available(iOS 17.0, *), AlmaCallBarBridge.shared.engine === self {
             AlmaCallBarBridge.shared.engine = nil
@@ -4982,11 +5127,20 @@ struct AlmaLiveVoiceStartAttemptState {
 final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
     weak var engine: AlmaVoiceEngine?
     private let evidenceRecorder: AlmaLiveVoiceEvidenceRecorder
+    private let usageMeter = AlmaLiveVoiceUsageMeter()
     private let traceID = String(UUID().uuidString.prefix(8))
 
     init(evidenceRecorder: AlmaLiveVoiceEvidenceRecorder) {
         self.evidenceRecorder = evidenceRecorder
         super.init()
+    }
+
+    func beginUsageSession(callID: String) {
+        usageMeter.begin(callID: callID)
+    }
+
+    func usageReport(conversationID: String?) -> AlmaLiveVoiceUsageReport? {
+        usageMeter.report(conversationID: conversationID)
     }
 
     struct SessionResponse: Decodable {
@@ -7479,6 +7633,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         sourceAttempt: AlmaLiveVoiceSocketAttempt,
         inputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil
     ) {
+        let usageProfile = profile(for: sourceAttempt.startAttempt)
         sendJSON(["realtimeInput": ["audio": [
             "mimeType": "audio/pcm;rate=16000",
             "data": bytes.base64EncodedString(),
@@ -7486,7 +7641,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             audioEvidenceByteCount: inputEvidence == nil ? nil : bytes.count,
             audioEvidenceGeneration: sourceAttempt.evidenceGeneration,
             audioSourceAttempt: sourceAttempt,
-            audioInputEvidence: inputEvidence)
+            audioInputEvidence: inputEvidence,
+            usageInputAudioByteCount: bytes.count,
+            usageProfile: usageProfile)
     }
 
     private func sendInputStreamEnd(
@@ -7558,6 +7715,12 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard let data = text.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let observedUptime = ProcessInfo.processInfo.systemUptime
+        if let metadata = root["usageMetadata"] as? [String: Any],
+           let usageProfile = profile(for: attempt.startAttempt) {
+            usageMeter.recordProviderUsage(
+                AlmaLiveVoiceProviderUsageParser.parse(metadata),
+                profile: usageProfile)
+        }
         if let error = root["error"] as? [String: Any] {
             // The attempt may have been invalidated after the receive-loop guard.
             // Snapshot currentness and setup state together so an accepted resume
@@ -8042,6 +8205,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                     correlateToActiveInput: !modelPlaybackStillActive)
             }
             if let text = input["text"] as? String {
+                if let usageProfile = profile(for: attempt.startAttempt) {
+                    usageMeter.recordInputTranscription(text, profile: usageProfile)
+                }
                 dispatchEngineCallback(
                     engineConnectionGeneration: attempt.engineConnectionGeneration,
                     requiring: attempt
@@ -8050,6 +8216,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         }
         if let output = content["outputTranscription"] as? [String: Any],
            let text = output["text"] as? String {
+            if let usageProfile = profile(for: attempt.startAttempt) {
+                usageMeter.recordOutputTranscription(text, profile: usageProfile)
+            }
             startAttemptLock.lock()
             guard startAttemptState.acceptsActive(attempt.startAttempt),
                   isCurrentSocketAttempt(attempt)
@@ -8095,6 +8264,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         guard acceptsStartAttempt(attempt.startAttempt),
               isCurrentSocketAttempt(attempt)
         else { return }
+        if let usageProfile = profile(for: attempt.startAttempt) {
+            usageMeter.recordOutputAudio(byteCount: pcm.count, profile: usageProfile)
+        }
         guard configured, let format = playbackFormat,
               let buffer = AVAudioPCMBuffer(pcmFormat: format,
                                             frameCapacity: AVAudioFrameCount(pcm.count / 2)),
@@ -8727,7 +8899,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         audioEvidenceByteCount: Int? = nil,
         audioEvidenceGeneration: Int? = nil,
         audioSourceAttempt: AlmaLiveVoiceSocketAttempt? = nil,
-        audioInputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil
+        audioInputEvidence: AlmaLiveVoiceEvidenceInputDeliveryToken? = nil,
+        usageInputAudioByteCount: Int? = nil,
+        usageProfile: AlmaLiveVoiceProfile? = nil
     ) {
         guard !stopped else { return }
         let sourceGeneration = audioEvidenceGeneration
@@ -8779,6 +8953,9 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 sourceGeneration: sourceGeneration,
                 observedUptime: ProcessInfo.processInfo.systemUptime,
                 inputEvidence: audioInputEvidence)
+        }
+        if let byteCount = usageInputAudioByteCount, let usageProfile {
+            usageMeter.recordInputAudio(byteCount: byteCount, profile: usageProfile)
         }
         readinessLock.unlock()
         socket.send(.string(text)) { [weak self, weak socket] error in

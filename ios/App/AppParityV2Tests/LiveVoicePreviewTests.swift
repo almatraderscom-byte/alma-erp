@@ -14,6 +14,59 @@ final class LiveVoicePreviewTests: XCTestCase {
         "Charon": "আরিফ", "Orus": "অর্ক", "Sulafat": "সামি",
     ]
 
+    func testLiveUsageParserReadsExactModalityTokenDetails() {
+        let parsed = AlmaLiveVoiceProviderUsageParser.parse([
+            "promptTokenCount": 41,
+            "responseTokenCount": 53,
+            "promptTokensDetails": [
+                ["modality": "AUDIO", "tokenCount": 31],
+                ["modality": "TEXT", "tokenCount": 10],
+            ],
+            "responseTokensDetails": [
+                ["modality": "AUDIO", "tokenCount": 45],
+                ["modality": "TEXT", "tokenCount": 8],
+            ],
+        ])
+
+        XCTAssertEqual(parsed.inputAudioTokens, 31)
+        XCTAssertEqual(parsed.inputTextTokens, 10)
+        XCTAssertEqual(parsed.outputAudioTokens, 45)
+        XCTAssertEqual(parsed.outputTextTokens, 8)
+        XCTAssertEqual(parsed.inputTotalTokens, 41)
+        XCTAssertEqual(parsed.outputTotalTokens, 53)
+    }
+
+    func testLiveUsageMeterSeparatesProfilesAndNeverSerializesTranscriptText() throws {
+        let first = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
+        let second = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Kore")
+        let meter = AlmaLiveVoiceUsageMeter()
+        meter.begin(callID: "call-usage-123")
+        meter.recordInputAudio(byteCount: 32_000, profile: first)
+        meter.recordOutputAudio(byteCount: 48_000, profile: second)
+        meter.recordInputTranscription("private input transcript", profile: first)
+        meter.recordOutputTranscription("private output transcript", profile: second)
+        meter.recordProviderUsage(
+            .init(inputAudioTokens: 10, outputAudioTokens: 20),
+            profile: first)
+        meter.recordProviderUsage(
+            .init(inputAudioTokens: 8, outputAudioTokens: 25),
+            profile: first)
+
+        let report = try XCTUnwrap(meter.report(conversationID: "conversation-1"))
+        XCTAssertEqual(report.callId, "call-usage-123")
+        XCTAssertEqual(report.segments.map(\.model), models)
+        XCTAssertEqual(report.segments[0].inputAudioQueuedBytes, 32_000)
+        XCTAssertEqual(report.segments[0].inputTranscriptionCharacters, 24)
+        XCTAssertEqual(report.segments[0].providerUsage.inputAudioTokens, 10)
+        XCTAssertEqual(report.segments[0].providerUsage.outputAudioTokens, 25)
+        XCTAssertEqual(report.segments[1].outputAudioReceivedBytes, 48_000)
+        XCTAssertEqual(report.segments[1].outputTranscriptionCharacters, 25)
+
+        let json = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
+        XCTAssertFalse(json.contains("private input transcript"))
+        XCTAssertFalse(json.contains("private output transcript"))
+    }
+
     func testLiveProfileKeepsSavedAndActiveDistinctUntilHealthCheckConnects() {
         let original = AlmaLiveVoiceProfile(modelID: models[0], voiceID: "Aoede")
         let proposed = AlmaLiveVoiceProfile(modelID: models[1], voiceID: "Kore")
