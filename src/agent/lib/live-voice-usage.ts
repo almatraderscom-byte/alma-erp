@@ -1,9 +1,5 @@
-import {
-  GEMINI_25_LIVE_MODEL,
-  GEMINI_31_LIVE_MODEL,
-  isSupportedLiveVoiceModel,
-  isSupportedLiveVoiceName,
-} from '@/agent/lib/live-voice-config'
+import { isSupportedLiveVoiceModel, isSupportedLiveVoiceName } from '@/agent/lib/live-voice-config'
+import { liveVoiceModelContract } from '@/agent/lib/live-voice-contract'
 
 export type LiveVoiceProviderUsage = {
   inputAudioTokens: number
@@ -42,21 +38,6 @@ const MAX_OUTPUT_BYTES = 24_000 * 2 * MAX_CALL_SECONDS
 const MAX_TRANSCRIPTION_CHARACTERS = 10_000_000
 const MAX_TOKENS = 250_000_000
 const AUDIO_TOKENS_PER_SECOND = 25
-
-const rates = {
-  [GEMINI_25_LIVE_MODEL]: {
-    inputText: 0.50,
-    inputAudio: 3.00,
-    outputText: 2.00,
-    outputAudio: 12.00,
-  },
-  [GEMINI_31_LIVE_MODEL]: {
-    inputText: 0.75,
-    inputAudio: 3.00,
-    outputText: 4.50,
-    outputAudio: 12.00,
-  },
-} as const
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -157,7 +138,7 @@ export function parseLiveVoiceUsageReport(
 }
 
 export function priceLiveVoiceUsageSegment(segment: LiveVoiceUsageSegment): PricedLiveVoiceSegment {
-  const modelRates = rates[segment.model as keyof typeof rates]
+  const modelRates = liveVoiceModelContract(segment.model)!.pricingUSDPerMillionTokens
   const inputSeconds = segment.inputAudioQueuedBytes / (16_000 * 2)
   const outputSeconds = segment.outputAudioReceivedBytes / (24_000 * 2)
   const inputAudioTokens = segment.providerUsage.inputAudioTokens > 0

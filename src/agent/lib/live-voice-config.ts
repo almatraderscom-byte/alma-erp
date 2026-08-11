@@ -9,21 +9,22 @@ import {
   type FunctionDeclaration,
   type LiveConnectConfig,
 } from '@google/genai'
+import { LIVE_VOICE_CONTRACT, liveVoiceModelContract } from '@/agent/lib/live-voice-contract'
 
-export const GEMINI_25_LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025'
-export const GEMINI_31_LIVE_MODEL = 'gemini-3.1-flash-live-preview'
-export const LIVE_VOICE_MODEL_IDS = [GEMINI_25_LIVE_MODEL, GEMINI_31_LIVE_MODEL] as const
-export const LIVE_VOICE_NAMES = [
-  'Aoede',
-  'Achernar',
-  'Kore',
-  'Charon',
-  'Orus',
-  'Sulafat',
-] as const
+const enabledModels = LIVE_VOICE_CONTRACT.models.filter((model) => model.enabled)
+export const GEMINI_25_LIVE_MODEL = enabledModels.find(
+  (model) => model.capabilities.affectiveDialog,
+)!.id
+export const GEMINI_31_LIVE_MODEL = enabledModels.find(
+  (model) => !model.capabilities.affectiveDialog,
+)!.id
+export const LIVE_VOICE_MODEL_IDS = enabledModels.map((model) => model.id)
+export const LIVE_VOICE_NAMES = LIVE_VOICE_CONTRACT.voices
+  .filter((voice) => voice.enabled)
+  .map((voice) => voice.id)
 
-export const DEFAULT_LIVE_VOICE_MODEL = GEMINI_25_LIVE_MODEL
-export const DEFAULT_LIVE_VOICE_NAME = 'Aoede'
+export const DEFAULT_LIVE_VOICE_MODEL = LIVE_VOICE_CONTRACT.defaults.modelID
+export const DEFAULT_LIVE_VOICE_NAME = LIVE_VOICE_CONTRACT.defaults.voiceID
 export const LIVE_VOICE_TOOL_NAMES = [
   'quick_erp_lookup',
   'end_call',
@@ -97,6 +98,8 @@ export function buildLiveVoiceConfig(
   voiceName = DEFAULT_LIVE_VOICE_NAME,
   model = DEFAULT_LIVE_VOICE_MODEL,
 ): LiveConnectConfig {
+  const modelContract = liveVoiceModelContract(model)
+  if (!modelContract) throw new Error('unsupported_live_model')
   const config: LiveConnectConfig = {
     responseModalities: [Modality.AUDIO],
     temperature: 0.7,
@@ -104,10 +107,15 @@ export function buildLiveVoiceConfig(
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
     },
     systemInstruction: LIVE_VOICE_SYSTEM_INSTRUCTION,
-    inputAudioTranscription: {},
-    outputAudioTranscription: {},
+    inputAudioTranscription: modelContract.capabilities.inputAudioTranscription ? {} : undefined,
+    outputAudioTranscription: modelContract.capabilities.outputAudioTranscription ? {} : undefined,
     sessionResumption: {},
-    contextWindowCompression: { slidingWindow: {} },
+    contextWindowCompression: {
+      triggerTokens: String(LIVE_VOICE_CONTRACT.contextCompression.triggerTokens),
+      slidingWindow: {
+        targetTokens: String(LIVE_VOICE_CONTRACT.contextCompression.targetTokens),
+      },
+    },
     realtimeInputConfig: {
       automaticActivityDetection: {
         disabled: false,
@@ -125,11 +133,15 @@ export function buildLiveVoiceConfig(
     tools: [{ functionDeclarations: LIVE_VOICE_FUNCTION_DECLARATIONS }],
   }
 
-  if (model === GEMINI_25_LIVE_MODEL) {
+  if (modelContract.capabilities.affectiveDialog) {
     config.enableAffectiveDialog = true
-    config.thinkingConfig = { thinkingBudget: 0 }
+  }
+  if (modelContract.capabilities.thinking.mode === 'budget') {
+    config.thinkingConfig = { thinkingBudget: modelContract.capabilities.thinking.budget }
   } else {
-    config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL }
+    config.thinkingConfig = {
+      thinkingLevel: modelContract.capabilities.thinking.level as ThinkingLevel,
+    }
   }
   return config
 }

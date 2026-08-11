@@ -70,11 +70,12 @@ enum AlmaLiveVoiceRecoveryFeature: String {
     case privateLiveActivityV1 = "private-live-activity-v1"
     case profileTransactionV1 = "profile-transaction-v1"
     case toolOrchestrationV1 = "tool-orchestration-v1"
+    case phase1BContractV1 = "phase1b-contract-v1"
 
     var defaultEnabled: Bool {
         switch self {
         case .evidenceV1, .previewCatalogV1, .privateLiveActivityV1,
-             .profileTransactionV1, .toolOrchestrationV1:
+             .profileTransactionV1, .toolOrchestrationV1, .phase1BContractV1:
             true
         }
     }
@@ -112,18 +113,35 @@ enum AlmaLiveVoiceRecoveryFeatures {
 enum AlmaLiveVoicePreferences {
     static let modelKey = "alma-live-model"
     static let voiceKey = "alma-live-voice"
-    static let gemini25 = "gemini-2.5-flash-native-audio-preview-12-2025"
-    static let gemini31 = "gemini-3.1-flash-live-preview"
+    static let selectionVersionKey = "alma-live-selection-version"
+    private static let legacyGemini25 = "gemini-2.5-flash-native-audio-preview-12-2025"
+    private static let legacyGemini31 = "gemini-3.1-flash-live-preview"
+    private static let bundledContract = try? AlmaLiveVoiceContractStore.load()
 
-    static let models: [AlmaLiveModelChoice] = [
-        .init(id: gemini25, title: "Gemini 2.5 Live",
+    static var activeContract: AlmaLiveVoiceContract? {
+        guard AlmaLiveVoiceRecoveryFeatures.isEnabled(.phase1BContractV1) else { return nil }
+        return bundledContract
+    }
+
+    static var gemini25: String {
+        activeContract?.enabledModels.first(where: { $0.capabilities.affectiveDialog })?.id
+            ?? legacyGemini25
+    }
+
+    static var gemini31: String {
+        activeContract?.enabledModels.first(where: { !$0.capabilities.affectiveDialog })?.id
+            ?? legacyGemini31
+    }
+
+    private static let legacyModels: [AlmaLiveModelChoice] = [
+        .init(id: legacyGemini25, title: "Gemini 2.5 Live",
               detail: "বাংলা কথোপকথন ও আবেগের টোনে বেশি স্বাভাবিক",
               badge: "Natural",
               strengths: "স্বাভাবিক pacing, কণ্ঠের mood ও জটিল workflow; synchronous ও asynchronous function calling সমর্থন করে।",
               limitations: "Preview model; 3.1 হলো Google-এর recommended replacement। Preview behavior ও rate limit বদলাতে পারে।",
               costLifecycle: "Preview · shutdown date ঘোষণা হয়নি · audio input $3/M token, output $12/M token; transcription text আলাদা bill হয়।",
               bestUse: "স্বাভাবিক বাংলা আলাপ, দীর্ঘ ব্যাখ্যা এবং non-blocking tool workflow"),
-        .init(id: gemini31, title: "Gemini 3.1 Live",
+        .init(id: legacyGemini31, title: "Gemini 3.1 Live",
               detail: "নতুন, দ্রুত ও নির্ভুল রিয়েলটাইম কথোপকথন",
               badge: "Fast",
               strengths: "Low-latency audio-to-audio, acoustic nuance, numeric precision ও multimodal awareness।",
@@ -133,7 +151,7 @@ enum AlmaLiveVoicePreferences {
     ]
 
     // The display names are ALMA personas; `id` is Google's official voice name.
-    static let voices: [AlmaLiveVoiceChoice] = [
+    private static let legacyVoices: [AlmaLiveVoiceChoice] = [
         .init(id: "Aoede", name: "মায়া", detail: "হালকা · স্বাভাবিক", symbol: "wind"),
         .init(id: "Achernar", name: "নীলা", detail: "কোমল · শান্ত", symbol: "moon.stars.fill"),
         .init(id: "Kore", name: "তারা", detail: "দৃঢ় · পরিষ্কার", symbol: "sparkles"),
@@ -142,29 +160,57 @@ enum AlmaLiveVoicePreferences {
         .init(id: "Sulafat", name: "সামি", detail: "উষ্ণ · বন্ধুসুলভ", symbol: "sun.max.fill"),
     ]
 
-    static var modelID: String {
-        if let saved = UserDefaults.standard.string(forKey: modelKey),
-           models.contains(where: { $0.id == saved }) {
-            return saved
-        }
-        return gemini25
+    static var models: [AlmaLiveModelChoice] {
+        activeContract?.modelChoices ?? legacyModels
     }
 
-    static var voiceID: String {
-        if let saved = UserDefaults.standard.string(forKey: voiceKey),
-           voices.contains(where: { $0.id == saved }) {
-            return saved
-        }
-        return "Aoede"
+    static var voices: [AlmaLiveVoiceChoice] {
+        activeContract?.voiceChoices ?? legacyVoices
     }
 
-    static var requestBody: [String: String] { ["model": modelID, "voice": voiceID] }
+    private static var selection: AlmaLiveVoiceMigratedSelection {
+        let defaults = UserDefaults.standard
+        guard let contract = activeContract else {
+            let model = defaults.string(forKey: modelKey)
+                .flatMap { saved in legacyModels.contains(where: { $0.id == saved }) ? saved : nil }
+                ?? legacyGemini25
+            let voice = defaults.string(forKey: voiceKey)
+                .flatMap { saved in legacyVoices.contains(where: { $0.id == saved }) ? saved : nil }
+                ?? "Aoede"
+            return .init(selectionVersion: 0, modelID: model, voiceID: voice, migrated: false)
+        }
+        let version = defaults.object(forKey: selectionVersionKey) == nil
+            ? nil : defaults.integer(forKey: selectionVersionKey)
+        let migrated = contract.migrate(.init(
+            selectionVersion: version,
+            modelID: defaults.string(forKey: modelKey),
+            voiceID: defaults.string(forKey: voiceKey)))
+        if migrated.migrated {
+            defaults.set(migrated.modelID, forKey: modelKey)
+            defaults.set(migrated.voiceID, forKey: voiceKey)
+            defaults.set(migrated.selectionVersion, forKey: selectionVersionKey)
+        }
+        return migrated
+    }
+
+    static var modelID: String { selection.modelID }
+
+    static var voiceID: String { selection.voiceID }
+
+    static var requestBody: [String: String] {
+        var body = ["model": modelID, "voice": voiceID]
+        if let contract = activeContract { body["contractVersion"] = contract.contractVersion }
+        return body
+    }
 
     static func save(modelID: String, voiceID: String) {
         guard models.contains(where: { $0.id == modelID }),
               voices.contains(where: { $0.id == voiceID }) else { return }
         UserDefaults.standard.set(modelID, forKey: modelKey)
         UserDefaults.standard.set(voiceID, forKey: voiceKey)
+        if let contract = activeContract {
+            UserDefaults.standard.set(contract.schemaVersion, forKey: selectionVersionKey)
+        }
     }
 }
 
@@ -2972,6 +3018,8 @@ final class AlmaVoiceEngine {
     private var streamingActive = false      // a live-STT listen is in flight
     private(set) var liveActive = false       // persistent Gemini Live full-duplex session
     private var liveConnectTask: Task<Void, Never>?
+    private var liveBudgetMonitorTask: Task<Void, Never>?
+    private var liveBudgetGuard = AlmaLiveVoiceLocalBudgetGuard()
     private var liveConnectAttempt = 0
     private var connectionGeneration = 0
     private var hasEverConnected = false
@@ -3195,6 +3243,7 @@ final class AlmaVoiceEngine {
             liveUsageCallID = UUID().uuidString.lowercased()
         }
         live.beginUsageSession(callID: liveUsageCallID)
+        startLiveBudgetMonitor()
         live.beginToolOrchestrationSession(
             enabled: AlmaLiveVoiceRecoveryFeatures.isEnabled(.toolOrchestrationV1))
         if callKitManaged {
@@ -3542,6 +3591,37 @@ final class AlmaVoiceEngine {
         end(waitForAudioTeardown: true)
     }
 
+    private func startLiveBudgetMonitor() {
+        liveBudgetMonitorTask?.cancel()
+        liveBudgetMonitorTask = nil
+        liveBudgetGuard = AlmaLiveVoiceLocalBudgetGuard()
+        guard let contract = AlmaLiveVoicePreferences.activeContract else { return }
+        let interval = UInt64(contract.localBudget.pollIntervalMilliseconds) * 1_000_000
+        liveBudgetMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled, let self, !self.closed else { return }
+                let evaluation = AlmaLiveVoiceLocalBudgetEvaluator.evaluate(
+                    report: self.live.usageReport(conversationID: nil),
+                    contract: contract)
+                guard let action = self.liveBudgetGuard.consume(evaluation) else { continue }
+                switch action {
+                case .alert(let estimatedMicroUSD):
+                    let spent = Double(estimatedMicroUSD) / 1_000_000
+                    let limit = Double(contract.localBudget.terminationMicroUSD) / 1_000_000
+                    self.errorToast = String(
+                        format: "Live Voice খরচ $%.2f হয়েছে; $%.2f সীমায় কল শেষ হবে।",
+                        spent, limit)
+                case .terminate:
+                    self.errorToast = "Live Voice-এর নির্ধারিত খরচসীমা পূর্ণ হওয়ায় কল শেষ হয়েছে।"
+                    self.feedStatus("খরচসীমা পূর্ণ হয়েছে — কল শেষ করা হচ্ছে।")
+                    self.end()
+                    return
+                }
+            }
+        }
+    }
+
     private func end(waitForAudioTeardown: Bool) {
         guard !closed else { return }
         let standaloneAdmissionToken = callKitManaged ? nil : callAudioAdmissionToken
@@ -3596,6 +3676,7 @@ final class AlmaVoiceEngine {
             }
         }
         liveConnectTask?.cancel(); liveConnectTask = nil
+        liveBudgetMonitorTask?.cancel(); liveBudgetMonitorTask = nil
         liveSessionHasStarted = false
         connectionGeneration += 1
         keepAliveStop()
@@ -6632,13 +6713,29 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]],
             ],
         ]
-        generationConfig["thinkingConfig"] = model == AlmaLiveVoicePreferences.gemini25
-            ? ["thinkingBudget": 0]
-            : ["thinkingLevel": "MINIMAL"]
+        if let thinking = AlmaLiveVoicePreferences.activeContract?
+            .model(id: model)?.capabilities.thinking {
+            generationConfig["thinkingConfig"] = thinking.mode == "budget"
+                ? ["thinkingBudget": thinking.budget ?? 0]
+                : ["thinkingLevel": thinking.level ?? "MINIMAL"]
+        } else {
+            generationConfig["thinkingConfig"] = model == AlmaLiveVoicePreferences.gemini25
+                ? ["thinkingBudget": 0]
+                : ["thinkingLevel": "MINIMAL"]
+        }
         // Gemini's raw Live websocket schema nests this under generationConfig.
         // Sending it at the setup root closes the socket with 1007 and silently
         // downgrades the whole call to non-affective speech.
         if allowAffective { generationConfig["enableAffectiveDialog"] = true }
+        let contextWindowCompression: [String: Any]
+        if let compression = AlmaLiveVoicePreferences.activeContract?.contextCompression {
+            contextWindowCompression = [
+                "triggerTokens": String(compression.triggerTokens),
+                "slidingWindow": ["targetTokens": String(compression.targetTokens)],
+            ]
+        } else {
+            contextWindowCompression = ["slidingWindow": [:]]
+        }
         var setup: [String: Any] = [
             "model": model.hasPrefix("models/") ? model : "models/\(model)",
             "generationConfig": generationConfig,
@@ -6646,7 +6743,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             "inputAudioTranscription": [:],
             "outputAudioTranscription": [:],
             "sessionResumption": resumption,
-            "contextWindowCompression": ["slidingWindow": [:]],
+            "contextWindowCompression": contextWindowCompression,
             "realtimeInputConfig": [
                 "automaticActivityDetection": [
                     "disabled": false,

@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "live-voice-2026-08-11-v1",
+  "defaults": {
+    "modelID": "gemini-2.5-flash-native-audio-preview-12-2025",
+    "voiceID": "Aoede"
+  },
+  "contextCompression": {
+    "triggerTokens": 25000,
+    "targetTokens": 8000,
+    "sourceURL": "https://ai.google.dev/gemini-api/docs/live-api/best-practices",
+    "verifiedAt": "2026-08-11"
+  },
+  "localBudget": {
+    "warningMicroUSD": 750000,
+    "terminationMicroUSD": 1000000,
+    "pollIntervalMilliseconds": 500,
+    "audioTokensPerSecond": 25
+  },
+  "models": [
+    {
+      "id": "gemini-2.5-flash-native-audio-preview-12-2025",
+      "enabled": true,
+      "lifecycle": "preview",
+      "replacementModelID": "gemini-3.1-flash-live-preview",
+      "capabilities": {
+        "affectiveDialog": true,
+        "functionCallingMode": "synchronous-and-asynchronous",
+        "thinking": {
+          "mode": "budget",
+          "budget": 0
+        },
+        "inputAudioTranscription": true,
+        "outputAudioTranscription": true
+      },
+      "pricingUSDPerMillionTokens": {
+        "inputText": 0.5,
+        "inputAudio": 3,
+        "outputText": 2,
+        "outputAudio": 12
+      },
+      "display": {
+        "title": "Gemini 2.5 Live",
+        "detail": "বাংলা কথোপকথন ও আবেগের টোনে বেশি স্বাভাবিক",
+        "badge": "Natural",
+        "strengths": "স্বাভাবিক pacing, কণ্ঠের mood ও জটিল workflow; synchronous ও asynchronous function calling সমর্থন করে।",
+        "limitations": "Preview model; 3.1 হলো Google-এর recommended replacement। Preview behavior ও rate limit বদলাতে পারে।",
+        "costLifecycle": "Preview · shutdown date ঘোষণা হয়নি · audio input $3/M token, output $12/M token; transcription text আলাদা bill হয়।",
+        "bestUse": "স্বাভাবিক বাংলা আলাপ, দীর্ঘ ব্যাখ্যা এবং non-blocking tool workflow"
+      }
+    },
+    {
+      "id": "gemini-3.1-flash-live-preview",
+      "enabled": true,
+      "lifecycle": "preview",
+      "replacementModelID": null,
+      "capabilities": {
+        "affectiveDialog": false,
+        "functionCallingMode": "synchronous-only",
+        "thinking": {
+          "mode": "level",
+          "level": "MINIMAL"
+        },
+        "inputAudioTranscription": true,
+        "outputAudioTranscription": true
+      },
+      "pricingUSDPerMillionTokens": {
+        "inputText": 0.75,
+        "inputAudio": 3,
+        "outputText": 4.5,
+        "outputAudio": 12
+      },
+      "display": {
+        "title": "Gemini 3.1 Live",
+        "detail": "নতুন, দ্রুত ও নির্ভুল রিয়েলটাইম কথোপকথন",
+        "badge": "Fast",
+        "strengths": "Low-latency audio-to-audio, acoustic nuance, numeric precision ও multimodal awareness।",
+        "limitations": "Preview model; Live function calling synchronous-only—tool result না আসা পর্যন্ত model অপেক্ষা করে।",
+        "costLifecycle": "Preview · shutdown date ঘোষণা হয়নি · audio input $3/M token (~$0.005/min), output $12/M (~$0.018/min); text/transcription extra।",
+        "bestUse": "দ্রুত realtime প্রশ্নোত্তর, সংখ্যাভিত্তিক তথ্য ও synchronous ERP lookup"
+      }
+    }
+  ],
+  "voices": [
+    {
+      "id": "Aoede",
+      "enabled": true,
+      "display": {
+        "name": "মায়া",
+        "detail": "হালকা · স্বাভাবিক",
+        "symbol": "wind"
+      }
+    },
+    {
+      "id": "Achernar",
+      "enabled": true,
+      "display": {
+        "name": "নীলা",
+        "detail": "কোমল · শান্ত",
+        "symbol": "moon.stars.fill"
+      }
+    },
+    {
+      "id": "Kore",
+      "enabled": true,
+      "display": {
+        "name": "তারা",
+        "detail": "দৃঢ় · পরিষ্কার",
+        "symbol": "sparkles"
+      }
+    },
+    {
+      "id": "Charon",
+      "enabled": true,
+      "display": {
+        "name": "আরিফ",
+        "detail": "তথ্যপূর্ণ · স্থির",
+        "symbol": "waveform"
+      }
+    },
+    {
+      "id": "Orus",
+      "enabled": true,
+      "display": {
+        "name": "অর্ক",
+        "detail": "গভীর · পেশাদার",
+        "symbol": "briefcase.fill"
+      }
+    },
+    {
+      "id": "Sulafat",
+      "enabled": true,
+      "display": {
+        "name": "সামি",
+        "detail": "উষ্ণ · বন্ধুসুলভ",
+        "symbol": "sun.max.fill"
+      }
+    }
+  ],
+  "migrations": [
+    {
+      "fromSelectionVersion": 0,
+      "toSelectionVersion": 1,
+      "modelReplacements": {},
+      "voiceReplacements": {}
+    }
+  ]
+}
