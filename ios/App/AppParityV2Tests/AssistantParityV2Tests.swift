@@ -1849,7 +1849,9 @@ final class AssistantParityV2Tests: XCTestCase {
     }
 
     func testLiveVoiceEvidenceRejectsContentBearingIdentityInputsAndCanBeDisabled() throws {
-        let recorder = AlmaLiveVoiceEvidenceRecorder(enabled: true)
+        let recorder = AlmaLiveVoiceEvidenceRecorder(
+            enabled: true,
+            buildProvenance: AlmaBuildProvenanceLoader.load(data: Data()))
         let localID = recorder.beginSession(
             modelID: "https://private.example/model?token=secret-token",
             voiceID: "owner-spoken-secret-token",
@@ -1894,14 +1896,14 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(report.session.activeModelID, "unknown")
         XCTAssertEqual(report.session.activeVoiceID, "unknown")
         XCTAssertEqual(report.app.commit, "unknown")
-        XCTAssertEqual(report.app.revisionStatus, .unavailableUntrustedBundleStamp)
+        XCTAssertEqual(report.app.revisionStatus, .unavailableInvalidBundleProvenance)
         XCTAssertFalse(json.contains("private.example"))
         XCTAssertFalse(json.contains("secret-token"))
         XCTAssertEqual(report.privacyContract, [
             "no-pcm-or-audio-payload",
             "no-transcript-prompt-or-user-content",
             "no-tool-arguments-results-or-provider-call-id",
-            "no-url-token-cookie-credential-or-content-hash",
+            "no-url-token-cookie-credential-or-user-content-hash",
             "typed-allowlisted-fields-only",
             "raw-energy-is-not-proof-of-owner-speech",
             "queue-is-not-send-and-local-send-is-not-provider-receipt",
@@ -1917,6 +1919,141 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertFalse(disabled.report().featureEnabled)
         XCTAssertTrue(disabled.report().events.isEmpty)
         XCTAssertThrowsError(try disabled.encodedReport())
+    }
+
+    func testBuildProvenanceAcceptsOnlyExactVerifiedCommitContract() throws {
+        func plist(_ dictionary: [String: Any]) throws -> Data {
+            try PropertyListSerialization.data(
+                fromPropertyList: dictionary,
+                format: .binary,
+                options: 0)
+        }
+        func verified(_ commit: Any, extra: [String: Any] = [:]) throws -> AlmaBuildProvenance {
+            var dictionary: [String: Any] = [
+                "schemaVersion": 1,
+                "revisionStatus": "verified-clean-source-and-bundled-inputs",
+                "commit": commit,
+            ]
+            extra.forEach { dictionary[$0.key] = $0.value }
+            return AlmaBuildProvenanceLoader.load(data: try plist(dictionary))
+        }
+
+        let sha1 = String(repeating: "a", count: 40)
+        let sha256 = String(repeating: "9", count: 64)
+        XCTAssertEqual(try verified(sha1).trustedCommit, sha1)
+        XCTAssertEqual(try verified(sha256).trustedCommit, sha256)
+        XCTAssertEqual(
+            try verified(sha1).revisionStatus,
+            .verifiedCleanSourceAndBundledInputs)
+
+        for untrustedCommit in [
+            "98c70adc77",
+            String(repeating: "A", count: 40),
+            String(repeating: "a", count: 39),
+            String(repeating: "a", count: 41),
+            String(repeating: "g", count: 40),
+            "\(String(repeating: "a", count: 40))\n",
+        ] {
+            let result = try verified(untrustedCommit)
+            XCTAssertNil(result.trustedCommit, "must reject forged commit: \(untrustedCommit)")
+            XCTAssertEqual(result.revisionStatus, .unavailableInvalidBundleProvenance)
+        }
+
+        XCTAssertEqual(
+            try verified(NSNumber(value: 1)).revisionStatus,
+            .unavailableInvalidBundleProvenance)
+        XCTAssertEqual(
+            try verified(sha1, extra: ["ALMAGitCommit": sha1]).revisionStatus,
+            .unavailableInvalidBundleProvenance,
+            "legacy or unexpected fields must not extend the trust envelope")
+    }
+
+    func testBuildProvenanceUnavailableAndMalformedInputsFailClosed() throws {
+        func plist(_ object: Any) throws -> Data {
+            try PropertyListSerialization.data(
+                fromPropertyList: object,
+                format: .binary,
+                options: 0)
+        }
+        func load(_ dictionary: [String: Any]) throws -> AlmaBuildProvenance {
+            AlmaBuildProvenanceLoader.load(data: try plist(dictionary))
+        }
+
+        let unavailable = AlmaBuildProvenanceStatus.allCases.filter {
+            $0 != .verifiedCleanSourceAndBundledInputs
+        }
+        for status in unavailable {
+            let result = try load([
+                "schemaVersion": 1,
+                "revisionStatus": status.rawValue,
+            ])
+            XCTAssertEqual(result.revisionStatus, status)
+            XCTAssertNil(result.trustedCommit)
+            XCTAssertEqual(result.evidenceCommit, "unknown")
+        }
+
+        let maliciousSha = String(repeating: "b", count: 40)
+        let invalidDictionaries: [[String: Any]] = [
+            [:],
+            ["schemaVersion": 2, "revisionStatus": "unavailable-repository"],
+            ["schemaVersion": true, "revisionStatus": "unavailable-repository"],
+            ["schemaVersion": 1.0, "revisionStatus": "unavailable-repository"],
+            ["schemaVersion": "1", "revisionStatus": "unavailable-repository"],
+            ["schemaVersion": 1, "revisionStatus": "VERIFIED-clean-source-and-bundled-inputs"],
+            ["schemaVersion": 1, "revisionStatus": "unknown-status"],
+            ["schemaVersion": 1, "revisionStatus": "verified-clean-source-and-bundled-inputs"],
+            [
+                "schemaVersion": 1,
+                "revisionStatus": "unavailable-dirty-worktree",
+                "commit": maliciousSha,
+            ],
+            [
+                "schemaVersion": 1,
+                "revisionStatus": "unavailable-repository",
+                "unexpected": "owner-content",
+            ],
+        ]
+        for dictionary in invalidDictionaries {
+            let result = try load(dictionary)
+            XCTAssertEqual(result.revisionStatus, .unavailableInvalidBundleProvenance)
+            XCTAssertNil(result.trustedCommit)
+        }
+
+        let nonDictionary = AlmaBuildProvenanceLoader.load(
+            data: try plist(["untrusted", maliciousSha]))
+        XCTAssertEqual(nonDictionary.revisionStatus, .unavailableInvalidBundleProvenance)
+        XCTAssertNil(nonDictionary.trustedCommit)
+        XCTAssertEqual(
+            AlmaBuildProvenanceLoader.load(data: Data("not a plist".utf8)).revisionStatus,
+            .unavailableInvalidBundleProvenance)
+    }
+
+    func testLiveVoiceEvidenceUsesOnlyInjectedTrustedBuildProvenance() throws {
+        let sha = String(repeating: "c", count: 40)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: [
+                "schemaVersion": 1,
+                "revisionStatus": "verified-clean-source-and-bundled-inputs",
+                "commit": sha,
+            ],
+            format: .binary,
+            options: 0)
+        let provenance = AlmaBuildProvenanceLoader.load(data: data)
+        let recorder = AlmaLiveVoiceEvidenceRecorder(
+            enabled: true,
+            buildProvenance: provenance)
+
+        recorder.beginFixtureSession(
+            modelID: AlmaLiveVoicePreferences.gemini25,
+            voiceID: "Aoede",
+            callMode: .standalone,
+            fixture: .unitTest)
+        recorder.endSession(.ownerEnded)
+
+        XCTAssertEqual(recorder.report().app.commit, sha)
+        XCTAssertEqual(
+            recorder.report().app.revisionStatus,
+            .verifiedCleanSourceAndBundledInputs)
     }
 
     func testLiveVoiceEvidenceSchemaV2Phase0CEventContract() throws {
@@ -2020,7 +2157,7 @@ final class AssistantParityV2Tests: XCTestCase {
             "no-pcm-or-audio-payload",
             "no-transcript-prompt-or-user-content",
             "no-tool-arguments-results-or-provider-call-id",
-            "no-url-token-cookie-credential-or-content-hash",
+            "no-url-token-cookie-credential-or-user-content-hash",
             "typed-allowlisted-fields-only",
             "raw-energy-is-not-proof-of-owner-speech",
             "queue-is-not-send-and-local-send-is-not-provider-receipt",

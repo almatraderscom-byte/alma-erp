@@ -955,6 +955,7 @@ final class OfficeCallCoordinator: NSObject {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        let provenance = AlmaBuildProvenanceLoader.current
         var metadata = metrics.mapValues { String($0) }
         if let detail { metadata["code"] = String(detail.prefix(160)) }
         let body = Body(
@@ -963,7 +964,7 @@ final class OfficeCallCoordinator: NSObject {
             platform: "ios",
             deviceId: UIDevice.current.identifierForVendor?.uuidString,
             appBuild: "\(version) (\(build))",
-            buildSha: info?["ALMAGitCommit"] as? String,
+            buildSha: provenance.trustedCommit,
             state: state,
             latencyMs: latencyMs,
             metadata: metadata.isEmpty ? nil : metadata,

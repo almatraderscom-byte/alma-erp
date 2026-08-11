@@ -63,6 +63,7 @@
 		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
 		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
+		C8A0D1000000000000000010 /* AlmaBuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */; };
 		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
@@ -265,6 +266,7 @@
 		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
+		C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBuildProvenance.swift; sourceTree = "<group>"; };
 		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeRobotLiveGlyph.swift; sourceTree = "<group>"; };
@@ -433,6 +435,7 @@
 				E1AA9900000000000000C001 /* Sounds */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */,
 				A1AA11A100000000000INTNT /* AlmaAppIntents.swift */,
 				C1AA3300000000000000A001 /* PulseActivityAttributes.swift */,
 				C1AA3300000000000000A002 /* LiveActivityBridge.swift */,
@@ -642,6 +645,7 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				C8A0D1000000000000000012 /* Generate Build Provenance */,
 				9592DBEFFC6D2A0C8D5DEB22 /* [CP] Embed Pods Frameworks */,
 				B1AA2200000000000000C004 /* Embed Foundation Extensions */,
 			);
@@ -873,6 +877,40 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-App/Pods-App-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		C8A0D1000000000000000012 /* Generate Build Provenance */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../scripts/ios-build-provenance.sh",
+				"$(SRCROOT)/BuildSupport/alma-bundled-inputs.sha256",
+				"$(SRCROOT)/../../mobile/www/index.html",
+				"$(SRCROOT)/App/capacitor.config.json",
+				"$(SRCROOT)/App/config.xml",
+				"$(SRCROOT)/App/public/index.html",
+				"$(SRCROOT)/App/public/cordova.js",
+				"$(SRCROOT)/App/public/cordova_plugins.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/capacitor.config.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/config.xml",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/index.html",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova_plugins.js",
+			);
+			name = "Generate Build Provenance";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/alma-build-provenance.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n  --output \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/alma-build-provenance.plist\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -881,6 +919,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				C8A0D1000000000000000010 /* AlmaBuildProvenance.swift in Sources */,
 				A1AA11A200000000000INTNT /* AlmaAppIntents.swift in Sources */,
 				C1AA3300000000000000B001 /* PulseActivityAttributes.swift in Sources */,
 				C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */,

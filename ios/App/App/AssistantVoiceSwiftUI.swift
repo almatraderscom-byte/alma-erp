@@ -829,9 +829,7 @@ enum AlmaLiveVoiceProviderControlEvidence {
     }
 }
 
-enum AlmaLiveVoiceEvidenceRevisionStatus: String, Codable, Sendable {
-    case unavailableUntrustedBundleStamp = "unavailable-untrusted-bundle-stamp"
-}
+typealias AlmaLiveVoiceEvidenceRevisionStatus = AlmaBuildProvenanceStatus
 
 enum AlmaLiveVoiceEvidenceReason: String, Codable, Sendable {
     case converterUnavailable = "converter-unavailable"
@@ -1185,6 +1183,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private static let maximumEvents = 600
 
     private let enabled: Bool
+    private let buildProvenance: AlmaBuildProvenance
     private let lock = NSLock()
     private var sessionActive = false
     private var localSessionID = "not-started"
@@ -1232,8 +1231,12 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
     private var modelAudioStages = Set<ModelStageKey>()
     private var transportEventStages = Set<TransportEventKey>()
 
-    init(enabled: Bool) {
+    init(
+        enabled: Bool,
+        buildProvenance: AlmaBuildProvenance = AlmaBuildProvenanceLoader.current
+    ) {
         self.enabled = enabled
+        self.buildProvenance = buildProvenance
     }
 
     var isEnabled: Bool { enabled }
@@ -2099,7 +2102,7 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
                 "no-pcm-or-audio-payload",
                 "no-transcript-prompt-or-user-content",
                 "no-tool-arguments-results-or-provider-call-id",
-                "no-url-token-cookie-credential-or-content-hash",
+                "no-url-token-cookie-credential-or-user-content-hash",
                 "typed-allowlisted-fields-only",
                 "raw-energy-is-not-proof-of-owner-speech",
                 "queue-is-not-send-and-local-send-is-not-provider-receipt",
@@ -2110,8 +2113,8 @@ final class AlmaLiveVoiceEvidenceRecorder: @unchecked Sendable {
                 version: Self.safeBuildValue(
                     info?["CFBundleShortVersionString"] as? String),
                 build: Self.safeBuildValue(info?["CFBundleVersion"] as? String),
-                commit: "unknown",
-                revisionStatus: .unavailableUntrustedBundleStamp),
+                commit: buildProvenance.evidenceCommit,
+                revisionStatus: buildProvenance.revisionStatus),
             session: .init(
                 id: localSessionID,
                 startedAt: Self.iso(startedAt),

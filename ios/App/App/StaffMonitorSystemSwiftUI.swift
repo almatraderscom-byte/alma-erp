@@ -1382,7 +1382,7 @@ struct StaffMonitorSystemTab: View {
     private var buildBadge: some View {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        let commit = Bundle.main.object(forInfoDictionaryKey: "ALMAGitCommit") as? String
+        let commit = AlmaBuildProvenanceLoader.current.trustedCommit
         return Text("ALMA ERP v\(version) (\(build))\(commit.map { " · \(String($0.prefix(7)))" } ?? "")")
             .font(.system(size: 9).monospacedDigit())
             .foregroundStyle(.secondary)

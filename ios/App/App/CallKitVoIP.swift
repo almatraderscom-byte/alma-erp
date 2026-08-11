@@ -153,12 +153,13 @@ final class CallKitVoIP: NSObject {
         let environment = "production"
         #endif
         let info = Bundle.main.infoDictionary
+        let provenance = AlmaBuildProvenanceLoader.current
         let body = Body(
             environment: environment,
             installationId: installationId,
             voipToken: token,
             appBuild: info?["CFBundleVersion"] as? String,
-            buildSha: info?["ALMAGitCommit"] as? String
+            buildSha: provenance.trustedCommit
         )
         Task {
             do {

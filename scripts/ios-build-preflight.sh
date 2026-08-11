@@ -17,17 +17,19 @@
 #   2. HEAD is pushed (no local-only commits),
 #   3. the branch contains ALL of origin/main (nothing already-shipped missing),
 #   4. you are on main — or explicitly override for a preview build.
-# It then stamps the exact commit into the app (ALMAGitCommit in Info.plist,
-# also shown nowhere in UI — it's for forensics via ipa inspection) so every
-# TestFlight build is traceable to one commit forever.
+# It also verifies that the tracked bootstrap and the five generated Capacitor
+# source inputs exactly match their committed manifest. It writes only a
+# temporary provenance report; the Xcode Generate Build Provenance phase
+# re-verifies the copied product resources and bundles the final report.
 #
 # Override (preview/experimental archive only — NEVER for a real TestFlight):
 #   ALMA_PREFLIGHT_ALLOW_BRANCH=1 bash scripts/ios-build-preflight.sh
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPOSITORY_ROOT"
 
-RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; NC=$'\033[0m'
+RED=$'\033[31m'; GRN=$'\033[32m'; NC=$'\033[0m'
 fail() { echo "${RED}✗ PREFLIGHT FAILED:${NC} $1"; echo "  $2"; exit 1; }
 
 echo "— iOS build preflight —"
@@ -67,15 +69,32 @@ if [[ "$BRANCH" != "main" && "${ALMA_PREFLIGHT_ALLOW_BRANCH:-0}" != "1" ]]; then
   Preview archive from a branch: ALMA_PREFLIGHT_ALLOW_BRANCH=1 bash scripts/ios-build-preflight.sh"
 fi
 
-# 5. Stamp the commit into Info.plist so the .ipa is forever traceable.
+# 5. Static commit stamps can become stale and must never reach an archive.
 PLIST="ios/App/App/Info.plist"
-if [[ -f "$PLIST" ]] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
-  /usr/libexec/PlistBuddy -c "Set :ALMAGitCommit ${SHA}" "$PLIST" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Add :ALMAGitCommit string ${SHA}" "$PLIST"
-  echo "${YLW}ℹ${NC} Stamped ALMAGitCommit=${SHA} into Info.plist — commit this with your build-number bump."
+if /usr/libexec/PlistBuddy -c "Print :ALMAGitCommit" "$PLIST" >/dev/null 2>&1; then
+  fail "Info.plist contains forbidden ALMAGitCommit" \
+    "Remove the static key. Build provenance is generated from verified source and copied-product inputs during the Xcode build."
 fi
 
-# 6. Reminder: the build number itself must be a committed fact.
+# 6. Prove source provenance without writing into the repository.
+PROVENANCE_TMP="$(mktemp "${TMPDIR:-/tmp}/alma-build-provenance.XXXXXX")" \
+  || fail "cannot create a temporary provenance report" \
+    "Check temporary-directory permissions, then re-run preflight."
+cleanup_provenance() { rm -f "$PROVENANCE_TMP"; }
+trap cleanup_provenance EXIT HUP INT TERM
+
+if ! "$REPOSITORY_ROOT/scripts/ios-build-provenance.sh" \
+  --repository-root "$REPOSITORY_ROOT" \
+  --manifest "$REPOSITORY_ROOT/ios/App/BuildSupport/alma-bundled-inputs.sha256" \
+  --output "$PROVENANCE_TMP" \
+  --source-only \
+  --require-verified; then
+  fail "source build provenance is not verified" \
+    "Restore committed, non-symlinked Capacitor inputs that match the provenance manifest before archiving."
+fi
+echo "${GRN}✓${NC} source provenance verified — Xcode will re-verify the copied product resources before bundling provenance"
+
+# 7. Reminder: the build number itself must be a committed fact.
 BUILD_NUM=$(grep -m1 'CURRENT_PROJECT_VERSION' ios/App/App.xcodeproj/project.pbxproj | grep -o '[0-9]\+' || echo '?')
 echo "${GRN}✓ preflight passed${NC} — branch=${BRANCH} commit=${SHA} CURRENT_PROJECT_VERSION=${BUILD_NUM}"
 echo "  Before uploading: bump CURRENT_PROJECT_VERSION in Xcode, COMMIT + PUSH the bump"
