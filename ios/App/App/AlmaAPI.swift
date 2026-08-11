@@ -31,6 +31,7 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
     private static var multiRequestCounts: [String: Int] = [:]
     private static var recoveryStreamServed = false
     private static var unexpectedEOFReplayServed = false
+    private static var richImageRetryCreated = false
     private static let interactiveLock = NSLock()
     private static var interactiveSelectedModelId = "auto"
     private static var interactiveTurnCounter = 0
@@ -89,6 +90,42 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             .split(separator: "=", maxSplits: 1).last.map(String.init)
     }
 
+    private static func imageSelectionFixture(
+        selectedModel: String, requestedImages: Int, maxPaidGenerations: Int
+    ) -> [String: Any] {
+        func quote(_ model: String, provider: String, unit: Double, size: String) -> [String: Any] {
+            let minimum = unit * Double(requestedImages)
+            return [
+                "version": 1, "currency": "USD", "kind": "provider_render_estimate",
+                "model": model, "provider": provider, "quality": "standard",
+                "imageSize": size, "requestedImages": requestedImages,
+                "unitPriceUsd": unit, "minCostUsd": minimum,
+                "maxCostUsd": minimum * Double(maxPaidGenerations),
+                "maxPaidGenerationsPerImage": maxPaidGenerations,
+                "pricingBasis": "internal_list_estimate",
+                "pricingLastVerifiedAt": "2026-08-11",
+                "excludes": ["qc_vision", "taxes", "provider_credits"],
+            ]
+        }
+        let flash = quote("gemini-3.1-flash-image", provider: "gemini", unit: 0.101, size: "2K")
+        let pro = quote("gemini-3-pro-image", provider: "gemini", unit: 0.24, size: "4K")
+        let gpt = quote("gpt-image-2", provider: "openai", unit: 0.05, size: "2K")
+        let options: [[String: Any]] = [
+            ["id": "gemini-3.1-flash-image", "label": "Nano Banana 2",
+             "provider": "gemini", "enabled": true, "quote": flash],
+            ["id": "gemini-3-pro-image", "label": "Nano Banana Pro",
+             "provider": "gemini", "enabled": true, "quote": pro],
+            ["id": "gpt-image-2", "label": "GPT Image 2",
+             "provider": "openai", "enabled": true, "quote": gpt],
+            ["id": "seedream-5.0-pro", "label": "Seedream 5 Pro",
+             "provider": "fal", "enabled": false,
+             "unavailableReason": "এই aspect ratio-তে provider এখন unavailable"],
+        ]
+        let selectedQuote = selectedModel == "gpt-image-2" ? gpt
+            : selectedModel == "gemini-3.1-flash-image" ? flash : pro
+        return ["selectedModel": selectedModel, "options": options, "quote": selectedQuote]
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         scenario != nil && request.url?.path.hasPrefix("/api/assistant/") == true
     }
@@ -99,6 +136,29 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL)); return
         }
         let path = url.path
+        if scenario == "rich-output", path == "/api/assistant/files" {
+            let requestedPath = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value
+            let filename = requestedPath?.split(separator: "/").last.map(String.init) ?? ""
+            let index = filename
+                .replacingOccurrences(of: "rich-image-", with: "")
+                .split(separator: ".").first.flatMap { Int($0) }
+            guard let requestedPath, requestedPath == "fixture/rich-image-\(index ?? 0).jpg",
+                  let index, (1...3).contains(index) else {
+                respond(status: 404, json: ["error": "unknown_rich_image_ref"])
+                return
+            }
+            let root = FileManager.default.temporaryDirectory
+            let source = root.appendingPathComponent("alma-rich-output-\(index).png")
+            let refreshed = root.appendingPathComponent("alma-rich-output-resigned-\(index).png")
+            do {
+                try Data(contentsOf: source).write(to: refreshed, options: .atomic)
+                respond(status: 200, object: ["url": refreshed.absoluteString])
+            } catch {
+                respond(status: 500, json: ["error": "rich_image_resign_fixture_failed"])
+            }
+            return
+        }
         if scenario == "claudeInteractive" {
             #if targetEnvironment(simulator)
             handleClaudeInteractive(path: path)
@@ -290,6 +350,38 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
             return
         }
+        if scenario == "library", path == "/api/assistant/actions/fix-image-model-action" {
+            let selection = Self.imageSelectionFixture(
+                selectedModel: "gpt-image-2", requestedImages: 4, maxPaidGenerations: 3)
+            respond(status: 200, object: [
+                "success": true, "id": "fix-image-model-action", "type": "image_gen",
+                "status": "pending",
+                "summary": "Image generation request (standard quality, 4 variations)\nModel: GPT Image 2",
+                "imageModelSelection": selection,
+            ])
+            return
+        }
+        if scenario == "rich-output",
+           path == "/api/assistant/actions/fixture-failed-image-worker/retry" {
+            Self.richImageRetryCreated = true
+            let selection = Self.imageSelectionFixture(
+                selectedModel: "gemini-3.1-flash-image",
+                requestedImages: 3, maxPaidGenerations: 1)
+            respond(status: 200, object: [
+                "success": true,
+                "pendingActionId": "fixture-fresh-image-retry",
+                "sourceActionId": "fixture-failed-image-worker",
+                "idempotent": false,
+                "action": [
+                    "id": "fixture-fresh-image-retry", "type": "image_gen",
+                    "status": "pending", "summary": "Pinned retry · 3 images",
+                    "costEstimate": NSNull(), "conversationId": "fixture-rich-output",
+                    "businessId": "biz-fixture", "createdAt": "2026-08-11T06:00:00.000Z",
+                    "imageModelSelection": selection,
+                ],
+            ])
+            return
+        }
         if scenario == "multiApproval", path.contains("/actions/"),
            (path.hasSuffix("/approve") || path.hasSuffix("/reject")) {
             let parts = path.split(separator: "/")
@@ -322,6 +414,35 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             return
         }
         if path.contains("/messages") {
+            if scenario == "rich-output", Self.richImageRetryCreated {
+                let selection = Self.imageSelectionFixture(
+                    selectedModel: "gemini-3.1-flash-image",
+                    requestedImages: 3, maxPaidGenerations: 1)
+                // Reconcile the canonical assistant row that already owns the
+                // failed card. A different synthetic message id would leave
+                // both the live fixture row and this cold-history row mounted,
+                // producing a duplicate retry control that production history
+                // never returns for the same pendingActionId.
+                respond(status: 200, object: [[
+                    "id": "rich-answer", "role": "assistant",
+                    "tokensIn": 24800, "tokensOut": 1320, "costUsd": 0.051,
+                    "content": [[
+                        "type": "confirm_card",
+                        "pendingActionId": "fixture-failed-image-worker",
+                        "summary": "Generate three ALMA campaign images from the saved checkpoint",
+                        "status": "failed", "actionType": "image_gen",
+                        "failReason": "Provider render শেষ করতে পারেনি",
+                        "imageModelSelection": selection,
+                    ], [
+                        "type": "confirm_card",
+                        "pendingActionId": "fixture-fresh-image-retry",
+                        "summary": "Pinned retry · 3 images",
+                        "status": "pending", "actionType": "image_gen",
+                        "imageModelSelection": selection,
+                    ]],
+                ]])
+                return
+            }
             if scenario == "multiApproval" {
                 Self.multiLock.lock()
                 let resolved = Self.multiResolvedActionIds

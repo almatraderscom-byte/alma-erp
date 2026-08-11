@@ -9,6 +9,9 @@ export type ConfirmCardPayload = {
   summary: string
   actionType?: string
   costEstimate?: number
+  imageModelSelection?: unknown
+  /** Optional deterministic receipt for API-originated cards/reconciliation. */
+  clientRequestId?: string
 }
 
 export async function appendConfirmCardMessage(
@@ -17,8 +20,7 @@ export async function appendConfirmCardMessage(
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  await db.agentMessage.create({
-    data: {
+  const data = {
       conversationId,
       role: 'assistant',
       content: [{
@@ -27,12 +29,24 @@ export async function appendConfirmCardMessage(
         summary: decodeUnicodeEscapes(card.summary),
         actionType: card.actionType ?? null,
         costEstimate: card.costEstimate ?? null,
+        ...(card.imageModelSelection && typeof card.imageModelSelection === 'object'
+          ? { imageModelSelection: card.imageModelSelection }
+          : {}),
       }],
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
-    },
-  })
+      ...(card.clientRequestId ? { clientRequestId: card.clientRequestId } : {}),
+    }
+  if (card.clientRequestId) {
+    await db.agentMessage.upsert({
+      where: { clientRequestId: card.clientRequestId },
+      update: { content: data.content },
+      create: data,
+    })
+  } else {
+    await db.agentMessage.create({ data })
+  }
   await prisma.agentConversation.update({
     where: { id: conversationId },
     data: { updatedAt: new Date() },

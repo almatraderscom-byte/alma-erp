@@ -17,6 +17,10 @@ function verifyInternalToken(provided: string): boolean {
   } catch { return false }
 }
 
+export function archivedConversationMode(searchParams: Pick<URLSearchParams, 'get'>): boolean {
+  return searchParams.get('archived') === 'true'
+}
+
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -35,6 +39,10 @@ export async function GET(req: NextRequest) {
   const limitParam = req.nextUrl.searchParams.get('limit')
   const take = limitParam ? Math.min(parseInt(limitParam, 10) || 50, 50) : 50
   const cursor = req.nextUrl.searchParams.get('cursor')
+  // The native Archive browser uses the same authenticated, paginated
+  // conversation contract. Active remains the default for every existing
+  // caller; `archived=true` only switches the visibility predicate.
+  const archivedOnly = archivedConversationMode(req.nextUrl.searchParams)
 
   let cursorUpdatedAt: Date | undefined
   let cursorId: string | undefined
@@ -52,7 +60,7 @@ export async function GET(req: NextRequest) {
 
   const conversations = await prisma.agentConversation.findMany({
     where: {
-      archived: false,
+      archived: archivedOnly,
       ...(cursorUpdatedAt && cursorId
         ? cursorPinned === true
           ? {

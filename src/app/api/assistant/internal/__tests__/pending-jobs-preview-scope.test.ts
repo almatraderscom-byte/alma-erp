@@ -32,6 +32,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   if (oldEnv.token === undefined) delete process.env.AGENT_INTERNAL_TOKEN
   else process.env.AGENT_INTERNAL_TOKEN = oldEnv.token
   if (oldEnv.vercel === undefined) delete process.env.VERCEL_ENV
@@ -57,7 +58,27 @@ describe('GET /api/assistant/internal/pending-jobs preview isolation', () => {
       ],
     })
     expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { status: 'preview_approved', type: 'image_gen' },
+      where: {
+        type: 'image_gen',
+        AND: [
+          {
+            AND: [
+              { payload: { path: ['studioSurface'], equals: 'v3' } },
+              { payload: { path: ['studioRunAuthorization', 'receipt'], not: expect.anything() } },
+            ],
+          },
+          {
+            OR: [
+              { status: 'preview_approved' },
+              { jobResultPending: true },
+            ],
+          },
+        ],
+      },
+      orderBy: [
+        { jobResultPending: 'desc' },
+        { createdAt: 'asc' },
+      ],
     }))
   })
 
@@ -68,6 +89,90 @@ describe('GET /api/assistant/internal/pending-jobs preview isolation', () => {
     await GET(request(true))
     expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ OR: expect.any(Array) }),
+    }))
+    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        type: 'image_gen',
+        jobResultPending: true,
+        NOT: expect.objectContaining({ AND: expect.any(Array) }),
+      }),
+      take: 10,
+    }))
+  })
+
+  it('skips 10 active claims so an 11th unclaimed receipt runs, while expired claims reappear', async () => {
+    vi.useFakeTimers()
+    const now = new Date('2026-08-11T06:00:00.000Z')
+    vi.setSystemTime(now)
+    const activeClaim = new Date(now.getTime() - 60_000)
+    const expiredClaim = new Date(now.getTime() - 3 * 60_000 - 1)
+    const receiptRows = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `claimed-${index + 1}`,
+        type: 'image_gen',
+        status: 'executed',
+        jobResultPending: true,
+        jobResultClaimedAt: activeClaim,
+        createdAt: new Date(`2026-08-11T05:${String(index).padStart(2, '0')}:00.000Z`),
+      })),
+      {
+        id: 'unclaimed-11',
+        type: 'image_gen',
+        status: 'executed',
+        jobResultPending: true,
+        jobResultClaimedAt: null,
+        createdAt: new Date('2026-08-11T05:10:00.000Z'),
+      },
+      {
+        id: 'expired-12',
+        type: 'image_gen',
+        status: 'failed',
+        jobResultPending: true,
+        jobResultClaimedAt: expiredClaim,
+        createdAt: new Date('2026-08-11T05:11:00.000Z'),
+      },
+    ]
+    mocks.findMany.mockImplementation(async (query: {
+      where?: {
+        jobResultPending?: boolean
+        OR?: Array<{ jobResultClaimedAt: null | { lt: Date } }>
+      }
+      take?: number
+    }) => {
+      if (query.where?.jobResultPending !== true) return []
+      const staleBefore = (
+        query.where.OR?.find((condition) => (
+          typeof condition.jobResultClaimedAt === 'object'
+          && condition.jobResultClaimedAt !== null
+        ))?.jobResultClaimedAt as { lt: Date } | undefined
+      )?.lt
+      if (!staleBefore) return receiptRows.slice(0, query.take)
+      return receiptRows
+        .filter((row) => (
+          row.jobResultClaimedAt === null
+          || row.jobResultClaimedAt < staleBefore
+        ))
+        .slice(0, query.take)
+    })
+
+    const response = await GET(request())
+    await expect(response.json()).resolves.toEqual({
+      jobs: [
+        expect.objectContaining({ id: 'unclaimed-11' }),
+        expect.objectContaining({ id: 'expired-12' }),
+      ],
+    })
+    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        type: 'image_gen',
+        jobResultPending: true,
+        OR: [
+          { jobResultClaimedAt: null },
+          { jobResultClaimedAt: { lt: new Date('2026-08-11T05:57:00.000Z') } },
+        ],
+      }),
+      orderBy: { createdAt: 'asc' },
+      take: 10,
     }))
   })
 })

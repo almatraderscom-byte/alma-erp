@@ -432,7 +432,13 @@ export async function ensureWorkflowRunForPendingAction(opts: {
   }
 
   // Create: template card step when known, legacy generic step otherwise.
-  const tplKind = templateKinds[0]
+  // `image_gen` is shared by two distinct intents:
+  //   1. a step inside an already-active product_post workflow; and
+  //   2. a standalone image deliverable (the normal chat/image-generator case).
+  // It may CLAIM an existing product_post run above, but must never CREATE one
+  // by type alone. Doing that forced every plain "give me three images" request
+  // into the social preview-confirm/post state machine after delivery.
+  const tplKind = opts.actionType === 'image_gen' ? undefined : templateKinds[0]
   const tpl = tplKind ? getWorkflowTemplate(tplKind) : undefined
   const cs = tpl && opts.actionType ? tpl.cardSteps[opts.actionType] : undefined
   const run = await createWorkflowRun({

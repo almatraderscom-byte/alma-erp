@@ -5,6 +5,19 @@ import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { agentStorageListFolder } from '@/agent/lib/storage'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
+import { readKv } from '@/lib/creative-studio/taste'
+import { readPipelineMode } from '@/lib/creative-studio/single-pipeline'
+import {
+  buildImageActionSummary,
+  buildImageModelSelection,
+  chooseAvailableImageModel,
+  IMAGE_WORKER_CAPABILITY_KV_KEY,
+  imageModelAvailability,
+  normalizeImageActionModel,
+  normalizeImageActionQuality,
+  normalizeImageActionSize,
+} from '@/agent/lib/image-action-contract'
+import { GENERIC_IMAGE_MODELS } from '@/lib/creative-studio/advanced-image-capabilities'
 
 /** Owner-decision card types — one at a time per conversation (owner incident
  * 2026-07-13: the marketing head staged an fb_post AND a fresh image_gen 0.3s
@@ -55,9 +68,10 @@ async function storagePathIsHealthy(path: string | undefined): Promise<boolean> 
 const generate_image: AgentTool = {
   name: 'generate_image',
   description:
-    'Generates an image using Nano Banana (Google Gemini). ' +
-    'This tool creates a PENDING ACTION — the owner must approve before the image is generated. ' +
-    'quality: "pro" (face-preservation, product mockups, ~৳4.50/image) | "standard" (routine, ~৳1.10/image). ' +
+    'Stages an allowlisted image model request (Gemini Nano Banana, GPT Image, or Seedream when configured). ' +
+    'This tool creates a PENDING ACTION — the owner can review/change the model and must approve before rendering. ' +
+    'The card includes a model/size/count/QC-bounded render estimate in USD; actual worker costUsd is canonical. ' +
+    'quality: "pro" for face/product work | "standard" for routine images. ' +
     'referenceImageId: optional Supabase storage path for reference image — for PRODUCT ' +
     'creatives pass a real catalog image storagePath from get_product so the render matches ' +
     'the actual product (never generate a product look without a reference).',
@@ -90,15 +104,45 @@ const generate_image: AgentTool = {
         maximum: 4,
         description: 'Number of distinct images/variations to render under this one approval (default 1, max 4).',
       },
+      imageModel: {
+        type: 'string',
+        enum: [...GENERIC_IMAGE_MODELS],
+        description: 'Optional allowlisted image model. Omit to snapshot the configured model for this quality tier.',
+      },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['prompt'],
   },
   handler: async (input) => {
     try {
-      const quality = (input.quality as string) === 'standard' ? 'standard' : 'pro'
+      const quality = normalizeImageActionQuality(input.quality)
       const count = Math.min(4, Math.max(1, Math.floor(Number(input.count) || 1)))
-      const costEstimate = (quality === 'pro' ? 4.5 : 1.1) * count // BDT estimate
+      const imageSize = normalizeImageActionSize(input.imageSize)
+      const [configuredModels, pipelineMode, workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+        readKv('cs_image_models'),
+        readPipelineMode(),
+        readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+        readKv('cs_engine_kill:gemini'),
+        readKv('cs_xai_enabled'),
+      ])
+      const preferredImageModel = normalizeImageActionModel(input.imageModel, quality, configuredModels)
+      const selectionInput = {
+        quality,
+        imageSize,
+        requestedImages: count,
+        pipelineMode,
+        aspectRatio: input.aspectRatio,
+        availability: imageModelAvailability({
+          workerCapabilities,
+          genericLaneKilled: genericLaneKill === '1',
+          xaiConfigured: xaiEnabled === '1',
+        }),
+      }
+      const imageModelSelection = input.imageModel
+        ? buildImageModelSelection({ ...selectionInput, selectedModel: preferredImageModel })
+        : chooseAvailableImageModel({ ...selectionInput, preferredModel: preferredImageModel })
+      const imageModel = imageModelSelection.selectedModel
+      const imageQuote = imageModelSelection.quote
 
       // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
       // conversation at a time — cross-type, so a post + a fresh image can't be
@@ -111,9 +155,7 @@ const generate_image: AgentTool = {
       const blockedImg = await assertSingleOpenCard(convIdForGuard, 'নতুন ছবি')
       if (blockedImg) return blockedImg
 
-      const summary =
-        `Image generation request (${quality} quality${count > 1 ? `, ${count} variations` : ''})\n` +
-        `Prompt: ${String(input.prompt).slice(0, 200)}`
+      const summary = buildImageActionSummary({ prompt: input.prompt, quality, count, model: imageModel })
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const action = await (prisma as any).agentPendingAction.create({
@@ -125,12 +167,17 @@ const generate_image: AgentTool = {
             quality,
             referenceImageId: input.referenceImageId ?? null,
             aspectRatio: input.aspectRatio ?? null,
-            imageSize: input.imageSize ?? null,
+            imageSize,
             variationCount: count,
+            pipelineMode,
+            imageModel,
+            imageQuote,
             conversationId: input.conversationId ?? null,
           },
           summary,
-          costEstimate,
+          costEstimate: null,
+          imageModel,
+          imageQuote,
           status: 'pending',
         },
       })
@@ -140,7 +187,7 @@ const generate_image: AgentTool = {
         data: {
           pendingActionId: action.id as string,
           summary,
-          costEstimate,
+          imageModelSelection,
           message:
             `${count > 1 ? `${count} image variations` : 'Image'} queued as one request. Awaiting owner approval before rendering.`,
         },

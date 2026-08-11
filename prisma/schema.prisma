@@ -2583,6 +2583,22 @@ model AgentPendingAction {
   /// NULL = unknown provenance (history written before this column).
   ownerDecided   Boolean?  @map("owner_decided")
   result         Json?
+  /// Immutable per-action image engine selection. Kept outside payload so an
+  /// owner model change cannot be lost by a concurrent progress JSON update.
+  imageModel     String?   @map("image_model")
+  /// Render-only USD estimate/range pinned with imageModel. Actual worker
+  /// spend remains in result.costUsd after execution.
+  imageQuote     Json?     @map("image_quote")
+  /// Short compare-and-set claim used while an image approval request creates
+  /// its one progress turn. A stale claim is recoverable; workers never poll it.
+  approvalClaimedAt DateTime? @map("approval_claimed_at")
+  /// Worker-owned durable terminal callback outbox. It is set before the app
+  /// callback and cleared only after server delivery/reconciliation succeeds.
+  jobResultPending Boolean @default(false) @map("job_result_pending")
+  jobResultEnvelope Json? @map("job_result_envelope")
+  /// Stale-safe server reconciliation lease. The terminal receipt remains
+  /// pending until the exact claimant finishes every delivery/runtime effect.
+  jobResultClaimedAt DateTime? @map("job_result_claimed_at")
   /// Phase 4: canonical WorkflowRun this card belongs to (camelCase column —
   /// this legacy table is camelCase in the DB).
   workflowRunId  String?

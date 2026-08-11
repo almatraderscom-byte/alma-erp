@@ -11,7 +11,11 @@ on:
       - 'src/agent/**'
       - 'src/app/api/assistant/**'
       - 'src/lib/agent-api/**'
+      - 'src/lib/content-engine/**'
+      - 'src/lib/creative-studio/**'
+      - 'worker/src/**'
       - 'prisma/**'
+      - 'scripts/migrate-on-deploy.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/agent-gate.yml'
@@ -29,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.1
           cache: npm
       - name: Install (postinstall runs prisma generate)
         run: npm ci --no-audit --no-fund
@@ -37,6 +41,22 @@ jobs:
         run: npx tsc --noEmit
       - name: Agent test suite (behavior gates)
         run: npm run test:agent
+      - name: Image action, pipeline and durable-worker gates
+        run: |
+          npx vitest run \
+            src/agent/lib/__tests__/image-action-contract.test.ts \
+            src/agent/protocol/__tests__/agent-event-image-card.test.ts \
+            src/app/api/assistant/actions/__tests__/route.test.ts \
+            'src/app/api/assistant/actions/[id]/approve/__tests__/image-approval-claim.test.ts' \
+            'src/app/api/assistant/actions/[id]/retry/__tests__/route.test.ts' \
+            src/app/api/assistant/conversations/__tests__/route-contract.test.ts \
+            src/app/api/assistant/internal/__tests__/job-result-image-replay.test.ts \
+            src/app/api/assistant/internal/__tests__/pending-jobs-dispatch.test.ts \
+            src/app/api/assistant/internal/__tests__/pending-jobs-preview-scope.test.ts \
+            src/lib/content-engine/__tests__/pipeline-render-idempotency.test.ts
+          node --test \
+            worker/src/__tests__/image-*.test.mjs \
+            worker/src/__tests__/preview-image-e2e.test.mjs
       # SPEC-200 — the official architecture certification is release-blocking:
       # freeze-baseline steps (contracts, forbidden-imports, ownership, ADR,
       # proof-complete for SPEC-001..200) + admission/gateway/authorization

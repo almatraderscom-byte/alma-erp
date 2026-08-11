@@ -3136,6 +3136,7 @@ async function* runAlternateProviderTurn(
                 entryCount: typeof d.entryCount === 'number' ? d.entryCount : undefined,
                 isFinance: d.isFinance === true,
                 isBatch: d.isBatch === true,
+                imageModelSelection: d.imageModelSelection,
               }
             }
           }
