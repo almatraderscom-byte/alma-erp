@@ -16,6 +16,20 @@ import {
   formatExpenseLineSummary,
   formatLedgerLineSummary,
 } from '@/agent/lib/finance-shared'
+import {
+  buildImageActionQuote,
+  buildImageActionSummary,
+  buildImageModelSelection,
+  IMAGE_WORKER_CAPABILITY_KV_KEY,
+  imageActionInputs,
+  imageModelAvailability,
+  selectionForImageAction,
+} from '@/agent/lib/image-action-contract'
+import {
+  GENERIC_IMAGE_MODELS,
+  type GenericImageModel,
+} from '@/lib/creative-studio/advanced-image-capabilities'
+import { readKv } from '@/lib/creative-studio/taste'
 
 export const runtime = 'nodejs'
 
@@ -47,6 +61,19 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   const action = await (prisma as any).agentPendingAction.findUnique({ where: { id: params.id } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
+  const [workerCapabilities, genericLaneKill, xaiEnabled] = action.type === 'image_gen'
+    ? await Promise.all([
+        readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+        readKv('cs_engine_kill:gemini'),
+        readKv('cs_xai_enabled'),
+      ])
+    : [null, null, null]
+  const availability = imageModelAvailability({
+    workerCapabilities,
+    genericLaneKilled: genericLaneKill === '1',
+    xaiConfigured: xaiEnabled === '1',
+  })
+
   return Response.json({
     id: action.id,
     type: action.type,
@@ -55,6 +82,9 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     isFinance: isFinanceConfirmType(action.type),
     entryCount: getEntryCount(action),
     editFields: financeEditFieldsForType(action.type),
+    ...(action.type === 'image_gen'
+      ? { imageModelSelection: selectionForImageAction({ ...action, availability }) }
+      : {}),
   })
 }
 
@@ -71,7 +101,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
   }
 
-  let body: { removeEntryIndex?: number; field?: string; value?: unknown; convertToSingle?: boolean }
+  let body: {
+    removeEntryIndex?: number
+    field?: string
+    value?: unknown
+    convertToSingle?: boolean
+    imageModel?: unknown
+  }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,6 +116,72 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+  }
+  if (action.type === 'image_gen' && body.imageModel !== undefined) {
+    if (
+      typeof body.imageModel !== 'string'
+      || !GENERIC_IMAGE_MODELS.includes(body.imageModel as GenericImageModel)
+    ) {
+      return Response.json({ error: 'invalid_image_model' }, { status: 422 })
+    }
+    const imageModel = body.imageModel as GenericImageModel
+    const inputs = imageActionInputs(action.payload)
+    const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+      readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+      readKv('cs_engine_kill:gemini'),
+      readKv('cs_xai_enabled'),
+    ])
+    const availability = imageModelAvailability({
+      workerCapabilities,
+      genericLaneKilled: genericLaneKill === '1',
+      xaiConfigured: xaiEnabled === '1',
+    })
+    let imageQuote
+    let imageModelSelection
+    try {
+      imageQuote = buildImageActionQuote({ model: imageModel, ...inputs })
+      imageModelSelection = buildImageModelSelection({ selectedModel: imageModel, ...inputs, availability })
+    } catch (error) {
+      const message = error instanceof Error ? error.message.replace(/^image_model_incompatible:/, '') : String(error)
+      return Response.json({ error: 'image_model_incompatible', message }, { status: 422 })
+    }
+    const payload = action.payload as Record<string, unknown>
+    const summary = buildImageActionSummary({
+      prompt: payload.prompt,
+      quality: inputs.quality,
+      count: inputs.requestedImages,
+      model: imageModel,
+    })
+    // One compare-and-set writes the independent selection fields. Approval
+    // claims the same pending row; whichever obtains the row lock first wins,
+    // so a model change can never mutate an already-approved worker payload.
+    const selected = await db.agentPendingAction.updateMany({
+      where: {
+        id: params.id,
+        status: 'pending',
+        approvalClaimedAt: null,
+        imageModel: action.imageModel ?? null,
+      },
+      data: { imageModel, imageQuote, summary },
+    })
+    if (selected.count === 0) {
+      const current = await db.agentPendingAction.findUnique({ where: { id: params.id } })
+      return Response.json({
+        error: current?.status === 'pending' ? 'image_model_changed' : 'already_resolved',
+        status: current?.status,
+        imageModelSelection: current
+          ? selectionForImageAction({ ...current, availability })
+          : null,
+      }, { status: 409 })
+    }
+    return Response.json({
+      success: true,
+      id: action.id,
+      type: action.type,
+      status: 'pending',
+      summary,
+      imageModelSelection,
+    })
   }
   if (!isFinanceConfirmType(action.type)) {
     return Response.json({ error: 'not_finance_action' }, { status: 400 })

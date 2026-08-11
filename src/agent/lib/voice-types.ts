@@ -13,7 +13,7 @@ export type VoiceTurnEvent =
   | { type: 'subagent_start'; id: string; roleLabel: string }
   | { type: 'subagent_end'; id: string; success?: boolean }
   | { type: 'text_delta'; delta: string }
-  | { type: 'confirm_card'; pendingActionId?: string; summary?: string; costEstimate?: number; actionType?: string }
+  | { type: 'confirm_card'; pendingActionId?: string; summary?: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | { type: 'error'; message?: string }
   | { type: 'verification_retry' }

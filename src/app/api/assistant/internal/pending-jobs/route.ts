@@ -2,6 +2,7 @@
 // Authenticated with AGENT_INTERNAL_TOKEN (constant-time compare).
 import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { prisma } from '@/lib/prisma'
 import {
@@ -11,6 +12,11 @@ import {
 } from '@/lib/creative-studio/preview-worker-scope'
 
 export const runtime = 'nodejs'
+
+// Must match the terminal reconciliation lease in job-result/route.ts. An
+// active claimant owns the side effects; only null/expired claims should take a
+// slot in the worker's bounded replay batch.
+const IMAGE_RESULT_CLAIM_TTL_MS = 3 * 60_000
 
 function verifyToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -38,15 +44,40 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const previewWorker = isAuthorizedPreviewWorkerRequest(req)
-  const jobs = await db.agentPendingAction.findMany({
-    where: previewWorker ? {
-      status: CREATIVE_STUDIO_PREVIEW_STATUS,
+  const signedPreviewPayloadWhere = {
+    AND: [
+      { payload: { path: ['studioSurface'], equals: 'v3' } },
+      { payload: { path: ['studioRunAuthorization', 'receipt'], not: Prisma.AnyNull } },
+    ],
+  }
+  const orderBy = [
+    { jobResultPending: 'desc' },
+    { createdAt: 'asc' },
+  ]
+  const jobs = previewWorker
+    ? await db.agentPendingAction.findMany({
+      where: {
       type: 'image_gen',
-    } : {
+      AND: [
+        signedPreviewPayloadWhere,
+        {
+          OR: [
+            { status: CREATIVE_STUDIO_PREVIEW_STATUS },
+            { jobResultPending: true },
+          ],
+        },
+      ],
+      },
+      orderBy,
+      take: 20,
+    })
+    : await (async () => {
+      const receiptClaimStaleBefore = new Date(Date.now() - IMAGE_RESULT_CLAIM_TTL_MS)
+      const freshWhere = {
       // NOTE: this list is the single gate between "queued" and "the worker ever
       // sees it" — a job type missing here hangs at approved until the watchdog
       // checkpoints it (exactly how workbench_run was caught missing in the P2 e2e).
-      OR: [
+        OR: [
         {
           status: 'approved',
           type: { in: ['image_gen', 'video_gen', 'video_edit', 'video_finish', 'audio_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit', 'agent_graph_run', 'voice_instruction_turn'] },
@@ -57,10 +88,39 @@ export async function GET(req: NextRequest) {
           payload: { path: ['provider'], equals: 'campaign_pack_local' },
         },
       ],
-    },
-    orderBy: { createdAt: 'asc' },
-    take: 20,
-  })
+        NOT: { type: 'image_gen', jobResultPending: true },
+      }
+      const [receipts, fresh] = await Promise.all([
+        db.agentPendingAction.findMany({
+          where: {
+            type: 'image_gen',
+            jobResultPending: true,
+            OR: [
+              { jobResultClaimedAt: null },
+              { jobResultClaimedAt: { lt: receiptClaimStaleBefore } },
+            ],
+            // Preview certification receipts are exclusive to the authorized
+            // preview worker/App URL even after their status becomes terminal.
+            NOT: signedPreviewPayloadWhere,
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 10,
+        }),
+        db.agentPendingAction.findMany({
+          where: freshWhere,
+          orderBy: { createdAt: 'asc' },
+          take: 20,
+        }),
+      ])
+      const seen = new Set<string>()
+      // Fresh approvals enqueue first; a bounded receipt batch follows. A
+      // poison callback can no longer hold every new job behind HTTP retries.
+      return [...fresh, ...receipts].filter((job: { id: string }) => {
+        if (seen.has(job.id)) return false
+        seen.add(job.id)
+        return true
+      })
+    })()
   const dispatchableJobs = previewWorker
     ? jobs.filter((job: { payload?: unknown }) => isSignedCreativeStudioImagePayload(job.payload))
     : jobs
@@ -88,7 +148,11 @@ export async function GET(req: NextRequest) {
   try {
     const { acquireWorkflowLease } = await import('@/agent/lib/workflow-run')
     const handout: unknown[] = []
-    for (const job of dispatchableJobs as Array<{ id: string; type: string }>) {
+    for (const job of dispatchableJobs as Array<{ id: string; type: string; jobResultPending?: boolean }>) {
+      if (job.jobResultPending) {
+        handout.push(job)
+        continue
+      }
       const lease = await acquireWorkflowLease(job.id, LEASE_TTL_MS[job.type] ?? 5 * 60_000)
         .catch(() => 'no_run' as const)
       if (lease !== 'held') handout.push(job)

@@ -785,6 +785,7 @@ export async function POST(req: NextRequest) {
       entryCount?: number
       isFinance?: boolean
       isBatch?: boolean
+      imageModelSelection?: unknown
     }> = []
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     let newConversationId: string | null = null
@@ -822,6 +823,7 @@ export async function POST(req: NextRequest) {
             entryCount: event.entryCount,
             isFinance: event.isFinance,
             isBatch: event.isBatch,
+            imageModelSelection: event.imageModelSelection,
           })
         }
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })

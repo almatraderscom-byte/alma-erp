@@ -82,4 +82,34 @@ describe('GET /api/assistant/actions pagination', () => {
     })
     expect(mocks.findMany).not.toHaveBeenCalled()
   })
+
+  it('falls back to the legacy projection instead of emptying the queue during migration rollout', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.findMany
+      .mockRejectedValueOnce(Object.assign(new Error('column image_model does not exist'), {
+        code: 'P2022',
+        meta: { column: 'agent_pending_actions.image_model' },
+      }))
+      .mockResolvedValueOnce([row('legacy-card', '2026-07-29T03:00:00Z')])
+
+    const response = await GET(new NextRequest(
+      'https://alma.test/api/assistant/actions?status=pending&limit=20',
+    ))
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      count: 1,
+      actions: [{ id: 'legacy-card' }],
+    })
+    expect(mocks.findMany).toHaveBeenCalledTimes(2)
+    expect(mocks.findMany.mock.calls[1][0].select).not.toHaveProperty('imageModel')
+    consoleError.mockRestore()
+  })
+
+  it('fails loud on a generic database outage instead of reporting an empty approval queue', async () => {
+    mocks.findMany.mockRejectedValueOnce(Object.assign(new Error('database unavailable'), { code: 'P1001' }))
+    await expect(GET(new NextRequest(
+      'https://alma.test/api/assistant/actions?status=pending&limit=20',
+    ))).rejects.toThrow('database unavailable')
+    expect(mocks.findMany).toHaveBeenCalledTimes(1)
+  })
 })

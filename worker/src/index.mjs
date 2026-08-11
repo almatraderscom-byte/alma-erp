@@ -42,6 +42,8 @@ import {
 } from './image/reference-contract.mjs'
 import { uploadImageArtifact } from './image-artifact.mjs'
 import { resolveGenericImageRequest } from './image-resolution-contract.mjs'
+import { geminiCostTierForImageModel } from './image/model-cost.mjs'
+import { startImageWorkerCapabilityPublisher } from './image/capability-receipt.mjs'
 import {
   allowPaidGarmentPrepCleanup,
   assertStudioRunPaidAttempt,
@@ -55,6 +57,13 @@ import {
   selectPreviewImageJob,
   terminalPreviewImageQcFailure,
 } from './preview-image-e2e.mjs'
+import {
+  chooseDurableImageTerminalCallback,
+  imageApprovedRecovery,
+  isTerminalBullMqFailure,
+  makeImageTerminalCallback,
+  readImageTerminalCallback,
+} from './image/terminal-callback.mjs'
 
 const PREVIEW_E2E_APP_URL = String(process.env.WORKER_PREVIEW_E2E_APP_URL ?? '').trim().replace(/\/$/, '')
 const PREVIEW_E2E_PROJECT_ID = String(process.env.WORKER_PREVIEW_E2E_PROJECT_ID ?? '').trim()
@@ -63,6 +72,33 @@ if (PREVIEW_E2E_MODE && (!PREVIEW_E2E_APP_URL || !PREVIEW_E2E_PROJECT_ID)) {
   throw new Error('WORKER_PREVIEW_E2E_APP_URL and WORKER_PREVIEW_E2E_PROJECT_ID are both required')
 }
 if (PREVIEW_E2E_MODE) process.env.APP_URL = PREVIEW_E2E_APP_URL
+
+const imageTerminalSidecarPath = (pendingActionId) =>
+  `job-results/image/${pendingActionId}.json`
+
+async function readImageTerminalSidecar(pendingActionId) {
+  const { data, error } = await supabase.storage
+    .from('agent-files')
+    .download(imageTerminalSidecarPath(pendingActionId))
+  if (error || !data) return null
+  try {
+    return readImageTerminalCallback(JSON.parse(await data.text()))
+  } catch {
+    return null
+  }
+}
+
+async function persistImageTerminalSidecar(pendingActionId, marker) {
+  const { error } = await supabase.storage
+    .from('agent-files')
+    .upload(
+      imageTerminalSidecarPath(pendingActionId),
+      Buffer.from(JSON.stringify(marker)),
+      { contentType: 'application/json', upsert: true },
+    )
+  if (error) throw error
+  return marker
+}
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -105,7 +141,10 @@ const longTaskConnection = { url: LONG_TASK_REDIS_URL }
 
 const imageGenQueue = new Queue('image-gen', {
   connection,
-  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 5000 } },
+  // A generic provider request can have committed spend before the handler
+  // crashes. Never replay that paid request at the BullMQ layer; QC retries are
+  // bounded inside one invocation and an owner-visible Retry creates a new row.
+  defaultJobOptions: { attempts: 1 },
 })
 
 const videoGenQueue = new Queue('video-gen', {
@@ -260,7 +299,10 @@ const browserTaskQueue = new Queue('browser-task', {
 
 // ── Polling for new approved jobs ──────────────────────────────────────────
 
+let pendingJobsPollInFlight = false
 async function pollPendingJobs() {
+  if (pendingJobsPollInFlight) return
+  pendingJobsPollInFlight = true
   try {
     const res = await fetch(`${getAppUrl()}/api/assistant/internal/pending-jobs`, {
       headers: { Authorization: `Bearer ${getInternalToken()}` },
@@ -278,6 +320,32 @@ async function pollPendingJobs() {
       }
       let handled = false
       if (job.type === 'image_gen') {
+        let marker = job.jobResultPending
+          ? readImageTerminalCallback(job.jobResultEnvelope)
+          : null
+        let bullState = null
+        if (!marker) {
+          const retained = await imageGenQueue.getJob(job.id)
+          bullState = retained ? await retained.getState().catch(() => null) : null
+          marker = readImageTerminalCallback(retained?.data)
+        }
+        if (!marker) marker = await readImageTerminalSidecar(job.id)
+        const recovery = imageApprovedRecovery(marker, bullState)
+        if (recovery === 'replay_callback') {
+          const acknowledged = await callJobResult(job.id, marker.status, marker.data, marker.error)
+          console.log(`[worker] image terminal callback ${job.id} replay ${acknowledged ? 'acknowledged' : 'still pending'}`)
+          continue
+        }
+        if (recovery === 'settle_callback_lost') {
+          await reportImageJobResult(
+            job.id,
+            'failed',
+            undefined,
+            `image_terminal_callback_lost:${bullState}`,
+          )
+          console.error(`[worker] image ${job.id} had retained ${bullState} job but no terminal envelope; settled for explicit Retry`)
+          continue
+        }
         await imageGenQueue.add(
           'generate',
           { pendingActionId: job.id, payload: job.payload },
@@ -387,6 +455,8 @@ async function pollPendingJobs() {
   } catch (err) {
     console.error('[worker] poll error:', err.message)
     captureWorkerError(err, 'worker.poll_pending_jobs')
+  } finally {
+    pendingJobsPollInFlight = false
   }
 }
 
@@ -660,18 +730,83 @@ async function generateImageToStorage({
   return storeOriginal(imageBuffer)
 }
 
+/** Persist the terminal callback *before* contacting the app. If that HTTP
+ * delivery exhausts its retries, pending-jobs returns this same approved row
+ * and pollPendingJobs replays only the callback — never the paid provider. */
+async function reportImageJobResult(pendingActionId, status, data, error) {
+  const marker = makeImageTerminalCallback(status, data, error)
+  let row = null
+  try {
+    const { data: readRow, error: readError } = await supabase
+      .from('agent_pending_actions')
+      .select('status, job_result_envelope')
+      .eq('id', pendingActionId)
+      .maybeSingle()
+    if (readError) throw readError
+    row = readRow
+  } catch (readError) {
+    console.error(`[worker] image terminal envelope read failed ${pendingActionId}:`, readError?.message ?? readError)
+  }
+  const queueJob = await imageGenQueue.getJob(pendingActionId).catch((cacheError) => {
+    console.warn(`[worker] image BullMQ receipt cache read failed ${pendingActionId}:`, cacheError?.message ?? cacheError)
+    return null
+  })
+  const sidecar = await readImageTerminalSidecar(pendingActionId).catch((cacheError) => {
+    console.warn(`[worker] image sidecar read failed ${pendingActionId}:`, cacheError?.message ?? cacheError)
+    return null
+  })
+  const previous = readImageTerminalCallback(row?.job_result_envelope)
+    ?? readImageTerminalCallback(queueJob?.data)
+    ?? sidecar
+  // A late queue failure must never replace a completed render receipt.
+  const durable = chooseDurableImageTerminalCallback(previous, marker)
+  let persisted = null
+  // The Postgres outbox is authoritative and is attempted FIRST. Redis/object
+  // storage are independent recovery caches and still receive the receipt if
+  // this write is transiently unavailable.
+  try {
+    const { data: persistedRows, error: persistError } = await supabase.rpc(
+      'record_agent_image_terminal_receipt',
+      { p_action_id: pendingActionId, p_envelope: durable },
+    )
+    if (persistError) throw persistError
+    const persistedRow = Array.isArray(persistedRows) ? persistedRows[0] : persistedRows
+    persisted = readImageTerminalCallback(persistedRow?.job_result_envelope)
+    if (!persisted) {
+      // A zero-row update is not a durable write (usually a competing terminal
+      // callback). Only an already-stored envelope is safe to replay.
+      throw new Error(`image_terminal_envelope_not_persisted:${row?.status ?? 'missing'}`)
+    }
+  } catch (persistError) {
+    console.error(`[worker] image terminal envelope persist failed ${pendingActionId}:`, persistError?.message ?? persistError)
+  }
+  const canonical = persisted ?? durable
+  if (queueJob) {
+    await queueJob.updateData({ ...queueJob.data, __imageTerminalCallback: canonical }).catch((cacheError) => {
+      console.warn(`[worker] image BullMQ receipt cache write failed ${pendingActionId}:`, cacheError?.message ?? cacheError)
+    })
+  }
+  await persistImageTerminalSidecar(pendingActionId, canonical).catch((cacheError) => {
+      console.warn(`[worker] image sidecar write failed ${pendingActionId}:`, cacheError?.message ?? cacheError)
+  })
+  // App delivery can still settle the action while the DB outbox write is down;
+  // if it also fails, pending-jobs sees the approved row and replays from one of
+  // the caches without rerunning the provider.
+  return callJobResult(pendingActionId, canonical.status, canonical.data, canonical.error)
+}
+
 async function processImageGen(job) {
   const { pendingActionId, payload } = job.data
   console.log(`[worker] image-gen ${pendingActionId} — starting`)
 
   if (!payload) {
-    await callJobResult(pendingActionId, 'failed', undefined, 'No payload in job data')
+    await reportImageJobResult(pendingActionId, 'failed', undefined, 'No payload in job data')
     return
   }
 
   const authorization = await authorizeStudioRunExecution(pendingActionId, payload)
   if (!authorization.authorized) {
-    await callJobResult(
+    await reportImageJobResult(
       pendingActionId,
       'failed',
       undefined,
@@ -687,10 +822,10 @@ async function processImageGen(job) {
     try {
       const { processCampaignPackStage } = await import('./campaign-pack.mjs')
       const result = await processCampaignPackStage({ supabase, pendingActionId, payload })
-      await callJobResult(pendingActionId, 'success', result)
+      await reportImageJobResult(pendingActionId, 'success', result)
       console.log(`[worker] campaign-pack ${payload.campaignPack?.stageId} ${pendingActionId} — done`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] campaign-pack ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -711,7 +846,7 @@ async function processImageGen(job) {
         // cleanup is therefore disabled rather than spending outside its cap.
         allowPaidCleanup: allowPaidGarmentPrepCleanup(payload),
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         garmentPrep: true,
         multiPerson: result.multiPerson,
         persons: result.persons,
@@ -722,7 +857,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] garment-prep ${pendingActionId} — ${result.persons.length} crop(s)`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] garment-prep ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -742,7 +877,7 @@ async function processImageGen(job) {
         appUrl: getAppUrl(),
         token: getInternalToken(),
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         goldenEval: true,
         runId: report.runId,
         attempts: report.attempts.length,
@@ -751,7 +886,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] golden-eval ${report.runId} — done, ${report.attempts.length} attempts, $${report.totalCostUsd}`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] golden-eval failed:`, err.message)
     }
     return
@@ -768,7 +903,7 @@ async function processImageGen(job) {
       const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
         original: result.original,
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'family_composite',
@@ -787,7 +922,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] family-composite ${pendingActionId} — done → ${result.storagePath}`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] family-composite ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -801,7 +936,7 @@ async function processImageGen(job) {
       // CS12 — owner kill switch: refuse jobs on a killed engine, clearly.
       const { isEngineKilled } = await import('./fal/client.mjs')
       if (await isEngineKilled(supabase, payload.falEngine)) {
-        await callJobResult(pendingActionId, 'failed', undefined, `ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে (${payload.falEngine}) — সেটিংস থেকে চালু করে আবার চালান।`)
+        await reportImageJobResult(pendingActionId, 'failed', undefined, `ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে (${payload.falEngine}) — সেটিংস থেকে চালু করে আবার চালান।`)
         return
       }
       const adapter = payload.falEngine === 'fal_idm_vton'
@@ -820,7 +955,7 @@ async function processImageGen(job) {
       const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
         original: result.original,
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'fal',
@@ -844,7 +979,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] fal:${payload.falEngine} ${pendingActionId} — done → ${result.storagePath}`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] fal:${payload.falEngine} ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -856,7 +991,7 @@ async function processImageGen(job) {
       const { processAvatarBuild } = await import('./avatar/build.mjs')
       const { logCost } = await import('./cost-log.mjs')
       const result = await processAvatarBuild({ supabase, pendingActionId, payload, logCost })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         provider: 'avatar_build',
         modelId: payload.modelId,
         sheetPath: result.sheetPath,
@@ -879,7 +1014,7 @@ async function processImageGen(job) {
           await supabase.from('agent_kv_settings').upsert({ key, value: JSON.stringify(avatar) }, { onConflict: 'key' })
         }
       } catch { /* best effort */ }
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] avatar-build ${payload.modelId} — failed:`, err.message)
     }
     return
@@ -891,7 +1026,7 @@ async function processImageGen(job) {
     try {
       const { isEngineKilled } = await import('./fal/client.mjs')
       if (await isEngineKilled(supabase, 'xai_imagine')) {
-        await callJobResult(pendingActionId, 'failed', undefined, 'Grok Imagine ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        await reportImageJobResult(pendingActionId, 'failed', undefined, 'Grok Imagine ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
         return
       }
       const { processXaiImagine } = await import('./xai/adapter.mjs')
@@ -901,7 +1036,7 @@ async function processImageGen(job) {
       const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
         original: result.original,
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'xai',
@@ -919,7 +1054,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] xai:${result.xaiModel} ${pendingActionId} — done → ${result.storagePath}`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] xai ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -929,7 +1064,7 @@ async function processImageGen(job) {
     try {
       const { isEngineKilled } = await import('./fal/client.mjs')
       if (await isEngineKilled(supabase, 'fashn')) {
-        await callJobResult(pendingActionId, 'failed', undefined, 'FASHN ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
+        await reportImageJobResult(pendingActionId, 'failed', undefined, 'FASHN ইঞ্জিনটি kill switch দিয়ে বন্ধ করা আছে — সেটিংস থেকে চালু করে আবার চালান।')
         return
       }
       const { processFashnImageGen } = await import('./fashn/process.mjs')
@@ -941,7 +1076,7 @@ async function processImageGen(job) {
       const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath, {
         original: result.original,
       })
-      await callJobResult(pendingActionId, 'success', {
+      await reportImageJobResult(pendingActionId, 'success', {
         storagePath: result.storagePath,
         allPaths: result.allPaths,
         provider: 'fashn',
@@ -955,7 +1090,7 @@ async function processImageGen(job) {
       })
       console.log(`[worker] fashn ${pendingActionId} — done → ${result.storagePath}`)
     } catch (err) {
-      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      await reportImageJobResult(pendingActionId, 'failed', undefined, err.message)
       console.error(`[worker] fashn ${pendingActionId} — failed:`, err.message)
     }
     return
@@ -963,17 +1098,15 @@ async function processImageGen(job) {
 
   // CSE-A — the owner-facing generic image lane (Gemini/GPT Image/Seedream)
   // keeps the existing `gemini` kill switch as its umbrella control.
-  if (payload.creativeStudio) {
-    const { isEngineKilled } = await import('./fal/client.mjs')
-    if (await isEngineKilled(supabase, 'gemini')) {
-      await callJobResult(
-        pendingActionId,
-        'failed',
-        undefined,
-        'Guided image engine lane is disabled by the owner kill switch.',
-      )
-      return
-    }
+  const { isEngineKilled } = await import('./fal/client.mjs')
+  if (await isEngineKilled(supabase, 'gemini')) {
+    await reportImageJobResult(
+      pendingActionId,
+      'failed',
+      undefined,
+      'Guided image engine lane is disabled by the owner kill switch.',
+    )
+    return
   }
 
   const {
@@ -1027,7 +1160,10 @@ async function processImageGen(job) {
       ? (quality === 'standard' ? 0.05 : 0.19)     // gpt-image-2 medium / high (approx list)
       : engine === 'fal'
         ? (resolvedImageSize === '1K' ? 0.0675 : 0.135) // Seedream 5.0 Pro 1K / 2K (fal list)
-        : calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize)
+        : calcGeminiImageCostUsd(
+            geminiCostTierForImageModel(modelName),
+            resolvedImageSize,
+          )
     totalCostUsd += engineCostUsd
     void logCost({
       provider: engine,
@@ -1172,7 +1308,7 @@ async function processImageGen(job) {
     }
   }
 
-  await callJobResult(pendingActionId, 'success', {
+  await reportImageJobResult(pendingActionId, 'success', {
     storagePath: qcResult.storagePath,
     storagePaths: deliveredImages.map((image) => image.storagePath),
     images: deliveredImages,
@@ -1227,19 +1363,28 @@ async function callJobResult(pendingActionId, status, data, error, attempt = 0) 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.error(`[worker] job-result callback HTTP ${res.status}: ${body.slice(0, 200)}`)
+      if (res.status === 409 && body.includes('image_reconciliation_in_progress')) {
+        // Another app request owns the stale-safe reconciliation claim. The
+        // durable outbox remains pending and a future non-overlapping poll will
+        // observe either its acknowledgement or a stale claim.
+        return false
+      }
       if (attempt + 1 < MAX_JOB_RESULT_RETRIES) {
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
         return callJobResult(pendingActionId, status, data, error, attempt + 1)
       }
+      return false
     } else if (PREVIEW_E2E_MODE && pendingActionId === previewE2eTargetActionId) {
       previewE2eReportedResult = { status, data, error }
     }
+    return true
   } catch (err) {
     console.error('[worker] job-result callback error:', err.message)
     if (attempt + 1 < MAX_JOB_RESULT_RETRIES) {
       await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
       return callJobResult(pendingActionId, status, data, error, attempt + 1)
     }
+    return false
   }
 }
 
@@ -1276,6 +1421,30 @@ async function runPreviewImageE2e() {
     const body = await res.json()
     const job = selectPreviewImageJob(body.jobs, PREVIEW_E2E_PROJECT_ID)
     if (job) {
+      const terminal = (job.jobResultPending
+        ? readImageTerminalCallback(job.jobResultEnvelope)
+        : null) ?? await readImageTerminalSidecar(job.id)
+      if (terminal) {
+        const acknowledged = await callJobResult(job.id, terminal.status, terminal.data, terminal.error)
+        if (!acknowledged) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000))
+          continue
+        }
+        if (terminal.status === 'failed') {
+          throw new Error(`preview_image_generation_failed:${terminal.error ?? 'durable_failure'}`)
+        }
+        const qcFailure = terminalPreviewImageQcFailure(job.payload, {
+          status: terminal.status,
+          data: terminal.data,
+          error: terminal.error,
+        })
+        if (qcFailure) throw new Error(qcFailure)
+        processedJobs += 1
+        idleSince = null
+        console.log(`[preview-e2e] recovered action ${job.id} acknowledged without rerender`)
+        // Callback-only recovery: never repeat the paid preview provider call.
+        continue
+      }
       if (processedJobs >= maxJobs) {
         throw new Error(`preview_image_job_limit:${maxJobs}`)
       }
@@ -1290,7 +1459,7 @@ async function runPreviewImageE2e() {
         // event cannot settle the action. Never leave a paid preview action in
         // preview_approved after a scorer/provider crash.
         if (previewE2eReportedResult?.status !== 'failed') {
-          await callJobResult(job.id, 'failed', undefined, err?.message ?? String(err))
+          await reportImageJobResult(job.id, 'failed', undefined, err?.message ?? String(err))
         }
         throw err
       }
@@ -1329,6 +1498,16 @@ if (PREVIEW_E2E_MODE) {
   }
   process.exit(0)
 }
+
+// Publish only from the live VPS worker. The isolated preview-certification
+// process exits above and must never overwrite production capability state.
+const imageWorkerCapabilityPublisher = startImageWorkerCapabilityPublisher({
+  supabase,
+  env: process.env,
+})
+void imageWorkerCapabilityPublisher.ready.then((receipt) => {
+  if (receipt) console.log(`[worker] image capability receipt published (${receipt.models.join(', ') || 'no models'})`)
+})
 
 const imageGenWorker = new Worker('image-gen', processImageGen, {
   connection,
@@ -1893,10 +2072,11 @@ imageGenWorker.on('completed', (job) => {
 })
 imageGenWorker.on('failed', async (job, err) => {
   console.error(`[worker] image-gen ${job?.id} failed:`, err.message)
+  if (!isTerminalBullMqFailure(job)) return
   captureWorkerError(err, 'worker.image_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    await reportImageJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
   }
 })
 
@@ -2195,6 +2375,7 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  imageWorkerCapabilityPublisher.stop()
   if (creativeDistributionInterval) clearInterval(creativeDistributionInterval)
   if (lifecycleWorkerInterval) clearInterval(lifecycleWorkerInterval)
   clearInterval(workbenchJanitorInterval)

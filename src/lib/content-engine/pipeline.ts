@@ -24,6 +24,146 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+const PIPELINE_RENDER_RECEIPT_VERSION = 1 as const
+const PIPELINE_RENDER_CLAIM_TTL_MS = 5 * 60_000
+
+type PipelineRenderReceipt = {
+  version: typeof PIPELINE_RENDER_RECEIPT_VERSION
+  renderActionId: string
+  storagePath: string
+  state: 'pending' | 'processing' | 'applied'
+  claimedAt: string | null
+  framedImagePath?: string
+  gate2Id?: string
+  appliedAt?: string
+  lastError?: string
+}
+
+type AcquiredPipelineRenderReceipt = {
+  key: string
+  raw: string
+  receipt: PipelineRenderReceipt
+}
+
+const pipelineRenderReceiptKey = (renderActionId: string) =>
+  `content_pipeline_render_receipt:${renderActionId}`
+
+function parsePipelineRenderReceipt(value: unknown): PipelineRenderReceipt | null {
+  if (typeof value !== 'string' || !value) return null
+  try {
+    const parsed = JSON.parse(value) as Partial<PipelineRenderReceipt>
+    if (
+      parsed.version !== PIPELINE_RENDER_RECEIPT_VERSION
+      || typeof parsed.renderActionId !== 'string'
+      || typeof parsed.storagePath !== 'string'
+      || !['pending', 'processing', 'applied'].includes(String(parsed.state))
+    ) return null
+    return parsed as PipelineRenderReceipt
+  } catch {
+    return null
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { code?: unknown }).code === 'P2002')
+}
+
+/**
+ * Persistent per-render lease. Identical callback replays either observe the
+ * applied receipt or fail retryably while one claimant is framing/updating;
+ * they never run the irreversible card transition in parallel.
+ */
+async function acquirePipelineRenderReceipt(
+  renderActionId: string,
+  storagePath: string,
+): Promise<AcquiredPipelineRenderReceipt | null> {
+  const key = pipelineRenderReceiptKey(renderActionId)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const row = await db.agentKvSetting.findUnique({ where: { key } })
+    const existing = parsePipelineRenderReceipt(row?.value)
+    if (!row) {
+      const receipt: PipelineRenderReceipt = {
+        version: PIPELINE_RENDER_RECEIPT_VERSION,
+        renderActionId,
+        storagePath,
+        state: 'processing',
+        claimedAt: new Date().toISOString(),
+      }
+      const raw = JSON.stringify(receipt)
+      try {
+        await db.agentKvSetting.create({ data: { key, value: raw } })
+        return { key, raw, receipt }
+      } catch (error) {
+        if (isUniqueConstraintError(error)) continue
+        throw error
+      }
+    }
+    if (!existing) throw new Error('pipeline_render_receipt_corrupt')
+    if (existing.storagePath !== storagePath) {
+      throw new Error('pipeline_render_receipt_path_mismatch')
+    }
+    if (existing.state === 'applied') return null
+    const claimedAtMs = Date.parse(existing.claimedAt ?? '')
+    const claimIsLive = existing.state === 'processing'
+      && Number.isFinite(claimedAtMs)
+      && Date.now() - claimedAtMs < PIPELINE_RENDER_CLAIM_TTL_MS
+    if (claimIsLive) throw new Error('pipeline_render_reconciliation_in_progress')
+
+    const receipt: PipelineRenderReceipt = {
+      ...existing,
+      state: 'processing',
+      claimedAt: new Date().toISOString(),
+      lastError: undefined,
+    }
+    const raw = JSON.stringify(receipt)
+    const claimed = await db.agentKvSetting.updateMany({
+      where: { key, value: row.value },
+      data: { value: raw },
+    })
+    if (claimed.count === 1) return { key, raw, receipt }
+  }
+  throw new Error('pipeline_render_reconciliation_raced')
+}
+
+async function updatePipelineRenderReceipt(
+  claim: AcquiredPipelineRenderReceipt,
+  changes: Partial<PipelineRenderReceipt>,
+): Promise<void> {
+  const receipt: PipelineRenderReceipt = { ...claim.receipt, ...changes }
+  const raw = JSON.stringify(receipt)
+  const updated = await db.agentKvSetting.updateMany({
+    where: { key: claim.key, value: claim.raw },
+    data: { value: raw },
+  })
+  if (updated.count !== 1) throw new Error('pipeline_render_receipt_claim_lost')
+  claim.receipt = receipt
+  claim.raw = raw
+}
+
+async function completePipelineRenderReceipt(
+  claim: AcquiredPipelineRenderReceipt,
+  changes: Partial<PipelineRenderReceipt> = {},
+): Promise<void> {
+  await updatePipelineRenderReceipt(claim, {
+    ...changes,
+    state: 'applied',
+    claimedAt: null,
+    appliedAt: new Date().toISOString(),
+    lastError: undefined,
+  })
+}
+
+async function releasePipelineRenderReceipt(
+  claim: AcquiredPipelineRenderReceipt,
+  error: unknown,
+): Promise<void> {
+  await updatePipelineRenderReceipt(claim, {
+    state: 'pending',
+    claimedAt: null,
+    lastError: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+  }).catch(() => {})
+}
+
 export type PipelineVariantState = {
   key: ContentVariant
   rawImagePath: string | null
@@ -326,115 +466,156 @@ export async function onPipelineRenderComplete(
   const variant = payload.variants.find((v) => v.key === cp.variant)
   if (!variant) return
 
-  variant.rawImagePath = storagePath
-  const product = await loadProductAsset(payload.productCode)
-  if (!product) return
-
-  variant.framedImagePath = await applyBrandFrame(storagePath, {
-    mode: 'model_overlay',
-    productCode: payload.productCode,
-    hook: payload.hook ?? 'নতুন কালেকশন',
-    theme: payload.theme,
-    footer: payload.qualityPass === 'pro',
-  })
-  variant.keep = true
-
-  if (payload.qualityPass === 'draft') {
-    const ready = allDraftVariantsReady(payload)
-    if (ready) {
-      payload.stage = 'gate1_ready'
-      const summary = await buildGate1Summary(payload.productCode, payload)
-      await db.agentPendingAction.update({
-        where: { id: gate1.id },
-        data: { payload, summary },
-      })
-      await sendOwnerApprovalCard({
-        summary,
-        reply_markup: buildContentGate1Keyboard(gate1.id, payload),
+  const claim = await acquirePipelineRenderReceipt(renderActionId, storagePath)
+  if (!claim) return
+  try {
+    // Rolling-deploy adoption: callbacks completed before receipts existed may
+    // already have persisted this exact variant/Gate transition. Record that
+    // fact and stop; do not re-frame or resend a historical approval card.
+    if (
+      !claim.receipt.framedImagePath
+      && variant.rawImagePath === storagePath
+      && variant.framedImagePath
+    ) {
+      await completePipelineRenderReceipt(claim, {
+        framedImagePath: variant.framedImagePath,
+        ...(payload.gate2Id ? { gate2Id: payload.gate2Id } : {}),
       })
       return
     }
+    variant.rawImagePath = storagePath
+    const product = await loadProductAsset(payload.productCode)
+    if (!product) throw new Error('pipeline_product_asset_missing')
 
-    if (payload.stage === 'gate1_ready') {
-      const summary = await buildGate1Summary(payload.productCode, payload)
-      await db.agentPendingAction.update({
-        where: { id: gate1.id },
-        data: { payload, summary },
-      })
-      await sendOwnerApprovalCard({
-        summary: `🔄 ${variantLabel(cp.variant)} রিজেনারেট সম্পন্ন\n\n${summary}`,
-        reply_markup: buildContentGate1Keyboard(gate1.id, payload),
-      })
-      return
-    }
-
-    await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
-    return
-  }
-
-  const allProDone = payload.variants.every((v) => v.framedImagePath)
-  if (!allProDone) {
-    await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
-    return
-  }
-
-  payload.stage = 'gate2_ready'
-  const captionText = payload.caption ?? `${payload.productCode} — Alma Lifestyle`
-
-  const imageLines: string[] = []
-  for (const v of payload.variants) {
-    if (!v.framedImagePath) continue
-    try {
-      const url = await agentStorageSignedUrl(v.framedImagePath, 3600)
-      imageLines.push(`![${v.key}](${url})`)
-    } catch (err) {
-      console.warn('[pipeline] gate2 signed URL failed:', err instanceof Error ? err.message : err)
-      imageLines.push(v.framedImagePath)
-    }
-  }
-
-  const primaryImage = payload.variants.find((v) => v.key === 'single')?.framedImagePath
-    ?? payload.variants[0]?.framedImagePath
-    ?? null
-
-  const gate2 = await db.agentPendingAction.create({
-    data: {
-      conversationId: payload.conversationId ?? null,
-      type: 'content_gate2',
-      payload: {
-        pipelineId: payload.pipelineId,
-        gate1Id: gate1.id,
+    if (!claim.receipt.framedImagePath) {
+      const framedImagePath = await applyBrandFrame(storagePath, {
+        mode: 'model_overlay',
         productCode: payload.productCode,
-        page: payload.page,
-        pageId: resolvePageId(payload.page),
-        message: captionText,
-        hook: payload.hook,
-        imagePaths: payload.variants.map((v) => v.framedImagePath).filter(Boolean),
-        primaryImagePath: primaryImage,
-        conversationId: payload.conversationId,
-      },
+        hook: payload.hook ?? 'নতুন কালেকশন',
+        theme: payload.theme,
+        footer: payload.qualityPass === 'pro',
+      })
+      await updatePipelineRenderReceipt(claim, { framedImagePath })
+    }
+    variant.framedImagePath = claim.receipt.framedImagePath ?? null
+    variant.keep = true
+
+    if (payload.qualityPass === 'draft') {
+      const ready = allDraftVariantsReady(payload)
+      if (ready) {
+        payload.stage = 'gate1_ready'
+        const summary = await buildGate1Summary(payload.productCode, payload)
+        await db.agentPendingAction.update({
+          where: { id: gate1.id },
+          data: { payload, summary },
+        })
+        const sent = await sendOwnerApprovalCard({
+          summary,
+          reply_markup: buildContentGate1Keyboard(gate1.id, payload),
+        })
+        if (!sent.ok) throw new Error(`pipeline_gate1_card_failed:${sent.error ?? 'unknown'}`)
+        await completePipelineRenderReceipt(claim)
+        return
+      }
+
+      if (payload.stage === 'gate1_ready') {
+        const summary = await buildGate1Summary(payload.productCode, payload)
+        await db.agentPendingAction.update({
+          where: { id: gate1.id },
+          data: { payload, summary },
+        })
+        const sent = await sendOwnerApprovalCard({
+          summary: `🔄 ${variantLabel(cp.variant)} রিজেনারেট সম্পন্ন\n\n${summary}`,
+          reply_markup: buildContentGate1Keyboard(gate1.id, payload),
+        })
+        if (!sent.ok) throw new Error(`pipeline_gate1_card_failed:${sent.error ?? 'unknown'}`)
+        await completePipelineRenderReceipt(claim)
+        return
+      }
+
+      await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
+      await completePipelineRenderReceipt(claim)
+      return
+    }
+
+    const allProDone = payload.variants.every((v) => v.framedImagePath)
+    if (!allProDone) {
+      await db.agentPendingAction.update({ where: { id: gate1.id }, data: { payload } })
+      await completePipelineRenderReceipt(claim)
+      return
+    }
+
+    payload.stage = 'gate2_ready'
+    const captionText = payload.caption ?? `${payload.productCode} — Alma Lifestyle`
+
+    const imageLines: string[] = []
+    for (const v of payload.variants) {
+      if (!v.framedImagePath) continue
+      try {
+        const url = await agentStorageSignedUrl(v.framedImagePath, 3600)
+        imageLines.push(`![${v.key}](${url})`)
+      } catch (err) {
+        console.warn('[pipeline] gate2 signed URL failed:', err instanceof Error ? err.message : err)
+        imageLines.push(v.framedImagePath)
+      }
+    }
+
+    const primaryImage = payload.variants.find((v) => v.key === 'single')?.framedImagePath
+      ?? payload.variants[0]?.framedImagePath
+      ?? null
+
+    const gate2DedupeKey = `content-pipeline-gate2:${gate1.id}`
+    const existingGate2 = payload.gate2Id
+      ? await db.agentPendingAction.findUnique({ where: { id: payload.gate2Id } })
+      : null
+    const gate2 = existingGate2 ?? await db.agentPendingAction.upsert({
+        where: { dedupeKey: gate2DedupeKey },
+        update: { dedupeKey: gate2DedupeKey },
+        create: {
+          dedupeKey: gate2DedupeKey,
+          conversationId: payload.conversationId ?? null,
+          type: 'content_gate2',
+          payload: {
+            pipelineId: payload.pipelineId,
+            gate1Id: gate1.id,
+            productCode: payload.productCode,
+            page: payload.page,
+            pageId: resolvePageId(payload.page),
+            message: captionText,
+            hook: payload.hook,
+            imagePaths: payload.variants.map((v) => v.framedImagePath).filter(Boolean),
+            primaryImagePath: primaryImage,
+            conversationId: payload.conversationId,
+          },
+          summary:
+            `📣 কন্টেন্ট পোস্ট — Gate 2 (ফাইনাল)\n` +
+            `প্রোডাক্ট: ${payload.productCode}\n` +
+            `ক্যাপশন:\n${captionText.slice(0, 400)}`,
+          status: 'pending',
+        },
+      })
+
+    payload.gate2Id = gate2.id
+    await updatePipelineRenderReceipt(claim, { gate2Id: gate2.id })
+    await db.agentPendingAction.update({
+      where: { id: gate1.id },
+      data: { payload, status: 'executed', resolvedAt: new Date() },
+    })
+
+    const sent = await sendOwnerApprovalCard({
       summary:
-        `📣 কন্টেন্ট পোস্ট — Gate 2 (ফাইনাল)\n` +
-        `প্রোডাক্ট: ${payload.productCode}\n` +
-        `ক্যাপশন:\n${captionText.slice(0, 400)}`,
-      status: 'pending',
-    },
-  })
-
-  payload.gate2Id = gate2.id
-  await db.agentPendingAction.update({
-    where: { id: gate1.id },
-    data: { payload, status: 'executed', resolvedAt: new Date() },
-  })
-
-  await sendOwnerApprovalCard({
-    summary:
-      `📣 কন্টেন্ট Gate 2 প্রস্তুত — ${payload.productCode}\n` +
-      `${imageLines.join('\n')}\n\n${captionText.slice(0, 500)}`,
-    pendingActionId: gate2.id,
-    approveLabel: '✅ Publish',
-    rejectLabel: '❌ বাতিল',
-  })
+        `📣 কন্টেন্ট Gate 2 প্রস্তুত — ${payload.productCode}\n` +
+        `${imageLines.join('\n')}\n\n${captionText.slice(0, 500)}`,
+      pendingActionId: gate2.id,
+      approveLabel: '✅ Publish',
+      rejectLabel: '❌ বাতিল',
+    })
+    if (!sent.ok) throw new Error(`pipeline_gate2_card_failed:${sent.error ?? 'unknown'}`)
+    await completePipelineRenderReceipt(claim, { gate2Id: gate2.id })
+  } catch (error) {
+    await releasePipelineRenderReceipt(claim, error)
+    throw error
+  }
 }
 
 export async function toggleGate1VariantKeep(

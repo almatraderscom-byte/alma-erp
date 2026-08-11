@@ -89,6 +89,48 @@ struct SMControlsPatch: Encodable {
     }
 }
 
+/// GET/POST /api/assistant/skills — owner-session provenance ledger.
+struct SMSkillApprovalRecord: Decodable {
+    let approvedBy: String
+    let approvedAt: String
+    let revokedAt: String?
+}
+
+struct SMSkillApprovalRow: Decodable, Identifiable {
+    let name: String
+    let version: String
+    let status: String
+    let hashShort: String
+    let state: String
+    let effectiveState: String
+    let wouldRun: Bool
+    let blockedBy: String?
+    let blockedByName: String?
+    let approval: SMSkillApprovalRecord?
+    var id: String { name }
+}
+
+struct SMSkillApprovalSummary: Decodable {
+    let total: Int
+    let live: Int
+    let needsApproval: Int
+    let revoked: Int
+}
+
+struct SMSkillApprovalView: Decodable {
+    let gateOn: Bool
+    let engineEnabled: Bool
+    let rows: [SMSkillApprovalRow]
+    let summary: SMSkillApprovalSummary
+}
+
+private struct SMSkillApprovalAction: Encodable {
+    let action: String
+    let name: String
+    let note: String?
+    let reason: String?
+}
+
 /// GET /api/assistant/live-browser/watch — FULL feed (screenshot included, NP-2).
 struct SMWatchDevice: Decodable, Identifiable {
     let id: String
@@ -487,6 +529,7 @@ func smStepBadge(_ status: String) -> (label: String, color: Color) {
 @MainActor
 final class StaffMonitorControlsVM {
     var controls: SMControls? = nil
+    var skillApprovals: SMSkillApprovalView? = nil
     var watch: SMWatchFeed? = nil
     var heartbeat: SMHeartbeatFeed? = nil
     var models: [SMModelRow]? = nil
@@ -497,6 +540,7 @@ final class StaffMonitorControlsVM {
     var busy = false                 // controls/watch mutations (confirm-dialog ops)
     var heartbeatBusy = false
     var modelSavingId: String? = nil
+    var skillSavingName: String? = nil
     var routingSaving = false
     var actionError: String? = nil
     var heartbeatToast: String? = nil
@@ -507,6 +551,7 @@ final class StaffMonitorControlsVM {
         if let c: SMControls = try? await AlmaAPI.shared.get("/api/assistant/controls") {
             controls = c
         }
+        await refreshSkillApprovals()
         await refreshWatch()
         await refreshHeartbeat()
         await refreshModels()
@@ -532,6 +577,12 @@ final class StaffMonitorControlsVM {
         struct Resp: Decodable { let models: [SMModelRow]? }
         if let r: Resp = try? await AlmaAPI.shared.get("/api/assistant/models") {
             if let rows = r.models { models = rows }
+        }
+    }
+
+    func refreshSkillApprovals() async {
+        if let view: SMSkillApprovalView = try? await AlmaAPI.shared.get("/api/assistant/skills") {
+            skillApprovals = view
         }
     }
 
@@ -637,6 +688,28 @@ final class StaffMonitorControlsVM {
         }
     }
 
+    /// POST /api/assistant/skills — approves/revokes the exact current content hash.
+    func setSkillApproval(_ name: String, approve: Bool) async {
+        guard skillSavingName == nil else { return }
+        skillSavingName = name
+        defer { skillSavingName = nil }
+        do {
+            let body = SMSkillApprovalAction(
+                action: approve ? "approve" : "revoke",
+                name: name,
+                note: approve ? "Native Control Center থেকে অনুমোদন" : nil,
+                reason: approve ? nil : "Native Control Center থেকে অনুমোদন তুলে নেওয়া")
+            let view: SMSkillApprovalView = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/skills", body: body)
+            skillApprovals = view
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionError = "Skill পরিবর্তন ব্যর্থ: \(error.localizedDescription)"
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+
     /// POST /api/assistant/model-routing — full draft; server echoes {config}.
     func saveRouting() async {
         guard let draft = routingDraft, !routingSaving else { return }
@@ -707,6 +780,7 @@ struct StaffMonitorAgentsTab: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pending: StaffMonitorControlAction? = nil
     @State private var modelSearch = ""
+    @State private var skillSearch = ""
     @State private var modelsCollapsed = false
     @State private var showScreenshotViewer = false
 
@@ -719,7 +793,7 @@ struct StaffMonitorAgentsTab: View {
     /// page. iOS composition instead — a COMPACT control-room list (icon + live
     /// status + chevron, More-menu language); each row drills into a focused sheet.
     enum AgentSheet: String, Identifiable {
-        case control, models, heartbeat, browser, routing, slo
+        case control, skills, models, heartbeat, browser, routing, slo
         var id: String { rawValue }
     }
     @State private var sheet: AgentSheet? = nil
@@ -741,6 +815,13 @@ struct StaffMonitorAgentsTab: View {
                             .disabled(vm.busy)
                     }
                 }
+                Divider().opacity(0.25).padding(.leading, 56)
+                controlRoomRow("🧾", "Skill অনুমোদন",
+                               vm.skillApprovals.map {
+                                   "চালু \($0.summary.live) · অনুমোদন বাকি \($0.summary.needsApproval)"
+                               } ?? "লোড হচ্ছে…",
+                               tint: (vm.skillApprovals?.summary.needsApproval ?? 0) > 0 ? amber600 : emerald,
+                               sheet: .skills)
                 Divider().opacity(0.25).padding(.leading, 56)
                 controlRoomRow("🧠", "AI মডেল",
                                vm.models.map { "\($0.filter(\.enabled).count)/\($0.count) চালু" } ?? "লোড হচ্ছে…",
@@ -780,6 +861,7 @@ struct StaffMonitorAgentsTab: View {
                     VStack(spacing: 10) {
                         switch which {
                         case .control: controlCenterCard
+                        case .skills: skillApprovalCard
                         case .models: modelsCard
                         case .heartbeat: heartbeatCard
                         case .browser: liveBrowserCard
@@ -855,6 +937,7 @@ struct StaffMonitorAgentsTab: View {
     private func sheetTitle(_ s: AgentSheet) -> String {
         switch s {
         case .control: return "কন্ট্রোল সেন্টার"
+        case .skills: return "Skill অনুমোদন"
         case .models: return "AI মডেল"
         case .heartbeat: return "হার্টবিট"
         case .browser: return "লাইভ ব্রাউজার"
@@ -1017,6 +1100,110 @@ struct StaffMonitorAgentsTab: View {
             .disabled(vm.busy)
         }
         .padding(.vertical, 2)
+    }
+
+    // ── 🧾 Skill provenance — native parity with web SkillApprovalPanel ──
+
+    private var filteredSkillRows: [SMSkillApprovalRow] {
+        guard let rows = vm.skillApprovals?.rows else { return [] }
+        let query = skillSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = query.isEmpty ? rows : rows.filter { row in
+            row.name.lowercased().contains(query) || row.state.lowercased().contains(query)
+        }
+        return filtered.sorted {
+            if ($0.effectiveState == "approved") != ($1.effectiveState == "approved") {
+                return $0.effectiveState != "approved"
+            }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    @ViewBuilder private var skillApprovalCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let view = vm.skillApprovals {
+                HStack(spacing: 6) {
+                    skillPill("Skill engine", on: view.engineEnabled)
+                    skillPill("Approval gate", on: view.gateOn)
+                    Spacer()
+                    Text("বাকি \(view.summary.needsApproval)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(view.summary.needsApproval > 0 ? amber600 : emerald)
+                }
+                Text("অনুমোদন বর্তমান version ও content hash-এর জন্য। Skill বদলালে আবার অনুমোদন লাগবে।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                TextField("Skill খুঁজুন…", text: $skillSearch)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 11).padding(.vertical, 8)
+                    .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+
+                ForEach(filteredSkillRows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(row.name).font(.caption.weight(.semibold)).lineLimit(1)
+                            Text("v\(row.version)").font(.system(size: 9)).foregroundStyle(.secondary)
+                            Spacer()
+                            skillStateBadge(row)
+                        }
+                        Text("\(row.hashShort)\(row.blockedByName.map { " · blocked by \($0)" } ?? "")")
+                            .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        HStack(spacing: 8) {
+                            if vm.skillSavingName == row.name {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Button(row.state == "changed" ? "নতুন version অনুমোদন" : "অনুমোদন") {
+                                    Task { await vm.setSkillApproval(row.name, approve: true) }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(emerald)
+                                .controlSize(.small)
+                                .disabled(row.state == "approved" || vm.skillSavingName != nil)
+
+                                Button("তুলে নিন", role: .destructive) {
+                                    Task { await vm.setSkillApproval(row.name, approve: false) }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(row.approval == nil || row.state == "revoked" || vm.skillSavingName != nil)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 5)
+                    Divider().opacity(0.3)
+                }
+            } else {
+                ProgressView("Skill তালিকা লোড হচ্ছে…")
+                    .task { await vm.refreshSkillApprovals() }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .smGlass(scheme)
+    }
+
+    private func skillPill(_ label: String, on: Bool) -> some View {
+        Text("\(label): \(on ? "চালু" : "বন্ধ")")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(on ? emerald : .secondary)
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .background((on ? emerald : Color.secondary).opacity(0.10), in: Capsule())
+    }
+
+    private func skillStateBadge(_ row: SMSkillApprovalRow) -> some View {
+        let label: String
+        let color: Color
+        switch row.state {
+        case "approved": label = "অনুমোদিত"; color = emerald
+        case "changed": label = "বদলেছে"; color = amber600
+        case "revoked": label = "তোলা"; color = red500
+        default: label = "অনুমোদন নেই"; color = .secondary
+        }
+        return Text(label)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(color.opacity(0.10), in: Capsule())
     }
 
     // ── 📏 Autonomy SLO (AG-03) ──

@@ -7,6 +7,12 @@ import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { buildMessageCursorWhere, buildMessagesPagePlan } from '@/agent/lib/messages-page'
 import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
+import {
+  IMAGE_WORKER_CAPABILITY_KV_KEY,
+  imageModelAvailability,
+  selectionForImageAction,
+} from '@/agent/lib/image-action-contract'
+import { readKv } from '@/lib/creative-studio/taste'
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -107,11 +113,24 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   // breadcrumbs AND lets us synthesize cards that were never breadcrumbed.
   const allActions = await prisma.agentPendingAction.findMany({
     where: { conversationId: id },
-    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true, ownerDecided: true },
+    select: {
+      id: true,
+      type: true,
+      summary: true,
+      costEstimate: true,
+      status: true,
+      createdAt: true,
+      result: true,
+      ownerDecided: true,
+      payload: true,
+      imageModel: true,
+      imageQuote: true,
+    },
     orderBy: { createdAt: 'asc' },
   })
 
   const statusById = new Map<string, string>()
+  const summaryById = new Map<string, string>()
   // Failure reason (owner rule: a failed approval must NEVER be silent — always
   // show WHY). Executors store their error in result.error / result.message.
   const failReasonById = new Map<string, string>()
@@ -123,9 +142,27 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   // being relabelled by a guess. (resolvedAt looked like the signal and is not:
   // the worker's job-result callback stamps it on completion.)
   const ownerDecidedById = new Map<string, boolean | null>()
+  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+    readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+    readKv('cs_engine_kill:gemini'),
+    readKv('cs_xai_enabled'),
+  ])
+  const imageAvailability = imageModelAvailability({
+    workerCapabilities,
+    genericLaneKilled: genericLaneKill === '1',
+    xaiConfigured: xaiEnabled === '1',
+  })
+  const imageSelectionById = new Map<string, unknown>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
+    summaryById.set(a.id, a.summary ?? '')
     ownerDecidedById.set(a.id, a.ownerDecided ?? null)
+    if (a.type === 'image_gen') {
+      imageSelectionById.set(a.id, selectionForImageAction({
+        ...a,
+        availability: imageAvailability,
+      }))
+    }
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
       const reason = [r.error, r.message, r.detail].find((v) => typeof v === 'string' && v.trim())
@@ -157,6 +194,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
+    if (a.type === 'image_gen') block.imageModelSelection = imageSelectionById.get(a.id)
     const list = syntheticByMsg.get(target.id) ?? []
     list.push(block)
     syntheticByMsg.set(target.id, list)
@@ -250,10 +288,14 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               status: statusById.get(b.pendingActionId) ?? 'expired',
               ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
-              // Heal any escaped astral emoji in a persisted breadcrumb summary.
-              ...(typeof b.summary === 'string'
-                ? { summary: decodeUnicodeEscapes(b.summary) }
-                : {}),
+              imageModelSelection: imageSelectionById.get(b.pendingActionId) ?? b.imageModelSelection,
+              // The action summary changes when the owner switches image model.
+              // Canonical action state wins over the old breadcrumb so a reload
+              // cannot revert the live card's "Model:" line.
+              summary: decodeUnicodeEscapes(
+                summaryById.get(b.pendingActionId)
+                  ?? (typeof b.summary === 'string' ? b.summary : ''),
+              ),
             }]
           }
           if (b?.type === 'ask_card' && typeof b.askCardId === 'string') {
