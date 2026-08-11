@@ -9,8 +9,9 @@ Authoritative recovery contract: commit `8aa1a60a9`,
 `docs/handoffs/IOS_LIVE_VOICE_CLAUDE_RECOVERY_HANDOFF_2026-08-11.md`
 
 Latest local implementation commits covered by this report:
-`ccd5c936a` (truthful Live Activity) and `56ec55b22` (final cross-phase
-safety/evidence closure). Neither commit has been pushed or uploaded.
+`ccd5c936a` (truthful Live Activity), `56ec55b22` (cross-phase safety/evidence
+closure), and `a69a422b` (final contract, evidence, and accessibility closure).
+None has been pushed or uploaded.
 
 This file is the phase evidence index and end-to-end flow map required by the
 recovery contract. It deliberately distinguishes simulator evidence from
@@ -106,11 +107,8 @@ structures.
   corrupt asset, rapid selection, lifecycle, takeover, and VoiceOver behavior are
   covered by focused tests.
 - Exact iPhone 17 Pro simulator evidence: all preview/catalog/audio-admission
-  cases in the 81-test `LiveVoicePreviewTests` class passed. One Phase 2 intent
-  classifier method in that mixed class failed before a one-line Bengali
-  grapheme-boundary fix; the final source compiled, but Xcode did not
-  materialize a post-fix test worker (details below). Catalog verifier 83/83
-  PASS.
+  cases in the 81-test `LiveVoicePreviewTests` class passed after the Bengali
+  grapheme-boundary fix. Catalog verifier 83/83 PASS.
 - Audible model×voice approval: **0/12, NOT RUN / OWNER GATE**.
 
 ### Phase 1B — profile, bounded context, and cost
@@ -164,35 +162,33 @@ structures.
   Type buckets, Bold Text, Reduce Motion/Transparency, Increase Contrast, and
   bounded small-screen/landscape/accessibility geometry. The 768-combination
   policy matrix and focused simulator/unit scope are **PASS**.
+- The exact iPhone 17 Pro Accessibility XXXL UI flow is **PASS** for the primary
+  call/settings controls, reachable wrapped footer, and the real in-call
+  preview-unavailable state. Its active-call fixture explicitly bypasses mic,
+  token mint, websocket, and provider audio.
 - Blinded Bengali evaluation, route matrix, 45-minute soak, battery, thermal,
   memory and paid-cost reconciliation: **NOT RUN / OWNER GATE**.
 
 ## Current automated evidence and limits
 
-These results are evidence for their named scope only. They deliberately do not
-convert a compile result or an infrastructure-interrupted rerun into a test PASS.
+These results are evidence for their named scope only.
 
 - Exact owner-approved iPhone 17 Pro simulator
-  `D9787ADC-5E93-4D23-86ED-FB497EFEE1FC`: final `build-for-testing` **PASS**,
-  including App, Widget, AppParityV2Tests, and AppParityV2UITests compile/link.
-- The combined focused run executed 140 tests. Accessibility 5/5, Live Activity
-  7/7, input 13/13, lifecycle 15/15, rendered-PCM 6/6, and Phase 1B 13/13
-  passed. `LiveVoicePreviewTests` passed 80/81 methods; its only failing method
-  had two assertions for the same Bengali mutation-classification defect.
-- That defect was fixed by matching the complete Bengali mutation stem
-  (`তৈরি`) instead of a substring ending inside the following grapheme. The
-  final source rebuilt successfully. Three post-fix `test-without-building`
-  attempts (including simulator reboot and non-destructive CoreSimulator service
-  restart) stalled before any test process materialized and were terminated;
-  therefore **no post-fix 140/140 PASS is claimed**.
-- The final combined pre-fix result bundle is
-  `/private/tmp/alma-live-voice-final-focused.xcresult`; the successful final
-  build log is `/private/tmp/alma-live-voice-final-build-confirm.log`.
+  `D9787ADC-5E93-4D23-86ED-FB497EFEE1FC`: focused unit execution **143/143
+  PASS**, 0 failures. Breakdown: Assistant evidence 2/2, accessibility policy
+  5/5, Live Activity 7/7, input 13/13, lifecycle 15/15, rendered PCM 6/6,
+  Phase 1B 14/14, and preview/catalog/audio admission 81/81.
+- Unit result bundle: `/private/tmp/alma-live-voice-final-unit.xcresult`; log:
+  `/private/tmp/alma-live-voice-final-unit.log`.
+- Exact-device Accessibility XXXL UI execution **1/1 PASS**, 0 failures. The
+  DEBUG-only launch override disables the system biometric sheet solely for UI
+  automation; it is absent from production builds. Result bundle:
+  `/private/tmp/alma-live-voice-final-ui-rerun2.xcresult`; log:
+  `/private/tmp/alma-live-voice-final-ui-rerun2.log`.
 - Preview catalog Node verifier: **83/83 PASS**; technical verifier resolves
   **12/12 generated+verified**, remains **0/12 owner-approved**.
 - Live voice TypeScript contract/config/usage/cancellation/voice-tool tests:
-  **27/27 PASS**; full `tsc --noEmit`: **PASS** after canonical Prisma client
-  generation.
+  **28/28 PASS**; full `tsc --noEmit`: **PASS**.
 - Swift parse, PBX plist lint, and repository diff/whitespace checks: **PASS**.
 - Release verifier: **EXPECTED BLOCK** because status is
   `generated_pending_owner_approval`, approvals are 0/12, and `release=false`.
@@ -203,14 +199,13 @@ Bluetooth routing, paid billing reconciliation, or human speech quality.
 
 ## Remaining release gate (no owner action performed)
 
-The source compiles and all executed focused rows except the now-fixed intent
-case are green. Release is still blocked by the missing post-fix simulator
-execution, the owner/device rows below, and these lower-severity code-evidence
-follow-ups identified at freeze: preserve preview/compression milestones beyond
-the bounded evidence FIFO, bind send-completion attribution to the captured
-socket attempt, enforce only the current model's declared remote replacement
-(including `retired` lifecycle), and add the accessibility-size/in-call preview
-unavailable UI assertions.
+The source compiles and every final simulator, static, TypeScript, catalog, and
+focused UI row listed above is green. The previously documented lower-severity
+follow-ups are closed: milestone evidence survives the bounded FIFO, send
+completion carries the captured socket-attempt generation, remote replacement is
+the current model's exact declared selectable target (retired models fail
+closed), and Accessibility XXXL/in-call preview-unavailable UI assertions pass.
+Release is blocked only by the owner/device rows below.
 
 Owner/device-only rows remain:
 
