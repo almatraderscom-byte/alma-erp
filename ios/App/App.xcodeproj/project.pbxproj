@@ -908,7 +908,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n  --output \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/alma-build-provenance.plist\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\n";
+			shellScript = "set -euo pipefail\nPRODUCT_ROOT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nPRODUCT_ROOT_PHYSICAL=$(cd \"${PRODUCT_ROOT}\" && pwd -P)\nOUTPUT_PATH=\"${PRODUCT_ROOT_PHYSICAL}/alma-build-provenance.plist\"\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n  --output \"${OUTPUT_PATH}\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

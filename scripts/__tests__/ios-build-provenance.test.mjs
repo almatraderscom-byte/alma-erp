@@ -22,6 +22,15 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'ios-build-provenance.sh')
+const xcodeProject = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'ios',
+  'App',
+  'App.xcodeproj',
+  'project.pbxproj',
+)
 const expectedPaths = [
   'ios/App/App/capacitor.config.json',
   'ios/App/App/config.xml',
@@ -838,4 +847,31 @@ test('script is executable and rejects ambiguous source/product CLI mode', () =>
   ])
   assert.equal(result.status, 2)
   assert.match(result.stderr, /mutually exclusive/)
+})
+
+test('Xcode canonicalizes its existing app product before invoking provenance', () => {
+  const project = readFileSync(xcodeProject, 'utf8')
+  const phase = project.match(
+    /C8A0D1000000000000000012 \/\* Generate Build Provenance \*\/ = \{[\s\S]*?\n\t\t\};/,
+  )?.[0]
+
+  assert.ok(phase, 'Generate Build Provenance phase is missing')
+  assert.equal(
+    phase.includes('PRODUCT_ROOT=\\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\\"'),
+    true,
+  )
+  assert.equal(
+    phase.includes('PRODUCT_ROOT_PHYSICAL=$(cd \\"${PRODUCT_ROOT}\\" && pwd -P)'),
+    true,
+  )
+  assert.equal(
+    phase.includes('OUTPUT_PATH=\\"${PRODUCT_ROOT_PHYSICAL}/alma-build-provenance.plist\\"'),
+    true,
+  )
+  assert.equal(phase.includes('--product-root \\"${PRODUCT_ROOT_PHYSICAL}\\"'), true)
+  assert.equal(phase.includes('--output \\"${OUTPUT_PATH}\\"'), true)
+  assert.equal(
+    phase.includes('--product-root \\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\\"'),
+    false,
+  )
 })
