@@ -12,8 +12,8 @@
 //  • state hues = the app's AlmaVoiceState.hue EXACTLY:
 //    idle 168 (cyan) · listening 145 (emerald) · thinking 265 (violet) · speaking 210 (azure)
 //
-//  Motion budget: ActivityKit gives ~1 snapshot/s; TimelineView(.periodic) steps
-//  the ribbon phase + orb fluids between snapshots, .animation springs the rest.
+//  Privacy/truth contract: ActivityKit renders a static phase-specific pose.
+//  Realtime/synthetic speech animation stays inside the foreground app.
 //
 
 #if canImport(ActivityKit)
@@ -33,14 +33,6 @@ private enum VoiceHue {
         default:          return 168
         }
     }
-    static func status(_ phase: String) -> String {
-        switch phase {
-        case "listening": return "শুনছি Boss…"
-        case "thinking":  return "ভাবছি…"
-        case "speaking":  return "বলছি…"
-        default:          return "প্রস্তুত"
-        }
-    }
     static let gold  = Color(red: 0.851, green: 0.659, blue: 0.298)  // #d9a84c
     static let coral = Color(red: 0.851, green: 0.467, blue: 0.341)  // #d97757
     static let textSecondary = Color(red: 0.68, green: 0.71, blue: 0.76)
@@ -57,14 +49,16 @@ private func hcol(_ h: Double, _ s: Double, _ b: Double, _ o: Double = 1) -> Col
 
 @available(iOS 17.0, *)
 private struct AlmaIslandOrb: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var size: CGFloat
     var hue: Double
-    /// Fluids rotate in TimelineView steps; false = fully static (minimal slot).
-    var animated: Bool = true
+    /// Voice activities are static by default. The parameter remains only for
+    /// previewing a decorative transition without changing the product contract.
+    var animated: Bool = false
 
     var body: some View {
         Group {
-            if animated {
+            if animated && !reduceMotion {
                 TimelineView(.periodic(from: .now, by: 0.5)) { tl in
                     layers(t: tl.date.timeIntervalSinceReferenceDate)
                 }
@@ -138,12 +132,21 @@ private struct AlmaIslandOrb: View {
 private struct VoiceStateLine: View {
     let phase: String
     let isMuted: Bool
+    let isStale: Bool
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: isMuted ? "mic.slash.fill" : "waveform")
-                .foregroundStyle(isMuted ? VoiceHue.coral : hcol(VoiceHue.hue(phase), 0.8, 0.9))
-            Text(isMuted ? "মাইক বন্ধ" : "ব্যক্তিগত ভয়েস সেশন")
+            Image(systemName: isStale
+                  ? "clock.badge.exclamationmark"
+                  : (isMuted ? "mic.slash.fill" : "waveform"))
+                .foregroundStyle(
+                    isStale || isMuted
+                        ? VoiceHue.coral
+                        : hcol(VoiceHue.hue(phase), 0.8, 0.9))
+            Text(isStale
+                 ? AlmaVoiceActivityPrivacyPolicy.status(
+                    phase: phase, isMuted: isMuted, isStale: true)
+                 : (isMuted ? "মাইক বন্ধ" : "ব্যক্তিগত ভয়েস সেশন"))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(VoiceHue.textSecondary)
                 .lineLimit(1)
@@ -175,6 +178,8 @@ private struct EndButton: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("ভয়েস সেশন শেষ করুন")
+        .accessibilityHint("ALMA-এর চলমান ভয়েস সেশন বন্ধ করবে")
     }
 }
 
@@ -245,16 +250,20 @@ private struct AuroraGlow: View {
 
 @available(iOS 17.0, *)
 private struct VoiceLockScreenView: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let context: ActivityViewContext<AlmaVoiceActivityAttributes>
 
     var body: some View {
-        let phase = context.state.phase
+        let phase = context.isStale ? "ended" : context.state.phase
         let hue = VoiceHue.hue(phase)
         VStack(spacing: 9) {
             HStack(spacing: 9) {
                 AlmaIslandOrb(size: 24, hue: hue)
                 Wordmark()
-                Text(VoiceHue.status(phase))
+                Text(AlmaVoiceActivityPrivacyPolicy.status(
+                    phase: phase,
+                    isMuted: context.state.isMuted,
+                    isStale: context.isStale))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(hcol(hue, 0.78, 0.9))
                     .lineLimit(1)
@@ -262,7 +271,10 @@ private struct VoiceLockScreenView: View {
                 ElapsedTimer(startedAt: context.state.startedAt, fontSize: 16)
             }
             HStack(spacing: 10) {
-                VoiceStateLine(phase: phase, isMuted: context.state.isMuted)
+                VoiceStateLine(
+                    phase: phase,
+                    isMuted: context.state.isMuted,
+                    isStale: context.isStale)
                 Spacer(minLength: 8)
                 EndButton()
             }
@@ -270,7 +282,8 @@ private struct VoiceLockScreenView: View {
         .padding(14)
         .background(AuroraGlow(hue: hue))
         // glassy: low-alpha tint lets the wallpaper melt through (owner: "transparent")
-        .activityBackgroundTint(Color.black.opacity(0.28))
+        .activityBackgroundTint(
+            reduceTransparency ? Color.black.opacity(0.92) : Color.black.opacity(0.28))
         .activitySystemActionForegroundColor(.white)
     }
 }
@@ -283,7 +296,7 @@ struct AlmaVoiceLiveActivity: Widget {
         ActivityConfiguration(for: AlmaVoiceActivityAttributes.self) { context in
             VoiceLockScreenView(context: context)
         } dynamicIsland: { context in
-            let phase = context.state.phase
+            let phase = context.isStale ? "ended" : context.state.phase
             let hue = VoiceHue.hue(phase)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -293,6 +306,8 @@ struct AlmaVoiceLiveActivity: Widget {
                         AlmaIslandOrb(size: 46, hue: hue)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("ALMA শুনুক")
+                    .accessibilityHint("চলমান ভয়েস সেশনে শোনা শুরু করবে")
                     .frame(maxHeight: .infinity, alignment: .center)
                     .padding(.leading, 8)
                     .padding(.top, 6)
@@ -306,12 +321,18 @@ struct AlmaVoiceLiveActivity: Widget {
                     VStack(spacing: 6) {
                         HStack(spacing: 8) {
                             Wordmark(size: 10.5)
-                            Text(VoiceHue.status(phase))
+                            Text(AlmaVoiceActivityPrivacyPolicy.status(
+                                phase: phase,
+                                isMuted: context.state.isMuted,
+                                isStale: context.isStale))
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(hcol(hue, 0.8, 0.9))
                                 .lineLimit(1)
                         }
-                        VoiceStateLine(phase: phase, isMuted: context.state.isMuted)
+                        VoiceStateLine(
+                            phase: phase,
+                            isMuted: context.state.isMuted,
+                            isStale: context.isStale)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -328,24 +349,35 @@ struct AlmaVoiceLiveActivity: Widget {
             } compactLeading: {
                 OfficeRobotLiveGlyph(
                     context: .voice(phase: phase),
-                    size: 23
+                    size: 23,
+                    animated: false
                 )
                     .padding(.leading, 1)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(VoiceHue.status(phase))
+                    .accessibilityLabel(AlmaVoiceActivityPrivacyPolicy.status(
+                        phase: phase,
+                        isMuted: context.state.isMuted,
+                        isStale: context.isStale))
             } compactTrailing: {
                 Image(systemName: context.state.isMuted ? "mic.slash.fill" : "waveform")
                     .foregroundStyle(context.state.isMuted ? VoiceHue.coral : hcol(hue, 0.8, 0.9))
                     .frame(width: 28, height: 20)
-                    .accessibilityLabel(context.state.isMuted ? "মাইক বন্ধ" : VoiceHue.status(phase))
+                    .accessibilityLabel(AlmaVoiceActivityPrivacyPolicy.status(
+                        phase: phase,
+                        isMuted: context.state.isMuted,
+                        isStale: context.isStale))
             } minimal: {
                 OfficeRobotLiveGlyph(
                     context: .voice(phase: phase),
                     size: 20,
+                    animated: false,
                     cadenceMultiplier: 1.30
                 )
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(VoiceHue.status(phase))
+                    .accessibilityLabel(AlmaVoiceActivityPrivacyPolicy.status(
+                        phase: phase,
+                        isMuted: context.state.isMuted,
+                        isStale: context.isStale))
             }
             .widgetURL(URL(string: "almaerp://office-robot?target=almaerp%3A%2F%2Fagent"))
             .keylineTint(hcol(hue, 0.8, 0.9))

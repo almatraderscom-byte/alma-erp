@@ -32,8 +32,6 @@ final class VoiceLiveActivityController {
     private var lastPushedMuted = false
     private var startedAt = Date()
 
-    private static let maxSession: TimeInterval = 30 * 60
-
     // MARK: - Lifecycle
 
     /// Console opened (engine.begin) — request one activity, or adopt a
@@ -53,9 +51,13 @@ final class VoiceLiveActivityController {
         }
         startedAt = Date()
         let state = contentState()
-        if let existing = Activity<AlmaVoiceActivityAttributes>.activities.first {
+        let existingActivities = Activity<AlmaVoiceActivityAttributes>.activities
+        if let existing = existingActivities.first {
             activity = existing
             Task { await existing.update(content(state)) }
+            for duplicate in existingActivities.dropFirst() {
+                Task { await duplicate.end(nil, dismissalPolicy: .immediate) }
+            }
         } else {
             activity = try? Activity.request(
                 attributes: AlmaVoiceActivityAttributes(sessionTitle: "ভয়েস কথোপকথন"),
@@ -67,7 +69,10 @@ final class VoiceLiveActivityController {
         lastPushedMuted = state.isMuted
         expiryTask?.cancel()
         expiryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.maxSession * 1_000_000_000))
+            try? await Task.sleep(
+                nanoseconds: UInt64(
+                    AlmaVoiceActivityPrivacyPolicy.maximumSessionSeconds
+                        * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.end()
         }
@@ -82,10 +87,18 @@ final class VoiceLiveActivityController {
 
     func stateChanged() {
         #if canImport(ActivityKit)
+        guard AlmaLiveVoiceRecoveryFeatures.isEnabled(.privateLiveActivityV1) else {
+            end()
+            return
+        }
         guard activity != nil else { return }
         let phase = currentPhase()
         let muted = engine?.isMuted ?? false
-        guard phase != lastPushedPhase || muted != lastPushedMuted else { return }
+        guard AlmaVoiceActivityPrivacyPolicy.shouldPublish(
+            previousPhase: lastPushedPhase,
+            previousMuted: lastPushedMuted,
+            nextPhase: phase,
+            nextMuted: muted) else { return }
         push()
         #endif
     }
@@ -123,12 +136,14 @@ final class VoiceLiveActivityController {
     }
 
     private func currentPhase() -> String {
+        let phase: String
         switch engine?.state {
-        case .listening: return "listening"
-        case .transcribing, .thinking: return "thinking"
-        case .speaking: return "speaking"
-        default: return "idle"
+        case .listening: phase = "listening"
+        case .transcribing, .thinking: phase = "thinking"
+        case .speaking: phase = "speaking"
+        default: phase = "idle"
         }
+        return AlmaVoiceActivityPrivacyPolicy.normalizedPhase(phase)
     }
 
     #if canImport(ActivityKit)
@@ -144,7 +159,7 @@ final class VoiceLiveActivityController {
         -> ActivityContent<AlmaVoiceActivityAttributes.ContentState> {
         ActivityContent(
             state: state,
-            staleDate: startedAt.addingTimeInterval(Self.maxSession)
+            staleDate: AlmaVoiceActivityPrivacyPolicy.staleDate(now: Date())
         )
     }
 

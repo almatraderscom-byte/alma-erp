@@ -16,6 +16,60 @@
 import ActivityKit
 import Foundation
 
+/// Pure, dependency-free policy shared by the app, widget and tests. ActivityKit
+/// is a low-frequency status surface: it never receives transcript text, PCM or
+/// an audio-derived/synthetic level. Unknown phases fail closed to `idle`.
+@available(iOS 17.0, *)
+enum AlmaVoiceActivityPrivacyPolicy {
+    static let staleAfterSeconds: TimeInterval = 90
+    static let maximumSessionSeconds: TimeInterval = 30 * 60
+    static let phases: Set<String> = [
+        "idle", "connecting", "listening", "thinking", "working",
+        "speaking", "reconnecting", "ended",
+    ]
+
+    static func normalizedPhase(_ value: String) -> String {
+        phases.contains(value) ? value : "idle"
+    }
+
+    static func staleDate(now: Date) -> Date {
+        now.addingTimeInterval(staleAfterSeconds)
+    }
+
+    static func hardExpiry(startedAt: Date) -> Date {
+        startedAt.addingTimeInterval(maximumSessionSeconds)
+    }
+
+    static func shouldPublish(
+        previousPhase: String,
+        previousMuted: Bool,
+        nextPhase: String,
+        nextMuted: Bool
+    ) -> Bool {
+        normalizedPhase(previousPhase) != normalizedPhase(nextPhase)
+            || previousMuted != nextMuted
+    }
+
+    static func status(
+        phase: String,
+        isMuted: Bool,
+        isStale: Bool = false
+    ) -> String {
+        if isStale { return "সেশন আপডেট বন্ধ" }
+        if isMuted { return "মাইক বন্ধ" }
+        switch normalizedPhase(phase) {
+        case "connecting": return "সংযোগ হচ্ছে"
+        case "listening": return "শুনছি"
+        case "thinking": return "ভাবছি"
+        case "working": return "কাজ করছি"
+        case "speaking": return "বলছি"
+        case "reconnecting": return "আবার সংযোগ হচ্ছে"
+        case "ended": return "শেষ হয়েছে"
+        default: return "প্রস্তুত"
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct AlmaVoiceActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {

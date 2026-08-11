@@ -1087,6 +1087,43 @@ final class LiveVoicePreviewTests: XCTestCase {
         #endif
     }
 
+    func testPrivateLiveActivityPolicyIsLowFrequencyBoundedAndFailClosed() {
+        #if canImport(ActivityKit)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(
+            AlmaVoiceActivityPrivacyPolicy.staleDate(now: now),
+            now.addingTimeInterval(90))
+        XCTAssertEqual(
+            AlmaVoiceActivityPrivacyPolicy.hardExpiry(startedAt: now),
+            now.addingTimeInterval(30 * 60))
+        XCTAssertEqual(
+            AlmaVoiceActivityPrivacyPolicy.normalizedPhase("provider-secret-state"),
+            "idle")
+        XCTAssertEqual(
+            AlmaVoiceActivityPrivacyPolicy.status(phase: "speaking", isMuted: true),
+            "মাইক বন্ধ")
+        XCTAssertEqual(
+            AlmaVoiceActivityPrivacyPolicy.status(
+                phase: "speaking", isMuted: false, isStale: true),
+            "সেশন আপডেট বন্ধ")
+        XCTAssertFalse(AlmaVoiceActivityPrivacyPolicy.shouldPublish(
+            previousPhase: "unknown-a",
+            previousMuted: false,
+            nextPhase: "unknown-b",
+            nextMuted: false))
+        XCTAssertTrue(AlmaVoiceActivityPrivacyPolicy.shouldPublish(
+            previousPhase: "listening",
+            previousMuted: false,
+            nextPhase: "speaking",
+            nextMuted: false))
+        XCTAssertTrue(AlmaVoiceActivityPrivacyPolicy.shouldPublish(
+            previousPhase: "speaking",
+            previousMuted: false,
+            nextPhase: "speaking",
+            nextMuted: true))
+        #endif
+    }
+
     func testDisablingFeatureStopsAnExistingPreviewAndReleasesItsSession() async throws {
         let fixture = try makeFixture()
         let entry = try fixture.catalog.entry(modelID: models[0], voiceID: "Aoede")
