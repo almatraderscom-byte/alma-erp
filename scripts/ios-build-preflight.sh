@@ -94,7 +94,17 @@ if ! "$REPOSITORY_ROOT/scripts/ios-build-provenance.sh" \
 fi
 echo "${GRN}✓${NC} source provenance verified — Xcode will re-verify the copied product resources before bundling provenance"
 
-# 7. Reminder: the build number itself must be a committed fact.
+# 7. Every immutable model × voice sample must be technically verified and
+# explicitly owner-approved before a TestFlight archive can begin. Local and
+# simulator recovery builds use the verifier without --release; this preflight
+# intentionally remains red while any catalog entry is awaiting owner audition.
+if ! node "$REPOSITORY_ROOT/scripts/verify-ios-voice-preview-catalog.mjs" --release; then
+  fail "voice preview catalog is not owner-approved" \
+    "Audition all 12 exact model × voice samples on a real iPhone, record every approval in the tracked catalog, and re-run preflight. Do not regenerate paid samples here."
+fi
+echo "${GRN}✓${NC} voice preview catalog verified and owner-approved"
+
+# 8. Reminder: the build number itself must be a committed fact.
 BUILD_NUM=$(grep -m1 'CURRENT_PROJECT_VERSION' ios/App/App.xcodeproj/project.pbxproj | grep -o '[0-9]\+' || echo '?')
 echo "${GRN}✓ preflight passed${NC} — branch=${BRANCH} commit=${SHA} CURRENT_PROJECT_VERSION=${BUILD_NUM}"
 echo "  Before uploading: bump CURRENT_PROJECT_VERSION in Xcode, COMMIT + PUSH the bump"

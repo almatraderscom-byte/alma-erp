@@ -43,6 +43,7 @@
 		A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
 		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
 		A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */; };
+		A7C100000000000000000002 /* VoicePreviews in Resources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000001 /* VoicePreviews */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
 		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
 		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
@@ -243,6 +244,7 @@
 		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
+		A7C100000000000000000001 /* VoicePreviews */ = {isa = PBXFileReference; lastKnownFileType = folder; path = VoicePreviews; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
@@ -467,6 +469,7 @@
 				FA22BB00000000000000A905 /* AlmaRequestCache.swift */,
 				F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				A7C100000000000000000001 /* VoicePreviews */,
 				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
 				F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */,
 				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
@@ -774,6 +777,7 @@
 				E1AA9900000000000000B005 /* RobotRejectSFX.mp3 in Resources */,
 				504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */,
 				50B271D11FEDC1A000F3C39B /* public in Resources */,
+				A7C100000000000000000002 /* VoicePreviews in Resources */,
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
@@ -887,7 +891,11 @@
 			);
 			inputPaths = (
 				"$(SRCROOT)/../../scripts/ios-build-provenance.sh",
+				"$(SRCROOT)/../../scripts/verify-ios-voice-preview-catalog.mjs",
 				"$(SRCROOT)/BuildSupport/alma-bundled-inputs.sha256",
+				"$(SRCROOT)/../../config/voice-preview-catalog/live-bn-v1.json",
+				"$(SRCROOT)/../../public/voice-previews/live-bn-v1",
+				"$(SRCROOT)/App/VoicePreviews/live-bn-v1",
 				"$(SRCROOT)/../../mobile/www/index.html",
 				"$(SRCROOT)/App/capacitor.config.json",
 				"$(SRCROOT)/App/config.xml",
@@ -899,6 +907,7 @@
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/index.html",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova.js",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova_plugins.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/VoicePreviews/live-bn-v1",
 			);
 			name = "Generate Build Provenance";
 			outputFileListPaths = (
@@ -908,7 +917,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nPRODUCT_ROOT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nPRODUCT_ROOT_PHYSICAL=$(cd \"${PRODUCT_ROOT}\" && pwd -P)\nOUTPUT_PATH=\"${PRODUCT_ROOT_PHYSICAL}/alma-build-provenance.plist\"\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n  --output \"${OUTPUT_PATH}\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\n";
+			shellScript = "set -euo pipefail\nPRODUCT_ROOT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nPRODUCT_ROOT_PHYSICAL=$(cd \"${PRODUCT_ROOT}\" && pwd -P)\nOUTPUT_PATH=\"${PRODUCT_ROOT_PHYSICAL}/alma-build-provenance.plist\"\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n  --output \"${OUTPUT_PATH}\"\n)\nCATALOG_ARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\n  CATALOG_ARGS+=(--release)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\nnode \"${SRCROOT}/../../scripts/verify-ios-voice-preview-catalog.mjs\" \"${CATALOG_ARGS[@]}\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
