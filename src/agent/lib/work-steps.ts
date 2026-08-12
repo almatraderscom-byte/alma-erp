@@ -334,7 +334,12 @@ export async function syncPlanTracker(
         currentTurnId,
         // Placeholder — the same transaction assigns the real revision below.
         revision: plan.trackerRevision + 1,
-        blockedBy: opts.blockedBy !== undefined ? opts.blockedBy : (prior?.blockedBy ?? null),
+        // A running/dispatched step contradicts a remembered owner blocker —
+        // the Plan-Driver resumed past the approval, so the stale reference
+        // must not keep projecting waiting_owner (Codex P2, PR #733 round 3).
+        blockedBy: opts.blockedBy !== undefined
+          ? opts.blockedBy
+          : (plan.steps.some((s) => s.status === 'running') ? null : (prior?.blockedBy ?? null)),
         live: opts.live ?? plan.steps.some((s) => s.status === 'running'),
         now: opts.now,
       })

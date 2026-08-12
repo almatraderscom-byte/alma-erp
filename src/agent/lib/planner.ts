@@ -404,6 +404,9 @@ export async function abandonAutodrive(planId: string): Promise<void> {
       completedAt: new Date(),
     },
   })
+  // Terminal by owner choice — no later step transition will ever refresh the
+  // tracker, so project the cancelled snapshot now (Codex P2, PR #733).
+  void refreshPlanTrackerSnapshot(planId)
 }
 
 /**
