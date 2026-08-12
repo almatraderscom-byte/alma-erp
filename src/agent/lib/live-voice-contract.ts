@@ -26,6 +26,7 @@ const modelSchema = z.object({
   replacementModelID: z.string().min(1).nullable(),
   capabilities: z.object({
     affectiveDialog: z.boolean(),
+    proactiveAudio: z.boolean(),
     functionCallingMode: z.enum([
       'synchronous-only',
       'synchronous-and-asynchronous',

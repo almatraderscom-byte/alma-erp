@@ -107,6 +107,13 @@ export function buildLiveVoiceConfig(
   if (modelContract.capabilities.affectiveDialog) {
     config.enableAffectiveDialog = true
   }
+  // Proactive audio is what stops a thinking pause ("উম্ম…", "আহ্…") from being
+  // read as a finished turn, and it answers sooner once the owner really has
+  // finished. Google documents it on the 2.5 native-audio model only, so the
+  // contract — not this file — decides which model gets it.
+  if (modelContract.capabilities.proactiveAudio) {
+    config.proactivity = { proactiveAudio: true }
+  }
   if (modelContract.capabilities.thinking.mode === 'budget') {
     config.thinkingConfig = { thinkingBudget: modelContract.capabilities.thinking.budget }
   } else {

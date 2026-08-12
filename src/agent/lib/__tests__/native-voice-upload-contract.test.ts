@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { LIVE_VOICE_CONTRACT } from '@/agent/lib/live-voice-contract'
 
 const ROOT = process.cwd()
 
@@ -107,16 +108,21 @@ describe('native voice upload contract', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
 
     expect(voice).toContain('private var allowAffective = false')
-    expect(voice).toContain('**Persona**')
-    expect(voice).toContain('**Conversation**')
-    expect(voice).toContain('**Tool flow**')
-    expect(voice).toContain('**Guardrails**')
-    expect(voice).toContain('Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না')
-    expect(voice).toContain('“আর কিছু জানতে চান?”')
-    expect(voice).toContain('স্বাভাবিকভাবে থেমে শুনবে')
-    expect(voice).toContain('দুঃখ বা খারাপ খবরে')
-    expect(voice).toContain('চাপ, রাগ বা হতাশায়')
-    expect(voice).toContain('scripted announcer')
+    // The persona used to be a second copy inside Swift. Phase 1B made the
+    // versioned contract the one source both the app and the server read, so
+    // these belong to the contract now — asserting them here would re-create
+    // the drift the contract exists to prevent.
+    const instruction = LIVE_VOICE_CONTRACT.sessionProtocol.systemInstruction
+    expect(instruction).toContain('**Persona**')
+    expect(instruction).toContain('**Conversation**')
+    expect(instruction).toContain('**Tool flow**')
+    expect(instruction).toContain('**Guardrails**')
+    expect(instruction).toContain('Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না')
+    expect(instruction).toContain('“আর কিছু জানতে চান?”')
+    expect(instruction).toContain('স্বাভাবিকভাবে থেমে শুনবে')
+    expect(instruction).toContain('দুঃখ বা খারাপ খবরে')
+    expect(instruction).toContain('চাপ, রাগ বা হতাশায়')
+    expect(instruction).toContain('scripted announcer')
     expect(voice).toContain('"temperature": 0.7')
   })
 
@@ -132,7 +138,7 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('.init(id: "Charon", name: "আরিফ"')
     expect(voice).toContain('.init(id: "Orus", name: "অর্ক"')
     expect(voice).toContain('.init(id: "Sulafat", name: "সামি"')
-    expect(voice).toContain('func applySelectedLiveProfileNow()')
+    expect(voice).toContain('func applyLiveProfileNow(modelID: String, voiceID: String) -> Bool')
     expect(voice).not.toContain('gpt-realtime')
   })
 
@@ -173,10 +179,10 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('recentPlaybackCorrelationLocked')
     expect(voice).toContain('AlmaLiveBargeInEvidence.isHumanSpeech')
     expect(voice).toContain('local barge-in confirmed speech')
-    expect(voice).toContain('let needsNoAECDetector = voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('let needsNoAECDetector = acousticOutputClass.needsNoAECProtection(')
     expect(voice).toContain('if needsNoAECDetector, let analyzer = soundAnalyzer')
     expect(voice).toContain('echoFloorRMS * 1.9 + 0.003')
-    expect(voice).toContain('voiceProcessingUnavailable && speakerEnabled')
+    expect(voice).toContain('acousticOutputClass.needsNoAECProtection(')
     expect(voice).toContain('setLoudspeakerProbeMuted(true)')
     expect(voice).toContain('loudspeakerProbeDuckAppliedAt = Date()')
     expect(voice).toContain('duckAppliedAt != .distantPast')
@@ -196,7 +202,7 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('index == trackedIndex ? chunk.deliveryToken : nil')
     expect(voice).toContain('for (index, chunk) in chunks.enumerated() {')
     expect(voice).toContain('inputEvidence: AlmaLiveVoiceCapturedInputPCM.deliveryTokenForSending(')
-    expect(voice).toContain('let serverCanOwnBargeIn = !voiceProcessingUnavailable || !speakerEnabled')
+    expect(voice).toContain('let serverCanOwnBargeIn = !echoExposedLoudspeaker')
     expect(voice).toContain('if serverCanOwnBargeIn {')
     expect(voice).toContain('sendNormally = true')
     expect(voice).toContain('input.isVoiceProcessingEnabled')
@@ -257,10 +263,14 @@ describe('native voice upload contract', () => {
     const voice = readFileSync(join(ROOT, 'ios/App/App/AssistantVoiceSwiftUI.swift'), 'utf8')
     const callKit = readFileSync(join(ROOT, 'ios/App/App/CallKitVoIP.swift'), 'utf8')
     const callUI = readFileSync(join(ROOT, 'ios/App/App/AgentCallUI.swift'), 'utf8')
+    // Two types declare prepareCallKitAudioSession(); take the one that follows
+    // the session preparer, or the slice silently collapses to empty.
+    const prepareStart = voice.indexOf('private func prepareAudioSession(activate: Bool) throws')
     const liveConfigure = voice.slice(
-      voice.indexOf('private func configureAudioOnQueue()'),
-      voice.indexOf('private func capture('),
+      prepareStart,
+      voice.indexOf('func prepareCallKitAudioSession()', prepareStart),
     )
+    expect(liveConfigure).not.toHaveLength(0)
 
     expect(voice).toContain('struct AlmaLiveAudioReadiness')
     expect(voice).toContain('callKitManaged && socketSetupComplete && !callKitAudioActive')
@@ -271,11 +281,11 @@ describe('native voice upload contract', () => {
     expect(voice).toContain('expectedLifecycleEpoch: liveActivitySourceBehaviorEpoch')
     expect(voice).toContain('deferAgentLifecycleEvidenceFinalization(')
     expect(callKit).toContain('agentLifecycleEvidence.deferFinalization(')
-    expect(voice).toContain('try resumeAudioGraphAfterActivation()')
+    expect(voice).toContain('try resumeAudioGraphAfterActivation(for: attempt)')
     expect(voice).toContain('try audioEngine.inputNode.setVoiceProcessingEnabled(true)')
     expect(voice).toContain('voiceProcessingUnavailable = !audioEngine.inputNode.isVoiceProcessingEnabled')
     expect(voice).toContain('updateReadiness { $0.audioConfigured = false }')
-    expect(callKit).toContain('AgentCallController.shared.audioSessionDeactivated(lifecycleObservation)')
+    expect(callKit).toContain('AgentCallController.shared.audioSessionDeactivated(')
     expect(liveConfigure).toContain('options: [.allowBluetoothHFP]')
     expect(liveConfigure).not.toContain('options: [.allowBluetoothHFP, .defaultToSpeaker]')
     expect(voice).toContain('overrideOutputAudioPort(enabled ? .speaker : .none)')
@@ -287,7 +297,10 @@ describe('native voice upload contract', () => {
     expect(callUI.indexOf('try eng.prepareCallKitAudioSession()')).toBeLessThan(
       callUI.indexOf('eng.begin()'),
     )
-    expect(callKit).toContain('guard AgentCallController.shared.start(callId: call.broadcastId, purpose: "") else')
+    // The start now returns a typed session and takes the CallKit UUID and the
+    // audio-admission token, so it no longer fits on one line.
+    expect(callKit).toContain('guard let agentSession = AgentCallController.shared.start(')
+    expect(callKit).toContain('callId: call.broadcastId,')
     expect(callKit.indexOf('AgentCallController.shared.start(callId: call.broadcastId')).toBeLessThan(
       callKit.indexOf('action.fulfill()', callKit.indexOf('AgentCallController.shared.start(callId: call.broadcastId')),
     )

@@ -103,6 +103,29 @@ describe('live voice configuration', () => {
     expect(natural.speechConfig?.languageCode).toBeUndefined()
   })
 
+  it('asks for proactive audio only on the model Google documents it for', () => {
+    // A thinking pause is not the end of a turn. Proactive audio is what tells
+    // the two apart; 3.1 Flash Live does not support it and must not be sent it.
+    expect(buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
+      .toEqual({ proactiveAudio: true })
+    expect(buildLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
+      .toEqual({ proactiveAudio: true })
+    expect(buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL).proactivity)
+      .toBeUndefined()
+  })
+
+  it('lets ALMA open a turn like a person instead of banning every filler', () => {
+    // The old instruction banned "হুম" outright, which is why the owner heard a
+    // machine. Naturalness is bounded, not forbidden: one opener per turn, and
+    // never spoken over the owner — the provider is strictly turn-based.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“হুম”')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('জোর করে হাসি, আশাবাদ, উপদেশ, “হুম”')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রতি টার্নে সর্বোচ্চ একটি')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss কথা বলার সময় নয়')
+    // Theatrics stay banned.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('দীর্ঘশ্বাস')
+  })
+
   it('avoids robotic conversation habits and asks for Bangladeshi pronunciation', () => {
     expect(buildLiveVoiceConfig().temperature).toBe(0.7)
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION.indexOf('**Persona**')).toBeLessThan(

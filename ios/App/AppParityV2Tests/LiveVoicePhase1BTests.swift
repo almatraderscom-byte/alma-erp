@@ -18,7 +18,7 @@ final class LiveVoicePhase1BTests: XCTestCase {
 
     func testContractOwnsDefaultsCapabilitiesAndBoundedContext() throws {
         let contract = try contract()
-        XCTAssertEqual(contract.contractVersion, "live-voice-2026-08-11-v1")
+        XCTAssertEqual(contract.contractVersion, "live-voice-2026-08-12-v2")
         XCTAssertEqual(contract.schemaVersion, 1)
         XCTAssertEqual(contract.defaults.modelID, contract.enabledModels[0].id)
         XCTAssertEqual(contract.defaults.voiceID, "Aoede")

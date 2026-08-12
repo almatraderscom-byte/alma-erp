@@ -75,6 +75,7 @@ struct AlmaLiveVoiceContract: Decodable, Equatable {
 
     struct Capabilities: Decodable, Equatable {
         let affectiveDialog: Bool
+        let proactiveAudio: Bool
         let functionCallingMode: String
         let thinking: Thinking
         let inputAudioTranscription: Bool
@@ -413,7 +414,7 @@ extension AlmaLiveVoiceContract {
             let capabilities = try object(
                 model["capabilities"],
                 allowed: [
-                    "affectiveDialog", "functionCallingMode", "thinking",
+                    "affectiveDialog", "proactiveAudio", "functionCallingMode", "thinking",
                     "inputAudioTranscription", "outputAudioTranscription",
                 ],
                 path: "models[\(index)].capabilities")

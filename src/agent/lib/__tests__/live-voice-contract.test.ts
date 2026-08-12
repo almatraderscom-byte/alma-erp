@@ -20,7 +20,7 @@ describe('versioned live voice contract', () => {
 
   it('has one enabled default and an explicit bounded compression window', () => {
     const contract = LIVE_VOICE_CONTRACT
-    expect(contract.contractVersion).toBe('live-voice-2026-08-11-v1')
+    expect(contract.contractVersion).toBe('live-voice-2026-08-12-v2')
     expect(contract.schemaVersion).toBe(1)
     expect(contract.models.filter((model) => model.enabled).map((model) => model.id))
       .toEqual([
