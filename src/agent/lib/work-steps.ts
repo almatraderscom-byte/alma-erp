@@ -62,7 +62,7 @@ export type WorkStepsSnapshot = {
   conversationId: string
   originAssistantMessageId: string | null
   revision: number
-  source: 'agent_plan'
+  source: 'agent_plan' | 'turn_runtime'
   sourceId: string
   goal: string
   status: WorkStepsOverallStatus
@@ -310,6 +310,102 @@ export async function persistWorkStepsSnapshot(snapshot: WorkStepsSnapshot): Pro
     return updated.count > 0
   } catch {
     return false
+  }
+}
+
+// ── Runtime projector for UNPLANNED turns ───────────────────────────────────
+//
+// The owner's live test (2026-08-12) showed the gap: a complex request the
+// head serves directly — without staging an AgentPlan — had no tracker at
+// all. Handoff §truth-precedence sanctions a factual runtime projector using
+// honest macro phases whose transitions come only from real evidence:
+// the accepted turn exists, tool rounds actually ran, the honesty guard
+// actually retried, the final answer was actually persisted. No invented
+// fixed plan, no estimated percentage; a trivial tool-free answer emits
+// nothing.
+
+export type RuntimeWorkPhase = 'working' | 'verifying' | 'delivering' | 'settled'
+
+export function projectRuntimeWorkSteps(input: {
+  turnId: string
+  conversationId: string
+  goal: string
+  revision: number
+  phase: RuntimeWorkPhase
+  completedToolRounds: number
+  verificationHappened: boolean
+  blockedBy: WorkStepsBlocker | null
+  originAssistantMessageId?: string | null
+  now?: Date
+}): WorkStepsSnapshot {
+  const now = input.now ?? new Date()
+  const { phase } = input
+  const steps: WorkStepsSnapshotStep[] = []
+  const push = (id: string, title: string, status: WorkStepStatus) => {
+    steps.push({
+      id: `rt-${input.turnId}-${id}`,
+      position: steps.length + 1,
+      title,
+      status,
+      toolCallIds: [],
+      startedAt: null,
+      finishedAt: null,
+    })
+  }
+  // Evidence: the persisted owner request was accepted (this turn exists).
+  push('accept', 'অনুরোধ বুঝে নেওয়া', 'completed')
+  // Evidence: tool rounds actually executed (the projector is only invoked
+  // once the first round completed).
+  const roundLabel = input.completedToolRounds > 1
+    ? `তথ্য সংগ্রহ ও কাজ (${bn(input.completedToolRounds)} ধাপ টুল-কাজ)`
+    : 'তথ্য সংগ্রহ ও কাজ'
+  push('work', roundLabel, phase === 'working' ? 'running' : 'completed')
+  // Appears only when the honesty guard ACTUALLY retried this turn.
+  if (input.verificationHappened) {
+    push('verify', 'উত্তর যাচাই', phase === 'verifying' ? 'running' : 'completed')
+  }
+  if (phase === 'delivering' || phase === 'settled') {
+    push('answer', 'উত্তর তৈরি', phase === 'settled' ? 'completed' : 'running')
+  }
+
+  const doneCount = steps.filter((s) => s.status === 'completed').length
+  let status: WorkStepsOverallStatus
+  if (input.blockedBy?.kind === 'approval' || input.blockedBy?.kind === 'question') {
+    status = 'waiting_owner'
+    const active = steps.find((s) => s.status === 'running')
+    if (active) active.status = 'waiting_owner'
+  } else if (phase === 'settled') {
+    status = 'completed'
+  } else {
+    status = 'running'
+  }
+  const running = steps.find((s) => s.status === 'running')
+  const waiting = steps.find((s) => s.status === 'waiting_owner')
+  const headline =
+    status === 'completed' ? `${bn(steps.length)}/${bn(steps.length)} ধাপ শেষ`
+    : status === 'waiting_owner' ? `আপনার সিদ্ধান্তের অপেক্ষায়${waiting ? `: ${waiting.title}` : ''}`
+    : running ? `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ · এখন: ${running.title}`
+    : `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ`
+
+  return {
+    type: 'work_steps_snapshot',
+    version: WORK_STEPS_SNAPSHOT_VERSION,
+    trackerId: `turn:${input.turnId}`,
+    originTurnId: input.turnId,
+    currentTurnId: input.turnId,
+    turnIds: [input.turnId],
+    conversationId: input.conversationId,
+    originAssistantMessageId: input.originAssistantMessageId ?? null,
+    revision: input.revision,
+    source: 'turn_runtime',
+    sourceId: input.turnId,
+    goal: input.goal,
+    status,
+    headline,
+    blockedBy: input.blockedBy,
+    retryRef: null,
+    steps,
+    updatedAt: now.toISOString(),
   }
 }
 

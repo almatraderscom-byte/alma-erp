@@ -428,7 +428,19 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       timeline,
       // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
       // this assistant message; cold history equals the settled live tracker.
-      workSteps: workStepsByMsg.get(m.id) ?? undefined,
+      // Plan trackers come from agent_plans; unplanned runtime trackers ride
+      // the message's own usage metadata (single writer, settled at save).
+      workSteps: (() => {
+        const fromPlans = workStepsByMsg.get(m.id) ?? []
+        const fromUsage = Array.isArray(u.workSteps)
+          ? (u.workSteps as unknown[]).filter((snap) => (
+              !!snap && typeof snap === 'object'
+              && (snap as Record<string, unknown>).type === 'work_steps_snapshot'
+            ))
+          : []
+        const merged = [...fromPlans, ...fromUsage]
+        return merged.length > 0 ? merged : undefined
+      })(),
       // ONE canonical, versioned presentation projection (parity roadmap §5) —
       // additive next to every legacy field; both clients converge on this.
       presentation:
