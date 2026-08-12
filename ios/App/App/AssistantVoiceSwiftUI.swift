@@ -3432,6 +3432,14 @@ final class AlmaVoiceEngine {
     /// call, and how many corrections this call has already spent.
     private var spokenTurnHadToolCall = false
     private var workFollowThroughBudget = AlmaLiveVoiceWorkFollowThrough.Budget()
+    /// Dropped-request recovery: Gemini discards owner content that collides
+    /// with an open model turn (server "INTERRUPTED model turn"), so the
+    /// harness stashes what Boss said and replays it if the next spoken turn
+    /// settles without doing any work.
+    private var droppedRequestRecovery = AlmaLiveVoiceDroppedRequestRecovery()
+    /// Latest owner input transcript (finalized or partial) — what an
+    /// interruption would swallow.
+    private var lastOwnerTranscript = ""
     private var feedUserLineId: String? = nil
     private var feedAgentLineId: String? = nil
 
@@ -4337,6 +4345,8 @@ final class AlmaVoiceEngine {
         liveTurnId = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
         liveToolSettleTask?.cancel(); liveToolSettleTask = nil
+        droppedRequestRecovery = AlmaLiveVoiceDroppedRequestRecovery()
+        lastOwnerTranscript = ""
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
         listenGeneration &+= 1
@@ -5528,6 +5538,19 @@ final class AlmaVoiceEngine {
     }
 
     func liveInputTranscriptSnapshot(_ text: String, finalized: Bool) {
+        // Track what Boss is saying RIGHT NOW — this is exactly what a
+        // server-confirmed interruption would swallow (liveWasInterrupted
+        // stashes it for replay).
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { lastOwnerTranscript = trimmed }
+        // A NEW finalized owner request supersedes any older stashed one —
+        // replaying stale speech after Boss has moved on would be worse than
+        // the original drop. stash() ignores short fillers, so a meaningful
+        // stash is never clobbered by "হুম".
+        if finalized, droppedRequestRecovery.stashedRequest != nil,
+           trimmed != droppedRequestRecovery.stashedRequest {
+            droppedRequestRecovery.stash(trimmed)
+        }
         applyLiveInputTranscript(text, replacingAggregate: true, finalized: finalized)
     }
 
@@ -5654,6 +5677,21 @@ final class AlmaVoiceEngine {
                 feedStatus("কথা নয় — কাজ করানো হচ্ছে…")
                 return
             }
+            // Dropped-request recovery (live-reproduced 2026-08-13): if an
+            // interruption swallowed an owner request and this settled turn
+            // did NO work (no tool call, nothing pending), replay the stashed
+            // request as a harness correction instead of making Boss repeat
+            // himself. The budget bounds a model that keeps dropping it.
+            if liveActive, !liveToolTurnPending, !spokenTurnHadToolCall,
+               let request = droppedRequestRecovery.consumeForResend() {
+                #if DEBUG
+                NSLog("ALMA-VOICE dropped-request resend")
+                #endif
+                live.sendRealtimeText(AlmaLiveVoiceDroppedRequestRecovery.resendText(request))
+                state = .thinking
+                feedStatus("হারানো অনুরোধ আবার পাঠানো হচ্ছে…")
+                return
+            }
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
             #if DEBUG
             debugInjectNextQueuedTurnAfterPlayback()
@@ -5722,6 +5760,12 @@ final class AlmaVoiceEngine {
     }
 
     func liveWasInterrupted() {
+        // The server just confirmed it cut the model's turn because owner
+        // content arrived — Gemini DISCARDS that content (live-reproduced
+        // 2026-08-13: a report request injected during the greeting was
+        // answered with a fresh greeting). Stash what Boss said so the
+        // harness can replay it if the next spoken turn does no work.
+        droppedRequestRecovery.stash(lastOwnerTranscript)
         ttsLevel = 0
         nowLine = ""
         // NOTE: deliberately NOT clearing liveToolTurnPending — an interruption
@@ -5794,6 +5838,9 @@ final class AlmaVoiceEngine {
             return
         }
         spokenTurnHadToolCall = true
+        // A tool call means the request IS being worked — nothing was dropped,
+        // so a later replay would duplicate the work.
+        droppedRequestRecovery.clear()
         switch invocation.payload {
         case .quickLookup(let tool):
             runQuickLookup(tool: tool, callId: invocation.callID)
@@ -5840,6 +5887,7 @@ final class AlmaVoiceEngine {
         livePollTask?.cancel(); livePollTask = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
         liveToolSettleTask?.cancel(); liveToolSettleTask = nil
+        droppedRequestRecovery.clear()
         let canceledTurnID = liveTurnId
         liveTurnId = nil
         _ = applyLifecycleEvent(.toolCompleted(id: invocation.callID))
