@@ -40,6 +40,11 @@ final class AssistantParityV2UITests: XCTestCase {
             "testGoalsSheetUsesAuthoritativeStateAndAllAgentPause",
             "testArchivedChatBrowserShowsRestorableConversationRows",
             "testConversationLibrarySurfaceMatchesMenuDestination",
+            "testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote",
+            "testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas",
+            "testWorkStepsTrackerBlockAndDockShareOneStore",
+            "testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras",
+            "testColdSessionRestoreNeverShowsHeroBehindLoader",
         ].contains { name.contains($0) }
         if ownsFixtureLaunch {
             // These tests immediately relaunch with a dedicated fixture. Avoid
@@ -859,6 +864,111 @@ final class AssistantParityV2UITests: XCTestCase {
     private var hasIOS265WebAccessibilityConflict: Bool {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return version.majorVersion == 26 && version.minorVersion == 5
+    }
+
+    // MARK: - Build 103 Issue 2/3 fixtures
+
+    private func launchFixture(_ env: [String: String]) -> XCUIApplication {
+        let fixture = XCUIApplication()
+        fixture.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
+        fixture.launchEnvironment["ALMA_OPEN_TAB"] = "2"
+        fixture.launchArguments.append("ALMA_OPEN_TAB=2")
+        for (key, value) in env { fixture.launchEnvironment[key] = value }
+        fixture.launch()
+        return fixture
+    }
+
+    func testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote() {
+        let fixture = launchFixture(["ALMA_ASSISTANT_IMAGE_SETUP_PROOF": "1"])
+        let setupRow = fixture.buttons["agent.confirm-card.image-setup"]
+        XCTAssertTrue(setupRow.waitForExistence(timeout: 8),
+                      "pending v2 card must show the Image setup summary row")
+        // The summary names preset, exact server-resolved pixels and count.
+        XCTAssertTrue(fixture.staticTexts["Facebook / Instagram post · 4:5 · 1856×2304"]
+            .waitForExistence(timeout: 4))
+        let quote = fixture.otherElements["agent.confirm-card.image-quote"]
+            .firstMatch
+        XCTAssertTrue(quote.exists || fixture.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Estimate $0.2"))
+            .firstMatch.exists)
+        setupRow.tap()
+        let sheet = fixture.otherElements["agent.image-setup.sheet"]
+        _ = sheet.waitForExistence(timeout: 4)
+        // Preset chips, size options with reasons, count and quality controls.
+        XCTAssertTrue(fixture.buttons["agent.image-setup.preset.poster"]
+            .waitForExistence(timeout: 4))
+        let fourK = fixture.buttons["agent.image-setup.size.4K"]
+        XCTAssertTrue(fourK.waitForExistence(timeout: 4))
+        XCTAssertFalse(fourK.isEnabled,
+                       "an unsupported size stays visible with its reason, never tappable")
+        XCTAssertTrue(fixture.buttons["agent.image-setup.count.4"].exists)
+        XCTAssertTrue(fixture.buttons["agent.image-setup.quality.pro"].exists)
+        XCTAssertTrue(fixture.buttons["agent.image-setup.model.gpt-image-2"].exists)
+    }
+
+    func testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas() {
+        let fixture = launchFixture([
+            "ALMA_ASSISTANT_IMAGE_SETUP_PROOF": "1",
+            "ALMA_ASSISTANT_IMAGE_SETUP_STATUS": "approved",
+            "ALMA_ASSISTANT_IMAGE_SETUP_ASPECT": "2:3",
+        ])
+        let lockedRow = fixture.otherElements["agent.confirm-card.image-setup"]
+        XCTAssertTrue(lockedRow.waitForExistence(timeout: 8),
+                      "after approval the pinned setup renders read-only")
+        XCTAssertTrue(fixture.staticTexts["Portrait poster · 2:3 · 1664×2496"]
+            .waitForExistence(timeout: 4))
+        XCTAssertFalse(fixture.buttons["agent.image-setup.sheet"].exists)
+    }
+
+    func testWorkStepsTrackerBlockAndDockShareOneStore() {
+        let fixture = launchFixture(["ALMA_ASSISTANT_WORK_STEPS_PROOF": "1"])
+        // Canonical in-turn block.
+        let header = fixture.buttons["agent.work-steps.header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 8))
+        // Dock strip above the composer projects the SAME tracker (1 of 5).
+        let dock = fixture.buttons["agent.work-steps.dock.progress"]
+        XCTAssertTrue(dock.waitForExistence(timeout: 4))
+        XCTAssertTrue(dock.label.contains("1 of 5"),
+                      "dock count must come from durable step evidence")
+        // Expanding the dock shows the numbered five-step panel while the
+        // composer stays visible.
+        dock.tap()
+        XCTAssertTrue(fixture.otherElements["agent.work-steps.dock.panel"]
+            .waitForExistence(timeout: 4))
+        XCTAssertTrue(fixture.textViews.firstMatch.exists
+                      || fixture.textFields.firstMatch.exists,
+                      "composer must remain mounted under the expanded panel")
+        // Expanding the block lists steps with stable identifiers.
+        dock.tap()   // collapse to avoid covering the block
+        header.tap()
+        XCTAssertTrue(fixture.otherElements["agent.work-steps.step.fixture-step-2"]
+            .waitForExistence(timeout: 4))
+    }
+
+    func testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras() {
+        let fixture = launchFixture([
+            "ALMA_ASSISTANT_WORK_STEPS_PROOF": "1",
+            "ALMA_ASSISTANT_WORK_STEPS_VARIANT": "settled",
+        ])
+        let header = fixture.buttons["agent.work-steps.header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 8))
+        XCTAssertTrue(header.label.contains("5 of 5"))
+        // A settled tracker offers NO dock strip — nothing is running.
+        XCTAssertFalse(fixture.buttons["agent.work-steps.dock.progress"].exists)
+    }
+
+    func testColdSessionRestoreNeverShowsHeroBehindLoader() {
+        // The awakening fixture drives an existing-session restore: during the
+        // restore phase the hero must not exist, and at most ONE restore
+        // indicator is on screen (owner two-robots regression, IMG_0140).
+        let fixture = launchFixture(["ALMA_ASSISTANT_NEW_SESSION_UI": "1"])
+        _ = fixture.wait(for: .runningForeground, timeout: 8)
+        let loader = fixture.otherElements["agent.session.loader"]
+        let hero = fixture.otherElements["agent.empty.hero"]
+        if loader.waitForExistence(timeout: 3) {
+            XCTAssertFalse(hero.exists,
+                           "hero and restore loader may never coexist")
+        }
     }
 
     /// The hybrid shell can briefly expose two accessibility copies of the

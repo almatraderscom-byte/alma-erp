@@ -108,6 +108,8 @@ export async function GET(req: NextRequest) {
         payload: true,
         imageModel: true,
         imageQuote: true,
+        imageConfig: true,
+        imageConfigRevision: true,
         createdAt: true,
       },
     })

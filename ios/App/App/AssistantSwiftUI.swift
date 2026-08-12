@@ -349,6 +349,8 @@ struct AgentContentBlock: Decodable {
     let actionType: String?
     let costEstimate: Double?
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — additive v2 render selection beside the v1 picker.
+    let imageRenderSelection: AgentImageRenderSelectionWire?
     let failReason: String?
     let askCardId: String?
     let question: String?
@@ -464,6 +466,37 @@ struct AgentMessageWire: Decodable {
     let costUsd: AgentJSONValue?
     let createdAt: String?
     let presentation: AgentMessagePresentationWire?
+    /// Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
+    /// this assistant message (cold history equals the settled live tracker).
+    let workSteps: [AgentWorkStepsSnapshotColdWire]?
+}
+
+/// Cold-history variant of the tracker snapshot: same fields, keyed decode.
+struct AgentWorkStepsSnapshotColdWire: Decodable {
+    let version: Int?
+    let trackerId: String?
+    let originTurnId: String?
+    let currentTurnId: String?
+    let turnIds: [String]?
+    let conversationId: String?
+    let originAssistantMessageId: String?
+    let revision: Int?
+    let sourceId: String?
+    let goal: String?
+    let status: String?
+    let headline: String?
+    let blockedBy: AgentWorkStepsBlockerWire?
+    let steps: [AgentWireStep]?
+    let updatedAt: String?
+
+    var trustedValue: AgentWorkStepsSnapshot? {
+        AgentWorkStepsSnapshot.from(
+            version: version, trackerId: trackerId, originTurnId: originTurnId,
+            currentTurnId: currentTurnId, turnIds: turnIds, conversationId: conversationId,
+            originAssistantMessageId: originAssistantMessageId, revision: revision,
+            sourceId: sourceId, goal: goal, status: status, headline: headline,
+            blockedBy: blockedBy, steps: steps, updatedAt: updatedAt)
+    }
 }
 
 /// Canonical server projection. Keep the native fallback derived from timeline,
@@ -1090,6 +1123,8 @@ struct AgentImageActionDetailWire: Decodable, Equatable {
     let status: String
     let summary: String
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — authoritative v2 echo (config + revision + quote).
+    let imageRenderSelection: AgentImageRenderSelectionWire?
 }
 
 struct AgentImageRetryActionWire: Decodable, Equatable {
@@ -1102,6 +1137,8 @@ struct AgentImageRetryActionWire: Decodable, Equatable {
     let businessId: String
     let createdAt: String
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — cloned canonical v2 selection on the fresh card.
+    let imageRenderSelection: AgentImageRenderSelectionWire?
 }
 
 struct AgentImageRetryResponseWire: Decodable, Equatable {
@@ -1117,7 +1154,10 @@ struct AgentImageRetryResponseWire: Decodable, Equatable {
               pendingActionId == action.id,
               action.type == "image_gen",
               action.status == "pending",
-              action.imageModelSelection?.trustedValue != nil else { return nil }
+              // A v2 card (e.g. poster 2:3) may truthfully have no v1
+              // projection — either validated contract authorizes the card.
+              action.imageModelSelection?.trustedValue != nil
+                || action.imageRenderSelection?.trustedValue != nil else { return nil }
         return action
     }
 }
@@ -1440,6 +1480,10 @@ struct AgentChatMessage: Identifiable, Equatable {
         /// Optional additive server contract. A nil value is a legacy card and
         /// must keep the existing truthful no-quote presentation.
         var imageModelSelection: AgentImageModelSelectionWire? = nil
+        /// Build 103 Issue 2 — validated v2 render selection (preset/aspect/
+        /// exact dimensions/quality/count + revisioned quote). Nil = v1 card:
+        /// the existing model-only picker presentation stays.
+        var imageRenderSelection: AgentImageRenderSelection? = nil
     }
     struct AskCard: Identifiable, Equatable {
         let id: String            // askCardId
@@ -1659,7 +1703,8 @@ struct AgentChatMessage: Identifiable, Equatable {
                                                 actionType: block.actionType,
                                                 costEstimate: block.costEstimate,
                                                 failReason: block.failReason,
-                                                imageModelSelection: block.imageModelSelection?.trustedValue))
+                                                imageModelSelection: block.imageModelSelection?.trustedValue,
+                                                imageRenderSelection: block.imageRenderSelection?.trustedValue))
                 }
             case "ask_card":
                 if let aid = block.askCardId {
@@ -2422,6 +2467,78 @@ final class AssistantVM {
     private var generatedImageQCLoadingConversations = Set<String>()
     private static let generatedImageQCCacheLimit = 256
     var loadingHistory = false
+    // ── Build 103 Issue 3: work-step tracker store ─────────────────────────
+    /// One store for hot stream, replay, poll, and cold history — keyed by
+    /// trackerId, merged by monotonic revision. Terminal states dominate.
+    private(set) var workTrackers: [String: AgentWorkStepsSnapshot] = [:]
+    /// Anchors: assistant message id → trackerIds whose canonical block that
+    /// message owns. Written by the terminal bound snapshot and by cold load.
+    private(set) var workTrackerAnchors: [String: [String]] = [:]
+    /// Same-revision/different-payload is a protocol error (telemetry only).
+    func mergeWorkStepsSnapshot(_ snapshot: AgentWorkStepsSnapshot, anchoredMessageId: String? = nil) {
+        if let current = workTrackers[snapshot.trackerId] {
+            if snapshot.revision < current.revision { return }
+            if snapshot.revision == current.revision {
+                if snapshot != current {
+                    AlmaTurnLog.event("workSteps.protocolError",
+                                      "same revision \(snapshot.revision), different payload — \(snapshot.trackerId)")
+                }
+                return
+            }
+            // Replay/poll overlap must never regress a settled tracker to running.
+            if current.isTerminal && !snapshot.isTerminal { return }
+        }
+        workTrackers[snapshot.trackerId] = snapshot
+        let anchor = snapshot.originAssistantMessageId ?? anchoredMessageId
+        if let anchor {
+            var list = workTrackerAnchors[anchor] ?? []
+            if !list.contains(snapshot.trackerId) { list.append(snapshot.trackerId) }
+            workTrackerAnchors[anchor] = list
+            // Reparent: the same logical tracker moves from its live streaming
+            // block to its bound message — remove any other anchor entries.
+            for (messageId, trackers) in workTrackerAnchors where messageId != anchor {
+                if trackers.contains(snapshot.trackerId) {
+                    workTrackerAnchors[messageId] = trackers.filter { $0 != snapshot.trackerId }
+                }
+            }
+        }
+    }
+    /// Trackers whose canonical block this message owns: bound by message id,
+    /// or — while the origin turn is still streaming — by turn linkage.
+    func workTrackers(for message: AgentChatMessage) -> [AgentWorkStepsSnapshot] {
+        var ids = workTrackerAnchors[message.serverId ?? message.id] ?? []
+        if let serverId = message.serverId, ids.isEmpty {
+            ids = workTrackerAnchors[serverId] ?? []
+        }
+        var result = ids.compactMap { workTrackers[$0] }
+        if message.isStreaming, let turnId = currentTurnId {
+            for snapshot in workTrackers.values
+            where snapshot.originAssistantMessageId == nil
+                && snapshot.turnIds.contains(turnId)
+                && !result.contains(snapshot) {
+                result.append(snapshot)
+            }
+        }
+        return result.sorted { $0.trackerId < $1.trackerId }
+    }
+    /// The dock projection: the newest non-terminal tracker of THIS chat. The
+    /// dock is navigation/summary over the same store — never a second state
+    /// machine and never a second set of controls.
+    var activeWorkTracker: AgentWorkStepsSnapshot? {
+        guard let cid = conversationId else { return nil }
+        return workTrackers.values
+            .filter { !$0.isTerminal && ($0.conversationId.isEmpty || $0.conversationId == cid) }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+    func clearWorkTrackersForConversationSwitch() {
+        workTrackers = [:]
+        workTrackerAnchors = [:]
+    }
+    #if DEBUG
+    func debugMergeWorkSteps(_ snapshot: AgentWorkStepsSnapshot, anchoredMessageId: String? = nil) {
+        mergeWorkStepsSnapshot(snapshot, anchoredMessageId: anchoredMessageId)
+    }
+    #endif
     /// Build 103 Issue 1 — the single source of truth for what the chat
     /// surface shows. Initialized to an unresolved route, NEVER an implicit
     /// new chat: the hero renders only from `.readyNew`.
@@ -4832,6 +4949,18 @@ final class AssistantVM {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
 
+        // Build 103 Issue 3 — cold tracker snapshots ride the message wire.
+        // They merge through the SAME monotonic store the live stream uses, so
+        // hot stream, replay, polling and cold load all resolve to the highest
+        // authoritative revision (terminal states can never regress).
+        for message in wire {
+            for cold in message.workSteps ?? [] {
+                if let snapshot = cold.trustedValue {
+                    mergeWorkStepsSnapshot(snapshot, anchoredMessageId: message.id)
+                }
+            }
+        }
+
         // Exact idempotency identity wins. A positional "last local ↔ last
         // server user" fallback used to pair a newly queued follow-up with the
         // previous owner message and silently retire the wrong queue item.
@@ -5837,6 +5966,7 @@ final class AssistantVM {
         lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
         resetHistoryWindowState()
         messages = []
+        clearWorkTrackersForConversationSwitch()   // trackers are per-conversation
         openTasks = []
         artifacts = []
         indexedSessionFileMessages = []
@@ -5955,6 +6085,7 @@ final class AssistantVM {
         usageSnapshot = nil
         pinnedSkillName = nil
         messages = []
+        clearWorkTrackersForConversationSwitch()
         restoreCurrentComposerDraft()
         openTasks = []
         artifacts = []
@@ -7668,16 +7799,25 @@ final class AssistantVM {
                     messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: title))
                 }
             case .confirmCard(let pid, let summary, let actionType, let costEstimate,
-                              let imageModelSelection):
+                              let imageModelSelection, let imageRenderSelection):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }),
                    !messages[i].confirmCards.contains(where: { $0.id == pid }) {
                     messages[i].confirmCards.append(.init(id: pid, summary: summary,
                                                           status: "pending", actionType: actionType,
                                                           costEstimate: costEstimate,
-                                                          imageModelSelection: imageModelSelection))
+                                                          imageModelSelection: imageModelSelection,
+                                                          imageRenderSelection: imageRenderSelection))
                     messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
                 }
+            case .planProgress, .turnProgress:
+                // Typed and decoded (never `unknown` telemetry). The native
+                // tracker renders from `workSteps` snapshots; the web-parity
+                // checklist/status-line projections carry no extra facts.
+                break
+            case .workSteps(let snapshot):
+                mergeWorkStepsSnapshot(snapshot)
+                touchedStream = true
             case .askCard(let aid, let question, let options):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }),
@@ -8424,6 +8564,161 @@ final class AssistantVM {
         answer.createdAt = "2026-08-11T05:42:00.000Z"
         messages = [answer]
         conversationId = "fixture-image-model-conversation"
+    }
+
+    /// Build 103 Issue 2 — v2 image-setup proof card. Decoded through the REAL
+    /// wire decoder so the fixture can never diverge from the production
+    /// contract shape the server emits.
+    static func imageRenderProofSelection(
+        presetId: String = "social_post", aspectRatio: String = "4:5",
+        width: Int = 1856, height: Int = 2304, imageSize: String = "2K",
+        variationCount: Int = 4, revision: Int = 3
+    ) -> AgentImageRenderSelection? {
+        let unit = 0.05
+        let minCost = unit * Double(variationCount)
+        let config: [String: Any] = [
+            "version": 1, "presetId": presetId, "sizeMode": "tier",
+            "aspectRatio": aspectRatio, "imageSize": imageSize,
+            "width": width, "height": height, "quality": "standard",
+            "providerQuality": "medium", "variationCount": variationCount,
+            "pipelineMode": "preview",
+        ]
+        let payload: [String: Any] = [
+            "contractVersion": 2, "revision": revision,
+            "selectedModel": "gpt-image-2",
+            "config": config,
+            "configFingerprint": "fixture-fp-\(revision)",
+            "modelOptions": [
+                ["id": "gpt-image-2", "label": "GPT Image 2", "provider": "openai", "enabled": true],
+                ["id": "gemini-3-pro-image", "label": "Nano Banana Pro", "provider": "gemini", "enabled": true],
+                ["id": "gemini-3.1-flash-image", "label": "Nano Banana 2", "provider": "gemini", "enabled": true],
+                ["id": "seedream-5.0-pro", "label": "Seedream 5 Pro", "provider": "fal",
+                 "enabled": false, "unavailableReason": "Live image worker has not proven this option."],
+            ],
+            "presetOptions": [
+                ["id": "square", "label": "Square", "aspectRatio": "1:1", "enabled": true],
+                ["id": "social_post", "label": "Facebook / Instagram post", "aspectRatio": "4:5", "enabled": true],
+                ["id": "reel_story", "label": "Reel / Story", "aspectRatio": "9:16", "enabled": true],
+                ["id": "landscape", "label": "Landscape / banner", "aspectRatio": "16:9", "enabled": true],
+                ["id": "poster", "label": "Portrait poster", "aspectRatio": "2:3", "enabled": true],
+            ],
+            "sizeOptions": [
+                ["id": "1K", "enabled": true, "width": 928, "height": 1152],
+                ["id": "2K", "enabled": true, "width": 1856, "height": 2304],
+                ["id": "4K", "enabled": false,
+                 "unavailableReason": "GPT Image 2 supports 4K here only at 9:16 or 16:9."],
+            ],
+            "qualityOptions": [
+                ["id": "standard", "providerQuality": "medium",
+                 "description": "OpenAI quality medium — দ্রুত ও সাশ্রয়ী"],
+                ["id": "pro", "providerQuality": "high",
+                 "description": "OpenAI quality high — বেশি output token, বেশি খরচ"],
+            ],
+            "countOptions": [1, 2, 3, 4],
+            "quote": [
+                "version": 2, "currency": "USD", "kind": "provider_render_estimate",
+                "model": "gpt-image-2", "provider": "openai", "presetId": presetId,
+                "aspectRatio": aspectRatio, "imageSize": imageSize,
+                "width": width, "height": height, "quality": "standard",
+                "providerQuality": "medium", "requestedImages": variationCount,
+                "unitPriceUsd": unit, "minCostUsd": minCost, "maxCostUsd": minCost,
+                "maxPaidGenerationsPerImage": 1,
+                "configFingerprint": "fixture-fp-\(revision)",
+                "pricingBasis": "internal_list_estimate", "pricingLastVerifiedAt": "2026-07-12",
+                "pricedComponents": ["provider_output_render"],
+                "excludes": ["qc_vision", "taxes", "provider_credits",
+                             "prompt_text_input_tokens", "reference_image_input_tokens"],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let wire = try? JSONDecoder().decode(AgentImageRenderSelectionWire.self, from: data)
+        else { return nil }
+        return wire.trustedValue
+    }
+
+    func loadImageSetupProofFixture(status: String = "pending", aspect: String = "4:5") {
+        let (presetId, width, height): (String, Int, Int) = {
+            switch aspect {
+            case "2:3": return ("poster", 1664, 2496)
+            case "9:16": return ("reel_story", 1536, 2752)
+            case "16:9": return ("landscape", 2752, 1536)
+            case "1:1": return ("square", 2048, 2048)
+            default: return ("social_post", 1856, 2304)
+            }
+        }()
+        var answer = AgentChatMessage(
+            id: "fix-image-setup", role: .assistant,
+            text: status == "pending"
+                ? "Render-এর আগে image setup (preset, size, সংখ্যা, model) নিশ্চিত করুন।"
+                : "Approve-এর পর pinned setup read-only থাকে।")
+        answer.confirmCards = [.init(
+            id: "fix-image-setup-action",
+            summary: "Image generation request (standard quality, 4 variations)",
+            status: status,
+            actionType: "image_gen",
+            costEstimate: nil,
+            approvedAt: status == "approved" ? Date() : nil,
+            imageModelSelection: Self.imageModelProofSelection(selectedModel: "gpt-image-2"),
+            imageRenderSelection: Self.imageRenderProofSelection(
+                presetId: presetId, aspectRatio: aspect, width: width, height: height))]
+        answer.createdAt = "2026-08-11T05:42:00.000Z"
+        messages = [answer]
+        conversationId = "fixture-image-setup-conversation"
+        #if DEBUG
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-image-setup-conversation"))
+        #endif
+    }
+
+    /// Build 103 Issue 3 — work-step tracker proof: canonical in-turn block +
+    /// composer dock projected from the SAME store, in running / waiting-owner
+    /// / settled variants.
+    func loadWorkStepsProofFixture(variant: String = "running") {
+        var answer = AgentChatMessage(
+            id: "fix-work-steps-message", role: .assistant,
+            text: "কাজটা ধাপে ধাপে এগোচ্ছে — নিচের tracker-এ প্রতিটি ধাপের অবস্থা দেখা যাবে।")
+        answer.createdAt = "2026-08-11T05:42:00.000Z"
+        answer.serverId = "fix-work-steps-message"
+        let status = variant == "waiting" ? "waiting_owner"
+            : variant == "settled" ? "completed" : "running"
+        let stepStatuses: [String] = variant == "settled"
+            ? ["completed", "completed", "completed", "completed", "completed"]
+            : variant == "waiting"
+                ? ["completed", "completed", "waiting_owner", "pending", "pending"]
+                : ["completed", "running", "pending", "pending", "pending"]
+        let titles = [
+            "Finish and review atomic per-image model selection and quote contract",
+            "Finish native picker/recovery UI and focused unit/UI tests",
+            "Run backend, worker, type, Swift and simulator verification",
+            "Create clean release branch, commit and PR",
+            "Verify TestFlight readiness and report",
+        ]
+        let snapshot = AgentWorkStepsSnapshot(
+            trackerId: "fixture-plan-1",
+            originTurnId: "fixture-turn-1",
+            currentTurnId: "fixture-turn-1",
+            turnIds: ["fixture-turn-1"],
+            conversationId: "fixture-work-steps-conversation",
+            originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
+            revision: variant == "settled" ? 7 : 3,
+            sourceId: "fixture-plan-1",
+            goal: "Ship the Build 103 three-issue candidate",
+            status: status,
+            headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"
+                : variant == "settled" ? "৫/৫ ধাপ শেষ" : "১/৫ ধাপ শেষ · এখন: native picker",
+            blockedByKind: variant == "waiting" ? "approval" : nil,
+            blockedByRefId: variant == "waiting" ? "fix-image-setup-action" : nil,
+            steps: titles.enumerated().map { index, title in
+                .init(id: "fixture-step-\(index + 1)", position: index + 1,
+                      title: title, status: stepStatuses[index],
+                      startedAt: nil, finishedAt: nil)
+            },
+            updatedAt: "2026-08-11T05:45:00.000Z")
+        messages = [answer]
+        conversationId = "fixture-work-steps-conversation"
+        #if DEBUG
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-work-steps-conversation"))
+        #endif
+        mergeWorkStepsSnapshot(snapshot, anchoredMessageId: "fix-work-steps-message")
     }
 
     /// Focused pending-image pricing proof. The legacy server value remains in
@@ -9367,6 +9662,9 @@ final class AssistantVM {
             if let selection = detail.imageModelSelection?.trustedValue {
                 messages[messageIndex].confirmCards[cardIndex].imageModelSelection = selection
             }
+            if let renderSelection = detail.imageRenderSelection?.trustedValue {
+                messages[messageIndex].confirmCards[cardIndex].imageRenderSelection = renderSelection
+            }
         }
     }
 
@@ -9449,6 +9747,110 @@ final class AssistantVM {
                 } else {
                     errorToast = "মডেল বদলানো হয়নি — server state মিলিয়ে নেওয়া হয়েছে"
                 }
+            }
+            AlmaAgentHaptics.warning()
+            return false
+        }
+    }
+
+    /// Build 103 Issue 2 — one atomic multi-field edit through the revisioned
+    /// server CAS. Selection state is applied ONLY from the server echo; while
+    /// the mutation (or its loss-reconciliation) is unresolved, Approve stays
+    /// disabled via the same `isChangingImageModel` gate as the v1 picker.
+    struct AgentImageConfigProposal: Equatable {
+        var imageModel: String
+        var presetId: String
+        var imageSize: String
+        var quality: String
+        var variationCount: Int
+    }
+
+    func imageRenderSelection(for cardId: String) -> AgentImageRenderSelection? {
+        messages.lazy.flatMap(\.confirmCards)
+            .first(where: { $0.id == cardId })?.imageRenderSelection
+    }
+
+    @discardableResult
+    func selectImageRenderConfig(cardId: String, proposal: AgentImageConfigProposal) async -> Bool {
+        guard let card = messages.lazy.flatMap(\.confirmCards).first(where: { $0.id == cardId }),
+              card.actionType == "image_gen",
+              card.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pending",
+              let selection = card.imageRenderSelection else {
+            errorToast = "এই setup এখন বদলানো যাচ্ছে না"
+            AlmaAgentHaptics.warning()
+            return false
+        }
+        let unchanged = selection.selectedModel == proposal.imageModel
+            && selection.config.presetId == proposal.presetId
+            && selection.config.imageSize == proposal.imageSize
+            && selection.config.quality == proposal.quality
+            && selection.config.variationCount == proposal.variationCount
+        if unchanged { return true }
+
+        let mutationKey = "image-config:\(cardId)"
+        guard beginSubmitting(mutationKey) else { return false }
+        imageModelMutationTargetByCard[cardId] = proposal.imageModel
+        defer {
+            imageModelMutationTargetByCard.removeValue(forKey: cardId)
+            finishSubmitting(mutationKey)
+        }
+
+        struct ImageConfigEditBody: Encodable {
+            struct Config: Encodable {
+                let expectedRevision: Int
+                let imageModel: String
+                let presetId: String
+                let imageSize: String
+                let quality: String
+                let variationCount: Int
+            }
+            let imageConfig: Config
+        }
+        let body = ImageConfigEditBody(imageConfig: .init(
+            expectedRevision: selection.revision,
+            imageModel: proposal.imageModel,
+            presetId: proposal.presetId,
+            imageSize: proposal.imageSize,
+            quality: proposal.quality,
+            variationCount: proposal.variationCount))
+        do {
+            let detail: AgentImageActionDetailWire = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(cardId)", body: body)
+            guard detail.id == cardId, detail.type == "image_gen",
+                  let echoed = detail.imageRenderSelection?.trustedValue else {
+                _ = await fetchImageActionDetail(cardId)
+                errorToast = "সার্ভারের setup response মেলেনি — card মিলিয়ে নেওয়া হয়েছে"
+                AlmaAgentHaptics.warning()
+                return false
+            }
+            applyImageActionDetail(detail)
+            let applied = echoed.selectedModel == proposal.imageModel
+                && echoed.config.presetId == proposal.presetId
+                && echoed.config.imageSize == proposal.imageSize
+                && echoed.config.quality == proposal.quality
+                && echoed.config.variationCount == proposal.variationCount
+            if applied {
+                AlmaAgentHaptics.success()
+                return true
+            }
+            errorToast = "সার্ভার setup গ্রহণ করেনি — বর্তমান অবস্থা দেখানো হচ্ছে"
+            AlmaAgentHaptics.warning()
+            return false
+        } catch {
+            // 409 (revision moved / already resolved) and 422 replies still
+            // carry/imply current server state — always re-read the SAME action
+            // so the card reflects server truth, never the lost request.
+            _ = await fetchImageActionDetail(cardId)
+            if case AlmaAPIError.http(let status, _) = error {
+                if status == 409 {
+                    errorToast = "Setup ইতিমধ্যে বদলেছে — নতুন অবস্থা দেখে আবার নিশ্চিত করুন"
+                } else if status == 422 {
+                    errorToast = "এই কম্বিনেশনটি এই মডেলে সম্ভব নয় বা এখন unavailable"
+                } else {
+                    errorToast = "Setup বদলানো যায়নি — card অপরিবর্তিত আছে"
+                }
+            } else {
+                errorToast = "Setup নিশ্চিত করা যায়নি — card মিলিয়ে নেওয়া হয়েছে"
             }
             AlmaAgentHaptics.warning()
             return false
@@ -12210,6 +12612,18 @@ enum AgentGeneratedImagePreviewBuilder {
 /// cropping or making the conversation jump during decode.
 enum AgentGeneratedImageSizing {
     static let stableContainerAspectRatio: CGFloat = 4.0 / 5.0
+
+    /// Build 103 Issue 2 — container ratio from the pinned "W:H" config. The
+    /// clamp keeps a phone-height bound for tall (9:16) and wide (16:9) media;
+    /// unknown/legacy input keeps the stable 4:5 reservation.
+    static func containerAspectRatio(fromPinned aspect: String?) -> CGFloat {
+        guard let aspect else { return stableContainerAspectRatio }
+        let parts = aspect.split(separator: ":")
+        guard parts.count == 2,
+              let w = Double(parts[0]), let h = Double(parts[1]),
+              w > 0, h > 0 else { return stableContainerAspectRatio }
+        return CGFloat(min(max(w / h, 0.5), 1.9))
+    }
 }
 
 enum AgentGeneratedImageDataLoader {
@@ -12276,6 +12690,9 @@ private struct AgentAdjacentRemoteImageGallery: View {
 private struct AgentGeneratedImageGallery: View {
     let items: [AgentGeneratedImageItem]
     let vm: AssistantVM
+    /// Build 103 Issue 2 — the approved config's composition shape for the
+    /// single-image reservation; legacy messages keep the stable 4:5.
+    var pinnedAspectRatio: CGFloat? = nil
     @Environment(\.colorScheme) private var scheme
     @State private var urls: [String: URL] = [:]
     @State private var images: [String: UIImage] = [:]
@@ -12311,9 +12728,10 @@ private struct AgentGeneratedImageGallery: View {
         VStack(alignment: .leading, spacing: 8) {
             if imageItems.count == 1, let item = imageItems.first {
                 tile(item, index: 0, pal: pal)
-                    .aspectRatio(AgentGeneratedImageSizing.stableContainerAspectRatio,
+                    .aspectRatio(pinnedAspectRatio
+                                 ?? AgentGeneratedImageSizing.stableContainerAspectRatio,
                                  contentMode: .fit)
-                    .frame(maxWidth: 520)
+                    .frame(maxWidth: 520, maxHeight: 560)
             } else if !imageItems.isEmpty {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
                     ForEach(Array(imageItems.enumerated()), id: \.offset) { index, item in
@@ -13227,10 +13645,24 @@ struct AgentMessageRow: View {
                         .padding(.vertical, 2)
                     }
 
+                    // Build 103 Issue 3 — the canonical turn-owned tracker
+                    // block, anchored to this assistant message (live via turn
+                    // linkage, settled/cold via the bound message id).
+                    ForEach(vm.workTrackers(for: message), id: \.trackerId) { snapshot in
+                        AgentWorkStepsBlockView(snapshot: snapshot, pal: pal) { actionId in
+                            vm.pendingActionScrollId = actionId
+                        }
+                        .padding(.top, 2)
+                    }
+
                     let generatedImageRefs = message.fileRefs.filter { $0.mediaType.hasPrefix("image/") }
                     if !generatedImageRefs.isEmpty {
                         AgentGeneratedImageGallery(
-                            items: generatedImageRefs.map { vm.generatedImageItem(for: $0) }, vm: vm)
+                            items: generatedImageRefs.map { vm.generatedImageItem(for: $0) }, vm: vm,
+                            pinnedAspectRatio: message.confirmCards.lazy
+                                .compactMap { $0.imageRenderSelection?.config.aspectRatio }
+                                .first
+                                .map { AgentGeneratedImageSizing.containerAspectRatio(fromPinned: $0) })
                             .padding(.top, 2)
                     }
                     // Canonical assistant `file_ref`s use the same signed-file +
@@ -14587,6 +15019,8 @@ struct AgentImageGeneratingCanvas: View {
     let startedAt: Date?
     let pal: AgentPalette
     var statusText = "ছবি তৈরি হচ্ছে…"
+    /// Pinned composition shape from the approved config; legacy cards keep 4:5.
+    var pinnedAspectRatio: CGFloat? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var firstObservedAt = Date()
@@ -14637,8 +15071,8 @@ struct AgentImageGeneratingCanvas: View {
                         .padding(12)
                 }
             }
-            .aspectRatio(4.0 / 5.0, contentMode: .fit)
-            .frame(maxWidth: 430)
+            .aspectRatio(pinnedAspectRatio ?? 4.0 / 5.0, contentMode: .fit)
+            .frame(maxWidth: 430, maxHeight: 560)
             .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
             .compositingGroup()
@@ -14873,6 +15307,7 @@ struct AgentConfirmCardView: View {
     let vm: AssistantVM
     let onDecide: (Bool) -> Void
     @State private var showImageModelPicker = false
+    @State private var showImageSetupSheet = false
     private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
     private var modelChanging: Bool { vm.isChangingImageModel(card.id) }
     private var selectedImageModelUnavailable: Bool {
@@ -14945,11 +15380,14 @@ struct AgentConfirmCardView: View {
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let selection = card.imageModelSelection?.trustedValue {
+            if let renderSelection = card.imageRenderSelection {
+                imageRenderSetupView(renderSelection)
+            } else if let selection = card.imageModelSelection?.trustedValue {
                 imageModelSelectionView(selection)
             }
 
-            if AgentConfirmCardCostPresentation.showsPendingImageQuoteUnavailable(
+            if card.imageRenderSelection == nil,
+               AgentConfirmCardCostPresentation.showsPendingImageQuoteUnavailable(
                 actionType: card.actionType, status: effectiveStatus,
                 imageModelSelection: card.imageModelSelection) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -15002,7 +15440,11 @@ struct AgentConfirmCardView: View {
                         startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt,
                         pal: pal,
                         statusText: submitting && card.status.lowercased() == "pending"
-                            ? "অনুমোদন পাঠানো হচ্ছে…" : "ছবি তৈরি হচ্ছে…")
+                            ? "অনুমোদন পাঠানো হচ্ছে…" : "ছবি তৈরি হচ্ছে…",
+                        pinnedAspectRatio: card.imageRenderSelection.map {
+                            AgentGeneratedImageSizing.containerAspectRatio(
+                                fromPinned: $0.config.aspectRatio)
+                        })
                 } else {
                     AgentRenderProgressStrip(
                         startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt,
@@ -15077,6 +15519,106 @@ struct AgentConfirmCardView: View {
         .sheet(isPresented: $showImageModelPicker) {
             AgentImageModelPickerSheet(vm: vm, cardId: card.id)
         }
+        .sheet(isPresented: $showImageSetupSheet) {
+            AgentImageSetupSheet(vm: vm, cardId: card.id)
+        }
+    }
+
+    /// Build 103 Issue 2 — the professional image setup summary. One compact
+    /// row (preset · ratio · exact pixels · variants · model) plus the truthful
+    /// USD estimate; tapping opens the native setup sheet while pending, and
+    /// the pinned setup stays read-only on every later state.
+    @ViewBuilder private func imageRenderSetupView(
+        _ selection: AgentImageRenderSelection
+    ) -> some View {
+        let preset = selection.presetOptions.first(where: { $0.id == selection.config.presetId })
+        let model = selection.modelOptions.first(where: { $0.id == selection.selectedModel })
+        let presetLabel = preset?.label ?? selection.config.presetId
+        let modelLabel = model?.label ?? selection.selectedModel
+        let provider = AgentImageModelQuotePresentation.providerLabel(
+            model?.provider ?? selection.quote.provider)
+        let pixels = "\(selection.config.width)×\(selection.config.height)"
+        let countText = "\(selection.config.variationCount) image"
+            + (selection.config.variationCount > 1 ? "s" : "")
+        let summaryLine = "\(presetLabel) · \(selection.config.aspectRatio) · \(pixels)"
+        let secondLine = "\(selection.config.imageSize) · \(countText) · \(modelLabel) · \(provider)"
+
+        VStack(alignment: .leading, spacing: 8) {
+            if effectiveStatus == "pending" {
+                Button {
+                    AlmaAgentHaptics.selection()
+                    showImageSetupSheet = true
+                } label: {
+                    imageSetupRow(summaryLine: summaryLine, secondLine: secondLine, locked: false)
+                }
+                .buttonStyle(.plain)
+                .disabled(submitting || modelChanging)
+                .accessibilityIdentifier("agent.confirm-card.image-setup")
+                .accessibilityLabel(
+                    "Image setup, \(presetLabel), অনুপাত \(selection.config.aspectRatio), \(pixels) pixels, \(countText), \(modelLabel), \(provider)")
+                .accessibilityHint("ছবির setup বদলাতে খুলুন")
+            } else {
+                imageSetupRow(summaryLine: summaryLine, secondLine: secondLine, locked: true)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("agent.confirm-card.image-setup")
+                    .accessibilityLabel(
+                        "Image setup, \(presetLabel), অনুপাত \(selection.config.aspectRatio), \(pixels) pixels, \(countText), \(modelLabel), \(provider), read only")
+            }
+
+            if let quote = AgentImageRenderQuotePresentation.resolve(selection.quote) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(quote.primaryText)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(pal.ink)
+                    Text(quote.detailText)
+                    if !quote.exclusionsText.isEmpty { Text(quote.exclusionsText) }
+                }
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent.confirm-card.image-quote")
+            }
+        }
+    }
+
+    @ViewBuilder private func imageSetupRow(
+        summaryLine: String, secondLine: String, locked: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundStyle(AgentPalette.coral)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Image setup")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                Text(summaryLine)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(2)
+                Text(secondLine)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if locked {
+                Text("Locked")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            } else if modelChanging {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            }
+        }
+        .padding(11)
+        .background(Color.white.opacity(locked ? 0.04 : 0.05),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(locked ? Color.clear : pal.borderSubtle, lineWidth: 1))
     }
 
     @ViewBuilder private func imageModelSelectionView(
@@ -15288,6 +15830,249 @@ struct AgentConfirmCardView: View {
         case "failed": return .red
         default: return pal.muted
         }
+    }
+}
+
+/// Build 103 Issue 2 — truthful presentation of the v2 quote. The estimate is
+/// labeled an estimate, priced components are named, and exclusions stay
+/// visible; nothing implies full provider spend or invoice truth.
+struct AgentImageRenderQuotePresentation: Equatable {
+    let primaryText: String
+    let detailText: String
+    let exclusionsText: String
+
+    static func resolve(_ quote: AgentImageRenderQuoteWire) -> Self? {
+        guard quote.hasValidContractShape else { return nil }
+        let primary = quote.maxCostUsd > quote.minCostUsd
+            ? "Base \(usd(quote.minCostUsd)) · সর্বোচ্চ \(usd(quote.maxCostUsd))"
+            : "Estimate \(usd(quote.minCostUsd))"
+        let imageWord = quote.requestedImages == 1 ? "image" : "images"
+        var detail = "\(quote.requestedImages) \(imageWord) · \(quote.imageSize)"
+            + " · \(quote.width)×\(quote.height) · \(quote.quality)"
+        if let providerQuality = quote.providerQuality, !providerQuality.isEmpty {
+            detail += " (\(providerQuality))"
+        }
+        detail += " · প্রতি image সর্বোচ্চ \(quote.maxPaidGenerationsPerImage) paid render"
+        let exclusions = quote.excludes.map(exclusionLabel).joined(separator: ", ")
+        return .init(
+            primaryText: primary,
+            detailText: detail,
+            exclusionsText: exclusions.isEmpty ? "" : "বাদ: \(exclusions)")
+    }
+
+    private static func usd(_ amount: Double) -> String {
+        var value = String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), amount)
+        while value.last == "0",
+              let decimal = value.firstIndex(of: "."),
+              value.distance(from: decimal, to: value.endIndex) > 3 {
+            value.removeLast()
+        }
+        return "$\(value)"
+    }
+
+    private static func exclusionLabel(_ code: String) -> String {
+        switch code {
+        case "qc_vision": return "QC vision"
+        case "taxes": return "tax"
+        case "provider_credits": return "provider credits"
+        case "prompt_text_input_tokens": return "prompt input tokens"
+        case "reference_image_input_tokens": return "reference image input tokens"
+        default: return code.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+}
+
+/// Build 103 Issue 2 — the professional image setup editor. Every control
+/// applies through the server's revisioned compare-and-set and re-renders
+/// ONLY from the server echo; disabled combinations stay visible with their
+/// reason, and the live authoritative quote follows each accepted change.
+@available(iOS 17.0, *)
+struct AgentImageSetupSheet: View {
+    @Bindable var vm: AssistantVM
+    let cardId: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    private var selection: AgentImageRenderSelection? {
+        vm.imageRenderSelection(for: cardId)
+    }
+    private var mutating: Bool { vm.isChangingImageModel(cardId) }
+
+    private func apply(_ transform: (AssistantVM.AgentImageConfigProposal) -> AssistantVM.AgentImageConfigProposal) {
+        guard let selection, !mutating else { return }
+        let base = AssistantVM.AgentImageConfigProposal(
+            imageModel: selection.selectedModel,
+            presetId: selection.config.presetId,
+            imageSize: selection.config.imageSize,
+            quality: selection.config.quality,
+            variationCount: selection.config.variationCount)
+        let proposal = transform(base)
+        guard proposal != base else { return }
+        AlmaAgentHaptics.selection()
+        Task { await vm.selectImageRenderConfig(cardId: cardId, proposal: proposal) }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            Group {
+                if let selection {
+                    List {
+                        Section("Preset") {
+                            ForEach(selection.presetOptions, id: \.id) { preset in
+                                Button { apply { var p = $0; p.presetId = preset.id; return p } } label: {
+                                    optionRow(
+                                        pal: pal,
+                                        title: "\(preset.label) · \(preset.aspectRatio)",
+                                        selected: preset.id == selection.config.presetId,
+                                        enabled: preset.enabled,
+                                        reason: preset.unavailableReason)
+                                }
+                                .disabled(!preset.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.preset.\(preset.id)")
+                            }
+                        }
+                        Section("Resolution") {
+                            ForEach(selection.sizeOptions, id: \.id) { size in
+                                Button { apply { var p = $0; p.imageSize = size.id; return p } } label: {
+                                    optionRow(
+                                        pal: pal,
+                                        title: size.width.flatMap { w in size.height.map { h in
+                                            "\(size.id) · \(w)×\(h)"
+                                        } } ?? size.id,
+                                        selected: size.id == selection.config.imageSize,
+                                        enabled: size.enabled,
+                                        reason: size.unavailableReason)
+                                }
+                                .disabled(!size.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.size.\(size.id)")
+                            }
+                        }
+                        Section("কতটি ছবি") {
+                            HStack(spacing: 10) {
+                                ForEach(selection.countOptions, id: \.self) { count in
+                                    Button { apply { var p = $0; p.variationCount = count; return p } } label: {
+                                        Text("\(count)")
+                                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                            .frame(width: 44, height: 44)
+                                            .background(
+                                                count == selection.config.variationCount
+                                                    ? AgentPalette.coral : Color.white.opacity(0.06),
+                                                in: Circle())
+                                            .foregroundStyle(
+                                                count == selection.config.variationCount ? .white : pal.ink)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(mutating)
+                                    .accessibilityIdentifier("agent.image-setup.count.\(count)")
+                                    .accessibilityLabel("\(count)টি ছবি")
+                                }
+                                Spacer()
+                            }
+                        }
+                        Section("Quality") {
+                            ForEach(selection.qualityOptions, id: \.id) { quality in
+                                Button { apply { var p = $0; p.quality = quality.id; return p } } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        optionRow(
+                                            pal: pal,
+                                            title: quality.id == "pro" ? "Pro" : "Standard",
+                                            selected: quality.id == selection.config.quality,
+                                            enabled: true, reason: nil)
+                                        Text(quality.description)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(pal.muted)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .disabled(mutating)
+                                .accessibilityIdentifier("agent.image-setup.quality.\(quality.id)")
+                            }
+                        }
+                        Section("Model") {
+                            ForEach(selection.modelOptions, id: \.id) { model in
+                                Button { apply { var p = $0; p.imageModel = model.id; return p } } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        optionRow(
+                                            pal: pal,
+                                            title: "\(model.label) · \(AgentImageModelQuotePresentation.providerLabel(model.provider))",
+                                            selected: model.id == selection.selectedModel,
+                                            enabled: model.enabled,
+                                            reason: model.unavailableReason)
+                                    }
+                                }
+                                .disabled(!model.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.model.\(model.id)")
+                            }
+                        }
+                        Section("খরচ (estimate)") {
+                            if let quote = AgentImageRenderQuotePresentation.resolve(selection.quote) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(quote.primaryText)
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(pal.ink)
+                                    Text(quote.detailText)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(pal.muted)
+                                    if !quote.exclusionsText.isEmpty {
+                                        Text(quote.exclusionsText)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(pal.muted)
+                                    }
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("agent.image-setup.quote")
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .overlay {
+                        if mutating {
+                            Color.black.opacity(0.08).ignoresSafeArea()
+                                .overlay(ProgressView("Setup সংরক্ষণ হচ্ছে…"))
+                        }
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Setup পাওয়া যায়নি",
+                        systemImage: "slider.horizontal.3",
+                        description: Text("এই card-টি হয়তো ইতিমধ্যে resolve হয়েছে।"))
+                }
+            }
+            .navigationTitle("Image setup")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.disabled(mutating)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .accessibilityIdentifier("agent.image-setup.sheet")
+    }
+
+    @ViewBuilder private func optionRow(
+        pal: AgentPalette, title: String, selected: Bool, enabled: Bool, reason: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(selected ? AgentPalette.coral : pal.muted)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(enabled ? pal.ink : pal.muted)
+                Spacer(minLength: 4)
+            }
+            if let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(reason)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 27)
+            }
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -18944,6 +19729,323 @@ struct AgentSessionLoadFailureView: View {
     }
 }
 
+// MARK: - Build 103 Issue 3 — work-step tracker presentation
+
+/// Shared status → icon/label mapping. Never color-only (a11y); the active
+/// step animates only while Reduce Motion is off, and completed rows stay
+/// quiet after cold load (no replayed celebration).
+@available(iOS 17.0, *)
+enum AgentWorkStepGlyph {
+    static func systemImage(for status: String) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "running": return "circle.dotted"
+        case "waiting_owner": return "person.crop.circle.badge.questionmark"
+        case "waiting_worker": return "clock.arrow.circlepath"
+        case "failed": return "xmark.circle.fill"
+        case "cancelled": return "slash.circle"
+        case "skipped": return "arrow.right.circle"
+        default: return "circle"
+        }
+    }
+    static func label(for status: String) -> String {
+        switch status {
+        case "completed": return "শেষ"
+        case "running": return "চলছে"
+        case "waiting_owner": return "আপনার সিদ্ধান্তের অপেক্ষায়"
+        case "waiting_worker": return "worker-এ চলছে"
+        case "failed": return "ব্যর্থ"
+        case "cancelled": return "বাতিল"
+        case "skipped": return "বাদ গেছে"
+        default: return "বাকি"
+        }
+    }
+    static func tint(for status: String, pal: AgentPalette) -> Color {
+        switch status {
+        case "completed": return AgentPalette.teal
+        case "running", "waiting_owner": return AgentPalette.coral
+        case "failed": return .red
+        case "waiting_worker": return pal.mutedHi
+        default: return pal.muted
+        }
+    }
+    static func overallLabel(for status: String) -> String {
+        switch status {
+        case "preparing": return "প্রস্তুতি চলছে"
+        case "running": return "কাজ চলছে"
+        case "waiting_owner": return "আপনার সিদ্ধান্তের অপেক্ষায়"
+        case "waiting_worker": return "worker-এ কাজ চলছে"
+        case "paused": return "থেমে আছে"
+        case "completed": return "সম্পন্ন"
+        case "failed": return "আটকে গেছে"
+        case "cancelled": return "বাতিল"
+        default: return status
+        }
+    }
+}
+
+/// The active-step ring: a partial arc that rotates while the step runs.
+/// Reduce Motion (or a settled tracker) renders a static partial ring.
+@available(iOS 17.0, *)
+private struct AgentWorkStepActiveRing: View {
+    let animated: Bool
+    @State private var spinning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.72)
+            .stroke(AgentPalette.coral, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .frame(width: 15, height: 15)
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .onAppear {
+                guard animated else { return }
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                    spinning = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// One canonical turn-owned tracker block (কাজের ধাপ). Chronologically part
+/// of its origin assistant message; the composer dock projects the SAME
+/// store and never duplicates controls. No estimated percentage, no hidden
+/// reasoning — only durable-evidence counts like "২/৫ ধাপ শেষ".
+@available(iOS 17.0, *)
+struct AgentWorkStepsBlockView: View {
+    let snapshot: AgentWorkStepsSnapshot
+    let pal: AgentPalette
+    /// Opens the EXISTING approval/question card — the tracker adds no second
+    /// set of decision controls.
+    var onOpenBlocker: ((String) -> Void)? = nil
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var countLine: String { "\(snapshot.completedCount) of \(snapshot.steps.count)" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                AlmaAgentHaptics.light()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.86)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(snapshot.goal)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(pal.ink)
+                            .lineLimit(expanded ? 3 : 1)
+                        Text("\(countLine) · \(AgentWorkStepGlyph.overallLabel(for: snapshot.status))")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                    }
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(pal.muted)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("agent.work-steps.header")
+            .accessibilityLabel(
+                "কাজের ধাপ, \(snapshot.goal), \(snapshot.completedCount) of \(snapshot.steps.count) completed, \(AgentWorkStepGlyph.overallLabel(for: snapshot.status))")
+            .accessibilityHint(expanded ? "ধাপের তালিকা বন্ধ করুন" : "ধাপের তালিকা খুলুন")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(snapshot.steps) { step in
+                        stepRow(step)
+                    }
+                }
+                .padding(.bottom, 8)
+                .transition(.opacity)
+            }
+        }
+        .background(Color.white.opacity(0.045),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent.work-steps.block")
+    }
+
+    @ViewBuilder private func stepRow(_ step: AgentWorkStepsSnapshot.Step) -> some View {
+        let isBlockingOwner = step.status == "waiting_owner" && snapshot.blockedByRefId != nil
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Group {
+                if step.status == "running", !reduceMotion, !snapshot.isTerminal {
+                    AgentWorkStepActiveRing(animated: true)
+                } else {
+                    Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+                }
+            }
+            .frame(width: 17)
+            Text("\(step.position).")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(pal.muted)
+            Text(step.title)
+                .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
+                .foregroundStyle(step.status == "completed" ? pal.mutedHi : pal.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if isBlockingOwner {
+                Image(systemName: "arrow.up.right.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(minHeight: 34)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isBlockingOwner, snapshot.blockedByKind == "approval",
+                  let refId = snapshot.blockedByRefId else { return }
+            AlmaAgentHaptics.light()
+            onOpenBlocker?(refId)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("agent.work-steps.step.\(step.id)")
+        .accessibilityLabel("ধাপ \(step.position), \(step.title), \(AgentWorkStepGlyph.label(for: step.status))")
+        .accessibilityHint(isBlockingOwner ? "অপেক্ষমাণ card-টি খুলুন" : "")
+    }
+}
+
+/// The lightweight bottom dock (owner's reference video): a persistent strip
+/// above the composer with compact pills; the center pill expands a rounded
+/// panel whose content scrolls independently while chat/composer stay put.
+/// It is a NAVIGATION/SUMMARY projection of the same tracker store — never a
+/// second state machine, never duplicate approve/retry controls.
+@available(iOS 17.0, *)
+struct AgentWorkStepsDockView: View {
+    let vm: AssistantVM
+    let pal: AgentPalette
+    var onOpenBlocker: ((String) -> Void)? = nil
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if let snapshot = vm.activeWorkTracker {
+            VStack(spacing: 6) {
+                if expanded {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(snapshot.steps) { step in
+                                dockStepRow(step, snapshot: snapshot)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .frame(maxHeight: 236)
+                    .background(Color.black.opacity(0.35),
+                                in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .accessibilityIdentifier("agent.work-steps.dock.panel")
+                }
+                HStack(spacing: 8) {
+                    Text(AgentWorkStepGlyph.overallLabel(for: snapshot.status))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                    Button {
+                        AlmaAgentHaptics.light()
+                        withAnimation(reduceMotion ? nil
+                                      : .spring(response: 0.25, dampingFraction: 0.86)) {
+                            expanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if snapshot.status == "running" || snapshot.status == "preparing",
+                               !reduceMotion {
+                                AgentWorkStepActiveRing(animated: true)
+                            } else {
+                                Image(systemName: "list.number")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text("\(snapshot.completedCount) of \(snapshot.steps.count)")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .background(AgentPalette.coral.opacity(0.14), in: Capsule())
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("agent.work-steps.dock.progress")
+                    .accessibilityLabel(
+                        "\(snapshot.completedCount) of \(snapshot.steps.count) completed"
+                        + (snapshot.steps.first(where: { $0.status == "running" })
+                            .map { "; ধাপ \($0.position) চলছে" } ?? ""))
+                    .accessibilityHint(expanded ? "ধাপের তালিকা বন্ধ করুন" : "ধাপের তালিকা খুলুন")
+                    Text(snapshot.headline)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agent.work-steps.dock")
+        }
+    }
+
+    @ViewBuilder private func dockStepRow(
+        _ step: AgentWorkStepsSnapshot.Step, snapshot: AgentWorkStepsSnapshot
+    ) -> some View {
+        let isBlockingOwner = step.status == "waiting_owner"
+            && snapshot.blockedByKind == "approval" && snapshot.blockedByRefId != nil
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Group {
+                if step.status == "running", !reduceMotion {
+                    AgentWorkStepActiveRing(animated: true)
+                } else {
+                    Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+                }
+            }
+            .frame(width: 17)
+            Text("\(step.position). \(step.title)")
+                .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
+                .foregroundStyle(.white.opacity(step.status == "completed" ? 0.6 : 0.92))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 6)
+        .frame(minHeight: 34)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isBlockingOwner, let refId = snapshot.blockedByRefId else { return }
+            AlmaAgentHaptics.light()
+            withAnimation { expanded = false }
+            onOpenBlocker?(refId)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("ধাপ \(step.position), \(step.title), \(AgentWorkStepGlyph.label(for: step.status))")
+    }
+}
+
 /// LOCKED §9 — "N কাজ বাকি": chat shows ONLY a small collapsed glossy chip;
 /// tap → glossy bottom sheet with THREE actions per task: অনুমোদন · বাতিল · আমার মত.
 /// (Owner rule 2026-07-07: every approval ask = 3 buttons, never 2 — everywhere.)
@@ -22076,6 +23178,11 @@ struct AssistantScreen: View {
             // rides the keyboard with the composer instead of fighting it, and
             // the chat scroll region shrinks to make room (never an overlay).
             VStack(spacing: 0) {
+                // Build 103 Issue 3 — the compact tracker strip (owner's video
+                // reference) projects the same store as the in-turn block.
+                AgentWorkStepsDockView(vm: vm, pal: AgentPalette(scheme)) { actionId in
+                    vm.pendingActionScrollId = actionId
+                }
                 AgentLiveDockView()
                 AgentComposerView(vm: vm, openWeb: openWeb)
             }
@@ -22279,6 +23386,19 @@ struct AssistantScreen: View {
                 vm.loadImageModelPickerProofFixture(
                     status: argFlag("ALMA_ASSISTANT_IMAGE_MODEL_READONLY") ? "failed" : "pending")
                 AlmaTurnLog.event("assistant.contentReady", "fixture=image-model-picker")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_IMAGE_SETUP_PROOF") {
+                vm.loadImageSetupProofFixture(
+                    status: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_STATUS"] ?? "pending",
+                    aspect: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_ASPECT"] ?? "4:5")
+                AlmaTurnLog.event("assistant.contentReady", "fixture=image-setup-proof")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_WORK_STEPS_PROOF") {
+                vm.loadWorkStepsProofFixture(
+                    variant: rawEnv["ALMA_ASSISTANT_WORK_STEPS_VARIANT"] ?? "running")
+                AlmaTurnLog.event("assistant.contentReady", "fixture=work-steps-proof")
                 return
             }
             if argFlag("ALMA_ASSISTANT_ACTION_FIXTURE") {
