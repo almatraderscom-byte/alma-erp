@@ -29,8 +29,12 @@ import { GENERIC_IMAGE_MODELS, type GenericImageModel } from '@/lib/creative-stu
 import {
   IMAGE_PRESET_ASPECTS as WORKER_PRESET_ASPECTS,
   resolveGenericImageRequest as workerResolve,
-  supportedPresetTiersForModel as workerPresetTiers,
+  supportedPresetTiersForModel as workerPresetTiersUntyped,
 } from '../../../../worker/src/image-resolution-contract.mjs'
+
+const workerPresetTiers = workerPresetTiersUntyped as (
+  model: string,
+) => Record<string, Array<'1K' | '2K' | '4K'>>
 import {
   IMAGE_RENDER_CONFIG_VERSION as WORKER_CONFIG_VERSION,
   IMAGE_WORKER_CAPABILITY_V2_KV_KEY as WORKER_V2_KV_KEY,
@@ -119,9 +123,13 @@ describe('image render config v2 — server/worker parity', () => {
     const receipt = makeImageWorkerCapabilityReceiptV2({
       env: {
         GEMINI_API_KEY: 'x', OPENAI_API_KEY: 'x', FAL_KEY: 'x',
-      },
+      } as unknown as NodeJS.ProcessEnv,
       now: new Date(NOW_MS),
-    })
+    }) as unknown as {
+      version: number
+      configContractVersion: number
+      presets: Record<string, Record<string, string[]>>
+    }
     expect(receipt.version).toBe(2)
     expect(receipt.configContractVersion).toBe(1)
     expect(receipt.presets['gpt-image-2'].poster).toEqual(['1K', '2K'])
@@ -305,7 +313,7 @@ describe('v2 projection', () => {
 })
 
 describe('worker payload verification', () => {
-  function approvedPayload(model: GenericImageModel = 'gpt-image-2') {
+  function approvedPayload(model: GenericImageModel = 'gpt-image-2'): Record<string, unknown> {
     const config = socialConfig(model)
     return {
       imageModel: model,

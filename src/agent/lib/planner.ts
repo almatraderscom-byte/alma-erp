@@ -114,12 +114,17 @@ export async function createPlan(opts: {
   steps: { action: string; toolName?: string; dependsOn?: string[]; maxAttempts?: number }[]
   conversationId?: string
   businessId?: string
+  /// Build 103 Issue 3 — the turn that accepted the owner request this plan
+  /// serves. The work-step tracker attaches by THIS exact link, never by
+  /// "newest plan in the conversation".
+  originTurnId?: string
 }): Promise<Plan> {
   const plan = await db.agentPlan.create({
     data: {
       goal: opts.goal,
       conversationId: opts.conversationId ?? null,
       businessId: opts.businessId ?? 'ALMA_LIFESTYLE',
+      originTurnId: opts.originTurnId ?? null,
       status: 'draft',
       steps: {
         create: opts.steps.map((s, i) => ({

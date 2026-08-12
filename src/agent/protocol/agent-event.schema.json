@@ -21,6 +21,9 @@
     { "$ref": "#/$defs/ask_card" },
     { "$ref": "#/$defs/verification_retry" },
     { "$ref": "#/$defs/conversation_compacted" },
+    { "$ref": "#/$defs/plan_progress" },
+    { "$ref": "#/$defs/turn_progress" },
+    { "$ref": "#/$defs/work_steps_snapshot" },
     { "$ref": "#/$defs/done" },
     { "$ref": "#/$defs/error" }
   ],
@@ -140,9 +143,230 @@
         "entryCount": { "type": "number" },
         "isFinance": { "type": "boolean" },
         "isBatch": { "type": "boolean" },
-        "imageModelSelection": { "$ref": "#/$defs/image_model_selection" }
+        "imageModelSelection": { "$ref": "#/$defs/image_model_selection" },
+        "imageRenderSelection": { "$ref": "#/$defs/image_render_selection" }
       },
       "required": ["type", "pendingActionId", "summary"]
+    },
+    "image_render_config": {
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "presetId": { "enum": ["square", "social_post", "reel_story", "landscape", "poster"] },
+        "sizeMode": { "const": "tier" },
+        "aspectRatio": { "type": "string" },
+        "imageSize": { "enum": ["1K", "2K", "4K"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "quality": { "enum": ["standard", "pro"] },
+        "providerQuality": { "type": ["string", "null"] },
+        "variationCount": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "pipelineMode": { "enum": ["preview", "production"] }
+      },
+      "required": [
+        "version", "presetId", "sizeMode", "aspectRatio", "imageSize",
+        "width", "height", "quality", "variationCount", "pipelineMode"
+      ]
+    },
+    "image_render_quote": {
+      "type": "object",
+      "properties": {
+        "version": { "const": 2 },
+        "currency": { "const": "USD" },
+        "kind": { "const": "provider_render_estimate" },
+        "model": { "type": "string" },
+        "provider": { "enum": ["gemini", "openai", "fal"] },
+        "presetId": { "type": "string" },
+        "aspectRatio": { "type": "string" },
+        "imageSize": { "enum": ["1K", "2K", "4K"] },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "quality": { "enum": ["standard", "pro"] },
+        "providerQuality": { "type": ["string", "null"] },
+        "requestedImages": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "unitPriceUsd": { "type": "number", "minimum": 0 },
+        "minCostUsd": { "type": "number", "minimum": 0 },
+        "maxCostUsd": { "type": "number", "minimum": 0 },
+        "maxPaidGenerationsPerImage": { "type": "integer", "minimum": 1 },
+        "configFingerprint": { "type": "string" },
+        "pricingBasis": { "const": "internal_list_estimate" },
+        "pricingLastVerifiedAt": { "type": "string" },
+        "pricedComponents": { "type": "array", "items": { "type": "string" } },
+        "excludes": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "version", "currency", "kind", "model", "provider", "presetId", "aspectRatio",
+        "imageSize", "width", "height", "quality", "requestedImages", "unitPriceUsd",
+        "minCostUsd", "maxCostUsd", "maxPaidGenerationsPerImage", "configFingerprint",
+        "pricingBasis", "pricingLastVerifiedAt", "pricedComponents", "excludes"
+      ]
+    },
+    "image_render_selection": {
+      "type": "object",
+      "properties": {
+        "contractVersion": { "const": 2 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "selectedModel": { "type": "string" },
+        "config": { "$ref": "#/$defs/image_render_config" },
+        "configFingerprint": { "type": "string" },
+        "modelOptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "provider": { "enum": ["gemini", "openai", "fal", "xai"] },
+              "enabled": { "type": "boolean" },
+              "unavailableReason": { "type": "string" }
+            },
+            "required": ["id", "label", "provider", "enabled"]
+          }
+        },
+        "presetOptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "aspectRatio": { "type": "string" },
+              "enabled": { "type": "boolean" },
+              "unavailableReason": { "type": "string" }
+            },
+            "required": ["id", "label", "aspectRatio", "enabled"]
+          }
+        },
+        "sizeOptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "enum": ["1K", "2K", "4K"] },
+              "enabled": { "type": "boolean" },
+              "width": { "type": "integer" },
+              "height": { "type": "integer" },
+              "unavailableReason": { "type": "string" }
+            },
+            "required": ["id", "enabled"]
+          }
+        },
+        "qualityOptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "enum": ["standard", "pro"] },
+              "providerQuality": { "type": ["string", "null"] },
+              "description": { "type": "string" }
+            },
+            "required": ["id", "description"]
+          }
+        },
+        "countOptions": { "type": "array", "items": { "type": "integer" } },
+        "quote": { "$ref": "#/$defs/image_render_quote" }
+      },
+      "required": [
+        "contractVersion", "revision", "selectedModel", "config", "configFingerprint",
+        "modelOptions", "presetOptions", "sizeOptions", "qualityOptions",
+        "countOptions", "quote"
+      ]
+    },
+    "plan_progress": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "plan_progress" },
+        "planId": { "type": "string" },
+        "goal": { "type": "string" },
+        "headline": { "type": "string" },
+        "doneCount": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "seq": { "type": "integer" },
+              "action": { "type": "string" },
+              "status": { "type": "string" }
+            },
+            "required": ["seq", "action", "status"]
+          }
+        }
+      },
+      "required": ["type", "planId", "goal", "headline", "doneCount", "total", "steps"]
+    },
+    "turn_progress": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "turn_progress" },
+        "round": { "type": "integer" },
+        "elapsedSec": { "type": "integer" },
+        "lastToolLabel": { "type": ["string", "null"] },
+        "text": { "type": "string" }
+      },
+      "required": ["type", "round", "elapsedSec", "text"]
+    },
+    "work_steps_snapshot": {
+      "type": "object",
+      "description": "Build 103 Issue 3 — full authoritative work-step tracker snapshot. Completion truth is durable AgentPlan/AgentPlanStep evidence only; no estimated percentage; never raw hidden reasoning.",
+      "properties": {
+        "type": { "const": "work_steps_snapshot" },
+        "version": { "const": 1 },
+        "trackerId": { "type": "string" },
+        "originTurnId": { "type": "string" },
+        "currentTurnId": { "type": "string" },
+        "turnIds": { "type": "array", "items": { "type": "string" } },
+        "conversationId": { "type": "string" },
+        "originAssistantMessageId": { "type": ["string", "null"] },
+        "revision": { "type": "integer", "minimum": 1 },
+        "source": { "const": "agent_plan" },
+        "sourceId": { "type": "string" },
+        "goal": { "type": "string" },
+        "status": {
+          "enum": [
+            "preparing", "running", "waiting_owner", "waiting_worker",
+            "paused", "completed", "failed", "cancelled"
+          ]
+        },
+        "headline": { "type": "string" },
+        "blockedBy": {
+          "type": ["object", "null"],
+          "properties": {
+            "kind": { "enum": ["approval", "question", "model_switch", "worker", "queue", "global_pause"] },
+            "refId": { "type": "string" }
+          },
+          "required": ["kind", "refId"]
+        },
+        "retryRef": { "type": ["object", "null"] },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "position": { "type": "integer", "minimum": 1 },
+              "title": { "type": "string" },
+              "status": {
+                "enum": [
+                  "pending", "running", "waiting_owner", "waiting_worker",
+                  "completed", "failed", "cancelled", "skipped"
+                ]
+              },
+              "toolCallIds": { "type": "array", "items": { "type": "string" } },
+              "startedAt": { "type": ["string", "null"] },
+              "finishedAt": { "type": ["string", "null"] }
+            },
+            "required": ["id", "position", "title", "status"]
+          }
+        },
+        "updatedAt": { "type": "string" }
+      },
+      "required": [
+        "type", "version", "trackerId", "originTurnId", "currentTurnId", "turnIds",
+        "conversationId", "revision", "source", "sourceId", "goal", "status",
+        "headline", "steps", "updatedAt"
+      ]
     },
     "image_action_quote": {
       "type": "object",

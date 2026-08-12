@@ -275,6 +275,46 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     syntheticAskByMsg.set(target.id, list)
   }
 
+  // Build 103 Issue 3 — cold work-step tracker projection. The durable
+  // snapshot persisted at each live emission is returned verbatim, anchored to
+  // its bound origin assistant message; an unbound tracker (process died before
+  // settlement) falls back to the earliest assistant message at/after the
+  // plan's creation, exactly like the confirm-card synthetic pattern. One
+  // tracker, one block — never a twin.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const trackerPlans: Array<{
+    id: string
+    createdAt: Date
+    originAssistantMessageId: string | null
+    trackerSnapshot: unknown
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }> = await (prisma as any).agentPlan.findMany({
+    where: { conversationId: id, trackerRevision: { gt: 0 } },
+    select: {
+      id: true,
+      createdAt: true,
+      originAssistantMessageId: true,
+      trackerSnapshot: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+  const workStepsByMsg = new Map<string, Array<unknown>>()
+  const loadedMessageIds = new Set(messages.map((m) => m.id))
+  for (const plan of trackerPlans) {
+    if (!plan.trackerSnapshot || typeof plan.trackerSnapshot !== 'object') continue
+    const bound = plan.originAssistantMessageId
+    const target = bound && loadedMessageIds.has(bound)
+      ? bound
+      : bound
+        ? null // bound to a message outside this window — older page owns it
+        : (assistantMsgs.find((m) => m.createdAt >= plan.createdAt)
+            ?? assistantMsgs[assistantMsgs.length - 1])?.id ?? null
+    if (!target) continue
+    const list = workStepsByMsg.get(target) ?? []
+    list.push(plan.trackerSnapshot)
+    workStepsByMsg.set(target, list)
+  }
+
   // Reconstruct the per-message tool activity (Claude-style expandable cards) from
   // the durable agent_tool_calls rows, so the cards survive the background message
   // poll / page reload instead of only existing during the live stream.
@@ -386,6 +426,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,
+      // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
+      // this assistant message; cold history equals the settled live tracker.
+      workSteps: workStepsByMsg.get(m.id) ?? undefined,
       // ONE canonical, versioned presentation projection (parity roadmap §5) —
       // additive next to every legacy field; both clients converge on this.
       presentation:

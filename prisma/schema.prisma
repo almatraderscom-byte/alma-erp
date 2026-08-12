@@ -5407,6 +5407,14 @@ model AgentPlan {
   costMilliTakaDay Int             @default(0) @map("cost_milli_taka_day")
   /// Asia/Dhaka calendar day (YYYY-MM-DD) the day-bucket above belongs to.
   costDay          String?         @map("cost_day")
+  /// Build 103 Issue 3 — exact tracker linkage: the turn that created this
+  /// plan and the settled assistant message that anchors its chat block.
+  originTurnId     String?         @map("origin_turn_id")
+  originAssistantMessageId String? @map("origin_assistant_message_id")
+  /// Durable full work_steps_snapshot (last emitted revision) so cold history
+  /// equals the settled live tracker exactly.
+  trackerSnapshot  Json?           @map("tracker_snapshot")
+  trackerRevision  Int             @default(0) @map("tracker_revision")
   steps            AgentPlanStep[]
 
   @@index([conversationId])

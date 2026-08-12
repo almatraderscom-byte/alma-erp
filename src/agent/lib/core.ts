@@ -195,6 +195,10 @@ export type AgentEvent =
       lastToolLabel: string | null
       text: string
     }
+  // Build 103 Issue 3 — full authoritative work-step tracker snapshot. Typed
+  // and durable; completion truth comes only from AgentPlan/AgentPlanStep
+  // rows, never prose/thinking/elapsed time. See work-steps.ts.
+  | ({ type: 'work_steps_snapshot' } & Omit<import('@/agent/lib/work-steps').WorkStepsSnapshot, 'type'>)
   // SK-8: the skill matched and the provenance gate refused it. Its own event,
   // emitted instead of `skill_pinned` and never alongside — the two are opposite
   // facts, and the chip must stay empty while the reason is still shown. Two

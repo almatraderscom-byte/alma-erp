@@ -60,6 +60,12 @@ import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/vi
 import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
+import {
+  loadPlanForWorkTracker,
+  persistWorkStepsSnapshot,
+  projectWorkSteps,
+  workStepsSignature,
+} from '@/agent/lib/work-steps'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -594,6 +600,13 @@ async function* runAlternateProviderTurn(
   const visibleProgress = createVisibleProgressContract()
   let spokeSinceProgress = false
   let lastPlanSignature = ''
+  // Build 103 Issue 3 — work-step tracker state for this turn. The tracker
+  // attaches by EXACT linkage only (plan created this turn, already-chained
+  // turn, or explicit continuation); an old conversation plan can never grab
+  // a new request. Blockers are recorded when a card is actually emitted.
+  let lastWorkStepsSignature = ''
+  let workStepsBlocker: import('@/agent/lib/work-steps').WorkStepsBlocker | null = null
+  let workStepsTrackerId: string | null = null
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
@@ -978,19 +991,10 @@ async function* runAlternateProviderTurn(
   } else if (activeSkills.heldBack) {
     // SK-8 — the gate refused it. Boss must be told, because from his side a
     // withheld skill and a broken one look identical, and one of them is
-    // waiting on a decision only he can make.
-    yield {
-      type: 'skill_held_back',
-      skill: activeSkills.heldBack.skill,
-      state: activeSkills.heldBack.state,
-      reason: activeSkills.heldBack.reason,
-    }
-  }
-  // SK-8 — a skill matched and the approval gate refused it. Proven necessary on
-  // the first live revoke test (2026-07-27): the skill correctly did not run and
-  // the head said nothing, because "explain yourself" lived only in the prompt.
-  // On the wire it is drawn whether or not the model cooperates.
-  if (activeSkills.heldBack) {
+    // waiting on a decision only he can make. Proven necessary on the first
+    // live revoke test (2026-07-27). Build 103 fix: this used to be emitted a
+    // SECOND time by an unconditional duplicate block below — one source, one
+    // event, and reducers stay idempotent.
     yield {
       type: 'skill_held_back',
       skill: activeSkills.heldBack.skill,
@@ -3127,6 +3131,9 @@ async function* runAlternateProviderTurn(
             }
             if (row?.status === 'pending') {
               confirmCardsEmitted++
+              // The tracker's waiting-owner blocker: an actually-emitted card
+              // is durable evidence; the step deep-links to this exact card.
+              workStepsBlocker = { kind: 'approval', refId: d.pendingActionId }
               yield {
                 type: 'confirm_card',
                 pendingActionId: d.pendingActionId,
@@ -3137,11 +3144,13 @@ async function* runAlternateProviderTurn(
                 isFinance: d.isFinance === true,
                 isBatch: d.isBatch === true,
                 imageModelSelection: d.imageModelSelection,
+                imageRenderSelection: d.imageRenderSelection,
               }
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
             if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
+              workStepsBlocker = { kind: 'question', refId: d.askCardId }
               yield {
                 type: 'ask_card',
                 askCardId: d.askCardId,
@@ -3314,11 +3323,16 @@ async function* runAlternateProviderTurn(
         .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
       // The live checklist. Re-read after each tool round and emitted ONLY when a
       // step actually changed state — an identical checklist re-sent every round
-      // is how a live element turns into wallpaper.
+      // is how a live element turns into wallpaper. Build 103 Issue 3: the plan
+      // now loads by EXACT turn linkage (created this turn / chained / explicit
+      // continuation) — the newest conversation plan can no longer hijack an
+      // unrelated request, for plan_progress and the typed tracker alike.
       try {
-        const planRows = await loadLatestPlanProgress(conversationId)
-        const planProgress = planRows
-          ? buildPlanProgress(planRows.planId, planRows.goal, planRows.rows)
+        const trackerPlan = await loadPlanForWorkTracker(
+          conversationId, turnId, options.continuation === true)
+        if (trackerPlan) workStepsTrackerId = trackerPlan.id
+        const planProgress = trackerPlan
+          ? buildPlanProgress(trackerPlan.id, trackerPlan.goal, trackerPlan.steps)
           : null
         const sig = planProgressSignature(planProgress)
         if (planProgress && sig !== lastPlanSignature) {
@@ -3331,6 +3345,25 @@ async function* runAlternateProviderTurn(
             doneCount: planProgress.doneCount,
             total: planProgress.total,
             steps: planProgress.steps,
+          }
+        }
+        // Typed durable tracker snapshot — full state, monotonic revision,
+        // persisted before it is emitted so cold history can never be behind
+        // what the owner saw live.
+        if (trackerPlan && turnId) {
+          const snapshot = projectWorkSteps({
+            plan: trackerPlan,
+            currentTurnId: turnId,
+            revision: trackerPlan.trackerRevision + 1,
+            blockedBy: workStepsBlocker,
+            live: true,
+          })
+          const trackerSig = workStepsSignature(snapshot)
+          if (trackerSig !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = trackerSig
+            if (await persistWorkStepsSnapshot(snapshot)) {
+              yield snapshot
+            }
           }
         }
       } catch { /* a checklist must never break a turn */ }
@@ -3742,6 +3775,32 @@ async function* runAlternateProviderTurn(
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
+
+    // Build 103 Issue 3 — terminal tracker snapshot. Re-read the durable plan
+    // rows, project the settled state (waiting/paused/completed — never a fake
+    // 100%), and bind the canonical assistant message ID when this turn is the
+    // tracker's origin so cold history reparents the SAME block, never a twin.
+    if (workStepsTrackerId && turnId) {
+      try {
+        const finalPlan = await loadPlanForWorkTracker(conversationId, turnId, true)
+        if (finalPlan && finalPlan.id === workStepsTrackerId) {
+          const snapshot = projectWorkSteps({
+            plan: finalPlan,
+            currentTurnId: turnId,
+            revision: finalPlan.trackerRevision + 1,
+            blockedBy: workStepsBlocker,
+            live: false,
+          })
+          if (!finalPlan.originAssistantMessageId && finalPlan.originTurnId === turnId) {
+            snapshot.originAssistantMessageId = savedMsg.id as string
+          }
+          if (await persistWorkStepsSnapshot(snapshot)) {
+            lastWorkStepsSignature = workStepsSignature(snapshot)
+            yield snapshot
+          }
+        }
+      } catch { /* the tracker must never break settlement */ }
+    }
 
     // Answer-Gate write path (owner decision 2026-07-08): a tool-free, card-free
     // answer from an EXPENSIVE head may be cacheable. All hard rules + a cheap
