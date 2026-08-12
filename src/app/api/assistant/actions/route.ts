@@ -20,6 +20,11 @@ import {
   imageModelAvailability,
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
+import {
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  readImageWorkerCapabilityV2,
+  renderSelectionForAction,
+} from '@/agent/lib/image-config-contract'
 import { readKv } from '@/lib/creative-studio/taste'
 
 export const runtime = 'nodejs'
@@ -142,6 +147,8 @@ export async function GET(req: NextRequest) {
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
+  const { receipt: actionsReceiptV2, reason: actionsReceiptV2Reason } = readImageWorkerCapabilityV2(
+    await readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY), Date.now())
   const actions = pageRows.map((row: {
     id: string
     status: string
@@ -150,8 +157,21 @@ export async function GET(req: NextRequest) {
     payload?: unknown
     imageModel?: string | null
     imageQuote?: unknown
+    imageConfig?: unknown
+    imageConfigRevision?: number | null
   } & Record<string, unknown>) => {
-    const { payload, imageModel, imageQuote, ...r } = row
+    const { payload, imageModel, imageQuote, imageConfig, imageConfigRevision, ...r } = row
+    const renderSelection = r.type === 'image_gen' && imageProjectionAvailable
+      ? renderSelectionForAction({
+          type: r.type,
+          imageModel,
+          imageConfig,
+          imageConfigRevision,
+          availability,
+          receipt: actionsReceiptV2,
+          receiptUnavailableReason: actionsReceiptV2Reason || undefined,
+        })
+      : null
     return {
       ...r,
       expired: r.status === 'pending' && isPendingActionExpired(r.createdAt, r.type),
@@ -164,6 +184,7 @@ export async function GET(req: NextRequest) {
             availability,
           }) }
         : {}),
+      ...(renderSelection ? { imageRenderSelection: renderSelection } : {}),
     }
   })
 

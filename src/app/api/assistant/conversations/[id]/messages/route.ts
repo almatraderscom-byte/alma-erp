@@ -12,6 +12,11 @@ import {
   imageModelAvailability,
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
+import {
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  readImageWorkerCapabilityV2,
+  renderSelectionForAction,
+} from '@/agent/lib/image-config-contract'
 import { readKv } from '@/lib/creative-studio/taste'
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -125,6 +130,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       payload: true,
       imageModel: true,
       imageQuote: true,
+      imageConfig: true,
+      imageConfigRevision: true,
     },
     orderBy: { createdAt: 'asc' },
   })
@@ -142,17 +149,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   // being relabelled by a guess. (resolvedAt looked like the signal and is not:
   // the worker's job-result callback stamps it on completion.)
   const ownerDecidedById = new Map<string, boolean | null>()
-  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+  const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = await Promise.all([
     readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
     readKv('cs_engine_kill:gemini'),
     readKv('cs_xai_enabled'),
+    readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
   ])
   const imageAvailability = imageModelAvailability({
     workerCapabilities,
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
+  const { receipt: imageReceiptV2, reason: imageReceiptV2Reason } = readImageWorkerCapabilityV2(
+    workerCapabilitiesV2, Date.now())
   const imageSelectionById = new Map<string, unknown>()
+  const imageRenderById = new Map<string, unknown>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
     summaryById.set(a.id, a.summary ?? '')
@@ -162,6 +173,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         ...a,
         availability: imageAvailability,
       }))
+      const renderSelection = renderSelectionForAction({
+        ...a,
+        availability: imageAvailability,
+        receipt: imageReceiptV2,
+        receiptUnavailableReason: imageReceiptV2Reason || undefined,
+      })
+      if (renderSelection) imageRenderById.set(a.id, renderSelection)
     }
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
@@ -194,7 +212,11 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
-    if (a.type === 'image_gen') block.imageModelSelection = imageSelectionById.get(a.id)
+    if (a.type === 'image_gen') {
+      block.imageModelSelection = imageSelectionById.get(a.id)
+      const renderSelection = imageRenderById.get(a.id)
+      if (renderSelection) block.imageRenderSelection = renderSelection
+    }
     const list = syntheticByMsg.get(target.id) ?? []
     list.push(block)
     syntheticByMsg.set(target.id, list)
@@ -289,6 +311,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
               imageModelSelection: imageSelectionById.get(b.pendingActionId) ?? b.imageModelSelection,
+              imageRenderSelection: imageRenderById.get(b.pendingActionId) ?? b.imageRenderSelection,
               // The action summary changes when the owner switches image model.
               // Canonical action state wins over the old breadcrumb so a reload
               // cannot revert the live card's "Model:" line.

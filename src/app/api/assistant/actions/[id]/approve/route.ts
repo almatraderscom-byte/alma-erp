@@ -23,6 +23,13 @@ import {
   imageModelAvailability,
   normalizeImageActionModel,
 } from '@/agent/lib/image-action-contract'
+import {
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  parseImageConfigEnvelope,
+  payloadMirrorMatchesConfig,
+  readImageWorkerCapabilityV2,
+  receiptSupports,
+} from '@/agent/lib/image-config-contract'
 import { readKv } from '@/lib/creative-studio/taste'
 import { GENERIC_IMAGE_MODELS, type GenericImageModel } from '@/lib/creative-studio/advanced-image-capabilities'
 import {
@@ -910,12 +917,50 @@ async function runApprove(
     const actionPayload = action.payload as Record<string, unknown>
     let pinnedImageModel = typeof action.imageModel === 'string' ? action.imageModel : null
     let pinnedImageQuote = action.imageQuote
+    // Build 103 Issue 2 — a v2 card carries the canonical revisioned config.
+    // Approval re-reads it, verifies fingerprint + mirror agreement + a fresh
+    // worker receipt, and claims the row on the exact revision it read: an
+    // edit that lands first wins, a half-updated selection can never queue.
+    const isV2Card = !actionPayload.creativeStudio && action.imageConfig != null
+    let v2Config: NonNullable<ReturnType<typeof parseImageConfigEnvelope>>['config'] | null = null
+    if (isV2Card) {
+      const envelope = parseImageConfigEnvelope(action.imageConfig, pinnedImageModel)
+      if (!envelope || !pinnedImageModel) {
+        return Response.json({ error: 'image_config_divergent' }, { status: 409 })
+      }
+      if (!payloadMirrorMatchesConfig(actionPayload, pinnedImageModel as GenericImageModel, envelope.config)) {
+        // Canonical config and mirror disagree — the card was half-written.
+        // Fail closed; no paid queue entry from a divergent selection.
+        return Response.json({ error: 'image_config_divergent' }, { status: 409 })
+      }
+      const workerCapabilitiesV2 = await readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY)
+      const { receipt: receiptV2, reason: receiptV2Reason } = readImageWorkerCapabilityV2(
+        workerCapabilitiesV2, Date.now())
+      const genericLaneKillV2 = await readKv('cs_engine_kill:gemini')
+      if (genericLaneKillV2 === '1') {
+        return Response.json({
+          error: 'image_model_unavailable',
+          message: 'Image generation is disabled by the owner kill switch.',
+          retryable: true,
+        }, { status: 422 })
+      }
+      if (!receiptSupports(receiptV2, pinnedImageModel as GenericImageModel, envelope.config.presetId, envelope.config.imageSize)) {
+        return Response.json({
+          error: 'image_model_unavailable',
+          message: receiptV2
+            ? 'Live image worker has not proven this model/preset/size combination.'
+            : receiptV2Reason,
+          retryable: true,
+        }, { status: 422 })
+      }
+      v2Config = envelope.config
+    }
     // Generic chat image cards pin one of the audited engines. Re-check the
     // current owner kill switch and worker-known configuration immediately
     // before the pending→queued CAS so a stale open card cannot incur spend on
     // an engine that was disabled after staging. Creative Studio has its own
     // signed authorization/engine contract and deliberately bypasses this lane.
-    if (!actionPayload.creativeStudio) {
+    if (!actionPayload.creativeStudio && !isV2Card) {
       const inputs = imageActionInputs(action.payload)
       const [configuredModels, workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
         readKv('cs_image_models'),
@@ -970,15 +1015,22 @@ async function runApprove(
       ...(pinnedImageQuote && typeof pinnedImageQuote === 'object'
         ? { imageQuote: pinnedImageQuote }
         : {}),
+      // v2: the worker payload embeds the canonical config snapshot; the
+      // worker independently re-derives the fingerprint and exact dimensions
+      // from this before any provider spend.
+      ...(v2Config ? { imageConfig: v2Config } : {}),
     }
     // The wrapper owns a short compare-and-set claim before it creates visible
     // progress. This second CAS is the only pending→worker transition and also
     // snapshots the independent model/quote fields into the immutable payload.
+    // For a v2 card it additionally claims the exact config revision it just
+    // verified, so a concurrent accepted edit makes this approval lose cleanly.
     const claimed = await db.agentPendingAction.updateMany({
       where: {
         id: actionId,
         status: 'pending',
         ...(options.imageClaimedAt ? { approvalClaimedAt: options.imageClaimedAt } : {}),
+        ...(isV2Card ? { imageConfigRevision: action.imageConfigRevision ?? 0 } : {}),
       },
       data: {
         status: queueStatus,
@@ -991,6 +1043,13 @@ async function runApprove(
     })
     if (claimed.count === 0) {
       const current = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
+      // A concurrent accepted edit bumped the revision while this approval was
+      // verifying — the card is still pending, but the selection changed. Tell
+      // the client to re-render and re-approve the NEW selection; nothing was
+      // queued and no money moved.
+      if (isV2Card && current?.status === 'pending') {
+        return Response.json({ error: 'image_config_conflict', status: 'pending' }, { status: 409 })
+      }
       return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
     }
 

@@ -26,6 +26,18 @@ import {
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
 import {
+  IMAGE_PRESETS,
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  buildImageConfigEnvelope,
+  buildImageRenderConfig,
+  parseImageConfigEnvelope,
+  payloadMirrorFromConfig,
+  readImageWorkerCapabilityV2,
+  receiptSupports,
+  renderSelectionForAction,
+  type ImagePresetId,
+} from '@/agent/lib/image-config-contract'
+import {
   GENERIC_IMAGE_MODELS,
   type GenericImageModel,
 } from '@/lib/creative-studio/advanced-image-capabilities'
@@ -61,18 +73,21 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   const action = await (prisma as any).agentPendingAction.findUnique({ where: { id: params.id } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
-  const [workerCapabilities, genericLaneKill, xaiEnabled] = action.type === 'image_gen'
+  const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = action.type === 'image_gen'
     ? await Promise.all([
         readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
         readKv('cs_engine_kill:gemini'),
         readKv('cs_xai_enabled'),
+        readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
       ])
-    : [null, null, null]
+    : [null, null, null, null]
   const availability = imageModelAvailability({
     workerCapabilities,
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
+  const { receipt: receiptV2, reason: receiptV2Reason } = readImageWorkerCapabilityV2(
+    workerCapabilitiesV2, Date.now())
 
   return Response.json({
     id: action.id,
@@ -83,7 +98,15 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     entryCount: getEntryCount(action),
     editFields: financeEditFieldsForType(action.type),
     ...(action.type === 'image_gen'
-      ? { imageModelSelection: selectionForImageAction({ ...action, availability }) }
+      ? {
+          imageModelSelection: selectionForImageAction({ ...action, availability }),
+          imageRenderSelection: renderSelectionForAction({
+            ...action,
+            availability,
+            receipt: receiptV2,
+            receiptUnavailableReason: receiptV2Reason || undefined,
+          }),
+        }
       : {}),
   })
 }
@@ -107,6 +130,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     value?: unknown
     convertToSingle?: boolean
     imageModel?: unknown
+    imageConfig?: unknown
   }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
@@ -116,6 +140,33 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+  }
+  // ── Build 103 Issue 2: revisioned multi-field edit (v2 cards only) ────────
+  if (action.type === 'image_gen' && body.imageConfig !== undefined) {
+    return applyImageConfigEdit(db, action, body.imageConfig)
+  }
+  // Legacy Build 102 model-only edit on a v2 card routes through the SAME v2
+  // canonical compare-and-set (snapshot the read revision) — it can never
+  // bypass a concurrent v2 edit or a claimed approval.
+  if (
+    action.type === 'image_gen'
+    && body.imageModel !== undefined
+    && action.imageConfig != null
+  ) {
+    const currentEnvelope = parseImageConfigEnvelope(action.imageConfig, action.imageModel)
+    if (!currentEnvelope) {
+      // A half-written v2 card must not accept blind edits — fail closed
+      // without mutating; approval performs the same divergence check.
+      return Response.json({ error: 'image_config_divergent' }, { status: 409 })
+    }
+    return applyImageConfigEdit(db, action, {
+      expectedRevision: action.imageConfigRevision ?? 0,
+      imageModel: body.imageModel,
+      presetId: currentEnvelope.config.presetId,
+      imageSize: currentEnvelope.config.imageSize,
+      quality: currentEnvelope.config.quality,
+      variationCount: currentEnvelope.config.variationCount,
+    })
   }
   if (action.type === 'image_gen' && body.imageModel !== undefined) {
     if (
@@ -260,5 +311,192 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     entryCount: getEntryCount(updated),
     isFinance: true,
     isBatch: updated.type === 'log_ledger_entries_batch' || updated.type === 'log_expenses_batch',
+  })
+}
+
+/**
+ * Build 103 Issue 2 — the atomic multi-field image edit. One revisioned
+ * compare-and-set writes the canonical envelope, the payload mirror, the v1
+ * mirror quote, and the summary together; approval claims the same row, so
+ * whichever wins first excludes the other completely.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function applyImageConfigEdit(db: any, action: any, rawInput: unknown): Promise<Response> {
+  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
+    return Response.json({ error: 'invalid_image_config', field: 'imageConfig' }, { status: 422 })
+  }
+  const input = rawInput as Record<string, unknown>
+  const expectedRevision = input.expectedRevision
+  if (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    return Response.json({ error: 'invalid_image_config', field: 'expectedRevision' }, { status: 422 })
+  }
+  if (
+    typeof input.imageModel !== 'string'
+    || !GENERIC_IMAGE_MODELS.includes(input.imageModel as GenericImageModel)
+  ) {
+    return Response.json({ error: 'invalid_image_config', field: 'imageModel' }, { status: 422 })
+  }
+  const model = input.imageModel as GenericImageModel
+  if (typeof input.presetId !== 'string' || !IMAGE_PRESETS.some((p) => p.id === input.presetId)) {
+    return Response.json({ error: 'invalid_image_config', field: 'presetId' }, { status: 422 })
+  }
+  const presetId = input.presetId as ImagePresetId
+  if (input.imageSize !== '1K' && input.imageSize !== '2K' && input.imageSize !== '4K') {
+    return Response.json({ error: 'invalid_image_config', field: 'imageSize' }, { status: 422 })
+  }
+  const imageSize = input.imageSize
+  if (input.quality !== 'standard' && input.quality !== 'pro') {
+    return Response.json({ error: 'invalid_image_config', field: 'quality' }, { status: 422 })
+  }
+  const quality = input.quality
+  if (
+    typeof input.variationCount !== 'number'
+    || !Number.isInteger(input.variationCount)
+    || input.variationCount < 1
+    || input.variationCount > 4
+  ) {
+    return Response.json({ error: 'invalid_image_config', field: 'variationCount' }, { status: 422 })
+  }
+  const variationCount = input.variationCount
+
+  // A v2 edit is only defined for a v2 card. (Legacy cards keep the v1 path.)
+  const currentEnvelope = parseImageConfigEnvelope(action.imageConfig, action.imageModel)
+  if (!currentEnvelope) {
+    return Response.json({ error: 'image_config_unsupported' }, { status: 422 })
+  }
+
+  // Fresh worker proof + owner kill switches — never enable from source code.
+  const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = await Promise.all([
+    readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+    readKv('cs_engine_kill:gemini'),
+    readKv('cs_xai_enabled'),
+    readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
+  ])
+  const availability = imageModelAvailability({
+    workerCapabilities,
+    genericLaneKilled: genericLaneKill === '1',
+    xaiConfigured: xaiEnabled === '1',
+  })
+  const { receipt: receiptV2, reason: receiptV2Reason } = readImageWorkerCapabilityV2(
+    workerCapabilitiesV2, Date.now())
+  const killReason = availability[model]
+  if (typeof killReason === 'string' && killReason) {
+    return Response.json({
+      error: 'image_model_incompatible', field: 'imageModel', message: killReason,
+    }, { status: 422 })
+  }
+  if (!receiptSupports(receiptV2, model, presetId, imageSize)) {
+    return Response.json({
+      error: 'image_model_incompatible',
+      field: 'imageModel',
+      message: receiptV2
+        ? 'Live image worker has not proven this model/preset/size combination.'
+        : receiptV2Reason,
+    }, { status: 422 })
+  }
+
+  let config
+  let envelope
+  try {
+    config = buildImageRenderConfig({
+      model,
+      presetId,
+      imageSize,
+      quality,
+      variationCount,
+      pipelineMode: currentEnvelope.config.pipelineMode,
+    })
+    envelope = buildImageConfigEnvelope(model, config)
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message.replace(/^image_config_incompatible:/, '')
+      : String(error)
+    return Response.json({ error: 'image_model_incompatible', message }, { status: 422 })
+  }
+
+  // v1 mirror quote keeps an installed Build 102 rendering a coherent card;
+  // poster (2:3) has no v1 projection and mirrors as null.
+  let v1Quote: unknown = null
+  try {
+    v1Quote = buildImageActionQuote({
+      model,
+      quality,
+      imageSize,
+      requestedImages: variationCount,
+      pipelineMode: config.pipelineMode,
+      aspectRatio: config.aspectRatio,
+    })
+  } catch { v1Quote = null }
+
+  const payload = (action.payload && typeof action.payload === 'object' && !Array.isArray(action.payload))
+    ? action.payload as Record<string, unknown>
+    : {}
+  const summary = buildImageActionSummary({
+    prompt: payload.prompt,
+    quality,
+    count: variationCount,
+    model,
+  })
+  const nextPayload = {
+    ...payload,
+    ...payloadMirrorFromConfig(model, config),
+  }
+
+  const selected = await db.agentPendingAction.updateMany({
+    where: {
+      id: action.id,
+      status: 'pending',
+      approvalClaimedAt: null,
+      imageConfigRevision: expectedRevision,
+    },
+    data: {
+      imageConfig: envelope,
+      imageConfigRevision: expectedRevision + 1,
+      imageModel: model,
+      imageQuote: v1Quote,
+      summary,
+      payload: nextPayload,
+    },
+  })
+  if (selected.count === 0) {
+    const current = await db.agentPendingAction.findUnique({ where: { id: action.id } })
+    return Response.json({
+      error: current?.status === 'pending' ? 'image_config_conflict' : 'already_resolved',
+      status: current?.status,
+      imageRenderSelection: current
+        ? renderSelectionForAction({
+            ...current,
+            availability,
+            receipt: receiptV2,
+            receiptUnavailableReason: receiptV2Reason || undefined,
+          })
+        : null,
+      imageModelSelection: current
+        ? selectionForImageAction({ ...current, availability })
+        : null,
+    }, { status: 409 })
+  }
+
+  const updated = {
+    ...action,
+    imageConfig: envelope,
+    imageConfigRevision: expectedRevision + 1,
+    imageModel: model,
+    imageQuote: v1Quote,
+    payload: nextPayload,
+  }
+  return Response.json({
+    success: true,
+    id: action.id,
+    type: action.type,
+    status: 'pending',
+    summary,
+    imageRenderSelection: renderSelectionForAction({
+      ...updated,
+      availability,
+      receipt: receiptV2,
+      receiptUnavailableReason: receiptV2Reason || undefined,
+    }),
+    imageModelSelection: selectionForImageAction({ ...updated, availability }),
   })
 }

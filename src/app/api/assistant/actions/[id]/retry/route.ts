@@ -9,6 +9,12 @@ import {
   imageModelAvailability,
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
+import {
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  parseImageConfigEnvelope,
+  readImageWorkerCapabilityV2,
+  renderSelectionForAction,
+} from '@/agent/lib/image-config-contract'
 import { GENERIC_IMAGE_MODELS, type GenericImageModel } from '@/lib/creative-studio/advanced-image-capabilities'
 import { isSystemOwner } from '@/lib/roles'
 import { readKv } from '@/lib/creative-studio/taste'
@@ -40,6 +46,10 @@ function chatRetryPayload(payload: unknown): Record<string, unknown> | null {
     'jobResultPending',
     'jobResultEnvelope',
     'workerAuthorization',
+    // v2: approval embeds the config snapshot into the worker payload. The
+    // fresh card is pre-approval again — its canonical config lives in the
+    // imageConfig column and is re-embedded by its own approval.
+    'imageConfig',
   ]) delete clone[key]
   return clone
 }
@@ -77,20 +87,28 @@ type ImageRetryRow = {
   businessId: string
   imageModel?: string | null
   imageQuote?: unknown
+  imageConfig?: unknown
+  imageConfigRevision?: number | null
   createdAt: Date | string
 }
 
 async function currentImageAvailability() {
-  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+  const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = await Promise.all([
     readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
     readKv('cs_engine_kill:gemini'),
     readKv('cs_xai_enabled'),
+    readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
   ])
-  return imageModelAvailability({
-    workerCapabilities,
-    genericLaneKilled: genericLaneKill === '1',
-    xaiConfigured: xaiEnabled === '1',
-  })
+  const v2 = readImageWorkerCapabilityV2(workerCapabilitiesV2, Date.now())
+  return {
+    availability: imageModelAvailability({
+      workerCapabilities,
+      genericLaneKilled: genericLaneKill === '1',
+      xaiConfigured: xaiEnabled === '1',
+    }),
+    receiptV2: v2.receipt,
+    receiptV2Reason: v2.reason,
+  }
 }
 
 async function responseForRetry(row: ImageRetryRow, sourceActionId: string, idempotent: boolean) {
@@ -103,8 +121,14 @@ async function responseForRetry(row: ImageRetryRow, sourceActionId: string, idem
   }
   // Existing pinned retry cards remain readable even if the current worker
   // receipt has expired. Approval performs a fresh fail-closed preflight.
-  const availability = await currentImageAvailability()
+  const { availability, receiptV2, receiptV2Reason } = await currentImageAvailability()
   const imageModelSelection = selectionForImageAction({ ...row, availability })
+  const imageRenderSelection = renderSelectionForAction({
+    ...row,
+    availability,
+    receipt: receiptV2,
+    receiptUnavailableReason: receiptV2Reason || undefined,
+  })
   if (row.conversationId) {
     try {
       await appendConfirmCardMessage(row.conversationId, {
@@ -113,6 +137,7 @@ async function responseForRetry(row: ImageRetryRow, sourceActionId: string, idem
         actionType: 'image_gen',
         costEstimate: row.costEstimate ?? undefined,
         imageModelSelection,
+        imageRenderSelection,
         clientRequestId: retryCardRequestId(row.id),
       })
     } catch (error) {
@@ -141,6 +166,7 @@ async function responseForRetry(row: ImageRetryRow, sourceActionId: string, idem
       businessId: row.businessId,
       createdAt: row.createdAt,
       imageModelSelection,
+      imageRenderSelection,
     },
   })
 }
@@ -166,7 +192,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   // A retry is a new approval card, not merely a history read. Snapshot current
   // worker availability before entering the serializing transaction and refuse
   // to create a card for a model this worker cannot currently execute.
-  const availability = await currentImageAvailability()
+  const { availability, receiptV2 } = await currentImageAvailability()
 
   let result:
     | { kind: 'created'; row: ImageRetryRow }
@@ -192,12 +218,32 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         || !source.imageQuote
         || typeof source.imageQuote !== 'object'
       ) return { kind: 'unsupported_lane' as const }
-      const selection = selectionForImageAction({ ...source, availability })
-      const selectedOption = selection?.options.find((option) => option.id === source.imageModel)
-      if (!selection || !selectedOption?.enabled) {
-        return {
-          kind: 'unavailable' as const,
-          message: selectedOption?.unavailableReason ?? 'Image model is unavailable on the active worker.',
+      // A v2 source proves availability through the live v2 receipt for its
+      // exact preset/tier; poster (2:3) has no v1 selection at all. Legacy
+      // sources keep the v1 selection check unchanged.
+      const sourceEnvelope = parseImageConfigEnvelope(source.imageConfig, source.imageModel)
+      if (sourceEnvelope) {
+        const supported = receiptV2
+          && receiptV2.models.includes(source.imageModel as never)
+          && (receiptV2.presets[source.imageModel]?.[sourceEnvelope.config.presetId] ?? [])
+            .includes(sourceEnvelope.config.imageSize)
+        const killed = availability[source.imageModel]
+        if (!supported || (typeof killed === 'string' && killed)) {
+          return {
+            kind: 'unavailable' as const,
+            message: typeof killed === 'string' && killed
+              ? killed
+              : 'Live image worker has not proven this model/preset/size combination.',
+          }
+        }
+      } else {
+        const selection = selectionForImageAction({ ...source, availability })
+        const selectedOption = selection?.options.find((option) => option.id === source.imageModel)
+        if (!selection || !selectedOption?.enabled) {
+          return {
+            kind: 'unavailable' as const,
+            message: selectedOption?.unavailableReason ?? 'Image model is unavailable on the active worker.',
+          }
         }
       }
 
@@ -234,6 +280,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           ownerDecided: null,
           imageModel: source.imageModel,
           imageQuote: source.imageQuote,
+          // v2: the fresh card copies the exact canonical selection and starts
+          // its own revision history — editable again before its own approval.
+          ...(sourceEnvelope
+            ? { imageConfig: source.imageConfig, imageConfigRevision: 0 }
+            : {}),
         },
       })
       return { kind: 'created' as const, row }

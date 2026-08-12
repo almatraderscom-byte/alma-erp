@@ -10,6 +10,8 @@ export type ConfirmCardPayload = {
   actionType?: string
   costEstimate?: number
   imageModelSelection?: unknown
+  /** Build 103 Issue 2 — v2 render selection, projected beside v1. */
+  imageRenderSelection?: unknown
   /** Optional deterministic receipt for API-originated cards/reconciliation. */
   clientRequestId?: string
 }
@@ -31,6 +33,9 @@ export async function appendConfirmCardMessage(
         costEstimate: card.costEstimate ?? null,
         ...(card.imageModelSelection && typeof card.imageModelSelection === 'object'
           ? { imageModelSelection: card.imageModelSelection }
+          : {}),
+        ...(card.imageRenderSelection && typeof card.imageRenderSelection === 'object'
+          ? { imageRenderSelection: card.imageRenderSelection }
           : {}),
       }],
       tokensIn: 0,

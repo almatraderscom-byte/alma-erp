@@ -2366,4 +2366,94 @@ final class AssistantParityV2Tests: XCTestCase {
         let source = "let amount = 5000 // whole taka"
         XCTAssertEqual(String(AgentSyntaxHighlighter.highlight(source, language: "swift").characters), source)
     }
+
+    // MARK: - Build 103 Issue 1: session surface state machine
+
+    func testInitialSurfaceIsUnresolvedNeverImplicitNewChat() {
+        let vm = AssistantVM()
+        // Fresh VM: nil conversation + empty messages used to read as "new
+        // chat". The authoritative surface must read as UNRESOLVED instead.
+        XCTAssertNil(vm.conversationId)
+        XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertTrue(vm.surfaceIsRestoring,
+                      "cold start owns a restore surface, not a hero")
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "the hero may never render before the route resolves")
+        XCTAssertNil(vm.surfaceFailure)
+    }
+
+    func testHeroRendersOnlyFromExplicitReadyNew() {
+        let vm = AssistantVM()
+        XCTAssertFalse(vm.surfaceShowsHero)
+        vm.debugSetSessionSurface(.loadingHistory(conversationId: "c1", requestToken: UUID()))
+        XCTAssertFalse(vm.surfaceShowsHero, "loading an existing chat is never a new chat")
+        XCTAssertTrue(vm.surfaceIsRestoring)
+        vm.debugSetSessionSurface(.failedHistory(conversationId: "c1", requestToken: UUID(), message: "x"))
+        XCTAssertFalse(vm.surfaceShowsHero, "failure must not fall back to the hero")
+        XCTAssertFalse(vm.surfaceIsRestoring)
+        vm.debugSetSessionSurface(.readyNew(sessionIdentity: "s1"))
+        XCTAssertTrue(vm.surfaceShowsHero)
+    }
+
+    func testExistingZeroMessageConversationIsReadyConversationNotHero() {
+        let vm = AssistantVM()
+        vm.debugSetSessionSurface(.readyConversation(conversationId: "empty-chat"))
+        XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "an existing conversation with zero rows is still an existing conversation")
+        XCTAssertFalse(vm.surfaceIsRestoring)
+    }
+
+    func testNewerSurfaceTokenInvalidatesOlderRequest() {
+        let vm = AssistantVM()
+        let tokenA = vm.debugIssueSurfaceToken(loading: "chat-a")
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(tokenA))
+        // Rapid A → B switch: B's request replaces A's before A responds.
+        let tokenB = vm.debugIssueSurfaceToken(loading: "chat-b")
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(tokenA),
+                       "a late Chat-A response may not commit into Chat B")
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(tokenB))
+    }
+
+    func testNewChatInvalidatesInFlightHistoryToken() async {
+        let vm = AssistantVM()
+        let token = vm.debugIssueSurfaceToken(loading: "chat-a")
+        let opened = await vm.newChat()
+        XCTAssertTrue(opened)
+        XCTAssertTrue(vm.surfaceShowsHero, "explicit New Chat is the genuine hero state")
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(token),
+                       "a late history response may not replace the fresh chat")
+        XCTAssertFalse(vm.loadingHistory)
+    }
+
+    func testTerminalReadyStatesRejectEveryToken() {
+        let vm = AssistantVM()
+        let token = vm.debugIssueSurfaceToken(loading: nil)
+        vm.debugSetSessionSurface(.readyConversation(conversationId: "c9"))
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(token),
+                       "a committed surface owns itself; stale bootstrap responses are dead")
+    }
+
+    func testFailureSurfaceStaysTiedToSelectedConversation() {
+        let vm = AssistantVM()
+        let token = UUID()
+        vm.debugSetSessionSurface(.failedHistory(
+            conversationId: "chat-a", requestToken: token, message: "কথোপকথন লোড করা যায়নি"))
+        XCTAssertEqual(vm.surfaceFailure?.conversationId, "chat-a")
+        XCTAssertEqual(vm.surfaceFailure?.message, "কথোপকথন লোড করা যায়নি")
+        XCTAssertFalse(vm.surfaceShowsHero)
+        // The failed request's own token remains addressable for retry.
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(token))
+    }
+
+    func testInitialRouteFailureIsRetryableWithoutConversation() {
+        let vm = AssistantVM()
+        let token = UUID()
+        vm.debugSetSessionSurface(.failedHistory(
+            conversationId: nil, requestToken: token, message: "সেশন খুলতে সমস্যা হয়েছে"))
+        XCTAssertNil(vm.surfaceFailure?.conversationId)
+        XCTAssertNotNil(vm.surfaceFailure)
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "a failed route resolution may not silently become a blank new chat")
+    }
 }
