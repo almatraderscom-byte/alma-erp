@@ -323,6 +323,38 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
         XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
     }
 
+    /// A short reply spoken and FINISHED inside the tail has a quiet edge, but
+    /// its late onset proves it is not echo: playback stopped when the tail
+    /// began and the measured echo dies within ~650 ms. Dropping it made the
+    /// owner repeat his first words (report 2026-08-13).
+    func testNoAECLateOnsetUtteranceInsideTailIsRetained() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        // 40 quiet tail frames (echo already dead), then a 1s utterance that
+        // ends with 10 quiet frames before the tail expires.
+        var sequence: UInt64 = 0
+        func frame(_ rms: Double, _ suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression) -> [UInt64] {
+            sequence += 1
+            return reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: sequence,
+                pcm: pcm(sequence),
+                rms: rms,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: suppression
+            ).audioFramesToSend.map(\.sequence)
+        }
+        for _ in 0..<40 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+        for _ in 0..<50 { XCTAssertEqual(frame(0.030, .playbackTail), []) }
+        for _ in 0..<10 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+
+        let released = frame(0.0015, .none)
+        // The buffered utterance drains; live listening continues.
+        XCTAssertEqual(released.count, 101)
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
     func testMuteEndsOnlyAnOpenAudioStreamAndUnmuteResumes() {
         var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
 

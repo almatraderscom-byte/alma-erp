@@ -3425,6 +3425,9 @@ final class AlmaVoiceEngine {
     }
     var liveFeed: [LiveFeedLine] = []
     private var liveStatusNudgeTask: Task<Void, Never>? = nil
+    /// Bounded settle check for a tool answer that arrives as transcript but
+    /// never as audio — nothing else recomputes the phase in that case.
+    private var liveToolSettleTask: Task<Void, Never>? = nil
     private var feedUserLineId: String? = nil
     private var feedAgentLineId: String? = nil
 
@@ -4329,6 +4332,7 @@ final class AlmaVoiceEngine {
         let canceledLiveTurnID = liveTurnId
         liveTurnId = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
+        liveToolSettleTask?.cancel(); liveToolSettleTask = nil
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
         listenGeneration &+= 1
@@ -5613,6 +5617,7 @@ final class AlmaVoiceEngine {
         live.setToolResponsePlaybackBlocked(active)
         ttsLevel = level
         if active {
+            liveToolSettleTask?.cancel()
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
@@ -5679,6 +5684,20 @@ final class AlmaVoiceEngine {
             hasOutstandingCalls: live.hasOutstandingToolCalls)
         liveStatusNudgeTask?.cancel()
         if state == .thinking, !liveToolTurnPending { state = .listening }
+        // Gemini sometimes answers a functionResponse with a transcript but no
+        // audio. Playback never starts, so nothing recomputed the phase and the
+        // call sat in "কাজ করছি" forever (owner report 2026-08-13). Text
+        // without audio still returns the call to listening.
+        liveToolSettleTask?.cancel()
+        liveToolSettleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard let self, !Task.isCancelled, self.liveActive else { return }
+            guard self.state == .thinking,
+                  self.activeLiveToolInvocation == nil,
+                  !self.live.hasOutstandingToolCalls else { return }
+            self.feedFinalizeAgent()
+            self.state = .listening
+        }
     }
 
     func liveWasInterrupted() {
@@ -5798,6 +5817,7 @@ final class AlmaVoiceEngine {
         turnTask?.cancel(); turnTask = nil
         livePollTask?.cancel(); livePollTask = nil
         liveStatusNudgeTask?.cancel(); liveStatusNudgeTask = nil
+        liveToolSettleTask?.cancel(); liveToolSettleTask = nil
         let canceledTurnID = liveTurnId
         liveTurnId = nil
         _ = applyLifecycleEvent(.toolCompleted(id: invocation.callID))
@@ -10713,6 +10733,16 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             echoExposedLoudspeaker ? 1.2 : 0.25)
         listenTailSuppressionLogged = false
         audioLock.unlock()
+
+        // A finished spoken segment is a finished feed line. A tool turn keeps
+        // the provider turn open across the acknowledgement and the answer, so
+        // waiting for turn-complete alone let the acknowledgement remain in the
+        // accumulator and weld itself onto the answer ("হ্যাঁ Boss, দেখছি।Boss,
+        // Ads Manager…", owner report 2026-08-13). Taken OUTSIDE audioLock —
+        // two call sites nest startAttemptLock before audioLock.
+        startAttemptLock.lock()
+        outputTranscript = ""
+        startAttemptLock.unlock()
 
         audioQueue.async { [weak self] in
             self?.player.stop()

@@ -71,6 +71,9 @@ struct AlmaLiveVoiceInputTurnReducer {
     /// clipped the first Bengali syllable.
     private var activePlaybackCandidateSequence: UInt64?
     private var activePlaybackOwnerConfirmed = false
+    /// Sequence of the first frame captured after playback stopped. Sound whose
+    /// onset lands well past this cannot be echo — the echo's source is gone.
+    private var tailStartSequence: UInt64?
     private var inputMuted = false
 
     private var ownerTurnCollecting = false
@@ -95,6 +98,7 @@ struct AlmaLiveVoiceInputTurnReducer {
         bufferedSuppressedFrameCount = 0
         activePlaybackCandidateSequence = nil
         activePlaybackOwnerConfirmed = false
+        tailStartSequence = nil
         inputMuted = false
         isAudioStreamOpen = false
         currentOwnerTurnOrdinal = 0
@@ -164,6 +168,7 @@ struct AlmaLiveVoiceInputTurnReducer {
 
         case .playbackTail:
             if bufferedSuppression != .playbackTail {
+                tailStartSequence = sequence
                 // Ordinary active-playback frames are model echo.  Preserve only
                 // the span beginning at an explicit acoustic owner candidate;
                 // confirmation may arrive a few frames into the tail.
@@ -211,7 +216,27 @@ struct AlmaLiveVoiceInputTurnReducer {
                 let boundaryThreshold = max(0.003, peak * 0.25)
                 let audibleAtBoundary = frame.rms >= boundaryThreshold
                     || suppressedFrames.suffix(3).contains { $0.rms >= boundaryThreshold }
-                guard audibleAtBoundary else {
+                // A short utterance spoken AND finished inside the tail has a
+                // quiet edge, but its onset betrays it: playback stopped when
+                // the tail began, and the measured echo decays within ~650 ms,
+                // so sound that first rises ≥700 ms (35 frames at 20 ms) into
+                // the tail cannot be echo. Dropping it made the owner repeat
+                // his first words (report 2026-08-13).
+                let lateOnset: Bool = {
+                    guard let tailStart = tailStartSequence,
+                          let lastLoud = suppressedFrames.lastIndex(
+                            where: { $0.rms >= boundaryThreshold })
+                    else { return false }
+                    var startIndex = lastLoud
+                    while startIndex > suppressedFrames.startIndex,
+                          suppressedFrames[suppressedFrames.index(before: startIndex)].rms
+                            >= boundaryThreshold {
+                        startIndex = suppressedFrames.index(before: startIndex)
+                    }
+                    return suppressedFrames[startIndex].sequence >= tailStart + 35
+                }()
+                tailStartSequence = nil
+                guard audibleAtBoundary || lateOnset else {
                     clearSuppressedFrames()
                     return sending([frame])
                 }
