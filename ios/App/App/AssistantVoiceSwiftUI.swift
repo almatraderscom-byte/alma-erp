@@ -5901,7 +5901,7 @@ final class AlmaVoiceEngine {
                     self.deliverLiveToolResult(
                         callId: callId,
                         functionName: invocation.functionName,
-                        text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। Boss-কে ছোট করে জানান, দরকার হলে run_agent_turn দিয়ে চেষ্টা করুন।",
+                        text: "তথ্যটা এখন আনা গেল না (\(resp.error ?? "unknown"))। এখনই সিদ্ধান্ত নাও: হয় ঠিক এই মুহূর্তে run_agent_turn call করে আবার চেষ্টা করো, নয়তো Boss-কে স্পষ্ট বলো কাজটা হয়নি এবং জিজ্ঞেস করো আবার চেষ্টা করবে কি না। tool call না করে মুখে 'আবার চেষ্টা করছি' বলা মিথ্যা — নিষেধ।",
                         executionToken: executionToken)
                 }
             } catch is CancellationError {
@@ -5910,7 +5910,7 @@ final class AlmaVoiceEngine {
                 self.deliverLiveToolResult(
                     callId: callId,
                     functionName: invocation.functionName,
-                    text: "তথ্যটা এখন আনা গেল না। Boss-কে ছোট করে জানান।",
+                    text: "তথ্যটা এখন আনা গেল না। Boss-কে স্পষ্ট বলো কাজটা হয়নি এবং জিজ্ঞেস করো আবার চেষ্টা করবে কি না — call না করে 'চেষ্টা করছি' বলা নিষেধ।",
                     executionToken: executionToken)
             }
         }
@@ -6177,7 +6177,11 @@ final class AlmaVoiceEngine {
             return nil
         }
         if status == "error" || status == "canceled" {
-            return "কাজটা শেষ করা যায়নি। Boss-কে ছোট করে জানান, একটু পরে আবার চেষ্টা করা যাবে।"
+            // The old text invited the model to promise a retry it never performs
+            // (owner report 2026-08-12): it said "আবার চেষ্টা করছি" and dropped back
+            // to listening. The only honest paths are an immediate second call or
+            // a clear failure plus a question.
+            return "কাজটা শেষ করা যায়নি। Boss-কে স্পষ্ট বলো কাজটা ব্যর্থ হয়েছে এবং জিজ্ঞেস করো এখনই আবার চেষ্টা করবে কি না — Boss হ্যাঁ বললে ঠিক তখনই run_agent_turn আবার call করবে। call না করে 'আবার চেষ্টা করছি' বলা মিথ্যা, নিষেধ।"
         }
         guard let mid = st.assistantMessageId, !mid.isEmpty else {
             return Self.noSpokenReplyNote
@@ -13000,16 +13004,38 @@ struct AlmaVoiceConsoleView: View {
         let settingsAccessibility = AlmaLiveVoiceAccessibilityLayoutPolicy
             .voiceOverDescriptor(for: .voiceSettings(
                 selectedVoice: engine.selectedLiveVoice.name))
+        // The connection badge lives UNDER the title beside the timer, never on
+        // the title's line: the old trailing placement shared a row with a
+        // centered title and the two overlapped on ordinary widths (owner
+        // screenshot 2026-08-12).
         return ZStack {
             VStack(spacing: 2) {
                 Text("ALMA AI Call")
                     .font(.headline)
                     .foregroundStyle(ink)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(engine.callElapsedText(at: context.date))
-                        .font(.caption.monospacedDigit())
-                        .monospacedDigit()
-                        .foregroundStyle(muted)
+                HStack(spacing: 8) {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(engine.callElapsedText(at: context.date))
+                            .font(.caption.monospacedDigit())
+                            .monospacedDigit()
+                            .foregroundStyle(muted)
+                    }
+                    HStack(spacing: 5) {
+                        Circle().fill(connectionColor).frame(width: 6, height: 6)
+                        .shadow(color: connectionColor, radius: 4)
+                        .opacity(liveBlink ? 0.35 : 1)
+                        .onAppear {
+                            guard presentation.motion == .outputPCMReactive else { return }
+                            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
+                        }
+                        Text(engine.transportBadgeText)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(connectionColor)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(connectionColor.opacity(0.08), in: Capsule())
+                    .overlay(Capsule().strokeBorder(connectionColor.opacity(0.25), lineWidth: 1))
+                    .accessibilityHidden(true)
                 }
             }
             HStack(spacing: 10) {
@@ -13027,22 +13053,6 @@ struct AlmaVoiceConsoleView: View {
                 .accessibilityHint("কল চালু রেখে চ্যাটে ফিরে যাবে")
                 .accessibilitySortPriority(90)
                 Spacer(minLength: 8)
-                HStack(spacing: 6) {
-                    Circle().fill(connectionColor).frame(width: 7, height: 7)
-                    .shadow(color: connectionColor, radius: 5)
-                    .opacity(liveBlink ? 0.35 : 1)
-                    .onAppear {
-                        guard presentation.motion == .outputPCMReactive else { return }
-                        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
-                    }
-                    Text(engine.transportBadgeText)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(connectionColor)
-                }
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(connectionColor.opacity(0.08), in: Capsule())
-                .overlay(Capsule().strokeBorder(connectionColor.opacity(0.25), lineWidth: 1))
-                .accessibilityHidden(true)
                 Button { showLiveSettings = true } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14, weight: .semibold))
@@ -14816,14 +14826,20 @@ struct AlmaFluidOrbView: View {
                     phase: state == .speaking ? .speaking : .listening,
                     reduceMotion: reduceMotion)
                 let level = output.level
+                // Listening is calm, not dead: the orb keeps a slow breath so
+                // the call never looks hung (owner report 2026-08-12 — "শুনছি
+                // mode-এ orb একদম stop থাকে"). Calm stays honest — this motion
+                // is ambience, never a claim that speech was heard.
                 let motionEnabled = !reduceMotion
-                    && state != .listening
                     && (state != .speaking || level > 0)
-                let motionTime = motionEnabled ? t : 0
+                let motionTime = motionEnabled
+                    ? (state == .listening ? t * 0.35 : t)
+                    : 0
                 let act = activity(level: level)
-                let ambientScale = reduceMotion || state == .listening
+                let ambientScale = reduceMotion
                     ? 1
-                    : 1 + 0.028 * (1 - cos(2 * .pi * motionTime / breathe))
+                    : 1 + (state == .listening ? 0.012 : 0.028)
+                        * (1 - cos(2 * .pi * motionTime / breathe))
                 let scale = state == .speaking ? output.scale : ambientScale
                 ZStack {
                     // breathing bloom (web .orb-bloom)
@@ -15179,8 +15195,10 @@ struct AlmaMetalOrbView: UIViewRepresentable {
             }
             let target: Float
             switch state {
+            // A quiet idle shimmer, not zero: a fully dead surface reads as a
+            // hang, and this amplitude is ambience — it never claims input.
             case "thinking", "transcribing": target = 0.85
-            case "listening": target = 0
+            case "listening": target = 0.10
             case "speaking": target = level
             case "error": target = 0.32
             default: target = 0.12
