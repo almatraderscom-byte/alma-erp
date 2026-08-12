@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { executeTool } from '@/agent/tools/registry'
+import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,25 @@ const READ_ONLY_TOOLS = new Set([
   'get_prayer_times',
 ])
 
+/**
+ * The Live declaration intentionally exposes only a fixed "today" sales
+ * lookup. `get_sales_summary` itself requires ISO `from`/`to`; forwarding `{}`
+ * made the fast lane fail validation. Derive both endpoints from the Dhaka
+ * calendar (not UTC or the server region) and do not accept a caller-supplied
+ * wider financial window through this narrow route.
+ */
+export function liveVoiceToolInput(
+  tool: string,
+  input: Record<string, unknown> | undefined,
+  now = new Date(),
+): Record<string, unknown> {
+  if (tool === 'get_sales_summary') {
+    const today = todayYmdDhaka(now)
+    return { from: today, to: today }
+  }
+  return input && typeof input === 'object' ? { ...input } : {}
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -47,7 +67,7 @@ export async function POST(req: NextRequest) {
   const started = Date.now()
   try {
     const result = await Promise.race([
-      executeTool(tool, body.input && typeof body.input === 'object' ? body.input : {}, {
+      executeTool(tool, liveVoiceToolInput(tool, body.input), {
         businessId: body.business_id || 'ALMA_LIFESTYLE',
       }),
       new Promise<never>((_, reject) =>
