@@ -2,6 +2,10 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import {
+  imageRenderConfigForAction,
+  imageRenderMirrorMatches,
+} from '@/agent/lib/image-render-config'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { enqueueApprovedActionContinuation } from '@/agent/lib/approval-continuation'
@@ -961,6 +965,21 @@ async function runApprove(
         }, { status: 422 })
       }
     }
+    // A v2 row's payload is a mirror of its canonical config, written in one
+    // update. If they somehow diverge — a partial write, a manual DB touch —
+    // approving would queue paid work from an ambiguous selection. Fail closed
+    // and keep the card pending instead.
+    if (action.imageConfig != null && !actionPayload.creativeStudio) {
+      const canonical = imageRenderConfigForAction(action)
+      if (!canonical || !imageRenderMirrorMatches(actionPayload, canonical)
+        || (pinnedImageModel !== null && canonical.model !== pinnedImageModel)) {
+        return Response.json({
+          error: 'image_config_diverged',
+          message: 'এই কার্ডের setup আর তার render payload মিলছে না — কার্ডটা খুলে আবার Save করুন।',
+          retryable: true,
+        }, { status: 409 })
+      }
+    }
     const queueStatus = creativeStudioImageQueueStatus(action.payload)
     const pinnedPayload = {
       ...actionPayload,
@@ -974,10 +993,14 @@ async function runApprove(
     // The wrapper owns a short compare-and-set claim before it creates visible
     // progress. This second CAS is the only pending→worker transition and also
     // snapshots the independent model/quote fields into the immutable payload.
+    // Guarding on the config revision closes the edit-vs-approve race: an edit
+    // accepted between this handler's read and this write bumps the revision,
+    // so the approval loses cleanly instead of queueing a stale selection.
     const claimed = await db.agentPendingAction.updateMany({
       where: {
         id: actionId,
         status: 'pending',
+        imageConfigRevision: action.imageConfigRevision ?? 0,
         ...(options.imageClaimedAt ? { approvalClaimedAt: options.imageClaimedAt } : {}),
       },
       data: {

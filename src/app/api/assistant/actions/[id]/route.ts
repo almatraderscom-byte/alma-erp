@@ -26,6 +26,21 @@ import {
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
 import {
+  buildImageRenderSelection,
+  IMAGE_CONTROLS_V2_KV_KEY,
+  imageRenderConfigForAction,
+  imageRenderPayloadMirror,
+  normalizeImagePresetId,
+  resolveImageRenderConfig,
+  buildImageRenderQuote,
+  type ImageRenderSelection,
+} from '@/agent/lib/image-render-config'
+import {
+  normalizeImageActionCount,
+  normalizeImageActionQuality,
+  normalizeImageActionSize,
+} from '@/agent/lib/image-action-contract'
+import {
   GENERIC_IMAGE_MODELS,
   type GenericImageModel,
 } from '@/lib/creative-studio/advanced-image-capabilities'
@@ -83,9 +98,39 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     entryCount: getEntryCount(action),
     editFields: financeEditFieldsForType(action.type),
     ...(action.type === 'image_gen'
-      ? { imageModelSelection: selectionForImageAction({ ...action, availability }) }
+      ? {
+          imageModelSelection: selectionForImageAction({ ...action, availability }),
+          imageRenderSelection: await imageRenderSelectionForAction(action, availability),
+        }
       : {}),
   })
+}
+
+/**
+ * The v2 projection rides beside v1, never in place of it: Build 102's decoder
+ * validates version 1 and must keep decoding. Advertised only while the owner
+ * flag is on; the canonical config itself persists regardless, so already
+ * pinned rows stay readable if the flag is rolled back.
+ */
+async function imageRenderSelectionForAction(
+  action: {
+    imageModel?: string | null
+    imageConfig?: unknown
+    imageConfigRevision?: number
+    payload: unknown
+  },
+  availability: ReturnType<typeof imageModelAvailability>,
+): Promise<ImageRenderSelection | null> {
+  if ((await readKv(IMAGE_CONTROLS_V2_KV_KEY)) !== '1') return null
+  const config = imageRenderConfigForAction(action)
+  if (!config) return null
+  try {
+    return buildImageRenderSelection({
+      config,
+      revision: action.imageConfigRevision ?? 0,
+      availability,
+    })
+  } catch { return null }
 }
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -107,6 +152,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     value?: unknown
     convertToSingle?: boolean
     imageModel?: unknown
+    imageConfig?: unknown
   }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
@@ -116,6 +162,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+  }
+  if (action.type === 'image_gen' && body.imageConfig !== undefined) {
+    return editImageRenderConfig(db, action, body.imageConfig, params.id)
   }
   if (action.type === 'image_gen' && body.imageModel !== undefined) {
     if (
@@ -155,14 +204,27 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // One compare-and-set writes the independent selection fields. Approval
     // claims the same pending row; whichever obtains the row lock first wins,
     // so a model change can never mutate an already-approved worker payload.
+    // The legacy Build-102 edit rides the SAME revision counter as the v2
+    // editor: it snapshots the revision it read, so a concurrent v2 edit wins
+    // or loses atomically and can never be partially overwritten.
+    const legacyConfig = imageRenderConfigForAction({ ...action, imageModel })
     const selected = await db.agentPendingAction.updateMany({
       where: {
         id: params.id,
         status: 'pending',
         approvalClaimedAt: null,
         imageModel: action.imageModel ?? null,
+        imageConfigRevision: action.imageConfigRevision ?? 0,
       },
-      data: { imageModel, imageQuote, summary },
+      data: {
+        imageModel,
+        imageQuote,
+        summary,
+        imageConfigRevision: (action.imageConfigRevision ?? 0) + 1,
+        // Keep the canonical config coherent with the new model when this row
+        // already carries one; a fresh v1-only row stays v1 until staged as v2.
+        ...(action.imageConfig != null && legacyConfig ? { imageConfig: legacyConfig } : {}),
+      },
     })
     if (selected.count === 0) {
       const current = await db.agentPendingAction.findUnique({ where: { id: params.id } })
@@ -260,5 +322,127 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     entryCount: getEntryCount(updated),
     isFinance: true,
     isBatch: updated.type === 'log_ledger_entries_batch' || updated.type === 'log_expenses_batch',
+  })
+}
+
+/**
+ * v2 professional setup edit. One compare-and-set writes the canonical config,
+ * its incremented revision, the payload mirror the worker renders from, the
+ * requote and the summary — atomically, guarded on the exact revision the
+ * editor saw plus the pending/unclaimed row state. Approval claims the same
+ * row, so whichever wins first excludes the other; no paid queue entry can be
+ * built from a half-updated selection.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function editImageRenderConfig(db: any, action: any, rawConfig: unknown, id: string) {
+  if ((await readKv(IMAGE_CONTROLS_V2_KV_KEY)) !== '1') {
+    return Response.json({ error: 'image_controls_v2_disabled' }, { status: 409 })
+  }
+  const request = rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+    ? rawConfig as Record<string, unknown>
+    : null
+  if (!request) return Response.json({ error: 'invalid_image_config' }, { status: 422 })
+  const expectedRevision = Number(request.expectedRevision)
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    return Response.json({ error: 'invalid_image_config', field: 'expectedRevision' }, { status: 422 })
+  }
+  const current = imageRenderConfigForAction(action)
+  if (!current) return Response.json({ error: 'image_config_unavailable' }, { status: 422 })
+  const model = request.imageModel === undefined
+    ? current.model
+    : (typeof request.imageModel === 'string'
+        && GENERIC_IMAGE_MODELS.includes(request.imageModel as GenericImageModel)
+      ? request.imageModel as GenericImageModel
+      : null)
+  if (!model) return Response.json({ error: 'invalid_image_config', field: 'imageModel' }, { status: 422 })
+
+  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+    readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+    readKv('cs_engine_kill:gemini'),
+    readKv('cs_xai_enabled'),
+  ])
+  const availability = imageModelAvailability({
+    workerCapabilities,
+    genericLaneKilled: genericLaneKill === '1',
+    xaiConfigured: xaiEnabled === '1',
+  })
+  const unavailableReason = availability[model]
+  if (typeof unavailableReason === 'string' && unavailableReason) {
+    return Response.json(
+      { error: 'image_model_unavailable', message: unavailableReason }, { status: 422 })
+  }
+
+  let config
+  try {
+    config = resolveImageRenderConfig({
+      model,
+      presetId: normalizeImagePresetId(
+        request.presetId ?? current.presetId, current.aspectRatio),
+      imageSize: request.imageSize === undefined
+        ? current.imageSize : normalizeImageActionSize(request.imageSize),
+      quality: request.quality === undefined
+        ? current.quality : normalizeImageActionQuality(request.quality),
+      variationCount: request.variationCount === undefined
+        ? current.variationCount : normalizeImageActionCount(request.variationCount),
+      pipelineMode: current.pipelineMode,
+    })
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message.replace(/^image_(config_invalid|model_incompatible):/, '')
+      : String(error)
+    return Response.json({ error: 'image_config_incompatible', message }, { status: 422 })
+  }
+
+  const quote = buildImageRenderQuote(config)
+  const payload = imageRenderPayloadMirror(
+    action.payload as Record<string, unknown>, config)
+  const summary = buildImageActionSummary({
+    prompt: (action.payload as Record<string, unknown>).prompt,
+    quality: config.quality,
+    count: config.variationCount,
+    model: config.model,
+  })
+  const selected = await db.agentPendingAction.updateMany({
+    where: {
+      id,
+      status: 'pending',
+      approvalClaimedAt: null,
+      imageConfigRevision: expectedRevision,
+    },
+    data: {
+      imageModel: config.model,
+      imageConfig: config,
+      imageConfigRevision: expectedRevision + 1,
+      imageQuote: quote,
+      payload,
+      summary,
+    },
+  })
+  if (selected.count === 0) {
+    const fresh = await db.agentPendingAction.findUnique({ where: { id } })
+    const freshConfig = fresh ? imageRenderConfigForAction(fresh) : null
+    return Response.json({
+      error: fresh?.status === 'pending' ? 'image_config_changed' : 'already_resolved',
+      status: fresh?.status,
+      imageRenderSelection: freshConfig
+        ? buildImageRenderSelection({
+            config: freshConfig,
+            revision: fresh?.imageConfigRevision ?? 0,
+            availability,
+          })
+        : null,
+    }, { status: 409 })
+  }
+  return Response.json({
+    success: true,
+    id,
+    type: action.type,
+    status: 'pending',
+    summary,
+    imageRenderSelection: buildImageRenderSelection({
+      config,
+      revision: expectedRevision + 1,
+      availability,
+    }),
   })
 }

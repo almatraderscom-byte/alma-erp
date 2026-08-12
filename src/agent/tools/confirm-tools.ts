@@ -17,6 +17,7 @@ import {
   normalizeImageActionQuality,
   normalizeImageActionSize,
 } from '@/agent/lib/image-action-contract'
+import { imageRenderConfigForAction } from '@/agent/lib/image-render-config'
 import { GENERIC_IMAGE_MODELS } from '@/lib/creative-studio/advanced-image-capabilities'
 
 /** Owner-decision card types — one at a time per conversation (owner incident
@@ -178,6 +179,16 @@ const generate_image: AgentTool = {
           costEstimate: null,
           imageModel,
           imageQuote,
+          // Stage the canonical v2 selection whenever the payload resolves to
+          // one. Persisting it is flag-independent; only ADVERTISING v2 to the
+          // app is gated, so rollback never strands a pinned row.
+          ...(() => {
+            const staged = imageRenderConfigForAction({
+              imageModel,
+              payload: { quality, imageSize, aspectRatio: input.aspectRatio ?? null, variationCount: count, pipelineMode },
+            })
+            return staged ? { imageConfig: staged, imageConfigRevision: 0 } : {}
+          })(),
           status: 'pending',
         },
       })

@@ -12,6 +12,11 @@ import {
   imageModelAvailability,
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
+import {
+  buildImageRenderSelection,
+  IMAGE_CONTROLS_V2_KV_KEY,
+  imageRenderConfigForAction,
+} from '@/agent/lib/image-render-config'
 import { readKv } from '@/lib/creative-studio/taste'
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -125,6 +130,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       payload: true,
       imageModel: true,
       imageQuote: true,
+      imageConfig: true,
+      imageConfigRevision: true,
     },
     orderBy: { createdAt: 'asc' },
   })
@@ -152,7 +159,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
+  const imageControlsV2 = (await readKv(IMAGE_CONTROLS_V2_KV_KEY)) === '1'
   const imageSelectionById = new Map<string, unknown>()
+  const imageRenderSelectionById = new Map<string, unknown>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
     summaryById.set(a.id, a.summary ?? '')
@@ -162,6 +171,20 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         ...a,
         availability: imageAvailability,
       }))
+      // Cold history carries the SAME v2 projection the live edit echo used,
+      // so a reloaded card renders identically to its settled live state.
+      if (imageControlsV2) {
+        const config = imageRenderConfigForAction(a)
+        if (config) {
+          try {
+            imageRenderSelectionById.set(a.id, buildImageRenderSelection({
+              config,
+              revision: a.imageConfigRevision ?? 0,
+              availability: imageAvailability,
+            }))
+          } catch { /* a malformed row keeps its v1 card */ }
+        }
+      }
     }
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
@@ -195,6 +218,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
     if (a.type === 'image_gen') block.imageModelSelection = imageSelectionById.get(a.id)
+    if (a.type === 'image_gen' && imageRenderSelectionById.has(a.id)) {
+      block.imageRenderSelection = imageRenderSelectionById.get(a.id)
+    }
     const list = syntheticByMsg.get(target.id) ?? []
     list.push(block)
     syntheticByMsg.set(target.id, list)
@@ -289,6 +315,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
               imageModelSelection: imageSelectionById.get(b.pendingActionId) ?? b.imageModelSelection,
+              imageRenderSelection: imageRenderSelectionById.get(b.pendingActionId) ?? b.imageRenderSelection,
               // The action summary changes when the owner switches image model.
               // Canonical action state wins over the old breadcrumb so a reload
               // cannot revert the live card's "Model:" line.
