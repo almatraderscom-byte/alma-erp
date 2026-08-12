@@ -225,6 +225,24 @@ export async function rememberHeadPin(
     // straight from the database, which is the only reason the last one was
     // ever found.
     if (!written || written.count === 0) {
+      // One zero-match cause is BY DESIGN and not a failure: the pin already
+      // equals this exact decision and is still live, so branch 2 (would it
+      // change anything?) deliberately matches no row — that is the
+      // don't-slide-the-window rule doing its job, and it happens on every
+      // turn of a continuing job. Logging it as pin_write_no_match was a false
+      // alarm that polluted a live diagnosis (2026-08-12). Re-read the row and
+      // stay quiet for that case only; every other zero-match still reports.
+      try {
+        const row = await db.agentConversation.findUnique({
+          where: { id: conversationId },
+          select: { pinnedHeadModel: true, pinnedHeadTier: true, pinnedHeadVia: true, pinnedHeadUntil: true },
+        })
+        const live = readHeadPin(row, { now })
+        if (live && live.modelId === decision.modelId && live.tier === decision.tier) return
+      } catch {
+        // Re-read failed — fall through to the failure log; a false alarm
+        // beats a silent one.
+      }
       void logToolEvent({
         surface: 'owner',
         toolName: '__head_pin__',
