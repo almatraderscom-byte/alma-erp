@@ -1338,8 +1338,10 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
             selectedIndex = i
             // The Capacitor Dashboard reparent can reset the selection right after the
             // first appearance — re-assert once the launch dust settles.
-            // The reparent timing varies with launch load — assert twice more.
-            for delay in [1.2, 3.5] {
+            // The reparent timing varies with launch load. A cold iOS 26
+            // WebKit process can finish after five seconds, so keep this
+            // DEBUG-only test selection authoritative through that window.
+            for delay in [1.2, 3.5, 6.0, 10.0] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     self?.selectedIndex = i
                 }

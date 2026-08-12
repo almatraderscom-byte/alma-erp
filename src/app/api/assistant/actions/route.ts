@@ -15,8 +15,25 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
+import {
+  IMAGE_WORKER_CAPABILITY_KV_KEY,
+  imageModelAvailability,
+  selectionForImageAction,
+} from '@/agent/lib/image-action-contract'
+import { readKv } from '@/lib/creative-studio/taste'
 
 export const runtime = 'nodejs'
+
+const readImageKv = (key: string) => readKv(key).catch(() => null)
+
+function isMissingImageProjectionColumn(error: unknown): boolean {
+  const code = (error as { code?: unknown })?.code
+  if (code !== 'P2022') return false
+  const detail = (() => {
+    try { return JSON.stringify(error) } catch { return String(error) }
+  })()
+  return /image_model|image_quote|imageModel|imageQuote/i.test(detail)
+}
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -56,14 +73,25 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const where = status === 'all' ? {} : { status }
-  const rows = await db.agentPendingAction
-    .findMany({
+  const baseQuery = {
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       // Fetch one extra row so the native clients can follow a truthful cursor
       // instead of silently dropping approval #101 and onward.
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  }
+  type ActionListRow = Record<string, unknown> & {
+    id: string
+    status: string
+    type: string
+    createdAt: Date | string
+  }
+  let rows: ActionListRow[]
+  let imageProjectionAvailable = true
+  try {
+    rows = await db.agentPendingAction.findMany({
+      ...baseQuery,
       select: {
         id: true,
         type: true,
@@ -72,20 +100,72 @@ export async function GET(req: NextRequest) {
         costEstimate: true,
         conversationId: true,
         result: true,
+        payload: true,
+        imageModel: true,
+        imageQuote: true,
         createdAt: true,
       },
     })
-    .catch(() => [])
+  } catch (error) {
+    if (!isMissingImageProjectionColumn(error)) throw error
+    imageProjectionAvailable = false
+    // Rolling deploy safety: old clients must not see an empty approval queue
+    // merely because code reached an instance before the additive migration.
+    // The model picker is omitted on that one legacy read; all cards remain.
+    console.error('[assistant/actions] image contract projection unavailable; using legacy select (deploy migration first):', error)
+    rows = await db.agentPendingAction.findMany({
+      ...baseQuery,
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        summary: true,
+        costEstimate: true,
+        conversationId: true,
+        result: true,
+        payload: true,
+        createdAt: true,
+      },
+    })
+  }
 
   // Flag transient cards that have aged past their TTL. Lifecycle-bound cards
   // like dispatch never expire — isPendingActionExpired handles that.
   const pageRows = rows.slice(0, limit)
-  const actions = pageRows.map(
-    (r: { status: string; type: string; createdAt: Date | string } & Record<string, unknown>) => ({
+  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+    readImageKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+    readImageKv('cs_engine_kill:gemini'),
+    readImageKv('cs_xai_enabled'),
+  ])
+  const availability = imageModelAvailability({
+    workerCapabilities,
+    genericLaneKilled: genericLaneKill === '1',
+    xaiConfigured: xaiEnabled === '1',
+  })
+  const actions = pageRows.map((row: {
+    id: string
+    status: string
+    type: string
+    createdAt: Date | string
+    payload?: unknown
+    imageModel?: string | null
+    imageQuote?: unknown
+  } & Record<string, unknown>) => {
+    const { payload, imageModel, imageQuote, ...r } = row
+    return {
       ...r,
       expired: r.status === 'pending' && isPendingActionExpired(r.createdAt, r.type),
-    }),
-  )
+      ...(r.type === 'image_gen' && imageProjectionAvailable
+        ? { imageModelSelection: selectionForImageAction({
+            type: r.type,
+            payload,
+            imageModel,
+            imageQuote,
+            availability,
+          }) }
+        : {}),
+    }
+  })
 
   // Proactively retire expired-but-still-pending cards. Without this they sit in
   // the queue forever as status='pending' — and the UI greys out both buttons on

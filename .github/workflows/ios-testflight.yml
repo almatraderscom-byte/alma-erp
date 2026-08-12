@@ -15,6 +15,8 @@
 #   ASC_KEY_ID      — App Store Connect API key ID (e.g. ABC123XYZ)
 #   ASC_ISSUER_ID   — issuer ID (UUID from the API Keys page)
 #   ASC_PRIVATE_KEY — full contents of the downloaded AuthKey_XXXX.p8 file
+# Existing worker-deploy secrets reused by the pre-archive readiness gate:
+#   VPS_HOST, VPS_SSH_KEY — SSH to the live worker; no new release secret/API.
 
 name: iOS TestFlight Upload
 
@@ -22,9 +24,9 @@ on:
   workflow_dispatch:
     inputs:
       expected_build:
-        description: 'Exact committed CFBundleVersion to upload (this release: 101).'
+        description: 'Exact committed CFBundleVersion to upload (this release: 102).'
         required: true
-        default: '101'
+        default: '102'
       marketing_version:
         description: 'App version shown to testers (e.g. 1.1). Leave empty to keep the current project version.'
         required: false
@@ -83,7 +85,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.1
           cache: npm
 
       - name: Install JS dependencies (Capacitor plugins)
@@ -99,6 +101,20 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: |
           npx vitest run src/agent/lib/__tests__/office-call*.test.ts
+          npx vitest run \
+            src/agent/lib/__tests__/image-action-contract.test.ts \
+            src/agent/protocol/__tests__/agent-event-image-card.test.ts \
+            src/app/api/assistant/actions/__tests__/route.test.ts \
+            'src/app/api/assistant/actions/[id]/approve/__tests__/image-approval-claim.test.ts' \
+            'src/app/api/assistant/actions/[id]/retry/__tests__/route.test.ts' \
+            src/app/api/assistant/conversations/__tests__/route-contract.test.ts \
+            src/app/api/assistant/internal/__tests__/job-result-image-replay.test.ts \
+            src/app/api/assistant/internal/__tests__/pending-jobs-dispatch.test.ts \
+            src/app/api/assistant/internal/__tests__/pending-jobs-preview-scope.test.ts \
+            src/lib/content-engine/__tests__/pipeline-render-idempotency.test.ts
+          node --test \
+            worker/src/__tests__/image-*.test.mjs \
+            worker/src/__tests__/preview-image-e2e.test.mjs
           npm run type-check
 
       - name: Sync Capacitor iOS project
@@ -114,6 +130,107 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :ALMAGitCommit ${GITHUB_SHA}" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Add :ALMAGitCommit string ${GITHUB_SHA}" "$PLIST"
           echo "ALMAGitCommit=${GITHUB_SHA}"
+
+      - name: Production readiness gate (frontend, DB and live image worker)
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_KEY" || { echo "::error::VPS_SSH_KEY is required for release readiness"; exit 1; }
+          test -n "$VPS_HOST" || { echo "::error::VPS_HOST is required for release readiness"; exit 1; }
+          KEY_FILE="$RUNNER_TEMP/vps_release_readiness_key"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i "$KEY_FILE" -o BatchMode=yes -o ConnectTimeout=15 \
+            "root@$VPS_HOST" bash -s -- "$GITHUB_SHA" <<'EOF'
+          set -euo pipefail
+          EXPECTED_SHA="$1"
+          REPO=/opt/alma-erp
+          WORKER="$REPO/worker"
+          test "$(git -C "$REPO" rev-parse HEAD)" = "$EXPECTED_SHA" || {
+            echo "Worker checkout is not the release commit" >&2
+            exit 1
+          }
+          cd "$WORKER"
+          test -f .env || { echo "Worker runtime env file is missing" >&2; exit 1; }
+          DOTENV_CONFIG_PATH=.env node --require dotenv/config --input-type=module - "$EXPECTED_SHA" <<'NODE'
+          import { createClient } from '@supabase/supabase-js'
+
+          const expectedSha = process.argv[2]
+          const required = [
+            'APP_URL',
+            'AGENT_INTERNAL_TOKEN',
+            'SUPABASE_URL',
+            'SUPABASE_SERVICE_ROLE_KEY',
+          ]
+          for (const key of required) {
+            if (!String(process.env[key] ?? '').trim()) throw new Error(`${key} is missing on the live worker`)
+          }
+
+          const appUrl = String(process.env.APP_URL).replace(/\/$/, '')
+          const frontendResponse = await fetch(`${appUrl}/api/health`, {
+            headers: { 'cache-control': 'no-cache' },
+            signal: AbortSignal.timeout(15_000),
+          })
+          if (!frontendResponse.ok) throw new Error(`frontend health HTTP ${frontendResponse.status}`)
+          const frontend = await frontendResponse.json()
+          if (frontend.ok !== true || frontend.database?.ok !== true) {
+            throw new Error('production frontend/database health is not ready')
+          }
+          if (frontend.frontend?.git_commit !== expectedSha) {
+            throw new Error(`production frontend SHA mismatch: ${frontend.frontend?.git_commit ?? 'missing'}`)
+          }
+
+          const diagnosticPort = Number(process.env.DIAGNOSTIC_HTTP_PORT || 3098)
+          const workerResponse = await fetch(`http://127.0.0.1:${diagnosticPort}/health`, {
+            headers: { authorization: `Bearer ${process.env.AGENT_INTERNAL_TOKEN}` },
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (!workerResponse.ok) throw new Error(`worker diagnostic HTTP ${workerResponse.status}`)
+          const worker = await workerResponse.json()
+          const bootCommit = String(worker.bootCommit ?? '')
+          if (worker.ok !== true || bootCommit.length < 7 || !expectedSha.startsWith(bootCommit)) {
+            throw new Error(`live worker commit mismatch: ${bootCommit || 'missing'}`)
+          }
+
+          const supabase = createClient(
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_SERVICE_ROLE_KEY,
+            { auth: { persistSession: false, autoRefreshToken: false } },
+          )
+          const { data: capabilityRow, error: capabilityError } = await supabase
+            .from('agent_kv_settings')
+            .select('value')
+            .eq('key', 'image_worker_capabilities_v1')
+            .maybeSingle()
+          if (capabilityError) throw capabilityError
+          if (!capabilityRow?.value) throw new Error('live image worker capability receipt is missing')
+          const capability = JSON.parse(capabilityRow.value)
+          const capabilityAgeMs = Date.now() - Date.parse(String(capability.updatedAt ?? ''))
+          if (
+            capability.version !== 1
+            || capability.source !== 'alma-agent-worker'
+            || !Array.isArray(capability.models)
+            || capability.models.length === 0
+            || !Number.isFinite(capabilityAgeMs)
+            || capabilityAgeMs < -60_000
+            || capabilityAgeMs > 180_000
+          ) {
+            throw new Error('live image worker capability receipt is invalid or stale')
+          }
+          console.log(JSON.stringify({
+            frontendCommit: expectedSha.slice(0, 10),
+            database: 'healthy',
+            workerCommit: bootCommit,
+            workerCapabilityModels: capability.models,
+            workerCapabilityAgeSeconds: Math.round(capabilityAgeMs / 1000),
+          }))
+          NODE
+          EOF
 
       - name: Write App Store Connect API key
         env:

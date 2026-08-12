@@ -139,9 +139,56 @@
         "actionType": { "type": "string" },
         "entryCount": { "type": "number" },
         "isFinance": { "type": "boolean" },
-        "isBatch": { "type": "boolean" }
+        "isBatch": { "type": "boolean" },
+        "imageModelSelection": { "$ref": "#/$defs/image_model_selection" }
       },
       "required": ["type", "pendingActionId", "summary"]
+    },
+    "image_action_quote": {
+      "type": "object",
+      "properties": {
+        "version": { "const": 1 },
+        "currency": { "const": "USD" },
+        "kind": { "const": "provider_render_estimate" },
+        "model": { "type": "string" },
+        "provider": { "enum": ["gemini", "openai", "fal"] },
+        "quality": { "enum": ["standard", "pro"] },
+        "imageSize": { "enum": ["1K", "2K", "4K"] },
+        "requestedImages": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "unitPriceUsd": { "type": "number", "minimum": 0 },
+        "minCostUsd": { "type": "number", "minimum": 0 },
+        "maxCostUsd": { "type": "number", "minimum": 0 },
+        "maxPaidGenerationsPerImage": { "type": "integer", "minimum": 1 },
+        "pricingBasis": { "const": "internal_list_estimate" },
+        "pricingLastVerifiedAt": { "type": "string" },
+        "excludes": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "version", "currency", "kind", "model", "provider", "quality", "imageSize",
+        "requestedImages", "unitPriceUsd", "minCostUsd", "maxCostUsd",
+        "maxPaidGenerationsPerImage", "pricingBasis", "pricingLastVerifiedAt", "excludes"
+      ]
+    },
+    "image_model_option": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "provider": { "enum": ["gemini", "openai", "fal", "xai"] },
+        "enabled": { "type": "boolean" },
+        "unavailableReason": { "type": "string" },
+        "quote": { "$ref": "#/$defs/image_action_quote" }
+      },
+      "required": ["id", "label", "provider", "enabled"]
+    },
+    "image_model_selection": {
+      "type": "object",
+      "properties": {
+        "selectedModel": { "type": "string" },
+        "options": { "type": "array", "items": { "$ref": "#/$defs/image_model_option" } },
+        "quote": { "$ref": "#/$defs/image_action_quote" }
+      },
+      "required": ["selectedModel", "options", "quote"]
     },
     "artifact_saved": {
       "type": "object",

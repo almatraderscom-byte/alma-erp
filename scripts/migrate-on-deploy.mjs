@@ -11,8 +11,9 @@
  *  - Migrations run over a DIRECT connection (DIRECT_URL), because the runtime
  *    DATABASE_URL is Supabase's transaction pooler (pgbouncer:6543) and Prisma
  *    `migrate deploy` can't run DDL reliably through it.
- *  - If DIRECT_URL isn't set yet, we WARN and skip instead of failing the deploy
- *    (graceful rollout: behaves exactly like today until the env var is added).
+ *  - A production deploy without DIRECT_URL fails closed. Shipping code before
+ *    its additive schema is how approval/action queues disappear at runtime.
+ *    Preview builds may still compile without a direct production credential.
  *  - If a migration actually fails, the build fails — better a blocked deploy
  *    than a broken page.
  *
@@ -20,6 +21,8 @@
  * from any Vercel build (preview or production) is safe for the live app.
  */
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { PrismaClient } from '@prisma/client'
 
 // 1) Only run inside Vercel's build — keep local `npm run build` DB-free.
 if (!process.env.VERCEL) {
@@ -27,14 +30,20 @@ if (!process.env.VERCEL) {
   process.exit(0)
 }
 
-// 2) Need a direct (non-pooler) connection for DDL. Skip gracefully if absent.
+// 2) Need a direct (non-pooler) connection for DDL. Production must never ship
+//    past this point without it; previews remain DB-free when the secret is not
+//    intentionally exposed to that environment.
 const directUrl = process.env.DIRECT_URL?.trim()
 if (!directUrl) {
-  console.warn(
-    '[migrate-on-deploy] DIRECT_URL not set — skipping auto-migrate.\n' +
-      '  Add DIRECT_URL (Supabase session pooler / direct, port 5432) in Vercel\n' +
-      '  env to enable automatic migrations on deploy.',
-  )
+  const environment = process.env.VERCEL_ENV?.trim().toLowerCase()
+  const detail =
+    '[migrate-on-deploy] DIRECT_URL not set. Add the Supabase direct/session-pooler ' +
+    'connection (port 5432) to the Vercel environment before deploying schema-dependent code.'
+  if (environment === 'production') {
+    console.error(`${detail}\n[migrate-on-deploy] refusing production deploy`)
+    process.exit(1)
+  }
+  console.warn(`${detail}\n[migrate-on-deploy] non-production build — migration skipped`)
   process.exit(0)
 }
 
@@ -52,3 +61,73 @@ if (r.status !== 0) {
   process.exit(r.status ?? 1)
 }
 console.log('[migrate-on-deploy] migrations up to date ✓')
+
+// 4) Fail closed on the exact additive contract this release reads. Prisma can
+// report migrations applied while a manually repaired/partially restored
+// database is still missing columns or the service-role receipt RPC; compiling
+// that deployment would make the approval queue disappear or strand renders.
+const smoke = new PrismaClient({ datasources: { db: { url: directUrl } } })
+try {
+  const [row] = await smoke.$queryRawUnsafe(`
+    SELECT
+      COUNT(*) FILTER (
+        WHERE column_name = ANY (ARRAY[
+          'image_model',
+          'image_quote',
+          'approval_claimed_at',
+          'job_result_pending',
+          'job_result_envelope',
+          'job_result_claimed_at'
+        ])
+      )::int AS "columnCount",
+      to_regprocedure(
+        'public.record_agent_image_terminal_receipt(text,jsonb)'
+      ) IS NOT NULL AS "receiptRpcPresent"
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'agent_pending_actions'
+  `)
+  if (Number(row?.columnCount) !== 6 || row?.receiptRpcPresent !== true) {
+    throw new Error(
+      `image action schema smoke failed (columns=${String(row?.columnCount)}, ` +
+      `receiptRpc=${String(row?.receiptRpcPresent)})`,
+    )
+  }
+  // Execute the RPC against a transaction-local probe row. This catches SQL
+  // signature/operator mistakes (the action ID column is TEXT, even though
+  // values are UUID-shaped) that an information_schema presence check cannot.
+  const probeId = `schema-smoke-${randomUUID()}`
+  const probeEnvelope = {
+    version: 1,
+    status: 'failed',
+    error: 'schema_smoke_no_provider_call',
+    receiptId: `schema-smoke-receipt-${randomUUID()}`,
+    recordedAt: new Date().toISOString(),
+  }
+  await smoke.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(
+      `INSERT INTO agent_pending_actions
+        (id, type, payload, summary, status, "createdAt", job_result_pending)
+       VALUES ($1, 'image_gen', '{}'::jsonb, 'image action schema smoke',
+         'approved', CURRENT_TIMESTAMP, false)`,
+      probeId,
+    )
+    const [receipt] = await tx.$queryRawUnsafe(
+      `SELECT job_result_envelope AS "jobResultEnvelope"
+         FROM record_agent_image_terminal_receipt($1::text, $2::jsonb)`,
+      probeId,
+      JSON.stringify(probeEnvelope),
+    )
+    if (receipt?.jobResultEnvelope?.receiptId !== probeEnvelope.receiptId) {
+      throw new Error('image terminal receipt RPC execution smoke failed')
+    }
+    await tx.$executeRawUnsafe('DELETE FROM agent_pending_actions WHERE id = $1', probeId)
+  })
+  console.log('[migrate-on-deploy] image action schema smoke ✓')
+} catch (error) {
+  console.error('[migrate-on-deploy] post-migration schema smoke FAILED — blocking the build')
+  console.error(error instanceof Error ? error.message : error)
+  process.exitCode = 1
+} finally {
+  await smoke.$disconnect()
+}

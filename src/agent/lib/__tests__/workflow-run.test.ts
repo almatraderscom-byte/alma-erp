@@ -266,11 +266,17 @@ describe('resume snapshot note', () => {
 
 describe('product_post template end-to-end (Phase 5)', () => {
   it('image card → rendering → preview_confirm → ask answer → post card attaches → published', async () => {
-    // 1. image_gen card staged → run opens AT the template's creative_approval step
+    // 1. The product-post intent owns the run before its shared image_gen card
+    // arrives. The card then claims that run at creative_approval.
+    const seeded = await createWorkflowRun({
+      conversationId: 'cc', kind: 'product_post', goal: '720 পোস্ট',
+      status: 'active', state: 'draft_ready',
+    })
     store.agentPendingAction.push({ id: 'img1', status: 'pending', type: 'image_gen', createdAt: new Date(), updatedAt: new Date() })
     const run = await ensureWorkflowRunForPendingAction({
       pendingActionId: 'img1', conversationId: 'cc', actionType: 'image_gen', kind: 'creative', goal: '720 পোস্ট',
     })
+    expect(run.id).toBe(seeded.id)
     expect(run.kind).toBe('product_post')
     expect(run.state).toBe('creative_approval')
     expect(run.status).toBe('waiting_owner')
@@ -319,7 +325,31 @@ describe('product_post template end-to-end (Phase 5)', () => {
     expect((row?.lastProof as Row)?.ref).toBe('post1')
   })
 
+  it('standalone image card stays a creative deliverable, not a product-post workflow', async () => {
+    store.agentPendingAction.push({
+      id: 'img-standalone', status: 'pending', type: 'image_gen',
+      createdAt: new Date(), updatedAt: new Date(),
+    })
+    const run = await ensureWorkflowRunForPendingAction({
+      pendingActionId: 'img-standalone', conversationId: 'image-chat',
+      actionType: 'image_gen', kind: 'creative', goal: 'তিনটি আলাদা image দাও',
+    })
+    expect(run.kind).toBe('creative')
+    expect(run.state).toBe('awaiting_approval')
+    expect(run.status).toBe('waiting_owner')
+
+    store.agentPendingAction[0].status = 'executed'
+    await syncWorkflowWithPendingAction('img-standalone', 'worker')
+    const settled = store.workflowRun.find((row) => row.id === run.id)
+    expect(settled?.status).toBe('done')
+    expect(settled?.state).toBe('executed')
+  })
+
   it('rejected image card falls back to draft_ready (change-flow), not cancelled', async () => {
+    await createWorkflowRun({
+      conversationId: 'cd', kind: 'product_post', goal: 'পোস্ট',
+      status: 'active', state: 'draft_ready',
+    })
     store.agentPendingAction.push({ id: 'img2', status: 'pending', type: 'image_gen', createdAt: new Date(), updatedAt: new Date() })
     const run = await ensureWorkflowRunForPendingAction({
       pendingActionId: 'img2', conversationId: 'cd', actionType: 'image_gen', kind: 'creative', goal: 'পোস্ট',

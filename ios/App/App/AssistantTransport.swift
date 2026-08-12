@@ -76,6 +76,244 @@ struct TurnStatusResponse: Decodable {
     let continuationNeeded: Bool?
 }
 
+/// Server-authored image-render estimate pinned to one model selection. These
+/// values are render-only pricing metadata; the client never derives a quote
+/// from token cost or from a legacy approval-card estimate.
+struct AgentImageModelQuoteWire: Equatable, Sendable {
+    let version: Int
+    let currency: String
+    let kind: String
+    let model: String
+    let provider: String
+    let quality: String
+    let imageSize: String
+    let requestedImages: Int
+    let unitPriceUsd: Double
+    let minCostUsd: Double
+    let maxCostUsd: Double
+    let maxPaidGenerationsPerImage: Int
+    let pricingBasis: String
+    let pricingLastVerifiedAt: String
+    let excludes: [String]
+    private let decodedContractShapeIsValid: Bool
+
+    init(
+        version: Int, currency: String, kind: String, model: String, provider: String,
+        quality: String, imageSize: String, requestedImages: Int, unitPriceUsd: Double,
+        minCostUsd: Double, maxCostUsd: Double, maxPaidGenerationsPerImage: Int,
+        pricingBasis: String, pricingLastVerifiedAt: String, excludes: [String],
+        decodedContractShapeIsValid: Bool = true
+    ) {
+        self.version = version
+        self.currency = currency
+        self.kind = kind
+        self.model = model
+        self.provider = provider
+        self.quality = quality
+        self.imageSize = imageSize
+        self.requestedImages = requestedImages
+        self.unitPriceUsd = unitPriceUsd
+        self.minCostUsd = minCostUsd
+        self.maxCostUsd = maxCostUsd
+        self.maxPaidGenerationsPerImage = maxPaidGenerationsPerImage
+        self.pricingBasis = pricingBasis
+        self.pricingLastVerifiedAt = pricingLastVerifiedAt
+        self.excludes = excludes
+        self.decodedContractShapeIsValid = decodedContractShapeIsValid
+    }
+
+    var hasValidContractShape: Bool {
+        decodedContractShapeIsValid
+            && version == 1
+            && currency == "USD" && kind == "provider_render_estimate"
+            && !model.isEmpty && !provider.isEmpty
+            && ["standard", "pro"].contains(quality)
+            && ["1K", "2K", "4K"].contains(imageSize)
+            && (1...4).contains(requestedImages) && maxPaidGenerationsPerImage > 0
+            && unitPriceUsd.isFinite && unitPriceUsd >= 0
+            && minCostUsd.isFinite && minCostUsd >= 0
+            && maxCostUsd.isFinite && maxCostUsd >= minCostUsd
+            && pricingBasis == "internal_list_estimate"
+            && !pricingLastVerifiedAt.isEmpty
+    }
+}
+
+extension AgentImageModelQuoteWire: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case version, currency, kind, model, provider, quality, imageSize, requestedImages
+        case unitPriceUsd, minCostUsd, maxCostUsd, maxPaidGenerationsPerImage
+        case pricingBasis, pricingLastVerifiedAt, excludes
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(
+                version: 0, currency: "", kind: "", model: "", provider: "",
+                quality: "", imageSize: "", requestedImages: 0,
+                unitPriceUsd: .nan, minCostUsd: .nan, maxCostUsd: .nan,
+                maxPaidGenerationsPerImage: 0, pricingBasis: "",
+                pricingLastVerifiedAt: "", excludes: [],
+                decodedContractShapeIsValid: false)
+            return
+        }
+        let version = try? c.decode(Int.self, forKey: .version)
+        let currency = try? c.decode(String.self, forKey: .currency)
+        let kind = try? c.decode(String.self, forKey: .kind)
+        let model = try? c.decode(String.self, forKey: .model)
+        let provider = try? c.decode(String.self, forKey: .provider)
+        let quality = try? c.decode(String.self, forKey: .quality)
+        let imageSize = try? c.decode(String.self, forKey: .imageSize)
+        let requestedImages = try? c.decode(Int.self, forKey: .requestedImages)
+        let unitPriceUsd = try? c.decode(Double.self, forKey: .unitPriceUsd)
+        let minCostUsd = try? c.decode(Double.self, forKey: .minCostUsd)
+        let maxCostUsd = try? c.decode(Double.self, forKey: .maxCostUsd)
+        let paidCap = try? c.decode(Int.self, forKey: .maxPaidGenerationsPerImage)
+        let pricingBasis = try? c.decode(String.self, forKey: .pricingBasis)
+        let verifiedAt = try? c.decode(String.self, forKey: .pricingLastVerifiedAt)
+        let excludes = try? c.decode([String].self, forKey: .excludes)
+        let allRequired = [currency, kind, model, provider, quality, imageSize,
+                           pricingBasis, verifiedAt].allSatisfy { $0 != nil }
+            && version != nil && requestedImages != nil && unitPriceUsd != nil
+            && minCostUsd != nil && maxCostUsd != nil && paidCap != nil && excludes != nil
+        self.init(
+            version: version ?? 0, currency: currency ?? "", kind: kind ?? "",
+            model: model ?? "", provider: provider ?? "", quality: quality ?? "",
+            imageSize: imageSize ?? "", requestedImages: requestedImages ?? 0,
+            unitPriceUsd: unitPriceUsd ?? .nan, minCostUsd: minCostUsd ?? .nan,
+            maxCostUsd: maxCostUsd ?? .nan, maxPaidGenerationsPerImage: paidCap ?? 0,
+            pricingBasis: pricingBasis ?? "", pricingLastVerifiedAt: verifiedAt ?? "",
+            excludes: excludes ?? [], decodedContractShapeIsValid: allRequired)
+    }
+}
+
+struct AgentImageModelOptionWire: Equatable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let provider: String
+    let enabled: Bool
+    let unavailableReason: String?
+    let quote: AgentImageModelQuoteWire?
+    private let decodedContractShapeIsValid: Bool
+
+    init(
+        id: String, label: String, provider: String, enabled: Bool,
+        unavailableReason: String?, quote: AgentImageModelQuoteWire?,
+        decodedContractShapeIsValid: Bool = true
+    ) {
+        self.id = id
+        self.label = label
+        self.provider = provider
+        self.enabled = enabled
+        self.unavailableReason = unavailableReason
+        self.quote = quote
+        self.decodedContractShapeIsValid = decodedContractShapeIsValid
+    }
+
+    var hasValidContractShape: Bool {
+        guard decodedContractShapeIsValid, !id.isEmpty, !label.isEmpty, !provider.isEmpty else {
+            return false
+        }
+        if enabled && quote == nil { return false }
+        if let quote {
+            guard quote.hasValidContractShape,
+                  quote.model == id,
+                  quote.provider.caseInsensitiveCompare(provider) == .orderedSame else { return false }
+        }
+        return true
+    }
+}
+
+extension AgentImageModelOptionWire: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case id, label, provider, enabled, unavailableReason, quote
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(
+                id: "", label: "", provider: "", enabled: false,
+                unavailableReason: nil, quote: nil, decodedContractShapeIsValid: false)
+            return
+        }
+        let id = try? c.decode(String.self, forKey: .id)
+        let label = try? c.decode(String.self, forKey: .label)
+        let provider = try? c.decode(String.self, forKey: .provider)
+        let enabled = try? c.decode(Bool.self, forKey: .enabled)
+        let reason = try? c.decodeIfPresent(String.self, forKey: .unavailableReason)
+        let quote = try? c.decodeIfPresent(AgentImageModelQuoteWire.self, forKey: .quote)
+        self.init(
+            id: id ?? "", label: label ?? "", provider: provider ?? "",
+            enabled: enabled ?? false, unavailableReason: reason ?? nil, quote: quote ?? nil,
+            decodedContractShapeIsValid: id != nil && label != nil && provider != nil && enabled != nil)
+    }
+}
+
+struct AgentImageModelSelectionWire: Equatable, Sendable {
+    let selectedModel: String
+    let options: [AgentImageModelOptionWire]
+    let quote: AgentImageModelQuoteWire
+    private let decodedContractShapeIsValid: Bool
+
+    init(
+        selectedModel: String, options: [AgentImageModelOptionWire],
+        quote: AgentImageModelQuoteWire, decodedContractShapeIsValid: Bool = true
+    ) {
+        self.selectedModel = selectedModel
+        self.options = options
+        self.quote = quote
+        self.decodedContractShapeIsValid = decodedContractShapeIsValid
+    }
+
+    var trustedValue: Self? {
+        guard decodedContractShapeIsValid,
+              !selectedModel.isEmpty,
+              !options.isEmpty,
+              options.allSatisfy({ $0.hasValidContractShape }),
+              Set(options.map(\.id)).count == options.count,
+              quote.hasValidContractShape,
+              quote.model == selectedModel,
+              let selected = options.first(where: { $0.id == selectedModel }) else { return nil }
+        // Historical terminal cards may truthfully show a now-disabled pinned
+        // model. A selectable option, however, must carry the exact same quote
+        // the card presents; accepting mismatched nested metadata could approve
+        // a different price/model than the owner saw.
+        if selected.enabled && selected.quote != quote { return nil }
+        return self
+    }
+}
+
+extension AgentImageModelSelectionWire: Decodable {
+    private enum CodingKeys: String, CodingKey { case selectedModel, options, quote }
+
+    init(from decoder: Decoder) throws {
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(
+                selectedModel: "", options: [], quote: .init(
+                    version: 0, currency: "", kind: "", model: "", provider: "",
+                    quality: "", imageSize: "", requestedImages: 0,
+                    unitPriceUsd: .nan, minCostUsd: .nan, maxCostUsd: .nan,
+                    maxPaidGenerationsPerImage: 0, pricingBasis: "",
+                    pricingLastVerifiedAt: "", excludes: [],
+                    decodedContractShapeIsValid: false),
+                decodedContractShapeIsValid: false)
+            return
+        }
+        let selectedModel = try? c.decode(String.self, forKey: .selectedModel)
+        let options = try? c.decode([AgentImageModelOptionWire].self, forKey: .options)
+        let quote = try? c.decode(AgentImageModelQuoteWire.self, forKey: .quote)
+        self.init(
+            selectedModel: selectedModel ?? "", options: options ?? [],
+            quote: quote ?? .init(
+                version: 0, currency: "", kind: "", model: "", provider: "",
+                quality: "", imageSize: "", requestedImages: 0,
+                unitPriceUsd: .nan, minCostUsd: .nan, maxCostUsd: .nan,
+                maxPaidGenerationsPerImage: 0, pricingBasis: "",
+                pricingLastVerifiedAt: "", excludes: [],
+                decodedContractShapeIsValid: false),
+            decodedContractShapeIsValid: selectedModel != nil && options != nil && quote != nil)
+    }
+}
+
 struct AgentSSEEvent: Decodable {
     let type: String
     let id: String?
@@ -92,6 +330,7 @@ struct AgentSSEEvent: Decodable {
     let summary: String?
     let actionType: String?
     let costEstimate: Double?
+    let imageModelSelection: AgentImageModelSelectionWire?
     let askCardId: String?
     let question: String?
     let options: [String]?
@@ -132,8 +371,9 @@ struct AgentSSEEvent: Decodable {
     let skill: String?          // skill_pinned
     let source: String?         // skill_pinned — "owner" | "router"
     let layer: String?          // skill_pinned
-    let reason: String?         // skill_pinned
+    let reason: String?         // skill_pinned + skill_held_back
     let isolated: Bool?         // skill_pinned — SK-7, ran on the skill's own prompt
+    let state: String?          // skill_held_back — changed | unapproved | revoked
     // steering_delivered — the running turn actually PICKED UP a steer. The
     // client uuids are the matching key; the row ids are for correlation only.
     let clientMessageIds: [String]?
@@ -160,7 +400,8 @@ enum AgentTurnEvent: Sendable {
     case subagentStart(id: String, role: String, roleLabel: String, task: String?)
     case subagentEnd(id: String, ok: Bool, summary: String?, toolsUsed: [String]?)
     case artifactSaved(id: String, title: String)
-    case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?)
+    case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?,
+                     imageModelSelection: AgentImageModelSelectionWire?)
     case askCard(id: String, question: String, options: [String])
     case verificationRetry(attempt: Int, maxAttempts: Int)
     /// Speak-first (owner rule 2026-07-25): the opening line the head wrote
@@ -171,6 +412,9 @@ enum AgentTurnEvent: Sendable {
     /// SK-3 — which skill is running this job, announced BEFORE any work starts
     /// so the owner sees it up front and can change it.
     case skillPinned(skill: String, source: String, reason: String, isolated: Bool)
+    /// SK-8 — a matching skill was withheld by the server's provenance gate.
+    /// This is factual product state, not model reasoning or an inferred error.
+    case skillHeldBack(skill: String, state: String, reason: String)
     /// A mid-turn message the RUNNING TURN has now read — the step after "the
     /// server accepted it". Without this the phone showed both states the same.
     case steeringDelivered(clientMessageIds: [String])
@@ -233,7 +477,8 @@ enum AgentTurnEvent: Sendable {
         case "confirm_card":
             self = ev.pendingActionId.map {
                 .confirmCard(pendingActionId: $0, summary: ev.summary ?? "",
-                             actionType: ev.actionType, costEstimate: ev.costEstimate)
+                             actionType: ev.actionType, costEstimate: ev.costEstimate,
+                             imageModelSelection: ev.imageModelSelection?.trustedValue)
             } ?? .unknown(type: "confirm_card/noid")
         case "ask_card":
             self = ev.askCardId.map {
@@ -248,6 +493,10 @@ enum AgentTurnEvent: Sendable {
                                 source: ev.source == "owner" ? "owner" : "router",
                                 reason: ev.reason ?? "",
                                 isolated: ev.isolated == true)
+        case "skill_held_back":
+            self = .skillHeldBack(skill: ev.skill ?? "",
+                                  state: ev.state ?? "",
+                                  reason: ev.reason ?? "")
         case "steering_delivered":
             self = .steeringDelivered(clientMessageIds: ev.clientMessageIds ?? [])
         case "conversation_compacted":

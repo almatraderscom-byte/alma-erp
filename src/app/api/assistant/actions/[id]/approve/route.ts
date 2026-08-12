@@ -15,6 +15,17 @@ import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { placeOutboundCall } from '@/agent/lib/voice-call'
 import { creativeStudioImageQueueStatus } from '@/lib/creative-studio/preview-worker-scope'
 import {
+  buildImageModelSelection,
+  chooseAvailableImageModel,
+  IMAGE_WORKER_CAPABILITY_KV_KEY,
+  imageActionInputs,
+  isImageActionQuoteForInputs,
+  imageModelAvailability,
+  normalizeImageActionModel,
+} from '@/agent/lib/image-action-contract'
+import { readKv } from '@/lib/creative-studio/taste'
+import { GENERIC_IMAGE_MODELS, type GenericImageModel } from '@/lib/creative-studio/advanced-image-capabilities'
+import {
   activeDevice as activeMacDevice,
   awaitResult as awaitMacResult,
   enqueueCommand as enqueueMacCommand,
@@ -76,19 +87,26 @@ async function appendConversationNote(
   })
 }
 
+async function authorizeApprovalRequest(req: NextRequest): Promise<Response | null> {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+  const authHeader = req.headers.get('authorization') ?? ''
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  if (verifyInternalToken(bearerToken)) return null
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  return null
+}
+
 async function runApprove(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
+  options: { authChecked?: boolean; imageClaimedAt?: Date } = {},
 ) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-
-  const authHeader = req.headers.get('authorization') ?? ''
-  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  if (!verifyInternalToken(bearerToken)) {
-    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-    if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-    if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!options.authChecked) {
+    const denied = await authorizeApprovalRequest(req)
+    if (denied) return denied
   }
 
   const actionId = (await params).id
@@ -99,6 +117,14 @@ async function runApprove(
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+  }
+  if (
+    action.type === 'image_gen'
+    && options.imageClaimedAt
+    && (!(action.approvalClaimedAt instanceof Date)
+      || action.approvalClaimedAt.getTime() !== options.imageClaimedAt.getTime())
+  ) {
+    return Response.json({ error: 'approval_claim_lost' }, { status: 409 })
   }
 
   // Check expiry (lifecycle-bound cards like dispatch_staff_tasks never expire —
@@ -881,13 +907,92 @@ async function runApprove(
   }
 
   if (action.type === 'image_gen') {
+    const actionPayload = action.payload as Record<string, unknown>
+    let pinnedImageModel = typeof action.imageModel === 'string' ? action.imageModel : null
+    let pinnedImageQuote = action.imageQuote
+    // Generic chat image cards pin one of the audited engines. Re-check the
+    // current owner kill switch and worker-known configuration immediately
+    // before the pending→queued CAS so a stale open card cannot incur spend on
+    // an engine that was disabled after staging. Creative Studio has its own
+    // signed authorization/engine contract and deliberately bypasses this lane.
+    if (!actionPayload.creativeStudio) {
+      const inputs = imageActionInputs(action.payload)
+      const [configuredModels, workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+        readKv('cs_image_models'),
+        readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
+        readKv('cs_engine_kill:gemini'),
+        readKv('cs_xai_enabled'),
+      ])
+      const availability = imageModelAvailability({
+        workerCapabilities,
+        genericLaneKilled: genericLaneKill === '1',
+        xaiConfigured: xaiEnabled === '1',
+      })
+      try {
+        const explicit = pinnedImageModel ?? (
+          typeof actionPayload.imageModel === 'string'
+            && GENERIC_IMAGE_MODELS.includes(actionPayload.imageModel as GenericImageModel)
+            ? actionPayload.imageModel as GenericImageModel
+            : null
+        )
+        const preferred = explicit ?? normalizeImageActionModel(
+          undefined,
+          inputs.quality,
+          configuredModels,
+        )
+        const selection = explicit
+          ? buildImageModelSelection({ selectedModel: explicit, ...inputs, availability })
+          : chooseAvailableImageModel({ preferredModel: preferred, ...inputs, availability })
+        pinnedImageModel = selection.selectedModel
+        pinnedImageQuote = isImageActionQuoteForInputs(action.imageQuote, {
+          model: pinnedImageModel,
+          ...inputs,
+        })
+          ? action.imageQuote
+          : selection.quote
+      } catch (validationError) {
+        const message = validationError instanceof Error
+          ? validationError.message.replace(/^image_model_incompatible:/, '')
+          : String(validationError)
+        return Response.json({
+          error: 'image_model_unavailable',
+          message,
+          retryable: true,
+        }, { status: 422 })
+      }
+    }
     const queueStatus = creativeStudioImageQueueStatus(action.payload)
-    // Mark as approved — the VPS worker polls /api/assistant/internal/pending-jobs
-    // and picks this up via BullMQ (worker-side queue). No BullMQ dependency in Next.js.
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data: { status: queueStatus, resolvedAt: new Date() },
+    const pinnedPayload = {
+      ...actionPayload,
+      ...(pinnedImageModel
+        ? { imageModel: pinnedImageModel }
+        : {}),
+      ...(pinnedImageQuote && typeof pinnedImageQuote === 'object'
+        ? { imageQuote: pinnedImageQuote }
+        : {}),
+    }
+    // The wrapper owns a short compare-and-set claim before it creates visible
+    // progress. This second CAS is the only pending→worker transition and also
+    // snapshots the independent model/quote fields into the immutable payload.
+    const claimed = await db.agentPendingAction.updateMany({
+      where: {
+        id: actionId,
+        status: 'pending',
+        ...(options.imageClaimedAt ? { approvalClaimedAt: options.imageClaimedAt } : {}),
+      },
+      data: {
+        status: queueStatus,
+        resolvedAt: new Date(),
+        approvalClaimedAt: null,
+        payload: pinnedPayload,
+        imageModel: pinnedImageModel,
+        imageQuote: pinnedImageQuote,
+      },
     })
+    if (claimed.count === 0) {
+      const current = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
+      return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+    }
 
     return Response.json({
       success: true,
@@ -3243,6 +3348,37 @@ async function runApprove(
  * path the VPS worker / Telegram already use, so it works whether Boss approved from
  * the app OR Telegram.
  */
+const IMAGE_APPROVAL_CLAIM_TTL_MS = 5 * 60_000
+
+async function claimImageApprovalProgress(actionId: string): Promise<'not_image' | { claimedAt: Date } | Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const row = await db.agentPendingAction.findUnique({
+    where: { id: actionId },
+    select: { type: true, status: true, approvalClaimedAt: true },
+  })
+  if (!row || row.type !== 'image_gen') return 'not_image'
+  if (row.status !== 'pending') {
+    return Response.json({ error: 'already_resolved', status: row.status }, { status: 409 })
+  }
+  // A process crash can leave the short request claim behind. Reclaim only
+  // after a conservative TTL; a live request keeps exclusive ownership.
+  const staleBefore = new Date(Date.now() - IMAGE_APPROVAL_CLAIM_TTL_MS)
+  await db.agentPendingAction.updateMany({
+    where: { id: actionId, status: 'pending', approvalClaimedAt: { lt: staleBefore } },
+    data: { approvalClaimedAt: null, ownerDecided: null },
+  })
+  const claimedAt = new Date()
+  const claimed = await db.agentPendingAction.updateMany({
+    where: { id: actionId, status: 'pending', approvalClaimedAt: null },
+    data: { approvalClaimedAt: claimedAt },
+  })
+  if (claimed.count === 0) {
+    return Response.json({ error: 'approval_in_progress', status: 'pending' }, { status: 409 })
+  }
+  return { claimedAt }
+}
+
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -3250,6 +3386,9 @@ export async function POST(
   // P0-2: the clock Boss experiences starts at his TAP, not after the workflow
   // guard and the note. Captured first thing, carried into the trace.
   const approveReceivedAt = new Date()
+  const denied = await authorizeApprovalRequest(req)
+  if (denied) return denied
+  const actionId = (await ctx.params).id
   // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
@@ -3259,14 +3398,61 @@ export async function POST(
   // on lookup errors — blocks only on a positive terminal finding.
   try {
     const { workflowBlocksApproval } = await import('@/agent/lib/workflow-run')
-    const guard = await workflowBlocksApproval((await ctx.params).id)
+    const guard = await workflowBlocksApproval(actionId)
     if (guard.blocked) {
       return Response.json({ error: 'workflow_outdated', message: guard.reason }, { status: 409 })
     }
   } catch { /* fail-open */ }
 
-  const progress = await beginApprovalProgress((await ctx.params).id, approveReceivedAt)
-  const res = await runApprove(req, ctx)
+  const imageClaim = await claimImageApprovalProgress(actionId)
+  if (imageClaim instanceof Response) return imageClaim
+  const imageClaimedAt = imageClaim === 'not_image' ? null : imageClaim.claimedAt
+  let progress: { turnId: string } | null = null
+  let res: Response
+  try {
+    progress = await beginApprovalProgress(actionId, approveReceivedAt)
+    res = await runApprove(req, ctx, { authChecked: true, imageClaimedAt: imageClaimedAt ?? undefined })
+  } catch (error) {
+    if (imageClaimedAt) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending', approvalClaimedAt: imageClaimedAt },
+        data: { approvalClaimedAt: null, ownerDecided: null },
+      }).catch(() => {})
+    }
+    if (progress?.turnId) await finalizeTurnIfRunning(progress.turnId, 'error').catch(() => {})
+    if (imageClaimedAt) {
+      return Response.json({
+        error: 'image_approval_failed',
+        message: error instanceof Error ? error.message : String(error),
+        retryable: true,
+      }, { status: 503 })
+    }
+    throw error
+  }
+  if (imageClaimedAt && (res.status < 200 || res.status >= 300)) {
+    // Guard/expiry failures before queue handoff release the request claim. A
+    // later owner retry can proceed; the losing concurrent tap never opened a
+    // second progress turn because it failed the claim before this point.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending', approvalClaimedAt: imageClaimedAt },
+      data: { approvalClaimedAt: null, ownerDecided: null },
+    })
+    if (res.status === 422) {
+      // beginApprovalProgress already posted an optimistic start line. Correct
+      // it durably when the final model/kill-switch preflight rejects before
+      // queue handoff, so history never implies provider work actually began.
+      const rejectedImage = await (prisma as any).agentPendingAction.findUnique({ where: { id: actionId } })
+      if (rejectedImage) {
+        await appendConversationNote(
+          prisma as any,
+          rejectedImage,
+          '⚠️ ছবির কাজটি শুরু হয়নি — নির্বাচিত image model এখন unavailable/disabled। Model বদলে আবার Approve করুন; কোনো provider charge হয়নি।',
+        ).catch(() => {})
+      }
+    }
+  }
   let visualProofPending = false
   if (res.status >= 200 && res.status < 300) {
     try {
@@ -3279,13 +3465,13 @@ export async function POST(
   // failure never affects the approval response.
   try {
     const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
-    await syncWorkflowWithPendingAction((await ctx.params).id, 'approval')
+    await syncWorkflowWithPendingAction(actionId, 'approval')
   } catch (err) {
     console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
   }
   try {
     if (res.status >= 200 && res.status < 300 && !visualProofPending) {
-      await enqueueApprovedActionContinuation((await ctx.params).id, progress?.turnId ?? null)
+      await enqueueApprovedActionContinuation(actionId, progress?.turnId ?? null)
     } else if (visualProofPending && progress?.turnId) {
       // The action/AFTER capture is still queued; starting the head now would
       // let it narrate completion before the result-route reconciler delivers

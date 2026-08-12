@@ -8,7 +8,11 @@ import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
-import { shouldEmitGenericJobSuccess, shouldResumeAgentAfterJob } from '@/agent/lib/job-result-message-policy'
+import {
+  shouldEmitGenericJobSuccess,
+  shouldResumeAgentAfterImageWorkflow,
+  shouldResumeAgentAfterJob,
+} from '@/agent/lib/job-result-message-policy'
 import {
   buildFallbackDeliveryMessage,
   hasUnansweredAskCard,
@@ -25,6 +29,12 @@ import {
 } from '@/agent/lib/image-result-contract'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
+const IMAGE_RESULT_CONTINUATION_MESSAGE =
+  '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
+  '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
+  'reply-তে ছবিটা উল্লেখ করে ask_user card দাও: "ছবিটা ঠিক আছে?" (অপশন: "ঠিক আছে, পোস্ট রেডি করো" / "ছবি change চাই")। ' +
+  'Boss "ঠিক আছে" বললে তবেই post_to_facebook/publish_to_instagram card দেবে — ছবি confirm হওয়ার আগে পোস্টের card দেওয়া নিষেধ। ' +
+  'ছবিটা আর নতুন করে generate কোরো না।'
 
 export const runtime = 'nodejs'
 // The continuation may run INLINE here (up to 90s) when the VPS worker's turn
@@ -68,6 +78,287 @@ interface JobResultBody {
   error?: string
 }
 
+function imageTerminalEnvelope(value: unknown): {
+  status: 'success' | 'failed'
+  data?: Record<string, unknown>
+  error?: string
+  receiptId: string
+  recordedAt: string
+} | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const envelope = value as Record<string, unknown>
+  if (
+    envelope.version !== 1
+    || (envelope.status !== 'success' && envelope.status !== 'failed')
+    || typeof envelope.receiptId !== 'string'
+    || !envelope.receiptId
+    || typeof envelope.recordedAt !== 'string'
+    || !Number.isFinite(Date.parse(envelope.recordedAt))
+  ) return null
+  return {
+    status: envelope.status,
+    ...(envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? { data: envelope.data as Record<string, unknown> }
+      : {}),
+    ...(typeof envelope.error === 'string' ? { error: envelope.error } : {}),
+    receiptId: envelope.receiptId,
+    recordedAt: envelope.recordedAt,
+  }
+}
+
+const imageDeliveryRequestId = (actionId: string) => `job-result:image:${actionId}`
+
+async function buildImageDeliveryContent(
+  pendingActionId: string,
+  result: Record<string, unknown>,
+): Promise<{ text: string; paths: string[]; content: Array<Record<string, unknown>> }> {
+  const paths = imageResultPaths(result)
+  const fallbackUrl = paths.length === 0 ? String(result.imageUrl ?? '').trim() : ''
+  let text = paths.length === 1
+    ? '✅ Image generated successfully.'
+    : paths.length > 1
+      ? `✅ ${paths.length} image variations generated successfully.`
+      : '✅ Image generated successfully.'
+  try {
+    const signed = paths.length
+      ? await signImageResultPreviews(
+          paths,
+          (path) => agentStorageSignedUrl(path, IMAGE_SIGNED_URL_TTL_SEC),
+        )
+      : { previews: [], failedPaths: [] }
+    if (paths.length === 0 && !fallbackUrl) throw new Error('No image path in job result')
+    const previews = signed.previews.map((preview) =>
+      `![Generated image ${preview.index + 1}](${preview.url})`)
+    if (fallbackUrl) previews.push(`![Generated image](${fallbackUrl})`)
+    if (previews.length) text += `\n${previews.join('\n')}`
+    if (signed.failedPaths.length) {
+      console.warn('[job-result] some signed image previews failed', {
+        pendingActionId,
+        failedPaths: signed.failedPaths,
+      })
+      text += `\n\n_${signed.failedPaths.length} preview link(s) unavailable; completed images remain attached._`
+    }
+    const qcWarnings = imageResultQcWarnings(result)
+    if (qcWarnings.length) text += `\n\n_${qcWarnings.join(' · ')}_`
+  } catch (signError) {
+    const detail = signError instanceof Error ? signError.message : String(signError)
+    console.error('[job-result] signed URL failed', { pendingActionId, detail })
+    text = paths.length
+      ? `✅ ${paths.length} image(s) generated and attached.\n(Preview link could not be created.)`
+      : fallbackUrl
+        ? `✅ Image generated.\n(Preview link could not be created.)`
+        : '✅ Image generated but preview unavailable.'
+  }
+  const content: Array<Record<string, unknown>> = [{ type: 'text', text }]
+  for (const path of paths) {
+    const ext = path.split('.').pop()?.toLowerCase()
+    content.push({
+      type: 'file_ref',
+      bucket: 'agent-files',
+      path,
+      mediaType: ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png',
+    })
+  }
+  return { text, paths, content }
+}
+
+async function reconcileTerminalImageDelivery(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  action: {
+    id: string
+    type: string
+    status: string
+    conversationId?: string | null
+    payload: unknown
+    result: unknown
+  },
+): Promise<boolean> {
+  if (action.type !== 'image_gen' || !['executed', 'failed'].includes(action.status)) return false
+  const payload = action.payload as Record<string, unknown>
+  const conversationId = resolveConversationId(action)
+  const result = action.result && typeof action.result === 'object'
+    ? action.result as Record<string, unknown>
+    : {}
+  if (!conversationId) return false
+  const contentPipeline = payload.contentPipeline as { gate1Id?: string } | undefined
+  if (action.status === 'executed' && (payload.creativeStudio || contentPipeline?.gate1Id)) return false
+  const delivery = action.status === 'failed'
+    ? {
+        content: [{
+          type: 'text',
+          text: `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${String(result.error ?? 'Unknown error')}`,
+        }],
+      }
+    : imageResultPaths(result).length > 0 || String(result.imageUrl ?? '').trim()
+      ? await buildImageDeliveryContent(action.id, result)
+      : null
+  if (!delivery) return false
+  await db.agentMessage.upsert({
+    where: { clientRequestId: imageDeliveryRequestId(action.id) },
+    update: { content: delivery.content },
+    create: {
+      clientRequestId: imageDeliveryRequestId(action.id),
+      conversationId,
+      role: 'assistant',
+      content: delivery.content,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    },
+  })
+  await db.agentConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } })
+  return true
+}
+
+async function reconcileExecutedImagePipeline(action: {
+  id: string
+  type: string
+  status: string
+  payload: unknown
+  result: unknown
+}): Promise<boolean> {
+  if (action.type !== 'image_gen' || action.status !== 'executed') return false
+  const payload = action.payload as Record<string, unknown>
+  const pipeline = payload.contentPipeline as { gate1Id?: string } | undefined
+  const result = action.result && typeof action.result === 'object'
+    ? action.result as Record<string, unknown>
+    : {}
+  const storagePath = typeof result.storagePath === 'string' ? result.storagePath.trim() : ''
+  if (!pipeline?.gate1Id || !storagePath) return false
+  const { onPipelineRenderComplete } = await import('@/lib/content-engine/pipeline')
+  await onPipelineRenderComplete(action.id, storagePath)
+  return true
+}
+
+/** A 2xx callback is the acknowledgement for the worker's durable image
+ * receipt. Keep the envelope for audit, but remove it from the replay queue
+ * only after every required reconciliation/delivery above has succeeded. */
+async function acknowledgeImageJobResult(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  actionId: string,
+  actionType: string,
+  claimedAt: Date | null,
+  processedEnvelope: unknown,
+): Promise<boolean> {
+  if (actionType !== 'image_gen') return true
+  const acknowledged = await db.agentPendingAction.updateMany({
+    where: {
+      id: actionId,
+      type: 'image_gen',
+      jobResultPending: true,
+      ...(claimedAt ? { jobResultClaimedAt: claimedAt } : {}),
+      ...(imageTerminalEnvelope(processedEnvelope)?.receiptId
+        ? {
+            jobResultEnvelope: {
+              path: ['receiptId'],
+              equals: imageTerminalEnvelope(processedEnvelope)?.receiptId,
+            },
+          }
+        : {}),
+    },
+    data: { jobResultPending: false, jobResultClaimedAt: null },
+  })
+  return acknowledged.count === 1
+}
+
+const IMAGE_RESULT_CLAIM_TTL_MS = 3 * 60_000
+
+async function claimTerminalImageReconciliation(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  actionId: string,
+): Promise<Date | null> {
+  const claimedAt = new Date()
+  const staleBefore = new Date(claimedAt.getTime() - IMAGE_RESULT_CLAIM_TTL_MS)
+  const claimed = await db.agentPendingAction.updateMany({
+    where: {
+      id: actionId,
+      type: 'image_gen',
+      jobResultPending: true,
+      OR: [
+        { jobResultClaimedAt: null },
+        { jobResultClaimedAt: { lt: staleBefore } },
+      ],
+    },
+    data: { jobResultClaimedAt: claimedAt },
+  })
+  return claimed.count === 1 ? claimedAt : null
+}
+
+async function reconcileTerminalImageRuntimeEffects(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  action: {
+    id: string
+    type: string
+    status: string
+    summary?: string | null
+    conversationId?: string | null
+    payload: unknown
+    result: unknown
+  },
+) {
+  if (action.type !== 'image_gen' || !['executed', 'failed'].includes(action.status)) return
+  const payload = action.payload as Record<string, unknown>
+  if (payload.campaignPack) return // campaign-pack reconciliation owns its stage UX
+  const progressTurnId = typeof payload.progressTurnId === 'string' ? payload.progressTurnId : null
+  const conversationId = resolveConversationId(action)
+  let resumeProductPost = false
+
+  const wf = await import('@/agent/lib/workflow-run')
+  await wf.releaseWorkflowLease(action.id)
+  await wf.syncWorkflowWithPendingAction(action.id, 'worker')
+  if (action.status === 'executed') {
+    const run = await wf.getWorkflowRunByPendingAction(action.id)
+    resumeProductPost = shouldResumeAgentAfterImageWorkflow(run)
+  }
+
+  if (action.status === 'failed') {
+    const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+    const result = action.result && typeof action.result === 'object'
+      ? action.result as Record<string, unknown>
+      : {}
+    const goal = action.summary?.split('\n')[0]?.slice(0, 160) || 'image_gen job'
+    const error = String(result.error ?? 'unknown_error').slice(0, 300)
+    const checkpointId = await writeCheckpoint({
+      taskRef: action.id,
+      taskType: 'image_gen',
+      goal,
+      summaryBn: `"${goal}" কাজটা মাঝপথে ব্যর্থ হয়েছে।`,
+      doneSteps: [],
+      currentStep: 'worker executing image_gen',
+      artifacts: [],
+      error,
+      nextActions: ['কারণ দেখে ঠিক করে কাজটা আবার চালাও, অথবা Boss-কে বিকল্প দাও'],
+      resumeHint: `pendingAction ${action.id} failed with: ${error}. Retry creates a fresh owner approval card from the pinned inputs.`,
+      conversationId,
+    })
+    if (!checkpointId) throw new Error('image_failure_checkpoint_reconcile_failed')
+    if (progressTurnId) await finalizeTurnIfRunning(progressTurnId, 'error')
+    return
+  }
+
+  const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+  await resolveCheckpointByTaskRef(action.id)
+  const result = action.result && typeof action.result === 'object'
+    ? action.result as Record<string, unknown>
+    : {}
+  const hasVisibleImage = imageResultPaths(result).length > 0 || Boolean(String(result.imageUrl ?? '').trim())
+  const pipeline = payload.contentPipeline as { gate1Id?: string } | undefined
+  const genericChatImage = !payload.creativeStudio && !pipeline?.gate1Id
+  if (resumeProductPost && genericChatImage && hasVisibleImage && conversationId) {
+    await enqueueAgentContinuation({
+      conversationId,
+      turnId: progressTurnId,
+      message: IMAGE_RESULT_CONTINUATION_MESSAGE,
+    })
+  } else if (progressTurnId) {
+    await finalizeTurnIfRunning(progressTurnId, 'done')
+  }
+}
+
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
@@ -83,12 +374,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
 
-  const { pendingActionId, status: rawStatus, data, error } = body
+  const { pendingActionId, status: rawStatus } = body
+  let data = body.data
+  let error = body.error
   if (!pendingActionId || !rawStatus) {
     return Response.json({ error: 'pendingActionId and status required' }, { status: 400 })
   }
 
-  const status = normalizeJobStatus(rawStatus)
+  let status = normalizeJobStatus(rawStatus)
   if (!status) {
     console.error('[job-result] invalid status:', rawStatus)
     return Response.json({ error: 'invalid_status', allowed: ['success', 'failed'] }, { status: 400 })
@@ -100,17 +393,80 @@ export async function POST(req: NextRequest) {
   const action = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
+  let processedImageEnvelope: unknown = action.jobResultEnvelope
+  if (action.type === 'image_gen' && action.jobResultPending) {
+    const durable = imageTerminalEnvelope(action.jobResultEnvelope)
+    if (!durable) {
+      return Response.json({
+        error: 'invalid_image_terminal_envelope',
+        retryable: true,
+      }, { status: 503 })
+    }
+    // The worker persisted this receipt before HTTP delivery. It is the
+    // canonical terminal fact; a stale/late failed callback cannot overwrite
+    // an already-paid success envelope.
+    status = durable.status
+    data = durable.data
+    error = durable.error
+    processedImageEnvelope = action.jobResultEnvelope
+  } else if (action.type === 'image_gen' && !['executed', 'failed'].includes(action.status)) {
+    // Rolling/DB-outage adoption: an authenticated old worker (or a worker whose
+    // outbox write failed) may reach the app without a pending envelope. Adopt
+    // that receipt atomically with the terminal CAS so any later 503 remains
+    // replayable instead of being fast-acked and lost.
+    processedImageEnvelope = {
+      version: 1,
+      status,
+      ...(data ? { data } : {}),
+      ...(error ? { error } : {}),
+      receiptId: `app-adopted:${pendingActionId}:${Date.now()}`,
+      recordedAt: new Date().toISOString(),
+    }
+  }
+
+  let imageResultClaimedAt: Date | null = null
   if (action.status === 'executed' || action.status === 'failed') {
+    if (action.type === 'image_gen' && !action.jobResultPending) {
+      return Response.json({ ok: true, idempotent: true, status: action.status })
+    }
+    if (action.type === 'image_gen') {
+      imageResultClaimedAt = await claimTerminalImageReconciliation(db, action.id)
+      if (!imageResultClaimedAt) {
+        return Response.json({
+          error: 'image_reconciliation_in_progress',
+          retryable: true,
+        }, { status: 409 })
+      }
+    }
+    let terminalAction = action
+    if (action.type === 'image_gen' && action.status === 'failed' && status === 'success') {
+      const receiptId = imageTerminalEnvelope(processedImageEnvelope)?.receiptId
+      const upgraded = await db.agentPendingAction.updateMany({
+        where: {
+          id: action.id,
+          status: 'failed',
+          jobResultClaimedAt: imageResultClaimedAt,
+          ...(receiptId
+            ? { jobResultEnvelope: { path: ['receiptId'], equals: receiptId } }
+            : {}),
+        },
+        data: { status: 'executed', result: data ?? {}, resolvedAt: new Date() },
+      })
+      if (upgraded.count === 0) {
+        return Response.json({ error: 'image_success_upgrade_raced', retryable: true }, { status: 503 })
+      }
+      terminalAction = { ...action, status: 'executed', result: data ?? {} }
+    }
     // A callback may have committed the step result before chain advancement or
     // project-asset rebinding completed. Reconcile executed chain steps on
     // replay; constructors are receipt-deduped, so this cannot double-spend.
-    const replayPayload = action.payload as Record<string, unknown> | null
-    if (action.status === 'executed' && replayPayload?.familyChain) {
+    const replayPayload = terminalAction.payload as Record<string, unknown> | null
+    if (terminalAction.status === 'executed' && replayPayload?.familyChain) {
       try {
         const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
-        const replayResult = action.result as Record<string, unknown> | null
+        const replayResult = terminalAction.result as Record<string, unknown> | null
         await advanceFamilyChain(
-          action,
+          terminalAction,
           typeof replayResult?.storagePath === 'string' ? replayResult.storagePath : undefined,
         )
       } catch (chainError) {
@@ -127,30 +483,109 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: 'studio_project_asset_reconcile_failed' }, { status: 503 })
       }
     }
+    if (terminalAction.status === 'executed' && terminalAction.type === 'image_gen') {
+      try {
+        await reconcileExecutedImagePipeline(terminalAction)
+      } catch (pipelineError) {
+        console.error('[job-result] content pipeline replay reconcile failed:', pipelineError)
+        return Response.json({ error: 'content_pipeline_reconcile_failed' }, { status: 503 })
+      }
+    }
+    if (terminalAction.status === 'executed' && terminalAction.type === 'image_gen') {
+      try {
+        await reconcileTerminalImageDelivery(db, terminalAction)
+      } catch (deliveryError) {
+        console.error('[job-result] image delivery replay reconcile failed:', deliveryError)
+        return Response.json({ error: 'image_delivery_reconcile_failed' }, { status: 503 })
+      }
+    } else if (terminalAction.status === 'failed' && terminalAction.type === 'image_gen') {
+      try {
+        await reconcileTerminalImageDelivery(db, terminalAction)
+      } catch (deliveryError) {
+        console.error('[job-result] image failure delivery replay reconcile failed:', deliveryError)
+        return Response.json({ error: 'image_delivery_reconcile_failed' }, { status: 503 })
+      }
+    }
     // CSE4 callback replay may mean the stage row committed but the pack
     // reconciliation/lineage write did not. Re-run that idempotent hook before
     // acknowledging the duplicate so a restart cannot leave the pack stale.
-    const campaignPack = (action.payload as Record<string, unknown> | null)?.campaignPack
+    const campaignPack = (terminalAction.payload as Record<string, unknown> | null)?.campaignPack
     if (campaignPack && typeof campaignPack === 'object') {
       try {
         const { reconcileCampaignPackStageResult } = await import('@/lib/creative-studio/campaign-pack-service')
-        await reconcileCampaignPackStageResult(action.id)
+        await reconcileCampaignPackStageResult(terminalAction.id)
       } catch (campaignError) {
         console.error('[job-result] campaign-pack replay reconcile failed:', campaignError)
         return Response.json({ error: 'campaign_pack_reconcile_failed' }, { status: 503 })
       }
     }
-    return Response.json({ ok: true, idempotent: true, status: action.status })
+    try {
+      await reconcileTerminalImageRuntimeEffects(db, terminalAction)
+    } catch (runtimeError) {
+      console.error('[job-result] image runtime-effects replay reconcile failed:', runtimeError)
+      return Response.json({ error: 'image_runtime_reconcile_failed' }, { status: 503 })
+    }
+    if (!await acknowledgeImageJobResult(
+      db,
+      terminalAction.id,
+      terminalAction.type,
+      imageResultClaimedAt,
+      processedImageEnvelope,
+    )) {
+      return Response.json({ error: 'image_result_receipt_changed', retryable: true }, { status: 503 })
+    }
+    return Response.json({ ok: true, idempotent: true, status: terminalAction.status })
   }
 
-  await db.agentPendingAction.update({
-    where: { id: pendingActionId },
-    data: {
-      status: status === 'success' ? 'executed' : 'failed',
-      result: data ?? { error },
-      resolvedAt: new Date(),
-    },
-  })
+  const terminalData = {
+    status: status === 'success' ? 'executed' : 'failed',
+    result: data ?? { error },
+    resolvedAt: new Date(),
+  }
+  if (action.type === 'image_gen') {
+    imageResultClaimedAt = new Date()
+    const processedReceiptId = imageTerminalEnvelope(processedImageEnvelope)?.receiptId
+    const settled = await db.agentPendingAction.updateMany({
+      where: {
+        id: pendingActionId,
+        status: action.status,
+        // Match the exact durable fact read above. A worker receipt RPC may
+        // atomically replace failure F with paid success S while this request
+        // is in flight; stale F must then lose this CAS instead of overwriting
+        // S and settling the action failed.
+        ...(action.jobResultPending
+          ? {
+              jobResultPending: true,
+              ...(processedReceiptId
+                ? { jobResultEnvelope: { path: ['receiptId'], equals: processedReceiptId } }
+                : {}),
+            }
+          : { jobResultPending: false }),
+      },
+      data: {
+        ...terminalData,
+        jobResultPending: true,
+        jobResultEnvelope: processedImageEnvelope,
+        jobResultClaimedAt: imageResultClaimedAt,
+      },
+    })
+    if (settled.count === 0) {
+      const current = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
+      // A competing callback owns the full terminal reconcile. Never let the
+      // CAS loser clear its outbox after running only a subset of the effects;
+      // if that winner crashes, the durable receipt must remain replayable.
+      return Response.json({
+        error: 'image_terminal_reconciliation_pending',
+        status: current?.status ?? 'missing',
+        retryable: true,
+      }, { status: 503 })
+    }
+  } else {
+    await db.agentPendingAction.update({
+      where: { id: pendingActionId },
+      data: terminalData,
+    })
+  }
 
   // CSE4 stages own their completion UX inside CampaignPackProgress. Reconcile
   // the root pack + CSE3 asset lineage here, then stop before generic chat,
@@ -160,6 +595,20 @@ export async function POST(req: NextRequest) {
     try {
       const { reconcileCampaignPackStageResult } = await import('@/lib/creative-studio/campaign-pack-service')
       await reconcileCampaignPackStageResult(action.id)
+      await reconcileTerminalImageRuntimeEffects(db, {
+        ...action,
+        status: status === 'success' ? 'executed' : 'failed',
+        result: data ?? { error },
+      })
+      if (!await acknowledgeImageJobResult(
+        db,
+        action.id,
+        action.type,
+        imageResultClaimedAt,
+        processedImageEnvelope,
+      )) {
+        return Response.json({ error: 'image_result_receipt_changed', retryable: true }, { status: 503 })
+      }
       return Response.json({ ok: true, campaignPack: true })
     } catch (campaignError) {
       console.error('[job-result] campaign-pack reconcile failed:', campaignError)
@@ -171,14 +620,20 @@ export async function POST(req: NextRequest) {
   // canonical WorkflowRun to the card's final status right away (turn-start
   // reconcile would catch it later; doing it here keeps the run's step honest
   // for anything reading it between now and the next turn). Fail-open.
-  try {
-    const wf = await import('@/agent/lib/workflow-run')
-    await wf.releaseWorkflowLease(pendingActionId)
-    // Awaited: the continuation must read the post-worker state (report step),
-    // never race the old waiting-worker state and go silent.
-    await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
-  } catch (err) {
-    console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+  const resumeProductPostAfterImage = false
+  // Image callbacks use reconcileTerminalImageRuntimeEffects below, after
+  // deterministic artifact/failure delivery. Replay uses that exact helper
+  // too, so the outbox has one shared acknowledgement gate.
+  if (action.type !== 'image_gen') {
+    try {
+      const wf = await import('@/agent/lib/workflow-run')
+      await wf.releaseWorkflowLease(pendingActionId)
+      // Awaited: the continuation must read the post-worker state (report step),
+      // never race the old waiting-worker state and go silent.
+      await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
+    } catch (err) {
+      console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+    }
   }
 
   // Delivery contract: from this moment the owner is OWED the result in his
@@ -223,6 +678,9 @@ export async function POST(req: NextRequest) {
       if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
     } catch (chainErr) {
       console.error('[job-result] family chain advance failed:', chainErr)
+      if (action.type === 'image_gen') {
+        return Response.json({ error: 'family_chain_reconcile_failed' }, { status: 503 })
+      }
     }
   }
 
@@ -305,6 +763,7 @@ export async function POST(req: NextRequest) {
         await onPipelineRenderComplete(pendingActionId, storagePath)
       } catch (pipeErr) {
         console.error('[job-result] content pipeline advance failed:', pipeErr)
+        return Response.json({ error: 'content_pipeline_reconcile_failed' }, { status: 503 })
       }
       messageText = null
     } else if (isVideo && storagePath) {
@@ -329,48 +788,12 @@ export async function POST(req: NextRequest) {
         messageText = `✅ Reel saved: \`${storagePath}\` (approval card failed: ${detail})`
       }
     } else {
-      const resultPaths = imageResultPaths(data)
+      const delivery = await buildImageDeliveryContent(pendingActionId, data)
       // Persist these independently of ephemeral preview signing. Native image
       // cards are driven by file_ref blocks, not by signed Markdown URLs.
-      messageImagePaths = resultPaths
-      try {
-        const signed = resultPaths.length
-          ? await signImageResultPreviews(
-              resultPaths,
-              (path) => agentStorageSignedUrl(path, IMAGE_SIGNED_URL_TTL_SEC),
-            )
-          : { previews: [], failedPaths: [] }
-        const fallbackUrl = resultPaths.length === 0 ? String(data?.imageUrl ?? '').trim() : ''
-        if (resultPaths.length === 0 && !fallbackUrl) throw new Error('No image path in job result')
-        const deliveredCount = resultPaths.length || 1
-        messageText = deliveredCount === 1
-          ? '✅ Image generated successfully.'
-          : `✅ ${deliveredCount} image variations generated successfully.`
-        const previewRows = signed.previews.map((preview) =>
-          `![Generated image ${preview.index + 1}](${preview.url})`)
-        if (fallbackUrl) previewRows.push(`![Generated image](${fallbackUrl})`)
-        if (previewRows.length) messageText += `\n${previewRows.join('\n')}`
-        if (signed.failedPaths.length) {
-          console.warn('[job-result] some signed image previews failed', {
-            pendingActionId, failedPaths: signed.failedPaths,
-          })
-          messageText += `\n\n_${signed.failedPaths.length} preview link(s) unavailable; completed images remain attached._`
-        }
-        resumeAgentAfterImage = true
-        const qcWarnings = imageResultQcWarnings(data)
-        if (qcWarnings.length) {
-          messageText += `\n\n_${qcWarnings.join(' · ')}_`
-        }
-      } catch (signErr) {
-        const detail = signErr instanceof Error ? signErr.message : String(signErr)
-        console.error('[job-result] signed URL failed', { storagePath, detail })
-        messageText = messageImagePaths.length
-          ? `✅ ${messageImagePaths.length} image(s) generated and attached.\n(Preview link could not be created.)`
-          : storagePath
-          ? `✅ Image generated and saved.\nPath: \`${storagePath}\`\n(Preview link could not be created — check Supabase storage config.)`
-          : `✅ Image generated but preview unavailable.`
-        resumeAgentAfterImage = messageImagePaths.length > 0
-      }
+      messageImagePaths = delivery.paths
+      messageText = delivery.text
+      resumeAgentAfterImage = messageImagePaths.length > 0 && resumeProductPostAfterImage
     }
   } else if (action.type === 'outbound_call' && status === 'failed') {
     messageText = `❌ বস, কল দেওয়া যায়নি।\nকারণ: ${error ?? String(data?.error ?? 'Unknown error')}`
@@ -388,13 +811,13 @@ export async function POST(req: NextRequest) {
 
   // P0 terminal-state contract: EVERY worker-job failure leaves a checkpoint the
   // owner's next reply can resume from — this one hook covers all job types.
-  if (status === 'failed') {
+  if (status === 'failed' && action.type !== 'image_gen') {
     try {
       const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
       const goal = (action.summary as string | null)?.split('\n')[0]?.slice(0, 160) || `${action.type} job`
       const errMsg = (error ?? String(data?.error ?? 'unknown_error')).slice(0, 300)
       const partial = typeof data?.storagePath === 'string' ? [data.storagePath] : []
-      await writeCheckpoint({
+      const checkpointId = await writeCheckpoint({
         taskRef: pendingActionId,
         taskType: action.type,
         goal,
@@ -407,10 +830,16 @@ export async function POST(req: NextRequest) {
         resumeHint: `pendingAction ${pendingActionId} (type ${action.type}) failed with: ${errMsg}. Payload payload-এ আগের সব input আছে — same payload দিয়ে retry করা যায়।`,
         conversationId: convId,
       })
+      if (action.type === 'image_gen' && !checkpointId) {
+        return Response.json({ error: 'image_failure_checkpoint_reconcile_failed' }, { status: 503 })
+      }
     } catch (cpErr) {
       console.error('[job-result] checkpoint write failed:', cpErr)
+      if (action.type === 'image_gen') {
+        return Response.json({ error: 'image_failure_checkpoint_reconcile_failed' }, { status: 503 })
+      }
     }
-  } else if (status === 'success') {
+  } else if (status === 'success' && action.type !== 'image_gen') {
     // a retried task that now succeeded closes its old checkpoint chip
     try {
       const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
@@ -429,16 +858,23 @@ export async function POST(req: NextRequest) {
         mediaType: ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png',
       })
     }
-    await db.agentMessage.create({
-      data: {
-        conversationId: convId,
-        role: 'assistant',
-        content: contentBlocks,
-        tokensIn: 0,
-        tokensOut: 0,
-        costUsd: 0,
-      },
-    })
+    const messageData = {
+      conversationId: convId,
+      role: 'assistant',
+      content: contentBlocks,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    }
+    if (action.type === 'image_gen') {
+      await db.agentMessage.upsert({
+        where: { clientRequestId: imageDeliveryRequestId(pendingActionId) },
+        update: { content: contentBlocks },
+        create: { ...messageData, clientRequestId: imageDeliveryRequestId(pendingActionId) },
+      })
+    } else {
+      await db.agentMessage.create({ data: messageData })
+    }
     await prisma.agentConversation.update({
       where: { id: convId },
       data: { updatedAt: new Date() },
@@ -453,15 +889,22 @@ export async function POST(req: NextRequest) {
   // The progress turn must stay OPEN while a continuation is about to present the
   // result — finalizing it here is what literally put "done" on the owner's screen
   // while the SEO report was still unwritten (2026-07-25).
-  if (progressTurnId && (status === 'failed' || (!resumeAgentAfterImage && !resumeAgentAfterSeo))) {
-    await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done').catch(() => {})
+  if (action.type !== 'image_gen' && progressTurnId && (status === 'failed' || (!resumeAgentAfterImage && !resumeAgentAfterSeo))) {
+    try {
+      await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done')
+    } catch (turnError) {
+      if (action.type === 'image_gen') {
+        console.error('[job-result] image progress-turn reconcile failed:', turnError)
+        return Response.json({ error: 'image_progress_turn_reconcile_failed' }, { status: 503 })
+      }
+    }
   }
 
   // The generated image is now in the conversation → resume the head so it carries on
   // its task (e.g. build the Instagram/Facebook post it was about to make) instead of
   // going silent. Best-effort: no-ops without a worker queue or if the owner disabled
   // auto-continue, and never fails the worker callback.
-  if (resumeAgentAfterImage && convId) {
+  if (action.type !== 'image_gen' && resumeAgentAfterImage && convId) {
     try {
       await enqueueAgentContinuation({
         conversationId: convId,
@@ -469,12 +912,7 @@ export async function POST(req: NextRequest) {
         // so the app's spinner runs from the owner's tap straight through to
         // this reply (Claude-Code-parity progress, owner ask 2026-07-13).
         turnId: progressTurnId,
-        message:
-          '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
-          '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
-          'reply-তে ছবিটা উল্লেখ করে ask_user card দাও: "ছবিটা ঠিক আছে?" (অপশন: "ঠিক আছে, পোস্ট রেডি করো" / "ছবি change চাই")। ' +
-          'Boss "ঠিক আছে" বললে তবেই post_to_facebook/publish_to_instagram card দেবে — ছবি confirm হওয়ার আগে পোস্টের card দেওয়া নিষেধ। ' +
-          'ছবিটা আর নতুন করে generate কোরো না।',
+        message: IMAGE_RESULT_CONTINUATION_MESSAGE,
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)
@@ -549,5 +987,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  try {
+    await reconcileTerminalImageRuntimeEffects(db, {
+      ...action,
+      status: status === 'success' ? 'executed' : 'failed',
+      result: data ?? { error },
+    })
+  } catch (runtimeError) {
+    console.error('[job-result] image runtime-effects reconcile failed:', runtimeError)
+    return Response.json({ error: 'image_runtime_reconcile_failed' }, { status: 503 })
+  }
+  if (!await acknowledgeImageJobResult(
+    db,
+    pendingActionId,
+    action.type,
+    imageResultClaimedAt,
+    processedImageEnvelope,
+  )) {
+    return Response.json({ error: 'image_result_receipt_changed', retryable: true }, { status: 503 })
+  }
   return Response.json({ success: true })
 }
