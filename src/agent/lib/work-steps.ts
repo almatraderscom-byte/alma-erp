@@ -409,6 +409,44 @@ export function projectRuntimeWorkSteps(input: {
   }
 }
 
+/**
+ * Refresh the durable tracker snapshot after a plan-step state change.
+ *
+ * Owner live test (2026-08-13): the Plan-Driver executes steps in BACKGROUND
+ * worker turns, but snapshots were only projected during the owner turn — the
+ * dock froze at ০/৫ while steps actually completed. Every step writer now
+ * refreshes the persisted snapshot; the app's message poll then merges the
+ * higher revision (no live stream required). Fire-and-forget by design: a
+ * tracker refresh must never break a step transition.
+ */
+export async function refreshPlanTrackerSnapshot(planId: string): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const plan: TrackerPlanRow | null = await db.agentPlan.findUnique({
+      where: { id: planId },
+      select: PLAN_SELECT,
+    })
+    // Only plans that ever emitted a tracker participate — a plan created
+    // before this feature (no origin turn, no snapshot) stays silent.
+    if (!plan || !plan.steps?.length) return
+    if (!plan.originTurnId && plan.trackerRevision === 0) return
+    const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
+    const currentTurnId = prior?.currentTurnId ?? plan.originTurnId ?? plan.id
+    const snapshot = projectWorkSteps({
+      plan,
+      currentTurnId,
+      revision: plan.trackerRevision + 1,
+      blockedBy: prior?.blockedBy ?? null,
+      // The driver is actively moving steps; running/waiting_worker/completed
+      // all derive from the durable rows themselves.
+      live: plan.steps.some((s) => s.status === 'running'),
+    })
+    if (prior && workStepsSignature(prior) === workStepsSignature(snapshot)) return
+    await persistWorkStepsSnapshot(snapshot)
+  } catch { /* never break the step writer */ }
+}
+
 /** Parse a stored snapshot; null when malformed or a future major version. */
 export function parseWorkStepsSnapshot(value: unknown): WorkStepsSnapshot | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
