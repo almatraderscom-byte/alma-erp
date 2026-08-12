@@ -62,9 +62,8 @@ import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progr
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
-  persistWorkStepsSnapshot,
   projectRuntimeWorkSteps,
-  projectWorkSteps,
+  syncPlanTracker,
   workStepsSignature,
 } from '@/agent/lib/work-steps'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
@@ -3358,19 +3357,14 @@ async function* runAlternateProviderTurn(
         // persisted before it is emitted so cold history can never be behind
         // what the owner saw live.
         if (trackerPlan && turnId) {
-          const snapshot = projectWorkSteps({
-            plan: trackerPlan,
+          const persisted = await syncPlanTracker(trackerPlan.id, {
             currentTurnId: turnId,
-            revision: trackerPlan.trackerRevision + 1,
             blockedBy: workStepsBlocker,
             live: true,
           })
-          const trackerSig = workStepsSignature(snapshot)
-          if (trackerSig !== lastWorkStepsSignature) {
-            lastWorkStepsSignature = trackerSig
-            if (await persistWorkStepsSnapshot(snapshot)) {
-              yield snapshot
-            }
+          if (persisted) {
+            lastWorkStepsSignature = workStepsSignature(persisted)
+            yield persisted
           }
         } else if (!trackerPlan && turnId && toolRecords.length > 0) {
           // UNPLANNED work (owner live-test gap 2026-08-12): the head served a
@@ -3846,19 +3840,17 @@ async function* runAlternateProviderTurn(
       try {
         const finalPlan = await loadPlanForWorkTracker(conversationId, turnId, true)
         if (finalPlan && finalPlan.id === workStepsTrackerId) {
-          const snapshot = projectWorkSteps({
-            plan: finalPlan,
+          const persisted = await syncPlanTracker(finalPlan.id, {
             currentTurnId: turnId,
-            revision: finalPlan.trackerRevision + 1,
             blockedBy: workStepsBlocker,
             live: false,
+            bindAssistantMessageId: finalPlan.originTurnId === turnId
+              ? (savedMsg.id as string)
+              : null,
           })
-          if (!finalPlan.originAssistantMessageId && finalPlan.originTurnId === turnId) {
-            snapshot.originAssistantMessageId = savedMsg.id as string
-          }
-          if (await persistWorkStepsSnapshot(snapshot)) {
-            lastWorkStepsSignature = workStepsSignature(snapshot)
-            yield snapshot
+          if (persisted) {
+            lastWorkStepsSignature = workStepsSignature(persisted)
+            yield persisted
           }
         }
       } catch { /* the tracker must never break settlement */ }

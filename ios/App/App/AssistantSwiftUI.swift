@@ -19956,10 +19956,16 @@ struct AgentWorkStepsDockView: View {
                         .padding(.vertical, 6)
                     }
                     .frame(maxHeight: 236)
-                    .background(Color.black.opacity(0.35),
-                                in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    // Owner 2026-08-13: the 0.35 wash let the chat text bleed
+                    // through the expanded list. Opaque panel — material base
+                    // plus a solid tint — so the steps are the only thing read.
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(.thinMaterial)
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Color(red: 0.09, green: 0.09, blue: 0.13).opacity(0.94))))
                     .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .accessibilityIdentifier("agent.work-steps.dock.panel")
                 }

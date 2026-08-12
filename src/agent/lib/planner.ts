@@ -3,6 +3,7 @@
  * for complex multi-step tasks.
  */
 import { prisma } from '@/lib/prisma'
+import { refreshPlanTrackerSnapshot } from '@/agent/lib/work-steps'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -203,16 +204,21 @@ export async function updatePlanStatus(
     data.selfCheckNote = selfCheckNote
   }
   await db.agentPlan.update({ where: { id: planId }, data })
+  void refreshPlanTrackerSnapshot(planId)
 }
 
 /**
  * Mark a step as running.
  */
 export async function markStepRunning(stepId: string): Promise<void> {
-  await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.update({
     where: { id: stepId },
     data: { status: 'running', startedAt: new Date() },
+    select: { planId: true },
   })
+  // Build 103: keep the durable work-step tracker in sync with every step
+  // writer (the Plan-Driver runs in background turns the owner never streams).
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /**
@@ -220,7 +226,7 @@ export async function markStepRunning(stepId: string): Promise<void> {
  * is never waiting on a turn.
  */
 export async function markStepDone(stepId: string, result?: unknown): Promise<void> {
-  await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.update({
     where: { id: stepId },
     data: {
       status: 'done',
@@ -229,7 +235,9 @@ export async function markStepDone(stepId: string, result?: unknown): Promise<vo
       turnId: null,
       dispatchedAt: null,
     },
+    select: { planId: true },
   })
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Backoff before a failed step may be retried: 2, 8, 18 … minutes. */
@@ -254,7 +262,7 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
   })
   const attemptCount = (step?.attemptCount ?? 0) + 1
   const maxAttempts = step?.maxAttempts ?? 3
-  await db.agentPlanStep.update({
+  const step2 = await db.agentPlanStep.update({
     where: { id: stepId },
     data: {
       status: 'failed',
@@ -265,7 +273,9 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
       turnId: null,
       dispatchedAt: null,
     },
+    select: { planId: true },
   })
+  if (step2?.planId) void refreshPlanTrackerSnapshot(step2.planId)
 }
 
 /**
@@ -279,18 +289,22 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
  * touched — waiting for Boss is not a failure.
  */
 export async function markStepBlocked(stepId: string): Promise<void> {
-  await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.update({
     where: { id: stepId },
     data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
+    select: { planId: true },
   })
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Queue mode — the step is now waiting on a worker turn (reaped next tick). */
 export async function markStepDispatched(stepId: string, turnId: string, now = new Date()): Promise<void> {
-  await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.update({
     where: { id: stepId },
     data: { status: 'running', turnId, dispatchedAt: now, startedAt: now },
+    select: { planId: true },
   })
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Steps currently waiting on a dispatched worker turn (reap input). */
@@ -329,6 +343,7 @@ export async function appendCorrectiveStep(planId: string, action: string): Prom
       status: 'pending',
     },
   })
+  void refreshPlanTrackerSnapshot(planId)
 }
 
 // ── Plan-Driver mutations (Phase B — autodrive lifecycle) ───────────────────
@@ -389,6 +404,10 @@ export async function abandonAutodrive(planId: string): Promise<void> {
       completedAt: new Date(),
     },
   })
+  // Terminal by owner choice — no later step transition will ever refresh the
+  // tracker, so project the cancelled snapshot now. Awaited: this runs in a
+  // serverless route, and work left after the response may never finish.
+  await refreshPlanTrackerSnapshot(planId)
 }
 
 /**
