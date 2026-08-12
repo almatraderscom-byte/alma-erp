@@ -882,6 +882,8 @@ struct AgentAwakeningOverlay: View {
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent.session.loader")
                 .frame(width: geo.size.width, height: geo.size.height)
                 .opacity(model.phase == .dismissing ? 0 : 1)
                 .animation(.easeOut(duration: 0.26), value: model.phase == .dismissing)

@@ -1673,6 +1673,48 @@ private enum AssistantAudioPlaybackError: Error {
     case failedToStart
 }
 
+/// The one thing that decides what the Agent screen may draw before its history
+/// exists. Every phase is entered by an authoritative answer — the active
+/// conversation pointer, a committed history load, an explicit New Chat — never
+/// by the absence of data.
+enum AgentSessionSurfaceState: Equatable {
+    /// We have not been told yet whether there is an active conversation.
+    case resolvingInitialRoute(requestToken: UUID)
+    /// A specific chat is selected and its history is in flight.
+    case loadingHistory(conversationId: String, requestToken: UUID)
+    /// The server confirmed there is no conversation, or the owner tapped New Chat.
+    case readyNew(sessionIdentity: String)
+    /// History committed. A conversation with zero messages is still this case.
+    case readyConversation(conversationId: String)
+    /// The selected chat's history failed. Retry belongs to that chat, and the
+    /// new-chat hero must never stand in for it.
+    case failedHistory(conversationId: String?, requestToken: UUID, message: String)
+
+    /// True while the app cannot yet honestly claim to know what to show.
+    var isResolving: Bool {
+        switch self {
+        case .resolvingInitialRoute, .loadingHistory: return true
+        case .readyNew, .readyConversation, .failedHistory: return false
+        }
+    }
+
+    /// The hero belongs to exactly one phase.
+    var showsNewChatHero: Bool {
+        if case .readyNew = self { return true }
+        return false
+    }
+
+    /// The token a response must still carry to be allowed to commit.
+    var requestToken: UUID? {
+        switch self {
+        case .resolvingInitialRoute(let token): return token
+        case .loadingHistory(_, let token): return token
+        case .failedHistory(_, let token, _): return token
+        case .readyNew, .readyConversation: return nil
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 @Observable
 @MainActor
@@ -1744,6 +1786,15 @@ final class AssistantVM {
     var currentProjectId: String?
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
+    /// What the screen is allowed to draw right now.
+    ///
+    /// `conversationId == nil && messages.isEmpty` used to mean two different
+    /// things — "this really is a new chat" and "we have not asked the server
+    /// yet" — and the screen drew the new-chat hero for both. On a cold launch
+    /// into an existing chat that raced the separate session loader, so the
+    /// owner saw two robots at once (build 102). Only the server may retire
+    /// `resolvingInitialRoute`.
+    var sessionSurface: AgentSessionSurfaceState = .resolvingInitialRoute(requestToken: UUID())
     /// Gate 1 source of truth. The composer no longer owns an ephemeral @State
     /// string that disappears on navigation/process death.
     var composerDraft = "" {
@@ -3247,6 +3298,10 @@ final class AssistantVM {
             await loadActiveConversation()
         } else {
             conversationId = nil
+            // A restored provisional session IS a new chat, and an explicit one.
+            // Without this the screen would sit in resolvingInitialRoute forever
+            // and never show the hero its draft belongs to.
+            sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? UUID().uuidString)
             AlmaTurnLog.event("composer.provisionalRestored", selectedSessionIdentity)
         }
         restoreCurrentComposerDraft()
@@ -3532,21 +3587,49 @@ final class AssistantVM {
     #endif
 
     private func loadActiveConversation() async {
+        let token = sessionSurface.requestToken ?? UUID()
         do {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
+            // A New Chat or an explicit deep link may have claimed the screen
+            // while this was in flight; that decision outranks the pointer.
+            guard sessionSurface.requestToken == token else { return }
             if let cid = ptr.conversationId {
                 conversationId = cid
                 selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
+                sessionSurface = .loadingHistory(conversationId: cid, requestToken: token)
                 await refreshPermissionModeFromServer()
-                await loadMessages(showSpinner: messages.isEmpty)
+                let outcome = await loadMessages(showSpinner: messages.isEmpty)
+                switch outcome {
+                case .committed:
+                    sessionSurface = .readyConversation(conversationId: cid)
+                case .failed(let message):
+                    sessionSurface = .failedHistory(
+                        conversationId: cid, requestToken: token, message: message)
+                case .superseded:
+                    return
+                }
                 await loadArtifacts()
                 await recoverTurnState(trigger: "bootstrap")
+            } else {
+                // Authoritative: the server says there is no active chat.
+                sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? "local:new")
             }
             authExpired = false
-        } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
-            // Pointer is a nicety — fall through to an empty new-chat state.
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            guard sessionSurface.requestToken == token else { return }
+            sessionSurface = .failedHistory(
+                conversationId: nil, requestToken: token, message: "লগইন শেষ হয়ে গেছে")
+        } catch {
+            guard sessionSurface.requestToken == token else { return }
+            // The pointer is unreachable. That is not proof of a new chat, so
+            // offer a retry instead of quietly presenting the hero.
+            sessionSurface = .failedHistory(
+                conversationId: nil,
+                requestToken: token,
+                message: (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription)
         }
     }
 
@@ -3604,24 +3687,66 @@ final class AssistantVM {
         }
     }
 
-    func loadMessages(showSpinner: Bool = false) async {
-        guard let cid = conversationId else { return }
+    /// What a history load actually did. A caller that changes the visible
+    /// session must know the difference between "committed", "this chat failed"
+    /// and "the owner moved on" — a swallowed error used to dismiss the loader
+    /// and leave a convincing but empty chat behind.
+    enum HistoryLoadOutcome: Equatable {
+        case committed
+        case failed(String)
+        /// Another chat was selected while this response was in flight.
+        case superseded
+    }
+
+    @discardableResult
+    func loadMessages(showSpinner: Bool = false) async -> HistoryLoadOutcome {
+        guard let cid = conversationId else { return .superseded }
         if showSpinner { loadingHistory = true }
-        defer { loadingHistory = false }
+        defer { if showSpinner { loadingHistory = false } }
         do {
             let wire: [AgentMessageWire] = try await AlmaAPI.shared.get(
                 "/api/assistant/conversations/\(cid)/messages",
                 query: ["limit": String(Self.historyWindow)])
+            // The await above is where a fast drawer switch overtakes us. Chat
+            // A's rows must never land in chat B.
+            guard conversationId == cid else { return .superseded }
             // Never clobber an in-flight optimistic/streaming tail with the poll.
-            guard !isStreaming else { return }
+            guard !isStreaming else { return .committed }
             mergeServerMessages(wire)
             serverHasOlder = wire.count >= Self.historyWindow
             canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
             authExpired = false
             await loadOpenTasks()
             resumeAcceptedActionContinuations()
-        } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
-            if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
+            return .committed
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return .failed("লগইন শেষ হয়ে গেছে")
+        } catch {
+            let message = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            if showSpinner { errorToast = message }
+            return .failed(message)
+        }
+    }
+
+    /// Retry the selected chat's history without losing the selection, the draft
+    /// or the queue.
+    func retrySessionHistory() async {
+        guard case .failedHistory(let cid, _, _) = sessionSurface else { return }
+        let token = UUID()
+        guard let cid, conversationId == cid else {
+            sessionSurface = .resolvingInitialRoute(requestToken: token)
+            await loadActiveConversation()
+            return
+        }
+        sessionSurface = .loadingHistory(conversationId: cid, requestToken: token)
+        let outcome = await loadMessages(showSpinner: true)
+        guard sessionSurface.requestToken == token else { return }
+        switch outcome {
+        case .committed: sessionSurface = .readyConversation(conversationId: cid)
+        case .failed(let message):
+            sessionSurface = .failedHistory(conversationId: cid, requestToken: token, message: message)
+        case .superseded: break
         }
     }
 
@@ -4774,8 +4899,21 @@ final class AssistantVM {
         // transaction may re-create its waiting owner intent; it must land in
         // the destination conversation, never briefly in the previous one.
         restoreCurrentComposerDraft()
+        let historyToken = UUID()
+        sessionSurface = .loadingHistory(conversationId: id, requestToken: historyToken)
         restoreTick += 1     // screen replays the single session-opening loader
-        await loadMessages()
+        let outcome = await loadMessages()
+        if sessionSurface.requestToken == historyToken {
+            switch outcome {
+            case .committed:
+                sessionSurface = .readyConversation(conversationId: id)
+            case .failed(let message):
+                sessionSurface = .failedHistory(
+                    conversationId: id, requestToken: historyToken, message: message)
+            case .superseded:
+                break
+            }
+        }
         restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
@@ -4818,6 +4956,9 @@ final class AssistantVM {
         currentClientMessageId = nil
         conversationId = nil     // server creates one on the first send
         selectedSessionIdentity = UUID().uuidString
+        // An explicit New Chat is authoritative: it retires any in-flight
+        // pointer or history request so a late response cannot replace it.
+        sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? UUID().uuidString)
         currentProjectId = nil
         conversationTitle = "ALMA AI"
         permissionMode = .standard
@@ -16050,6 +16191,48 @@ struct AgentProjectFormSheet: View {
     }
 }
 
+/// Shown when the selected chat's history could not be loaded. It stays tied to
+/// that chat: the owner retries the thing that failed instead of being handed a
+/// convincing blank new chat that quietly lost their conversation.
+@available(iOS 17.0, *)
+struct AgentSessionRestoreFailureView: View {
+    let pal: AgentPalette
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "arrow.trianglehead.clockwise")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(pal.mutedHi)
+            Text("চ্যাটটা আনা গেল না")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(pal.ink)
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(pal.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("agent.session.load.failure")
+            Button {
+                AlmaAgentHaptics.light()
+                onRetry()
+            } label: {
+                Text("আবার চেষ্টা করুন")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 44)
+                    .background(AgentPalette.coral, in: Capsule())
+            }
+            .accessibilityIdentifier("agent.session.load.retry")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 22)
+    }
+}
+
 /// Empty new-chat state — greeting + time-of-day suggestion chips (web AgentEmptyState).
 @available(iOS 17.0, *)
 struct AgentEmptyStateView: View {
@@ -16098,6 +16281,7 @@ struct AgentEmptyStateView: View {
         VStack(spacing: 8) {
             AgentNewSessionHero(pal: pal)
                 .frame(height: 150)
+                .accessibilityIdentifier("agent.empty.hero")
             Text("আস্সালামু আলাইকুম, Boss")
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(pal.ink)
@@ -18552,6 +18736,7 @@ struct AssistantScreen: View {
     let barHooks: AssistantBarHooks
 
     private static let bottomID = "ALMA_BOTTOM"
+    private static let newChatHeroID = "ALMA_NEW_CHAT_HERO"
 
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
@@ -18614,7 +18799,7 @@ struct AssistantScreen: View {
                     // heights. LazyVStack evicted large rich rows mid-jump, briefly
                     // blanking the viewport before correcting to an older offset.
                     VStack(alignment: .leading, spacing: 0) {
-                        if vm.loadingHistory && vm.messages.isEmpty {
+                        if vm.sessionSurface.isResolving && vm.messages.isEmpty {
                             // AgentAwakeningOverlay is the ONE session loader.
                             // Keeping the timeline transparent here prevents a
                             // second loader from appearing underneath it.
@@ -18651,12 +18836,20 @@ struct AssistantScreen: View {
                             .buttonStyle(AlmaAgentPressStyle())
                             .padding(.bottom, 6)
                         }
-                        // The hero belongs only to a genuinely new chat. An
-                        // existing conversation is temporarily empty while its
-                        // history loads and must never flash the home Robot+ALMA.
-                        if vm.conversationId == nil
-                            && !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
+                        // The hero belongs only to a chat the server has confirmed
+                        // is new. While the route or history is unresolved this
+                        // draws nothing at all — the session loader is the only
+                        // thing on screen, so the owner can never meet two robots.
+                        if vm.sessionSurface.showsNewChatHero
+                            && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
+                                .id(Self.newChatHeroID)
+                        }
+                        if case .failedHistory(_, _, let message) = vm.sessionSurface,
+                           vm.messages.isEmpty {
+                            AgentSessionRestoreFailureView(pal: pal, message: message) {
+                                Task { await vm.retrySessionHistory() }
+                            }
                         }
                         ForEach(chronologicalMessages) { msg in
                             AgentMessageRow(
@@ -18781,6 +18974,13 @@ struct AssistantScreen: View {
                 .onChange(of: vm.messages.last?.text) { _, _ in
                     guard nearBottom, Date() >= followSuppressedUntil else { return }
                     scheduleScrollToBottom(proxy: proxy)
+                }
+                // A new chat inherits the previous chat's scroll offset, so the
+                // greeting sat above the viewport and New Chat looked like a
+                // blank screen. Bring the hero back into view when it appears.
+                .onChange(of: vm.sessionSurface.showsNewChatHero) { _, showsHero in
+                    guard showsHero, vm.messages.isEmpty else { return }
+                    proxy.scrollTo(Self.newChatHeroID, anchor: .top)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
                     // 1.4: server merges/polls must never yank the owner away from
@@ -19191,10 +19391,11 @@ struct AssistantScreen: View {
                 return
             }
             #endif
-            // Awakening overlay: only when an existing session must restore (the
-            // message list is still empty at first appear). Success is gated on
-            // the REAL bootstrap finishing below.
-            awakening.begin(sessionNeedsRestore: vm.messages.isEmpty)
+            // Awakening overlay: derived from the VM's own phase, never from an
+            // empty message list. `messages.isEmpty` was a second source of truth
+            // and it disagreed with the hero's — that disagreement was the two
+            // robots the owner photographed.
+            awakening.begin(sessionNeedsRestore: vm.sessionSurface.isResolving)
             await vm.bootstrap()
             #if DEBUG
             // Production-connected simulator matrix; release/TestFlight never
