@@ -239,7 +239,7 @@ final class AssistantParityV2Tests: XCTestCase {
         """#.utf8)
 
         let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: data)
-        guard case .confirmCard(let id, _, let type, _, let selection) = AgentTurnEvent(dto: dto) else {
+        guard case .confirmCard(let id, _, let type, _, let selection, _) = AgentTurnEvent(dto: dto) else {
             return XCTFail("image approval must remain a typed confirm-card event")
         }
         XCTAssertEqual(id, "image-live")
@@ -288,7 +288,7 @@ final class AssistantParityV2Tests: XCTestCase {
          "actionType":"image_gen",\(malformed)}
         """.utf8)
         let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: liveData)
-        guard case .confirmCard(let liveId, let summary, _, _, let selection) =
+        guard case .confirmCard(let liveId, let summary, _, _, let selection, _) =
                 AgentTurnEvent(dto: dto) else {
             return XCTFail("malformed additive metadata must not drop the live card")
         }

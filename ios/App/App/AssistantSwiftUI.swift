@@ -15519,9 +15519,6 @@ struct AgentConfirmCardView: View {
         .sheet(isPresented: $showImageModelPicker) {
             AgentImageModelPickerSheet(vm: vm, cardId: card.id)
         }
-        .sheet(isPresented: $showImageSetupSheet) {
-            AgentImageSetupSheet(vm: vm, cardId: card.id)
-        }
     }
 
     /// Build 103 Issue 2 — the professional image setup summary. One compact
@@ -15553,6 +15550,11 @@ struct AgentConfirmCardView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(submitting || modelChanging)
+                // NOTE: attached here, not on the card root — two .sheet
+                // modifiers on one view silently drop one of them.
+                .sheet(isPresented: $showImageSetupSheet) {
+                    AgentImageSetupSheet(vm: vm, cardId: card.id)
+                }
                 .accessibilityIdentifier("agent.confirm-card.image-setup")
                 .accessibilityLabel(
                     "Image setup, \(presetLabel), অনুপাত \(selection.config.aspectRatio), \(pixels) pixels, \(countText), \(modelLabel), \(provider)")
