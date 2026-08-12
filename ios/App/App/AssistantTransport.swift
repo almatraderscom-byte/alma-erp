@@ -314,6 +314,76 @@ extension AgentImageModelSelectionWire: Decodable {
     }
 }
 
+/// v2 professional image setup (contractVersion 2). Rides beside the v1
+/// selection; a malformed or future payload degrades to nil and the card falls
+/// back to the v1 read-only picker rather than guessing.
+struct AgentImageRenderSelectionWire: Equatable, Sendable, Decodable {
+    struct Config: Equatable, Sendable, Decodable {
+        let presetId: String
+        let aspectRatio: String
+        let imageSize: String
+        let width: Int
+        let height: Int
+        let quality: String
+        let providerQuality: String
+        let variationCount: Int
+        let model: String
+    }
+    struct PresetOption: Equatable, Sendable, Decodable, Identifiable {
+        let id: String
+        let label: String
+        let aspectRatio: String
+        let enabled: Bool
+        let unavailableReason: String?
+    }
+    struct SizeOption: Equatable, Sendable, Decodable, Identifiable {
+        let id: String
+        let enabled: Bool
+        let width: Int?
+        let height: Int?
+        let unavailableReason: String?
+    }
+    let contractVersion: Int
+    let revision: Int
+    let selectedModel: String
+    let config: Config
+    let modelOptions: [AgentImageModelOptionWire]
+    let presetOptions: [PresetOption]
+    let sizeOptions: [SizeOption]
+    let qualityOptions: [String]
+    let countOptions: [Int]
+    let quote: AgentImageModelQuoteWire
+
+    /// Accept only what this build can honestly render and edit. Unknown extra
+    /// fields are fine; a wrong version or an incoherent selection is not.
+    var trustedValue: Self? {
+        guard contractVersion == 2,
+              revision >= 0,
+              !selectedModel.isEmpty,
+              config.model == selectedModel,
+              config.width > 0, config.height > 0,
+              config.variationCount >= 1, config.variationCount <= 4,
+              !presetOptions.isEmpty,
+              presetOptions.contains(where: { $0.id == config.presetId }),
+              !modelOptions.isEmpty,
+              modelOptions.allSatisfy({ $0.hasValidContractShape }),
+              modelOptions.contains(where: { $0.id == selectedModel }),
+              quote.hasValidContractShape,
+              quote.model == selectedModel,
+              quote.requestedImages == config.variationCount
+        else { return nil }
+        return self
+    }
+
+    /// One line the owner reads on the card: shape · pixels · count · model.
+    var setupSummary: String {
+        let preset = presetOptions.first(where: { $0.id == config.presetId })?.label
+            ?? config.presetId
+        let count = config.variationCount > 1 ? " · \(config.variationCount)টি" : ""
+        return "\(preset) · \(config.aspectRatio) · \(config.width)×\(config.height)\(count)"
+    }
+}
+
 struct AgentSSEEvent: Decodable {
     let type: String
     let id: String?
@@ -331,6 +401,7 @@ struct AgentSSEEvent: Decodable {
     let actionType: String?
     let costEstimate: Double?
     let imageModelSelection: AgentImageModelSelectionWire?
+    let imageRenderSelection: AgentImageRenderSelectionWire?
     let askCardId: String?
     let question: String?
     let options: [String]?
@@ -401,7 +472,8 @@ enum AgentTurnEvent: Sendable {
     case subagentEnd(id: String, ok: Bool, summary: String?, toolsUsed: [String]?)
     case artifactSaved(id: String, title: String)
     case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?,
-                     imageModelSelection: AgentImageModelSelectionWire?)
+                     imageModelSelection: AgentImageModelSelectionWire?,
+                     imageRenderSelection: AgentImageRenderSelectionWire?)
     case askCard(id: String, question: String, options: [String])
     case verificationRetry(attempt: Int, maxAttempts: Int)
     /// Speak-first (owner rule 2026-07-25): the opening line the head wrote
@@ -478,7 +550,8 @@ enum AgentTurnEvent: Sendable {
             self = ev.pendingActionId.map {
                 .confirmCard(pendingActionId: $0, summary: ev.summary ?? "",
                              actionType: ev.actionType, costEstimate: ev.costEstimate,
-                             imageModelSelection: ev.imageModelSelection?.trustedValue)
+                             imageModelSelection: ev.imageModelSelection?.trustedValue,
+                             imageRenderSelection: ev.imageRenderSelection?.trustedValue)
             } ?? .unknown(type: "confirm_card/noid")
         case "ask_card":
             self = ev.askCardId.map {

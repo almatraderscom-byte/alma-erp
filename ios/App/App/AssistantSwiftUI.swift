@@ -1440,6 +1440,8 @@ struct AgentChatMessage: Identifiable, Equatable {
         /// Optional additive server contract. A nil value is a legacy card and
         /// must keep the existing truthful no-quote presentation.
         var imageModelSelection: AgentImageModelSelectionWire? = nil
+        /// v2 professional setup; nil on v1-only rows and Build-102 payloads.
+        var imageRenderSelection: AgentImageRenderSelectionWire? = nil
     }
     struct AskCard: Identifiable, Equatable {
         let id: String            // askCardId
@@ -7762,14 +7764,15 @@ final class AssistantVM {
                     messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: title))
                 }
             case .confirmCard(let pid, let summary, let actionType, let costEstimate,
-                              let imageModelSelection):
+                              let imageModelSelection, let imageRenderSelection):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }),
                    !messages[i].confirmCards.contains(where: { $0.id == pid }) {
                     messages[i].confirmCards.append(.init(id: pid, summary: summary,
                                                           status: "pending", actionType: actionType,
                                                           costEstimate: costEstimate,
-                                                          imageModelSelection: imageModelSelection))
+                                                          imageModelSelection: imageModelSelection,
+                                                          imageRenderSelection: imageRenderSelection))
                     messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
                 }
             case .askCard(let aid, let question, let options):
