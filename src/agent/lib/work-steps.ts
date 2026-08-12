@@ -288,28 +288,35 @@ export function workStepsSignature(snapshot: WorkStepsSnapshot | null): string {
 }
 
 /**
- * Durable, monotonic persistence: the snapshot lands only if its revision is
- * newer than the stored one, so replay/poll overlap can never regress a
- * terminal state. Returns true when this revision won.
+ * Durable, atomic persistence. The database allocates the revision inside ONE
+ * UPDATE (`tracker_revision + 1`, stamped into the stored snapshot by
+ * `jsonb_set`), so two overlapping refreshes — e.g. markStepRunning and
+ * markStepDispatched fired without awaiting each other — can never construct
+ * the same revision and silently drop the newer state (Codex P1, PR #733).
+ * Returns the assigned revision, or null when the plan row is gone/errored.
+ * Origin turn is written once and never overwritten; the assistant-message
+ * binding is written when the snapshot carries one, kept otherwise.
  */
-export async function persistWorkStepsSnapshot(snapshot: WorkStepsSnapshot): Promise<boolean> {
+export async function persistWorkStepsSnapshot(snapshot: WorkStepsSnapshot): Promise<number | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
-    const updated = await db.agentPlan.updateMany({
-      where: { id: snapshot.trackerId, trackerRevision: { lt: snapshot.revision } },
-      data: {
-        trackerSnapshot: snapshot,
-        trackerRevision: snapshot.revision,
-        ...(snapshot.originAssistantMessageId
-          ? { originAssistantMessageId: snapshot.originAssistantMessageId }
-          : {}),
-        ...(snapshot.originTurnId && { originTurnId: snapshot.originTurnId }),
-      },
-    })
-    return updated.count > 0
+    const rows: Array<{ tracker_revision: number }> = await db.$queryRaw`
+      UPDATE "agent_plans"
+      SET "tracker_revision" = "tracker_revision" + 1,
+          "tracker_snapshot" = jsonb_set(
+            ${JSON.stringify(snapshot)}::jsonb,
+            '{revision}',
+            to_jsonb("tracker_revision" + 1)),
+          "origin_assistant_message_id" =
+            COALESCE(${snapshot.originAssistantMessageId}, "origin_assistant_message_id"),
+          "origin_turn_id" = COALESCE("origin_turn_id", ${snapshot.originTurnId})
+      WHERE "id" = ${snapshot.trackerId}
+      RETURNING "tracker_revision"`
+    const revision = rows?.[0]?.tracker_revision
+    return typeof revision === 'number' ? revision : null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -436,6 +443,7 @@ export async function refreshPlanTrackerSnapshot(planId: string): Promise<void> 
     const snapshot = projectWorkSteps({
       plan,
       currentTurnId,
+      // Placeholder — the database allocates the real revision atomically.
       revision: plan.trackerRevision + 1,
       blockedBy: prior?.blockedBy ?? null,
       // The driver is actively moving steps; running/waiting_worker/completed

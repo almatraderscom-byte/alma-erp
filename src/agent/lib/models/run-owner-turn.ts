@@ -3368,8 +3368,9 @@ async function* runAlternateProviderTurn(
           const trackerSig = workStepsSignature(snapshot)
           if (trackerSig !== lastWorkStepsSignature) {
             lastWorkStepsSignature = trackerSig
-            if (await persistWorkStepsSnapshot(snapshot)) {
-              yield snapshot
+            const assignedRevision = await persistWorkStepsSnapshot(snapshot)
+            if (assignedRevision !== null) {
+              yield { ...snapshot, revision: assignedRevision }
             }
           }
         } else if (!trackerPlan && turnId && toolRecords.length > 0) {
@@ -3856,9 +3857,10 @@ async function* runAlternateProviderTurn(
           if (!finalPlan.originAssistantMessageId && finalPlan.originTurnId === turnId) {
             snapshot.originAssistantMessageId = savedMsg.id as string
           }
-          if (await persistWorkStepsSnapshot(snapshot)) {
+          const assignedRevision = await persistWorkStepsSnapshot(snapshot)
+          if (assignedRevision !== null) {
             lastWorkStepsSignature = workStepsSignature(snapshot)
-            yield snapshot
+            yield { ...snapshot, revision: assignedRevision }
           }
         }
       } catch { /* the tracker must never break settlement */ }

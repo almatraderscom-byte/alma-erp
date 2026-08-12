@@ -289,10 +289,12 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
  * touched — waiting for Boss is not a failure.
  */
 export async function markStepBlocked(stepId: string): Promise<void> {
-  await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.update({
     where: { id: stepId },
     data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
+    select: { planId: true },
   })
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Queue mode — the step is now waiting on a worker turn (reaped next tick). */
@@ -341,6 +343,7 @@ export async function appendCorrectiveStep(planId: string, action: string): Prom
       status: 'pending',
     },
   })
+  void refreshPlanTrackerSnapshot(planId)
 }
 
 // ── Plan-Driver mutations (Phase B — autodrive lifecycle) ───────────────────
