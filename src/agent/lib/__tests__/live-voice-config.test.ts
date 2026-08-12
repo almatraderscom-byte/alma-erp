@@ -103,13 +103,17 @@ describe('live voice configuration', () => {
     expect(natural.speechConfig?.languageCode).toBeUndefined()
   })
 
-  it('asks for proactive audio only on the model Google documents it for', () => {
-    // A thinking pause is not the end of a turn. Proactive audio is what tells
-    // the two apart; 3.1 Flash Live does not support it and must not be sent it.
+  it('sends proactive audio only when the contract declares it', () => {
+    // Proactive audio lets the model decide input is "not directed at me" and
+    // stay silent. On the no-AEC simulator with a noisy Mac microphone that
+    // read as ignoring the owner until he repeated himself 4-6 times
+    // (2026-08-13), so the contract ships it OFF until a real-device
+    // evaluation proves it helps. The plumbing stays: flipping the contract
+    // flag re-enables it without a code change.
     expect(buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
-      .toEqual({ proactiveAudio: true })
+      .toBeUndefined()
     expect(buildLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
-      .toEqual({ proactiveAudio: true })
+      .toBeUndefined()
     expect(buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL).proactivity)
       .toBeUndefined()
   })

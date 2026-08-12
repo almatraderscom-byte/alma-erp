@@ -147,9 +147,22 @@ struct AlmaLiveVoiceInputTurnReducer {
                 return sending([frame])
             }
             if bufferedSuppression != .activePlayback {
+                // The model resuming speech (a multi-sentence reply's next
+                // sentence) must not erase an answer the owner gave inside the
+                // inter-sentence pause (verified finding #3, 2026-08-13). The
+                // buffered tail gets the same owner-evidence decision it would
+                // have gotten at the tail boundary; only echo is discarded.
+                let drained = bufferedSuppression == .playbackTail
+                    ? takeTailIfOwnerSpeech()
+                    : []
                 clearSuppressedFrames()
+                tailStartSequence = nil
                 bufferedSuppression = .activePlayback
                 activePlaybackCandidateSequence = nil
+                if !drained.isEmpty {
+                    appendSuppressed(frame)
+                    return sending(drained)
+                }
             }
             if ownerSpeechCandidate || ownerSpeechConfirmed {
                 activePlaybackCandidateSequence = activePlaybackCandidateSequence ?? sequence
@@ -167,6 +180,12 @@ struct AlmaLiveVoiceInputTurnReducer {
             return .none
 
         case .playbackTail:
+            // A CONFIRMED barge-in does not lose its voice because playback
+            // drained: the owner's sentence continues into the tail and keeps
+            // streaming (verified finding #4, 2026-08-13).
+            if activePlaybackOwnerConfirmed {
+                return sending([frame])
+            }
             if bufferedSuppression != .playbackTail {
                 tailStartSequence = sequence
                 // Ordinary active-playback frames are model echo.  Preserve only
@@ -179,7 +198,6 @@ struct AlmaLiveVoiceInputTurnReducer {
                 }
                 bufferedSuppression = .playbackTail
             }
-            activePlaybackOwnerConfirmed = false
             if ownerSpeechCandidate || ownerSpeechConfirmed {
                 activePlaybackCandidateSequence = activePlaybackCandidateSequence ?? sequence
             }
@@ -212,36 +230,14 @@ struct AlmaLiveVoiceInputTurnReducer {
                 // sound already died replayed ALMA's own voice as the owner's
                 // next turn — she then answered herself ("আমি তো বুঝলাম না আমি
                 // তোমাকে কি বলতেছি…", owner report 2026-08-12).
-                let peak = suppressedFrames.map(\.rms).max() ?? 0
-                let boundaryThreshold = max(0.003, peak * 0.25)
-                let audibleAtBoundary = frame.rms >= boundaryThreshold
-                    || suppressedFrames.suffix(3).contains { $0.rms >= boundaryThreshold }
-                // A short utterance spoken AND finished inside the tail has a
-                // quiet edge, but its onset betrays it: playback stopped when
-                // the tail began, and the measured echo decays within ~650 ms,
-                // so sound that first rises ≥700 ms (35 frames at 20 ms) into
-                // the tail cannot be echo. Dropping it made the owner repeat
-                // his first words (report 2026-08-13).
-                let lateOnset: Bool = {
-                    guard let tailStart = tailStartSequence,
-                          let lastLoud = suppressedFrames.lastIndex(
-                            where: { $0.rms >= boundaryThreshold })
-                    else { return false }
-                    var startIndex = lastLoud
-                    while startIndex > suppressedFrames.startIndex,
-                          suppressedFrames[suppressedFrames.index(before: startIndex)].rms
-                            >= boundaryThreshold {
-                        startIndex = suppressedFrames.index(before: startIndex)
-                    }
-                    return suppressedFrames[startIndex].sequence >= tailStart + 35
-                }()
+                appendSuppressed(frame)
+                let retained = takeTailIfOwnerSpeech(boundaryRMS: frame.rms)
                 tailStartSequence = nil
-                guard audibleAtBoundary || lateOnset else {
+                guard !retained.isEmpty else {
                     clearSuppressedFrames()
                     return sending([frame])
                 }
-                appendSuppressed(frame)
-                return sending(takeSuppressedFrames())
+                return sending(retained)
             }
             // Never replay unconfirmed model audio retained during playback.
             clearSuppressedFrames()
@@ -401,6 +397,46 @@ struct AlmaLiveVoiceInputTurnReducer {
     /// Drops every pre-candidate frame.  The candidate itself is produced by a
     /// content/echo discriminator, not an RMS-only guess, so keeping the exact
     /// candidate boundary preserves onset without replaying earlier model echo.
+    /// One owner-evidence decision for a buffered no-AEC tail, used both at the
+    /// tail boundary and when the model resumes speaking mid-pause.
+    ///
+    /// A human answers 200-500 ms after the agent's question — an onset-based
+    /// rule threw that away and made the owner repeat himself (report
+    /// 2026-08-13). What separates him from echo is not when the sound STARTS
+    /// but whether it OUTLIVES the echo: playback stopped when the tail began
+    /// and the measured echo dies within ~650 ms, so any sound still loud
+    /// ≥700 ms (35 frames at 20 ms) into the tail is the owner. The threshold
+    /// is capped so soft speech after loud playback still counts (finding #5),
+    /// and the flushed span is trimmed to the final loud run so a retained
+    /// buffer can never replay the decayed-echo prefix as an owner turn
+    /// (finding #7). Returns [] when the buffer is echo; empties the buffer
+    /// when it returns frames.
+    private mutating func takeTailIfOwnerSpeech(boundaryRMS: Double? = nil) -> [AudioFrame] {
+        guard !suppressedFrames.isEmpty else { return [] }
+        let peak = suppressedFrames.map(\.rms).max() ?? 0
+        let threshold = max(0.003, min(peak * 0.25, 0.02))
+        let audibleAtBoundary = (boundaryRMS.map { $0 >= threshold } ?? false)
+            || suppressedFrames.suffix(3).contains { $0.rms >= threshold }
+        let sustained: Bool = {
+            guard let tailStart = tailStartSequence,
+                  let lastLoud = suppressedFrames.last(where: { $0.rms >= threshold })
+            else { return false }
+            return lastLoud.sequence >= tailStart + 35
+        }()
+        guard audibleAtBoundary || sustained else { return [] }
+        var frames = takeSuppressedFrames()
+        if !audibleAtBoundary,
+           let lastLoudIndex = frames.lastIndex(where: { $0.rms >= threshold }) {
+            var runStart = lastLoudIndex
+            while runStart > frames.startIndex,
+                  frames[frames.index(before: runStart)].rms >= threshold {
+                runStart = frames.index(before: runStart)
+            }
+            frames.removeFirst(runStart)
+        }
+        return frames
+    }
+
     private mutating func retainCandidateSpanIfPresent() {
         guard let candidate = activePlaybackCandidateSequence,
               let index = suppressedFrames.firstIndex(where: { $0.sequence >= candidate })

@@ -75,7 +75,7 @@
       "replacementModelID": "gemini-3.1-flash-live-preview",
       "capabilities": {
         "affectiveDialog": true,
-        "proactiveAudio": true,
+        "proactiveAudio": false,
         "functionCallingMode": "synchronous-and-asynchronous",
         "thinking": {
           "mode": "budget",

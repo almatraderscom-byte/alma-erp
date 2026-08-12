@@ -323,10 +323,45 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
         XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
     }
 
+    /// A human answers 200-500 ms after the agent finishes — inside the echo
+    /// window. What separates him from echo is that his sound OUTLIVES it:
+    /// echo dies by ~650 ms, his sentence is still loud past 700 ms. Requiring
+    /// a late ONSET instead threw his reply away and made him repeat himself
+    /// (owner report 2026-08-13, "৪-৬ বার বলা লাগে").
+    func testNoAECImmediateReplyStartingInsideEchoWindowIsRetained() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        var sequence: UInt64 = 0
+        func frame(_ rms: Double, _ suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression) -> [UInt64] {
+            sequence += 1
+            return reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: sequence,
+                pcm: pcm(sequence),
+                rms: rms,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: suppression
+            ).audioFramesToSend.map(\.sequence)
+        }
+        // 15 quiet frames (300 ms), then the owner's reply overlapping the echo
+        // window and sustaining well past it, ending quietly before the tail
+        // expires.
+        for _ in 0..<15 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+        for _ in 0..<60 { XCTAssertEqual(frame(0.030, .playbackTail), []) }
+        for _ in 0..<10 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+
+        let released = frame(0.0015, .none)
+        // Sustained retention trims to the final loud run: the 15-frame quiet
+        // lead is dropped, the reply itself (60 loud + 10 quiet close + the
+        // boundary frame) goes through — 71 frames from sequence 16.
+        XCTAssertEqual(released.count, 71)
+        XCTAssertEqual(released.first, 16)
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
     /// A short reply spoken and FINISHED inside the tail has a quiet edge, but
-    /// its late onset proves it is not echo: playback stopped when the tail
-    /// began and the measured echo dies within ~650 ms. Dropping it made the
-    /// owner repeat his first words (report 2026-08-13).
+    /// it outlives the echo window, so it is retained.
     func testNoAECLateOnsetUtteranceInsideTailIsRetained() {
         var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
 
@@ -350,9 +385,96 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
         for _ in 0..<10 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
 
         let released = frame(0.0015, .none)
-        // The buffered utterance drains; live listening continues.
-        XCTAssertEqual(released.count, 101)
+        // Trimmed to the utterance's own run: 50 loud + 10 quiet close +
+        // boundary frame, starting at sequence 41 — the 40-frame quiet lead
+        // never reaches the model.
+        XCTAssertEqual(released.count, 61)
+        XCTAssertEqual(released.first, 41)
         XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
+    /// Finding #3 (2026-08-13): the model resuming its next sentence must not
+    /// erase an answer the owner gave inside the inter-sentence pause.
+    func testNoAECAnswerInInterSentencePauseSurvivesModelResuming() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        var sequence: UInt64 = 0
+        func frame(_ rms: Double, _ suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression) -> [UInt64] {
+            sequence += 1
+            return reducer.acceptAudioFrame(
+                generation: generation, sequence: sequence, pcm: pcm(sequence),
+                rms: rms, route: .noAECLoudspeaker, ready: true,
+                suppression: suppression
+            ).audioFramesToSend.map(\.sequence)
+        }
+        // Owner answers 300ms into the pause and is still talking (sustained
+        // past the echo window) when the model's next sentence begins.
+        for _ in 0..<15 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+        for _ in 0..<45 { XCTAssertEqual(frame(0.030, .playbackTail), []) }
+        let resumed = frame(0.030, .activePlayback)
+        // The buffered answer drains instead of being wiped. Speech is audible
+        // at the boundary, so the whole buffer (quiet lead included — post-
+        // playback silence, not echo) goes through.
+        XCTAssertEqual(resumed.count, 60)
+    }
+
+    /// Finding #4 (2026-08-13): a CONFIRMED barge-in whose sentence continues
+    /// into the tail keeps streaming; it does not go silent at the boundary.
+    func testNoAECConfirmedBargeInKeepsStreamingThroughTail() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        _ = reducer.acceptAudioFrame(
+            generation: generation, sequence: 1, pcm: pcm(1), rms: 0.03,
+            route: .noAECLoudspeaker, ready: true,
+            suppression: .activePlayback, ownerSpeechConfirmed: true)
+        let tail = reducer.acceptAudioFrame(
+            generation: generation, sequence: 2, pcm: pcm(2), rms: 0.03,
+            route: .noAECLoudspeaker, ready: true,
+            suppression: .playbackTail)
+        XCTAssertEqual(tail.audioFramesToSend.map(\.sequence), [2])
+    }
+
+    /// Finding #5 (2026-08-13): soft owner speech after loud playback echo must
+    /// clear the threshold — the cap keeps a 0.2-rms echo from silencing a
+    /// 0.03-rms voice.
+    func testNoAECSoftSpeechAfterLoudEchoClearsCappedThreshold() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        var sequence: UInt64 = 0
+        func frame(_ rms: Double, _ suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression) -> [UInt64] {
+            sequence += 1
+            return reducer.acceptAudioFrame(
+                generation: generation, sequence: sequence, pcm: pcm(sequence),
+                rms: rms, route: .noAECLoudspeaker, ready: true,
+                suppression: suppression
+            ).audioFramesToSend.map(\.sequence)
+        }
+        for _ in 0..<10 { XCTAssertEqual(frame(0.20, .playbackTail), []) }   // loud echo
+        for _ in 0..<20 { XCTAssertEqual(frame(0.0015, .playbackTail), []) } // decay
+        for _ in 0..<20 { XCTAssertEqual(frame(0.030, .playbackTail), []) }  // soft owner
+        let released = frame(0.030, .none)
+        XCTAssertFalse(released.isEmpty)
+    }
+
+    /// Finding #7 (2026-08-13): a sustained retention must not drag the decayed
+    /// echo prefix along — the model never hears its own voice replayed.
+    func testNoAECSustainedRetentionTrimsEchoPrefix() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+        var sequence: UInt64 = 0
+        func frame(_ rms: Double, _ suppression: AlmaLiveVoiceInputTurnReducer.PlaybackSuppression) -> [UInt64] {
+            sequence += 1
+            return reducer.acceptAudioFrame(
+                generation: generation, sequence: sequence, pcm: pcm(sequence),
+                rms: rms, route: .noAECLoudspeaker, ready: true,
+                suppression: suppression
+            ).audioFramesToSend.map(\.sequence)
+        }
+        for _ in 0..<10 { XCTAssertEqual(frame(0.030, .playbackTail), []) }  // echo
+        for _ in 0..<30 { XCTAssertEqual(frame(0.0015, .playbackTail), []) } // silence
+        for _ in 0..<20 { XCTAssertEqual(frame(0.030, .playbackTail), []) }  // owner, quiet edge below
+        for _ in 0..<5 { XCTAssertEqual(frame(0.0015, .playbackTail), []) }
+        let released = frame(0.0015, .none)
+        // Sustained retention fires, but the flushed span starts at the owner's
+        // run (sequence 41), never at the echo (sequence 1).
+        XCTAssertEqual(released.first, 41)
+        XCTAssertTrue(released.allSatisfy { $0 >= 41 })
     }
 
     func testMuteEndsOnlyAnOpenAudioStreamAndUnmuteResumes() {
