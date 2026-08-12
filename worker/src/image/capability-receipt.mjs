@@ -1,4 +1,5 @@
 import { ALLOWED_GENERIC_IMAGE_MODELS } from './reference-contract.mjs'
+import { supportedPresetTiersForModel } from '../image-resolution-contract.mjs'
 
 // Runtime mirror of src/agent/lib/image-action-contract.ts. The parity test in
 // that module's test suite prevents either side from changing independently.
@@ -6,6 +7,14 @@ export const IMAGE_WORKER_CAPABILITY_KV_KEY = 'image_worker_capabilities_v1'
 export const IMAGE_WORKER_CAPABILITY_VERSION = 1
 export const IMAGE_WORKER_CAPABILITY_SOURCE = 'alma-agent-worker'
 export const IMAGE_WORKER_CAPABILITY_PUBLISH_INTERVAL_MS = 60_000
+
+// Build 103 Issue 2 — v2 receipt proves, per model, the exact preset/tier
+// pairs THIS process can execute plus the config contract version it verifies.
+// Published beside v1 (never replacing it) so an un-upgraded server keeps its
+// v1 lease while an upgraded server may enable v2 staging.
+export const IMAGE_WORKER_CAPABILITY_V2_KV_KEY = 'image_worker_capabilities_v2'
+export const IMAGE_WORKER_CAPABILITY_V2_VERSION = 2
+export const IMAGE_RENDER_CONFIG_VERSION = 1
 
 const MODEL_ENV_KEYS = Object.freeze({
   'gemini-3.1-flash-image': 'GEMINI_API_KEY',
@@ -40,13 +49,34 @@ export function makeImageWorkerCapabilityReceipt({
   }
 }
 
-/** One atomic KV upsert. Provider credentials are never written to storage. */
+export function makeImageWorkerCapabilityReceiptV2({
+  env = process.env,
+  now = new Date(),
+} = {}) {
+  const updatedAt = (now instanceof Date ? now : new Date(now)).toISOString()
+  const models = genericImageModelsFromWorkerEnv(env)
+  const presets = {}
+  for (const model of models) {
+    presets[model] = supportedPresetTiersForModel(model)
+  }
+  return {
+    version: IMAGE_WORKER_CAPABILITY_V2_VERSION,
+    source: IMAGE_WORKER_CAPABILITY_SOURCE,
+    updatedAt,
+    configContractVersion: IMAGE_RENDER_CONFIG_VERSION,
+    models,
+    presets,
+  }
+}
+
+/** One atomic KV upsert per key. Provider credentials never reach storage. */
 export async function publishImageWorkerCapabilityReceipt({
   supabase,
   env = process.env,
   now = new Date(),
 }) {
   const receipt = makeImageWorkerCapabilityReceipt({ env, now })
+  const receiptV2 = makeImageWorkerCapabilityReceiptV2({ env, now })
   const { error } = await supabase
     .from('agent_kv_settings')
     .upsert({
@@ -55,6 +85,14 @@ export async function publishImageWorkerCapabilityReceipt({
       updated_at: receipt.updatedAt,
     }, { onConflict: 'key' })
   if (error) throw error
+  const { error: v2Error } = await supabase
+    .from('agent_kv_settings')
+    .upsert({
+      key: IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+      value: JSON.stringify(receiptV2),
+      updated_at: receiptV2.updatedAt,
+    }, { onConflict: 'key' })
+  if (v2Error) throw v2Error
   return receipt
 }
 

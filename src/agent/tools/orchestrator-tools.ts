@@ -213,9 +213,12 @@ const make_plan: AgentTool = {
 
     const conversationId = typeof input.conversationId === 'string' ? input.conversationId : undefined
     const businessId = (input.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
+    // Server-managed turn context (merged into input by the registry) — exact
+    // tracker linkage for the Build 103 work-step tracker.
+    const originTurnId = typeof input.turnId === 'string' && input.turnId ? input.turnId : undefined
 
     try {
-      const plan = await createPlan({ goal, steps, conversationId, businessId })
+      const plan = await createPlan({ goal, steps, conversationId, businessId, originTurnId })
 
       const stepsSummary = plan.steps.map((s, i) => ({
         id: stepIds[i],

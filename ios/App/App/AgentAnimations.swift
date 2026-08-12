@@ -890,6 +890,7 @@ struct AgentAwakeningOverlay: View {
             .allowsHitTesting(false)   // never intercept composer/header taps
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("এজেন্ট সেশন লোড হচ্ছে")
+            .accessibilityIdentifier("agent.session.loader")
         }
     }
 }

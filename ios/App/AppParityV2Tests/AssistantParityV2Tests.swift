@@ -239,7 +239,7 @@ final class AssistantParityV2Tests: XCTestCase {
         """#.utf8)
 
         let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: data)
-        guard case .confirmCard(let id, _, let type, _, let selection) = AgentTurnEvent(dto: dto) else {
+        guard case .confirmCard(let id, _, let type, _, let selection, _) = AgentTurnEvent(dto: dto) else {
             return XCTFail("image approval must remain a typed confirm-card event")
         }
         XCTAssertEqual(id, "image-live")
@@ -288,7 +288,7 @@ final class AssistantParityV2Tests: XCTestCase {
          "actionType":"image_gen",\(malformed)}
         """.utf8)
         let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: liveData)
-        guard case .confirmCard(let liveId, let summary, _, _, let selection) =
+        guard case .confirmCard(let liveId, let summary, _, _, let selection, _) =
                 AgentTurnEvent(dto: dto) else {
             return XCTFail("malformed additive metadata must not drop the live card")
         }
@@ -2365,5 +2365,325 @@ final class AssistantParityV2Tests: XCTestCase {
     func testSyntaxHighlighterPreservesSourceText() {
         let source = "let amount = 5000 // whole taka"
         XCTAssertEqual(String(AgentSyntaxHighlighter.highlight(source, language: "swift").characters), source)
+    }
+
+    // MARK: - Build 103 Issue 1: session surface state machine
+
+    func testInitialSurfaceIsUnresolvedNeverImplicitNewChat() {
+        let vm = AssistantVM()
+        // Fresh VM: nil conversation + empty messages used to read as "new
+        // chat". The authoritative surface must read as UNRESOLVED instead.
+        XCTAssertNil(vm.conversationId)
+        XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertTrue(vm.surfaceIsRestoring,
+                      "cold start owns a restore surface, not a hero")
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "the hero may never render before the route resolves")
+        XCTAssertNil(vm.surfaceFailure)
+    }
+
+    func testHeroRendersOnlyFromExplicitReadyNew() {
+        let vm = AssistantVM()
+        XCTAssertFalse(vm.surfaceShowsHero)
+        vm.debugSetSessionSurface(.loadingHistory(conversationId: "c1", requestToken: UUID()))
+        XCTAssertFalse(vm.surfaceShowsHero, "loading an existing chat is never a new chat")
+        XCTAssertTrue(vm.surfaceIsRestoring)
+        vm.debugSetSessionSurface(.failedHistory(conversationId: "c1", requestToken: UUID(), message: "x"))
+        XCTAssertFalse(vm.surfaceShowsHero, "failure must not fall back to the hero")
+        XCTAssertFalse(vm.surfaceIsRestoring)
+        vm.debugSetSessionSurface(.readyNew(sessionIdentity: "s1"))
+        XCTAssertTrue(vm.surfaceShowsHero)
+    }
+
+    func testExistingZeroMessageConversationIsReadyConversationNotHero() {
+        let vm = AssistantVM()
+        vm.debugSetSessionSurface(.readyConversation(conversationId: "empty-chat"))
+        XCTAssertTrue(vm.messages.isEmpty)
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "an existing conversation with zero rows is still an existing conversation")
+        XCTAssertFalse(vm.surfaceIsRestoring)
+    }
+
+    func testNewerSurfaceTokenInvalidatesOlderRequest() {
+        let vm = AssistantVM()
+        let tokenA = vm.debugIssueSurfaceToken(loading: "chat-a")
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(tokenA))
+        // Rapid A → B switch: B's request replaces A's before A responds.
+        let tokenB = vm.debugIssueSurfaceToken(loading: "chat-b")
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(tokenA),
+                       "a late Chat-A response may not commit into Chat B")
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(tokenB))
+    }
+
+    func testNewChatInvalidatesInFlightHistoryToken() async {
+        let vm = AssistantVM()
+        let token = vm.debugIssueSurfaceToken(loading: "chat-a")
+        let opened = await vm.newChat()
+        XCTAssertTrue(opened)
+        XCTAssertTrue(vm.surfaceShowsHero, "explicit New Chat is the genuine hero state")
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(token),
+                       "a late history response may not replace the fresh chat")
+        XCTAssertFalse(vm.loadingHistory)
+    }
+
+    func testTerminalReadyStatesRejectEveryToken() {
+        let vm = AssistantVM()
+        let token = vm.debugIssueSurfaceToken(loading: nil)
+        vm.debugSetSessionSurface(.readyConversation(conversationId: "c9"))
+        XCTAssertFalse(vm.debugSurfaceTokenIsCurrent(token),
+                       "a committed surface owns itself; stale bootstrap responses are dead")
+    }
+
+    func testFailureSurfaceStaysTiedToSelectedConversation() {
+        let vm = AssistantVM()
+        let token = UUID()
+        vm.debugSetSessionSurface(.failedHistory(
+            conversationId: "chat-a", requestToken: token, message: "কথোপকথন লোড করা যায়নি"))
+        XCTAssertEqual(vm.surfaceFailure?.conversationId, "chat-a")
+        XCTAssertEqual(vm.surfaceFailure?.message, "কথোপকথন লোড করা যায়নি")
+        XCTAssertFalse(vm.surfaceShowsHero)
+        // The failed request's own token remains addressable for retry.
+        XCTAssertTrue(vm.debugSurfaceTokenIsCurrent(token))
+    }
+
+    func testInitialRouteFailureIsRetryableWithoutConversation() {
+        let vm = AssistantVM()
+        let token = UUID()
+        vm.debugSetSessionSurface(.failedHistory(
+            conversationId: nil, requestToken: token, message: "সেশন খুলতে সমস্যা হয়েছে"))
+        XCTAssertNil(vm.surfaceFailure?.conversationId)
+        XCTAssertNotNil(vm.surfaceFailure)
+        XCTAssertFalse(vm.surfaceShowsHero,
+                       "a failed route resolution may not silently become a blank new chat")
+    }
+
+    // MARK: - Build 103 Issue 2: v2 image render selection decode
+
+    private func renderSelectionJSON(
+        revision: Int = 3,
+        fingerprint: String = "fp-1",
+        quoteFingerprint: String = "fp-1",
+        extraField: Bool = false
+    ) -> Data {
+        Data("""
+        {
+          "contractVersion": 2,
+          "revision": \(revision),
+          "selectedModel": "gpt-image-2",
+          \(extraField ? "\"futureUnknownField\": {\"nested\": true}," : "")
+          "config": {
+            "version": 1, "presetId": "social_post", "sizeMode": "tier",
+            "aspectRatio": "4:5", "imageSize": "2K", "width": 1856, "height": 2304,
+            "quality": "standard", "providerQuality": "medium",
+            "variationCount": 4, "pipelineMode": "preview"
+          },
+          "configFingerprint": "\(fingerprint)",
+          "modelOptions": [
+            {"id": "gpt-image-2", "label": "GPT Image 2", "provider": "openai", "enabled": true},
+            {"id": "gemini-3-pro-image", "label": "Nano Banana Pro", "provider": "gemini",
+             "enabled": false, "unavailableReason": "Live image worker has not proven this option."}
+          ],
+          "presetOptions": [
+            {"id": "social_post", "label": "Facebook / Instagram post", "aspectRatio": "4:5", "enabled": true},
+            {"id": "poster", "label": "Portrait poster", "aspectRatio": "2:3", "enabled": false,
+             "unavailableReason": "Live image worker has not proven this option."}
+          ],
+          "sizeOptions": [
+            {"id": "1K", "enabled": true, "width": 928, "height": 1152},
+            {"id": "2K", "enabled": true, "width": 1856, "height": 2304},
+            {"id": "4K", "enabled": false, "unavailableReason": "GPT Image does not support 4K at 4:5."}
+          ],
+          "qualityOptions": [
+            {"id": "standard", "providerQuality": "medium", "description": "OpenAI quality medium"},
+            {"id": "pro", "providerQuality": "high", "description": "OpenAI quality high"}
+          ],
+          "countOptions": [1, 2, 3, 4],
+          "quote": {
+            "version": 2, "currency": "USD", "kind": "provider_render_estimate",
+            "model": "gpt-image-2", "provider": "openai", "presetId": "social_post",
+            "aspectRatio": "4:5", "imageSize": "2K", "width": 1856, "height": 2304,
+            "quality": "standard", "providerQuality": "medium", "requestedImages": 4,
+            "unitPriceUsd": 0.05, "minCostUsd": 0.2, "maxCostUsd": 0.2,
+            "maxPaidGenerationsPerImage": 1,
+            "configFingerprint": "\(quoteFingerprint)",
+            "pricingBasis": "internal_list_estimate", "pricingLastVerifiedAt": "2026-07-12",
+            "pricedComponents": ["provider_output_render"],
+            "excludes": ["qc_vision", "taxes", "provider_credits",
+                         "prompt_text_input_tokens", "reference_image_input_tokens"]
+          }
+        }
+        """.utf8)
+    }
+
+    func testImageRenderSelectionDecodesCompleteV2Projection() throws {
+        let wire = try JSONDecoder().decode(
+            AgentImageRenderSelectionWire.self, from: renderSelectionJSON())
+        let selection = try XCTUnwrap(wire.trustedValue)
+        XCTAssertEqual(selection.revision, 3)
+        XCTAssertEqual(selection.config.width, 1856)
+        XCTAssertEqual(selection.config.aspectRatio, "4:5")
+        XCTAssertEqual(selection.countOptions, [1, 2, 3, 4])
+        // Disabled combinations stay visible with a reason.
+        XCTAssertEqual(selection.sizeOptions.first(where: { $0.id == "4K" })?.enabled, false)
+        XCTAssertNotNil(selection.sizeOptions.first(where: { $0.id == "4K" })?.unavailableReason)
+        XCTAssertEqual(selection.presetOptions.first(where: { $0.id == "poster" })?.enabled, false)
+    }
+
+    func testImageRenderSelectionSurvivesUnknownFutureFields() throws {
+        let wire = try JSONDecoder().decode(
+            AgentImageRenderSelectionWire.self, from: renderSelectionJSON(extraField: true))
+        XCTAssertNotNil(wire.trustedValue)
+    }
+
+    func testImageRenderSelectionRejectsQuoteFingerprintMismatch() throws {
+        // A quote that binds a DIFFERENT selection could approve a different
+        // price than shown — the whole projection is untrusted.
+        let wire = try JSONDecoder().decode(
+            AgentImageRenderSelectionWire.self,
+            from: renderSelectionJSON(quoteFingerprint: "fp-OTHER"))
+        XCTAssertNil(wire.trustedValue)
+    }
+
+    func testPinnedAspectDrivesContainerRatioWithBoundedRange() {
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: "1:1"), 1.0)
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: "2:3"),
+                       CGFloat(2.0 / 3.0), accuracy: 0.001)
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: "9:16"),
+                       CGFloat(9.0 / 16.0), accuracy: 0.001)
+        // Legacy/unknown input keeps the stable 4:5 reservation.
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: nil),
+                       AgentGeneratedImageSizing.stableContainerAspectRatio)
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: "banana"),
+                       AgentGeneratedImageSizing.stableContainerAspectRatio)
+        // Bounded for phone height: extreme ratios clamp instead of exploding.
+        XCTAssertEqual(AgentGeneratedImageSizing.containerAspectRatio(fromPinned: "100:1"), 1.9)
+    }
+
+    // MARK: - Build 103 Issue 3: tracker decode + monotonic reducer
+
+    private func workStepsJSON(
+        revision: Int = 1,
+        status: String = "running",
+        boundMessageId: String? = nil,
+        stepTwoStatus: String = "running"
+    ) -> String {
+        """
+        {
+          "type": "work_steps_snapshot",
+          "version": 1,
+          "trackerId": "plan-1",
+          "originTurnId": "turn-1",
+          "currentTurnId": "turn-1",
+          "turnIds": ["turn-1"],
+          "conversationId": "conversation-1",
+          "originAssistantMessageId": \(boundMessageId.map { "\"\($0)\"" } ?? "null"),
+          "revision": \(revision),
+          "source": "agent_plan",
+          "sourceId": "plan-1",
+          "goal": "Prepare the requested deliverable",
+          "status": "\(status)",
+          "headline": "১/৩ ধাপ শেষ",
+          "blockedBy": null,
+          "retryRef": null,
+          "steps": [
+            {"id": "s1", "position": 1, "title": "Inspect the request", "status": "completed",
+             "toolCallIds": [], "startedAt": "2026-08-11T00:00:00Z", "finishedAt": "2026-08-11T00:00:03Z"},
+            {"id": "s2", "position": 2, "title": "Draft the output", "status": "\(stepTwoStatus)",
+             "toolCallIds": [], "startedAt": null, "finishedAt": null},
+            {"id": "s3", "position": 3, "title": "Verify the result", "status": "pending",
+             "toolCallIds": [], "startedAt": null, "finishedAt": null}
+          ],
+          "updatedAt": "2026-08-11T00:00:03Z"
+        }
+        """
+    }
+
+    private func decodeTurnEvent(_ json: String) throws -> AgentTurnEvent {
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: Data(json.utf8))
+        return AgentTurnEvent(dto: dto)
+    }
+
+    func testWorkStepsSnapshotDecodesTypedNeverUnknown() throws {
+        let event = try decodeTurnEvent(workStepsJSON())
+        guard case .workSteps(let snapshot) = event else {
+            return XCTFail("work_steps_snapshot must decode typed, got \(event)")
+        }
+        XCTAssertEqual(snapshot.trackerId, "plan-1")
+        XCTAssertEqual(snapshot.revision, 1)
+        XCTAssertEqual(snapshot.steps.count, 3)
+        XCTAssertEqual(snapshot.steps.map(\.status), ["completed", "running", "pending"])
+        XCTAssertEqual(snapshot.completedCount, 1)
+        XCTAssertFalse(snapshot.isTerminal)
+    }
+
+    func testPlanAndTurnProgressDecodeTypedNeverUnknown() throws {
+        let plan = try decodeTurnEvent("""
+        {"type": "plan_progress", "planId": "p1", "goal": "g", "headline": "১/২",
+         "doneCount": 1, "total": 2,
+         "steps": [{"seq": 1, "action": "a", "status": "done"}]}
+        """)
+        guard case .planProgress = plan else { return XCTFail("plan_progress decoded as \(plan)") }
+        let turn = try decodeTurnEvent("""
+        {"type": "turn_progress", "round": 3, "elapsedSec": 42, "lastToolLabel": null, "text": "কাজ চলছে"}
+        """)
+        guard case .turnProgress = turn else { return XCTFail("turn_progress decoded as \(turn)") }
+    }
+
+    func testMalformedWorkStepsBecomesTelemetryNotCrash() throws {
+        let event = try decodeTurnEvent("""
+        {"type": "work_steps_snapshot", "version": 99, "trackerId": "x"}
+        """)
+        guard case .unknown(let type) = event else {
+            return XCTFail("future-version snapshot must be telemetry, got \(event)")
+        }
+        XCTAssertEqual(type, "work_steps_snapshot/invalid")
+    }
+
+    private func snapshotFixture(
+        revision: Int, status: String = "running", boundMessageId: String? = nil
+    ) throws -> AgentWorkStepsSnapshot {
+        let event = try decodeTurnEvent(workStepsJSON(
+            revision: revision, status: status, boundMessageId: boundMessageId))
+        guard case .workSteps(let snapshot) = event else {
+            throw NSError(domain: "fixture", code: 1)
+        }
+        return snapshot
+    }
+
+    func testWorkTrackerMergeIsMonotonicAndTerminalDominant() throws {
+        let vm = AssistantVM()
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 2))
+        // A lower revision (replay overlap) never regresses the store.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 1, status: "preparing"))
+        XCTAssertEqual(vm.workTrackers["plan-1"]?.revision, 2)
+        XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "running")
+        // Terminal state cannot regress to running from a late higher revision
+        // replay of a non-terminal frame.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "completed"))
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "running"))
+        XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "completed")
+    }
+
+    func testSameRevisionSamePayloadIsIdempotentNoOp() throws {
+        let vm = AssistantVM()
+        let snapshot = try snapshotFixture(revision: 2)
+        vm.debugMergeWorkSteps(snapshot)
+        vm.debugMergeWorkSteps(snapshot)
+        XCTAssertEqual(vm.workTrackers.count, 1)
+        XCTAssertEqual(vm.workTrackers["plan-1"]?.revision, 2)
+    }
+
+    func testTerminalBoundSnapshotReparentsSameTrackerNeverTwo() throws {
+        let vm = AssistantVM()
+        // Live: unbound snapshot anchored to the streaming message.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 1), anchoredMessageId: "stream-1")
+        XCTAssertEqual(vm.workTrackerAnchors["stream-1"], ["plan-1"])
+        // Settlement: bound snapshot reparents to the canonical message id.
+        vm.debugMergeWorkSteps(
+            try snapshotFixture(revision: 2, status: "completed", boundMessageId: "msg-9"))
+        XCTAssertEqual(vm.workTrackerAnchors["msg-9"], ["plan-1"])
+        XCTAssertEqual(vm.workTrackerAnchors["stream-1"], [],
+                       "the same logical tracker must move, never duplicate")
+        XCTAssertEqual(vm.workTrackers.count, 1)
     }
 }

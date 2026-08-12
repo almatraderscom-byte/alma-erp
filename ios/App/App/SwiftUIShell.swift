@@ -315,7 +315,31 @@ extension AlmaTabBarController {
     /// bridges keep running — the reason the tab was frozen. Flag off → the plain Capacitor
     /// dashboard, exactly as before. `detachDashboardVC` first frees the VC from any prior
     /// parent so the live flag-toggle (onSwiftUIFlagChanged) can re-mount it cleanly.
+    #if DEBUG
+    /// True when ANY Assistant fixture flag is present at launch — the web
+    /// dashboard (and its biometric lock) must never race a scripted test.
+    static var isNativeFixtureLaunch: Bool {
+        let env = ProcessInfo.processInfo.environment
+        if env.keys.contains(where: { $0.hasPrefix("ALMA_ASSISTANT_") }) { return true }
+        return ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("ALMA_ASSISTANT_") }
+    }
+    #endif
+
     func makeDashboardTab() -> UINavigationController {
+        #if DEBUG
+        // Build 103 self-test rig: fixture launches must stay deterministic.
+        // The background Capacitor dashboard boots the production web origin,
+        // whose BiometricLockGate raises the system passcode sheet ~10s in and
+        // intercepts every scripted tap. Fixtures never assert dashboard/web
+        // behavior, so mount a plain placeholder instead of the bridge VC.
+        if Self.isNativeFixtureLaunch {
+            let placeholder = UIViewController()
+            placeholder.view.backgroundColor = .systemBackground
+            placeholder.title = "Dashboard"
+            return Self.darkNav(root: placeholder, tabTitle: "Dashboard",
+                                icon: "square.grid.2x2", largeTitles: false)
+        }
+        #endif
         guard let dvc = dashboardVC else {
             // Unreachable in practice (set at init) — degrade to the web dashboard.
             return webTab("/", "Dashboard", "square.grid.2x2")
