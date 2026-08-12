@@ -288,36 +288,92 @@ export function workStepsSignature(snapshot: WorkStepsSnapshot | null): string {
 }
 
 /**
- * Durable, atomic persistence. The database allocates the revision inside ONE
- * UPDATE (`tracker_revision + 1`, stamped into the stored snapshot by
- * `jsonb_set`), so two overlapping refreshes — e.g. markStepRunning and
- * markStepDispatched fired without awaiting each other — can never construct
- * the same revision and silently drop the newer state (Codex P1, PR #733).
- * Returns the assigned revision, or null when the plan row is gone/errored.
- * Origin turn is written once and never overwritten; the assistant-message
- * binding is written when the snapshot carries one, kept otherwise.
+ * Serialized project-and-persist for one plan tracker.
+ *
+ * Codex P1 rounds on PR #733: (1) two overlapping refreshes constructed the
+ * same revision; (2) after atomic revision allocation, a refresh that READ
+ * stale rows could still WRITE later and win the higher revision, regressing
+ * waiting_worker back to running. The whole read→project→write now runs
+ * inside one transaction holding a per-plan advisory lock, so every writer
+ * projects from the freshest rows and revisions are both unique and ordered
+ * with content.
+ *
+ * Returns the persisted snapshot (with its DB-assigned revision) when the
+ * content actually changed, or null when unchanged/failed — callers emit
+ * exactly what was persisted.
  */
-export async function persistWorkStepsSnapshot(snapshot: WorkStepsSnapshot): Promise<number | null> {
+export async function syncPlanTracker(
+  planId: string,
+  opts: {
+    currentTurnId?: string
+    blockedBy?: WorkStepsBlocker | null
+    live?: boolean
+    bindAssistantMessageId?: string | null
+    now?: Date
+  } = {},
+): Promise<WorkStepsSnapshot | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
-    const rows: Array<{ tracker_revision: number }> = await db.$queryRaw`
-      UPDATE "agent_plans"
-      SET "tracker_revision" = "tracker_revision" + 1,
-          "tracker_snapshot" = jsonb_set(
-            ${JSON.stringify(snapshot)}::jsonb,
-            '{revision}',
-            to_jsonb("tracker_revision" + 1)),
-          "origin_assistant_message_id" =
-            COALESCE(${snapshot.originAssistantMessageId}, "origin_assistant_message_id"),
-          "origin_turn_id" = COALESCE("origin_turn_id", ${snapshot.originTurnId})
-      WHERE "id" = ${snapshot.trackerId}
-      RETURNING "tracker_revision"`
-    const revision = rows?.[0]?.tracker_revision
-    return typeof revision === 'number' ? revision : null
+    return await db.$transaction(async (tx: typeof db) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${planId}))`
+      const plan: TrackerPlanRow | null = await tx.agentPlan.findUnique({
+        where: { id: planId },
+        select: PLAN_SELECT,
+      })
+      // Only plans that ever emitted a tracker participate — a plan created
+      // before this feature (no origin turn, no snapshot) stays silent unless
+      // the caller supplies an explicit turn.
+      if (!plan || !plan.steps?.length) return null
+      if (!plan.originTurnId && plan.trackerRevision === 0 && !opts.currentTurnId) return null
+      const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
+      const currentTurnId = opts.currentTurnId
+        ?? prior?.currentTurnId ?? plan.originTurnId ?? plan.id
+      const snapshot = projectWorkSteps({
+        plan,
+        currentTurnId,
+        // Placeholder — the same transaction assigns the real revision below.
+        revision: plan.trackerRevision + 1,
+        blockedBy: opts.blockedBy !== undefined ? opts.blockedBy : (prior?.blockedBy ?? null),
+        live: opts.live ?? plan.steps.some((s) => s.status === 'running'),
+        now: opts.now,
+      })
+      if (opts.bindAssistantMessageId && !plan.originAssistantMessageId) {
+        snapshot.originAssistantMessageId = opts.bindAssistantMessageId
+      }
+      const bindingChanged = Boolean(
+        snapshot.originAssistantMessageId
+        && snapshot.originAssistantMessageId !== plan.originAssistantMessageId)
+      if (prior && !bindingChanged
+        && workStepsSignature(prior) === workStepsSignature(snapshot)) return null
+      const rows: Array<{ tracker_revision: number }> = await tx.$queryRaw`
+        UPDATE "agent_plans"
+        SET "tracker_revision" = "tracker_revision" + 1,
+            "tracker_snapshot" = jsonb_set(
+              ${JSON.stringify(snapshot)}::jsonb,
+              '{revision}',
+              to_jsonb("tracker_revision" + 1)),
+            "origin_assistant_message_id" =
+              COALESCE(${snapshot.originAssistantMessageId}, "origin_assistant_message_id"),
+            "origin_turn_id" = COALESCE("origin_turn_id", ${snapshot.originTurnId})
+        WHERE "id" = ${planId}
+        RETURNING "tracker_revision"`
+      const revision = rows?.[0]?.tracker_revision
+      if (typeof revision !== 'number') return null
+      return { ...snapshot, revision }
+    })
   } catch {
     return null
   }
+}
+
+/**
+ * Fire-and-forget wrapper for plan-step writers (the Plan-Driver runs in
+ * background turns the owner never streams; the app's message poll picks up
+ * the refreshed snapshot). Must never break a step transition.
+ */
+export async function refreshPlanTrackerSnapshot(planId: string): Promise<void> {
+  await syncPlanTracker(planId).catch(() => null)
 }
 
 // ── Runtime projector for UNPLANNED turns ───────────────────────────────────
@@ -414,45 +470,6 @@ export function projectRuntimeWorkSteps(input: {
     steps,
     updatedAt: now.toISOString(),
   }
-}
-
-/**
- * Refresh the durable tracker snapshot after a plan-step state change.
- *
- * Owner live test (2026-08-13): the Plan-Driver executes steps in BACKGROUND
- * worker turns, but snapshots were only projected during the owner turn — the
- * dock froze at ০/৫ while steps actually completed. Every step writer now
- * refreshes the persisted snapshot; the app's message poll then merges the
- * higher revision (no live stream required). Fire-and-forget by design: a
- * tracker refresh must never break a step transition.
- */
-export async function refreshPlanTrackerSnapshot(planId: string): Promise<void> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = prisma as any
-    const plan: TrackerPlanRow | null = await db.agentPlan.findUnique({
-      where: { id: planId },
-      select: PLAN_SELECT,
-    })
-    // Only plans that ever emitted a tracker participate — a plan created
-    // before this feature (no origin turn, no snapshot) stays silent.
-    if (!plan || !plan.steps?.length) return
-    if (!plan.originTurnId && plan.trackerRevision === 0) return
-    const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
-    const currentTurnId = prior?.currentTurnId ?? plan.originTurnId ?? plan.id
-    const snapshot = projectWorkSteps({
-      plan,
-      currentTurnId,
-      // Placeholder — the database allocates the real revision atomically.
-      revision: plan.trackerRevision + 1,
-      blockedBy: prior?.blockedBy ?? null,
-      // The driver is actively moving steps; running/waiting_worker/completed
-      // all derive from the durable rows themselves.
-      live: plan.steps.some((s) => s.status === 'running'),
-    })
-    if (prior && workStepsSignature(prior) === workStepsSignature(snapshot)) return
-    await persistWorkStepsSnapshot(snapshot)
-  } catch { /* never break the step writer */ }
 }
 
 /** Parse a stored snapshot; null when malformed or a future major version. */
