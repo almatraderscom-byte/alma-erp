@@ -65,6 +65,53 @@ struct AlmaLiveVoiceChoice: Identifiable, Hashable {
 
 /// Phase-specific rollback switches must be checked where behavior starts. Do
 /// not add a future phase here until its entry point actually reads the flag.
+/// A live reply is speech, so its transcript is a record of what was said, not a
+/// document. The provider still emits occasional Markdown emphasis (`**Boss**`),
+/// which the speech synthesiser never pronounces — printing it raw makes the
+/// transcript disagree with the audio the owner just heard.
+enum AlmaLiveVoiceSpokenText {
+    static func plain(_ text: String) -> String {
+        var out = ""
+        out.reserveCapacity(text.count)
+        var runCharacter: Character?
+        var runLength = 0
+
+        func flushRun() {
+            guard let character = runCharacter, runLength > 0 else {
+                runCharacter = nil
+                runLength = 0
+                return
+            }
+            // Markdown emphasis is one to three markers. A longer run is a rule
+            // or ASCII art, and a single `_` is part of an identifier such as
+            // get_sales_summary — neither is emphasis, so both stay.
+            let isEmphasis = runLength <= 3 && !(character == "_" && runLength == 1)
+            if !isEmphasis {
+                out.append(String(repeating: character, count: runLength))
+            }
+            runCharacter = nil
+            runLength = 0
+        }
+
+        for character in text {
+            if character == "*" || character == "_" || character == "`" {
+                if runCharacter == character {
+                    runLength += 1
+                } else {
+                    flushRun()
+                    runCharacter = character
+                    runLength = 1
+                }
+                continue
+            }
+            flushRun()
+            out.append(character)
+        }
+        flushRun()
+        return out
+    }
+}
+
 enum AlmaLiveVoiceRecoveryFeature: String {
     case evidenceV1 = "evidence-v1"
     case previewCatalogV1 = "preview-catalog-v1"
@@ -5556,9 +5603,10 @@ final class AlmaVoiceEngine {
     }
 
     func liveOutputTranscript(_ text: String) {
-        replyText = text
-        nowLine = text
-        feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: text)
+        let spoken = AlmaLiveVoiceSpokenText.plain(text)
+        replyText = spoken
+        nowLine = spoken
+        feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: spoken)
     }
 
     func livePlaybackChanged(active: Bool, level: Double) {
@@ -10557,6 +10605,13 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
                 #if DEBUG
                 NSLog("ALMA-VOICE watchdog force-closed a stuck model turn")
                 #endif
+                // The turn ends here without the provider's own turn-complete,
+                // which is the only other place that clears the accumulator. Left
+                // behind, the abandoned reply becomes the prefix of the next one
+                // and the owner reads two answers welded into one bubble.
+                self.startAttemptLock.lock()
+                self.outputTranscript = ""
+                self.startAttemptLock.unlock()
                 self.finishModelPlayback(generation: generation)
             }
         }
