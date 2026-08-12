@@ -42,7 +42,7 @@ final class AssistantParityV2UITests: XCTestCase {
             "testConversationLibrarySurfaceMatchesMenuDestination",
             "testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote",
             "testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas",
-            "testWorkStepsTrackerBlockAndDockShareOneStore",
+            "testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate",
             "testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras",
             "testColdSessionRestoreNeverShowsHeroBehindLoader",
         ].contains { name.contains($0) }
@@ -985,31 +985,29 @@ final class AssistantParityV2UITests: XCTestCase {
         add(proofLocked)
     }
 
-    func testWorkStepsTrackerBlockAndDockShareOneStore() {
+    func testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate() {
         let fixture = launchFixture(["ALMA_ASSISTANT_WORK_STEPS_PROOF": "1"])
-        // Canonical in-turn block.
-        let header = anyElement(fixture, "agent.work-steps.header")
-        XCTAssertTrue(header.waitForExistence(timeout: 10))
-        // Dock strip above the composer projects the SAME tracker (1 of 5).
+        // Owner decision 2026-08-13: while running, the dock is the ONLY
+        // tracker surface — no in-chat twin, nothing to overlap the reply.
         let dock = anyElement(fixture, "agent.work-steps.dock.progress")
-        XCTAssertTrue(dock.waitForExistence(timeout: 4))
+        XCTAssertTrue(dock.waitForExistence(timeout: 10))
         XCTAssertTrue(dock.label.contains("1 of 5"),
                       "dock count must come from durable step evidence")
+        XCTAssertFalse(anyElement(fixture, "agent.work-steps.header").exists,
+                       "a running tracker must not render a duplicate in-chat block")
         // Expanding the dock shows the numbered five-step panel while the
         // composer stays visible.
         tapViaWindow(fixture, dock)
         XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
             .waitForExistence(timeout: 6))
+        XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
+            .staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2."))
+            .firstMatch.waitForExistence(timeout: 4))
         XCTAssertTrue(fixture.textViews.firstMatch.exists
                       || fixture.textFields.firstMatch.exists,
                       "composer must remain mounted under the expanded panel")
-        // Expanding the block lists steps with stable identifiers.
-        tapViaWindow(fixture, dock)   // collapse to avoid covering the block
-        tapViaWindow(fixture, header)
-        XCTAssertTrue(anyElement(fixture, "agent.work-steps.step.fixture-step-2")
-            .waitForExistence(timeout: 6))
         let proofTracker = XCTAttachment(screenshot: fixture.screenshot())
-        proofTracker.name = "b103-work-steps-block-expanded"
+        proofTracker.name = "b103-work-steps-dock-expanded"
         proofTracker.lifetime = .keepAlways
         add(proofTracker)
     }
@@ -1020,7 +1018,8 @@ final class AssistantParityV2UITests: XCTestCase {
             "ALMA_ASSISTANT_WORK_STEPS_VARIANT": "settled",
         ])
         let header = anyElement(fixture, "agent.work-steps.header")
-        XCTAssertTrue(header.waitForExistence(timeout: 10))
+        XCTAssertTrue(header.waitForExistence(timeout: 10),
+                      "the settled tracker is the task's durable in-chat record")
         XCTAssertTrue(header.label.contains("5 of 5"))
         // A settled tracker offers NO dock strip — nothing is running.
         XCTAssertFalse(anyElement(fixture, "agent.work-steps.dock.progress").exists)

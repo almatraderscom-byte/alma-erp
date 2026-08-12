@@ -185,6 +185,27 @@ describe('the owner override', () => {
   })
 })
 
+describe('ambiguous decisions never pin (owner incident 2026-08-12)', () => {
+  it('leaves a weak 2-vs-1 keyword race unpinned with the unrestricted head', async () => {
+    // The live message "Last 30 days er order shob gulor jnne plan baniye
+    // report daw" scores mac-backup-verifier 2 vs alma-marketing 1 against the
+    // real skill index — the router honestly marks it needsModel ("head বেছে
+    // নেবে"), and the pin layer used to write the wrong skill anyway, whose
+    // narrow instructions then hijacked the whole conversation.
+    mockPrisma.agentConversation.findUnique.mockResolvedValue({
+      pinnedSkill: null,
+      skillRouteTrace: null,
+    })
+    const pin = await resolveSkillPin(
+      'conversation-owner-report',
+      'Last 30 days er order shob gulor jnne plan baniye report daw')
+    expect(pin.skill).toBeNull()
+    expect(pin.source).toBe('none')
+    expect(pin.trace?.needsModel).toBe(true)
+    expect(mockPrisma.agentConversation.update).not.toHaveBeenCalled()
+  })
+})
+
 describe('the announcement', () => {
   it('names the skill', () => {
     expect(announcementLine('seo-fixing-own-site')).toContain('seo-fixing-own-site')

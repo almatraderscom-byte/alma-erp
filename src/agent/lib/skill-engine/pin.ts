@@ -178,6 +178,13 @@ export async function resolveSkillPin(
 
     const decision = routeSkill(index, lastUserText)
     if (!decision.skill) return { skill: null, source: 'none', trace: decision }
+    // Owner incident 2026-08-12: an orders-report request scored a junk 2-point
+    // keyword hit on mac-backup-verifier, the router honestly said "head বেছে
+    // নেবে" (needsModel) — and this line pinned the wrong skill anyway, whose
+    // narrow instructions then hijacked the whole conversation. An ambiguous
+    // close call is exactly the case the design says NOT to guess: leave the
+    // turn unpinned with the unrestricted head; only a decisive match pins.
+    if (decision.needsModel) return { skill: null, source: 'none', trace: decision }
 
     await writePin(conversationId, decision.skill, decision, 'router')
     return { skill: decision.skill, source: 'router', trace: decision }

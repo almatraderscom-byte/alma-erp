@@ -13645,10 +13645,14 @@ struct AgentMessageRow: View {
                         .padding(.vertical, 2)
                     }
 
-                    // Build 103 Issue 3 — the canonical turn-owned tracker
-                    // block, anchored to this assistant message (live via turn
-                    // linkage, settled/cold via the bound message id).
-                    ForEach(vm.workTrackers(for: message), id: \.trackerId) { snapshot in
+                    // Build 103 Issue 3 — the turn-owned tracker block. Owner
+                    // decision 2026-08-13: while the task RUNS, the composer
+                    // dock is the ONLY tracker surface (the in-chat copy read
+                    // as a duplicate and its expansion overlapped the reply);
+                    // the block appears here once the tracker settles, as the
+                    // task's durable record in the conversation.
+                    ForEach(vm.workTrackers(for: message).filter(\.isTerminal),
+                            id: \.trackerId) { snapshot in
                         AgentWorkStepsBlockView(snapshot: snapshot, pal: pal) { actionId in
                             vm.pendingActionScrollId = actionId
                         }
