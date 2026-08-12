@@ -218,7 +218,7 @@ export async function markStepRunning(stepId: string): Promise<void> {
   })
   // Build 103: keep the durable work-step tracker in sync with every step
   // writer (the Plan-Driver runs in background turns the owner never streams).
-  void refreshPlanTrackerSnapshot(step.planId)
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /**
@@ -237,7 +237,7 @@ export async function markStepDone(stepId: string, result?: unknown): Promise<vo
     },
     select: { planId: true },
   })
-  void refreshPlanTrackerSnapshot(step.planId)
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Backoff before a failed step may be retried: 2, 8, 18 … minutes. */
@@ -262,7 +262,7 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
   })
   const attemptCount = (step?.attemptCount ?? 0) + 1
   const maxAttempts = step?.maxAttempts ?? 3
-  await db.agentPlanStep.update({
+  const step2 = await db.agentPlanStep.update({
     where: { id: stepId },
     data: {
       status: 'failed',
@@ -274,7 +274,8 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
       dispatchedAt: null,
     },
     select: { planId: true },
-  }).then((step: { planId: string }) => { void refreshPlanTrackerSnapshot(step.planId) })
+  })
+  if (step2?.planId) void refreshPlanTrackerSnapshot(step2.planId)
 }
 
 /**
@@ -301,7 +302,7 @@ export async function markStepDispatched(stepId: string, turnId: string, now = n
     data: { status: 'running', turnId, dispatchedAt: now, startedAt: now },
     select: { planId: true },
   })
-  void refreshPlanTrackerSnapshot(step.planId)
+  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
 /** Steps currently waiting on a dispatched worker turn (reap input). */
