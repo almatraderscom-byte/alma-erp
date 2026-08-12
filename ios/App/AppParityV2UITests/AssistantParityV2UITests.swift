@@ -564,8 +564,12 @@ final class AssistantParityV2UITests: XCTestCase {
         relaunch(fixture: "ALMA_ASSISTANT_IMAGE_GENERATING", mock: "library")
 
         let canvas = app.descendants(matching: .any)["agent.generated-image.generating-canvas"]
+        // Wait for the surface to MOUNT before scroll-hunting: swipes issued
+        // during the launch splash land nowhere, and with the faster fixture
+        // boot (no web dashboard) they used to spill onto the fresh chat and
+        // scroll the canvas out of its hittable frame.
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         for _ in 0..<5 where !canvas.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
         XCTAssertTrue(canvas.isHittable)
         XCTAssertGreaterThan(canvas.frame.height, canvas.frame.width * 1.15,
                              "image generation must be a first-class media surface, not a thin rail")
