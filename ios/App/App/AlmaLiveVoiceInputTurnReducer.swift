@@ -189,9 +189,33 @@ struct AlmaLiveVoiceInputTurnReducer {
         case .none:
             activePlaybackOwnerConfirmed = false
             if bufferedSuppression == .playbackTail {
+                bufferedSuppression = nil
+                if activePlaybackCandidateSequence != nil {
+                    appendSuppressed(frame)
+                    retainCandidateSpanIfPresent()
+                    activePlaybackCandidateSequence = nil
+                    return sending(takeSuppressedFrames())
+                }
+                // No acoustic owner onset was ever flagged, so decide by how the
+                // sound ends. The tail window is sized well past the measured
+                // playback-echo decay, so echo falls far below its own peak
+                // before the window closes, while an owner who started speaking
+                // in the tail is still audible at its edge. The threshold is
+                // relative to the buffer's own peak — a buffer filled wall to
+                // wall with speech has a loud edge and drains, a decayed echo
+                // has a silent edge and is discarded. Draining a buffer whose
+                // sound already died replayed ALMA's own voice as the owner's
+                // next turn — she then answered herself ("আমি তো বুঝলাম না আমি
+                // তোমাকে কি বলতেছি…", owner report 2026-08-12).
+                let peak = suppressedFrames.map(\.rms).max() ?? 0
+                let boundaryThreshold = max(0.003, peak * 0.25)
+                let audibleAtBoundary = frame.rms >= boundaryThreshold
+                    || suppressedFrames.suffix(3).contains { $0.rms >= boundaryThreshold }
+                guard audibleAtBoundary else {
+                    clearSuppressedFrames()
+                    return sending([frame])
+                }
                 appendSuppressed(frame)
-                retainCandidateSpanIfPresent()
-                activePlaybackCandidateSequence = nil
                 return sending(takeSuppressedFrames())
             }
             // Never replay unconfirmed model audio retained during playback.

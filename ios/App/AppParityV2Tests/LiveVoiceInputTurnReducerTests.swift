@@ -257,6 +257,72 @@ final class LiveVoiceInputTurnReducerTests: XCTestCase {
         XCTAssertEqual(expired.audioFramesToSend.map(\.sequence), [5, 6])
     }
 
+    /// The 2026-08-12 owner report: ALMA answered her own echo ("আমি তো বুঝলাম
+    /// না আমি তোমাকে কি বলতেছি…"). On a no-AEC route her playback leaks into the
+    /// tail buffer; it decays to near-silence inside the window, and draining
+    /// that dead buffer wholesale fed her own words back as the owner's turn.
+    func testNoAECDecayedEchoTailIsDiscardedInsteadOfReplayedAsOwnerSpeech() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        // Echo, loud at first, decaying to ambient before the tail expires.
+        let decay: [Double] = [0.030, 0.028, 0.020, 0.012, 0.006, 0.002, 0.0015, 0.0015]
+        for (offset, level) in decay.enumerated() {
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(offset + 1),
+                pcm: pcm(UInt64(offset + 1)),
+                rms: level,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .playbackTail)
+            XCTAssertTrue(effect.audioFramesToSend.isEmpty)
+        }
+
+        let boundary = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 9,
+            pcm: pcm(9),
+            rms: 0.0015,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .none)
+
+        // Only live listening continues; the dead echo never reaches the model.
+        XCTAssertEqual(boundary.audioFramesToSend.map(\.sequence), [9])
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
+    /// The mirror case: an owner who starts talking inside the tail is still
+    /// audible when it expires, and the whole utterance — first syllable
+    /// included — must reach the model.
+    func testNoAECSpeechAudibleAtTailBoundaryStillDrainsCompletely() {
+        var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
+
+        for sequence in 1...6 {
+            let effect = reducer.acceptAudioFrame(
+                generation: generation,
+                sequence: UInt64(sequence),
+                pcm: pcm(UInt64(sequence)),
+                rms: 0.030,
+                route: .noAECLoudspeaker,
+                ready: true,
+                suppression: .playbackTail)
+            XCTAssertTrue(effect.audioFramesToSend.isEmpty)
+        }
+
+        let boundary = reducer.acceptAudioFrame(
+            generation: generation,
+            sequence: 7,
+            pcm: pcm(7),
+            rms: 0.028,
+            route: .noAECLoudspeaker,
+            ready: true,
+            suppression: .none)
+
+        XCTAssertEqual(boundary.audioFramesToSend.map(\.sequence), (1...7).map(UInt64.init))
+        XCTAssertEqual(reducer.bufferedSuppressedFrameCount, 0)
+    }
+
     func testMuteEndsOnlyAnOpenAudioStreamAndUnmuteResumes() {
         var reducer = AlmaLiveVoiceInputTurnReducer(generation: generation)
 
