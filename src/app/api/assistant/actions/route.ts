@@ -149,8 +149,10 @@ export async function GET(req: NextRequest) {
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
+  // Fail-open like the v1 trio above: a KV outage may cost the v2 picker on
+  // this one read, never the whole approval queue.
   const { receipt: actionsReceiptV2, reason: actionsReceiptV2Reason } = readImageWorkerCapabilityV2(
-    await readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY), Date.now())
+    await readImageKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY), Date.now())
   const actions = pageRows.map((row: {
     id: string
     status: string
