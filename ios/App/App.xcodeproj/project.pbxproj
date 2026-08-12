@@ -47,10 +47,12 @@
 		A7C100000000000000000007 /* AlmaLiveVoicePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */; };
 		A7C100000000000000000009 /* LiveVoicePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000008 /* LiveVoicePreviewTests.swift */; };
 		B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */; };
+		C2A2A0000000000000000032 /* AlmaLiveVoiceWorkFollowThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */; };
 		B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */; };
 		C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */; };
 		C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */; };
 		C2A2A0000000000000000012 /* LiveVoiceSpokenTranscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */; };
+		C2A2A0000000000000000036 /* LiveVoiceWorkFollowThroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */; };
 		C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */; };
 		D3C300000000000000000001 /* AlmaLiveVoiceLifecycleReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */; };
 		D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */; };
@@ -265,10 +267,12 @@
 		A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoicePreview.swift; sourceTree = "<group>"; };
 		A7C100000000000000000008 /* LiveVoicePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePreviewTests.swift; sourceTree = "<group>"; };
 		B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceContract.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceWorkFollowThrough.swift; sourceTree = "<group>"; };
 		B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePhase1BTests.swift; sourceTree = "<group>"; };
 		C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceInputTurnReducer.swift; sourceTree = "<group>"; };
 		C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceInputTurnReducerTests.swift; sourceTree = "<group>"; };
 		C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceSpokenTranscriptTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceWorkFollowThroughTests.swift; sourceTree = "<group>"; };
 		C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionSurfaceTests.swift; sourceTree = "<group>"; };
 		D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceLifecycleReducer.swift; sourceTree = "<group>"; };
 		D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceLifecycleReducerTests.swift; sourceTree = "<group>"; };
@@ -504,6 +508,7 @@
 				F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
 				B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */,
+				C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */,
 				C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */,
 				D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */,
 				E5D500000000000000000003 /* AlmaLiveVoiceOutputPCMEnvelope.swift */,
@@ -618,6 +623,7 @@
 				B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */,
 				C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */,
 				C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */,
+				C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */,
 				C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */,
 				D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */,
 				E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */,
@@ -1038,6 +1044,7 @@
 				F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
 				B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */,
+				C2A2A0000000000000000032 /* AlmaLiveVoiceWorkFollowThrough.swift in Sources */,
 				C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */,
 				D3C300000000000000000001 /* AlmaLiveVoiceLifecycleReducer.swift in Sources */,
 				E5D500000000000000000001 /* AlmaLiveVoiceOutputPCMEnvelope.swift in Sources */,
@@ -1133,6 +1140,7 @@
 				B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */,
 				C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */,
 				C2A2A0000000000000000012 /* LiveVoiceSpokenTranscriptTests.swift in Sources */,
+				C2A2A0000000000000000036 /* LiveVoiceWorkFollowThroughTests.swift in Sources */,
 				C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */,
 				D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */,
 				E5D500000000000000000002 /* LiveVoiceOutputPCMEnvelopeTests.swift in Sources */,

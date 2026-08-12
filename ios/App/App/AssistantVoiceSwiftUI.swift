@@ -3428,6 +3428,10 @@ final class AlmaVoiceEngine {
     /// Bounded settle check for a tool answer that arrives as transcript but
     /// never as audio — nothing else recomputes the phase in that case.
     private var liveToolSettleTask: Task<Void, Never>? = nil
+    /// Work follow-through: did the spoken turn now finishing include ANY tool
+    /// call, and how many corrections this call has already spent.
+    private var spokenTurnHadToolCall = false
+    private var workFollowThroughBudget = AlmaLiveVoiceWorkFollowThrough.Budget()
     private var feedUserLineId: String? = nil
     private var feedAgentLineId: String? = nil
 
@@ -5618,6 +5622,7 @@ final class AlmaVoiceEngine {
         ttsLevel = level
         if active {
             liveToolSettleTask?.cancel()
+            spokenTurnHadToolCall = false
             state = .speaking
             feedFinalizeUser()          // Boss's sentence is done once ALMA starts answering
         } else {
@@ -5633,6 +5638,22 @@ final class AlmaVoiceEngine {
             liveToolTurnPending = AlmaLiveVoiceToolWorkModePolicy.isPending(
                 activeInvocation: activeLiveToolInvocation != nil,
                 hasOutstandingCalls: live.hasOutstandingToolCalls)
+            // Follow-through contract (owner rule 2026-08-13, both live models):
+            // a spoken turn that PROMISED work but called no tool does not get
+            // to return to listening. One immediate correction forces the model
+            // to call the tool or state plainly that it cannot; the budget
+            // keeps a stubborn model from looping.
+            if liveActive, !liveToolTurnPending, !spokenTurnHadToolCall,
+               AlmaLiveVoiceWorkFollowThrough.promisesWork(replyText),
+               workFollowThroughBudget.claim() {
+                #if DEBUG
+                NSLog("ALMA-VOICE work follow-through correction sent")
+                #endif
+                live.sendRealtimeText(AlmaLiveVoiceWorkFollowThrough.correction)
+                state = .thinking
+                feedStatus("কথা নয় — কাজ করানো হচ্ছে…")
+                return
+            }
             if liveActive { state = liveToolTurnPending ? .thinking : .listening }
             #if DEBUG
             debugInjectNextQueuedTurnAfterPlayback()
@@ -5772,6 +5793,7 @@ final class AlmaVoiceEngine {
                 executionToken: executionToken)
             return
         }
+        spokenTurnHadToolCall = true
         switch invocation.payload {
         case .quickLookup(let tool):
             runQuickLookup(tool: tool, callId: invocation.callID)
