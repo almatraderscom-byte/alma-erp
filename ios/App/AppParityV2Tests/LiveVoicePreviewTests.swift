@@ -467,13 +467,16 @@ final class LiveVoicePreviewTests: XCTestCase {
         XCTAssertEqual(draft.previewStatus, .idle)
     }
 
-    func testPreviewFeatureOffHidesOnlyPreCallSettingsAndLeavesLiveCallEntry() {
+    /// Owner decision 2026-08-11: the chat composer never shows a voice-settings
+    /// entry — settings live only inside the voice console. The live-call entry
+    /// itself must survive both flag states.
+    func testComposerNeverShowsPreCallSettingsAndLeavesLiveCallEntry() {
         XCTAssertEqual(
             AlmaLiveVoiceComposerEntryVisibility.resolve(previewCatalogEnabled: false),
             .init(showsPreCallSettings: false, showsLiveCall: true))
         XCTAssertEqual(
             AlmaLiveVoiceComposerEntryVisibility.resolve(previewCatalogEnabled: true),
-            .init(showsPreCallSettings: true, showsLiveCall: true))
+            .init(showsPreCallSettings: false, showsLiveCall: true))
     }
 
     func testPreCallControllerOpenHasZeroOperationalSideEffects() {

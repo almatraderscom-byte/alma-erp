@@ -70,31 +70,18 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "Uploaded")).count > 0)
     }
 
-    func testPreCallVoiceSettingsKeepsPrimaryCallEntryAndOpensWithoutStartingCall() {
+    /// Owner decision 2026-08-11: voice settings live only inside the voice
+    /// console. The chat composer keeps its live-call entry and must never grow
+    /// a second voice-settings button.
+    func testComposerKeepsLiveCallEntryAndNeverShowsVoiceSettings() {
         let call = app.buttons["voice.live-call.start"]
-        let settings = app.buttons["voice.precall.settings.open"]
         XCTAssertTrue(call.waitForExistence(timeout: 3))
-        XCTAssertTrue(settings.waitForExistence(timeout: 3))
         XCTAssertTrue(call.isHittable)
-        XCTAssertTrue(settings.isHittable)
-
-        settings.tap()
-        XCTAssertTrue(app.scrollViews["voice.precall.settings.scroll"]
-            .waitForExistence(timeout: 4))
-        XCTAssertTrue(app.buttons["voice.precall.cancel"].exists)
-        XCTAssertTrue(app.buttons["voice.precall.save"].exists)
-        XCTAssertTrue(app.buttons[
-            "voice.precall.model.gemini-3.1-flash-live-preview"
-        ].exists)
-        XCTAssertTrue(app.buttons["voice.precall.voice.Aoede"].exists)
-        XCTAssertTrue(app.staticTexts["voice.precall.preview.status"].exists)
+        XCTAssertFalse(app.buttons["voice.precall.settings.open"].exists,
+                       "the composer must not show a duplicate voice-settings entry")
+        XCTAssertFalse(app.scrollViews["voice.precall.settings.scroll"].exists)
         XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
-                       "opening preview settings must not start a call")
-
-        app.buttons["voice.precall.cancel"].tap()
-        XCTAssertTrue(call.waitForExistence(timeout: 3))
-        XCTAssertTrue(call.isHittable,
-                      "Cancel must preserve the primary live-call entry")
+                       "an idle composer must not have an active call")
     }
 
     func testAccessibilityDynamicTypeKeepsVoiceEntryAndSettingsUsableWithoutAudio() {
@@ -114,28 +101,13 @@ final class AssistantParityV2UITests: XCTestCase {
             assistantTab.tap()
         }
 
-        let settings = app.buttons["voice.precall.settings.open"]
         XCTAssertTrue(call.waitForExistence(timeout: 8))
-        XCTAssertTrue(settings.waitForExistence(timeout: 3))
         XCTAssertTrue(waitUntilHittable(call, timeout: 12),
                       "the primary call entry must remain usable at accessibility Dynamic Type")
-        XCTAssertTrue(waitUntilHittable(settings, timeout: 4),
-                      "pre-call settings must remain usable at accessibility Dynamic Type")
-
-        settings.tap()
-        let preCallScroll = app.scrollViews["voice.precall.settings.scroll"]
-        XCTAssertTrue(preCallScroll.waitForExistence(timeout: 4))
-        XCTAssertTrue(app.buttons["voice.precall.cancel"].isHittable)
-        XCTAssertTrue(app.buttons["voice.precall.save"].isHittable)
-        let footer = app.staticTexts["voice.precall.footer"]
-        XCTAssertTrue(footer.waitForExistence(timeout: 3))
-        for _ in 0..<24 where !footer.isHittable {
-            preCallScroll.swipeUp(velocity: .fast)
-        }
-        XCTAssertTrue(footer.isHittable,
-                      "the semantic pre-call footer must wrap and remain reachable")
+        XCTAssertFalse(app.buttons["voice.precall.settings.open"].exists,
+                       "the composer must not show a duplicate voice-settings entry at any Dynamic Type")
         XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
-                       "pre-call settings must not start microphone or call audio")
+                       "an idle composer must not have an active call")
 
         app.terminate()
         app = XCUIApplication()

@@ -14577,12 +14577,16 @@ private struct AgentComposerAutocompleteItem: Identifiable {
 }
 
 struct AlmaLiveVoiceComposerEntryVisibility: Equatable {
+    /// Owner decision 2026-08-11: voice settings live only inside the voice
+    /// console (its in-call settings sheet). The chat composer never shows a
+    /// second voice-settings entry, regardless of the preview-catalog flag.
     let showsPreCallSettings: Bool
     let showsLiveCall: Bool
 
     static func resolve(previewCatalogEnabled: Bool) -> Self {
-        .init(
-            showsPreCallSettings: previewCatalogEnabled,
+        _ = previewCatalogEnabled
+        return .init(
+            showsPreCallSettings: false,
             showsLiveCall: true)
     }
 }
@@ -14601,7 +14605,6 @@ struct AgentComposerView: View {
     @State private var showScanner = false
     @State private var showContextWindow = false
     @State private var showPermissionModes = false
-    @State private var showPreCallVoiceSettings = false
     @FocusState private var focused: Bool
 
     private static let supportedCommands = ["status", "help", "ping", "cancel", "balance"]
@@ -14609,7 +14612,6 @@ struct AgentComposerView: View {
     private var hasComposerPresentation: Bool {
         showAttachmentChoices || showPhotoPicker || showDocumentPicker
             || showCamera || showScanner || showContextWindow || showPermissionModes
-            || showPreCallVoiceSettings
     }
 
     private var voiceEntryVisibility: AlmaLiveVoiceComposerEntryVisibility {
@@ -14774,9 +14776,6 @@ struct AgentComposerView: View {
         .sheet(isPresented: $showScanner) {
             AgentDocumentScanner { images in images.forEach(vm.attachImage) }
                 .ignoresSafeArea()
-        }
-        .sheet(isPresented: $showPreCallVoiceSettings) {
-            AlmaLiveVoicePreCallSettingsSheet()
         }
         .onChange(of: hasComposerPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-composer-presentation")
@@ -15110,9 +15109,6 @@ struct AgentComposerView: View {
 
                 if compactComposer {
                     dictationButton(pal)
-                    if voiceEntryVisibility.showsPreCallSettings {
-                        preCallVoiceSettingsButton(pal)
-                    }
                     if voiceEntryVisibility.showsLiveCall { voiceButton(pal) }
                 }
             }
@@ -15124,9 +15120,6 @@ struct AgentComposerView: View {
                     contextWindowButton(pal)
                     Spacer(minLength: 2)
                     dictationButton(pal)
-                    if voiceEntryVisibility.showsPreCallSettings {
-                        preCallVoiceSettingsButton(pal)
-                    }
                     if voiceEntryVisibility.showsLiveCall { voiceButton(pal) }
                     if showSendControl { sendButton() }
                 }
@@ -15224,22 +15217,6 @@ struct AgentComposerView: View {
         }
         .accessibilityLabel("ভয়েস কথোপকথন")
         .accessibilityIdentifier("voice.live-call.start")
-    }
-
-    @ViewBuilder private func preCallVoiceSettingsButton(_ pal: AgentPalette) -> some View {
-        Button {
-            AlmaAgentHaptics.light()
-            showPreCallVoiceSettings = true
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(pal.mutedHi)
-                .frame(width: 34, height: 34)
-                .almaAgentHitTarget()
-        }
-        .accessibilityLabel("কলের আগে লাইভ মডেল ও কণ্ঠ বেছে নিন")
-        .accessibilityHint("কোনো কল বা microphone শুরু না করে settings খুলবে")
-        .accessibilityIdentifier("voice.precall.settings.open")
     }
 
     @ViewBuilder private func sendButton() -> some View {
