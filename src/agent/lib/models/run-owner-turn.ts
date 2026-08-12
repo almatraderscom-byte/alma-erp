@@ -63,6 +63,7 @@ import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
   persistWorkStepsSnapshot,
+  projectRuntimeWorkSteps,
   projectWorkSteps,
   workStepsSignature,
 } from '@/agent/lib/work-steps'
@@ -607,6 +608,11 @@ async function* runAlternateProviderTurn(
   let lastWorkStepsSignature = ''
   let workStepsBlocker: import('@/agent/lib/work-steps').WorkStepsBlocker | null = null
   let workStepsTrackerId: string | null = null
+  // Runtime (unplanned-turn) tracker state — see projectRuntimeWorkSteps.
+  let runtimeWorkRevision = 0
+  let runtimeWorkEmitted = false
+  let runtimeVerificationSeen = false
+  const runtimeWorkGoal = (lastUserText || 'চলমান কাজ').slice(0, 200)
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
@@ -2650,6 +2656,7 @@ async function* runAlternateProviderTurn(
           }
           if (violations.length > 0) {
             verifyRetries++
+            runtimeVerificationSeen = true
             yield {
               type: 'verification_retry',
               attempt: verifyRetries,
@@ -3365,6 +3372,30 @@ async function* runAlternateProviderTurn(
               yield snapshot
             }
           }
+        } else if (!trackerPlan && turnId && toolRecords.length > 0) {
+          // UNPLANNED work (owner live-test gap 2026-08-12): the head served a
+          // complex request directly, without staging a plan. Project honest
+          // macro phases from real evidence — tool rounds actually ran. A
+          // trivial tool-free answer never reaches this branch.
+          runtimeWorkRevision += 1
+          const snapshot = projectRuntimeWorkSteps({
+            turnId,
+            conversationId,
+            goal: runtimeWorkGoal,
+            revision: runtimeWorkRevision,
+            phase: 'working',
+            completedToolRounds: iteration + 1,
+            verificationHappened: runtimeVerificationSeen,
+            blockedBy: workStepsBlocker,
+          })
+          const trackerSig = workStepsSignature(snapshot)
+          if (trackerSig !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = trackerSig
+            runtimeWorkEmitted = true
+            yield snapshot
+          } else {
+            runtimeWorkRevision -= 1   // unchanged frame — keep revisions dense
+          }
         }
       } catch { /* a checklist must never break a turn */ }
 
@@ -3747,6 +3778,26 @@ async function* runAlternateProviderTurn(
           reasoningTokens: billedReasoningTokens,
         })
 
+    // Runtime tracker settlement (unplanned turns): the final snapshot is
+    // embedded in the message usage so cold history returns the exact settled
+    // tracker with this message; the live bound emission follows the save.
+    let runtimeFinalSnapshot: import('@/agent/lib/work-steps').WorkStepsSnapshot | null = null
+    if (runtimeWorkEmitted && !workStepsTrackerId && turnId) {
+      runtimeWorkRevision += 1
+      runtimeFinalSnapshot = projectRuntimeWorkSteps({
+        turnId,
+        conversationId,
+        goal: runtimeWorkGoal,
+        revision: runtimeWorkRevision,
+        // An emitted approval/question card leaves this task honestly waiting
+        // on the owner; otherwise the persisted answer completes it.
+        phase: 'settled',
+        completedToolRounds: apiRounds > 0 ? apiRounds : 1,
+        verificationHappened: runtimeVerificationSeen,
+        blockedBy: workStepsBlocker,
+      })
+    }
+
     // Ask-card breadcrumbs are appended after the text block — same reload-survival
     // pattern as the confirm-card breadcrumbs on the native Claude path (core.ts).
     const storedContent: Array<Record<string, unknown>> = [
@@ -3771,10 +3822,21 @@ async function* runAlternateProviderTurn(
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
-          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
+
+    // Runtime tracker: emit the bound settled snapshot. One revision above the
+    // usage-persisted copy — same payload at a higher revision, so replay/cold
+    // merges monotonically instead of tripping the same-revision guard.
+    if (runtimeFinalSnapshot) {
+      yield {
+        ...runtimeFinalSnapshot,
+        revision: runtimeFinalSnapshot.revision + 1,
+        originAssistantMessageId: savedMsg.id as string,
+      }
+    }
 
     // Build 103 Issue 3 — terminal tracker snapshot. Re-read the durable plan
     // rows, project the settled state (waiting/paused/completed — never a fake

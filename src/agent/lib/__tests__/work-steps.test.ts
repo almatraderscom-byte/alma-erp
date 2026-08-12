@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import agentEventSchema from '../../protocol/agent-event.schema.json'
 import {
   parseWorkStepsSnapshot,
+  projectRuntimeWorkSteps,
   projectWorkSteps,
   workStepsSignature,
   type TrackerPlanRow,
@@ -139,6 +140,43 @@ describe('work_steps_snapshot projector', () => {
     expect(parseWorkStepsSnapshot(null)).toBeNull()
     expect(parseWorkStepsSnapshot({ ...snapshot, version: 2 })).toBeNull()
     expect(parseWorkStepsSnapshot({ ...snapshot, steps: 'nope' })).toBeNull()
+  })
+
+  it('runtime projector: honest macro phases for unplanned turns, evidence only', () => {
+    const working = projectRuntimeWorkSteps({
+      turnId: 'turn-9', conversationId: 'conversation-1',
+      goal: 'Last 30 days order report', revision: 1, phase: 'working',
+      completedToolRounds: 2, verificationHappened: false, blockedBy: null, now: NOW,
+    })
+    expect(working.source).toBe('turn_runtime')
+    expect(working.trackerId).toBe('turn:turn-9')
+    expect(working.status).toBe('running')
+    expect(working.steps.map((s) => s.status)).toEqual(['completed', 'running'])
+    // No verify step unless the honesty guard actually retried; no answer
+    // step before delivery actually starts — nothing speculative.
+    expect(working.steps.some((s) => s.title.includes('যাচাই'))).toBe(false)
+    const validate = new Ajv2020({ strict: false, allErrors: true }).compile(agentEventSchema)
+    expect(validate(working), JSON.stringify(validate.errors)).toBe(true)
+
+    const settled = projectRuntimeWorkSteps({
+      turnId: 'turn-9', conversationId: 'conversation-1',
+      goal: 'Last 30 days order report', revision: 3, phase: 'settled',
+      completedToolRounds: 4, verificationHappened: true, blockedBy: null, now: NOW,
+    })
+    expect(settled.status).toBe('completed')
+    expect(settled.steps.map((s) => s.title.slice(0, 4))).toEqual(
+      ['অনুর', 'তথ্য', 'উত্ত', 'উত্ত'])
+    expect(settled.steps.every((s) => s.status === 'completed')).toBe(true)
+    expect(validate(settled), JSON.stringify(validate.errors)).toBe(true)
+
+    const waiting = projectRuntimeWorkSteps({
+      turnId: 'turn-9', conversationId: 'conversation-1',
+      goal: 'ছবি বানাও', revision: 2, phase: 'working',
+      completedToolRounds: 1, verificationHappened: false,
+      blockedBy: { kind: 'approval', refId: 'action-1' }, now: NOW,
+    })
+    expect(waiting.status).toBe('waiting_owner')
+    expect(waiting.steps.find((s) => s.status === 'waiting_owner')).toBeTruthy()
   })
 
   it('terminal snapshots dominate: cancelled/failed plans project terminally', () => {
