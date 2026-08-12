@@ -165,6 +165,65 @@ import {
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 import { modelProviderToCostProvider } from '@/agent/lib/cost-provider'
 
+/** The shape of a find_tool result as this loop reads (and edits) it. */
+interface FindToolResultLike {
+  data?: { matches?: Array<{ name?: unknown }>; note?: unknown }
+}
+
+/**
+ * A find_tool result must never advertise a tool this turn cannot call.
+ *
+ * Deadlock caught live 2026-08-12 (conversation 8b7b482e, unattended plan
+ * driver): find_tool matched tools the pinned skill's allowlist then refused,
+ * but only a console.info recorded the refusal — the MODEL still saw the
+ * matches, called them, and the membership gate bounced it back to "আগে
+ * find_tool দিয়ে খুঁজে নাও". find_tool ok → membership_gate/tool_not_shipped,
+ * repeating every plan-driver tick, burning tokens with the step never
+ * completing.
+ *
+ * So the filter now EDITS the result in place before it is serialized into the
+ * transcript: refused matches are removed and a note says why, giving the model
+ * an honest exit (use a permitted tool, or tell Boss the tool is not allowed at
+ * this step). Returns the names that may actually be granted this turn.
+ * Exported for tests.
+ */
+export function filterFindToolResultForTurn(
+  res: FindToolResultLike | undefined,
+  opts: {
+    /** Names already shipped/loaded this turn — neither granted again nor refused. */
+    already: Set<string>
+    turnDenylist: Set<string>
+    /** The pinned skill's allowlist (null = does not narrow). */
+    turnAllowlist: Set<string> | null
+  },
+): { permitted: string[]; refused: string[] } {
+  const matchNames = (res?.data?.matches ?? [])
+    .map((m) => String(m?.name ?? ''))
+    .filter(Boolean)
+  if (matchNames.length === 0) return { permitted: [], refused: [] }
+  // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
+  // the skill allowlist was list-time only: a read-only audit skill could
+  // find_tool its way to a write tool, and "an absent tool is a guarantee"
+  // was untrue exactly where it was quoted most.
+  const permitted = matchNames.filter((n) => {
+    if (opts.already.has(n)) return false
+    if (opts.turnDenylist.has(n)) return false
+    if (opts.turnAllowlist && !opts.turnAllowlist.has(n)) return false
+    return true
+  })
+  const refused = matchNames.filter((n) => !opts.already.has(n) && !permitted.includes(n))
+  if (refused.length > 0 && res?.data && Array.isArray(res.data.matches)) {
+    const refusedSet = new Set(refused)
+    res.data.matches = res.data.matches.filter((m) => !refusedSet.has(String(m?.name ?? '')))
+    res.data.note =
+      `${typeof res.data.note === 'string' ? res.data.note : ''}` +
+      `\n\n[হারনেস] এই টার্নে অনুমোদিত নয় বলে বাদ: ${refused.join(', ')}। ` +
+      'এগুলো call কোরো না — বিকল্প: অনুমোদিত tool ব্যবহার করো, ' +
+      'নয়তো Boss-কে বলো এই ধাপে টুলটা অনুমোদিত নেই।'
+  }
+  return { permitted, refused }
+}
+
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
   modelId?: string | null
@@ -3206,6 +3265,53 @@ async function* runAlternateProviderTurn(
         })
       }
 
+      // Harness Gap 5 — after a find_tool round, expose the matched tools'
+      // schemas for the remaining rounds of THIS turn (any head model).
+      // Execution authority unchanged: loaded tools still pass every guard.
+      //
+      // This block runs BEFORE the exchange is appended to `messages`, because
+      // filterFindToolResultForTurn must edit the very find_tool result the
+      // model reads — a refused match the model can still see is the find_tool
+      // → membership_gate deadlock (see the function's doc, conv 8b7b482e).
+      for (const call of calls) {
+        if (call.name !== FIND_TOOL_NAME) continue
+        const res = toolResults.find((r) => r.id === call.id)?.result as
+          | FindToolResultLike
+          | undefined
+        const already = new Set<string>([
+          ...neutralTools.map((t) => t.name),
+          ...dynamicNeutralTools.map((t) => t.name),
+        ])
+        const { permitted, refused } = filterFindToolResultForTurn(res, {
+          already,
+          turnDenylist,
+          turnAllowlist,
+        })
+        if (permitted.length === 0 && refused.length === 0) continue
+        if (refused.length > 0) {
+          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
+        }
+        for (const tool of await resolveToolsByName(permitted)) {
+          if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicNeutralTools.push({
+            name: tool.name,
+            description: tool.description,
+            schema: tool.input_schema as object,
+          })
+        }
+        // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
+        // only, so dynamic loads could push a capped head (xAI: 200) back over
+        // the limit and 400 the very next round. The static budget already
+        // reserves MAX_DYNAMIC_TOOLS_PER_TURN slots; this is the belt-and-braces
+        // re-check — drop the OLDEST dynamic entries if we somehow exceed.
+        if (Number.isFinite(toolCap)) {
+          while (neutralTools.length + dynamicNeutralTools.length > toolCap && dynamicNeutralTools.length > 0) {
+            const dropped = dynamicNeutralTools.shift()
+            console.warn(`[run-owner-turn] dynamic tool over provider cap — dropped ${dropped?.name}`)
+          }
+        }
+      }
+
       messages = appendToolExchange(messages, calls, toolResults)
 
       // ── Progress updates between phases (owner ask 2026-07-26) ─────────────
@@ -3267,57 +3373,6 @@ async function* runAlternateProviderTurn(
               + 'তারপর ফলাফল। "ঠিক আছে/অবশ্যই" দিয়ে শুরু কোরো না। পরের ধাপগুলোতে টুল চালানোর আগে ওই এক লাইন আগে লিখবে।',
           },
         ]
-      }
-
-      // Harness Gap 5 — after a find_tool round, expose the matched tools'
-      // schemas for the remaining rounds of THIS turn (any head model).
-      // Execution authority unchanged: loaded tools still pass every guard.
-      for (const call of calls) {
-        if (call.name !== FIND_TOOL_NAME) continue
-        const res = toolResults.find((r) => r.id === call.id)?.result as
-          | { data?: { matches?: Array<{ name?: unknown }> } }
-          | undefined
-        const matchNames = (res?.data?.matches ?? [])
-          .map((m) => String(m?.name ?? ''))
-          .filter(Boolean)
-        if (matchNames.length === 0) continue
-        const already = new Set<string>([
-          ...neutralTools.map((t) => t.name),
-          ...dynamicNeutralTools.map((t) => t.name),
-        ])
-        // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
-        // the skill allowlist was list-time only: a read-only audit skill could
-        // find_tool its way to a write tool, and "an absent tool is a guarantee"
-        // was untrue exactly where it was quoted most.
-        const permitted = matchNames.filter((n) => {
-          if (already.has(n)) return false
-          if (turnDenylist.has(n)) return false
-          if (turnAllowlist && !turnAllowlist.has(n)) return false
-          return true
-        })
-        const refused = matchNames.filter((n) => !already.has(n) && !permitted.includes(n))
-        if (refused.length > 0) {
-          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
-        }
-        for (const tool of await resolveToolsByName(permitted)) {
-          if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
-          dynamicNeutralTools.push({
-            name: tool.name,
-            description: tool.description,
-            schema: tool.input_schema as object,
-          })
-        }
-        // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
-        // only, so dynamic loads could push a capped head (xAI: 200) back over
-        // the limit and 400 the very next round. The static budget already
-        // reserves MAX_DYNAMIC_TOOLS_PER_TURN slots; this is the belt-and-braces
-        // re-check — drop the OLDEST dynamic entries if we somehow exceed.
-        if (Number.isFinite(toolCap)) {
-          while (neutralTools.length + dynamicNeutralTools.length > toolCap && dynamicNeutralTools.length > 0) {
-            const dropped = dynamicNeutralTools.shift()
-            console.warn(`[run-owner-turn] dynamic tool over provider cap — dropped ${dropped?.name}`)
-          }
-        }
       }
 
       // Harness Gap 1 — one compact recovery instruction after a round with

@@ -211,6 +211,7 @@ describe('resolveHeadModelId — task-level head pin', () => {
 describe('head-pin storage rules', () => {
   beforeEach(() => {
     delete process.env.HEAD_TASK_PIN
+    pinRow = null
     updates.length = 0
     wheres.length = 0
     toolEvents.length = 0
@@ -227,6 +228,33 @@ describe('head-pin storage rules', () => {
     expect(toolEvents[0].toolName).toBe('__head_pin__')
     expect(toolEvents[0].errorClass).toBe('pin_write_no_match')
     expect(toolEvents[0].conversationId).toBe(CONV)
+  })
+
+  // 2026-08-12 false alarm: a zero-match write whose ONLY cause is "the pin is
+  // already exactly this decision and still live" is branch 2 (would-it-change)
+  // working as designed — it fires on every turn of a continuing job and must
+  // NOT be reported as pin_write_no_match. That noise polluted a live diagnosis.
+  it('stays quiet on a zero-match write when the pin is ALREADY this decision and live', async () => {
+    updateCount = 0
+    pinRow = livePin('gpt-5.6-luna', 'heavy')
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'task_pin' })
+    expect(toolEvents).toHaveLength(0)
+  })
+
+  it('still reports a zero-match write when the stored pin DIFFERS (a genuine failure)', async () => {
+    updateCount = 0
+    pinRow = livePin('or-deepseek-v4-flash', 'light')
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'triage' })
+    expect(toolEvents).toHaveLength(1)
+    expect(toolEvents[0].errorClass).toBe('pin_write_no_match')
+  })
+
+  it('still reports a zero-match write when the identical pin has EXPIRED', async () => {
+    updateCount = 0
+    pinRow = expiredPin('gpt-5.6-luna', 'heavy')
+    await rememberHeadPin(CONV, { modelId: 'gpt-5.6-luna', tier: 'heavy', via: 'triage' })
+    expect(toolEvents).toHaveLength(1)
+    expect(toolEvents[0].errorClass).toBe('pin_write_no_match')
   })
 
   it('stays quiet when the write lands', async () => {
