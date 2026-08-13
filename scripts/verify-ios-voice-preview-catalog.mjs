@@ -437,7 +437,7 @@ async function readVerifiedFile(baseRoot, relativePath, label, errors) {
   }
 }
 
-function validateManifest(manifest, release, errors) {
+function validateManifest(manifest, errors) {
   if (!hasExactKeys(manifest, MANIFEST_KEYS, 'manifest', errors)) return new Map()
 
   if (manifest.schemaVersion !== 1) errors.push('schemaVersion must be the number 1')
@@ -534,17 +534,6 @@ function validateManifest(manifest, release, errors) {
   if (manifest.status === RELEASE_READY_STATUS && approvedCount !== EXPECTED_PAIRS.length) {
     errors.push(`${RELEASE_READY_STATUS} requires exactly 12/12 entries with approved=true; got ${approvedCount}/12`)
   }
-  // Owner decision 2026-08-13: preview samples are an IN-APP feature — the
-  // owner auditions and switches voices from the settings sheet whenever he
-  // likes, exactly like the Claude/ChatGPT apps. Release therefore verifies
-  // TECHNICAL integrity only (12/12 pairs present, hashes/sizes exact, no
-  // regeneration); the audible approvals are informational, never a release
-  // blocker. The counts still print so drift stays visible.
-  if (release) {
-    console.log(
-      `release note: preview approvals ${approvedCount}/12 (in-app owner control; not release-blocking)`,
-    )
-  }
   return entriesByKey
 }
 
@@ -639,7 +628,7 @@ async function main() {
       }
     }
 
-    if (manifest !== undefined) entriesByKey = validateManifest(manifest, options.release, errors)
+    if (manifest !== undefined) entriesByKey = validateManifest(manifest, errors)
     const assets = await Promise.all([
       inspectAssetDirectory(options.repositoryRoot, PUBLIC_RELATIVE_ROOT, 'public', errors),
       inspectAssetDirectory(options.repositoryRoot, BUNDLE_RELATIVE_ROOT, 'bundle', errors),
@@ -718,6 +707,18 @@ async function main() {
     `Voice preview catalog PASS: 12/12 pairs, 12/12 generated+verified, `
       + `${approved}/12 owner-approved, release=${options.release}`,
   )
+  // Owner decision 2026-08-13: preview samples are an IN-APP feature — the
+  // owner auditions and switches voices from the settings sheet whenever he
+  // likes, exactly like the Claude/ChatGPT apps. Release therefore verifies
+  // TECHNICAL integrity only (12/12 pairs present, hashes/sizes exact, no
+  // regeneration); the audible approvals are informational, never a release
+  // blocker. The note prints only after verification succeeds so failures
+  // keep stderr-only output; the count keeps drift visible.
+  if (options.release) {
+    console.log(
+      `release note: preview approvals ${approved}/12 (in-app owner control; not release-blocking)`,
+    )
+  }
 }
 
 await main()

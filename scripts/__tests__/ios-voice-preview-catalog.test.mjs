@@ -264,17 +264,22 @@ test('technical verification passes all exact copies with 0/12 owner approvals',
   for (const path of probedPaths) assert.equal(dirname(path), fixture.bundleRoot)
 })
 
-test('release verification fails closed until every entry has exact boolean approval', () => {
-  const fixture = createFixture()
-  assertFailure(
-    invoke(fixture, ['--release']),
-    /release requires status=owner_approved_release_ready and 12\/12 exact boolean approvals/,
+test('release passes on technical integrity with any approval count and prints the release note', () => {
+  const pendingFixture = createFixture({ realMedia: true })
+  commitCatalogFixture(pendingFixture)
+  const pendingResult = invoke(pendingFixture, ['--release'], { afinfoMode: 'failure' })
+  assertPass(pendingResult, /0\/12 owner-approved, release=true/)
+  assert.match(
+    pendingResult.stdout,
+    /release note: preview approvals 0\/12 \(in-app owner control; not release-blocking\)/,
   )
 
   const approvedFixture = createCommittedReleaseFixture()
-  assertPass(
-    invoke(approvedFixture, ['--release'], { afinfoMode: 'failure' }),
-    /12\/12 owner-approved, release=true/,
+  const approvedResult = invoke(approvedFixture, ['--release'], { afinfoMode: 'failure' })
+  assertPass(approvedResult, /12\/12 owner-approved, release=true/)
+  assert.match(
+    approvedResult.stdout,
+    /release note: preview approvals 12\/12 \(in-app owner control; not release-blocking\)/,
   )
   const product = createProductCopy(approvedFixture)
   assertPass(
@@ -285,6 +290,7 @@ test('release verification fails closed until every entry has exact boolean appr
     ),
     /12\/12 owner-approved, release=true/,
   )
+  assert.throws(() => readFileSync(pendingFixture.afinfoLog), { code: 'ENOENT' })
   assert.throws(() => readFileSync(approvedFixture.afinfoLog), { code: 'ENOENT' })
 })
 
@@ -650,7 +656,7 @@ test('rejects non-boolean approval values in technical and release modes', async
       assertFailure(invoke(fixture), /approved must be a boolean/)
       const releaseResult = invoke(fixture, ['--release'])
       assertFailure(releaseResult, /approved must be a boolean/)
-      assert.match(releaseResult.stderr, /release requires status=owner_approved_release_ready and 12\/12 exact boolean approvals/)
+      assert.doesNotMatch(releaseResult.stdout, /release note: preview approvals/)
     })
   }
 })
