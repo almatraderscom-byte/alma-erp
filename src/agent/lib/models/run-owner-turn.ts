@@ -60,6 +60,12 @@ import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/vi
 import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
+import {
+  loadPlanForWorkTracker,
+  projectRuntimeWorkSteps,
+  syncPlanTracker,
+  workStepsSignature,
+} from '@/agent/lib/work-steps'
 import { buildCardStateNote, readPendingCards } from '@/agent/lib/card-state'
 import { FIND_TOOL_NAME, resolveToolsByName, MAX_DYNAMIC_TOOLS_PER_TURN } from '@/agent/tools/find-tool'
 import { filterToolsForOwnerIntent, validateToolCallAgainstOwnerIntent } from '@/agent/lib/owner-intent-contract'
@@ -158,6 +164,65 @@ import {
 } from '@/agent/lib/models/neutral'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 import { modelProviderToCostProvider } from '@/agent/lib/cost-provider'
+
+/** The shape of a find_tool result as this loop reads (and edits) it. */
+interface FindToolResultLike {
+  data?: { matches?: Array<{ name?: unknown }>; note?: unknown }
+}
+
+/**
+ * A find_tool result must never advertise a tool this turn cannot call.
+ *
+ * Deadlock caught live 2026-08-12 (conversation 8b7b482e, unattended plan
+ * driver): find_tool matched tools the pinned skill's allowlist then refused,
+ * but only a console.info recorded the refusal — the MODEL still saw the
+ * matches, called them, and the membership gate bounced it back to "আগে
+ * find_tool দিয়ে খুঁজে নাও". find_tool ok → membership_gate/tool_not_shipped,
+ * repeating every plan-driver tick, burning tokens with the step never
+ * completing.
+ *
+ * So the filter now EDITS the result in place before it is serialized into the
+ * transcript: refused matches are removed and a note says why, giving the model
+ * an honest exit (use a permitted tool, or tell Boss the tool is not allowed at
+ * this step). Returns the names that may actually be granted this turn.
+ * Exported for tests.
+ */
+export function filterFindToolResultForTurn(
+  res: FindToolResultLike | undefined,
+  opts: {
+    /** Names already shipped/loaded this turn — neither granted again nor refused. */
+    already: Set<string>
+    turnDenylist: Set<string>
+    /** The pinned skill's allowlist (null = does not narrow). */
+    turnAllowlist: Set<string> | null
+  },
+): { permitted: string[]; refused: string[] } {
+  const matchNames = (res?.data?.matches ?? [])
+    .map((m) => String(m?.name ?? ''))
+    .filter(Boolean)
+  if (matchNames.length === 0) return { permitted: [], refused: [] }
+  // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
+  // the skill allowlist was list-time only: a read-only audit skill could
+  // find_tool its way to a write tool, and "an absent tool is a guarantee"
+  // was untrue exactly where it was quoted most.
+  const permitted = matchNames.filter((n) => {
+    if (opts.already.has(n)) return false
+    if (opts.turnDenylist.has(n)) return false
+    if (opts.turnAllowlist && !opts.turnAllowlist.has(n)) return false
+    return true
+  })
+  const refused = matchNames.filter((n) => !opts.already.has(n) && !permitted.includes(n))
+  if (refused.length > 0 && res?.data && Array.isArray(res.data.matches)) {
+    const refusedSet = new Set(refused)
+    res.data.matches = res.data.matches.filter((m) => !refusedSet.has(String(m?.name ?? '')))
+    res.data.note =
+      `${typeof res.data.note === 'string' ? res.data.note : ''}` +
+      `\n\n[হারনেস] এই টার্নে অনুমোদিত নয় বলে বাদ: ${refused.join(', ')}। ` +
+      'এগুলো call কোরো না — বিকল্প: অনুমোদিত tool ব্যবহার করো, ' +
+      'নয়তো Boss-কে বলো এই ধাপে টুলটা অনুমোদিত নেই।'
+  }
+  return { permitted, refused }
+}
 
 export interface RunOwnerTurnOptions extends RunAgentTurnOptions {
   /** Registry model id from AgentConversation.modelId */
@@ -594,6 +659,18 @@ async function* runAlternateProviderTurn(
   const visibleProgress = createVisibleProgressContract()
   let spokeSinceProgress = false
   let lastPlanSignature = ''
+  // Build 103 Issue 3 — work-step tracker state for this turn. The tracker
+  // attaches by EXACT linkage only (plan created this turn, already-chained
+  // turn, or explicit continuation); an old conversation plan can never grab
+  // a new request. Blockers are recorded when a card is actually emitted.
+  let lastWorkStepsSignature = ''
+  let workStepsBlocker: import('@/agent/lib/work-steps').WorkStepsBlocker | null = null
+  let workStepsTrackerId: string | null = null
+  // Runtime (unplanned-turn) tracker state — see projectRuntimeWorkSteps.
+  let runtimeWorkRevision = 0
+  let runtimeWorkEmitted = false
+  let runtimeVerificationSeen = false
+  const runtimeWorkGoal = (lastUserText || 'চলমান কাজ').slice(0, 200)
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
@@ -978,19 +1055,10 @@ async function* runAlternateProviderTurn(
   } else if (activeSkills.heldBack) {
     // SK-8 — the gate refused it. Boss must be told, because from his side a
     // withheld skill and a broken one look identical, and one of them is
-    // waiting on a decision only he can make.
-    yield {
-      type: 'skill_held_back',
-      skill: activeSkills.heldBack.skill,
-      state: activeSkills.heldBack.state,
-      reason: activeSkills.heldBack.reason,
-    }
-  }
-  // SK-8 — a skill matched and the approval gate refused it. Proven necessary on
-  // the first live revoke test (2026-07-27): the skill correctly did not run and
-  // the head said nothing, because "explain yourself" lived only in the prompt.
-  // On the wire it is drawn whether or not the model cooperates.
-  if (activeSkills.heldBack) {
+    // waiting on a decision only he can make. Proven necessary on the first
+    // live revoke test (2026-07-27). Build 103 fix: this used to be emitted a
+    // SECOND time by an unconditional duplicate block below — one source, one
+    // event, and reducers stay idempotent.
     yield {
       type: 'skill_held_back',
       skill: activeSkills.heldBack.skill,
@@ -2646,6 +2714,7 @@ async function* runAlternateProviderTurn(
           }
           if (violations.length > 0) {
             verifyRetries++
+            runtimeVerificationSeen = true
             yield {
               type: 'verification_retry',
               attempt: verifyRetries,
@@ -3127,6 +3196,9 @@ async function* runAlternateProviderTurn(
             }
             if (row?.status === 'pending') {
               confirmCardsEmitted++
+              // The tracker's waiting-owner blocker: an actually-emitted card
+              // is durable evidence; the step deep-links to this exact card.
+              workStepsBlocker = { kind: 'approval', refId: d.pendingActionId }
               yield {
                 type: 'confirm_card',
                 pendingActionId: d.pendingActionId,
@@ -3137,11 +3209,13 @@ async function* runAlternateProviderTurn(
                 isFinance: d.isFinance === true,
                 isBatch: d.isBatch === true,
                 imageModelSelection: d.imageModelSelection,
+                imageRenderSelection: d.imageRenderSelection,
               }
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
             if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
+              workStepsBlocker = { kind: 'question', refId: d.askCardId }
               yield {
                 type: 'ask_card',
                 askCardId: d.askCardId,
@@ -3189,6 +3263,53 @@ async function* runAlternateProviderTurn(
             ? { ...annotated, deadPath: deadPathNote }
             : annotated,
         })
+      }
+
+      // Harness Gap 5 — after a find_tool round, expose the matched tools'
+      // schemas for the remaining rounds of THIS turn (any head model).
+      // Execution authority unchanged: loaded tools still pass every guard.
+      //
+      // This block runs BEFORE the exchange is appended to `messages`, because
+      // filterFindToolResultForTurn must edit the very find_tool result the
+      // model reads — a refused match the model can still see is the find_tool
+      // → membership_gate deadlock (see the function's doc, conv 8b7b482e).
+      for (const call of calls) {
+        if (call.name !== FIND_TOOL_NAME) continue
+        const res = toolResults.find((r) => r.id === call.id)?.result as
+          | FindToolResultLike
+          | undefined
+        const already = new Set<string>([
+          ...neutralTools.map((t) => t.name),
+          ...dynamicNeutralTools.map((t) => t.name),
+        ])
+        const { permitted, refused } = filterFindToolResultForTurn(res, {
+          already,
+          turnDenylist,
+          turnAllowlist,
+        })
+        if (permitted.length === 0 && refused.length === 0) continue
+        if (refused.length > 0) {
+          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
+        }
+        for (const tool of await resolveToolsByName(permitted)) {
+          if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
+          dynamicNeutralTools.push({
+            name: tool.name,
+            description: tool.description,
+            schema: tool.input_schema as object,
+          })
+        }
+        // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
+        // only, so dynamic loads could push a capped head (xAI: 200) back over
+        // the limit and 400 the very next round. The static budget already
+        // reserves MAX_DYNAMIC_TOOLS_PER_TURN slots; this is the belt-and-braces
+        // re-check — drop the OLDEST dynamic entries if we somehow exceed.
+        if (Number.isFinite(toolCap)) {
+          while (neutralTools.length + dynamicNeutralTools.length > toolCap && dynamicNeutralTools.length > 0) {
+            const dropped = dynamicNeutralTools.shift()
+            console.warn(`[run-owner-turn] dynamic tool over provider cap — dropped ${dropped?.name}`)
+          }
+        }
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
@@ -3254,57 +3375,6 @@ async function* runAlternateProviderTurn(
         ]
       }
 
-      // Harness Gap 5 — after a find_tool round, expose the matched tools'
-      // schemas for the remaining rounds of THIS turn (any head model).
-      // Execution authority unchanged: loaded tools still pass every guard.
-      for (const call of calls) {
-        if (call.name !== FIND_TOOL_NAME) continue
-        const res = toolResults.find((r) => r.id === call.id)?.result as
-          | { data?: { matches?: Array<{ name?: unknown }> } }
-          | undefined
-        const matchNames = (res?.data?.matches ?? [])
-          .map((m) => String(m?.name ?? ''))
-          .filter(Boolean)
-        if (matchNames.length === 0) continue
-        const already = new Set<string>([
-          ...neutralTools.map((t) => t.name),
-          ...dynamicNeutralTools.map((t) => t.name),
-        ])
-        // A SEARCH MUST NOT WIDEN WHAT THIS TURN IS ALLOWED TO DO. Without this
-        // the skill allowlist was list-time only: a read-only audit skill could
-        // find_tool its way to a write tool, and "an absent tool is a guarantee"
-        // was untrue exactly where it was quoted most.
-        const permitted = matchNames.filter((n) => {
-          if (already.has(n)) return false
-          if (turnDenylist.has(n)) return false
-          if (turnAllowlist && !turnAllowlist.has(n)) return false
-          return true
-        })
-        const refused = matchNames.filter((n) => !already.has(n) && !permitted.includes(n))
-        if (refused.length > 0) {
-          console.info('[find-tool] refused outside this turn’s permissions', { conversationId, refused })
-        }
-        for (const tool of await resolveToolsByName(permitted)) {
-          if (dynamicNeutralTools.length >= MAX_DYNAMIC_TOOLS_PER_TURN) break
-          dynamicNeutralTools.push({
-            name: tool.name,
-            description: tool.description,
-            schema: tool.input_schema as object,
-          })
-        }
-        // Phase 4 (Bug B) — the provider cap was computed over the STATIC list
-        // only, so dynamic loads could push a capped head (xAI: 200) back over
-        // the limit and 400 the very next round. The static budget already
-        // reserves MAX_DYNAMIC_TOOLS_PER_TURN slots; this is the belt-and-braces
-        // re-check — drop the OLDEST dynamic entries if we somehow exceed.
-        if (Number.isFinite(toolCap)) {
-          while (neutralTools.length + dynamicNeutralTools.length > toolCap && dynamicNeutralTools.length > 0) {
-            const dropped = dynamicNeutralTools.shift()
-            console.warn(`[run-owner-turn] dynamic tool over provider cap — dropped ${dropped?.name}`)
-          }
-        }
-      }
-
       // Harness Gap 1 — one compact recovery instruction after a round with
       // failed tool calls, so the head reasons about the error instead of
       // repeating the identical call or apologising vaguely.
@@ -3314,11 +3384,16 @@ async function* runAlternateProviderTurn(
         .map((r) => ({ toolName: r.toolName, error: String(r.error ?? '') }))
       // The live checklist. Re-read after each tool round and emitted ONLY when a
       // step actually changed state — an identical checklist re-sent every round
-      // is how a live element turns into wallpaper.
+      // is how a live element turns into wallpaper. Build 103 Issue 3: the plan
+      // now loads by EXACT turn linkage (created this turn / chained / explicit
+      // continuation) — the newest conversation plan can no longer hijack an
+      // unrelated request, for plan_progress and the typed tracker alike.
       try {
-        const planRows = await loadLatestPlanProgress(conversationId)
-        const planProgress = planRows
-          ? buildPlanProgress(planRows.planId, planRows.goal, planRows.rows)
+        const trackerPlan = await loadPlanForWorkTracker(
+          conversationId, turnId, options.continuation === true)
+        if (trackerPlan) workStepsTrackerId = trackerPlan.id
+        const planProgress = trackerPlan
+          ? buildPlanProgress(trackerPlan.id, trackerPlan.goal, trackerPlan.steps)
           : null
         const sig = planProgressSignature(planProgress)
         if (planProgress && sig !== lastPlanSignature) {
@@ -3331,6 +3406,44 @@ async function* runAlternateProviderTurn(
             doneCount: planProgress.doneCount,
             total: planProgress.total,
             steps: planProgress.steps,
+          }
+        }
+        // Typed durable tracker snapshot — full state, monotonic revision,
+        // persisted before it is emitted so cold history can never be behind
+        // what the owner saw live.
+        if (trackerPlan && turnId) {
+          const persisted = await syncPlanTracker(trackerPlan.id, {
+            currentTurnId: turnId,
+            blockedBy: workStepsBlocker,
+            live: true,
+          })
+          if (persisted) {
+            lastWorkStepsSignature = workStepsSignature(persisted)
+            yield persisted
+          }
+        } else if (!trackerPlan && turnId && toolRecords.length > 0) {
+          // UNPLANNED work (owner live-test gap 2026-08-12): the head served a
+          // complex request directly, without staging a plan. Project honest
+          // macro phases from real evidence — tool rounds actually ran. A
+          // trivial tool-free answer never reaches this branch.
+          runtimeWorkRevision += 1
+          const snapshot = projectRuntimeWorkSteps({
+            turnId,
+            conversationId,
+            goal: runtimeWorkGoal,
+            revision: runtimeWorkRevision,
+            phase: 'working',
+            completedToolRounds: iteration + 1,
+            verificationHappened: runtimeVerificationSeen,
+            blockedBy: workStepsBlocker,
+          })
+          const trackerSig = workStepsSignature(snapshot)
+          if (trackerSig !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = trackerSig
+            runtimeWorkEmitted = true
+            yield snapshot
+          } else {
+            runtimeWorkRevision -= 1   // unchanged frame — keep revisions dense
           }
         }
       } catch { /* a checklist must never break a turn */ }
@@ -3714,6 +3827,26 @@ async function* runAlternateProviderTurn(
           reasoningTokens: billedReasoningTokens,
         })
 
+    // Runtime tracker settlement (unplanned turns): the final snapshot is
+    // embedded in the message usage so cold history returns the exact settled
+    // tracker with this message; the live bound emission follows the save.
+    let runtimeFinalSnapshot: import('@/agent/lib/work-steps').WorkStepsSnapshot | null = null
+    if (runtimeWorkEmitted && !workStepsTrackerId && turnId) {
+      runtimeWorkRevision += 1
+      runtimeFinalSnapshot = projectRuntimeWorkSteps({
+        turnId,
+        conversationId,
+        goal: runtimeWorkGoal,
+        revision: runtimeWorkRevision,
+        // An emitted approval/question card leaves this task honestly waiting
+        // on the owner; otherwise the persisted answer completes it.
+        phase: 'settled',
+        completedToolRounds: apiRounds > 0 ? apiRounds : 1,
+        verificationHappened: runtimeVerificationSeen,
+        blockedBy: workStepsBlocker,
+      })
+    }
+
     // Ask-card breadcrumbs are appended after the text block — same reload-survival
     // pattern as the confirm-card breadcrumbs on the native Claude path (core.ts).
     const storedContent: Array<Record<string, unknown>> = [
@@ -3738,10 +3871,45 @@ async function* runAlternateProviderTurn(
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
-          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
+
+    // Runtime tracker: emit the bound settled snapshot. One revision above the
+    // usage-persisted copy — same payload at a higher revision, so replay/cold
+    // merges monotonically instead of tripping the same-revision guard.
+    if (runtimeFinalSnapshot) {
+      yield {
+        ...runtimeFinalSnapshot,
+        revision: runtimeFinalSnapshot.revision + 1,
+        originAssistantMessageId: savedMsg.id as string,
+      }
+    }
+
+    // Build 103 Issue 3 — terminal tracker snapshot. Re-read the durable plan
+    // rows, project the settled state (waiting/paused/completed — never a fake
+    // 100%), and bind the canonical assistant message ID when this turn is the
+    // tracker's origin so cold history reparents the SAME block, never a twin.
+    if (workStepsTrackerId && turnId) {
+      try {
+        const finalPlan = await loadPlanForWorkTracker(conversationId, turnId, true)
+        if (finalPlan && finalPlan.id === workStepsTrackerId) {
+          const persisted = await syncPlanTracker(finalPlan.id, {
+            currentTurnId: turnId,
+            blockedBy: workStepsBlocker,
+            live: false,
+            bindAssistantMessageId: finalPlan.originTurnId === turnId
+              ? (savedMsg.id as string)
+              : null,
+          })
+          if (persisted) {
+            lastWorkStepsSignature = workStepsSignature(persisted)
+            yield persisted
+          }
+        }
+      } catch { /* the tracker must never break settlement */ }
+    }
 
     // Answer-Gate write path (owner decision 2026-07-08): a tool-free, card-free
     // answer from an EXPENSIVE head may be cacheable. All hard rules + a cheap

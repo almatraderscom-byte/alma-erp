@@ -1109,6 +1109,20 @@ async function processImageGen(job) {
     return
   }
 
+  // Build 103 Issue 2 — a v2 card carries the canonical approved config. This
+  // process re-derives the fingerprint and exact dimensions from its OWN
+  // audited tables before any paid provider call; a mismatch fails closed here
+  // instead of rendering something the owner did not approve.
+  if (payload.imageConfig !== undefined && payload.imageConfig !== null) {
+    const { verifyImageConfigPayload } = await import('./image/config-contract.mjs')
+    const configFailure = verifyImageConfigPayload(payload)
+    if (configFailure) {
+      await reportImageJobResult(pendingActionId, 'failed', undefined, configFailure)
+      console.error(`[worker] image ${pendingActionId} — config verification failed: ${configFailure}`)
+      return
+    }
+  }
+
   const {
     prompt: basePrompt,
     quality,

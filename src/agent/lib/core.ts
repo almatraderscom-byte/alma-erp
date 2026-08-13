@@ -141,7 +141,7 @@ export type AgentEvent =
   | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string; resultPreview?: string; screenshot?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
   | { type: 'subagent_end'; id: string; role: string; success: boolean; summary?: string; toolsUsed?: string[]; error?: string }
-  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean; imageModelSelection?: unknown }
+  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean; imageModelSelection?: unknown; imageRenderSelection?: unknown }
   // A tool filed a document as a conversation artifact — the UI drops a file
   // card into the reply flow and opens the artifacts panel on it.
   | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
@@ -195,6 +195,10 @@ export type AgentEvent =
       lastToolLabel: string | null
       text: string
     }
+  // Build 103 Issue 3 — full authoritative work-step tracker snapshot. Typed
+  // and durable; completion truth comes only from AgentPlan/AgentPlanStep
+  // rows, never prose/thinking/elapsed time. See work-steps.ts.
+  | ({ type: 'work_steps_snapshot' } & Omit<import('@/agent/lib/work-steps').WorkStepsSnapshot, 'type'>)
   // SK-8: the skill matched and the provenance gate refused it. Its own event,
   // emitted instead of `skill_pinned` and never alongside — the two are opposite
   // facts, and the chip must stay empty while the reason is still shown. Two
@@ -365,7 +369,7 @@ interface FileRefBlock {
 type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
-  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown }
+  | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | FileRefBlock
 
@@ -1102,7 +1106,7 @@ export async function* runAgentTurn(
   const toolRecords: ToolRecord[] = []
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
-  const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown }> = []
+  const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }> = []
   // Ask-user question cards emitted this turn — persisted as breadcrumbs (same
   // pattern as confirm cards) so the card survives the message poll / reload
   // instead of living only in the SSE stream.
@@ -2012,6 +2016,7 @@ export async function* runAgentTurn(
                 isFinance: d.isFinance === true,
                 isBatch: d.isBatch === true,
                 imageModelSelection: d.imageModelSelection,
+                imageRenderSelection: d.imageRenderSelection,
               }
               // Persist a breadcrumb so the card re-renders after a page reload
               // (the live SSE event alone is lost on refresh). Batch/finance edit
@@ -2025,6 +2030,9 @@ export async function* runAgentTurn(
                 ...(cardActionType ? { actionType: cardActionType } : {}),
                 ...(d.imageModelSelection && typeof d.imageModelSelection === 'object'
                   ? { imageModelSelection: d.imageModelSelection }
+                  : {}),
+                ...(d.imageRenderSelection && typeof d.imageRenderSelection === 'object'
+                  ? { imageRenderSelection: d.imageRenderSelection }
                   : {}),
               })
             }

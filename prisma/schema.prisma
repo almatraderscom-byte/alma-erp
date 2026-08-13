@@ -2586,16 +2586,16 @@ model AgentPendingAction {
   /// Immutable per-action image engine selection. Kept outside payload so an
   /// owner model change cannot be lost by a concurrent progress JSON update.
   imageModel     String?   @map("image_model")
-  /// v2 professional setup: the canonical pending render selection
-  /// (preset/aspect/tier/exact pixels/quality/count). The loose fields inside
-  /// payload are a backward-compatible mirror written in the same update.
-  imageConfig    Json?     @map("image_config")
-  /// Optimistic-concurrency revision for imageConfig. Every accepted edit
-  /// increments it; approval snapshots the revision it claimed.
-  imageConfigRevision Int  @default(0) @map("image_config_revision")
   /// Render-only USD estimate/range pinned with imageModel. Actual worker
   /// spend remains in result.costUsd after execution.
   imageQuote     Json?     @map("image_quote")
+  /// Build 103 Issue 2 — canonical v2 render selection (preset, aspect, exact
+  /// server-resolved dimensions, quality, variation count). Null = legacy v1
+  /// card; loose payload fields stay a backward-compatible mirror only.
+  imageConfig    Json?     @map("image_config")
+  /// Monotonic compare-and-set revision for imageConfig. Every accepted edit
+  /// increments it; approval snapshots the revision it claimed.
+  imageConfigRevision Int  @default(0) @map("image_config_revision")
   /// Short compare-and-set claim used while an image approval request creates
   /// its one progress turn. A stale claim is recoverable; workers never poll it.
   approvalClaimedAt DateTime? @map("approval_claimed_at")
@@ -5407,6 +5407,14 @@ model AgentPlan {
   costMilliTakaDay Int             @default(0) @map("cost_milli_taka_day")
   /// Asia/Dhaka calendar day (YYYY-MM-DD) the day-bucket above belongs to.
   costDay          String?         @map("cost_day")
+  /// Build 103 Issue 3 — exact tracker linkage: the turn that created this
+  /// plan and the settled assistant message that anchors its chat block.
+  originTurnId     String?         @map("origin_turn_id")
+  originAssistantMessageId String? @map("origin_assistant_message_id")
+  /// Durable full work_steps_snapshot (last emitted revision) so cold history
+  /// equals the settled live tracker exactly.
+  trackerSnapshot  Json?           @map("tracker_snapshot")
+  trackerRevision  Int             @default(0) @map("tracker_revision")
   steps            AgentPlanStep[]
 
   @@index([conversationId])

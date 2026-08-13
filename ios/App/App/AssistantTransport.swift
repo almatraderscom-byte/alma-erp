@@ -314,73 +314,409 @@ extension AgentImageModelSelectionWire: Decodable {
     }
 }
 
-/// v2 professional image setup (contractVersion 2). Rides beside the v1
-/// selection; a malformed or future payload degrades to nil and the card falls
-/// back to the v1 read-only picker rather than guessing.
-struct AgentImageRenderSelectionWire: Equatable, Sendable, Decodable {
-    struct Config: Equatable, Sendable, Decodable {
-        let presetId: String
-        let aspectRatio: String
-        let imageSize: String
-        let width: Int
-        let height: Int
-        let quality: String
-        let providerQuality: String
-        let variationCount: Int
-        let model: String
+// MARK: - Build 103 Issue 2 — v2 image render selection (preset/aspect/exact
+// dimensions/quality/count/model + revisioned quote). Decoded leniently so an
+// unknown future field can never drop the card; `trustedValue` is the gate.
+
+struct AgentImageRenderConfigWire: Decodable, Equatable, Sendable {
+    let version: Int
+    let presetId: String
+    let sizeMode: String
+    let aspectRatio: String
+    let imageSize: String
+    let width: Int
+    let height: Int
+    let quality: String
+    let providerQuality: String?
+    let variationCount: Int
+    let pipelineMode: String
+
+    private enum CodingKeys: String, CodingKey {
+        case version, presetId, sizeMode, aspectRatio, imageSize, width, height,
+             quality, providerQuality, variationCount, pipelineMode
     }
-    struct PresetOption: Equatable, Sendable, Decodable, Identifiable {
-        let id: String
-        let label: String
-        let aspectRatio: String
-        let enabled: Bool
-        let unavailableReason: String?
+
+    init(version: Int, presetId: String, sizeMode: String, aspectRatio: String,
+         imageSize: String, width: Int, height: Int, quality: String,
+         providerQuality: String?, variationCount: Int, pipelineMode: String) {
+        self.version = version
+        self.presetId = presetId
+        self.sizeMode = sizeMode
+        self.aspectRatio = aspectRatio
+        self.imageSize = imageSize
+        self.width = width
+        self.height = height
+        self.quality = quality
+        self.providerQuality = providerQuality
+        self.variationCount = variationCount
+        self.pipelineMode = pipelineMode
     }
-    struct SizeOption: Equatable, Sendable, Decodable, Identifiable {
-        let id: String
-        let enabled: Bool
-        let width: Int?
-        let height: Int?
-        let unavailableReason: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: (try? c?.decode(Int.self, forKey: .version)) ?? 0,
+            presetId: (try? c?.decode(String.self, forKey: .presetId)) ?? "",
+            sizeMode: (try? c?.decode(String.self, forKey: .sizeMode)) ?? "",
+            aspectRatio: (try? c?.decode(String.self, forKey: .aspectRatio)) ?? "",
+            imageSize: (try? c?.decode(String.self, forKey: .imageSize)) ?? "",
+            width: (try? c?.decode(Int.self, forKey: .width)) ?? 0,
+            height: (try? c?.decode(Int.self, forKey: .height)) ?? 0,
+            quality: (try? c?.decode(String.self, forKey: .quality)) ?? "",
+            providerQuality: (try? c?.decodeIfPresent(String.self, forKey: .providerQuality)) ?? nil,
+            variationCount: (try? c?.decode(Int.self, forKey: .variationCount)) ?? 0,
+            pipelineMode: (try? c?.decode(String.self, forKey: .pipelineMode)) ?? "")
     }
+
+    var hasValidContractShape: Bool {
+        version == 1 && sizeMode == "tier"
+            && !presetId.isEmpty && !aspectRatio.isEmpty
+            && ["1K", "2K", "4K"].contains(imageSize)
+            && width > 0 && height > 0
+            && (quality == "standard" || quality == "pro")
+            && (1...4).contains(variationCount)
+            && (pipelineMode == "preview" || pipelineMode == "production")
+    }
+}
+
+struct AgentImageRenderQuoteWire: Decodable, Equatable, Sendable {
+    let version: Int
+    let currency: String
+    let model: String
+    let provider: String
+    let presetId: String
+    let aspectRatio: String
+    let imageSize: String
+    let width: Int
+    let height: Int
+    let quality: String
+    let providerQuality: String?
+    let requestedImages: Int
+    let unitPriceUsd: Double
+    let minCostUsd: Double
+    let maxCostUsd: Double
+    let maxPaidGenerationsPerImage: Int
+    let configFingerprint: String
+    let pricingBasis: String
+    let pricingLastVerifiedAt: String
+    let pricedComponents: [String]
+    let excludes: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case version, currency, model, provider, presetId, aspectRatio, imageSize,
+             width, height, quality, providerQuality, requestedImages, unitPriceUsd,
+             minCostUsd, maxCostUsd, maxPaidGenerationsPerImage, configFingerprint,
+             pricingBasis, pricingLastVerifiedAt, pricedComponents, excludes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        version = (try? c?.decode(Int.self, forKey: .version)) ?? 0
+        currency = (try? c?.decode(String.self, forKey: .currency)) ?? ""
+        model = (try? c?.decode(String.self, forKey: .model)) ?? ""
+        provider = (try? c?.decode(String.self, forKey: .provider)) ?? ""
+        presetId = (try? c?.decode(String.self, forKey: .presetId)) ?? ""
+        aspectRatio = (try? c?.decode(String.self, forKey: .aspectRatio)) ?? ""
+        imageSize = (try? c?.decode(String.self, forKey: .imageSize)) ?? ""
+        width = (try? c?.decode(Int.self, forKey: .width)) ?? 0
+        height = (try? c?.decode(Int.self, forKey: .height)) ?? 0
+        quality = (try? c?.decode(String.self, forKey: .quality)) ?? ""
+        providerQuality = (try? c?.decodeIfPresent(String.self, forKey: .providerQuality)) ?? nil
+        requestedImages = (try? c?.decode(Int.self, forKey: .requestedImages)) ?? 0
+        unitPriceUsd = (try? c?.decode(Double.self, forKey: .unitPriceUsd)) ?? .nan
+        minCostUsd = (try? c?.decode(Double.self, forKey: .minCostUsd)) ?? .nan
+        maxCostUsd = (try? c?.decode(Double.self, forKey: .maxCostUsd)) ?? .nan
+        maxPaidGenerationsPerImage = (try? c?.decode(Int.self, forKey: .maxPaidGenerationsPerImage)) ?? 0
+        configFingerprint = (try? c?.decode(String.self, forKey: .configFingerprint)) ?? ""
+        pricingBasis = (try? c?.decode(String.self, forKey: .pricingBasis)) ?? ""
+        pricingLastVerifiedAt = (try? c?.decode(String.self, forKey: .pricingLastVerifiedAt)) ?? ""
+        pricedComponents = (try? c?.decode([String].self, forKey: .pricedComponents)) ?? []
+        excludes = (try? c?.decode([String].self, forKey: .excludes)) ?? []
+    }
+
+    var hasValidContractShape: Bool {
+        version == 2 && currency == "USD" && !model.isEmpty
+            && !configFingerprint.isEmpty
+            && unitPriceUsd.isFinite && unitPriceUsd >= 0
+            && minCostUsd.isFinite && minCostUsd >= 0
+            && maxCostUsd.isFinite && maxCostUsd >= minCostUsd
+            && maxPaidGenerationsPerImage >= 1
+            && (1...4).contains(requestedImages)
+            && pricingBasis == "internal_list_estimate"
+    }
+}
+
+struct AgentImageRenderModelOptionWire: Decodable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let provider: String
+    let enabled: Bool
+    let unavailableReason: String?
+
+    private enum CodingKeys: String, CodingKey { case id, label, provider, enabled, unavailableReason }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c?.decode(String.self, forKey: .id)) ?? ""
+        label = (try? c?.decode(String.self, forKey: .label)) ?? ""
+        provider = (try? c?.decode(String.self, forKey: .provider)) ?? ""
+        enabled = (try? c?.decode(Bool.self, forKey: .enabled)) ?? false
+        unavailableReason = (try? c?.decodeIfPresent(String.self, forKey: .unavailableReason)) ?? nil
+    }
+    var hasValidContractShape: Bool { !id.isEmpty && !label.isEmpty }
+}
+
+struct AgentImagePresetOptionWire: Decodable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let aspectRatio: String
+    let enabled: Bool
+    let unavailableReason: String?
+
+    private enum CodingKeys: String, CodingKey { case id, label, aspectRatio, enabled, unavailableReason }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c?.decode(String.self, forKey: .id)) ?? ""
+        label = (try? c?.decode(String.self, forKey: .label)) ?? ""
+        aspectRatio = (try? c?.decode(String.self, forKey: .aspectRatio)) ?? ""
+        enabled = (try? c?.decode(Bool.self, forKey: .enabled)) ?? false
+        unavailableReason = (try? c?.decodeIfPresent(String.self, forKey: .unavailableReason)) ?? nil
+    }
+    var hasValidContractShape: Bool { !id.isEmpty && !aspectRatio.isEmpty }
+}
+
+struct AgentImageSizeOptionWire: Decodable, Equatable, Sendable {
+    let id: String
+    let enabled: Bool
+    let width: Int?
+    let height: Int?
+    let unavailableReason: String?
+
+    private enum CodingKeys: String, CodingKey { case id, enabled, width, height, unavailableReason }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c?.decode(String.self, forKey: .id)) ?? ""
+        enabled = (try? c?.decode(Bool.self, forKey: .enabled)) ?? false
+        width = (try? c?.decodeIfPresent(Int.self, forKey: .width)) ?? nil
+        height = (try? c?.decodeIfPresent(Int.self, forKey: .height)) ?? nil
+        unavailableReason = (try? c?.decodeIfPresent(String.self, forKey: .unavailableReason)) ?? nil
+    }
+    var hasValidContractShape: Bool { ["1K", "2K", "4K"].contains(id) }
+}
+
+struct AgentImageQualityOptionWire: Decodable, Equatable, Sendable {
+    let id: String
+    let providerQuality: String?
+    let description: String
+
+    private enum CodingKeys: String, CodingKey { case id, providerQuality, description }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c?.decode(String.self, forKey: .id)) ?? ""
+        providerQuality = (try? c?.decodeIfPresent(String.self, forKey: .providerQuality)) ?? nil
+        description = (try? c?.decode(String.self, forKey: .description)) ?? ""
+    }
+    var hasValidContractShape: Bool { id == "standard" || id == "pro" }
+}
+
+struct AgentImageRenderSelectionWire: Decodable, Equatable, Sendable {
     let contractVersion: Int
     let revision: Int
     let selectedModel: String
-    let config: Config
-    let modelOptions: [AgentImageModelOptionWire]
-    let presetOptions: [PresetOption]
-    let sizeOptions: [SizeOption]
-    let qualityOptions: [String]
+    let config: AgentImageRenderConfigWire?
+    let configFingerprint: String
+    let modelOptions: [AgentImageRenderModelOptionWire]
+    let presetOptions: [AgentImagePresetOptionWire]
+    let sizeOptions: [AgentImageSizeOptionWire]
+    let qualityOptions: [AgentImageQualityOptionWire]
     let countOptions: [Int]
-    let quote: AgentImageModelQuoteWire
+    let quote: AgentImageRenderQuoteWire?
 
-    /// Accept only what this build can honestly render and edit. Unknown extra
-    /// fields are fine; a wrong version or an incoherent selection is not.
-    var trustedValue: Self? {
+    private enum CodingKeys: String, CodingKey {
+        case contractVersion, revision, selectedModel, config, configFingerprint,
+             modelOptions, presetOptions, sizeOptions, qualityOptions, countOptions, quote
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        contractVersion = (try? c?.decode(Int.self, forKey: .contractVersion)) ?? 0
+        revision = (try? c?.decode(Int.self, forKey: .revision)) ?? -1
+        selectedModel = (try? c?.decode(String.self, forKey: .selectedModel)) ?? ""
+        config = (try? c?.decodeIfPresent(AgentImageRenderConfigWire.self, forKey: .config)) ?? nil
+        configFingerprint = (try? c?.decode(String.self, forKey: .configFingerprint)) ?? ""
+        modelOptions = (try? c?.decode([AgentImageRenderModelOptionWire].self, forKey: .modelOptions)) ?? []
+        presetOptions = (try? c?.decode([AgentImagePresetOptionWire].self, forKey: .presetOptions)) ?? []
+        sizeOptions = (try? c?.decode([AgentImageSizeOptionWire].self, forKey: .sizeOptions)) ?? []
+        qualityOptions = (try? c?.decode([AgentImageQualityOptionWire].self, forKey: .qualityOptions)) ?? []
+        countOptions = (try? c?.decode([Int].self, forKey: .countOptions)) ?? []
+        quote = (try? c?.decodeIfPresent(AgentImageRenderQuoteWire.self, forKey: .quote)) ?? nil
+    }
+
+    /// Non-nil only for a complete, internally-consistent v2 projection: the
+    /// quote must bind the exact selection fingerprint the card presents —
+    /// approving anything else could spend a different price than shown.
+    var trustedValue: AgentImageRenderSelection? {
         guard contractVersion == 2,
               revision >= 0,
               !selectedModel.isEmpty,
-              config.model == selectedModel,
-              config.width > 0, config.height > 0,
-              config.variationCount >= 1, config.variationCount <= 4,
-              !presetOptions.isEmpty,
-              presetOptions.contains(where: { $0.id == config.presetId }),
-              !modelOptions.isEmpty,
-              modelOptions.allSatisfy({ $0.hasValidContractShape }),
-              modelOptions.contains(where: { $0.id == selectedModel }),
-              quote.hasValidContractShape,
+              let config, config.hasValidContractShape,
+              !configFingerprint.isEmpty,
+              let quote, quote.hasValidContractShape,
+              quote.configFingerprint == configFingerprint,
               quote.model == selectedModel,
-              quote.requestedImages == config.variationCount
+              quote.width == config.width, quote.height == config.height,
+              quote.requestedImages == config.variationCount,
+              !modelOptions.isEmpty,
+              modelOptions.allSatisfy(\.hasValidContractShape),
+              Set(modelOptions.map(\.id)).count == modelOptions.count,
+              modelOptions.contains(where: { $0.id == selectedModel }),
+              !presetOptions.isEmpty,
+              presetOptions.allSatisfy(\.hasValidContractShape),
+              presetOptions.contains(where: { $0.id == config.presetId }),
+              !sizeOptions.isEmpty,
+              sizeOptions.allSatisfy(\.hasValidContractShape),
+              !qualityOptions.isEmpty,
+              qualityOptions.allSatisfy(\.hasValidContractShape),
+              !countOptions.isEmpty,
+              countOptions.allSatisfy({ (1...4).contains($0) })
         else { return nil }
-        return self
+        return AgentImageRenderSelection(
+            revision: revision, selectedModel: selectedModel, config: config,
+            configFingerprint: configFingerprint, modelOptions: modelOptions,
+            presetOptions: presetOptions, sizeOptions: sizeOptions,
+            qualityOptions: qualityOptions, countOptions: countOptions, quote: quote)
     }
+}
 
-    /// One line the owner reads on the card: shape · pixels · count · model.
-    var setupSummary: String {
-        let preset = presetOptions.first(where: { $0.id == config.presetId })?.label
-            ?? config.presetId
-        let count = config.variationCount > 1 ? " · \(config.variationCount)টি" : ""
-        return "\(preset) · \(config.aspectRatio) · \(config.width)×\(config.height)\(count)"
+/// Validated domain value the UI renders — only constructible via `trustedValue`.
+struct AgentImageRenderSelection: Equatable, Sendable {
+    let revision: Int
+    let selectedModel: String
+    let config: AgentImageRenderConfigWire
+    let configFingerprint: String
+    let modelOptions: [AgentImageRenderModelOptionWire]
+    let presetOptions: [AgentImagePresetOptionWire]
+    let sizeOptions: [AgentImageSizeOptionWire]
+    let qualityOptions: [AgentImageQualityOptionWire]
+    let countOptions: [Int]
+    let quote: AgentImageRenderQuoteWire
+}
+
+// MARK: - Build 103 Issue 3 — typed work-step tracker wire contract
+
+struct AgentWireStep: Decodable, Equatable, Sendable {
+    // work_steps_snapshot shape
+    let id: String?
+    let position: Int?
+    let title: String?
+    let status: String?
+    let toolCallIds: [String]?
+    let startedAt: String?
+    let finishedAt: String?
+    // plan_progress shape (decoded so it can never arrive as unknown)
+    let seq: Int?
+    let action: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, position, title, status, toolCallIds, startedAt, finishedAt, seq, action
+    }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c?.decodeIfPresent(String.self, forKey: .id)) ?? nil
+        position = (try? c?.decodeIfPresent(Int.self, forKey: .position)) ?? nil
+        title = (try? c?.decodeIfPresent(String.self, forKey: .title)) ?? nil
+        status = (try? c?.decodeIfPresent(String.self, forKey: .status)) ?? nil
+        toolCallIds = (try? c?.decodeIfPresent([String].self, forKey: .toolCallIds)) ?? nil
+        startedAt = (try? c?.decodeIfPresent(String.self, forKey: .startedAt)) ?? nil
+        finishedAt = (try? c?.decodeIfPresent(String.self, forKey: .finishedAt)) ?? nil
+        seq = (try? c?.decodeIfPresent(Int.self, forKey: .seq)) ?? nil
+        action = (try? c?.decodeIfPresent(String.self, forKey: .action)) ?? nil
+    }
+}
+
+struct AgentWorkStepsBlockerWire: Decodable, Equatable, Sendable {
+    let kind: String?
+    let refId: String?
+}
+
+/// Validated typed snapshot — the reducer stores these keyed by trackerId with
+/// monotonic revisions; live, replay, polling and cold load all merge here.
+struct AgentWorkStepsSnapshot: Equatable, Sendable {
+    struct Step: Equatable, Sendable, Identifiable {
+        let id: String
+        let position: Int
+        let title: String
+        let status: String
+        let startedAt: String?
+        let finishedAt: String?
+    }
+    let trackerId: String
+    let originTurnId: String
+    let currentTurnId: String
+    let turnIds: [String]
+    let conversationId: String
+    let originAssistantMessageId: String?
+    let revision: Int
+    let sourceId: String
+    let goal: String
+    let status: String
+    let headline: String
+    let blockedByKind: String?
+    let blockedByRefId: String?
+    let steps: [Step]
+    let updatedAt: String
+
+    var isTerminal: Bool { ["completed", "failed", "cancelled"].contains(status) }
+    var completedCount: Int { steps.filter { $0.status == "completed" || $0.status == "skipped" }.count }
+
+    static let overallStatuses: Set<String> = [
+        "preparing", "running", "waiting_owner", "waiting_worker",
+        "paused", "completed", "failed", "cancelled",
+    ]
+    static let stepStatuses: Set<String> = [
+        "pending", "running", "waiting_owner", "waiting_worker",
+        "completed", "failed", "cancelled", "skipped",
+    ]
+
+    /// Build from the flat SSE event/cold JSON. Nil = malformed (telemetry).
+    static func from(
+        version: Int?, trackerId: String?, originTurnId: String?, currentTurnId: String?,
+        turnIds: [String]?, conversationId: String?, originAssistantMessageId: String?,
+        revision: Int?, sourceId: String?, goal: String?, status: String?, headline: String?,
+        blockedBy: AgentWorkStepsBlockerWire?, steps: [AgentWireStep]?, updatedAt: String?
+    ) -> AgentWorkStepsSnapshot? {
+        guard version == 1,
+              let trackerId, !trackerId.isEmpty,
+              let originTurnId, !originTurnId.isEmpty,
+              let revision, revision >= 1,
+              let goal, let status, overallStatuses.contains(status),
+              let steps else { return nil }
+        var mapped: [Step] = []
+        for step in steps {
+            guard let id = step.id, !id.isEmpty,
+                  let position = step.position, position >= 1,
+                  let title = step.title,
+                  let stepStatus = step.status, stepStatuses.contains(stepStatus)
+            else { return nil }
+            mapped.append(Step(
+                id: id, position: position, title: title, status: stepStatus,
+                startedAt: step.startedAt, finishedAt: step.finishedAt))
+        }
+        return AgentWorkStepsSnapshot(
+            trackerId: trackerId,
+            originTurnId: originTurnId,
+            currentTurnId: currentTurnId ?? originTurnId,
+            turnIds: turnIds ?? [originTurnId],
+            conversationId: conversationId ?? "",
+            originAssistantMessageId: originAssistantMessageId,
+            revision: revision,
+            sourceId: sourceId ?? trackerId,
+            goal: goal,
+            status: status,
+            headline: headline ?? "",
+            blockedByKind: blockedBy?.kind,
+            blockedByRefId: blockedBy?.refId,
+            steps: mapped.sorted { $0.position < $1.position },
+            updatedAt: updatedAt ?? "")
     }
 }
 
@@ -401,7 +737,6 @@ struct AgentSSEEvent: Decodable {
     let actionType: String?
     let costEstimate: Double?
     let imageModelSelection: AgentImageModelSelectionWire?
-    let imageRenderSelection: AgentImageRenderSelectionWire?
     let askCardId: String?
     let question: String?
     let options: [String]?
@@ -449,6 +784,28 @@ struct AgentSSEEvent: Decodable {
     // client uuids are the matching key; the row ids are for correlation only.
     let clientMessageIds: [String]?
     let ids: [String]?
+    // Build 103 Issue 2 — v2 image render selection beside the v1 picker.
+    let imageRenderSelection: AgentImageRenderSelectionWire?
+    // Build 103 Issue 3 — plan_progress / turn_progress / work_steps_snapshot.
+    let planId: String?         // plan_progress
+    let goal: String?           // plan_progress + work_steps_snapshot
+    let headline: String?       // plan_progress + work_steps_snapshot
+    let doneCount: Int?         // plan_progress
+    let total: Int?             // plan_progress
+    let steps: [AgentWireStep]? // plan_progress + work_steps_snapshot
+    let round: Int?             // turn_progress
+    let elapsedSec: Int?        // turn_progress
+    let lastToolLabel: String?  // turn_progress
+    let version: Int?           // work_steps_snapshot
+    let trackerId: String?      // work_steps_snapshot
+    let originTurnId: String?   // work_steps_snapshot
+    let currentTurnId: String?  // work_steps_snapshot
+    let turnIds: [String]?      // work_steps_snapshot
+    let originAssistantMessageId: String? // work_steps_snapshot
+    let revision: Int?          // work_steps_snapshot
+    let sourceId: String?       // work_steps_snapshot
+    let blockedBy: AgentWorkStepsBlockerWire? // work_steps_snapshot
+    let updatedAt: String?      // work_steps_snapshot
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -473,7 +830,15 @@ enum AgentTurnEvent: Sendable {
     case artifactSaved(id: String, title: String)
     case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?,
                      imageModelSelection: AgentImageModelSelectionWire?,
-                     imageRenderSelection: AgentImageRenderSelectionWire?)
+                     imageRenderSelection: AgentImageRenderSelection?)
+    /// Build 103 Issue 3 — live checklist projection (web parity event). The
+    /// native tracker is driven by `workSteps`; this is decoded so it can
+    /// never surface as `unknown` telemetry.
+    case planProgress(planId: String, goal: String, headline: String, doneCount: Int, total: Int)
+    /// Deterministic server status line for long silent turns — decoded typed.
+    case turnProgress(round: Int, elapsedSec: Int, lastToolLabel: String?, text: String)
+    /// Build 103 Issue 3 — full authoritative work-step tracker snapshot.
+    case workSteps(AgentWorkStepsSnapshot)
     case askCard(id: String, question: String, options: [String])
     case verificationRetry(attempt: Int, maxAttempts: Int)
     /// Speak-first (owner rule 2026-07-25): the opening line the head wrote
@@ -553,6 +918,23 @@ enum AgentTurnEvent: Sendable {
                              imageModelSelection: ev.imageModelSelection?.trustedValue,
                              imageRenderSelection: ev.imageRenderSelection?.trustedValue)
             } ?? .unknown(type: "confirm_card/noid")
+        case "plan_progress":
+            self = .planProgress(planId: ev.planId ?? "", goal: ev.goal ?? "",
+                                 headline: ev.headline ?? "",
+                                 doneCount: ev.doneCount ?? 0, total: ev.total ?? 0)
+        case "turn_progress":
+            self = .turnProgress(round: ev.round ?? 0, elapsedSec: ev.elapsedSec ?? 0,
+                                 lastToolLabel: ev.lastToolLabel, text: ev.text ?? "")
+        case "work_steps_snapshot":
+            self = AgentWorkStepsSnapshot.from(
+                version: ev.version, trackerId: ev.trackerId,
+                originTurnId: ev.originTurnId, currentTurnId: ev.currentTurnId,
+                turnIds: ev.turnIds, conversationId: ev.conversationId,
+                originAssistantMessageId: ev.originAssistantMessageId,
+                revision: ev.revision, sourceId: ev.sourceId, goal: ev.goal,
+                status: ev.status, headline: ev.headline, blockedBy: ev.blockedBy,
+                steps: ev.steps, updatedAt: ev.updatedAt,
+            ).map(AgentTurnEvent.workSteps) ?? .unknown(type: "work_steps_snapshot/invalid")
         case "ask_card":
             self = ev.askCardId.map {
                 .askCard(id: $0, question: ev.question ?? "", options: ev.options ?? [])

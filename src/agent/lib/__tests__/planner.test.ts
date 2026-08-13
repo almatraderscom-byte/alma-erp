@@ -292,6 +292,7 @@ describe('planner', () => {
     expect(mockPrisma.agentPlanStep.update).toHaveBeenCalledWith({
       where: { id: 's1' },
       data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
+      select: { planId: true },
     })
   })
 })

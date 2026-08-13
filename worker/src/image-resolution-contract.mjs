@@ -6,7 +6,11 @@
  * returned validationContract to the decoded-byte artifact inspector.
  */
 
-export const STUDIO_ASPECT_RATIOS = Object.freeze(['1:1', '4:5', '9:16', '16:9'])
+// Build 103 Issue 2 adds the 2:3 portrait-poster column. Every value stays a
+// multiple of 16 inside each provider's audited pixel budget, and the exact
+// validation contract still rejects any provider that delivers something else
+// — an unproven combination fails closed before delivery, never silently.
+export const STUDIO_ASPECT_RATIOS = Object.freeze(['1:1', '4:5', '9:16', '16:9', '2:3'])
 export const STUDIO_TIERS = Object.freeze(['1k', '2k', '4k'])
 
 const GEMINI_DIMENSIONS = Object.freeze({
@@ -15,18 +19,21 @@ const GEMINI_DIMENSIONS = Object.freeze({
     '4:5': [928, 1152],
     '9:16': [768, 1376],
     '16:9': [1376, 768],
+    '2:3': [832, 1248],
   }),
   '2k': Object.freeze({
     '1:1': [2048, 2048],
     '4:5': [1856, 2304],
     '9:16': [1536, 2752],
     '16:9': [2752, 1536],
+    '2:3': [1664, 2496],
   }),
   '4k': Object.freeze({
     '1:1': [4096, 4096],
     '4:5': [3712, 4608],
     '9:16': [3072, 5504],
     '16:9': [5504, 3072],
+    '2:3': [3328, 4992],
   }),
 })
 
@@ -46,8 +53,40 @@ const SEEDREAM_DIMENSIONS = Object.freeze({
     '4:5': [1824, 2272],
     '9:16': [1536, 2720],
     '16:9': [2720, 1536],
+    '2:3': [1664, 2496],
   }),
 })
+
+/**
+ * Preset → aspect mapping shared with the server's v2 image-config contract
+ * (src/agent/lib/image-config-contract.ts — parity-tested). The capability
+ * receipt publishes, per model, which preset/tier pairs THIS worker process
+ * can actually execute, so the server never advertises from source code.
+ */
+export const IMAGE_PRESET_ASPECTS = Object.freeze({
+  square: '1:1',
+  social_post: '4:5',
+  reel_story: '9:16',
+  landscape: '16:9',
+  poster: '2:3',
+})
+
+export function supportedPresetTiersForModel(modelName) {
+  const result = {}
+  for (const [presetId, aspectRatio] of Object.entries(IMAGE_PRESET_ASPECTS)) {
+    const tiers = []
+    for (const tier of STUDIO_TIERS) {
+      try {
+        resolveGenericImageRequest({ modelName, imageSize: tier, aspectRatio })
+        tiers.push(tier.toUpperCase())
+      } catch {
+        // Unsupported combination — simply not advertised.
+      }
+    }
+    if (tiers.length > 0) result[presetId] = tiers
+  }
+  return result
+}
 
 export const XAI_ASPECT_RATIOS = Object.freeze([
   '1:1',

@@ -13,10 +13,10 @@ import {
   selectionForImageAction,
 } from '@/agent/lib/image-action-contract'
 import {
-  buildImageRenderSelection,
-  IMAGE_CONTROLS_V2_KV_KEY,
-  imageRenderConfigForAction,
-} from '@/agent/lib/image-render-config'
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  readImageWorkerCapabilityV2,
+  renderSelectionForAction,
+} from '@/agent/lib/image-config-contract'
 import { readKv } from '@/lib/creative-studio/taste'
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -149,19 +149,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   // being relabelled by a guess. (resolvedAt looked like the signal and is not:
   // the worker's job-result callback stamps it on completion.)
   const ownerDecidedById = new Map<string, boolean | null>()
-  const [workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+  const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = await Promise.all([
     readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
     readKv('cs_engine_kill:gemini'),
     readKv('cs_xai_enabled'),
+    readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
   ])
   const imageAvailability = imageModelAvailability({
     workerCapabilities,
     genericLaneKilled: genericLaneKill === '1',
     xaiConfigured: xaiEnabled === '1',
   })
-  const imageControlsV2 = (await readKv(IMAGE_CONTROLS_V2_KV_KEY)) === '1'
+  const { receipt: imageReceiptV2, reason: imageReceiptV2Reason } = readImageWorkerCapabilityV2(
+    workerCapabilitiesV2, Date.now())
   const imageSelectionById = new Map<string, unknown>()
-  const imageRenderSelectionById = new Map<string, unknown>()
+  const imageRenderById = new Map<string, unknown>()
   for (const a of allActions) {
     statusById.set(a.id, a.status)
     summaryById.set(a.id, a.summary ?? '')
@@ -171,20 +173,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         ...a,
         availability: imageAvailability,
       }))
-      // Cold history carries the SAME v2 projection the live edit echo used,
-      // so a reloaded card renders identically to its settled live state.
-      if (imageControlsV2) {
-        const config = imageRenderConfigForAction(a)
-        if (config) {
-          try {
-            imageRenderSelectionById.set(a.id, buildImageRenderSelection({
-              config,
-              revision: a.imageConfigRevision ?? 0,
-              availability: imageAvailability,
-            }))
-          } catch { /* a malformed row keeps its v1 card */ }
-        }
-      }
+      const renderSelection = renderSelectionForAction({
+        ...a,
+        availability: imageAvailability,
+        receipt: imageReceiptV2,
+        receiptUnavailableReason: imageReceiptV2Reason || undefined,
+      })
+      if (renderSelection) imageRenderById.set(a.id, renderSelection)
     }
     if (a.status === 'failed' && a.result && typeof a.result === 'object') {
       const r = a.result as Record<string, unknown>
@@ -217,9 +212,10 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
-    if (a.type === 'image_gen') block.imageModelSelection = imageSelectionById.get(a.id)
-    if (a.type === 'image_gen' && imageRenderSelectionById.has(a.id)) {
-      block.imageRenderSelection = imageRenderSelectionById.get(a.id)
+    if (a.type === 'image_gen') {
+      block.imageModelSelection = imageSelectionById.get(a.id)
+      const renderSelection = imageRenderById.get(a.id)
+      if (renderSelection) block.imageRenderSelection = renderSelection
     }
     const list = syntheticByMsg.get(target.id) ?? []
     list.push(block)
@@ -279,6 +275,46 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     syntheticAskByMsg.set(target.id, list)
   }
 
+  // Build 103 Issue 3 — cold work-step tracker projection. The durable
+  // snapshot persisted at each live emission is returned verbatim, anchored to
+  // its bound origin assistant message; an unbound tracker (process died before
+  // settlement) falls back to the earliest assistant message at/after the
+  // plan's creation, exactly like the confirm-card synthetic pattern. One
+  // tracker, one block — never a twin.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const trackerPlans: Array<{
+    id: string
+    createdAt: Date
+    originAssistantMessageId: string | null
+    trackerSnapshot: unknown
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }> = await (prisma as any).agentPlan.findMany({
+    where: { conversationId: id, trackerRevision: { gt: 0 } },
+    select: {
+      id: true,
+      createdAt: true,
+      originAssistantMessageId: true,
+      trackerSnapshot: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+  const workStepsByMsg = new Map<string, Array<unknown>>()
+  const loadedMessageIds = new Set(messages.map((m) => m.id))
+  for (const plan of trackerPlans) {
+    if (!plan.trackerSnapshot || typeof plan.trackerSnapshot !== 'object') continue
+    const bound = plan.originAssistantMessageId
+    const target = bound && loadedMessageIds.has(bound)
+      ? bound
+      : bound
+        ? null // bound to a message outside this window — older page owns it
+        : (assistantMsgs.find((m) => m.createdAt >= plan.createdAt)
+            ?? assistantMsgs[assistantMsgs.length - 1])?.id ?? null
+    if (!target) continue
+    const list = workStepsByMsg.get(target) ?? []
+    list.push(plan.trackerSnapshot)
+    workStepsByMsg.set(target, list)
+  }
+
   // Reconstruct the per-message tool activity (Claude-style expandable cards) from
   // the durable agent_tool_calls rows, so the cards survive the background message
   // poll / page reload instead of only existing during the live stream.
@@ -315,7 +351,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               ownerDecided: ownerDecidedById.get(b.pendingActionId) ?? undefined,
               failReason: failReasonById.get(b.pendingActionId),
               imageModelSelection: imageSelectionById.get(b.pendingActionId) ?? b.imageModelSelection,
-              imageRenderSelection: imageRenderSelectionById.get(b.pendingActionId) ?? b.imageRenderSelection,
+              imageRenderSelection: imageRenderById.get(b.pendingActionId) ?? b.imageRenderSelection,
               // The action summary changes when the owner switches image model.
               // Canonical action state wins over the old breadcrumb so a reload
               // cannot revert the live card's "Model:" line.
@@ -390,6 +426,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,
+      // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
+      // this assistant message; cold history equals the settled live tracker.
+      // Plan trackers come from agent_plans; unplanned runtime trackers ride
+      // the message's own usage metadata (single writer, settled at save).
+      workSteps: (() => {
+        const fromPlans = workStepsByMsg.get(m.id) ?? []
+        const fromUsage = Array.isArray(u.workSteps)
+          ? (u.workSteps as unknown[]).filter((snap) => (
+              !!snap && typeof snap === 'object'
+              && (snap as Record<string, unknown>).type === 'work_steps_snapshot'
+            ))
+          : []
+        const merged = [...fromPlans, ...fromUsage]
+        return merged.length > 0 ? merged : undefined
+      })(),
       // ONE canonical, versioned presentation projection (parity roadmap §5) —
       // additive next to every legacy field; both clients converge on this.
       presentation:

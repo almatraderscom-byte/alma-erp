@@ -60,7 +60,10 @@ test('publishes a versioned, stamped receipt with no credential material', async
       'seedream-5.0-pro',
     ],
   })
-  assert.deepEqual(supabase.writes, [{
+  // Build 103: one atomic upsert per protocol version — v1 stays untouched
+  // for un-upgraded servers, v2 adds the proven preset/tier matrix.
+  assert.equal(supabase.writes.length, 2)
+  assert.deepEqual(supabase.writes[0], {
     table: 'agent_kv_settings',
     value: {
       key: IMAGE_WORKER_CAPABILITY_KV_KEY,
@@ -68,8 +71,20 @@ test('publishes a versioned, stamped receipt with no credential material', async
       updated_at: receipt.updatedAt,
     },
     options: { onConflict: 'key' },
-  }])
-  assert.doesNotMatch(supabase.writes[0].value.value, /private-/)
+  })
+  const v2Write = supabase.writes[1]
+  assert.equal(v2Write.value.key, 'image_worker_capabilities_v2')
+  const v2 = JSON.parse(v2Write.value.value)
+  assert.equal(v2.version, 2)
+  assert.equal(v2.configContractVersion, 1)
+  assert.deepEqual(v2.models, receipt.models)
+  assert.ok(v2.presets['gemini-3-pro-image'].poster.includes('2K'))
+  // Seedream poster proves only up to 2K; GPT is absent (no OPENAI key here).
+  assert.deepEqual(v2.presets['seedream-5.0-pro'].poster, ['1K', '2K'])
+  assert.equal(v2.presets['gpt-image-2'], undefined)
+  for (const write of supabase.writes) {
+    assert.doesNotMatch(write.value.value, /private-/)
+  }
 })
 
 test('publishes immediately, refreshes periodically, and stops its timer', async () => {
@@ -91,16 +106,17 @@ test('publishes immediately, refreshes periodically, and stops its timer', async
   })
   await publisher.ready
 
-  assert.equal(supabase.writes.length, 1)
+  // Two writes per publish tick: the v1 receipt and the v2 receipt.
+  assert.equal(supabase.writes.length, 2)
   assert.equal(scheduled.intervalMs, IMAGE_WORKER_CAPABILITY_PUBLISH_INTERVAL_MS)
   await scheduled.callback()
-  assert.equal(supabase.writes.length, 2)
-  assert.notEqual(supabase.writes[0].value.value, supabase.writes[1].value.value)
+  assert.equal(supabase.writes.length, 4)
+  assert.notEqual(supabase.writes[0].value.value, supabase.writes[2].value.value)
 
   publisher.stop()
   assert.equal(cleared, scheduled.token)
   await publisher.refresh()
-  assert.equal(supabase.writes.length, 2)
+  assert.equal(supabase.writes.length, 4)
 })
 
 test('surfaces a failed atomic KV upsert to the publisher error hook', async () => {

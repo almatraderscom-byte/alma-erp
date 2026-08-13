@@ -42,6 +42,11 @@ final class AssistantParityV2UITests: XCTestCase {
             "testGoalsSheetUsesAuthoritativeStateAndAllAgentPause",
             "testArchivedChatBrowserShowsRestorableConversationRows",
             "testConversationLibrarySurfaceMatchesMenuDestination",
+            "testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote",
+            "testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas",
+            "testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate",
+            "testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras",
+            "testColdSessionRestoreNeverShowsHeroBehindLoader",
         ].contains { name.contains($0) }
         if ownsFixtureLaunch {
             // These tests immediately relaunch with a dedicated fixture. Avoid
@@ -626,8 +631,12 @@ final class AssistantParityV2UITests: XCTestCase {
         relaunch(fixture: "ALMA_ASSISTANT_IMAGE_GENERATING", mock: "library")
 
         let canvas = app.descendants(matching: .any)["agent.generated-image.generating-canvas"]
+        // Wait for the surface to MOUNT before scroll-hunting: swipes issued
+        // during the launch splash land nowhere, and with the faster fixture
+        // boot (no web dashboard) they used to spill onto the fresh chat and
+        // scroll the canvas out of its hittable frame.
+        XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         for _ in 0..<5 where !canvas.isHittable { app.swipeUp(velocity: .slow) }
-        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
         XCTAssertTrue(canvas.isHittable)
         XCTAssertGreaterThan(canvas.frame.height, canvas.frame.width * 1.15,
                              "image generation must be a first-class media surface, not a thin rail")
@@ -978,6 +987,179 @@ final class AssistantParityV2UITests: XCTestCase {
     private var hasIOS265WebAccessibilityConflict: Bool {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return version.majorVersion == 26 && version.minorVersion == 5
+    }
+
+    // MARK: - Build 103 Issue 2/3 fixtures
+
+    /// SwiftUI's `.accessibilityElement(children: .combine)` rows and styled
+    /// containers surface with unpredictable element types (staticText/other/
+    /// scrollView) — query by identifier across ANY type.
+    private func anyElement(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// The hybrid shell's duplicated accessibility trees can leave a native
+    /// element with an invalid hit point, silently no-opping `element.tap()`.
+    /// Tap through the window at the element's normalized frame center instead.
+    private func tapViaWindow(_ app: XCUIApplication, _ element: XCUIElement) {
+        guard let window = app.windows.allElementsBoundByIndex.first,
+              !element.frame.isEmpty else {
+            element.tap()
+            return
+        }
+        let x = (element.frame.midX - window.frame.minX) / window.frame.width
+        let y = (element.frame.midY - window.frame.minY) / window.frame.height
+        window.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).tap()
+    }
+
+    private func launchFixture(_ env: [String: String]) -> XCUIApplication {
+        let fixture = XCUIApplication()
+        fixture.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
+        fixture.launchEnvironment["ALMA_OPEN_TAB"] = "2"
+        fixture.launchArguments.append("ALMA_OPEN_TAB=2")
+        for (key, value) in env { fixture.launchEnvironment[key] = value }
+        fixture.launch()
+        dismissAppLockIfPresented(fixture)
+        return fixture
+    }
+
+    /// The web BiometricLockGate raises the system device-owner passcode sheet
+    /// ~10s AFTER launch (once the background Dashboard webview boots), which
+    /// intercepts any tap the test performs from that moment on. Wait for it
+    /// deterministically, unlock, and only then hand the app to the test. The
+    /// passcode comes from the runner's environment (never committed); if the
+    /// sheet never appears (lock disabled), the wait simply times out once.
+    private func dismissAppLockIfPresented(_ fixture: XCUIApplication) {
+        let prompt = fixture.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Enter iPhone Passcode"))
+            .firstMatch
+        guard prompt.waitForExistence(timeout: 14) else { return }
+        guard let passcode = ProcessInfo.processInfo.environment["ALMA_TEST_APP_PASSCODE"],
+              !passcode.isEmpty else {
+            XCTFail("app lock appeared but ALMA_TEST_APP_PASSCODE is not set for the runner")
+            return
+        }
+        for _ in 0..<2 {
+            let field = fixture.textFields.firstMatch.exists
+                ? fixture.textFields.firstMatch
+                : fixture.secureTextFields.firstMatch
+            guard field.waitForExistence(timeout: 3) else { break }
+            field.tap()
+            field.typeText(passcode)
+            field.typeText("\n")
+            if prompt.waitForNonExistence(timeout: 8) { return }
+        }
+        XCTAssertFalse(prompt.exists, "app lock must be dismissed before assertions")
+    }
+
+    func testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote() {
+        let fixture = launchFixture(["ALMA_ASSISTANT_IMAGE_SETUP_PROOF": "1"])
+        let setupRow = anyElement(fixture, "agent.confirm-card.image-setup")
+        XCTAssertTrue(setupRow.waitForExistence(timeout: 10),
+                      "pending v2 card must show the Image setup summary row")
+        // The summary names preset, exact server-resolved pixels and count.
+        XCTAssertTrue(fixture.staticTexts["Facebook / Instagram post · 4:5 · 1856×2304"]
+            .waitForExistence(timeout: 4))
+        tapViaWindow(fixture, setupRow)
+        // Preset chips, size options with reasons, count and quality controls.
+        XCTAssertTrue(anyElement(fixture, "agent.image-setup.preset.poster")
+            .waitForExistence(timeout: 8))
+        let fourK = anyElement(fixture, "agent.image-setup.size.4K")
+        XCTAssertTrue(fourK.waitForExistence(timeout: 4))
+        XCTAssertFalse(fourK.isEnabled,
+                       "an unsupported size stays visible with its reason, never tappable")
+        XCTAssertTrue(anyElement(fixture, "agent.image-setup.count.4").exists)
+        // SwiftUI List rows are lazy — quality/model/quote sit below the fold.
+        fixture.swipeUp()
+        XCTAssertTrue(anyElement(fixture, "agent.image-setup.quality.pro")
+            .waitForExistence(timeout: 4))
+        fixture.swipeUp()
+        XCTAssertTrue(anyElement(fixture, "agent.image-setup.model.gpt-image-2")
+            .waitForExistence(timeout: 4))
+        XCTAssertTrue(anyElement(fixture, "agent.image-setup.quote")
+            .waitForExistence(timeout: 4))
+        let proofSheet = XCTAttachment(screenshot: fixture.screenshot())
+        proofSheet.name = "b103-image-setup-sheet"
+        proofSheet.lifetime = .keepAlways
+        add(proofSheet)
+    }
+
+    func testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas() {
+        let fixture = launchFixture([
+            "ALMA_ASSISTANT_IMAGE_SETUP_PROOF": "1",
+            "ALMA_ASSISTANT_IMAGE_SETUP_STATUS": "approved",
+            "ALMA_ASSISTANT_IMAGE_SETUP_ASPECT": "2:3",
+        ])
+        let lockedRow = anyElement(fixture, "agent.confirm-card.image-setup")
+        XCTAssertTrue(lockedRow.waitForExistence(timeout: 10),
+                      "after approval the pinned setup renders read-only")
+        XCTAssertTrue(fixture.staticTexts
+            .containing(NSPredicate(format: "label CONTAINS %@", "Portrait poster"))
+            .firstMatch.waitForExistence(timeout: 4)
+            || lockedRow.label.contains("Portrait poster"))
+        XCTAssertFalse(anyElement(fixture, "agent.image-setup.sheet").exists)
+        let proofLocked = XCTAttachment(screenshot: fixture.screenshot())
+        proofLocked.name = "b103-image-setup-locked-poster"
+        proofLocked.lifetime = .keepAlways
+        add(proofLocked)
+    }
+
+    func testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate() {
+        let fixture = launchFixture(["ALMA_ASSISTANT_WORK_STEPS_PROOF": "1"])
+        // Owner decision 2026-08-13: while running, the dock is the ONLY
+        // tracker surface — no in-chat twin, nothing to overlap the reply.
+        let dock = anyElement(fixture, "agent.work-steps.dock.progress")
+        XCTAssertTrue(dock.waitForExistence(timeout: 10))
+        XCTAssertTrue(dock.label.contains("1 of 5"),
+                      "dock count must come from durable step evidence")
+        XCTAssertFalse(anyElement(fixture, "agent.work-steps.header").exists,
+                       "a running tracker must not render a duplicate in-chat block")
+        // Expanding the dock shows the numbered five-step panel while the
+        // composer stays visible.
+        tapViaWindow(fixture, dock)
+        XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
+            .waitForExistence(timeout: 6))
+        XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
+            .staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2."))
+            .firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(fixture.textViews.firstMatch.exists
+                      || fixture.textFields.firstMatch.exists,
+                      "composer must remain mounted under the expanded panel")
+        let proofTracker = XCTAttachment(screenshot: fixture.screenshot())
+        proofTracker.name = "b103-work-steps-dock-expanded"
+        proofTracker.lifetime = .keepAlways
+        add(proofTracker)
+    }
+
+    func testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras() {
+        let fixture = launchFixture([
+            "ALMA_ASSISTANT_WORK_STEPS_PROOF": "1",
+            "ALMA_ASSISTANT_WORK_STEPS_VARIANT": "settled",
+        ])
+        let header = anyElement(fixture, "agent.work-steps.header")
+        XCTAssertTrue(header.waitForExistence(timeout: 10),
+                      "the settled tracker is the task's durable in-chat record")
+        XCTAssertTrue(header.label.contains("5 of 5"))
+        // A settled tracker offers NO dock strip — nothing is running.
+        XCTAssertFalse(anyElement(fixture, "agent.work-steps.dock.progress").exists)
+        let proofSettled = XCTAttachment(screenshot: fixture.screenshot())
+        proofSettled.name = "b103-work-steps-settled"
+        proofSettled.lifetime = .keepAlways
+        add(proofSettled)
+    }
+
+    func testColdSessionRestoreNeverShowsHeroBehindLoader() {
+        // The awakening fixture drives an existing-session restore: during the
+        // restore phase the hero must not exist, and at most ONE restore
+        // indicator is on screen (owner two-robots regression, IMG_0140).
+        let fixture = launchFixture(["ALMA_ASSISTANT_NEW_SESSION_UI": "1"])
+        _ = fixture.wait(for: .runningForeground, timeout: 8)
+        let loader = fixture.otherElements["agent.session.loader"]
+        let hero = fixture.otherElements["agent.empty.hero"]
+        if loader.waitForExistence(timeout: 3) {
+            XCTAssertFalse(hero.exists,
+                           "hero and restore loader may never coexist")
+        }
     }
 
     /// The hybrid shell can briefly expose two accessibility copies of the

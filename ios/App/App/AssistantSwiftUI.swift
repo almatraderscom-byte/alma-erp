@@ -349,6 +349,8 @@ struct AgentContentBlock: Decodable {
     let actionType: String?
     let costEstimate: Double?
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — additive v2 render selection beside the v1 picker.
+    let imageRenderSelection: AgentImageRenderSelectionWire?
     let failReason: String?
     let askCardId: String?
     let question: String?
@@ -464,6 +466,37 @@ struct AgentMessageWire: Decodable {
     let costUsd: AgentJSONValue?
     let createdAt: String?
     let presentation: AgentMessagePresentationWire?
+    /// Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
+    /// this assistant message (cold history equals the settled live tracker).
+    let workSteps: [AgentWorkStepsSnapshotColdWire]?
+}
+
+/// Cold-history variant of the tracker snapshot: same fields, keyed decode.
+struct AgentWorkStepsSnapshotColdWire: Decodable {
+    let version: Int?
+    let trackerId: String?
+    let originTurnId: String?
+    let currentTurnId: String?
+    let turnIds: [String]?
+    let conversationId: String?
+    let originAssistantMessageId: String?
+    let revision: Int?
+    let sourceId: String?
+    let goal: String?
+    let status: String?
+    let headline: String?
+    let blockedBy: AgentWorkStepsBlockerWire?
+    let steps: [AgentWireStep]?
+    let updatedAt: String?
+
+    var trustedValue: AgentWorkStepsSnapshot? {
+        AgentWorkStepsSnapshot.from(
+            version: version, trackerId: trackerId, originTurnId: originTurnId,
+            currentTurnId: currentTurnId, turnIds: turnIds, conversationId: conversationId,
+            originAssistantMessageId: originAssistantMessageId, revision: revision,
+            sourceId: sourceId, goal: goal, status: status, headline: headline,
+            blockedBy: blockedBy, steps: steps, updatedAt: updatedAt)
+    }
 }
 
 /// Canonical server projection. Keep the native fallback derived from timeline,
@@ -1090,6 +1123,8 @@ struct AgentImageActionDetailWire: Decodable, Equatable {
     let status: String
     let summary: String
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — authoritative v2 echo (config + revision + quote).
+    let imageRenderSelection: AgentImageRenderSelectionWire?
 }
 
 struct AgentImageRetryActionWire: Decodable, Equatable {
@@ -1102,6 +1137,8 @@ struct AgentImageRetryActionWire: Decodable, Equatable {
     let businessId: String
     let createdAt: String
     let imageModelSelection: AgentImageModelSelectionWire?
+    /// Build 103 Issue 2 — cloned canonical v2 selection on the fresh card.
+    let imageRenderSelection: AgentImageRenderSelectionWire?
 }
 
 struct AgentImageRetryResponseWire: Decodable, Equatable {
@@ -1117,7 +1154,10 @@ struct AgentImageRetryResponseWire: Decodable, Equatable {
               pendingActionId == action.id,
               action.type == "image_gen",
               action.status == "pending",
-              action.imageModelSelection?.trustedValue != nil else { return nil }
+              // A v2 card (e.g. poster 2:3) may truthfully have no v1
+              // projection — either validated contract authorizes the card.
+              action.imageModelSelection?.trustedValue != nil
+                || action.imageRenderSelection?.trustedValue != nil else { return nil }
         return action
     }
 }
@@ -1440,8 +1480,10 @@ struct AgentChatMessage: Identifiable, Equatable {
         /// Optional additive server contract. A nil value is a legacy card and
         /// must keep the existing truthful no-quote presentation.
         var imageModelSelection: AgentImageModelSelectionWire? = nil
-        /// v2 professional setup; nil on v1-only rows and Build-102 payloads.
-        var imageRenderSelection: AgentImageRenderSelectionWire? = nil
+        /// Build 103 Issue 2 — validated v2 render selection (preset/aspect/
+        /// exact dimensions/quality/count + revisioned quote). Nil = v1 card:
+        /// the existing model-only picker presentation stays.
+        var imageRenderSelection: AgentImageRenderSelection? = nil
     }
     struct AskCard: Identifiable, Equatable {
         let id: String            // askCardId
@@ -1661,7 +1703,8 @@ struct AgentChatMessage: Identifiable, Equatable {
                                                 actionType: block.actionType,
                                                 costEstimate: block.costEstimate,
                                                 failReason: block.failReason,
-                                                imageModelSelection: block.imageModelSelection?.trustedValue))
+                                                imageModelSelection: block.imageModelSelection?.trustedValue,
+                                                imageRenderSelection: block.imageRenderSelection?.trustedValue))
                 }
             case "ask_card":
                 if let aid = block.askCardId {
@@ -2268,6 +2311,57 @@ struct AgentChatMessage: Identifiable, Equatable {
     }
 }
 
+// MARK: - Session surface state (Build 103 Issue 1)
+
+/// One authoritative answer to "what does the chat surface show right now".
+///
+/// The old truth was derived (`conversationId == nil && messages.isEmpty &&
+/// !loadingHistory`), which is ambiguous at cold start: "the server said there
+/// is no active conversation" and "the active-conversation pointer has not
+/// resolved yet" look identical, so the new-chat hero mounted underneath the
+/// session-restore loader (owner screenshot IMG_0140, 2026-08-11 — two robots).
+/// The surface now starts in an explicit unresolved state and the hero renders
+/// only after the server authoritatively says this is a genuine new chat.
+enum AgentSessionSurfaceState: Equatable {
+    /// App opened; the active-conversation route is not resolved yet.
+    case resolvingInitialRoute(requestToken: UUID)
+    /// A specific conversation's foreground history request is in flight.
+    case loadingHistory(conversationId: String, requestToken: UUID)
+    /// The server resolved "no active conversation", the owner tapped New
+    /// Chat, or a provisional draft session was restored.
+    case readyNew(sessionIdentity: String)
+    /// The selected conversation's history committed — even with 0 rows this
+    /// is an existing conversation, never the new-chat hero.
+    case readyConversation(conversationId: String)
+    /// The selected target's route/history failed. Honest retry surface for
+    /// that exact target; the hero must never appear as a failure fallback.
+    case failedHistory(conversationId: String?, requestToken: UUID, message: String)
+
+    /// True while the app cannot yet honestly claim to know what to show.
+    var isResolving: Bool {
+        switch self {
+        case .resolvingInitialRoute, .loadingHistory: return true
+        case .readyNew, .readyConversation, .failedHistory: return false
+        }
+    }
+
+    /// The hero belongs to exactly one phase.
+    var showsNewChatHero: Bool {
+        if case .readyNew = self { return true }
+        return false
+    }
+
+    /// The token a response must still carry to be allowed to commit.
+    var requestToken: UUID? {
+        switch self {
+        case .resolvingInitialRoute(let token): return token
+        case .loadingHistory(_, let token): return token
+        case .failedHistory(_, let token, _): return token
+        case .readyNew, .readyConversation: return nil
+        }
+    }
+}
+
 // MARK: - View model
 
 /// A narrow lease for Assistant-owned, non-call audio sessions. Cleanup is
@@ -2313,48 +2407,6 @@ private struct AssistantNonCallAudioSessionLease {
 
 private enum AssistantAudioPlaybackError: Error {
     case failedToStart
-}
-
-/// The one thing that decides what the Agent screen may draw before its history
-/// exists. Every phase is entered by an authoritative answer — the active
-/// conversation pointer, a committed history load, an explicit New Chat — never
-/// by the absence of data.
-enum AgentSessionSurfaceState: Equatable {
-    /// We have not been told yet whether there is an active conversation.
-    case resolvingInitialRoute(requestToken: UUID)
-    /// A specific chat is selected and its history is in flight.
-    case loadingHistory(conversationId: String, requestToken: UUID)
-    /// The server confirmed there is no conversation, or the owner tapped New Chat.
-    case readyNew(sessionIdentity: String)
-    /// History committed. A conversation with zero messages is still this case.
-    case readyConversation(conversationId: String)
-    /// The selected chat's history failed. Retry belongs to that chat, and the
-    /// new-chat hero must never stand in for it.
-    case failedHistory(conversationId: String?, requestToken: UUID, message: String)
-
-    /// True while the app cannot yet honestly claim to know what to show.
-    var isResolving: Bool {
-        switch self {
-        case .resolvingInitialRoute, .loadingHistory: return true
-        case .readyNew, .readyConversation, .failedHistory: return false
-        }
-    }
-
-    /// The hero belongs to exactly one phase.
-    var showsNewChatHero: Bool {
-        if case .readyNew = self { return true }
-        return false
-    }
-
-    /// The token a response must still carry to be allowed to commit.
-    var requestToken: UUID? {
-        switch self {
-        case .resolvingInitialRoute(let token): return token
-        case .loadingHistory(_, let token): return token
-        case .failedHistory(_, let token, _): return token
-        case .readyNew, .readyConversation: return nil
-        }
-    }
 }
 
 @available(iOS 17.0, *)
@@ -2484,15 +2536,130 @@ final class AssistantVM {
     private var generatedImageQCLoadingConversations = Set<String>()
     private static let generatedImageQCCacheLimit = 256
     var loadingHistory = false
-    /// What the screen is allowed to draw right now.
-    ///
-    /// `conversationId == nil && messages.isEmpty` used to mean two different
-    /// things — "this really is a new chat" and "we have not asked the server
-    /// yet" — and the screen drew the new-chat hero for both. On a cold launch
-    /// into an existing chat that raced the separate session loader, so the
-    /// owner saw two robots at once (build 102). Only the server may retire
-    /// `resolvingInitialRoute`.
-    var sessionSurface: AgentSessionSurfaceState = .resolvingInitialRoute(requestToken: UUID())
+    // ── Build 103 Issue 3: work-step tracker store ─────────────────────────
+    /// One store for hot stream, replay, poll, and cold history — keyed by
+    /// trackerId, merged by monotonic revision. Terminal states dominate.
+    private(set) var workTrackers: [String: AgentWorkStepsSnapshot] = [:]
+    /// Anchors: assistant message id → trackerIds whose canonical block that
+    /// message owns. Written by the terminal bound snapshot and by cold load.
+    private(set) var workTrackerAnchors: [String: [String]] = [:]
+    /// Same-revision/different-payload is a protocol error (telemetry only).
+    func mergeWorkStepsSnapshot(_ snapshot: AgentWorkStepsSnapshot, anchoredMessageId: String? = nil) {
+        if let current = workTrackers[snapshot.trackerId] {
+            if snapshot.revision < current.revision { return }
+            if snapshot.revision == current.revision {
+                if snapshot != current {
+                    AlmaTurnLog.event("workSteps.protocolError",
+                                      "same revision \(snapshot.revision), different payload — \(snapshot.trackerId)")
+                }
+                return
+            }
+            // Replay/poll overlap must never regress a settled tracker to running.
+            if current.isTerminal && !snapshot.isTerminal { return }
+        }
+        workTrackers[snapshot.trackerId] = snapshot
+        let anchor = snapshot.originAssistantMessageId ?? anchoredMessageId
+        if let anchor {
+            var list = workTrackerAnchors[anchor] ?? []
+            if !list.contains(snapshot.trackerId) { list.append(snapshot.trackerId) }
+            workTrackerAnchors[anchor] = list
+            // Reparent: the same logical tracker moves from its live streaming
+            // block to its bound message — remove any other anchor entries.
+            for (messageId, trackers) in workTrackerAnchors where messageId != anchor {
+                if trackers.contains(snapshot.trackerId) {
+                    workTrackerAnchors[messageId] = trackers.filter { $0 != snapshot.trackerId }
+                }
+            }
+        }
+    }
+    /// Trackers whose canonical block this message owns: bound by message id,
+    /// or — while the origin turn is still streaming — by turn linkage.
+    func workTrackers(for message: AgentChatMessage) -> [AgentWorkStepsSnapshot] {
+        var ids = workTrackerAnchors[message.serverId ?? message.id] ?? []
+        if let serverId = message.serverId, ids.isEmpty {
+            ids = workTrackerAnchors[serverId] ?? []
+        }
+        var result = ids.compactMap { workTrackers[$0] }
+        if message.isStreaming, let turnId = currentTurnId {
+            for snapshot in workTrackers.values
+            where snapshot.originAssistantMessageId == nil
+                && snapshot.turnIds.contains(turnId)
+                && !result.contains(snapshot) {
+                result.append(snapshot)
+            }
+        }
+        return result.sorted { $0.trackerId < $1.trackerId }
+    }
+    /// The dock projection: the newest non-terminal tracker of THIS chat. The
+    /// dock is navigation/summary over the same store — never a second state
+    /// machine and never a second set of controls.
+    var activeWorkTracker: AgentWorkStepsSnapshot? {
+        guard let cid = conversationId else { return nil }
+        return workTrackers.values
+            .filter { !$0.isTerminal && ($0.conversationId.isEmpty || $0.conversationId == cid) }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+    func clearWorkTrackersForConversationSwitch() {
+        workTrackers = [:]
+        workTrackerAnchors = [:]
+    }
+    #if DEBUG
+    func debugMergeWorkSteps(_ snapshot: AgentWorkStepsSnapshot, anchoredMessageId: String? = nil) {
+        mergeWorkStepsSnapshot(snapshot, anchoredMessageId: anchoredMessageId)
+    }
+    #endif
+    /// Build 103 Issue 1 — the single source of truth for what the chat
+    /// surface shows. Initialized to an unresolved route, NEVER an implicit
+    /// new chat: the hero renders only from `.readyNew`.
+    private(set) var sessionSurface: AgentSessionSurfaceState =
+        .resolvingInitialRoute(requestToken: UUID())
+    /// The new-chat hero/greeting/suggestions belong only to a server-confirmed
+    /// genuine new chat (or an explicit owner New Chat / provisional restore).
+    var surfaceShowsHero: Bool {
+        if case .readyNew = sessionSurface { return true }
+        return false
+    }
+    /// True while the route or the selected history is unresolved — the
+    /// restore loader owns the surface and nothing else may render.
+    var surfaceIsRestoring: Bool {
+        switch sessionSurface {
+        case .resolvingInitialRoute, .loadingHistory: return true
+        case .readyNew, .readyConversation, .failedHistory: return false
+        }
+    }
+    /// Compact retry surface payload when the selected target failed to load.
+    var surfaceFailure: (conversationId: String?, message: String)? {
+        if case let .failedHistory(cid, _, message) = sessionSurface { return (cid, message) }
+        return nil
+    }
+    /// Issues a fresh monotonic request token and enters the matching
+    /// unresolved phase. Every foreground history/route request holds one; a
+    /// response may commit, transition, or toast ONLY while its token is still
+    /// the current one — a later switch/New Chat silently invalidates it.
+    private func issueSurfaceToken(loading cid: String?) -> UUID {
+        let token = UUID()
+        if let cid {
+            sessionSurface = .loadingHistory(conversationId: cid, requestToken: token)
+        } else {
+            sessionSurface = .resolvingInitialRoute(requestToken: token)
+        }
+        return token
+    }
+    private func surfaceTokenIsCurrent(_ token: UUID) -> Bool {
+        switch sessionSurface {
+        case .resolvingInitialRoute(let t): return t == token
+        case .loadingHistory(_, let t): return t == token
+        case .failedHistory(_, let t, _): return t == token
+        case .readyNew, .readyConversation: return false
+        }
+    }
+    #if DEBUG
+    /// State-machine tests drive the surface directly; production code goes
+    /// through bootstrap/openConversation/newChat/retrySessionLoad only.
+    func debugSetSessionSurface(_ value: AgentSessionSurfaceState) { sessionSurface = value }
+    func debugIssueSurfaceToken(loading cid: String?) -> UUID { issueSurfaceToken(loading: cid) }
+    func debugSurfaceTokenIsCurrent(_ token: UUID) -> Bool { surfaceTokenIsCurrent(token) }
+    #endif
     /// Gate 1 source of truth. The composer no longer owns an ephemeral @State
     /// string that disappears on navigation/process death.
     var composerDraft = "" {
@@ -4054,13 +4221,20 @@ final class AssistantVM {
         registerObserversOnce()
         await loadModels()
         if !shouldRestoreProvisionalSession {
-            await loadActiveConversation()
+            // Slow model loading extends the unresolved window — the surface
+            // stays in `resolvingInitialRoute`, so no hero can leak through it.
+            let token: UUID
+            if case let .resolvingInitialRoute(t) = sessionSurface {
+                token = t
+            } else {
+                token = issueSurfaceToken(loading: nil)
+            }
+            await loadActiveConversation(surfaceToken: token)
         } else {
             conversationId = nil
-            // A restored provisional session IS a new chat, and an explicit one.
-            // Without this the screen would sit in resolvingInitialRoute forever
-            // and never show the hero its draft belongs to.
-            sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? UUID().uuidString)
+            // The provisional draft session IS an explicit new chat — it must
+            // never remain stuck in `resolvingInitialRoute` (handoff Issue 1).
+            sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity)
             AlmaTurnLog.event("composer.provisionalRestored", selectedSessionIdentity)
         }
         restoreCurrentComposerDraft()
@@ -4184,6 +4358,10 @@ final class AssistantVM {
             messages = []
             openTasks = []
             artifacts = []
+            // This recovered provisional chat now owns the surface — the
+            // descriptor's own session replaces any in-flight initial route
+            // token (handoff Issue 1: deep links/recovery invalidate it).
+            sessionSurface = .readyNew(sessionIdentity: identity)
             descriptor.sessionIdentity = identity
             recoverableTurn = descriptor
             resumePreTurnDescriptor(descriptor)
@@ -4346,50 +4524,56 @@ final class AssistantVM {
     }
     #endif
 
-    private func loadActiveConversation() async {
-        let token = sessionSurface.requestToken ?? UUID()
+    private func loadActiveConversation(surfaceToken: UUID) async {
         do {
             let ptr: ActiveConversationPointer = try await AlmaAPI.shared.get("/api/assistant/active-conversation")
-            // A New Chat or an explicit deep link may have claimed the screen
-            // while this was in flight; that decision outranks the pointer.
-            guard sessionSurface.requestToken == token else { return }
+            // A New Chat tap, drawer switch, or deep link that landed while the
+            // pointer was in flight owns the surface now — this response is stale.
+            guard surfaceTokenIsCurrent(surfaceToken) else { return }
             if let cid = ptr.conversationId {
                 conversationId = cid
                 selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
-                sessionSurface = .loadingHistory(conversationId: cid, requestToken: token)
+                let historyToken = UUID()
+                sessionSurface = .loadingHistory(conversationId: cid, requestToken: historyToken)
                 await refreshPermissionModeFromServer()
-                let outcome = await loadMessages(showSpinner: messages.isEmpty)
-                switch outcome {
-                case .committed:
+                let committed = await loadMessages(
+                    showSpinner: messages.isEmpty, surfaceToken: historyToken)
+                guard surfaceTokenIsCurrent(historyToken) else { return }
+                if committed {
                     sessionSurface = .readyConversation(conversationId: cid)
-                case .failed(let message):
+                    await loadArtifacts()
+                    await recoverTurnState(trigger: "bootstrap")
+                } else {
+                    // The pointer resolved but the history request failed —
+                    // an honest retry surface, never a fake blank new chat.
                     sessionSurface = .failedHistory(
-                        conversationId: cid, requestToken: token, message: message)
-                case .superseded:
-                    return
+                        conversationId: cid, requestToken: historyToken,
+                        message: "কথোপকথন লোড করা যায়নি")
                 }
-                await loadArtifacts()
-                await recoverTurnState(trigger: "bootstrap")
             } else {
-                // Authoritative: the server says there is no active chat.
-                sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? "local:new")
+                // Authoritative server answer: there IS no active conversation.
+                // Only now may the surface become a genuine new chat.
+                sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity)
             }
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
-            guard sessionSurface.requestToken == token else { return }
-            sessionSurface = .failedHistory(
-                conversationId: nil, requestToken: token, message: "লগইন শেষ হয়ে গেছে")
+            if surfaceTokenIsCurrent(surfaceToken) {
+                sessionSurface = .failedHistory(
+                    conversationId: nil, requestToken: surfaceToken,
+                    message: "সেশনের মেয়াদ শেষ — লগইন করে আবার চেষ্টা করুন")
+            }
         } catch {
-            guard sessionSurface.requestToken == token else { return }
-            // The pointer is unreachable. That is not proof of a new chat, so
-            // offer a retry instead of quietly presenting the hero.
-            sessionSurface = .failedHistory(
-                conversationId: nil,
-                requestToken: token,
-                message: (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription)
+            // The route did not resolve. The old code fell through to an
+            // implicit new-chat state here, which is exactly the false-blank
+            // state the handoff forbids — fail honestly and offer retry.
+            if surfaceTokenIsCurrent(surfaceToken) {
+                sessionSurface = .failedHistory(
+                    conversationId: nil, requestToken: surfaceToken,
+                    message: "সেশন খুলতে সমস্যা হয়েছে")
+            }
         }
     }
 
@@ -4553,67 +4737,61 @@ final class AssistantVM {
         }
     }
 
-    /// What a history load actually did. A caller that changes the visible
-    /// session must know the difference between "committed", "this chat failed"
-    /// and "the owner moved on" — a swallowed error used to dismiss the loader
-    /// and leave a convincing but empty chat behind.
-    enum HistoryLoadOutcome: Equatable {
-        case committed
-        case failed(String)
-        /// Another chat was selected while this response was in flight.
-        case superseded
-    }
-
+    /// Windowed history load with a typed outcome. `true` means the selected
+    /// conversation's rows decoded AND committed; `false` means nothing was
+    /// merged (stale target, superseded token, or transport failure) — callers
+    /// deciding restore-readiness must not fire on `false`.
+    ///
+    /// Build 103 Issue 1 guards:
+    /// - The response merges only if the SAME conversation is still selected
+    ///   (a late Chat-A response can no longer overwrite Chat B).
+    /// - A foreground load carries a `surfaceToken`; a background poll carries
+    ///   none and may neither own nor clear the foreground loading phase.
+    /// - `loadingHistory` is cleared only by the exact call that set it, and
+    ///   only while its target is still selected.
     @discardableResult
-    func loadMessages(showSpinner: Bool = false) async -> HistoryLoadOutcome {
-        guard let cid = conversationId else { return .superseded }
+    func loadMessages(showSpinner: Bool = false, surfaceToken: UUID? = nil) async -> Bool {
+        guard let cid = conversationId else { return false }
         if showSpinner { loadingHistory = true }
-        defer { if showSpinner { loadingHistory = false } }
+        func clearSpinnerIfOwned() {
+            if showSpinner, conversationId == cid { loadingHistory = false }
+        }
         do {
             let wire: [AgentMessageWire] = try await AlmaAPI.shared.get(
                 "/api/assistant/conversations/\(cid)/messages",
                 query: ["limit": String(Self.historyWindow)])
-            // The await above is where a fast drawer switch overtakes us. Chat
-            // A's rows must never land in chat B.
-            guard conversationId == cid else { return .superseded }
+            // Stale-response guard: the owner switched away (or tapped New
+            // Chat) while this request was in flight. Discard silently — the
+            // new selection owns the surface, the spinner, and the caches.
+            guard conversationId == cid else { return false }
+            if let surfaceToken, !surfaceTokenIsCurrent(surfaceToken) {
+                clearSpinnerIfOwned()
+                return false
+            }
             // Never clobber an in-flight optimistic/streaming tail with the poll.
-            guard !isStreaming else { return .committed }
+            guard !isStreaming else {
+                clearSpinnerIfOwned()
+                return true
+            }
             mergeServerMessages(wire)
             scheduleGeneratedImageQCRefresh()
             serverHasOlder = wire.count >= Self.historyWindow
             canLoadOlder = !olderHistoryCache.isEmpty || serverHasOlder
             authExpired = false
+            clearSpinnerIfOwned()
             await loadOpenTasks()
             resumeAcceptedActionContinuations()
-            return .committed
+            return true
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
-            return .failed("লগইন শেষ হয়ে গেছে")
+            clearSpinnerIfOwned()
+            return false
         } catch {
-            let message = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
-            if showSpinner { errorToast = message }
-            return .failed(message)
-        }
-    }
-
-    /// Retry the selected chat's history without losing the selection, the draft
-    /// or the queue.
-    func retrySessionHistory() async {
-        guard case .failedHistory(let cid, _, _) = sessionSurface else { return }
-        let token = UUID()
-        guard let cid, conversationId == cid else {
-            sessionSurface = .resolvingInitialRoute(requestToken: token)
-            await loadActiveConversation()
-            return
-        }
-        sessionSurface = .loadingHistory(conversationId: cid, requestToken: token)
-        let outcome = await loadMessages(showSpinner: true)
-        guard sessionSurface.requestToken == token else { return }
-        switch outcome {
-        case .committed: sessionSurface = .readyConversation(conversationId: cid)
-        case .failed(let message):
-            sessionSurface = .failedHistory(conversationId: cid, requestToken: token, message: message)
-        case .superseded: break
+            clearSpinnerIfOwned()
+            if showSpinner, conversationId == cid {
+                errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            }
+            return false
         }
     }
 
@@ -4853,6 +5031,18 @@ final class AssistantVM {
     private func mergeServerMessages(_ wire: [AgentMessageWire]) {
         var incoming = wire.map(AgentChatMessage.from)
         let activeServerIds = Set(incoming.map(\.id))
+
+        // Build 103 Issue 3 — cold tracker snapshots ride the message wire.
+        // They merge through the SAME monotonic store the live stream uses, so
+        // hot stream, replay, polling and cold load all resolve to the highest
+        // authoritative revision (terminal states can never regress).
+        for message in wire {
+            for cold in message.workSteps ?? [] {
+                if let snapshot = cold.trustedValue {
+                    mergeWorkStepsSnapshot(snapshot, anchoredMessageId: message.id)
+                }
+            }
+        }
 
         // Exact idempotency identity wins. A positional "last local ↔ last
         // server user" fallback used to pair a newly queued follow-up with the
@@ -5837,6 +6027,7 @@ final class AssistantVM {
         // wordmark cannot remain behind the loader, and the new-chat hero never
         // owns an intermediate empty frame.
         loadingHistory = true
+        let surfaceToken = issueSurfaceToken(loading: id)
         stopStreaming(cancelServer: false)
         currentClientMessageId = nil
         conversationId = id
@@ -5858,6 +6049,7 @@ final class AssistantVM {
         lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
         resetHistoryWindowState()
         messages = []
+        clearWorkTrackersForConversationSwitch()   // trackers are per-conversation
         openTasks = []
         artifacts = []
         indexedSessionFileMessages = []
@@ -5866,27 +6058,59 @@ final class AssistantVM {
         // transaction may re-create its waiting owner intent; it must land in
         // the destination conversation, never briefly in the previous one.
         restoreCurrentComposerDraft()
-        let historyToken = UUID()
-        sessionSurface = .loadingHistory(conversationId: id, requestToken: historyToken)
         restoreTick += 1     // screen replays the single session-opening loader
-        let outcome = await loadMessages()
-        if sessionSurface.requestToken == historyToken {
-            switch outcome {
-            case .committed:
-                sessionSurface = .readyConversation(conversationId: id)
-            case .failed(let message):
-                sessionSurface = .failedHistory(
-                    conversationId: id, requestToken: historyToken, message: message)
-            case .superseded:
-                break
-            }
+        let committed = await loadMessages(surfaceToken: surfaceToken)
+        // Another switch/New Chat superseded this open — it owns the surface.
+        guard surfaceTokenIsCurrent(surfaceToken) else { return }
+        loadingHistory = false
+        if committed {
+            sessionSurface = .readyConversation(conversationId: id)
+            restoreReadyTick += 1   // history committed → awakening resolves to success
+            await loadArtifacts()
+            let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
+                                                                body: ["conversationId": id])
+            await recoverTurnState(trigger: "openConversation")
+            scheduleQueuedOwnerMessage()
+        } else {
+            // The old code fired restore-ready even when the request failed,
+            // dismissing the loader into a false blank timeline. Fail honestly:
+            // the retry surface stays tied to THIS conversation.
+            sessionSurface = .failedHistory(
+                conversationId: id, requestToken: surfaceToken,
+                message: "কথোপকথন লোড করা যায়নি")
         }
-        restoreReadyTick += 1   // history loaded → awakening may resolve to success
-        await loadArtifacts()
-        let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
-                                                            body: ["conversationId": id])
-        await recoverTurnState(trigger: "openConversation")
-        scheduleQueuedOwnerMessage()
+    }
+
+    /// Retry for `failedHistory` — reloads the exact selected target. The
+    /// draft, queued messages, and approval recovery all survive because the
+    /// failure path never cleared them.
+    func retrySessionLoad() async {
+        guard case let .failedHistory(cid, _, _) = sessionSurface else { return }
+        if let cid {
+            if conversationId != cid { conversationId = cid }
+            loadingHistory = true
+            let token = issueSurfaceToken(loading: cid)
+            restoreTick += 1     // replay the single restore loader
+            let committed = await loadMessages(surfaceToken: token)
+            guard surfaceTokenIsCurrent(token) else { return }
+            loadingHistory = false
+            if committed {
+                sessionSurface = .readyConversation(conversationId: cid)
+                restoreReadyTick += 1
+                await loadArtifacts()
+                await recoverTurnState(trigger: "sessionRetry")
+                scheduleQueuedOwnerMessage()
+            } else {
+                sessionSurface = .failedHistory(
+                    conversationId: cid, requestToken: token,
+                    message: "কথোপকথন লোড করা যায়নি")
+            }
+        } else {
+            // The initial route itself failed — resolve it from scratch.
+            let token = issueSurfaceToken(loading: nil)
+            restoreTick += 1
+            await loadActiveConversation(surfaceToken: token)
+        }
     }
 
     /// Change the mode for THIS chat.
@@ -5923,9 +6147,11 @@ final class AssistantVM {
         currentClientMessageId = nil
         conversationId = nil     // server creates one on the first send
         selectedSessionIdentity = UUID().uuidString
-        // An explicit New Chat is authoritative: it retires any in-flight
-        // pointer or history request so a late response cannot replace it.
-        sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity ?? UUID().uuidString)
+        // Explicit owner intent: this IS a genuine new chat, and entering
+        // `readyNew` invalidates every in-flight history token — a late
+        // history response can never replace the fresh surface.
+        sessionSurface = .readyNew(sessionIdentity: selectedSessionIdentity)
+        loadingHistory = false   // a superseded foreground load may not clear it
         currentProjectId = nil
         conversationTitle = "ALMA AI"
         permissionMode = .standard
@@ -5942,6 +6168,7 @@ final class AssistantVM {
         usageSnapshot = nil
         pinnedSkillName = nil
         messages = []
+        clearWorkTrackersForConversationSwitch()
         restoreCurrentComposerDraft()
         openTasks = []
         artifacts = []
@@ -7138,6 +7365,9 @@ final class AssistantVM {
             to: id,
             clientMessageId: currentClientMessageId ?? recoverableTurn?.clientMessageId)
         conversationId = id
+        // The server just bound this chat to a real conversation — the surface
+        // is an existing conversation from here on (hero stays retired).
+        sessionSurface = .readyConversation(conversationId: id)
         migrateComposerDraft(from: previousDraftKey, to: composerDraftKey)
         if var pendingAttachmentSend,
            pendingAttachmentSend.sessionIdentity == selectedSessionIdentity {
@@ -7775,6 +8005,14 @@ final class AssistantVM {
                                                           imageRenderSelection: imageRenderSelection))
                     messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
                 }
+            case .planProgress, .turnProgress:
+                // Typed and decoded (never `unknown` telemetry). The native
+                // tracker renders from `workSteps` snapshots; the web-parity
+                // checklist/status-line projections carry no extra facts.
+                break
+            case .workSteps(let snapshot):
+                mergeWorkStepsSnapshot(snapshot)
+                touchedStream = true
             case .askCard(let aid, let question, let options):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }),
@@ -8521,6 +8759,161 @@ final class AssistantVM {
         answer.createdAt = "2026-08-11T05:42:00.000Z"
         messages = [answer]
         conversationId = "fixture-image-model-conversation"
+    }
+
+    /// Build 103 Issue 2 — v2 image-setup proof card. Decoded through the REAL
+    /// wire decoder so the fixture can never diverge from the production
+    /// contract shape the server emits.
+    static func imageRenderProofSelection(
+        presetId: String = "social_post", aspectRatio: String = "4:5",
+        width: Int = 1856, height: Int = 2304, imageSize: String = "2K",
+        variationCount: Int = 4, revision: Int = 3
+    ) -> AgentImageRenderSelection? {
+        let unit = 0.05
+        let minCost = unit * Double(variationCount)
+        let config: [String: Any] = [
+            "version": 1, "presetId": presetId, "sizeMode": "tier",
+            "aspectRatio": aspectRatio, "imageSize": imageSize,
+            "width": width, "height": height, "quality": "standard",
+            "providerQuality": "medium", "variationCount": variationCount,
+            "pipelineMode": "preview",
+        ]
+        let payload: [String: Any] = [
+            "contractVersion": 2, "revision": revision,
+            "selectedModel": "gpt-image-2",
+            "config": config,
+            "configFingerprint": "fixture-fp-\(revision)",
+            "modelOptions": [
+                ["id": "gpt-image-2", "label": "GPT Image 2", "provider": "openai", "enabled": true],
+                ["id": "gemini-3-pro-image", "label": "Nano Banana Pro", "provider": "gemini", "enabled": true],
+                ["id": "gemini-3.1-flash-image", "label": "Nano Banana 2", "provider": "gemini", "enabled": true],
+                ["id": "seedream-5.0-pro", "label": "Seedream 5 Pro", "provider": "fal",
+                 "enabled": false, "unavailableReason": "Live image worker has not proven this option."],
+            ],
+            "presetOptions": [
+                ["id": "square", "label": "Square", "aspectRatio": "1:1", "enabled": true],
+                ["id": "social_post", "label": "Facebook / Instagram post", "aspectRatio": "4:5", "enabled": true],
+                ["id": "reel_story", "label": "Reel / Story", "aspectRatio": "9:16", "enabled": true],
+                ["id": "landscape", "label": "Landscape / banner", "aspectRatio": "16:9", "enabled": true],
+                ["id": "poster", "label": "Portrait poster", "aspectRatio": "2:3", "enabled": true],
+            ],
+            "sizeOptions": [
+                ["id": "1K", "enabled": true, "width": 928, "height": 1152],
+                ["id": "2K", "enabled": true, "width": 1856, "height": 2304],
+                ["id": "4K", "enabled": false,
+                 "unavailableReason": "GPT Image 2 supports 4K here only at 9:16 or 16:9."],
+            ],
+            "qualityOptions": [
+                ["id": "standard", "providerQuality": "medium",
+                 "description": "OpenAI quality medium — দ্রুত ও সাশ্রয়ী"],
+                ["id": "pro", "providerQuality": "high",
+                 "description": "OpenAI quality high — বেশি output token, বেশি খরচ"],
+            ],
+            "countOptions": [1, 2, 3, 4],
+            "quote": [
+                "version": 2, "currency": "USD", "kind": "provider_render_estimate",
+                "model": "gpt-image-2", "provider": "openai", "presetId": presetId,
+                "aspectRatio": aspectRatio, "imageSize": imageSize,
+                "width": width, "height": height, "quality": "standard",
+                "providerQuality": "medium", "requestedImages": variationCount,
+                "unitPriceUsd": unit, "minCostUsd": minCost, "maxCostUsd": minCost,
+                "maxPaidGenerationsPerImage": 1,
+                "configFingerprint": "fixture-fp-\(revision)",
+                "pricingBasis": "internal_list_estimate", "pricingLastVerifiedAt": "2026-07-12",
+                "pricedComponents": ["provider_output_render"],
+                "excludes": ["qc_vision", "taxes", "provider_credits",
+                             "prompt_text_input_tokens", "reference_image_input_tokens"],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let wire = try? JSONDecoder().decode(AgentImageRenderSelectionWire.self, from: data)
+        else { return nil }
+        return wire.trustedValue
+    }
+
+    func loadImageSetupProofFixture(status: String = "pending", aspect: String = "4:5") {
+        let (presetId, width, height): (String, Int, Int) = {
+            switch aspect {
+            case "2:3": return ("poster", 1664, 2496)
+            case "9:16": return ("reel_story", 1536, 2752)
+            case "16:9": return ("landscape", 2752, 1536)
+            case "1:1": return ("square", 2048, 2048)
+            default: return ("social_post", 1856, 2304)
+            }
+        }()
+        var answer = AgentChatMessage(
+            id: "fix-image-setup", role: .assistant,
+            text: status == "pending"
+                ? "Render-এর আগে image setup (preset, size, সংখ্যা, model) নিশ্চিত করুন।"
+                : "Approve-এর পর pinned setup read-only থাকে।")
+        answer.confirmCards = [.init(
+            id: "fix-image-setup-action",
+            summary: "Image generation request (standard quality, 4 variations)",
+            status: status,
+            actionType: "image_gen",
+            costEstimate: nil,
+            approvedAt: status == "approved" ? Date() : nil,
+            imageModelSelection: Self.imageModelProofSelection(selectedModel: "gpt-image-2"),
+            imageRenderSelection: Self.imageRenderProofSelection(
+                presetId: presetId, aspectRatio: aspect, width: width, height: height))]
+        answer.createdAt = "2026-08-11T05:42:00.000Z"
+        messages = [answer]
+        conversationId = "fixture-image-setup-conversation"
+        #if DEBUG
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-image-setup-conversation"))
+        #endif
+    }
+
+    /// Build 103 Issue 3 — work-step tracker proof: canonical in-turn block +
+    /// composer dock projected from the SAME store, in running / waiting-owner
+    /// / settled variants.
+    func loadWorkStepsProofFixture(variant: String = "running") {
+        var answer = AgentChatMessage(
+            id: "fix-work-steps-message", role: .assistant,
+            text: "কাজটা ধাপে ধাপে এগোচ্ছে — নিচের tracker-এ প্রতিটি ধাপের অবস্থা দেখা যাবে।")
+        answer.createdAt = "2026-08-11T05:42:00.000Z"
+        answer.serverId = "fix-work-steps-message"
+        let status = variant == "waiting" ? "waiting_owner"
+            : variant == "settled" ? "completed" : "running"
+        let stepStatuses: [String] = variant == "settled"
+            ? ["completed", "completed", "completed", "completed", "completed"]
+            : variant == "waiting"
+                ? ["completed", "completed", "waiting_owner", "pending", "pending"]
+                : ["completed", "running", "pending", "pending", "pending"]
+        let titles = [
+            "Finish and review atomic per-image model selection and quote contract",
+            "Finish native picker/recovery UI and focused unit/UI tests",
+            "Run backend, worker, type, Swift and simulator verification",
+            "Create clean release branch, commit and PR",
+            "Verify TestFlight readiness and report",
+        ]
+        let snapshot = AgentWorkStepsSnapshot(
+            trackerId: "fixture-plan-1",
+            originTurnId: "fixture-turn-1",
+            currentTurnId: "fixture-turn-1",
+            turnIds: ["fixture-turn-1"],
+            conversationId: "fixture-work-steps-conversation",
+            originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
+            revision: variant == "settled" ? 7 : 3,
+            sourceId: "fixture-plan-1",
+            goal: "Ship the Build 103 three-issue candidate",
+            status: status,
+            headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"
+                : variant == "settled" ? "৫/৫ ধাপ শেষ" : "১/৫ ধাপ শেষ · এখন: native picker",
+            blockedByKind: variant == "waiting" ? "approval" : nil,
+            blockedByRefId: variant == "waiting" ? "fix-image-setup-action" : nil,
+            steps: titles.enumerated().map { index, title in
+                .init(id: "fixture-step-\(index + 1)", position: index + 1,
+                      title: title, status: stepStatuses[index],
+                      startedAt: nil, finishedAt: nil)
+            },
+            updatedAt: "2026-08-11T05:45:00.000Z")
+        messages = [answer]
+        conversationId = "fixture-work-steps-conversation"
+        #if DEBUG
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-work-steps-conversation"))
+        #endif
+        mergeWorkStepsSnapshot(snapshot, anchoredMessageId: "fix-work-steps-message")
     }
 
     /// Focused pending-image pricing proof. The legacy server value remains in
@@ -9464,6 +9857,9 @@ final class AssistantVM {
             if let selection = detail.imageModelSelection?.trustedValue {
                 messages[messageIndex].confirmCards[cardIndex].imageModelSelection = selection
             }
+            if let renderSelection = detail.imageRenderSelection?.trustedValue {
+                messages[messageIndex].confirmCards[cardIndex].imageRenderSelection = renderSelection
+            }
         }
     }
 
@@ -9546,6 +9942,110 @@ final class AssistantVM {
                 } else {
                     errorToast = "মডেল বদলানো হয়নি — server state মিলিয়ে নেওয়া হয়েছে"
                 }
+            }
+            AlmaAgentHaptics.warning()
+            return false
+        }
+    }
+
+    /// Build 103 Issue 2 — one atomic multi-field edit through the revisioned
+    /// server CAS. Selection state is applied ONLY from the server echo; while
+    /// the mutation (or its loss-reconciliation) is unresolved, Approve stays
+    /// disabled via the same `isChangingImageModel` gate as the v1 picker.
+    struct AgentImageConfigProposal: Equatable {
+        var imageModel: String
+        var presetId: String
+        var imageSize: String
+        var quality: String
+        var variationCount: Int
+    }
+
+    func imageRenderSelection(for cardId: String) -> AgentImageRenderSelection? {
+        messages.lazy.flatMap(\.confirmCards)
+            .first(where: { $0.id == cardId })?.imageRenderSelection
+    }
+
+    @discardableResult
+    func selectImageRenderConfig(cardId: String, proposal: AgentImageConfigProposal) async -> Bool {
+        guard let card = messages.lazy.flatMap(\.confirmCards).first(where: { $0.id == cardId }),
+              card.actionType == "image_gen",
+              card.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pending",
+              let selection = card.imageRenderSelection else {
+            errorToast = "এই setup এখন বদলানো যাচ্ছে না"
+            AlmaAgentHaptics.warning()
+            return false
+        }
+        let unchanged = selection.selectedModel == proposal.imageModel
+            && selection.config.presetId == proposal.presetId
+            && selection.config.imageSize == proposal.imageSize
+            && selection.config.quality == proposal.quality
+            && selection.config.variationCount == proposal.variationCount
+        if unchanged { return true }
+
+        let mutationKey = "image-config:\(cardId)"
+        guard beginSubmitting(mutationKey) else { return false }
+        imageModelMutationTargetByCard[cardId] = proposal.imageModel
+        defer {
+            imageModelMutationTargetByCard.removeValue(forKey: cardId)
+            finishSubmitting(mutationKey)
+        }
+
+        struct ImageConfigEditBody: Encodable {
+            struct Config: Encodable {
+                let expectedRevision: Int
+                let imageModel: String
+                let presetId: String
+                let imageSize: String
+                let quality: String
+                let variationCount: Int
+            }
+            let imageConfig: Config
+        }
+        let body = ImageConfigEditBody(imageConfig: .init(
+            expectedRevision: selection.revision,
+            imageModel: proposal.imageModel,
+            presetId: proposal.presetId,
+            imageSize: proposal.imageSize,
+            quality: proposal.quality,
+            variationCount: proposal.variationCount))
+        do {
+            let detail: AgentImageActionDetailWire = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(cardId)", body: body)
+            guard detail.id == cardId, detail.type == "image_gen",
+                  let echoed = detail.imageRenderSelection?.trustedValue else {
+                _ = await fetchImageActionDetail(cardId)
+                errorToast = "সার্ভারের setup response মেলেনি — card মিলিয়ে নেওয়া হয়েছে"
+                AlmaAgentHaptics.warning()
+                return false
+            }
+            applyImageActionDetail(detail)
+            let applied = echoed.selectedModel == proposal.imageModel
+                && echoed.config.presetId == proposal.presetId
+                && echoed.config.imageSize == proposal.imageSize
+                && echoed.config.quality == proposal.quality
+                && echoed.config.variationCount == proposal.variationCount
+            if applied {
+                AlmaAgentHaptics.success()
+                return true
+            }
+            errorToast = "সার্ভার setup গ্রহণ করেনি — বর্তমান অবস্থা দেখানো হচ্ছে"
+            AlmaAgentHaptics.warning()
+            return false
+        } catch {
+            // 409 (revision moved / already resolved) and 422 replies still
+            // carry/imply current server state — always re-read the SAME action
+            // so the card reflects server truth, never the lost request.
+            _ = await fetchImageActionDetail(cardId)
+            if case AlmaAPIError.http(let status, _) = error {
+                if status == 409 {
+                    errorToast = "Setup ইতিমধ্যে বদলেছে — নতুন অবস্থা দেখে আবার নিশ্চিত করুন"
+                } else if status == 422 {
+                    errorToast = "এই কম্বিনেশনটি এই মডেলে সম্ভব নয় বা এখন unavailable"
+                } else {
+                    errorToast = "Setup বদলানো যায়নি — card অপরিবর্তিত আছে"
+                }
+            } else {
+                errorToast = "Setup নিশ্চিত করা যায়নি — card মিলিয়ে নেওয়া হয়েছে"
             }
             AlmaAgentHaptics.warning()
             return false
@@ -12655,6 +13155,18 @@ enum AgentGeneratedImagePreviewBuilder {
 /// cropping or making the conversation jump during decode.
 enum AgentGeneratedImageSizing {
     static let stableContainerAspectRatio: CGFloat = 4.0 / 5.0
+
+    /// Build 103 Issue 2 — container ratio from the pinned "W:H" config. The
+    /// clamp keeps a phone-height bound for tall (9:16) and wide (16:9) media;
+    /// unknown/legacy input keeps the stable 4:5 reservation.
+    static func containerAspectRatio(fromPinned aspect: String?) -> CGFloat {
+        guard let aspect else { return stableContainerAspectRatio }
+        let parts = aspect.split(separator: ":")
+        guard parts.count == 2,
+              let w = Double(parts[0]), let h = Double(parts[1]),
+              w > 0, h > 0 else { return stableContainerAspectRatio }
+        return CGFloat(min(max(w / h, 0.5), 1.9))
+    }
 }
 
 enum AgentGeneratedImageDataLoader {
@@ -12721,6 +13233,9 @@ private struct AgentAdjacentRemoteImageGallery: View {
 private struct AgentGeneratedImageGallery: View {
     let items: [AgentGeneratedImageItem]
     let vm: AssistantVM
+    /// Build 103 Issue 2 — the approved config's composition shape for the
+    /// single-image reservation; legacy messages keep the stable 4:5.
+    var pinnedAspectRatio: CGFloat? = nil
     @Environment(\.colorScheme) private var scheme
     @State private var urls: [String: URL] = [:]
     @State private var images: [String: UIImage] = [:]
@@ -12756,9 +13271,10 @@ private struct AgentGeneratedImageGallery: View {
         VStack(alignment: .leading, spacing: 8) {
             if imageItems.count == 1, let item = imageItems.first {
                 tile(item, index: 0, pal: pal)
-                    .aspectRatio(AgentGeneratedImageSizing.stableContainerAspectRatio,
+                    .aspectRatio(pinnedAspectRatio
+                                 ?? AgentGeneratedImageSizing.stableContainerAspectRatio,
                                  contentMode: .fit)
-                    .frame(maxWidth: 520)
+                    .frame(maxWidth: 520, maxHeight: 560)
             } else if !imageItems.isEmpty {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
                     ForEach(Array(imageItems.enumerated()), id: \.offset) { index, item in
@@ -13672,10 +14188,28 @@ struct AgentMessageRow: View {
                         .padding(.vertical, 2)
                     }
 
+                    // Build 103 Issue 3 — the turn-owned tracker block. Owner
+                    // decision 2026-08-13: while the task RUNS, the composer
+                    // dock is the ONLY tracker surface (the in-chat copy read
+                    // as a duplicate and its expansion overlapped the reply);
+                    // the block appears here once the tracker settles, as the
+                    // task's durable record in the conversation.
+                    ForEach(vm.workTrackers(for: message).filter(\.isTerminal),
+                            id: \.trackerId) { snapshot in
+                        AgentWorkStepsBlockView(snapshot: snapshot, pal: pal) { actionId in
+                            vm.pendingActionScrollId = actionId
+                        }
+                        .padding(.top, 2)
+                    }
+
                     let generatedImageRefs = message.fileRefs.filter { $0.mediaType.hasPrefix("image/") }
                     if !generatedImageRefs.isEmpty {
                         AgentGeneratedImageGallery(
-                            items: generatedImageRefs.map { vm.generatedImageItem(for: $0) }, vm: vm)
+                            items: generatedImageRefs.map { vm.generatedImageItem(for: $0) }, vm: vm,
+                            pinnedAspectRatio: message.confirmCards.lazy
+                                .compactMap { $0.imageRenderSelection?.config.aspectRatio }
+                                .first
+                                .map { AgentGeneratedImageSizing.containerAspectRatio(fromPinned: $0) })
                             .padding(.top, 2)
                     }
                     // Canonical assistant `file_ref`s use the same signed-file +
@@ -15032,6 +15566,8 @@ struct AgentImageGeneratingCanvas: View {
     let startedAt: Date?
     let pal: AgentPalette
     var statusText = "ছবি তৈরি হচ্ছে…"
+    /// Pinned composition shape from the approved config; legacy cards keep 4:5.
+    var pinnedAspectRatio: CGFloat? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var firstObservedAt = Date()
@@ -15082,8 +15618,8 @@ struct AgentImageGeneratingCanvas: View {
                         .padding(12)
                 }
             }
-            .aspectRatio(4.0 / 5.0, contentMode: .fit)
-            .frame(maxWidth: 430)
+            .aspectRatio(pinnedAspectRatio ?? 4.0 / 5.0, contentMode: .fit)
+            .frame(maxWidth: 430, maxHeight: 560)
             .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
             .compositingGroup()
@@ -15318,6 +15854,7 @@ struct AgentConfirmCardView: View {
     let vm: AssistantVM
     let onDecide: (Bool) -> Void
     @State private var showImageModelPicker = false
+    @State private var showImageSetupSheet = false
     private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
     private var modelChanging: Bool { vm.isChangingImageModel(card.id) }
     private var selectedImageModelUnavailable: Bool {
@@ -15390,11 +15927,14 @@ struct AgentConfirmCardView: View {
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let selection = card.imageModelSelection?.trustedValue {
+            if let renderSelection = card.imageRenderSelection {
+                imageRenderSetupView(renderSelection)
+            } else if let selection = card.imageModelSelection?.trustedValue {
                 imageModelSelectionView(selection)
             }
 
-            if AgentConfirmCardCostPresentation.showsPendingImageQuoteUnavailable(
+            if card.imageRenderSelection == nil,
+               AgentConfirmCardCostPresentation.showsPendingImageQuoteUnavailable(
                 actionType: card.actionType, status: effectiveStatus,
                 imageModelSelection: card.imageModelSelection) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -15447,7 +15987,11 @@ struct AgentConfirmCardView: View {
                         startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt,
                         pal: pal,
                         statusText: submitting && card.status.lowercased() == "pending"
-                            ? "অনুমোদন পাঠানো হচ্ছে…" : "ছবি তৈরি হচ্ছে…")
+                            ? "অনুমোদন পাঠানো হচ্ছে…" : "ছবি তৈরি হচ্ছে…",
+                        pinnedAspectRatio: card.imageRenderSelection.map {
+                            AgentGeneratedImageSizing.containerAspectRatio(
+                                fromPinned: $0.config.aspectRatio)
+                        })
                 } else {
                     AgentRenderProgressStrip(
                         startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt,
@@ -15522,6 +16066,108 @@ struct AgentConfirmCardView: View {
         .sheet(isPresented: $showImageModelPicker) {
             AgentImageModelPickerSheet(vm: vm, cardId: card.id)
         }
+    }
+
+    /// Build 103 Issue 2 — the professional image setup summary. One compact
+    /// row (preset · ratio · exact pixels · variants · model) plus the truthful
+    /// USD estimate; tapping opens the native setup sheet while pending, and
+    /// the pinned setup stays read-only on every later state.
+    @ViewBuilder private func imageRenderSetupView(
+        _ selection: AgentImageRenderSelection
+    ) -> some View {
+        let preset = selection.presetOptions.first(where: { $0.id == selection.config.presetId })
+        let model = selection.modelOptions.first(where: { $0.id == selection.selectedModel })
+        let presetLabel = preset?.label ?? selection.config.presetId
+        let modelLabel = model?.label ?? selection.selectedModel
+        let provider = AgentImageModelQuotePresentation.providerLabel(
+            model?.provider ?? selection.quote.provider)
+        let pixels = "\(selection.config.width)×\(selection.config.height)"
+        let countText = "\(selection.config.variationCount) image"
+            + (selection.config.variationCount > 1 ? "s" : "")
+        let summaryLine = "\(presetLabel) · \(selection.config.aspectRatio) · \(pixels)"
+        let secondLine = "\(selection.config.imageSize) · \(countText) · \(modelLabel) · \(provider)"
+
+        VStack(alignment: .leading, spacing: 8) {
+            if effectiveStatus == "pending" {
+                Button {
+                    AlmaAgentHaptics.selection()
+                    showImageSetupSheet = true
+                } label: {
+                    imageSetupRow(summaryLine: summaryLine, secondLine: secondLine, locked: false)
+                }
+                .buttonStyle(.plain)
+                .disabled(submitting || modelChanging)
+                // NOTE: attached here, not on the card root — two .sheet
+                // modifiers on one view silently drop one of them.
+                .sheet(isPresented: $showImageSetupSheet) {
+                    AgentImageSetupSheet(vm: vm, cardId: card.id)
+                }
+                .accessibilityIdentifier("agent.confirm-card.image-setup")
+                .accessibilityLabel(
+                    "Image setup, \(presetLabel), অনুপাত \(selection.config.aspectRatio), \(pixels) pixels, \(countText), \(modelLabel), \(provider)")
+                .accessibilityHint("ছবির setup বদলাতে খুলুন")
+            } else {
+                imageSetupRow(summaryLine: summaryLine, secondLine: secondLine, locked: true)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("agent.confirm-card.image-setup")
+                    .accessibilityLabel(
+                        "Image setup, \(presetLabel), অনুপাত \(selection.config.aspectRatio), \(pixels) pixels, \(countText), \(modelLabel), \(provider), read only")
+            }
+
+            if let quote = AgentImageRenderQuotePresentation.resolve(selection.quote) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(quote.primaryText)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(pal.ink)
+                    Text(quote.detailText)
+                    if !quote.exclusionsText.isEmpty { Text(quote.exclusionsText) }
+                }
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("agent.confirm-card.image-quote")
+            }
+        }
+    }
+
+    @ViewBuilder private func imageSetupRow(
+        summaryLine: String, secondLine: String, locked: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "slider.horizontal.3")
+                .foregroundStyle(AgentPalette.coral)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Image setup")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                Text(summaryLine)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(2)
+                Text(secondLine)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 4)
+            if locked {
+                Text("Locked")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            } else if modelChanging {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            }
+        }
+        .padding(11)
+        .background(Color.white.opacity(locked ? 0.04 : 0.05),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(locked ? Color.clear : pal.borderSubtle, lineWidth: 1))
     }
 
     @ViewBuilder private func imageModelSelectionView(
@@ -15733,6 +16379,249 @@ struct AgentConfirmCardView: View {
         case "failed": return .red
         default: return pal.muted
         }
+    }
+}
+
+/// Build 103 Issue 2 — truthful presentation of the v2 quote. The estimate is
+/// labeled an estimate, priced components are named, and exclusions stay
+/// visible; nothing implies full provider spend or invoice truth.
+struct AgentImageRenderQuotePresentation: Equatable {
+    let primaryText: String
+    let detailText: String
+    let exclusionsText: String
+
+    static func resolve(_ quote: AgentImageRenderQuoteWire) -> Self? {
+        guard quote.hasValidContractShape else { return nil }
+        let primary = quote.maxCostUsd > quote.minCostUsd
+            ? "Base \(usd(quote.minCostUsd)) · সর্বোচ্চ \(usd(quote.maxCostUsd))"
+            : "Estimate \(usd(quote.minCostUsd))"
+        let imageWord = quote.requestedImages == 1 ? "image" : "images"
+        var detail = "\(quote.requestedImages) \(imageWord) · \(quote.imageSize)"
+            + " · \(quote.width)×\(quote.height) · \(quote.quality)"
+        if let providerQuality = quote.providerQuality, !providerQuality.isEmpty {
+            detail += " (\(providerQuality))"
+        }
+        detail += " · প্রতি image সর্বোচ্চ \(quote.maxPaidGenerationsPerImage) paid render"
+        let exclusions = quote.excludes.map(exclusionLabel).joined(separator: ", ")
+        return .init(
+            primaryText: primary,
+            detailText: detail,
+            exclusionsText: exclusions.isEmpty ? "" : "বাদ: \(exclusions)")
+    }
+
+    private static func usd(_ amount: Double) -> String {
+        var value = String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), amount)
+        while value.last == "0",
+              let decimal = value.firstIndex(of: "."),
+              value.distance(from: decimal, to: value.endIndex) > 3 {
+            value.removeLast()
+        }
+        return "$\(value)"
+    }
+
+    private static func exclusionLabel(_ code: String) -> String {
+        switch code {
+        case "qc_vision": return "QC vision"
+        case "taxes": return "tax"
+        case "provider_credits": return "provider credits"
+        case "prompt_text_input_tokens": return "prompt input tokens"
+        case "reference_image_input_tokens": return "reference image input tokens"
+        default: return code.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+}
+
+/// Build 103 Issue 2 — the professional image setup editor. Every control
+/// applies through the server's revisioned compare-and-set and re-renders
+/// ONLY from the server echo; disabled combinations stay visible with their
+/// reason, and the live authoritative quote follows each accepted change.
+@available(iOS 17.0, *)
+struct AgentImageSetupSheet: View {
+    @Bindable var vm: AssistantVM
+    let cardId: String
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    private var selection: AgentImageRenderSelection? {
+        vm.imageRenderSelection(for: cardId)
+    }
+    private var mutating: Bool { vm.isChangingImageModel(cardId) }
+
+    private func apply(_ transform: (AssistantVM.AgentImageConfigProposal) -> AssistantVM.AgentImageConfigProposal) {
+        guard let selection, !mutating else { return }
+        let base = AssistantVM.AgentImageConfigProposal(
+            imageModel: selection.selectedModel,
+            presetId: selection.config.presetId,
+            imageSize: selection.config.imageSize,
+            quality: selection.config.quality,
+            variationCount: selection.config.variationCount)
+        let proposal = transform(base)
+        guard proposal != base else { return }
+        AlmaAgentHaptics.selection()
+        Task { await vm.selectImageRenderConfig(cardId: cardId, proposal: proposal) }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            Group {
+                if let selection {
+                    List {
+                        Section("Preset") {
+                            ForEach(selection.presetOptions, id: \.id) { preset in
+                                Button { apply { var p = $0; p.presetId = preset.id; return p } } label: {
+                                    optionRow(
+                                        pal: pal,
+                                        title: "\(preset.label) · \(preset.aspectRatio)",
+                                        selected: preset.id == selection.config.presetId,
+                                        enabled: preset.enabled,
+                                        reason: preset.unavailableReason)
+                                }
+                                .disabled(!preset.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.preset.\(preset.id)")
+                            }
+                        }
+                        Section("Resolution") {
+                            ForEach(selection.sizeOptions, id: \.id) { size in
+                                Button { apply { var p = $0; p.imageSize = size.id; return p } } label: {
+                                    optionRow(
+                                        pal: pal,
+                                        title: size.width.flatMap { w in size.height.map { h in
+                                            "\(size.id) · \(w)×\(h)"
+                                        } } ?? size.id,
+                                        selected: size.id == selection.config.imageSize,
+                                        enabled: size.enabled,
+                                        reason: size.unavailableReason)
+                                }
+                                .disabled(!size.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.size.\(size.id)")
+                            }
+                        }
+                        Section("কতটি ছবি") {
+                            HStack(spacing: 10) {
+                                ForEach(selection.countOptions, id: \.self) { count in
+                                    Button { apply { var p = $0; p.variationCount = count; return p } } label: {
+                                        Text("\(count)")
+                                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                            .frame(width: 44, height: 44)
+                                            .background(
+                                                count == selection.config.variationCount
+                                                    ? AgentPalette.coral : Color.white.opacity(0.06),
+                                                in: Circle())
+                                            .foregroundStyle(
+                                                count == selection.config.variationCount ? .white : pal.ink)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(mutating)
+                                    .accessibilityIdentifier("agent.image-setup.count.\(count)")
+                                    .accessibilityLabel("\(count)টি ছবি")
+                                }
+                                Spacer()
+                            }
+                        }
+                        Section("Quality") {
+                            ForEach(selection.qualityOptions, id: \.id) { quality in
+                                Button { apply { var p = $0; p.quality = quality.id; return p } } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        optionRow(
+                                            pal: pal,
+                                            title: quality.id == "pro" ? "Pro" : "Standard",
+                                            selected: quality.id == selection.config.quality,
+                                            enabled: true, reason: nil)
+                                        Text(quality.description)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(pal.muted)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .disabled(mutating)
+                                .accessibilityIdentifier("agent.image-setup.quality.\(quality.id)")
+                            }
+                        }
+                        Section("Model") {
+                            ForEach(selection.modelOptions, id: \.id) { model in
+                                Button { apply { var p = $0; p.imageModel = model.id; return p } } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        optionRow(
+                                            pal: pal,
+                                            title: "\(model.label) · \(AgentImageModelQuotePresentation.providerLabel(model.provider))",
+                                            selected: model.id == selection.selectedModel,
+                                            enabled: model.enabled,
+                                            reason: model.unavailableReason)
+                                    }
+                                }
+                                .disabled(!model.enabled || mutating)
+                                .accessibilityIdentifier("agent.image-setup.model.\(model.id)")
+                            }
+                        }
+                        Section("খরচ (estimate)") {
+                            if let quote = AgentImageRenderQuotePresentation.resolve(selection.quote) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(quote.primaryText)
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                        .foregroundStyle(pal.ink)
+                                    Text(quote.detailText)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(pal.muted)
+                                    if !quote.exclusionsText.isEmpty {
+                                        Text(quote.exclusionsText)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(pal.muted)
+                                    }
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("agent.image-setup.quote")
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .overlay {
+                        if mutating {
+                            Color.black.opacity(0.08).ignoresSafeArea()
+                                .overlay(ProgressView("Setup সংরক্ষণ হচ্ছে…"))
+                        }
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Setup পাওয়া যায়নি",
+                        systemImage: "slider.horizontal.3",
+                        description: Text("এই card-টি হয়তো ইতিমধ্যে resolve হয়েছে।"))
+                }
+            }
+            .navigationTitle("Image setup")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.disabled(mutating)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .accessibilityIdentifier("agent.image-setup.sheet")
+    }
+
+    @ViewBuilder private func optionRow(
+        pal: AgentPalette, title: String, selected: Bool, enabled: Bool, reason: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(selected ? AgentPalette.coral : pal.muted)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(enabled ? pal.ink : pal.muted)
+                Spacer(minLength: 4)
+            }
+            if let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(reason)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 27)
+            }
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -19227,48 +20116,6 @@ struct AgentProjectFormSheet: View {
     }
 }
 
-/// Shown when the selected chat's history could not be loaded. It stays tied to
-/// that chat: the owner retries the thing that failed instead of being handed a
-/// convincing blank new chat that quietly lost their conversation.
-@available(iOS 17.0, *)
-struct AgentSessionRestoreFailureView: View {
-    let pal: AgentPalette
-    let message: String
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "arrow.trianglehead.clockwise")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(pal.mutedHi)
-            Text("চ্যাটটা আনা গেল না")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(pal.ink)
-            Text(message)
-                .font(.system(size: 13))
-                .foregroundStyle(pal.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("agent.session.load.failure")
-            Button {
-                AlmaAgentHaptics.light()
-                onRetry()
-            } label: {
-                Text("আবার চেষ্টা করুন")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .frame(minHeight: 44)
-                    .background(AgentPalette.coral, in: Capsule())
-            }
-            .accessibilityIdentifier("agent.session.load.retry")
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 22)
-    }
-}
-
 /// Project-scoped instructions backed by the existing partial PATCH contract.
 /// This deliberately does not claim to be a global personality control.
 @available(iOS 17.0, *)
@@ -19399,7 +20246,6 @@ struct AgentEmptyStateView: View {
         VStack(spacing: 8) {
             AgentNewSessionHero(pal: pal)
                 .frame(height: 150)
-                .accessibilityIdentifier("agent.empty.hero")
             Text("আস্সালামু আলাইকুম, Boss")
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(pal.ink)
@@ -19411,6 +20257,371 @@ struct AgentEmptyStateView: View {
         .frame(maxWidth: .infinity)
         .padding(.top, 58)
         .padding(.horizontal, 24)
+    }
+}
+
+/// Build 103 Issue 1 — honest history-load failure for the SELECTED target.
+/// One static robot, one message, one retry. Never the new-chat hero, never a
+/// second animated loader; the draft/queue/approval recovery stay untouched.
+@available(iOS 17.0, *)
+struct AgentSessionLoadFailureView: View {
+    let pal: AgentPalette
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            AgentCodexSpriteRobot(mode: .still)
+            Text(message)
+                .font(.system(size: 14.5, weight: .medium))
+                .foregroundStyle(pal.ink)
+                .multilineTextAlignment(.center)
+            Button {
+                AlmaAgentHaptics.light()
+                onRetry()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("আবার চেষ্টা করুন")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .frame(height: 40)
+                .background(AgentPalette.coral, in: Capsule())
+            }
+            .buttonStyle(AlmaAgentPressStyle())
+            .accessibilityIdentifier("agent.session.load.retry")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 64)
+        .padding(.horizontal, 24)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("কথোপকথন লোড ব্যর্থ — আবার চেষ্টা করুন")
+    }
+}
+
+// MARK: - Build 103 Issue 3 — work-step tracker presentation
+
+/// Shared status → icon/label mapping. Never color-only (a11y); the active
+/// step animates only while Reduce Motion is off, and completed rows stay
+/// quiet after cold load (no replayed celebration).
+@available(iOS 17.0, *)
+enum AgentWorkStepGlyph {
+    static func systemImage(for status: String) -> String {
+        switch status {
+        case "completed": return "checkmark.circle.fill"
+        case "running": return "circle.dotted"
+        case "waiting_owner": return "person.crop.circle.badge.questionmark"
+        case "waiting_worker": return "clock.arrow.circlepath"
+        case "failed": return "xmark.circle.fill"
+        case "cancelled": return "slash.circle"
+        case "skipped": return "arrow.right.circle"
+        default: return "circle"
+        }
+    }
+    static func label(for status: String) -> String {
+        switch status {
+        case "completed": return "শেষ"
+        case "running": return "চলছে"
+        case "waiting_owner": return "আপনার সিদ্ধান্তের অপেক্ষায়"
+        case "waiting_worker": return "worker-এ চলছে"
+        case "failed": return "ব্যর্থ"
+        case "cancelled": return "বাতিল"
+        case "skipped": return "বাদ গেছে"
+        default: return "বাকি"
+        }
+    }
+    static func tint(for status: String, pal: AgentPalette) -> Color {
+        switch status {
+        case "completed": return AgentPalette.teal
+        case "running", "waiting_owner": return AgentPalette.coral
+        case "failed": return .red
+        case "waiting_worker": return pal.mutedHi
+        default: return pal.muted
+        }
+    }
+    static func overallLabel(for status: String) -> String {
+        switch status {
+        case "preparing": return "প্রস্তুতি চলছে"
+        case "running": return "কাজ চলছে"
+        case "waiting_owner": return "আপনার সিদ্ধান্তের অপেক্ষায়"
+        case "waiting_worker": return "worker-এ কাজ চলছে"
+        case "paused": return "থেমে আছে"
+        case "completed": return "সম্পন্ন"
+        case "failed": return "আটকে গেছে"
+        case "cancelled": return "বাতিল"
+        default: return status
+        }
+    }
+}
+
+/// The active-step ring: a partial arc that rotates while the step runs.
+/// Reduce Motion (or a settled tracker) renders a static partial ring.
+@available(iOS 17.0, *)
+private struct AgentWorkStepActiveRing: View {
+    let animated: Bool
+    @State private var spinning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.72)
+            .stroke(AgentPalette.coral, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .frame(width: 15, height: 15)
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .onAppear {
+                guard animated else { return }
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                    spinning = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// One canonical turn-owned tracker block (কাজের ধাপ). Chronologically part
+/// of its origin assistant message; the composer dock projects the SAME
+/// store and never duplicates controls. No estimated percentage, no hidden
+/// reasoning — only durable-evidence counts like "২/৫ ধাপ শেষ".
+@available(iOS 17.0, *)
+struct AgentWorkStepsBlockView: View {
+    let snapshot: AgentWorkStepsSnapshot
+    let pal: AgentPalette
+    /// Opens the EXISTING approval/question card — the tracker adds no second
+    /// set of decision controls.
+    var onOpenBlocker: ((String) -> Void)? = nil
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var countLine: String { "\(snapshot.completedCount) of \(snapshot.steps.count)" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                AlmaAgentHaptics.light()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.86)) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "list.number")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(snapshot.goal)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(pal.ink)
+                            .lineLimit(expanded ? 3 : 1)
+                        Text("\(countLine) · \(AgentWorkStepGlyph.overallLabel(for: snapshot.status))")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                    }
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(pal.muted)
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("agent.work-steps.header")
+            .accessibilityLabel(
+                "কাজের ধাপ, \(snapshot.goal), \(snapshot.completedCount) of \(snapshot.steps.count) completed, \(AgentWorkStepGlyph.overallLabel(for: snapshot.status))")
+            .accessibilityHint(expanded ? "ধাপের তালিকা বন্ধ করুন" : "ধাপের তালিকা খুলুন")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(snapshot.steps) { step in
+                        stepRow(step)
+                    }
+                }
+                .padding(.bottom, 8)
+                .transition(.opacity)
+            }
+        }
+        .background(Color.white.opacity(0.045),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent.work-steps.block")
+    }
+
+    @ViewBuilder private func stepRow(_ step: AgentWorkStepsSnapshot.Step) -> some View {
+        let isBlockingOwner = step.status == "waiting_owner" && snapshot.blockedByRefId != nil
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Group {
+                if step.status == "running", !reduceMotion, !snapshot.isTerminal {
+                    AgentWorkStepActiveRing(animated: true)
+                } else {
+                    Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+                }
+            }
+            .frame(width: 17)
+            Text("\(step.position).")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(pal.muted)
+            Text(step.title)
+                .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
+                .foregroundStyle(step.status == "completed" ? pal.mutedHi : pal.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if isBlockingOwner {
+                Image(systemName: "arrow.up.right.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(minHeight: 34)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isBlockingOwner, snapshot.blockedByKind == "approval",
+                  let refId = snapshot.blockedByRefId else { return }
+            AlmaAgentHaptics.light()
+            onOpenBlocker?(refId)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("agent.work-steps.step.\(step.id)")
+        .accessibilityLabel("ধাপ \(step.position), \(step.title), \(AgentWorkStepGlyph.label(for: step.status))")
+        .accessibilityHint(isBlockingOwner ? "অপেক্ষমাণ card-টি খুলুন" : "")
+    }
+}
+
+/// The lightweight bottom dock (owner's reference video): a persistent strip
+/// above the composer with compact pills; the center pill expands a rounded
+/// panel whose content scrolls independently while chat/composer stay put.
+/// It is a NAVIGATION/SUMMARY projection of the same tracker store — never a
+/// second state machine, never duplicate approve/retry controls.
+@available(iOS 17.0, *)
+struct AgentWorkStepsDockView: View {
+    let vm: AssistantVM
+    let pal: AgentPalette
+    var onOpenBlocker: ((String) -> Void)? = nil
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if let snapshot = vm.activeWorkTracker {
+            VStack(spacing: 6) {
+                if expanded {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(snapshot.steps) { step in
+                                dockStepRow(step, snapshot: snapshot)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .frame(maxHeight: 236)
+                    // Owner 2026-08-13: the 0.35 wash let the chat text bleed
+                    // through the expanded list. Opaque panel — material base
+                    // plus a solid tint — so the steps are the only thing read.
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(.thinMaterial)
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Color(red: 0.09, green: 0.09, blue: 0.13).opacity(0.94))))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .accessibilityIdentifier("agent.work-steps.dock.panel")
+                }
+                HStack(spacing: 8) {
+                    Text(AgentWorkStepGlyph.overallLabel(for: snapshot.status))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Color.white.opacity(0.07), in: Capsule())
+                    Button {
+                        AlmaAgentHaptics.light()
+                        withAnimation(reduceMotion ? nil
+                                      : .spring(response: 0.25, dampingFraction: 0.86)) {
+                            expanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if snapshot.status == "running" || snapshot.status == "preparing",
+                               !reduceMotion {
+                                AgentWorkStepActiveRing(animated: true)
+                            } else {
+                                Image(systemName: "list.number")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text("\(snapshot.completedCount) of \(snapshot.steps.count)")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(pal.ink)
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .background(AgentPalette.coral.opacity(0.14), in: Capsule())
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("agent.work-steps.dock.progress")
+                    .accessibilityLabel(
+                        "\(snapshot.completedCount) of \(snapshot.steps.count) completed"
+                        + (snapshot.steps.first(where: { $0.status == "running" })
+                            .map { "; ধাপ \($0.position) চলছে" } ?? ""))
+                    .accessibilityHint(expanded ? "ধাপের তালিকা বন্ধ করুন" : "ধাপের তালিকা খুলুন")
+                    Text(snapshot.headline)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agent.work-steps.dock")
+        }
+    }
+
+    @ViewBuilder private func dockStepRow(
+        _ step: AgentWorkStepsSnapshot.Step, snapshot: AgentWorkStepsSnapshot
+    ) -> some View {
+        let isBlockingOwner = step.status == "waiting_owner"
+            && snapshot.blockedByKind == "approval" && snapshot.blockedByRefId != nil
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Group {
+                if step.status == "running", !reduceMotion {
+                    AgentWorkStepActiveRing(animated: true)
+                } else {
+                    Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+                }
+            }
+            .frame(width: 17)
+            Text("\(step.position). \(step.title)")
+                .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
+                .foregroundStyle(.white.opacity(step.status == "completed" ? 0.6 : 0.92))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 6)
+        .frame(minHeight: 34)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isBlockingOwner, let refId = snapshot.blockedByRefId else { return }
+            AlmaAgentHaptics.light()
+            withAnimation { expanded = false }
+            onOpenBlocker?(refId)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("ধাপ \(step.position), \(step.title), \(AgentWorkStepGlyph.label(for: step.status))")
     }
 }
 
@@ -22185,6 +23396,24 @@ struct AssistantScreen: View {
     private static let bottomID = "ALMA_BOTTOM"
     private static let newChatHeroID = "ALMA_NEW_CHAT_HERO"
 
+    /// Build 103 Issue 1 — the loader mirrors the ONE authoritative VM surface
+    /// state. Restore phases keep (or start) the loader; a committed history
+    /// resolves it to success; a genuine new chat or an honest failure quietly
+    /// dismisses it (the hero or the retry surface owns the next frame).
+    private func syncAwakening(with surface: AgentSessionSurfaceState) {
+        switch surface {
+        case .resolvingInitialRoute, .loadingHistory:
+            // Keep an already-running loader running: a pointer resolution
+            // that flows into a history load is ONE visual restore, and the
+            // robot must not blink between the two phases.
+            if !awakening.isActive { awakening.restart(sessionNeedsRestore: true) }
+        case .readyConversation:
+            awakening.markReady(hasContent: !vm.messages.isEmpty)
+        case .readyNew, .failedHistory:
+            awakening.markReady(hasContent: false)
+        }
+    }
+
     private var hasBlockingPresentation: Bool {
         vm.showSidebar || vm.showVoice || debugViewer != nil || toolSheet != nil
             || activitySheet != nil || showLibrary || showProjectPicker
@@ -22282,20 +23511,23 @@ struct AssistantScreen: View {
                             .buttonStyle(AlmaAgentPressStyle())
                             .padding(.bottom, 6)
                         }
-                        // The hero belongs only to a chat the server has confirmed
-                        // is new. While the route or history is unresolved this
-                        // draws nothing at all — the session loader is the only
-                        // thing on screen, so the owner can never meet two robots.
-                        if vm.sessionSurface.showsNewChatHero
-                            && vm.messages.isEmpty && !vm.isStreaming {
+                        // The hero belongs only to a genuinely new chat. Build
+                        // 103 Issue 1: "genuinely new" is now the authoritative
+                        // VM surface state — an unresolved cold bootstrap, a
+                        // loading history, and a failed load all render WITHOUT
+                        // the home Robot+ALMA (owner two-robots screenshot).
+                        if vm.surfaceShowsHero && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
+                                .accessibilityIdentifier("agent.empty.hero")
                                 .id(Self.newChatHeroID)
                         }
-                        if case .failedHistory(_, _, let message) = vm.sessionSurface,
-                           vm.messages.isEmpty {
-                            AgentSessionRestoreFailureView(pal: pal, message: message) {
-                                Task { await vm.retrySessionHistory() }
+                        // Honest failure: the selected target did not load.
+                        // One compact retry surface — never the hero fallback.
+                        if let failure = vm.surfaceFailure {
+                            AgentSessionLoadFailureView(pal: pal, message: failure.message) {
+                                Task { await vm.retrySessionLoad() }
                             }
+                            .accessibilityIdentifier("agent.session.load.failure")
                         }
                         ForEach(chronologicalMessages) { msg in
                             AgentMessageRow(
@@ -22520,17 +23752,25 @@ struct AssistantScreen: View {
         // the ZStack's frame already excludes the composer inset below and the
         // native header above, so neither is ever covered.
         .overlay { AgentAwakeningOverlay(model: awakening) }
-        // Opening a DIFFERENT existing conversation from the drawer replays the
-        // awakening (owner 2026-07-17: not only on app launch). Success stays
-        // gated on the real history load (restoreReadyTick).
-        .onChange(of: vm.restoreTick) { _, _ in awakening.restart(sessionNeedsRestore: true) }
-        .onChange(of: vm.restoreReadyTick) { _, _ in awakening.markReady(hasContent: !vm.messages.isEmpty) }
+        // Build 103 Issue 1: the loader is DERIVED from the one authoritative
+        // VM surface state — `messages.isEmpty` is no longer a second source
+        // of truth. Opening a different conversation from the drawer replays
+        // the awakening (owner 2026-07-17) because the switch re-enters
+        // `.loadingHistory`; success fires only on a committed history.
+        .onChange(of: vm.sessionSurface) { _, newSurface in
+            syncAwakening(with: newSurface)
+        }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // The live dock sits ABOVE the composer inside the same inset, so it
             // rides the keyboard with the composer instead of fighting it, and
             // the chat scroll region shrinks to make room (never an overlay).
             VStack(spacing: 0) {
+                // Build 103 Issue 3 — the compact tracker strip (owner's video
+                // reference) projects the same store as the in-turn block.
+                AgentWorkStepsDockView(vm: vm, pal: AgentPalette(scheme)) { actionId in
+                    vm.pendingActionScrollId = actionId
+                }
                 AgentLiveDockView()
                 AgentComposerView(vm: vm, openWeb: openWeb)
             }
@@ -22736,6 +23976,19 @@ struct AssistantScreen: View {
                 AlmaTurnLog.event("assistant.contentReady", "fixture=image-model-picker")
                 return
             }
+            if argFlag("ALMA_ASSISTANT_IMAGE_SETUP_PROOF") {
+                vm.loadImageSetupProofFixture(
+                    status: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_STATUS"] ?? "pending",
+                    aspect: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_ASPECT"] ?? "4:5")
+                AlmaTurnLog.event("assistant.contentReady", "fixture=image-setup-proof")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_WORK_STEPS_PROOF") {
+                vm.loadWorkStepsProofFixture(
+                    variant: rawEnv["ALMA_ASSISTANT_WORK_STEPS_VARIANT"] ?? "running")
+                AlmaTurnLog.event("assistant.contentReady", "fixture=work-steps-proof")
+                return
+            }
             if argFlag("ALMA_ASSISTANT_ACTION_FIXTURE") {
                 vm.loadMergeReadinessActionFixture()
                 AlmaTurnLog.event("assistant.contentReady", "fixture=actions")
@@ -22864,11 +24117,10 @@ struct AssistantScreen: View {
                 return
             }
             #endif
-            // Awakening overlay: derived from the VM's own phase, never from an
-            // empty message list. `messages.isEmpty` was a second source of truth
-            // and it disagreed with the hero's — that disagreement was the two
-            // robots the owner photographed.
-            awakening.begin(sessionNeedsRestore: vm.sessionSurface.isResolving)
+            // Awakening overlay: the surface starts in `resolvingInitialRoute`,
+            // so the loader owns the cold start — the hero cannot coexist with
+            // it. Success is gated on the REAL surface transition below.
+            awakening.begin(sessionNeedsRestore: vm.surfaceIsRestoring)
             await vm.bootstrap()
             #if DEBUG
             // Production-connected simulator matrix; release/TestFlight never
@@ -22878,7 +24130,9 @@ struct AssistantScreen: View {
                 activitySheet = await vm.waitForProviderMatrixThoughtRequest()
             }
             #endif
-            awakening.markReady(hasContent: !vm.messages.isEmpty)
+            // Safety net for a bootstrap that settled before the surface
+            // observer attached — mirrors the `.onChange` derivation exactly.
+            syncAwakening(with: vm.sessionSurface)
             AlmaTurnLog.event("assistant.contentReady", "live count=\(vm.messages.count)")
         }
         .fullScreenCover(isPresented: $vm.showSidebar) {

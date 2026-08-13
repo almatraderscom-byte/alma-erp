@@ -13,12 +13,23 @@ import {
   chooseAvailableImageModel,
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
+} from '@/agent/lib/image-action-contract'
+import {
   normalizeImageActionModel,
   normalizeImageActionQuality,
   normalizeImageActionSize,
 } from '@/agent/lib/image-action-contract'
-import { imageRenderConfigForAction } from '@/agent/lib/image-render-config'
-import { GENERIC_IMAGE_MODELS } from '@/lib/creative-studio/advanced-image-capabilities'
+import {
+  AGENT_IMAGE_CONTROLS_V2_KV_KEY,
+  IMAGE_WORKER_CAPABILITY_V2_KV_KEY,
+  buildImageConfigEnvelope,
+  buildImageRenderConfig,
+  buildImageRenderSelection,
+  presetForAspect,
+  readImageWorkerCapabilityV2,
+  receiptSupports,
+} from '@/agent/lib/image-config-contract'
+import { GENERIC_IMAGE_MODELS, type GenericImageModel } from '@/lib/creative-studio/advanced-image-capabilities'
 
 /** Owner-decision card types — one at a time per conversation (owner incident
  * 2026-07-13: the marketing head staged an fb_post AND a fresh image_gen 0.3s
@@ -91,8 +102,8 @@ const generate_image: AgentTool = {
       },
       aspectRatio: {
         type: 'string',
-        enum: ['1:1', '4:5', '16:9', '9:16'],
-        description: 'Output aspect ratio (default 4:5 for FB/IG feed)',
+        enum: ['1:1', '4:5', '16:9', '9:16', '2:3'],
+        description: 'Output aspect ratio (default 4:5 for FB/IG feed; 2:3 = portrait poster)',
       },
       imageSize: {
         type: 'string',
@@ -119,14 +130,24 @@ const generate_image: AgentTool = {
       const quality = normalizeImageActionQuality(input.quality)
       const count = Math.min(4, Math.max(1, Math.floor(Number(input.count) || 1)))
       const imageSize = normalizeImageActionSize(input.imageSize)
-      const [configuredModels, pipelineMode, workerCapabilities, genericLaneKill, xaiEnabled] = await Promise.all([
+      const [configuredModels, pipelineMode, workerCapabilities, genericLaneKill, xaiEnabled, controlsV2Flag, workerCapabilitiesV2] = await Promise.all([
         readKv('cs_image_models'),
         readPipelineMode(),
         readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
         readKv('cs_engine_kill:gemini'),
         readKv('cs_xai_enabled'),
+        readKv(AGENT_IMAGE_CONTROLS_V2_KV_KEY),
+        readKv(IMAGE_WORKER_CAPABILITY_V2_KV_KEY),
       ])
       const preferredImageModel = normalizeImageActionModel(input.imageModel, quality, configuredModels)
+      // Build 103 Issue 2 — v2 staging is double-gated: the owner flag must be
+      // on AND the live worker's fresh v2 receipt must prove the combination.
+      const controlsV2 = controlsV2Flag === '1'
+      const { receipt: receiptV2 } = readImageWorkerCapabilityV2(workerCapabilitiesV2, Date.now())
+      const requestedAspect = typeof input.aspectRatio === 'string' && input.aspectRatio
+        ? input.aspectRatio
+        : '4:5'
+      const requestedPreset = presetForAspect(requestedAspect)
       const selectionInput = {
         quality,
         imageSize,
@@ -139,11 +160,59 @@ const generate_image: AgentTool = {
           xaiConfigured: xaiEnabled === '1',
         }),
       }
-      const imageModelSelection = input.imageModel
-        ? buildImageModelSelection({ ...selectionInput, selectedModel: preferredImageModel })
-        : chooseAvailableImageModel({ ...selectionInput, preferredModel: preferredImageModel })
-      const imageModel = imageModelSelection.selectedModel
-      const imageQuote = imageModelSelection.quote
+      let imageModelSelection: ReturnType<typeof buildImageModelSelection> | null = null
+      let imageModel: GenericImageModel
+      let imageQuote: unknown
+      let imageConfigEnvelope: ReturnType<typeof buildImageConfigEnvelope> | null = null
+      let imageRenderSelection: ReturnType<typeof buildImageRenderSelection> | null = null
+      const v2Eligible = controlsV2 && receiptV2 && requestedPreset
+        && (input.imageModel
+          ? receiptSupports(receiptV2, preferredImageModel, requestedPreset, imageSize)
+          : true)
+      if (v2Eligible) {
+        // Pick the staged model from proven capability, preferred first.
+        const candidates = [preferredImageModel, ...GENERIC_IMAGE_MODELS.filter((m) => m !== preferredImageModel)]
+        const chosen = candidates.find((m) => (
+          receiptSupports(receiptV2, m, requestedPreset, imageSize)
+          && !selectionInput.availability?.[m]
+        ))
+        if (!chosen) throw new Error('no_runnable_image_model')
+        const config = buildImageRenderConfig({
+          model: chosen,
+          presetId: requestedPreset,
+          imageSize,
+          quality,
+          variationCount: count,
+          pipelineMode,
+        })
+        imageModel = chosen
+        imageConfigEnvelope = buildImageConfigEnvelope(chosen, config)
+        imageRenderSelection = buildImageRenderSelection({
+          model: chosen,
+          config,
+          revision: 0,
+          receipt: receiptV2,
+          availability: selectionInput.availability,
+          pinnedQuote: imageConfigEnvelope.quote,
+        })
+        // v1 mirror for Build 102: poster (2:3) has no v1 projection — that
+        // installed build shows the honest legacy no-picker card instead.
+        try {
+          imageModelSelection = buildImageModelSelection({
+            ...selectionInput, selectedModel: chosen, requireSelectedEnabled: false,
+          })
+          imageQuote = imageModelSelection.quote
+        } catch {
+          imageModelSelection = null
+          imageQuote = null
+        }
+      } else {
+        imageModelSelection = input.imageModel
+          ? buildImageModelSelection({ ...selectionInput, selectedModel: preferredImageModel })
+          : chooseAvailableImageModel({ ...selectionInput, preferredModel: preferredImageModel })
+        imageModel = imageModelSelection.selectedModel
+        imageQuote = imageModelSelection.quote
+      }
 
       // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
       // conversation at a time — cross-type, so a post + a fresh image can't be
@@ -167,29 +236,29 @@ const generate_image: AgentTool = {
             prompt: input.prompt,
             quality,
             referenceImageId: input.referenceImageId ?? null,
-            aspectRatio: input.aspectRatio ?? null,
+            aspectRatio: imageConfigEnvelope
+              ? imageConfigEnvelope.config.aspectRatio
+              : (input.aspectRatio ?? null),
             imageSize,
             variationCount: count,
             pipelineMode,
             imageModel,
             imageQuote,
             conversationId: input.conversationId ?? null,
+            // v2 mirror — canonical truth lives in the imageConfig column;
+            // these loose fields keep every v1 reader working.
+            ...(imageConfigEnvelope
+              ? { imageConfigFingerprint: imageConfigEnvelope.fingerprint }
+              : {}),
           },
           summary,
           costEstimate: null,
           imageModel,
           imageQuote,
-          // Stage the canonical v2 selection whenever the payload resolves to
-          // one. Persisting it is flag-independent; only ADVERTISING v2 to the
-          // app is gated, so rollback never strands a pinned row.
-          ...(() => {
-            const staged = imageRenderConfigForAction({
-              imageModel,
-              payload: { quality, imageSize, aspectRatio: input.aspectRatio ?? null, variationCount: count, pipelineMode },
-            })
-            return staged ? { imageConfig: staged, imageConfigRevision: 0 } : {}
-          })(),
           status: 'pending',
+          ...(imageConfigEnvelope
+            ? { imageConfig: imageConfigEnvelope, imageConfigRevision: 0 }
+            : {}),
         },
       })
 
@@ -199,6 +268,7 @@ const generate_image: AgentTool = {
           pendingActionId: action.id as string,
           summary,
           imageModelSelection,
+          ...(imageRenderSelection ? { imageRenderSelection } : {}),
           message:
             `${count > 1 ? `${count} image variations` : 'Image'} queued as one request. Awaiting owner approval before rendering.`,
         },
