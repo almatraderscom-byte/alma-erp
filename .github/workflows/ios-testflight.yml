@@ -128,21 +128,35 @@ jobs:
         # The lockfile is committed from CocoaPods 1.12.1; the runner ships a
         # newer gem whose re-serialization dirties the file even when every pod
         # resolved exactly as locked (this failed the provenance guard on the
-        # build-103 archives, runs 6-7, 2026-08-13). pod install with a lockfile
-        # present installs the locked versions or errors, so restoring the
-        # committed bytes is cosmetic — but only after proving the diff carries
-        # no dependency drift. Real drift prints the diff and fails the run.
+        # build-103 archives, runs 6-8, 2026-08-13). Two benign cross-version
+        # rewrites are tolerated: the COCOAPODS version line, and SPEC CHECKSUMS
+        # entries for the path-based Capacitor plugin pods — newer CocoaPods
+        # serializes the podspec JSON differently, so the SHA1 flips even though
+        # the podspec bytes (from `npm ci` against the committed package-lock)
+        # are identical (run 8 proved the diff is exactly these lines). Real
+        # dependency drift always changes PODS version lines, which still fail
+        # the run with the diff printed. pod install with a lockfile present
+        # installs the locked versions or errors, so restoring the committed
+        # bytes afterwards is cosmetic.
         run: |
           if ! git diff --quiet -- ios/App/Podfile.lock; then
             git --no-pager diff -- ios/App/Podfile.lock
             if git diff -- ios/App/Podfile.lock \
               | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-              | grep -vqE '^[+-]  COCOAPODS: [0-9][0-9.]*$|^[+-]COCOAPODS: [0-9][0-9.]*$'; then
-              echo "Podfile.lock changed beyond the CocoaPods version line — dependency drift, refusing to mask it" >&2
+              | grep -vqE '^[+-]COCOAPODS: [0-9][0-9.]*$|^[+-]  [A-Za-z][A-Za-z0-9_-]*: [0-9a-f]{40}$'; then
+              echo "Podfile.lock changed beyond CocoaPods re-serialization (version or pod-list drift) — refusing to mask it" >&2
+              exit 1
+            fi
+            # A checksum line is only benign as a rewrite of an existing entry:
+            # the same pod names must appear on both sides of the diff.
+            removed=$(git diff -- ios/App/Podfile.lock | grep -E '^-  [A-Za-z][A-Za-z0-9_-]*: [0-9a-f]{40}$' | cut -c2- | cut -d: -f1 | sort)
+            added=$(git diff -- ios/App/Podfile.lock | grep -E '^\+  [A-Za-z][A-Za-z0-9_-]*: [0-9a-f]{40}$' | cut -c2- | cut -d: -f1 | sort)
+            if [ "$removed" != "$added" ]; then
+              echo "Podfile.lock SPEC CHECKSUMS entries were added or removed — pod-list drift, refusing to mask it" >&2
               exit 1
             fi
             git checkout -- ios/App/Podfile.lock
-            echo "Restored committed Podfile.lock (only the COCOAPODS version line differed)"
+            echo "Restored committed Podfile.lock (only cross-version CocoaPods re-serialization differed)"
           fi
 
       - name: Stamp the built commit into Info.plist (forensics parity with the Mac path)
