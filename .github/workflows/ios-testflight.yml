@@ -156,6 +156,13 @@ jobs:
               exit 1
             fi
             git checkout -- ios/App/Podfile.lock
+            # Xcode's "[CP] Check Pods Manifest.lock" phase diffs Podfile.lock
+            # against Pods/Manifest.lock (pod install's own copy, still in the
+            # runner gem's serialization — it failed run 10's archive). The
+            # manifest is by definition a byte copy of the lockfile at install
+            # time, so restoring one requires restoring the other; installed
+            # pod content is untouched.
+            cp ios/App/Podfile.lock ios/App/Pods/Manifest.lock
             echo "Restored committed Podfile.lock (only cross-version CocoaPods re-serialization differed)"
           fi
 
