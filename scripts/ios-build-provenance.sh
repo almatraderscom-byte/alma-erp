@@ -548,7 +548,13 @@ elif [[ "$source_result" -ne 0 ]]; then
   finish "$STATUS_BUNDLED_MISMATCH"
 fi
 
-[[ "$initial_clean" -eq 1 ]] || finish "$STATUS_DIRTY"
+if [[ "$initial_clean" -ne 1 ]]; then
+  # Name the dirt: a bare "dirty-worktree" cost a full CI archive cycle to
+  # diagnose (build 103, 2026-08-13). Paths only — file contents never leak.
+  git -C "$repository_root" status --porcelain=v1 --untracked-files=all \
+    | head -40 | sed 's/^/ALMA build provenance dirty: /' >&2 || true
+  finish "$STATUS_DIRTY"
+fi
 
 if [[ "$source_only" -eq 0 ]]; then
   verify_product_inputs || finish "$STATUS_PRODUCT_MISMATCH"
@@ -567,8 +573,11 @@ elif [[ "$source_result" -ne 0 ]]; then
   finish "$STATUS_BUNDLED_MISMATCH"
 fi
 
-[[ "$snapshot_clean" -eq 1 && "$snapshot_head" == "$initial_head" ]] \
-  || finish "$STATUS_DIRTY"
+if [[ "$snapshot_clean" -ne 1 || "$snapshot_head" != "$initial_head" ]]; then
+  git -C "$repository_root" status --porcelain=v1 --untracked-files=all \
+    | head -40 | sed 's/^/ALMA build provenance dirty: /' >&2 || true
+  finish "$STATUS_DIRTY"
+fi
 
 if [[ "$source_only" -eq 0 ]]; then
   verify_product_inputs || finish "$STATUS_PRODUCT_MISMATCH"
