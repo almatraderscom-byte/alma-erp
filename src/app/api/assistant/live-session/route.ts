@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import {
-  buildLegacyLiveVoiceTokenConfig,
+  buildBareClientLiveVoiceTokenConfig,
   buildLiveVoiceTokenConfig,
   GEMINI_31_LIVE_MODEL,
   isSupportedLiveVoiceModel,
@@ -43,14 +43,22 @@ export async function POST(req: NextRequest) {
   const requestedModel = typeof requested.model === 'string' ? requested.model.trim() : ''
   const requestedVoice = typeof requested.voice === 'string' ? requested.voice.trim() : ''
   // A constrained token rejects a client setup whose value for a locked field
-  // differs from the token's, and installed pre-contract builds send the
-  // session values they shipped with — minting them a contract-v2 token killed
-  // every live call on those builds the day the contract reached production
-  // (greeting from the app's local latency path, then silence). Builds that
-  // speak the contract prove it by echoing contractVersion in this request;
-  // everything else gets the frozen pre-contract config it was proven against.
+  // differs from the token's. Bare {model, voice} requests come from BOTH
+  // installed pre-contract builds and the contract build's non-prewarm start
+  // and reconnect mint paths (Codex P1, PR #744) — the two generations differ
+  // only in system-instruction text and compression thresholds, so bare
+  // requests get a token that leaves exactly those two fields to the client.
+  // Requests that echo contractVersion keep the full v2 lock. Locking v2
+  // values into bare clients' tokens is what killed every installed build's
+  // live call on 2026-08-13 (greeting, then the session never opened).
+  // Only an EXACT version match earns the full current-contract lock: a
+  // client whose bundled contract is older (or newer) than the server's may
+  // disagree on a locked field, and Google rejects the setup on any mismatch
+  // (Codex P1, PR #745). Everything else — legacy builds and version skew —
+  // gets the frozen bare-client constraints, which lock only the fields every
+  // shipped binary sends identically.
   const contractClient = typeof requested.contractVersion === 'string'
-    && requested.contractVersion.trim().length > 0
+    && requested.contractVersion.trim() === LIVE_VOICE_CONTRACT.contractVersion
   // One contract now owns new-client defaults. The temporary environment gate
   // atomically restores the old empty-body 3.1/Charon behavior during rollout.
   const contractRolloutEnabled = process.env.LIVE_VOICE_PHASE1B_CONTRACT_V1 !== 'false'
@@ -99,7 +107,7 @@ export async function POST(req: NextRequest) {
           model,
           config: contractClient
             ? buildLiveVoiceTokenConfig(voice, model)
-            : buildLegacyLiveVoiceTokenConfig(voice, model),
+            : buildBareClientLiveVoiceTokenConfig(voice, model),
         },
         // Lock the fields present above, but allow the client to add only the
         // sessionResumption.handle required for Google's ~10-minute socket rotation.

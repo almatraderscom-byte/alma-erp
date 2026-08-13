@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  buildLegacyLiveVoiceTokenConfig,
+  buildBareClientLiveVoiceTokenConfig,
   buildLiveVoiceConfig,
   buildLiveVoiceTokenConfig,
   DEFAULT_LIVE_VOICE_MODEL,
@@ -164,36 +164,50 @@ describe('live voice configuration', () => {
     expect(route).not.toContain("apiVersion: 'v1alpha'")
   })
 
-  it('serves pre-contract builds the frozen legacy token config they were proven against', () => {
-    const legacy25 = buildLegacyLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL)
-    const legacy31 = buildLegacyLiveVoiceTokenConfig('Charon', GEMINI_31_LIVE_MODEL)
+  it('freezes the bare-client token to the literals installed binaries ship', () => {
+    const bare25 = buildBareClientLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL)
+    const bare31 = buildBareClientLiveVoiceTokenConfig('Charon', GEMINI_31_LIVE_MODEL)
 
-    // The exact pre-contract shape: bare sliding window (no token thresholds),
-    // both transcriptions on, no proactivity, no tools/resumption in the lock.
-    expect(legacy25.contextWindowCompression).toEqual({ slidingWindow: {} })
-    expect(legacy25.inputAudioTranscription).toEqual({})
-    expect(legacy25.outputAudioTranscription).toEqual({})
-    expect(legacy25.proactivity).toBeUndefined()
-    expect(legacy25.tools).toBeUndefined()
-    expect(legacy25.sessionResumption).toBeUndefined()
-    expect(legacy25.enableAffectiveDialog).toBe(true)
-    expect(legacy25.thinkingConfig).toEqual({ thinkingBudget: 0 })
-    expect(legacy31.enableAffectiveDialog).toBeUndefined()
-    expect(legacy31.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })
+    // The generations disagree only on these two fields — each sends its
+    // signed bundle's version, so the token must not lock them.
+    expect(bare25.systemInstruction).toBeUndefined()
+    expect(bare25.contextWindowCompression).toBeUndefined()
 
-    // The legacy instruction is the pre-contract text, not contract v2: it
-    // still bans fillers and knows nothing about end_call.
-    const legacyInstruction = String(legacy25.systemInstruction)
-    expect(legacyInstruction).toContain('জোর করে হাসি, আশাবাদ, উপদেশ')
-    expect(legacyInstruction).toContain('STATUS_NOTE')
-    expect(legacyInstruction).not.toContain('end_call')
-    expect(legacyInstruction).not.toEqual(LIVE_VOICE_SYSTEM_INSTRUCTION)
+    // Every locked value is a literal snapshot of what installed bare-minting
+    // binaries send (2026-08-13) — deliberately NOT derived from the contract,
+    // so a future contract edit cannot re-break installed builds.
+    expect(bare25.responseModalities).toEqual(['AUDIO'])
+    expect(bare25.temperature).toBe(0.7)
+    expect(bare25.speechConfig).toEqual({
+      voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } },
+    })
+    expect(bare25.inputAudioTranscription).toEqual({})
+    expect(bare25.outputAudioTranscription).toEqual({})
+    expect(bare25.realtimeInputConfig).toEqual({
+      automaticActivityDetection: {
+        disabled: false,
+        startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
+        endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+        prefixPaddingMs: 250,
+        silenceDurationMs: 1200,
+      },
+      activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+      turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY',
+    })
+    expect(bare25.enableAffectiveDialog).toBe(true)
+    expect(bare25.thinkingConfig).toEqual({ thinkingBudget: 0 })
+    expect(bare31.enableAffectiveDialog).toBeUndefined()
+    expect(bare31.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })
+    expect(bare25.proactivity).toBeUndefined()
+    expect(bare25.tools).toBeUndefined()
+    expect(bare25.sessionResumption).toBeUndefined()
   })
 
-  it('mints legacy constraints for requests without contractVersion', () => {
+  it('mints bare-client constraints for requests without contractVersion', () => {
     const route = readFileSync(join(process.cwd(), 'src/app/api/assistant/live-session/route.ts'), 'utf8')
 
-    expect(route).toContain('buildLegacyLiveVoiceTokenConfig(voice, model)')
+    expect(route).toContain('buildBareClientLiveVoiceTokenConfig(voice, model)')
     expect(route).toContain("typeof requested.contractVersion === 'string'")
+    expect(route).toContain('=== LIVE_VOICE_CONTRACT.contractVersion')
   })
 })

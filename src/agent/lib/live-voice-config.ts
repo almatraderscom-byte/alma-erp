@@ -143,38 +143,31 @@ export function buildLiveVoiceTokenConfig(
 }
 
 // ————————————————————————————————————————————————————————————————————————————
-// Legacy-client compatibility (installed builds that predate the live-voice
-// contract). A constrained ephemeral token REJECTS a client setup whose value
-// for a locked field differs from the token's, and old builds send the session
-// values they shipped with. Shipping contract v2 therefore broke every
-// installed build's live call the moment it reached production (2026-08-13:
-// greeting still played from the app's local latency path, then the session
-// never opened — the owner heard a hello and silence). Old clients are
-// recognized by the absence of `contractVersion` in the /live-session request
-// and served this frozen pre-contract config, verbatim from the last commit
-// their builds were proven against (e8399d9d). Do not "improve" these values —
-// they must keep matching what the installed apps send. Delete this block only
-// when the owner confirms no pre-contract build remains in use.
+// Bare-client compatibility. A constrained ephemeral token REJECTS a client
+// setup whose value for a locked field differs from the token's. Two client
+// generations mint tokens with a bare {model, voice} body: installed
+// pre-contract builds (their only mint path) and the contract-era build's
+// non-prewarm start and reconnect paths, which also omit contractVersion
+// (Codex P1 #1 on PR #744). This constraint set is FROZEN AS LITERALS — the
+// field values every installed bare-minting binary ships as of 2026-08-13 —
+// and must never be derived from the mutable contract, or a future contract
+// edit to a locked field would re-break every installed binary (Codex P1 #2
+// on PR #745): the server would lock the new value while the binary keeps
+// sending its bundled one, and the setup is rejected into the silent-call
+// outage this block exists to prevent. Shipping the contract-v2 lock to bare
+// clients is exactly what killed every installed build's live call on
+// 2026-08-13 (greeting from the app's local latency path, then the session
+// never opened). The system-instruction text and compression thresholds are
+// the two fields the generations disagree on — they stay unlocked and come
+// from each client's signed bundle. Tool execution stays behind ALMA's
+// authenticated head route. Contract evolution belongs to contractVersion
+// requests, which keep the full v2 lock; grow this file's frozen sets only
+// per-version, never in place.
 // ————————————————————————————————————————————————————————————————————————————
 
-const LEGACY_LIVE_VOICE_SYSTEM_INSTRUCTION = `**Persona**
-তুমি ALMA — Boss-এর ব্যক্তিগত AI সহকারী, এখন Boss-এর সাথে ফোন কলে। unmistakably প্রমিত বাংলাদেশি বাংলা ও বাংলাদেশি উচ্চারণে একজন মনোযোগী, উষ্ণ, স্বাভাবিক মানুষের মতো কথা বলবে; হিন্দি বা ভারতীয় বাংলা টান আনবে না। কণ্ঠকে scripted announcer বা customer-service bot-এর মতো শোনাবে না।
+const FROZEN_BARE_CLIENT_GEMINI_25 = 'gemini-2.5-flash-native-audio-preview-12-2025'
 
-**Conversation**
-Boss কী বলছে এবং যে আবেগে বলছে—দুটোই শুনে delivery স্বাভাবিকভাবে মিলাবে। দুঃখ বা খারাপ খবরে আন্তরিক ও নরম হবে; চাপ, রাগ বা হতাশায় শান্ত ও স্থির হবে; সুখবর বা রসিকতায় স্বতঃস্ফূর্ত উষ্ণতা থাকবে। জোর করে হাসি, আশাবাদ, উপদেশ, “হুম”, দীর্ঘশ্বাস বা অভিনয় করবে না।
-একবারে একটি সম্পূর্ণ ভাব conversationalভাবে বলবে, তারপর স্বাভাবিকভাবে থেমে শুনবে। Boss কথা শুরু করলেই বাক্য শেষ করার চেষ্টা না করে সঙ্গে সঙ্গে চুপ করবে। Boss-এর কথা প্রশ্নের মতো পুনরাবৃত্তি করবে না, ফাঁকা ভূমিকা দেবে না, এবং প্রতিটি উত্তরের শেষে “আর কিছু জানতে চান?”, “কেমন হলো?”, “ঠিক আছে?” ধরনের অভ্যাসগত প্রশ্ন করবে না। তথ্য কম থাকলেই শুধু একটি ছোট clarification প্রশ্ন করবে।
-
-**Tool flow**
-কখন নিজে উত্তর দেবে: সালাম, কুশল, হালকা গল্প, মতামত, সাধারণ জ্ঞান — সাথে সাথে নিজেই ছোট করে উত্তর দেবে; কোনো tool ডাকবে না, দেরি করবে না।
-কখন quick_erp_lookup: আজকের হাজিরা, বিক্রি, অর্ডার, স্টক, নামাজ, পেন্ডিং অনুমোদন — এমন সাধারণ তথ্য-প্রশ্নে সরাসরি quick_erp_lookup চালাবে (কয়েক সেকেন্ডে ফল আসে), আগে ছোট্ট ack বলবে। কখন run_agent_turn: ব্যবসার তথ্য, হিসাব, টাকা, staff, অর্ডার, রিপোর্ট, মেমরি, বা কোনো কাজ করার অনুরোধ — তখনই কেবল run_agent_turn ঠিক একবার চালাবে, আর ডাকার ঠিক আগে নিজের ভাষায় ছোট্ট এক কথায় জানাবে যে বিষয়টা দেখছ — প্রতিবার ভিন্নভাবে বলবে, বাঁধা বুলি নয়। ব্যবসার তথ্য বা হিসাব কখনো নিজে বানাবে না — একমাত্র উৎস run_agent_turn-এর result।
-ভেতরের শব্দ মুখে আনবে না: tool, function, acknowledgement, STATUS_NOTE, system, agent — এগুলো কখনো উচ্চারণ করবে না।
-STATUS_NOTE লেখা বার্তা এলে সেটা Boss-এর কথা নয়; STATUS_NOTE-এর জবাবে run_agent_turn কখনোই ডাকবে না — শুধু তার ভাবটুকু নিজের ভাষায় এক ছোট স্বাভাবিক বাক্যে বলবে — প্রতিবার নতুনভাবে, একই বাক্য দুবার কখনো নয়।
-Boss-এর কথা অস্পষ্ট হলে সাথে সাথে ছোট প্রশ্নে পরিষ্কার করে নেবে; চুপ করে থাকবে না।
-Approval মানে কাজ শেষ নয় — result-এ completed/reportReady না বললে বলবে কাজ চলছে।
-**Guardrails**
-মালিককে শুধু "Boss" বলবে, তবে প্রতি বাক্যে নয়। ভয়েসে emoji পড়বে না; ইসলামি আদব বজায় রাখবে। ব্যবসা, টাকা বা গুরুতর বিষয়ে পরিষ্কার ও পেশাদার থাকবে। প্রচলিত technical শব্দ ইংরেজিতে বলা স্বাভাবিক হলে বলবে, কিন্তু বাক্যের গঠন বাংলা রাখবে। লিখিত রিপোর্ট বা তালিকা আবৃত্তি করবে না—Boss চাইলে তবেই তালিকা দেবে।`
-
-export function buildLegacyLiveVoiceTokenConfig(
+export function buildBareClientLiveVoiceTokenConfig(
   voiceName = DEFAULT_LIVE_VOICE_NAME,
   model = DEFAULT_LIVE_VOICE_MODEL,
 ): LiveConnectConfig {
@@ -184,10 +177,8 @@ export function buildLegacyLiveVoiceTokenConfig(
     speechConfig: {
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
     },
-    systemInstruction: LEGACY_LIVE_VOICE_SYSTEM_INSTRUCTION,
     inputAudioTranscription: {},
     outputAudioTranscription: {},
-    contextWindowCompression: { slidingWindow: {} },
     realtimeInputConfig: {
       automaticActivityDetection: {
         disabled: false,
@@ -200,7 +191,7 @@ export function buildLegacyLiveVoiceTokenConfig(
       turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
     },
   }
-  if (model === GEMINI_25_LIVE_MODEL) {
+  if (model === FROZEN_BARE_CLIENT_GEMINI_25) {
     locked.enableAffectiveDialog = true
     locked.thinkingConfig = { thinkingBudget: 0 }
   } else {
