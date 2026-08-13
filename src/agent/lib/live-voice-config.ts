@@ -148,26 +148,54 @@ export function buildLiveVoiceTokenConfig(
 // generations mint tokens with a bare {model, voice} body: installed
 // pre-contract builds (their only mint path) and the contract-era build's
 // non-prewarm start and reconnect paths, which also omit contractVersion
-// (Codex P1 on PR #744). The generations agree byte-for-byte on every session
-// field EXCEPT the system-instruction text and the context-window-compression
-// thresholds — each sends the version from its own signed bundle. A bare
-// request therefore gets a token that locks all the agreed fields and leaves
-// exactly those two to the client. Session semantics still come from the
-// signed app bundle, and tool execution stays behind ALMA's authenticated
-// head route; requests that DO carry contractVersion keep the full v2 lock.
-// Shipping the full v2 lock to bare clients is what killed every installed
-// build's live call on 2026-08-13 (greeting from the app's local latency
-// path, then the session never opened).
+// (Codex P1 #1 on PR #744). This constraint set is FROZEN AS LITERALS — the
+// field values every installed bare-minting binary ships as of 2026-08-13 —
+// and must never be derived from the mutable contract, or a future contract
+// edit to a locked field would re-break every installed binary (Codex P1 #2
+// on PR #745): the server would lock the new value while the binary keeps
+// sending its bundled one, and the setup is rejected into the silent-call
+// outage this block exists to prevent. Shipping the contract-v2 lock to bare
+// clients is exactly what killed every installed build's live call on
+// 2026-08-13 (greeting from the app's local latency path, then the session
+// never opened). The system-instruction text and compression thresholds are
+// the two fields the generations disagree on — they stay unlocked and come
+// from each client's signed bundle. Tool execution stays behind ALMA's
+// authenticated head route. Contract evolution belongs to contractVersion
+// requests, which keep the full v2 lock; grow this file's frozen sets only
+// per-version, never in place.
 // ————————————————————————————————————————————————————————————————————————————
+
+const FROZEN_BARE_CLIENT_GEMINI_25 = 'gemini-2.5-flash-native-audio-preview-12-2025'
 
 export function buildBareClientLiveVoiceTokenConfig(
   voiceName = DEFAULT_LIVE_VOICE_NAME,
   model = DEFAULT_LIVE_VOICE_MODEL,
 ): LiveConnectConfig {
-  const {
-    systemInstruction: _clientInstruction,
-    contextWindowCompression: _clientCompression,
-    ...agreed
-  } = buildLiveVoiceTokenConfig(voiceName, model)
-  return agreed
+  const locked: LiveConnectConfig = {
+    responseModalities: [Modality.AUDIO],
+    temperature: 0.7,
+    speechConfig: {
+      voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+    },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: false,
+        startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+        endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+        prefixPaddingMs: 250,
+        silenceDurationMs: 1200,
+      },
+      activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+      turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+    },
+  }
+  if (model === FROZEN_BARE_CLIENT_GEMINI_25) {
+    locked.enableAffectiveDialog = true
+    locked.thinkingConfig = { thinkingBudget: 0 }
+  } else {
+    locked.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL }
+  }
+  return locked
 }
