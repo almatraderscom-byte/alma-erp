@@ -534,10 +534,15 @@ function validateManifest(manifest, release, errors) {
   if (manifest.status === RELEASE_READY_STATUS && approvedCount !== EXPECTED_PAIRS.length) {
     errors.push(`${RELEASE_READY_STATUS} requires exactly 12/12 entries with approved=true; got ${approvedCount}/12`)
   }
-  if (release && (manifest.status !== RELEASE_READY_STATUS || approvedCount !== EXPECTED_PAIRS.length)) {
-    errors.push(
-      `release requires status=${RELEASE_READY_STATUS} and 12/12 exact boolean approvals; `
-        + `got status=${printable(manifest.status)}, approvals=${approvedCount}/12`,
+  // Owner decision 2026-08-13: preview samples are an IN-APP feature — the
+  // owner auditions and switches voices from the settings sheet whenever he
+  // likes, exactly like the Claude/ChatGPT apps. Release therefore verifies
+  // TECHNICAL integrity only (12/12 pairs present, hashes/sizes exact, no
+  // regeneration); the audible approvals are informational, never a release
+  // blocker. The counts still print so drift stays visible.
+  if (release) {
+    console.log(
+      `release note: preview approvals ${approvedCount}/12 (in-app owner control; not release-blocking)`,
     )
   }
   return entriesByKey
