@@ -124,6 +124,27 @@ jobs:
         working-directory: ios/App
         run: pod install
 
+      - name: Keep the committed Podfile.lock (runner CocoaPods rewrites the lockfile)
+        # The lockfile is committed from CocoaPods 1.12.1; the runner ships a
+        # newer gem whose re-serialization dirties the file even when every pod
+        # resolved exactly as locked (this failed the provenance guard on the
+        # build-103 archives, runs 6-7, 2026-08-13). pod install with a lockfile
+        # present installs the locked versions or errors, so restoring the
+        # committed bytes is cosmetic — but only after proving the diff carries
+        # no dependency drift. Real drift prints the diff and fails the run.
+        run: |
+          if ! git diff --quiet -- ios/App/Podfile.lock; then
+            git --no-pager diff -- ios/App/Podfile.lock
+            if git diff -- ios/App/Podfile.lock \
+              | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
+              | grep -vqE '^[+-]  COCOAPODS: [0-9][0-9.]*$|^[+-]COCOAPODS: [0-9][0-9.]*$'; then
+              echo "Podfile.lock changed beyond the CocoaPods version line — dependency drift, refusing to mask it" >&2
+              exit 1
+            fi
+            git checkout -- ios/App/Podfile.lock
+            echo "Restored committed Podfile.lock (only the COCOAPODS version line differed)"
+          fi
+
       - name: Stamp the built commit into Info.plist (forensics parity with the Mac path)
         run: |
           PLIST=ios/App/App/Info.plist
