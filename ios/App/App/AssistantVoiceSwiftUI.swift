@@ -8005,9 +8005,17 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         let mintStart = Date()
         NSLog("ALMA-VOICE mint begin")
         #endif
+        // Every contract-era mint must carry contractVersion: a bare body is
+        // served the frozen legacy constraint set, which stops matching this
+        // client's signed-bundle setup the moment a future contract changes
+        // any locked field (Codex P1, PR #745).
+        var mintBody = ["model": desiredModel, "voice": desiredVoice]
+        if let contract = AlmaLiveVoicePreferences.activeContract {
+            mintBody["contractVersion"] = contract.contractVersion
+        }
         let raw = try await AssistantNet.postJSONForData(
             path: "/api/assistant/live-session",
-            body: ["model": desiredModel, "voice": desiredVoice])
+            body: mintBody)
         try Task.checkCancellation()
         guard acceptsStartAttempt(attempt) else { throw CancellationError() }
         #if DEBUG
@@ -10201,10 +10209,15 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
         Task { [weak self, startAttempt, priorMintedSession, resumptionHandle] in
             guard let self, self.acceptsStartAttempt(startAttempt) else { return }
             do {
-                let body: [String: String] = [
+                var body: [String: String] = [
                     "model": priorMintedSession?.model ?? AlmaLiveVoicePreferences.modelID,
                     "voice": priorMintedSession?.voice ?? AlmaLiveVoicePreferences.voiceID,
                 ]
+                // Reconnect mints must also carry contractVersion — a bare
+                // body gets the frozen legacy constraints (Codex P1, PR #745).
+                if let contract = AlmaLiveVoicePreferences.activeContract {
+                    body["contractVersion"] = contract.contractVersion
+                }
                 let raw = try await AssistantNet.postJSONForData(
                     path: "/api/assistant/live-session", body: body)
                 try Task.checkCancellation()
