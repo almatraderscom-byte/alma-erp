@@ -489,17 +489,34 @@ capture_repository_snapshot() {
   # tolerates, and only when the file's sole diff is the ALMAGitCommit value —
   # anything else in Info.plist, or any other path, still fails closed.
   if [[ -n "$porcelain" ]]; then
-    local plist_only
-    plist_only=$(printf '%s\n' "$porcelain" | grep -cv '^ M ios/App/App/Info.plist$' || true)
-    if [[ "$plist_only" -eq 0 ]]; then
+    # Two sanctioned CI writes, each tolerated only when its diff is exactly
+    # the known benign shape: the workflow's ALMAGitCommit stamp in Info.plist,
+    # and CocoaPods rewriting its own "COCOAPODS: x.y.z" version line in
+    # Podfile.lock (the runner's gem version differs from the committing Mac's;
+    # named by the dirty diagnostics on the build-103 archive, 2026-08-13).
+    # Any other line in either file, or any other path, still fails closed.
+    local unexplained
+    unexplained=$(printf '%s\n' "$porcelain" \
+      | grep -cvE '^ M ios/App/(App/Info\.plist|Podfile\.lock)$' || true)
+    if [[ "$unexplained" -eq 0 ]]; then
+      local benign=1
       local plist_diff
       plist_diff=$(git -C "$repository_root" diff -- ios/App/App/Info.plist 2>/dev/null)
       if [[ -n "$plist_diff" ]] \
-        && ! printf '%s\n' "$plist_diff" | grep -E '^[+-]' \
+        && printf '%s\n' "$plist_diff" | grep -E '^[+-]' \
           | grep -vE '^(\+\+\+|---)' | grep -vE 'ALMAGitCommit|^[+-][[:space:]]*<string>[0-9a-f]{40}</string>$' \
           | grep -q .; then
-        porcelain=""
+        benign=0
       fi
+      local pods_diff
+      pods_diff=$(git -C "$repository_root" diff -- ios/App/Podfile.lock 2>/dev/null)
+      if [[ -n "$pods_diff" ]] \
+        && printf '%s\n' "$pods_diff" | grep -E '^[+-]' \
+          | grep -vE '^(\+\+\+|---)' | grep -vE '^[+-]COCOAPODS: [0-9][0-9.]*$' \
+          | grep -q .; then
+        benign=0
+      fi
+      [[ "$benign" -eq 1 ]] && porcelain=""
     fi
   fi
   verify_index_visibility
