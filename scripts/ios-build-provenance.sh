@@ -483,6 +483,25 @@ capture_repository_snapshot() {
   is_full_commit "$candidate_head" || return 1
   porcelain=$(git -C "$repository_root" status --porcelain=v1 \
     --untracked-files=all --ignore-submodules=none 2>/dev/null) || return 1
+  # The TestFlight workflow stamps ALMAGitCommit into Info.plist before the
+  # archive (forensics parity with the Mac path; shipped since build 94). That
+  # sanctioned single-file stamp is the ONLY tracked modification the guard
+  # tolerates, and only when the file's sole diff is the ALMAGitCommit value —
+  # anything else in Info.plist, or any other path, still fails closed.
+  if [[ -n "$porcelain" ]]; then
+    local plist_only
+    plist_only=$(printf '%s\n' "$porcelain" | grep -cv '^ M ios/App/App/Info.plist$' || true)
+    if [[ "$plist_only" -eq 0 ]]; then
+      local plist_diff
+      plist_diff=$(git -C "$repository_root" diff -- ios/App/App/Info.plist 2>/dev/null)
+      if [[ -n "$plist_diff" ]] \
+        && ! printf '%s\n' "$plist_diff" | grep -E '^[+-]' \
+          | grep -vE '^(\+\+\+|---)' | grep -vE 'ALMAGitCommit|^[+-][[:space:]]*<string>[0-9a-f]{40}</string>$' \
+          | grep -q .; then
+        porcelain=""
+      fi
+    fi
+  fi
   verify_index_visibility
   visibility_result=$?
   [[ "$visibility_result" -ne 1 ]] || return 1
