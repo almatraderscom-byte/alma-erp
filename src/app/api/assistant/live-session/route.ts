@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import {
+  buildLegacyLiveVoiceTokenConfig,
   buildLiveVoiceTokenConfig,
   GEMINI_31_LIVE_MODEL,
   isSupportedLiveVoiceModel,
@@ -20,7 +21,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 15
 
-type LiveSessionSelection = { model?: unknown; voice?: unknown }
+type LiveSessionSelection = { model?: unknown; voice?: unknown; contractVersion?: unknown }
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -41,6 +42,15 @@ export async function POST(req: NextRequest) {
   const configuredVoice = process.env.GEMINI_LIVE_APP_VOICE?.trim()
   const requestedModel = typeof requested.model === 'string' ? requested.model.trim() : ''
   const requestedVoice = typeof requested.voice === 'string' ? requested.voice.trim() : ''
+  // A constrained token rejects a client setup whose value for a locked field
+  // differs from the token's, and installed pre-contract builds send the
+  // session values they shipped with — minting them a contract-v2 token killed
+  // every live call on those builds the day the contract reached production
+  // (greeting from the app's local latency path, then silence). Builds that
+  // speak the contract prove it by echoing contractVersion in this request;
+  // everything else gets the frozen pre-contract config it was proven against.
+  const contractClient = typeof requested.contractVersion === 'string'
+    && requested.contractVersion.trim().length > 0
   // One contract now owns new-client defaults. The temporary environment gate
   // atomically restores the old empty-body 3.1/Charon behavior during rollout.
   const contractRolloutEnabled = process.env.LIVE_VOICE_PHASE1B_CONTRACT_V1 !== 'false'
@@ -85,7 +95,12 @@ export async function POST(req: NextRequest) {
         uses: 1,
         expireTime: expiresAt,
         newSessionExpireTime: newSessionExpiresAt,
-        liveConnectConstraints: { model, config: buildLiveVoiceTokenConfig(voice, model) },
+        liveConnectConstraints: {
+          model,
+          config: contractClient
+            ? buildLiveVoiceTokenConfig(voice, model)
+            : buildLegacyLiveVoiceTokenConfig(voice, model),
+        },
         // Lock the fields present above, but allow the client to add only the
         // sessionResumption.handle required for Google's ~10-minute socket rotation.
         lockAdditionalFields: [],
