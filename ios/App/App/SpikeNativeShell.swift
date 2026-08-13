@@ -260,6 +260,28 @@ final class AlmaGlassHeaderView: UIVisualEffectView {
 
 /// Scripts shared by every tab (and the Capacitor web view).
 enum AlmaEmbed {
+    #if DEBUG
+    /// UI automation must be able to inspect the native shell without a system
+    /// Face ID/passcode sheet covering it. This override is intentionally gated by
+    /// both DEBUG compilation and an explicit launch environment value; production
+    /// builds cannot install it. Running at document start sets the preference on
+    /// each real origin before BiometricLockGate reads localStorage.
+    private static func installUITestBiometricLockOverride(
+        into content: WKUserContentController
+    ) {
+        guard ProcessInfo.processInfo.environment[
+            "ALMA_UI_TEST_DISABLE_BIOMETRIC_LOCK"
+        ] == "1" else { return }
+        content.addUserScript(WKUserScript(
+            source: """
+            try { localStorage.setItem('alma_biometric_lock_enabled', '0'); } catch (e) {}
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+    }
+    #endif
+
     /// Runs at document START, before the web app's JS: sets the flag the ERP's
     /// native embed mode (Lane 2) reads to hide its own chrome and report navigation.
     /// Until that web code deploys this flag is simply ignored — safe either way.
@@ -292,6 +314,9 @@ enum AlmaEmbed {
     /// Add the scripts to a content controller. `hideWebHeader` additionally tells
     /// the web to drop its own page header where a native header is shown.
     static func install(into content: WKUserContentController, hideWebHeader: Bool = false) {
+        #if DEBUG
+        installUITestBiometricLockOverride(into: content)
+        #endif
         content.addUserScript(flagScript())
         if hideWebHeader { content.addUserScript(headerFlagScript()) }
         content.addUserScript(hideChromeScript())

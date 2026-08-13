@@ -9,6 +9,12 @@ import {
   isSupportedLiveVoiceModel,
   isSupportedLiveVoiceName,
 } from '@/agent/lib/live-voice-config'
+import {
+  LIVE_VOICE_CONTRACT,
+  liveVoiceModelContract,
+  liveVoiceRemoteModelAvailability,
+  liveVoiceRolloutDefaults,
+} from '@/agent/lib/live-voice-contract'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,15 +41,31 @@ export async function POST(req: NextRequest) {
   const configuredVoice = process.env.GEMINI_LIVE_APP_VOICE?.trim()
   const requestedModel = typeof requested.model === 'string' ? requested.model.trim() : ''
   const requestedVoice = typeof requested.voice === 'string' ? requested.voice.trim() : ''
-  // Old iOS builds post an empty body. Keep their proven 3.1/Charon baseline;
-  // only the new native selector opts into 2.5/Aoede or another preset.
-  const model = requestedModel || configuredModel || GEMINI_31_LIVE_MODEL
-  const voice = requestedVoice || configuredVoice || 'Charon'
+  // One contract now owns new-client defaults. The temporary environment gate
+  // atomically restores the old empty-body 3.1/Charon behavior during rollout.
+  const contractRolloutEnabled = process.env.LIVE_VOICE_PHASE1B_CONTRACT_V1 !== 'false'
+  const rolloutDefaults = liveVoiceRolloutDefaults(contractRolloutEnabled, {
+    modelID: GEMINI_31_LIVE_MODEL,
+    voiceID: 'Charon',
+  })
+  const model = requestedModel || configuredModel || rolloutDefaults.modelID
+  const voice = requestedVoice || configuredVoice || rolloutDefaults.voiceID
   if (!isSupportedLiveVoiceModel(model)) {
     return Response.json({ error: 'unsupported_live_model' }, { status: 400 })
   }
   if (!isSupportedLiveVoiceName(voice)) {
     return Response.json({ error: 'unsupported_live_voice' }, { status: 400 })
+  }
+  const availability = liveVoiceRemoteModelAvailability(
+    model,
+    process.env.LIVE_VOICE_DISABLED_MODEL_IDS,
+  )
+  if (!availability.enabled) {
+    return Response.json({
+      error: 'live_model_remotely_disabled',
+      replacementModel: availability.replacementModelID,
+      contractVersion: LIVE_VOICE_CONTRACT.contractVersion,
+    }, { status: 503 })
   }
   const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString()
   // 120s (was 60s): the native app now prewarms this token when an agent call
@@ -76,7 +98,8 @@ export async function POST(req: NextRequest) {
       token: token.name,
       model,
       voice,
-      affectiveDialog: model === 'gemini-2.5-flash-native-audio-preview-12-2025',
+      contractVersion: contractRolloutEnabled ? LIVE_VOICE_CONTRACT.contractVersion : 'legacy',
+      affectiveDialog: liveVoiceModelContract(model)?.capabilities.affectiveDialog ?? false,
       expiresAt,
       websocketUrl: 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained',
     })

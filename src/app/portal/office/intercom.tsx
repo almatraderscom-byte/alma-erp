@@ -16,6 +16,7 @@ import { tapHaptic, successHaptic, warningHaptic } from '@/lib/ui-haptics'
 import { useAgoraCall } from '@/agent/hooks/useAgoraCall'
 import { useAgoraIntercom } from '@/agent/hooks/useAgoraIntercom'
 import { isRecoverableOutgoingOfficeCall } from '@/agent/lib/office-call-web-policy'
+import { isCapacitorNative } from '@/lib/capacitor-native'
 import { INTERCOM_CSS } from './intercom-css'
 
 const POLL_MS = 6_000
@@ -28,16 +29,10 @@ const CALL_RING_MS = 60_000
  * own their complete call lifecycle, so the WebView must never create a second
  * Agora client or render competing answer/end controls.
  */
-function isNativeCallShell(): boolean {
-  if (typeof window === 'undefined') return false
-  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor
-  const platform = cap?.getPlatform?.()
-  return Boolean(cap?.isNativePlatform?.()) && (platform === 'ios' || platform === 'android')
-}
-/** Mount-safe read of {@link isNativeCallShell} (avoids an SSR/hydration mismatch). */
+/** Mount-safe native-shell read (avoids an SSR/hydration mismatch). */
 export function useIsNativeCallShell(): boolean {
   const [native, setNative] = useState(false)
-  useEffect(() => setNative(isNativeCallShell()), [])
+  useEffect(() => setNative(isCapacitorNative()), [])
   return native
 }
 /** The Agora channel for a call is derived from its broadcast id (no signaling column needed). */
@@ -299,6 +294,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   )
 
   const startPtt = useCallback(async () => {
+    if (isCapacitorNative()) return
     if (pttRef.current !== 'idle') return
     setError(null)
     setPtt('starting')
@@ -306,7 +302,7 @@ export function useIntercom(self: 'owner' | 'staff') {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       // The press may have ended while the permission prompt was up.
-      if (cancelRef.current) {
+      if (cancelRef.current || isCapacitorNative()) {
         stream.getTracks().forEach((t) => t.stop())
         setPtt('idle')
         return
@@ -477,6 +473,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Owner rings ONE staff: create a call broadcast, then join its channel.
   const startCall = useCallback(
     async (staffId: string, staffName: string) => {
+      if (isCapacitorNative()) return
       if (callStartRef.current || callStarting || activeCallId) return
       callStartRef.current = true
       setCallStarting(true)
@@ -509,6 +506,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Staff rings the owner (bidirectional calling). No targetStaffId → the server
   // routes it to the owner's devices; the owner's app rings just like WhatsApp.
   const callOwner = useCallback(async () => {
+    if (isCapacitorNative()) return
     if (callStartRef.current || callStarting || activeCallId) return
     callStartRef.current = true
     setCallStarting(true)
@@ -539,6 +537,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Answer an incoming call (owner or staff): stop the ring + join the channel.
   const answerCall = useCallback(
     async (b: ItcBroadcast) => {
+      if (isCapacitorNative()) return
       if (answerRef.current || activeCallId) return
       answerRef.current = true
       successHaptic()
@@ -563,6 +562,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Browser reload cannot preserve a MediaStream, but the canonical leg remains
   // recoverable: the user explicitly resumes it from the global call surface.
   const resumeCall = useCallback(async (b: ItcBroadcast) => {
+    if (isCapacitorNative()) return
     if (answerRef.current || activeCallId) return
     answerRef.current = true
     const peer = b.targetStaffId
@@ -620,6 +620,7 @@ export function useIntercom(self: 'owner' | 'staff') {
 
   /* ── staff: live listen toggle (the tap unlocks audio for auto-play) ── */
   const toggleLiveListen = useCallback(() => {
+    if (isCapacitorNative()) return
     if (!liveChannel) return
     tapHaptic()
     if (liveApi.listening) void liveApi.leave()
@@ -691,7 +692,7 @@ export function useIntercom(self: 'owner' | 'staff') {
   // (Skipped in the iOS native shell — CallKit already answered there.)
   const autoAnsweredRef = useRef(false)
   useEffect(() => {
-    if (autoAnsweredRef.current || activeCallId || isNativeCallShell()) return
+    if (autoAnsweredRef.current || activeCallId || isCapacitorNative()) return
     let wanted: string | null = null
     try {
       wanted = new URLSearchParams(window.location.search).get('answerCall')
@@ -760,6 +761,10 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
   const startYRef = useRef(0)
   const [cancelArmed, setCancelArmed] = useState(false)
   const live = ptt === 'live'
+
+  // CallKit/Core-Telecom and the native intercom own audio in Capacitor.  The
+  // retained dashboard must not expose a second Web MediaRecorder/PTT owner.
+  if (nativeCallShell) return null
 
   const targetStaff = feed.staff.find((s) => s.id === target)
   const targetName = target === 'all' ? 'সবাই' : targetStaff?.name ?? ''
@@ -1114,6 +1119,7 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
   const attemptedRef = useRef<string | null>(null)
 
   const beep = useCallback(() => {
+    if (isCapacitorNative()) return
     try {
       const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctx) return
@@ -1139,6 +1145,7 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
 
   const play = useCallback(
     (b: ItcBroadcast) => {
+      if (isCapacitorNative()) return
       if (!b.audioUrl) return
       let a = audioRef.current
       if (!a || a.src !== b.audioUrl) {
@@ -1522,7 +1529,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
   useEffect(() => {
-    if (!incoming) return
+    if (!incoming || isCapacitorNative()) return
     let cancelled = false
     try {
       const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext

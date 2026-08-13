@@ -43,11 +43,33 @@
 		A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
 		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
 		A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */; };
+		A7C100000000000000000002 /* VoicePreviews in Resources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000001 /* VoicePreviews */; };
+		A7C100000000000000000007 /* AlmaLiveVoicePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */; };
+		A7C100000000000000000009 /* LiveVoicePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C100000000000000000008 /* LiveVoicePreviewTests.swift */; };
+		B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */; };
+		C2A2A0000000000000000032 /* AlmaLiveVoiceWorkFollowThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */; };
+		C2A2A000000000000000003A /* AlmaLiveVoiceDroppedRequestRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A000000000000000003C /* AlmaLiveVoiceDroppedRequestRecovery.swift */; };
+		B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */; };
+		C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */; };
+		C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */; };
+		C2A2A0000000000000000012 /* LiveVoiceSpokenTranscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */; };
+		C2A2A0000000000000000036 /* LiveVoiceWorkFollowThroughTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */; };
+		C2A2A000000000000000003E /* LiveVoiceDroppedRequestRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000040 /* LiveVoiceDroppedRequestRecoveryTests.swift */; };
+		C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */; };
+		D3C300000000000000000001 /* AlmaLiveVoiceLifecycleReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */; };
+		D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */; };
+		E5D500000000000000000001 /* AlmaLiveVoiceOutputPCMEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D500000000000000000003 /* AlmaLiveVoiceOutputPCMEnvelope.swift */; };
+		E5D500000000000000000002 /* LiveVoiceOutputPCMEnvelopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */; };
+		F6A600000000000000000001 /* AlmaLiveVoiceAccessibilityLayoutPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A600000000000000000003 /* AlmaLiveVoiceAccessibilityLayoutPolicy.swift */; };
+		F6A600000000000000000002 /* LiveVoiceAccessibilityLayoutPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */; };
+		B4D400000000000000000001 /* LiveVoiceActivityPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D400000000000000000002 /* LiveVoiceActivityPolicyTests.swift */; };
 		A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F000000000000000000002 /* AssistantParityV2Tests.swift */; };
 		A9F10000000000000000B001 /* GlobalOfficeRobotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */; };
 		A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */; };
 		A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */; };
 		AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */; };
+		AC570000000000000000B001 /* AgentCallStatusOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC570000000000000000A001 /* AgentCallStatusOutbox.swift */; };
+		AC570000000000000000C001 /* AgentCallStatusOutboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */; };
 		AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */; };
 		B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */; };
 		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
@@ -63,6 +85,7 @@
 		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
 		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
+		C8A0D1000000000000000010 /* AlmaBuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */; };
 		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
@@ -242,11 +265,33 @@
 		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
 		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
+		A7C100000000000000000001 /* VoicePreviews */ = {isa = PBXFileReference; lastKnownFileType = folder; path = VoicePreviews; sourceTree = "<group>"; };
+		A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoicePreview.swift; sourceTree = "<group>"; };
+		A7C100000000000000000008 /* LiveVoicePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePreviewTests.swift; sourceTree = "<group>"; };
+		B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceContract.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceWorkFollowThrough.swift; sourceTree = "<group>"; };
+		C2A2A000000000000000003C /* AlmaLiveVoiceDroppedRequestRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceDroppedRequestRecovery.swift; sourceTree = "<group>"; };
+		B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoicePhase1BTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceInputTurnReducer.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceInputTurnReducerTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceSpokenTranscriptTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceWorkFollowThroughTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000040 /* LiveVoiceDroppedRequestRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceDroppedRequestRecoveryTests.swift; sourceTree = "<group>"; };
+		C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionSurfaceTests.swift; sourceTree = "<group>"; };
+		D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceLifecycleReducer.swift; sourceTree = "<group>"; };
+		D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceLifecycleReducerTests.swift; sourceTree = "<group>"; };
+		E5D500000000000000000003 /* AlmaLiveVoiceOutputPCMEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceOutputPCMEnvelope.swift; sourceTree = "<group>"; };
+		E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceOutputPCMEnvelopeTests.swift; sourceTree = "<group>"; };
+		F6A600000000000000000003 /* AlmaLiveVoiceAccessibilityLayoutPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaLiveVoiceAccessibilityLayoutPolicy.swift; sourceTree = "<group>"; };
+		F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceAccessibilityLayoutPolicyTests.swift; sourceTree = "<group>"; };
+		B4D400000000000000000002 /* LiveVoiceActivityPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceActivityPolicyTests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000002 /* AssistantParityV2Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantParityV2Tests.swift; sourceTree = "<group>"; };
 		A9F000000000000000000008 /* AppParityV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppParityV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A9F10000000000000000A001 /* GlobalOfficeRobotView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotView.swift; sourceTree = "<group>"; };
 		A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotStore.swift; sourceTree = "<group>"; };
 		A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalOfficeRobotTests.swift; sourceTree = "<group>"; };
+		AC570000000000000000A001 /* AgentCallStatusOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallStatusOutbox.swift; sourceTree = "<group>"; };
+		AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallStatusOutboxTests.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallUI.swift; sourceTree = "<group>"; };
 		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -265,6 +310,7 @@
 		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
+		C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBuildProvenance.swift; sourceTree = "<group>"; };
 		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		D7AA8800000000000000A001 /* OfficeRobotLiveGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeRobotLiveGlyph.swift; sourceTree = "<group>"; };
@@ -433,6 +479,7 @@
 				E1AA9900000000000000C001 /* Sounds */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				C8A0D1000000000000000011 /* AlmaBuildProvenance.swift */,
 				A1AA11A100000000000INTNT /* AlmaAppIntents.swift */,
 				C1AA3300000000000000A001 /* PulseActivityAttributes.swift */,
 				C1AA3300000000000000A002 /* LiveActivityBridge.swift */,
@@ -464,6 +511,15 @@
 				FA22BB00000000000000A905 /* AlmaRequestCache.swift */,
 				F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				B8C1B0000000000000000003 /* AlmaLiveVoiceContract.swift */,
+				C2A2A0000000000000000034 /* AlmaLiveVoiceWorkFollowThrough.swift */,
+				C2A2A000000000000000003C /* AlmaLiveVoiceDroppedRequestRecovery.swift */,
+				C2A2A0000000000000000003 /* AlmaLiveVoiceInputTurnReducer.swift */,
+				D3C300000000000000000003 /* AlmaLiveVoiceLifecycleReducer.swift */,
+				E5D500000000000000000003 /* AlmaLiveVoiceOutputPCMEnvelope.swift */,
+				F6A600000000000000000003 /* AlmaLiveVoiceAccessibilityLayoutPolicy.swift */,
+				A7C100000000000000000006 /* AlmaLiveVoicePreview.swift */,
+				A7C100000000000000000001 /* VoicePreviews */,
 				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
 				F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */,
 				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
@@ -475,6 +531,7 @@
 				A9F10000000000000000A002 /* GlobalOfficeRobotStore.swift */,
 				F2AA7702000000000000A0FE /* AgoraIntercom.swift */,
 				CA11C17700000000A0FECA11 /* CallKitVoIP.swift */,
+				AC570000000000000000A001 /* AgentCallStatusOutbox.swift */,
 				AGC1CA1100000000A0FEAGC1 /* AgentCallUI.swift */,
 				F2AA7703000000000000A0FE /* IntercomUI.swift */,
 				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
@@ -567,6 +624,18 @@
 			isa = PBXGroup;
 			children = (
 				A9F000000000000000000002 /* AssistantParityV2Tests.swift */,
+				A7C100000000000000000008 /* LiveVoicePreviewTests.swift */,
+				B8C1B0000000000000000004 /* LiveVoicePhase1BTests.swift */,
+				C2A2A0000000000000000004 /* LiveVoiceInputTurnReducerTests.swift */,
+				C2A2A0000000000000000014 /* LiveVoiceSpokenTranscriptTests.swift */,
+				C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */,
+				C2A2A0000000000000000040 /* LiveVoiceDroppedRequestRecoveryTests.swift */,
+				C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */,
+				D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */,
+				E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */,
+				F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */,
+				B4D400000000000000000002 /* LiveVoiceActivityPolicyTests.swift */,
+				AC570000000000000000A002 /* AgentCallStatusOutboxTests.swift */,
 				A9F10000000000000000C002 /* GlobalOfficeRobotTests.swift */,
 			);
 			path = AppParityV2Tests;
@@ -642,6 +711,8 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				A7C100000000000000000005 /* Copy Voice Preview Manifest */,
+				C8A0D1000000000000000012 /* Generate Build Provenance */,
 				9592DBEFFC6D2A0C8D5DEB22 /* [CP] Embed Pods Frameworks */,
 				B1AA2200000000000000C004 /* Embed Foundation Extensions */,
 			);
@@ -770,6 +841,7 @@
 				E1AA9900000000000000B005 /* RobotRejectSFX.mp3 in Resources */,
 				504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */,
 				50B271D11FEDC1A000F3C39B /* public in Resources */,
+				A7C100000000000000000002 /* VoicePreviews in Resources */,
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
@@ -873,6 +945,70 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-App/Pods-App-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		A7C100000000000000000005 /* Copy Voice Preview Manifest */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../config/voice-preview-catalog/live-bn-v1.json",
+				"$(SRCROOT)/../../config/live-voice/live-voice-v1.json",
+			);
+			name = "Copy Voice Preview Manifest";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/VoicePreviews/live-bn-v1.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/LiveVoice/live-voice-v1.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nSOURCE_MANIFEST=\"${SRCROOT}/../../config/voice-preview-catalog/live-bn-v1.json\"\nPRODUCT_MANIFEST_DIRECTORY=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/VoicePreviews\"\nPRODUCT_MANIFEST=\"${PRODUCT_MANIFEST_DIRECTORY}/live-bn-v1.json\"\nSOURCE_CONTRACT=\"${SRCROOT}/../../config/live-voice/live-voice-v1.json\"\nPRODUCT_CONTRACT_DIRECTORY=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/LiveVoice\"\nPRODUCT_CONTRACT=\"${PRODUCT_CONTRACT_DIRECTORY}/live-voice-v1.json\"\n/bin/mkdir -p \"${PRODUCT_MANIFEST_DIRECTORY}\" \"${PRODUCT_CONTRACT_DIRECTORY}\"\n/usr/bin/install -m 0644 \"${SOURCE_MANIFEST}\" \"${PRODUCT_MANIFEST}\"\n/usr/bin/install -m 0644 \"${SOURCE_CONTRACT}\" \"${PRODUCT_CONTRACT}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		C8A0D1000000000000000012 /* Generate Build Provenance */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../scripts/ios-build-provenance.sh",
+				"$(SRCROOT)/../../scripts/verify-ios-voice-preview-catalog.mjs",
+				"$(SRCROOT)/BuildSupport/alma-bundled-inputs.sha256",
+				"$(SRCROOT)/../../config/voice-preview-catalog/live-bn-v1.json",
+				"$(SRCROOT)/../../public/voice-previews/live-bn-v1",
+				"$(SRCROOT)/App/VoicePreviews/live-bn-v1",
+				"$(SRCROOT)/../../mobile/www/index.html",
+				"$(SRCROOT)/App/capacitor.config.json",
+				"$(SRCROOT)/App/config.xml",
+				"$(SRCROOT)/App/public/index.html",
+				"$(SRCROOT)/App/public/cordova.js",
+				"$(SRCROOT)/App/public/cordova_plugins.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/capacitor.config.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/config.xml",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/index.html",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/public/cordova_plugins.js",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/VoicePreviews/live-bn-v1",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/VoicePreviews/live-bn-v1.json",
+			);
+			name = "Generate Build Provenance";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/alma-build-provenance.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nPRODUCT_ROOT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nPRODUCT_ROOT_PHYSICAL=$(cd \"${PRODUCT_ROOT}\" && pwd -P)\nOUTPUT_PATH=\"${PRODUCT_ROOT_PHYSICAL}/alma-build-provenance.plist\"\nARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --manifest \"${SRCROOT}/BuildSupport/alma-bundled-inputs.sha256\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n  --output \"${OUTPUT_PATH}\"\n)\nCATALOG_ARGS=(\n  --repository-root \"${SRCROOT}/../..\"\n  --product-root \"${PRODUCT_ROOT_PHYSICAL}\"\n)\nif [[ \"${DEPLOYMENT_LOCATION:-NO}\" == \"YES\" ]]; then\n  ARGS+=(--require-verified)\n  CATALOG_ARGS+=(--release)\nfi\n\"${SRCROOT}/../../scripts/ios-build-provenance.sh\" \"${ARGS[@]}\"\nnode \"${SRCROOT}/../../scripts/verify-ios-voice-preview-catalog.mjs\" \"${CATALOG_ARGS[@]}\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -881,6 +1017,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				C8A0D1000000000000000010 /* AlmaBuildProvenance.swift in Sources */,
 				A1AA11A200000000000INTNT /* AlmaAppIntents.swift in Sources */,
 				C1AA3300000000000000B001 /* PulseActivityAttributes.swift in Sources */,
 				C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */,
@@ -912,6 +1049,14 @@
 				FA22BB00000000000000B905 /* AlmaRequestCache.swift in Sources */,
 				F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				B8C1B0000000000000000001 /* AlmaLiveVoiceContract.swift in Sources */,
+				C2A2A0000000000000000032 /* AlmaLiveVoiceWorkFollowThrough.swift in Sources */,
+				C2A2A000000000000000003A /* AlmaLiveVoiceDroppedRequestRecovery.swift in Sources */,
+				C2A2A0000000000000000001 /* AlmaLiveVoiceInputTurnReducer.swift in Sources */,
+				D3C300000000000000000001 /* AlmaLiveVoiceLifecycleReducer.swift in Sources */,
+				E5D500000000000000000001 /* AlmaLiveVoiceOutputPCMEnvelope.swift in Sources */,
+				F6A600000000000000000001 /* AlmaLiveVoiceAccessibilityLayoutPolicy.swift in Sources */,
+				A7C100000000000000000007 /* AlmaLiveVoicePreview.swift in Sources */,
 				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,
 				F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */,
 				F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */,
@@ -923,6 +1068,7 @@
 				A9F10000000000000000B002 /* GlobalOfficeRobotStore.swift in Sources */,
 				F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */,
 				CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */,
+				AC570000000000000000B001 /* AgentCallStatusOutbox.swift in Sources */,
 				AGC1CA1100000000B0FEAGC1 /* AgentCallUI.swift in Sources */,
 				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
 				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
@@ -997,6 +1143,18 @@
 			buildActionMask = 2147483647;
 			files = (
 				A9F000000000000000000003 /* AssistantParityV2Tests.swift in Sources */,
+				A7C100000000000000000009 /* LiveVoicePreviewTests.swift in Sources */,
+				B8C1B0000000000000000002 /* LiveVoicePhase1BTests.swift in Sources */,
+				C2A2A0000000000000000002 /* LiveVoiceInputTurnReducerTests.swift in Sources */,
+				C2A2A0000000000000000012 /* LiveVoiceSpokenTranscriptTests.swift in Sources */,
+				C2A2A0000000000000000036 /* LiveVoiceWorkFollowThroughTests.swift in Sources */,
+				C2A2A000000000000000003E /* LiveVoiceDroppedRequestRecoveryTests.swift in Sources */,
+				C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */,
+				D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */,
+				E5D500000000000000000002 /* LiveVoiceOutputPCMEnvelopeTests.swift in Sources */,
+				F6A600000000000000000002 /* LiveVoiceAccessibilityLayoutPolicyTests.swift in Sources */,
+				B4D400000000000000000001 /* LiveVoiceActivityPolicyTests.swift in Sources */,
+				AC570000000000000000C001 /* AgentCallStatusOutboxTests.swift in Sources */,
 				A9F10000000000000000C003 /* GlobalOfficeRobotTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

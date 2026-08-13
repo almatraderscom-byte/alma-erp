@@ -13,6 +13,7 @@ import {
   LIVE_VOICE_MODEL_IDS,
   LIVE_VOICE_NAMES,
   LIVE_VOICE_SYSTEM_INSTRUCTION,
+  LIVE_VOICE_TOOL_NAMES,
 } from '@/agent/lib/live-voice-config'
 
 describe('live voice configuration', () => {
@@ -57,6 +58,28 @@ describe('live voice configuration', () => {
     expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('স্যার')
   })
 
+  it('advertises the same synchronous exact tool contract for both live models', () => {
+    for (const model of LIVE_VOICE_MODEL_IDS) {
+      const config = buildLiveVoiceConfig('Aoede', model)
+      const declarations = (config.tools?.[0] as {
+        functionDeclarations?: Array<{
+          name?: string
+          behavior?: string
+          parameters?: { required?: string[] }
+        }>
+      })?.functionDeclarations ?? []
+
+      expect(declarations.map((item) => item.name)).toEqual(LIVE_VOICE_TOOL_NAMES)
+      expect(declarations.find((item) => item.name === 'quick_erp_lookup')?.parameters?.required)
+        .toEqual(['tool'])
+      expect(declarations.find((item) => item.name === 'run_agent_turn')?.parameters?.required)
+        .toEqual(['request'])
+      expect(declarations.every((item) => item.behavior === undefined)).toBe(true)
+      expect(JSON.stringify(config.tools)).not.toContain('NON_BLOCKING')
+    }
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('STATUS_NOTE')
+  })
+
   it('offers exactly two Gemini Native Audio models and a validated voice catalog', () => {
     expect(DEFAULT_LIVE_VOICE_MODEL).toBe(GEMINI_25_LIVE_MODEL)
     expect(DEFAULT_LIVE_VOICE_NAME).toBe('Aoede')
@@ -78,6 +101,33 @@ describe('live voice configuration', () => {
     expect(fast.enableAffectiveDialog).toBeUndefined()
     expect(fast.thinkingConfig?.thinkingLevel).toBe('MINIMAL')
     expect(natural.speechConfig?.languageCode).toBeUndefined()
+  })
+
+  it('sends proactive audio only when the contract declares it', () => {
+    // Proactive audio lets the model decide input is "not directed at me" and
+    // stay silent. On the no-AEC simulator with a noisy Mac microphone that
+    // read as ignoring the owner until he repeated himself 4-6 times
+    // (2026-08-13), so the contract ships it OFF until a real-device
+    // evaluation proves it helps. The plumbing stays: flipping the contract
+    // flag re-enables it without a code change.
+    expect(buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
+      .toBeUndefined()
+    expect(buildLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL).proactivity)
+      .toBeUndefined()
+    expect(buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL).proactivity)
+      .toBeUndefined()
+  })
+
+  it('lets ALMA open a turn like a person instead of banning every filler', () => {
+    // The old instruction banned "হুম" outright, which is why the owner heard a
+    // machine. Naturalness is bounded, not forbidden: one opener per turn, and
+    // never spoken over the owner — the provider is strictly turn-based.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('“হুম”')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).not.toContain('জোর করে হাসি, আশাবাদ, উপদেশ, “হুম”')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('প্রতি টার্নে সর্বোচ্চ একটি')
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('Boss কথা বলার সময় নয়')
+    // Theatrics stay banned.
+    expect(LIVE_VOICE_SYSTEM_INSTRUCTION).toContain('দীর্ঘশ্বাস')
   })
 
   it('avoids robotic conversation habits and asks for Bangladeshi pronunciation', () => {

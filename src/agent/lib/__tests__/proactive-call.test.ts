@@ -36,6 +36,13 @@ vi.mock('@/agent/lib/quiet-hours', () => mockQuiet)
 const mockSalah = vi.hoisted(() => ({ getDhakaPrayerTimes: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/agent/lib/salah-times', () => mockSalah)
 
+const mockAgentAppCall = vi.hoisted(() => ({
+  ringOwnerApp: vi.fn(),
+  getAgentAppCallStatus: vi.fn(),
+  sweepStaleAgentAppCalls: vi.fn(),
+}))
+vi.mock('@/agent/lib/agent-app-call', () => mockAgentAppCall)
+
 import {
   callOutcome,
   ownerPrimaryNumber,
@@ -50,6 +57,9 @@ beforeEach(() => {
   mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
   mockQuiet.isQuietHoursDhaka.mockReturnValue(false)
   mockSalah.getDhakaPrayerTimes.mockResolvedValue([])
+  mockAgentAppCall.ringOwnerApp.mockResolvedValue({ ok: false, error: 'no_devices' })
+  mockAgentAppCall.getAgentAppCallStatus.mockResolvedValue('ringing')
+  mockAgentAppCall.sweepStaleAgentAppCalls.mockResolvedValue(0)
 })
 
 describe('callOutcome', () => {
@@ -296,6 +306,60 @@ describe('processCallEscalations — awaiting_approval', () => {
     mockPrisma.agentPendingAction.findUnique.mockResolvedValue({ status: 'pending' })
     const res = await processCallEscalations()
     expect(res).toEqual([{ id: 'esc3', outcome: 'still_awaiting_approval' }])
+  })
+})
+
+describe('processCallEscalations — app call terminal truth', () => {
+  const appRow = {
+    id: 'esc-app',
+    trigger: 'manual',
+    refId: 'app-ref',
+    title: 'Urgent app call',
+    purpose: 'deliver this report',
+    status: 'app_ringing',
+    createdAt: new Date(),
+    nextCheckAt: new Date(Date.now() - 1000),
+    appCallId: 'app-call-1',
+    waCallId: null,
+    pstnCallId: null,
+    approvalActionId: null,
+  }
+
+  it('keeps an answered-but-not-terminal app call open for a possible failed startup', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([appRow])
+    mockAgentAppCall.getAgentAppCallStatus.mockResolvedValue('answered')
+
+    const res = await processCallEscalations()
+
+    expect(res).toEqual([{ id: 'esc-app', outcome: 'waiting_app_answered' }])
+    expect(mockPrisma.agentCallEscalation.update).toHaveBeenCalledWith({
+      where: { id: 'esc-app' },
+      data: { nextCheckAt: expect.any(Date) },
+    })
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+  })
+
+  it('treats completed as delivered and resolves answered', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([appRow])
+    mockAgentAppCall.getAgentAppCallStatus.mockResolvedValue('completed')
+
+    const res = await processCallEscalations()
+
+    expect(res).toEqual([{ id: 'esc-app', outcome: 'answered' }])
+    expect(mockVoiceCall.placeOutboundCall).not.toHaveBeenCalled()
+  })
+
+  it('never treats failed as delivered and continues to the next fallback leg', async () => {
+    mockPrisma.agentCallEscalation.findMany.mockResolvedValue([appRow])
+    mockAgentAppCall.getAgentAppCallStatus.mockResolvedValue('failed')
+    mockVoiceCall.placeOutboundCall.mockResolvedValue({ ok: true, callRecordId: 'wa-fallback' })
+
+    const res = await processCallEscalations()
+
+    expect(res).toEqual([{ id: 'esc-app', outcome: 'escalated_to_wa_calling' }])
+    expect(mockVoiceCall.placeOutboundCall).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'whatsapp', callType: 'owner' }),
+    )
   })
 })
 

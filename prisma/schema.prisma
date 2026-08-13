@@ -5787,7 +5787,18 @@ model AgentAppCall {
   status     String    @default("ringing")
   /// Push delivery snapshot ({voip, fcm, delivered}) for diagnostics.
   pushResult Json?     @map("push_result")
+  /// Active call-capable installations eligible when this distributed ring was
+  /// created. Lifecycle ownership is checked against this immutable snapshot,
+  /// not a registry row that can rotate while the call is in flight.
+  eligibleDeviceIds String[] @default([]) @map("eligible_device_ids")
+  /// SHA-256 of the per-ring bearer receipt delivered inside the VoIP payload.
+  /// It lets an upgraded app reached through a legacy token prove receipt while
+  /// its encrypted installation registration is still racing.
+  claimReceiptHash String? @map("claim_receipt_hash") @db.Char(64)
   answeredAt DateTime? @map("answered_at")
+  /// Stable native installation that won the ringing -> answered CAS. Only
+  /// this device may close an answered call; server recovery is explicit.
+  answeringDeviceId String? @map("answering_device_id") @db.VarChar(180)
   endedAt    DateTime? @map("ended_at")
   summary    String?   @db.Text
   createdAt  DateTime  @default(now()) @map("created_at")

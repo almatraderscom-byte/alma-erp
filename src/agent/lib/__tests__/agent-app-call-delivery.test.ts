@@ -60,8 +60,14 @@ describe('agent app call delivery registry', () => {
     const sandbox = 'a'.repeat(64)
     const production = 'b'.repeat(64)
     mocks.getDevices.mockResolvedValue([
-      { id: 'dev', provider: 'apns_voip', environment: 'sandbox', token: sandbox },
-      { id: 'prod', provider: 'apns_voip', environment: 'production', token: production },
+      {
+        id: 'dev', installationId: 'ios-sandbox', provider: 'apns_voip',
+        environment: 'sandbox', token: sandbox,
+      },
+      {
+        id: 'prod', installationId: 'ios-production', provider: 'apns_voip',
+        environment: 'production', token: production,
+      },
     ])
 
     await expect(ringOwnerApp({ purpose: 'device test', source: 'manual' })).resolves.toMatchObject({
@@ -69,7 +75,10 @@ describe('agent app call delivery registry', () => {
       voipSent: 2,
     })
     expect(mocks.sendVoip).toHaveBeenNthCalledWith(
-      1, [sandbox], expect.objectContaining({ type: 'agent_call' }), { environment: 'sandbox' },
+      1, [sandbox], expect.objectContaining({
+        type: 'agent_call',
+        claimReceipt: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      }), { environment: 'sandbox' },
     )
     expect(mocks.sendVoip).toHaveBeenNthCalledWith(
       2, [production], expect.objectContaining({ type: 'agent_call' }), { environment: 'production' },
@@ -79,12 +88,21 @@ describe('agent app call delivery registry', () => {
         pushResult: expect.objectContaining({ voip: { attempted: 2, delivered: 2 } }),
       }),
     }))
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        eligibleDeviceIds: ['ios-production', 'ios-sandbox'],
+        claimReceiptHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    }))
   })
 
   it('deduplicates legacy tokens already classified by the current registry', async () => {
     const token = 'c'.repeat(64)
     mocks.getDevices.mockResolvedValue([
-      { id: 'dev', provider: 'apns_voip', environment: 'sandbox', token },
+      {
+        id: 'dev', installationId: 'ios-installation', provider: 'apns_voip',
+        environment: 'sandbox', token,
+      },
     ])
     mocks.getLegacy.mockResolvedValue({ voip: [token], fcm: [] })
 
@@ -93,5 +111,27 @@ describe('agent app call delivery registry', () => {
     expect(mocks.sendVoip).toHaveBeenCalledWith(
       [token], expect.any(Object), { environment: 'sandbox' },
     )
+  })
+
+  it('awaits stale-call sweeping before reading busy state or creating a ring', async () => {
+    let releaseSweep!: (rows: []) => void
+    mocks.staleFindMany.mockReturnValueOnce(new Promise<[]>(resolve => { releaseSweep = resolve }))
+    mocks.getDevices.mockResolvedValue([{
+      id: 'dev', installationId: 'ios-installation', provider: 'apns_voip',
+      environment: 'sandbox', token: 'd'.repeat(64),
+    }])
+
+    let settled = false
+    const ring = ringOwnerApp({ purpose: 'ordered sweep', source: 'manual' })
+      .then(result => { settled = true; return result })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(mocks.activeFindFirst).not.toHaveBeenCalled()
+    expect(mocks.create).not.toHaveBeenCalled()
+
+    releaseSweep([])
+    await expect(ring).resolves.toMatchObject({ ok: true })
+    expect(mocks.activeFindFirst).toHaveBeenCalledTimes(1)
+    expect(mocks.create).toHaveBeenCalledTimes(1)
   })
 })

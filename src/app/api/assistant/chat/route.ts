@@ -26,6 +26,7 @@ import {
   getTurnSnapshot,
   linkTurnUserMessage,
   linkTurnAssistantMessage,
+  requestTurnCancel,
 } from '@/agent/lib/turn-status'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
@@ -48,6 +49,7 @@ import {
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
+import { liveVoiceDisconnectCancellation } from '@/agent/lib/live-voice-cancel-policy'
 import { type ChatMode, chatModeForPermission } from '@/agent/lib/chat-mode'
 import {
   type PermissionMode,
@@ -596,8 +598,8 @@ export async function POST(req: NextRequest) {
     isInternalCall
     && (body.source === 'telegram' || req.headers.get('x-agent-source') === 'telegram')
 
-  // iPhone fix (backgrounded turn must still finish): do NOT tie the turn to
-  // req.signal. On the native app, sending a message then backgrounding the app
+  // iPhone fix (backgrounded ordinary chat must still finish): do NOT tie an
+  // ordinary chat turn to req.signal. Sending a message then backgrounding the app
   // (home screen) drops the WebView's fetch connection, which aborts req.signal —
   // the model call threw AbortError and run-owner-turn returned WITHOUT saving the
   // assistant reply, so the answer was lost. The turn runs against a server-side
@@ -910,9 +912,30 @@ export async function POST(req: NextRequest) {
   // is backgrounded the WebView's fetch is dropped, so req.signal aborts and/or the
   // stream is canceled. We DON'T abort the turn (it runs to completion server-side),
   // but we remember the client left so we can ping the owner on Telegram when a slow
-  // turn finishes unseen.
+  // turn finishes unseen. Live Voice is the intentional exception: provider
+  // cancellation invalidates the spoken request, so markDisconnected aborts its
+  // local controller and durably requests cancellation of its exact turn row.
   let clientConnected = true
-  const markDisconnected = () => { clientConnected = false }
+  let disconnectCancellationRequested = false
+  const markDisconnected = () => {
+    clientConnected = false
+    const cancellation = liveVoiceDisconnectCancellation({
+      voice: body.voice,
+      cancellationAlreadyRequested: disconnectCancellationRequested,
+      hasDurableTurnID: Boolean(turnId),
+    })
+    if (!cancellation.abortInProcessTurn) return
+    disconnectCancellationRequested = true
+    turnAbort.abort()
+    if (cancellation.requestDurableCancel && turnId) {
+      void requestTurnCancel(turnId).catch((err) => {
+        console.warn(
+          '[assistant/chat] live voice disconnect cancel failed:',
+          err instanceof Error ? err.message : String(err),
+        )
+      })
+    }
+  }
   req.signal.addEventListener('abort', markDisconnected)
   const turnStartedAt = Date.now()
   let doneTurnMs = -1
@@ -1114,9 +1137,9 @@ export async function POST(req: NextRequest) {
       }
     },
     cancel() {
-      // Consumer (the app) disconnected mid-stream — e.g. iPhone backgrounded.
-      // The turn itself keeps running (see enqueue guard above).
-      clientConnected = false
+      // Consumer disconnected. Ordinary chat keeps running; Live Voice follows
+      // the exact cancellation policy in markDisconnected.
+      markDisconnected()
     },
   })
 

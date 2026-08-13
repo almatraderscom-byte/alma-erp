@@ -8,6 +8,7 @@ import {
   IntercomStyle,
   IntercomTakeover,
   useIntercom,
+  useIsNativeCallShell,
   type Intercom,
 } from '@/app/portal/office/intercom'
 
@@ -22,12 +23,13 @@ function hasLifestyleAccess(access: string | null | undefined): boolean {
 
 function OfficeCommunicationRuntime({ self, children }: { self: 'owner' | 'staff'; children: ReactNode }) {
   const intercom = useIntercom(self)
+  const nativeCallShell = useIsNativeCallShell()
 
   return (
     <OfficeCommunicationContext.Provider value={intercom}>
       {children}
       <IntercomStyle />
-      {self === 'staff' && <IntercomTakeover itc={intercom} />}
+      {self === 'staff' && !nativeCallShell && <IntercomTakeover itc={intercom} />}
       <IntercomCall itc={intercom} />
     </OfficeCommunicationContext.Provider>
   )

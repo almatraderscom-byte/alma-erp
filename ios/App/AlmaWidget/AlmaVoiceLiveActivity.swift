@@ -12,8 +12,8 @@
 //  • state hues = the app's AlmaVoiceState.hue EXACTLY:
 //    idle 168 (cyan) · listening 145 (emerald) · thinking 265 (violet) · speaking 210 (azure)
 //
-//  Motion budget: ActivityKit gives ~1 snapshot/s; TimelineView(.periodic) steps
-//  the ribbon phase + orb fluids between snapshots, .animation springs the rest.
+//  Privacy/truth contract: ActivityKit renders a static phase-specific pose.
+//  Realtime/synthetic speech animation stays inside the foreground app.
 //
 
 #if canImport(ActivityKit)
@@ -27,18 +27,14 @@ import SwiftUI
 private enum VoiceHue {
     static func hue(_ phase: String) -> Double {
         switch phase {
+        case "connecting": return 168
         case "listening": return 145
         case "thinking":  return 265
+        case "working":   return 36
         case "speaking":  return 210
+        case "reconnecting": return 24
+        case "ended":     return 150
         default:          return 168
-        }
-    }
-    static func status(_ phase: String) -> String {
-        switch phase {
-        case "listening": return "শুনছি Boss…"
-        case "thinking":  return "ভাবছি…"
-        case "speaking":  return "বলছি…"
-        default:          return "প্রস্তুত"
         }
     }
     static let gold  = Color(red: 0.851, green: 0.659, blue: 0.298)  // #d9a84c
@@ -57,14 +53,16 @@ private func hcol(_ h: Double, _ s: Double, _ b: Double, _ o: Double = 1) -> Col
 
 @available(iOS 17.0, *)
 private struct AlmaIslandOrb: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var size: CGFloat
     var hue: Double
-    /// Fluids rotate in TimelineView steps; false = fully static (minimal slot).
-    var animated: Bool = true
+    /// Voice activities are static by default. The parameter remains only for
+    /// previewing a decorative transition without changing the product contract.
+    var animated: Bool = false
 
     var body: some View {
         Group {
-            if animated {
+            if animated && !reduceMotion {
                 TimelineView(.periodic(from: .now, by: 0.5)) { tl in
                     layers(t: tl.date.timeIntervalSinceReferenceDate)
                 }
@@ -73,7 +71,9 @@ private struct AlmaIslandOrb: View {
             }
         }
         .frame(width: size, height: size)
-        .animation(.easeInOut(duration: 0.6), value: hue)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.6),
+            value: hue)
     }
 
     @ViewBuilder private func layers(t: Double) -> some View {
@@ -132,67 +132,29 @@ private struct AlmaIslandOrb: View {
     }
 }
 
-// MARK: - Iridescent ribbon wave (owner's reference: braided silk strands)
+// MARK: - Privacy-safe state line
 
 @available(iOS 17.0, *)
-private struct RibbonWave: View {
-    var levels: [Double]
-    var hue: Double
+private struct VoiceStateLine: View {
+    let presentation: AlmaVoiceActivityPresentationPolicy.Presentation
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.4)) { tl in
-            Canvas { ctx, sz in
-                draw(ctx: &ctx, sz: sz, t: tl.date.timeIntervalSinceReferenceDate)
-            }
+        HStack(spacing: 7) {
+            Image(systemName: presentation.systemImage)
+                .foregroundStyle(
+                    presentation.phase == "ended"
+                        || presentation.systemImage == "mic.slash.fill"
+                        ? VoiceHue.coral
+                        : hcol(VoiceHue.hue(presentation.phase), 0.8, 0.95))
+            Text(presentation.status)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VoiceHue.textSecondary)
+                .lineLimit(presentation.statusLineLimit)
         }
-    }
-
-    private func draw(ctx: inout GraphicsContext, sz: CGSize, t: Double) {
-        let mid = sz.height / 2
-        let energy = levels.suffix(6).max() ?? 0.1
-        // demo parity: the braid stays clearly visible even at idle
-        let A = (0.38 + energy * 0.62) * (sz.height / 2 - 1)
-        ctx.blendMode = .plusLighter
-
-        // faint center axis the strands melt into at both ends
-        var axis = Path()
-        axis.move(to: CGPoint(x: 0, y: mid)); axis.addLine(to: CGPoint(x: sz.width, y: mid))
-        ctx.stroke(axis, with: .color(hcol(hue, 0.8, 0.75, 0.28)), lineWidth: 0.6)
-
-        for s in 0..<6 {
-            let pair: Double = s % 2 == 0 ? -1 : 1
-            let hs = hue + (Double(s) / 5.0 - 0.5) * 200          // রামধনু, state-রঙ কেন্দ্রে
-            let f = 1.5 + Double(s % 3) * 0.8
-            let ph = t * (1.0 + Double(s) * 0.17) * pair + Double(s) * 1.9
-            let n = 40
-            var top: [CGPoint] = []; var bot: [CGPoint] = []
-            top.reserveCapacity(n + 1); bot.reserveCapacity(n + 1)
-            for i in 0...n {
-                let k = Double(i) / Double(n)
-                let x = k * sz.width
-                let env = pow(sin(k * .pi), 1.2)
-                let li = min(levels.count - 1, Int(k * Double(levels.count - 1)))
-                let shape = 0.72 + levels[li] * 0.7               // waveform snapshot bends the braid
-                let y = mid + env * A * sin(k * f * 6.283 + ph) * cos(k * 2.6 + t * 0.8 * pair) * shape
-                let th = 0.7 + env * (1.4 + energy * 3.0) * (1 + 0.55 * sin(k * 9 + t * 2.2 + Double(s) * 1.3))
-                top.append(CGPoint(x: x, y: y - th))
-                bot.append(CGPoint(x: x, y: y + th))
-            }
-            var ribbon = Path()
-            ribbon.move(to: top[0])
-            for p in top.dropFirst() { ribbon.addLine(to: p) }
-            for p in bot.reversed() { ribbon.addLine(to: p) }
-            ribbon.closeSubpath()
-            ctx.fill(ribbon, with: .color(hcol(hs, 0.92, 0.65, 0.42)))
-
-            var core = Path()
-            core.move(to: CGPoint(x: top[0].x, y: (top[0].y + bot[0].y) / 2))
-            for i in 1...n {
-                core.addLine(to: CGPoint(x: top[i].x, y: (top[i].y + bot[i].y) / 2))
-            }
-            ctx.stroke(core, with: .color(hcol(hs, 1.0, 0.85, 0.65)), lineWidth: 1.0)
-        }
-        ctx.blendMode = .normal
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityValue(presentation.accessibilityValue)
+        .accessibilityHint(presentation.accessibilityHint)
     }
 }
 
@@ -203,8 +165,8 @@ private struct EndButton: View {
     var body: some View {
         Button(intent: AlmaVoiceEndIntent()) {
             HStack(spacing: 5) {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
-                Text("শেষ").font(.system(size: 13, weight: .semibold))
+                Image(systemName: "xmark").font(.caption.weight(.bold))
+                Text("শেষ").font(.caption.weight(.semibold))
             }
             .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.85))
             .padding(.horizontal, 13)
@@ -219,22 +181,26 @@ private struct EndButton: View {
             )
         }
         .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("ভয়েস সেশন শেষ করুন")
+        .accessibilityHint("ALMA-এর চলমান ভয়েস সেশন বন্ধ করবে")
     }
 }
 
 @available(iOS 17.0, *)
 private struct ElapsedTimer: View {
     let startedAt: Date
-    var fontSize: CGFloat = 20
+    var font: Font = .title3
     var body: some View {
         Text(startedAt, style: .timer)
-            .font(.system(size: fontSize, weight: .thin))
+            .font(font.weight(.thin))
             .foregroundColor(Color(red: 0.87, green: 0.90, blue: 0.93))
             .monospacedDigit()
             .multilineTextAlignment(.trailing)
-            .frame(width: fontSize * 3)
             .lineLimit(1)
-            .minimumScaleFactor(0.6)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("কলের সময়")
     }
 }
 
@@ -250,6 +216,7 @@ private struct Wordmark: View {
                 .frame(width: 5, height: 5)
                 .shadow(color: Color(red: 0.21, green: 0.88, blue: 0.56), radius: 4)
         }
+        .accessibilityHidden(true)
     }
 }
 
@@ -271,6 +238,7 @@ private func goldCaption(_ text: String) -> Text {
 /// Aurora glow behind expanded-card / banner content (state hue + neighbors).
 @available(iOS 17.0, *)
 private struct AuroraGlow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var hue: Double
     var body: some View {
         ZStack {
@@ -281,7 +249,9 @@ private struct AuroraGlow: View {
             RadialGradient(colors: [hcol(hue - 40, 0.65, 0.3, 0.14), .clear],
                            center: UnitPoint(x: 0.5, y: 1.15), startRadius: 0, endRadius: 200)
         }
-        .animation(.easeInOut(duration: 0.6), value: hue)
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.6),
+            value: hue)
     }
 }
 
@@ -289,38 +259,71 @@ private struct AuroraGlow: View {
 
 @available(iOS 17.0, *)
 private struct VoiceLockScreenView: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let context: ActivityViewContext<AlmaVoiceActivityAttributes>
 
     var body: some View {
-        let phase = context.state.phase
-        let hue = VoiceHue.hue(phase)
+        let presentation = AlmaVoiceActivityPresentationPolicy.presentation(
+            phase: context.state.phase,
+            isMuted: context.state.isMuted,
+            startedAt: context.state.startedAt,
+            isStale: context.isStale,
+            now: Date(),
+            surface: .lockScreen,
+            environment: .init(
+                isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+                reduceTransparency: reduceTransparency,
+                increaseContrast: colorSchemeContrast == .increased))
+        let hue = VoiceHue.hue(presentation.phase)
         VStack(spacing: 9) {
-            HStack(spacing: 9) {
-                AlmaIslandOrb(size: 24, hue: hue)
-                Wordmark()
-                Text(VoiceHue.status(phase))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(hcol(hue, 0.78, 0.9))
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                ElapsedTimer(startedAt: context.state.startedAt, fontSize: 16)
+            if presentation.usesStackedLayout {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 9) {
+                        AlmaIslandOrb(size: 24, hue: hue)
+                            .accessibilityHidden(true)
+                        Wordmark()
+                    }
+                    VoiceStateLine(presentation: presentation)
+                    if presentation.showsElapsedTimer {
+                        ElapsedTimer(
+                            startedAt: context.state.startedAt,
+                            font: .body)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 9) {
+                    AlmaIslandOrb(size: 24, hue: hue)
+                        .accessibilityHidden(true)
+                    Wordmark()
+                    VoiceStateLine(presentation: presentation)
+                    Spacer(minLength: 6)
+                    if presentation.showsElapsedTimer {
+                        ElapsedTimer(
+                            startedAt: context.state.startedAt,
+                            font: .callout)
+                    }
+                }
             }
-            RibbonWave(levels: context.state.levels, hue: hue)
-                .frame(height: 26)
             HStack(spacing: 10) {
-                goldCaption(context.state.captionTail.isEmpty ? "ভয়েস কথোপকথন" : context.state.captionTail)
-                    .font(.system(size: 12))
-                    .foregroundColor(VoiceHue.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                Spacer(minLength: 8)
-                EndButton()
+                Text("কথোপকথনের লেখা ও অডিও এই Activity-তে রাখা হয় না")
+                    .font(.caption2)
+                    .foregroundStyle(VoiceHue.textSecondary)
+                    .lineLimit(presentation.statusLineLimit)
+                    .accessibilityLabel("গোপনীয়তা")
+                    .accessibilityValue("কথোপকথনের লেখা ও অডিও লক স্ক্রিনে রাখা হয় না")
+                if presentation.showsEndAction {
+                    Spacer(minLength: 8)
+                    EndButton()
+                }
             }
         }
         .padding(14)
         .background(AuroraGlow(hue: hue))
-        // glassy: low-alpha tint lets the wallpaper melt through (owner: "transparent")
-        .activityBackgroundTint(Color.black.opacity(0.28))
+        .activityBackgroundTint(
+            Color.black.opacity(presentation.backgroundOpacity))
         .activitySystemActionForegroundColor(.white)
     }
 }
@@ -333,71 +336,122 @@ struct AlmaVoiceLiveActivity: Widget {
         ActivityConfiguration(for: AlmaVoiceActivityAttributes.self) { context in
             VoiceLockScreenView(context: context)
         } dynamicIsland: { context in
-            let phase = context.state.phase
-            let hue = VoiceHue.hue(phase)
+            let environment = AlmaVoiceActivityPresentationPolicy.Environment(
+                isAccessibilitySize: false,
+                reduceTransparency: false,
+                increaseContrast: false)
+            let expanded = AlmaVoiceActivityPresentationPolicy.presentation(
+                phase: context.state.phase,
+                isMuted: context.state.isMuted,
+                startedAt: context.state.startedAt,
+                isStale: context.isStale,
+                now: Date(),
+                surface: .expanded,
+                environment: environment)
+            let compact = AlmaVoiceActivityPresentationPolicy.presentation(
+                phase: context.state.phase,
+                isMuted: context.state.isMuted,
+                startedAt: context.state.startedAt,
+                isStale: context.isStale,
+                now: Date(),
+                surface: .compact,
+                environment: environment)
+            let minimal = AlmaVoiceActivityPresentationPolicy.presentation(
+                phase: context.state.phase,
+                isMuted: context.state.isMuted,
+                startedAt: context.state.startedAt,
+                isStale: context.isStale,
+                now: Date(),
+                surface: .minimal,
+                environment: environment)
+            let hue = VoiceHue.hue(expanded.phase)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    // orb = "শুনুন" button: starts a listen in the background app
-                    // process without opening the app (AlmaVoiceListenIntent)
-                    Button(intent: AlmaVoiceListenIntent()) {
-                        AlmaIslandOrb(size: 46, hue: hue)
+                    Group {
+                        if expanded.showsListenAction {
+                            Button(intent: AlmaVoiceListenIntent()) {
+                                AlmaIslandOrb(size: 44, hue: hue)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                            .accessibilityLabel("ALMA শুনুক")
+                            .accessibilityHint("চলমান ভয়েস সেশনে শোনা শুরু করবে")
+                        } else {
+                            AlmaIslandOrb(size: 44, hue: hue)
+                                .accessibilityHidden(true)
+                        }
                     }
-                    .buttonStyle(.plain)
                     .frame(maxHeight: .infinity, alignment: .center)
                     .padding(.leading, 8)
                     .padding(.top, 6)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    ElapsedTimer(startedAt: context.state.startedAt)
-                        .padding(.trailing, 4)
-                        .padding(.top, 8)
+                    Group {
+                        if expanded.showsElapsedTimer {
+                            ElapsedTimer(startedAt: context.state.startedAt)
+                        } else {
+                            Image(systemName: expanded.systemImage)
+                                .foregroundStyle(VoiceHue.coral)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .padding(.trailing, 4)
+                    .padding(.top, 8)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 6) {
-                        HStack(spacing: 8) {
-                            Wordmark(size: 10.5)
-                            Text(VoiceHue.status(phase))
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(hcol(hue, 0.8, 0.9))
-                                .lineLimit(1)
-                        }
-                        RibbonWave(levels: context.state.levels, hue: hue)
-                            .frame(height: 30)
-                            .frame(maxWidth: .infinity)
+                        Wordmark(size: 10.5)
+                        VoiceStateLine(presentation: expanded)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(alignment: .center, spacing: 10) {
-                        goldCaption(context.state.captionTail.isEmpty ? "ভয়েস কথোপকথন" : context.state.captionTail)
-                            .font(.system(size: 12))
+                        Text("কথোপকথনের লেখা শুধু অ্যাপের ভেতরে")
+                            .font(.caption2)
                             .foregroundColor(VoiceHue.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                        Spacer(minLength: 8)
-                        EndButton()
+                            .lineLimit(expanded.statusLineLimit)
+                            .accessibilityLabel("গোপনীয়তা")
+                            .accessibilityValue("কথোপকথনের লেখা Dynamic Island-এ রাখা হয় না")
+                        if expanded.showsEndAction {
+                            Spacer(minLength: 8)
+                            EndButton()
+                        }
                     }
                     .padding(.top, 4)
                 }
             } compactLeading: {
                 OfficeRobotLiveGlyph(
-                    context: .voice(phase: phase),
-                    size: 23
+                    context: .voice(phase: compact.phase),
+                    size: 23,
+                    animated: false
                 )
                     .padding(.leading, 1)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(VoiceHue.status(phase))
+                    .accessibilityLabel(compact.accessibilityLabel)
+                    .accessibilityValue(compact.accessibilityValue)
+                    .accessibilityHint(compact.accessibilityHint)
             } compactTrailing: {
-                RibbonWave(levels: Array(context.state.levels.suffix(8)), hue: hue)
-                    .frame(width: 34, height: 20)
-                    .padding(.trailing, 2)
+                Image(systemName: compact.systemImage)
+                    .foregroundStyle(
+                        compact.phase == "ended" || context.state.isMuted
+                            ? VoiceHue.coral
+                            : hcol(hue, 0.8, 0.95))
+                    .frame(width: 28, height: 20)
+                    .accessibilityLabel(compact.accessibilityLabel)
+                    .accessibilityValue(compact.accessibilityValue)
+                    .accessibilityHint(compact.accessibilityHint)
             } minimal: {
                 OfficeRobotLiveGlyph(
-                    context: .voice(phase: phase),
+                    context: .voice(phase: minimal.phase),
                     size: 20,
+                    animated: false,
                     cadenceMultiplier: 1.30
                 )
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(VoiceHue.status(phase))
+                    .accessibilityLabel(minimal.accessibilityLabel)
+                    .accessibilityValue(minimal.accessibilityValue)
+                    .accessibilityHint(minimal.accessibilityHint)
             }
             .widgetURL(URL(string: "almaerp://office-robot?target=almaerp%3A%2F%2Fagent"))
             .keylineTint(hcol(hue, 0.8, 0.9))

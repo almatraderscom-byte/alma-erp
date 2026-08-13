@@ -1138,7 +1138,9 @@ enum AssistantNet {
             #if DEBUG
             NSLog("ALMA-NET JSON %@ failed status=%d", path, status)
             #endif
-            throw AlmaAPIError.http(status: status, body: "json_request_failed")
+            throw AlmaAPIError.http(
+                status: status,
+                body: String(data: data, encoding: .utf8) ?? "json_request_failed")
         }
         return data
     }

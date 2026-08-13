@@ -121,6 +121,9 @@ export type VoipCallPayload = {
   channel: string
   caller: string
   expiresAt?: string
+  /** Per-ring bearer proof. New clients return it with their v2 lifecycle
+   *  transition; legacy clients ignore the additive payload field. */
+  claimReceipt?: string
   /** 'ring' (default) reports a new CallKit incoming call; 'cancel' ends the call
    *  already showing for this broadcastId (caller hung up / callee answered elsewhere). */
   event?: 'ring' | 'cancel'

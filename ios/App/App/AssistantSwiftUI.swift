@@ -2336,9 +2336,78 @@ enum AgentSessionSurfaceState: Equatable {
     /// The selected target's route/history failed. Honest retry surface for
     /// that exact target; the hero must never appear as a failure fallback.
     case failedHistory(conversationId: String?, requestToken: UUID, message: String)
+
+    /// True while the app cannot yet honestly claim to know what to show.
+    var isResolving: Bool {
+        switch self {
+        case .resolvingInitialRoute, .loadingHistory: return true
+        case .readyNew, .readyConversation, .failedHistory: return false
+        }
+    }
+
+    /// The hero belongs to exactly one phase.
+    var showsNewChatHero: Bool {
+        if case .readyNew = self { return true }
+        return false
+    }
+
+    /// The token a response must still carry to be allowed to commit.
+    var requestToken: UUID? {
+        switch self {
+        case .resolvingInitialRoute(let token): return token
+        case .loadingHistory(_, let token): return token
+        case .failedHistory(_, let token, _): return token
+        case .readyNew, .readyConversation: return nil
+        }
+    }
 }
 
 // MARK: - View model
+
+/// A narrow lease for Assistant-owned, non-call audio sessions. Cleanup is
+/// intentionally conditional: if another owner has changed even one part of the
+/// configuration, the old owner relinquishes without touching that newer
+/// owner's session.
+@available(iOS 17.0, *)
+private struct AssistantNonCallAudioSessionLease {
+    let previousCategory: AVAudioSession.Category
+    let previousMode: AVAudioSession.Mode
+    let previousOptions: AVAudioSession.CategoryOptions
+    let ownedCategory: AVAudioSession.Category
+    let ownedMode: AVAudioSession.Mode
+    let ownedOptions: AVAudioSession.CategoryOptions
+
+    static func capture(
+        session: AVAudioSession,
+        ownedCategory: AVAudioSession.Category,
+        ownedMode: AVAudioSession.Mode,
+        ownedOptions: AVAudioSession.CategoryOptions
+    ) -> Self {
+        Self(
+            previousCategory: session.category,
+            previousMode: session.mode,
+            previousOptions: session.categoryOptions,
+            ownedCategory: ownedCategory,
+            ownedMode: ownedMode,
+            ownedOptions: ownedOptions)
+    }
+
+    func releaseIfStillOwned(session: AVAudioSession) {
+        guard session.category == ownedCategory,
+              session.mode == ownedMode,
+              session.categoryOptions == ownedOptions
+        else { return }
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        try? session.setCategory(
+            previousCategory,
+            mode: previousMode,
+            options: previousOptions)
+    }
+}
+
+private enum AssistantAudioPlaybackError: Error {
+    case failedToStart
+}
 
 @available(iOS 17.0, *)
 @Observable
@@ -3687,6 +3756,11 @@ final class AssistantVM {
     private var ttsDelegate: AssistantTTSDelegate?
     private var ttsChunks: [String] = []
     private var ttsGeneration = UUID()
+    private var ttsTask: Task<Void, Never>?
+    private var ttsPlayerGeneration: UUID?
+    private var ttsAudioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
+    private var ttsAudioClaimGeneration: UUID?
+    private var ttsAudioSessionLease: AssistantNonCallAudioSessionLease?
 
     // Composer attachments
     struct PendingFile: Identifiable, Equatable {
@@ -3916,17 +3990,25 @@ final class AssistantVM {
 
     // Mic (recording bar: waveform + timer, web VoiceWaveform parity)
     var isRecording = false
+    /// Reserved synchronously before the permission prompt so repeated taps can
+    /// never queue multiple microphone starts behind one system dialog.
+    var isDictationStarting = false
     /// Claude-style LIVE dictation: words appear as spoken (gpt-4o-transcribe
     /// realtime over the shared AlmaStreamingSTT; falls back to the recorder +
     /// upload path if the streaming mic fails to start).
     var liveDictation = ""
     private var usingStreamDictation = false
-    private let dictationStreamer = AlmaStreamingSTT()
+    private var dictationStreamer = AlmaStreamingSTT()
     var transcribing = false
     var micLevel: Double = 0.06         // 0.06…1, mirrors the web's clamped RMS level
     var recordingSeconds: Int = 0
     private var recorder: AVAudioRecorder?
     private var meterTask: Task<Void, Never>?
+    private var dictationStartTask: Task<Void, Never>?
+    private var dictationGeneration: UInt64 = 0
+    private var dictationAudioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
+    private var dictationAudioClaimGeneration: UInt64?
+    private var dictationAudioSessionLease: AssistantNonCallAudioSessionLease?
     /// Text the mic transcription appends — the composer view observes this.
     var dictatedText: String = ""
     private static let dictationFailureKey = "alma.assistant.dictationFailure.v2"
@@ -4355,6 +4437,7 @@ final class AssistantVM {
                                               object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.cancelDictationForLifecycle()
                 self.backgroundedAt = Date()
                 self.isInBackground = true
                 await self.sendPresenceState("background")
@@ -6677,23 +6760,22 @@ final class AssistantVM {
 
     func toggleTTS(for message: AgentChatMessage) {
         if ttsPlayingId == message.id || ttsLoadingId == message.id {
-            ttsGeneration = UUID()
-            ttsPlayer?.stop()
-            ttsPlayer = nil
-            ttsPlayingId = nil
-            ttsLoadingId = nil
-            ttsChunks = []
+            cancelTTSGeneration(ttsGeneration)
             return
         }
         guard ttsLoadingId == nil else { return }
+        if ttsPlayingId != nil {
+            cancelTTSGeneration(ttsGeneration)
+        }
         ttsGeneration = UUID()
         let generation = ttsGeneration
         ttsChunks = Self.ttsChunks(for: message.text)
         guard !ttsChunks.isEmpty else { return }
         ttsLoadingId = message.id
         AlmaAgentHaptics.light()
-        Task { [weak self] in
-            await self?.playNextTTSChunk(messageId: message.id, generation: generation)
+        ttsTask = Task { [weak self] in
+            guard let self else { return }
+            await self.playNextTTSChunk(messageId: message.id, generation: generation)
         }
     }
 
@@ -6731,11 +6813,14 @@ final class AssistantVM {
     }
 
     private func playNextTTSChunk(messageId: String, generation: UUID) async {
-        guard generation == ttsGeneration else { return }
+        guard generation == ttsGeneration, !Task.isCancelled else { return }
         guard !ttsChunks.isEmpty else {
+            ttsTask = nil
             ttsLoadingId = nil
             ttsPlayingId = nil
             ttsPlayer = nil
+            ttsPlayerGeneration = nil
+            ttsDelegate = nil
             return
         }
         let chunk = ttsChunks.removeFirst()
@@ -6743,30 +6828,140 @@ final class AssistantVM {
         do {
             let mp3 = try await AssistantNet.postJSONForData(
                 path: "/api/assistant/tts", body: ["text": chunk])
-            guard generation == ttsGeneration else { return }
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try AVAudioSession.sharedInstance().setActive(true)
+            try Task.checkCancellation()
+            guard generation == ttsGeneration else { throw CancellationError() }
+
+            // Final suspension point is above. Claim + AVAudioSession mutation
+            // remain one MainActor transaction so CallKit cannot slip between.
+            guard let token = AlmaLiveVoicePreviewTakeoverRelay.shared.claimNonCallAudio(
+                .assistantTTS,
+                stop: { [weak self] mode in
+                    self?.stopTTSForAudioTakeover(generation: generation, mode: mode)
+                })
+            else { throw CancellationError() }
+            ttsAudioClaimToken = token
+            ttsAudioClaimGeneration = generation
+
+            let session = AVAudioSession.sharedInstance()
+            let ownedCategory: AVAudioSession.Category = .playback
+            let ownedMode: AVAudioSession.Mode = .default
+            let ownedOptions: AVAudioSession.CategoryOptions = []
+            let lease = AssistantNonCallAudioSessionLease.capture(
+                session: session,
+                ownedCategory: ownedCategory,
+                ownedMode: ownedMode,
+                ownedOptions: ownedOptions)
+            do {
+                try session.setCategory(ownedCategory, mode: ownedMode, options: ownedOptions)
+                try session.setActive(true)
+                ttsAudioSessionLease = lease
+            } catch {
+                lease.releaseIfStillOwned(session: session)
+                releaseTTSAudioOwnership(
+                    generation: generation,
+                    mode: .restoreBeforeNextAppMutation)
+                throw error
+            }
+
             let player = try AVAudioPlayer(data: mp3)
-            let delegate = AssistantTTSDelegate { [weak self] in
+            let delegate = AssistantTTSDelegate { [weak self] succeeded in
                 Task { @MainActor in
                     guard let self, generation == self.ttsGeneration else { return }
                     self.ttsPlayer = nil
-                    await self.playNextTTSChunk(messageId: messageId, generation: generation)
+                    self.ttsPlayerGeneration = nil
+                    self.ttsDelegate = nil
+                    self.releaseTTSAudioOwnership(
+                        generation: generation,
+                        mode: .restoreBeforeNextAppMutation)
+                    guard succeeded else {
+                        self.cancelTTSGeneration(generation)
+                        self.errorToast = "ভয়েস চালানো গেল না — আবার চেষ্টা করুন"
+                        return
+                    }
+                    self.ttsTask = Task { [weak self] in
+                        guard let self else { return }
+                        await self.playNextTTSChunk(
+                            messageId: messageId,
+                            generation: generation)
+                    }
                 }
             }
             player.delegate = delegate
             ttsDelegate = delegate
             ttsPlayer = player
+            ttsPlayerGeneration = generation
             ttsLoadingId = nil
             ttsPlayingId = messageId
-            player.play()
+            guard player.play() else { throw AssistantAudioPlaybackError.failedToStart }
         } catch {
             guard generation == ttsGeneration else { return }
-            ttsLoadingId = nil
-            ttsPlayingId = nil
-            ttsChunks = []
-            errorToast = "ভয়েস চালানো গেল না — আবার চেষ্টা করুন"
+            let shouldReport = !(error is CancellationError)
+            cancelTTSGeneration(generation)
+            if shouldReport {
+                errorToast = "ভয়েস চালানো গেল না — আবার চেষ্টা করুন"
+            }
         }
+    }
+
+    private func releaseTTSAudioOwnership(
+        generation: UUID,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard ttsAudioClaimGeneration == generation else { return }
+        let token = ttsAudioClaimToken
+        let lease = ttsAudioSessionLease
+        ttsAudioClaimToken = nil
+        ttsAudioClaimGeneration = nil
+        ttsAudioSessionLease = nil
+        if mode == .restoreBeforeNextAppMutation {
+            lease?.releaseIfStillOwned(session: .sharedInstance())
+        }
+        if let token {
+            AlmaLiveVoiceNonCallAudioRegistry.shared.release(token)
+        }
+    }
+
+    private func stopTTSForAudioTakeover(
+        generation: UUID,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard ttsAudioClaimGeneration == generation else { return }
+        if ttsPlayerGeneration == generation {
+            ttsPlayer?.stop()
+            ttsPlayer = nil
+            ttsPlayerGeneration = nil
+            ttsDelegate = nil
+        }
+        releaseTTSAudioOwnership(generation: generation, mode: mode)
+        guard ttsGeneration == generation else { return }
+        ttsTask?.cancel()
+        ttsTask = nil
+        ttsGeneration = UUID()
+        ttsLoadingId = nil
+        ttsPlayingId = nil
+        ttsChunks = []
+    }
+
+    private func cancelTTSGeneration(_ generation: UUID) {
+        guard ttsGeneration == generation
+                || ttsPlayerGeneration == generation
+                || ttsAudioClaimGeneration == generation
+        else { return }
+        ttsTask?.cancel()
+        ttsTask = nil
+        if ttsPlayerGeneration == generation {
+            ttsPlayer?.stop()
+            ttsPlayer = nil
+            ttsPlayerGeneration = nil
+            ttsDelegate = nil
+        }
+        releaseTTSAudioOwnership(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
+        if ttsGeneration == generation { ttsGeneration = UUID() }
+        ttsLoadingId = nil
+        ttsPlayingId = nil
+        ttsChunks = []
     }
 
     // ── Send + stream ──────────────────────────────────────────────────────
@@ -10938,106 +11133,303 @@ final class AssistantVM {
     }
 
     func toggleRecording() {
+        guard !isDictationStarting else { return }
         if isRecording { finishRecording() } else { startRecording() }
     }
 
     private func startRecording() {
-        let session = AVAudioSession.sharedInstance()
-        session.requestRecordPermission { [weak self] granted in
-            DispatchQueue.main.async {
-                guard granted, let self else { return }
-                // LIVE dictation first (Claude-app parity): realtime words while
-                // speaking. Any start failure falls through to the recorder path.
-                self.dictationStreamer.dictationMode = true
-                self.dictationStreamer.onPartialSink = { [weak self] text in
-                    NSLog("ALMA-DICTATE partial %d chars", text.count)
-                    self?.liveDictation = text
+        guard !isRecording, !isDictationStarting else { return }
+        dictationGeneration &+= 1
+        let generation = dictationGeneration
+        isDictationStarting = true
+        dictationStartTask?.cancel()
+        dictationStartTask = Task { [weak self] in
+            guard let self else { return }
+            let granted = await self.requestDictationRecordPermission()
+            guard self.dictationStartIsCurrent(generation), !Task.isCancelled else { return }
+            guard granted else {
+                self.endDictationStart(generation: generation)
+                return
+            }
+
+            let streamer = AlmaStreamingSTT()
+            self.dictationStreamer = streamer
+            self.installDictationSinks(streamer: streamer, generation: generation)
+            do {
+                try Task.checkCancellation()
+                try self.acquireDictationAudioSession(generation: generation)
+                guard self.dictationStartIsCurrent(generation), !Task.isCancelled else {
+                    throw CancellationError()
                 }
-                self.dictationStreamer.onLevelSink = { [weak self] level in
-                    guard let self, self.isRecording else { return }
-                    self.micLevel = max(0.06, level)
+                // The streamer reads the input node's format — without an active
+                // playAndRecord session the device reports 0 Hz and start() throws.
+                try await streamer.start()
+                try Task.checkCancellation()
+                guard self.dictationStartIsCurrent(generation) else {
+                    throw CancellationError()
                 }
-                self.dictationStreamer.onFinalSink = { [weak self] text in
-                    guard let self, self.usingStreamDictation else { return }
-                    self.usingStreamDictation = false
-                    self.isRecording = false
-                    self.liveDictation = ""
-                    let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let wav = self.dictationStreamer.fullUtteranceWav()
-                    guard !clean.isEmpty || wav != nil else {
-                        self.dictationFailure = "কথা বোঝা যায়নি"
-                        return
-                    }
-                    self.finishDictationPipeline(stitched: clean, wav: wav)
+                NSLog("ALMA-DICTATE streaming started")
+                self.dictationStartTask = nil
+                self.isDictationStarting = false
+                self.usingStreamDictation = true
+                self.isRecording = true
+                self.dictationFailure = nil
+                self.liveDictation = ""
+                self.recordingSeconds = 0
+                self.micLevel = 0.06
+                AlmaAgentHaptics.commit()
+                self.startStreamingDictationMeter(generation: generation)
+            } catch {
+                streamer.cancel()
+                guard self.dictationCaptureIsCurrent(generation) else { return }
+                guard self.dictationStartIsCurrent(generation),
+                      !Task.isCancelled,
+                      !(error is CancellationError) else {
+                    self.endDictationStart(generation: generation)
+                    return
                 }
-                self.dictationStreamer.onNoSpeechSink = { [weak self] in
-                    guard let self, self.usingStreamDictation else { return }
-                    NSLog("ALMA-DICTATE UI noSpeech (liveDictation was %d chars)", self.liveDictation.count)
-                    self.usingStreamDictation = false
-                    self.isRecording = false
-                    self.liveDictation = ""
-                    // Streaming transcripts came back empty but the mic DID hear
-                    // speech — rescue via the full-utterance accuracy pass.
-                    if let wav = self.dictationStreamer.fullUtteranceWav() {
-                        NSLog("ALMA-DICTATE noSpeech rescue via full-utterance WAV (%d bytes)", wav.count)
-                        self.finishDictationPipeline(stitched: "", wav: wav)
-                    } else {
-                        self.dictationFailure = "কথা বোঝা যায়নি"
-                    }
-                }
-                // Socket died mid-take: the streamer hands back the buffered
-                // utterance as WAV — without this sink the take vanished silently
-                // (composer dictation has no AlmaVoiceEngine behind it).
-                self.dictationStreamer.onFallbackUploadSink = { [weak self] wav in
-                    guard let self, self.usingStreamDictation else { return }
-                    NSLog("ALMA-DICTATE UI WAV fallback %d bytes", wav.count)
-                    self.usingStreamDictation = false
-                    self.isRecording = false
-                    self.liveDictation = ""
-                    self.finishDictationPipeline(stitched: "", wav: wav)
-                }
-                self.dictationStreamer.onErrorSink = { [weak self] _ in
-                    guard let self, self.usingStreamDictation else { return }
-                    self.usingStreamDictation = false
-                    self.isRecording = false
-                    self.liveDictation = ""
-                    self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
-                }
-                Task { [weak self] in
-                    guard let self else { return }
-                    do {
-                        // The streamer reads the input node's format — without an
-                        // active playAndRecord session the sim/device reports 0 Hz
-                        // and start() throws noMic (owner hit: no live words).
-                        try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-                        try? session.setActive(true)
-                        try await self.dictationStreamer.start()
-                        await MainActor.run {
-                            NSLog("ALMA-DICTATE streaming started")
-                            self.usingStreamDictation = true
-                            self.isRecording = true
-                            self.dictationFailure = nil
-                            self.liveDictation = ""
-                            self.recordingSeconds = 0
-                            self.micLevel = 0.06
-                            AlmaAgentHaptics.commit()
-                            self.meterTask?.cancel()
-                            self.meterTask = Task { [weak self] in
-                                var secs = 0
-                                while let self, self.isRecording, !Task.isCancelled {
-                                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                                    secs += 1
-                                    self.recordingSeconds = secs
-                                }
-                            }
-                        }
-                    } catch {
-                        NSLog("ALMA-DICTATE streamer failed to start (%@) — recorder fallback", String(describing: error))
-                        await MainActor.run { self.startRecorderFallback() }
-                    }
-                }
+                NSLog("ALMA-DICTATE streamer failed to start (%@) — recorder fallback",
+                      String(describing: error))
+                self.releaseDictationAudioSessionLease(generation: generation)
+                self.startRecorderFallback(generation: generation)
             }
         }
+    }
+
+    private func requestDictationRecordPermission() async -> Bool {
+        await withCheckedContinuation { continuation in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    private func dictationStartIsCurrent(_ generation: UInt64) -> Bool {
+        generation == dictationGeneration && isDictationStarting
+    }
+
+    private func dictationCaptureIsCurrent(_ generation: UInt64) -> Bool {
+        generation == dictationGeneration
+    }
+
+    private func installDictationSinks(streamer: AlmaStreamingSTT, generation: UInt64) {
+        streamer.dictationMode = true
+        streamer.onPartialSink = { [weak self] text in
+            guard let self, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation else { return }
+            NSLog("ALMA-DICTATE partial %d chars", text.count)
+            self.liveDictation = text
+        }
+        streamer.onLevelSink = { [weak self] level in
+            guard let self, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation, self.isRecording else { return }
+            self.micLevel = max(0.06, level)
+        }
+        streamer.onFinalSink = { [weak self, weak streamer] text in
+            guard let self, let streamer, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation else { return }
+            let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let wav = streamer.fullUtteranceWav()
+            self.endActiveDictation(generation: generation)
+            guard !clean.isEmpty || wav != nil else {
+                self.dictationFailure = "কথা বোঝা যায়নি"
+                return
+            }
+            self.finishDictationPipeline(stitched: clean, wav: wav)
+        }
+        streamer.onNoSpeechSink = { [weak self, weak streamer] in
+            guard let self, let streamer, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation else { return }
+            NSLog("ALMA-DICTATE UI noSpeech (liveDictation was %d chars)",
+                  self.liveDictation.count)
+            // Streaming transcripts came back empty but the mic DID hear speech
+            // — rescue via the full-utterance accuracy pass.
+            let wav = streamer.fullUtteranceWav()
+            self.endActiveDictation(generation: generation)
+            if let wav {
+                NSLog("ALMA-DICTATE noSpeech rescue via full-utterance WAV (%d bytes)",
+                      wav.count)
+                self.finishDictationPipeline(stitched: "", wav: wav)
+            } else {
+                self.dictationFailure = "কথা বোঝা যায়নি"
+            }
+        }
+        // Socket died mid-take: the streamer hands back the buffered utterance
+        // as WAV, preserving the existing upload fallback semantics.
+        streamer.onFallbackUploadSink = { [weak self] wav in
+            guard let self, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation else { return }
+            NSLog("ALMA-DICTATE UI WAV fallback %d bytes", wav.count)
+            self.endActiveDictation(generation: generation)
+            self.finishDictationPipeline(stitched: "", wav: wav)
+        }
+        streamer.onErrorSink = { [weak self] _ in
+            guard let self, self.dictationCaptureIsCurrent(generation),
+                  self.usingStreamDictation else { return }
+            self.endActiveDictation(generation: generation)
+            self.dictationFailure = "ভয়েস বোঝা যায়নি — আবার চেষ্টা করুন"
+        }
+    }
+
+    private func acquireDictationAudioSession(generation: UInt64) throws {
+        guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+            throw CancellationError()
+        }
+
+        if dictationAudioClaimGeneration != generation {
+            let streamer = dictationStreamer
+            guard let token = AlmaLiveVoicePreviewTakeoverRelay.shared.claimNonCallAudio(
+                .composerDictation,
+                stop: { [weak self, weak streamer] mode in
+                    guard let streamer else { return }
+                    self?.stopDictationForAudioTakeover(
+                        generation: generation,
+                        streamer: streamer,
+                        mode: mode)
+                })
+            else { throw CancellationError() }
+            guard dictationStartIsCurrent(generation), !Task.isCancelled,
+                  dictationStreamer === streamer
+            else {
+                AlmaLiveVoiceNonCallAudioRegistry.shared.release(token)
+                throw CancellationError()
+            }
+            dictationAudioClaimToken = token
+            dictationAudioClaimGeneration = generation
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        let ownedCategory: AVAudioSession.Category = .playAndRecord
+        let ownedMode: AVAudioSession.Mode = .default
+        let ownedOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker]
+        let lease = AssistantNonCallAudioSessionLease.capture(
+            session: session,
+            ownedCategory: ownedCategory,
+            ownedMode: ownedMode,
+            ownedOptions: ownedOptions)
+        do {
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            try session.setCategory(ownedCategory, mode: ownedMode, options: ownedOptions)
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                lease.releaseIfStillOwned(session: session)
+                throw CancellationError()
+            }
+            try session.setActive(true)
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                lease.releaseIfStillOwned(session: session)
+                throw CancellationError()
+            }
+            dictationAudioSessionLease = lease
+        } catch {
+            lease.releaseIfStillOwned(session: session)
+            releaseDictationAudioOwnership(
+                generation: generation,
+                mode: .restoreBeforeNextAppMutation)
+            throw error
+        }
+    }
+
+    private func releaseDictationAudioSessionLease(generation: UInt64) {
+        guard dictationAudioClaimGeneration == generation,
+              let lease = dictationAudioSessionLease
+        else { return }
+        dictationAudioSessionLease = nil
+        lease.releaseIfStillOwned(session: .sharedInstance())
+    }
+
+    private func releaseDictationAudioOwnership(
+        generation: UInt64,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard dictationAudioClaimGeneration == generation else { return }
+        let token = dictationAudioClaimToken
+        let lease = dictationAudioSessionLease
+        dictationAudioClaimToken = nil
+        dictationAudioClaimGeneration = nil
+        dictationAudioSessionLease = nil
+        if mode == .restoreBeforeNextAppMutation {
+            lease?.releaseIfStillOwned(session: .sharedInstance())
+        }
+        if let token {
+            AlmaLiveVoiceNonCallAudioRegistry.shared.release(token)
+        }
+    }
+
+    private func stopDictationForAudioTakeover(
+        generation: UInt64,
+        streamer: AlmaStreamingSTT,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard dictationAudioClaimGeneration == generation,
+              dictationCaptureIsCurrent(generation),
+              dictationStreamer === streamer
+        else { return }
+        dictationGeneration &+= 1
+        dictationStartTask?.cancel()
+        dictationStartTask = nil
+        meterTask?.cancel()
+        meterTask = nil
+        streamer.cancel()
+        recorder?.stop()
+        recorder = nil
+        isDictationStarting = false
+        usingStreamDictation = false
+        isRecording = false
+        liveDictation = ""
+        releaseDictationAudioOwnership(generation: generation, mode: mode)
+    }
+
+    private func startStreamingDictationMeter(generation: UInt64) {
+        meterTask?.cancel()
+        meterTask = Task { [weak self] in
+            var secs = 0
+            while let self,
+                  self.dictationCaptureIsCurrent(generation),
+                  self.isRecording,
+                  !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard self.dictationCaptureIsCurrent(generation),
+                      self.isRecording,
+                      !Task.isCancelled else { return }
+                secs += 1
+                self.recordingSeconds = secs
+            }
+        }
+    }
+
+    private func endDictationStart(generation: UInt64, errorMessage: String? = nil) {
+        guard dictationCaptureIsCurrent(generation) else { return }
+        dictationGeneration &+= 1
+        dictationStartTask?.cancel()
+        dictationStartTask = nil
+        isDictationStarting = false
+        usingStreamDictation = false
+        isRecording = false
+        liveDictation = ""
+        meterTask?.cancel()
+        meterTask = nil
+        releaseDictationAudioOwnership(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
+        if let errorMessage { errorToast = errorMessage }
+    }
+
+    private func endActiveDictation(generation: UInt64) {
+        guard dictationCaptureIsCurrent(generation) else { return }
+        dictationGeneration &+= 1
+        dictationStartTask?.cancel()
+        dictationStartTask = nil
+        isDictationStarting = false
+        usingStreamDictation = false
+        isRecording = false
+        liveDictation = ""
+        meterTask?.cancel()
+        meterTask = nil
+        releaseDictationAudioOwnership(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
     }
 
     /// UIKit may normalize line breaks and Unicode spacing in an actively
@@ -11053,47 +11445,63 @@ final class AssistantVM {
 
     /// Legacy path: AVAudioRecorder + upload-after-stop. Used only when the
     /// realtime streamer cannot start (mic contention etc.).
-    private func startRecorderFallback() {
-        let session = AVAudioSession.sharedInstance()
-        session.requestRecordPermission { [weak self] granted in
-            DispatchQueue.main.async {
-                guard granted, let self else { return }
-                do {
-                    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-                    try session.setActive(true)
-                    let settings: [String: Any] = [
-                        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                        AVSampleRateKey: 16_000,
-                        AVNumberOfChannelsKey: 1,
-                        AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
-                    ]
-                    let rec = try AVAudioRecorder(url: self.recordingURL, settings: settings)
-                    rec.isMeteringEnabled = true
-                    rec.record()
-                    self.recorder = rec
-                    self.isRecording = true
-                    self.dictationFailure = nil
-                    self.recordingSeconds = 0
-                    self.micLevel = 0.06
-                    AlmaAgentHaptics.commit()
-                    // Web VoiceWaveform parity: live RMS level drives the 34-bar wave.
-                    self.meterTask?.cancel()
-                    self.meterTask = Task { [weak self] in
-                        while let self, self.isRecording, !Task.isCancelled {
-                            if let r = self.recorder {
-                                r.updateMeters()
-                                let db = r.averagePower(forChannel: 0)          // -160…0 dB
-                                let linear = pow(10.0, Double(db) / 20.0)       // 0…1
-                                self.micLevel = max(0.06, min(1.0, linear * 3.2))
-                                self.recordingSeconds = Int(r.currentTime)
-                            }
-                            try? await Task.sleep(nanoseconds: 66_000_000)      // ~15 fps
-                        }
+    private func startRecorderFallback(generation: UInt64) {
+        guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+            endDictationStart(generation: generation)
+            return
+        }
+        var candidate: AVAudioRecorder?
+        do {
+            try acquireDictationAudioSession(generation: generation)
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            ]
+            let rec = try AVAudioRecorder(url: recordingURL, settings: settings)
+            candidate = rec
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            rec.isMeteringEnabled = true
+            guard rec.record() else { throw AlmaVoiceSTTError.noMic }
+            guard dictationStartIsCurrent(generation), !Task.isCancelled else {
+                rec.stop()
+                throw CancellationError()
+            }
+            recorder = rec
+            dictationStartTask = nil
+            isDictationStarting = false
+            isRecording = true
+            dictationFailure = nil
+            recordingSeconds = 0
+            micLevel = 0.06
+            AlmaAgentHaptics.commit()
+            // Web VoiceWaveform parity: live RMS level drives the 34-bar wave.
+            meterTask?.cancel()
+            meterTask = Task { [weak self] in
+                while let self,
+                      self.dictationCaptureIsCurrent(generation),
+                      self.isRecording,
+                      !Task.isCancelled {
+                    if let recorder = self.recorder {
+                        recorder.updateMeters()
+                        let db = recorder.averagePower(forChannel: 0)      // -160…0 dB
+                        let linear = pow(10.0, Double(db) / 20.0)           // 0…1
+                        self.micLevel = max(0.06, min(1.0, linear * 3.2))
+                        self.recordingSeconds = Int(recorder.currentTime)
                     }
-                } catch {
-                    self.errorToast = "মাইক্রোফোন চালু করা গেল না"
+                    try? await Task.sleep(nanoseconds: 66_000_000)          // ~15 fps
                 }
             }
+        } catch {
+            candidate?.stop()
+            let message = error is CancellationError ? nil : "মাইক্রোফোন চালু করা গেল না"
+            endDictationStart(generation: generation, errorMessage: message)
         }
     }
 
@@ -11165,26 +11573,56 @@ final class AssistantVM {
 
     /// ✕ on the recording bar — discard the take, no transcription.
     func cancelRecording() {
+        cancelRecording(playHaptic: true)
+    }
+
+    private func cancelRecording(playHaptic: Bool) {
+        let hadPendingOrActiveCapture = isDictationStarting || isRecording
+            || usingStreamDictation || recorder != nil
+        let hadActiveCapture = isRecording || usingStreamDictation || recorder != nil
+        let hadLegacyRecording = recorder != nil
+        let generation = dictationGeneration
+        dictationGeneration &+= 1
+        dictationStartTask?.cancel()
+        dictationStartTask = nil
+        isDictationStarting = false
         meterTask?.cancel()
-        if usingStreamDictation {
-            usingStreamDictation = false
-            dictationStreamer.cancel()
-            isRecording = false
-            liveDictation = ""
-            dictationFailure = nil
-            AlmaAgentHaptics.light()
-            return
-        }
+        meterTask = nil
+        usingStreamDictation = false
+        dictationStreamer.cancel()
         recorder?.stop()
         recorder = nil
         isRecording = false
-        try? FileManager.default.removeItem(at: recordingURL)
-        dictationFailure = nil
-        AlmaAgentHaptics.light()
+        liveDictation = ""
+        releaseDictationAudioOwnership(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
+        if hadLegacyRecording { try? FileManager.default.removeItem(at: recordingURL) }
+        if hadActiveCapture { dictationFailure = nil }
+        if playHaptic && hadPendingOrActiveCapture { AlmaAgentHaptics.light() }
+    }
+
+    /// Privacy boundary used by app/screen lifecycle hooks. It is deliberately
+    /// silent and leaves an unrelated durable retry marker untouched.
+    func cancelDictationForLifecycle() {
+        guard isDictationStarting || isRecording || usingStreamDictation || recorder != nil else {
+            return
+        }
+        cancelRecording(playHaptic: false)
+    }
+
+    func openVoiceConsole() {
+        cancelDictationForLifecycle()
+        showVoice = true
     }
 
     private func finishRecording() {
+        if isDictationStarting {
+            cancelRecording(playHaptic: false)
+            return
+        }
         meterTask?.cancel()
+        meterTask = nil
         if usingStreamDictation {
             // Realtime path: commit the utterance; onFinalSink fills the composer
             // (or the streamer's built-in WAV fallback upload resolves it).
@@ -11195,6 +11633,11 @@ final class AssistantVM {
         recorder?.stop()
         recorder = nil
         isRecording = false
+        let generation = dictationGeneration
+        dictationGeneration &+= 1
+        releaseDictationAudioOwnership(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
         AlmaAgentHaptics.light()
         transcribePendingDictation()
     }
@@ -11251,9 +11694,14 @@ final class AssistantVM {
 
 /// AVAudioPlayer completion → clear the "playing" state on the TTS button.
 final class AssistantTTSDelegate: NSObject, AVAudioPlayerDelegate {
-    private let onFinish: () -> Void
-    init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { onFinish() }
+    private let onFinish: (Bool) -> Void
+    init(onFinish: @escaping (Bool) -> Void) { self.onFinish = onFinish }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onFinish(flag)
+    }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        onFinish(false)
+    }
 }
 
 // MARK: - Aurora background (web .ambient-bg-root parity)
@@ -12481,6 +12929,9 @@ private struct AgentMediaCard: View {
     let url: URL
     let pal: AgentPalette
     @State private var player: AVPlayer
+    @State private var audioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
+    @State private var audioClaimGeneration: UUID?
+    @State private var audioSessionLease: AssistantNonCallAudioSessionLease?
     init(title: String, url: URL, pal: AgentPalette) {
         self.title = title; self.url = url; self.pal = pal
         _player = State(initialValue: AVPlayer(url: url))
@@ -12500,8 +12951,8 @@ private struct AgentMediaCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             } else {
                 HStack {
-                    Button { player.play() } label: { Image(systemName: "play.fill") }
-                    Button { player.pause() } label: { Image(systemName: "pause.fill") }
+                    Button { startAudioPlayback() } label: { Image(systemName: "play.fill") }
+                    Button { stopAudioPlayback() } label: { Image(systemName: "pause.fill") }
                     Text(url.lastPathComponent).font(.caption).lineLimit(1)
                 }
                 .frame(minHeight: 44)
@@ -12511,6 +12962,98 @@ private struct AgentMediaCard: View {
         .background(pal.card.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(pal.borderSubtle))
         .accessibilityIdentifier(isVideo ? "agent.video-card" : "agent.audio-card")
+        .onReceive(NotificationCenter.default.publisher(
+            for: AVPlayerItem.didPlayToEndTimeNotification,
+            object: player.currentItem)) { _ in
+                guard !isVideo, let generation = audioClaimGeneration else { return }
+                releaseAudioOwnership(
+                    generation: generation,
+                    mode: .restoreBeforeNextAppMutation)
+            }
+        .onReceive(NotificationCenter.default.publisher(
+            for: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: player.currentItem)) { _ in
+                guard !isVideo, let generation = audioClaimGeneration else { return }
+                stopAudioPlayback(
+                    generation: generation,
+                    mode: .restoreBeforeNextAppMutation)
+            }
+        .onDisappear {
+            guard !isVideo else { return }
+            stopAudioPlayback()
+        }
+    }
+
+    private func startAudioPlayback() {
+        guard !isVideo else { return }
+        stopAudioPlayback()
+        let generation = UUID()
+        guard let token = AlmaLiveVoicePreviewTakeoverRelay.shared.claimNonCallAudio(
+            .agentMedia,
+            stop: { mode in
+                stopAudioPlayback(generation: generation, mode: mode)
+            })
+        else { return }
+        audioClaimToken = token
+        audioClaimGeneration = generation
+
+        let session = AVAudioSession.sharedInstance()
+        let ownedCategory: AVAudioSession.Category = .playback
+        let ownedMode: AVAudioSession.Mode = .default
+        let ownedOptions: AVAudioSession.CategoryOptions = []
+        let lease = AssistantNonCallAudioSessionLease.capture(
+            session: session,
+            ownedCategory: ownedCategory,
+            ownedMode: ownedMode,
+            ownedOptions: ownedOptions)
+        do {
+            try session.setCategory(ownedCategory, mode: ownedMode, options: ownedOptions)
+            try session.setActive(true)
+            audioSessionLease = lease
+            player.play()
+        } catch {
+            lease.releaseIfStillOwned(session: session)
+            releaseAudioOwnership(
+                generation: generation,
+                mode: .restoreBeforeNextAppMutation)
+        }
+    }
+
+    private func stopAudioPlayback() {
+        guard let generation = audioClaimGeneration else {
+            player.pause()
+            return
+        }
+        stopAudioPlayback(
+            generation: generation,
+            mode: .restoreBeforeNextAppMutation)
+    }
+
+    private func stopAudioPlayback(
+        generation: UUID,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard audioClaimGeneration == generation else { return }
+        player.pause()
+        releaseAudioOwnership(generation: generation, mode: mode)
+    }
+
+    private func releaseAudioOwnership(
+        generation: UUID,
+        mode: AlmaLiveVoiceNonCallAudioRegistry.StopMode
+    ) {
+        guard audioClaimGeneration == generation else { return }
+        let token = audioClaimToken
+        let lease = audioSessionLease
+        audioClaimToken = nil
+        audioClaimGeneration = nil
+        audioSessionLease = nil
+        if mode == .restoreBeforeNextAppMutation {
+            lease?.releaseIfStillOwned(session: .sharedInstance())
+        }
+        if let token {
+            AlmaLiveVoiceNonCallAudioRegistry.shared.release(token)
+        }
     }
 }
 
@@ -17938,6 +18481,21 @@ private struct AgentComposerAutocompleteItem: Identifiable {
     var id: String { "\(kind == .command ? "command" : "skill"):\(value)" }
 }
 
+struct AlmaLiveVoiceComposerEntryVisibility: Equatable {
+    /// Owner decision 2026-08-11: voice settings live only inside the voice
+    /// console (its in-call settings sheet). The chat composer never shows a
+    /// second voice-settings entry, regardless of the preview-catalog flag.
+    let showsPreCallSettings: Bool
+    let showsLiveCall: Bool
+
+    static func resolve(previewCatalogEnabled: Bool) -> Self {
+        _ = previewCatalogEnabled
+        return .init(
+            showsPreCallSettings: false,
+            showsLiveCall: true)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentComposerView: View {
     @Bindable var vm: AssistantVM
@@ -17961,6 +18519,11 @@ struct AgentComposerView: View {
             || showCamera || showScanner || showContextWindow || showPermissionModes
     }
 
+    private var voiceEntryVisibility: AlmaLiveVoiceComposerEntryVisibility {
+        .resolve(previewCatalogEnabled:
+            AlmaLiveVoiceRecoveryFeatures.isEnabled(.previewCatalogV1))
+    }
+
     /// ChatGPT/Codex mobile grammar: an idle, empty composer is a compact one-line
     /// affordance. Focus, content, files, recording or any active state expands it
     /// into the full writing console without making the draft jump to another view.
@@ -17974,6 +18537,7 @@ struct AgentComposerView: View {
             && !vm.composerSubmissionPending
             && !vm.hasPendingAttachmentSend
             && !vm.isRecording
+            && !vm.isDictationStarting
             && vm.dictationFailure == nil
             && !hasComposerPresentation
     }
@@ -18123,6 +18687,7 @@ struct AgentComposerView: View {
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-composer-presentation")
         }
         .onDisappear {
+            vm.cancelDictationForLifecycle()
             FloatingChatHead.shared.setSuppressed(false, reason: "assistant-composer-presentation")
         }
         .task(id: vm.usageRefreshIdentity) {
@@ -18467,7 +19032,7 @@ struct AgentComposerView: View {
 
                 if compactComposer {
                     dictationButton(pal)
-                    voiceButton(pal)
+                    if voiceEntryVisibility.showsLiveCall { voiceButton(pal) }
                 }
             }
 
@@ -18478,7 +19043,7 @@ struct AgentComposerView: View {
                     contextWindowButton(pal)
                     Spacer(minLength: 2)
                     dictationButton(pal)
-                    voiceButton(pal)
+                    if voiceEntryVisibility.showsLiveCall { voiceButton(pal) }
                     if showSendControl { sendButton() }
                 }
                 .padding(.horizontal, 5)
@@ -18545,7 +19110,7 @@ struct AgentComposerView: View {
     @ViewBuilder private func dictationButton(_ pal: AgentPalette) -> some View {
         Button { vm.toggleRecording() } label: {
             Group {
-                if vm.transcribing {
+                if vm.transcribing || vm.isDictationStarting {
                     AlmaMiniLoader(mode: .thinking, size: 16)
                 } else {
                     Image(systemName: vm.isRecording ? "stop.fill" : "mic")
@@ -18559,12 +19124,13 @@ struct AgentComposerView: View {
             .almaAgentHitTarget()
         }
         .accessibilityLabel(vm.isRecording ? "রেকর্ডিং বন্ধ করুন" : "কণ্ঠে লিখুন")
+        .disabled(vm.isDictationStarting)
     }
 
     @ViewBuilder private func voiceButton(_ pal: AgentPalette) -> some View {
         Button {
             AlmaAgentHaptics.light()
-            vm.showVoice = true
+            vm.openVoiceConsole()
         } label: {
             Image(systemName: "waveform")
                 .font(.system(size: 15, weight: .medium))
@@ -18573,6 +19139,7 @@ struct AgentComposerView: View {
                 .almaAgentHitTarget()
         }
         .accessibilityLabel("ভয়েস কথোপকথন")
+        .accessibilityIdentifier("voice.live-call.start")
     }
 
     @ViewBuilder private func sendButton() -> some View {
@@ -22827,6 +23394,7 @@ struct AssistantScreen: View {
     let barHooks: AssistantBarHooks
 
     private static let bottomID = "ALMA_BOTTOM"
+    private static let newChatHeroID = "ALMA_NEW_CHAT_HERO"
 
     /// Build 103 Issue 1 — the loader mirrors the ONE authoritative VM surface
     /// state. Restore phases keep (or start) the loader; a committed history
@@ -22906,7 +23474,7 @@ struct AssistantScreen: View {
                     // heights. LazyVStack evicted large rich rows mid-jump, briefly
                     // blanking the viewport before correcting to an older offset.
                     VStack(alignment: .leading, spacing: 0) {
-                        if vm.loadingHistory && vm.messages.isEmpty {
+                        if vm.sessionSurface.isResolving && vm.messages.isEmpty {
                             // AgentAwakeningOverlay is the ONE session loader.
                             // Keeping the timeline transparent here prevents a
                             // second loader from appearing underneath it.
@@ -22951,6 +23519,7 @@ struct AssistantScreen: View {
                         if vm.surfaceShowsHero && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
                                 .accessibilityIdentifier("agent.empty.hero")
+                                .id(Self.newChatHeroID)
                         }
                         // Honest failure: the selected target did not load.
                         // One compact retry surface — never the hero fallback.
@@ -23083,6 +23652,13 @@ struct AssistantScreen: View {
                 .onChange(of: vm.messages.last?.text) { _, _ in
                     guard nearBottom, Date() >= followSuppressedUntil else { return }
                     scheduleScrollToBottom(proxy: proxy)
+                }
+                // A new chat inherits the previous chat's scroll offset, so the
+                // greeting sat above the viewport and New Chat looked like a
+                // blank screen. Bring the hero back into view when it appears.
+                .onChange(of: vm.sessionSurface.showsNewChatHero) { _, showsHero in
+                    guard showsHero, vm.messages.isEmpty else { return }
+                    proxy.scrollTo(Self.newChatHeroID, anchor: .top)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
                     // 1.4: server merges/polls must never yank the owner away from
@@ -23258,7 +23834,7 @@ struct AssistantScreen: View {
             }
             #endif
             if argFlag("ALMA_ASSISTANT_VOICE") {
-                Task { try? await Task.sleep(nanoseconds: 2_500_000_000); vm.showVoice = true }
+                Task { try? await Task.sleep(nanoseconds: 2_500_000_000); vm.openVoiceConsole() }
             }
             if env["ALMA_ASSISTANT_SIDEBAR"] == "1" {
                 Task { try? await Task.sleep(nanoseconds: 1_500_000_000); Self.presentDrawer(vm) }
@@ -23270,7 +23846,7 @@ struct AssistantScreen: View {
                 Task { try? await Task.sleep(nanoseconds: 3_000_000_000); await vm.newChat() }
             }
             if env["ALMA_ASSISTANT_VOICE"] == "1" {
-                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); vm.showVoice = true }
+                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); vm.openVoiceConsole() }
             }
             if env["ALMA_ASSISTANT_TOOLSHEET"] == "1" {
                 Task {
@@ -23565,7 +24141,7 @@ struct AssistantScreen: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceDebugOpen"))) { _ in
             #if DEBUG
-            vm.showVoice = true
+            vm.openVoiceConsole()
             #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceBadgeFixture"))) { _ in
@@ -23590,7 +24166,7 @@ struct AssistantScreen: View {
         // The floating call bar is now SHELL-LEVEL (AlmaTabBarController) so it
         // follows the owner to every tab; this view only answers its reopen tap.
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("almaVoiceReopenConsole"))) { _ in
-            vm.showVoice = true
+            vm.openVoiceConsole()
         }
         .fullScreenCover(item: $debugViewer) { PortalImageViewer(preview: $0, showsSave: true) }
         .sheet(item: $toolSheet) { tool in

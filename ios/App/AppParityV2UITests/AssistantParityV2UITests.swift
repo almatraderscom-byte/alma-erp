@@ -37,6 +37,8 @@ final class AssistantParityV2UITests: XCTestCase {
             "testLegacyFailedImageExplainsUnsupportedDirectRetry",
             "testFullscreenGeneratedImageFailureCanRetry",
             "testCommandAndSkillAutocompleteUsesSupportedContracts",
+            "testLiveVoiceEvidenceFixtureExportsWithoutNetwork",
+            "testAccessibilityDynamicTypeKeepsVoiceEntryAndSettingsUsableWithoutAudio",
             "testGoalsSheetUsesAuthoritativeStateAndAllAgentPause",
             "testArchivedChatBrowserShowsRestorableConversationRows",
             "testConversationLibrarySurfaceMatchesMenuDestination",
@@ -117,6 +119,71 @@ final class AssistantParityV2UITests: XCTestCase {
             NSPredicate(format: "label CONTAINS %@", "Generated")).count > 0)
         XCTAssertTrue(app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "Uploaded")).count > 0)
+    }
+
+    /// Owner decision 2026-08-11: voice settings live only inside the voice
+    /// console. The chat composer keeps its live-call entry and must never grow
+    /// a second voice-settings button.
+    func testComposerKeepsLiveCallEntryAndNeverShowsVoiceSettings() {
+        let call = app.buttons["voice.live-call.start"]
+        XCTAssertTrue(call.waitForExistence(timeout: 3))
+        XCTAssertTrue(call.isHittable)
+        XCTAssertFalse(app.buttons["voice.precall.settings.open"].exists,
+                       "the composer must not show a duplicate voice-settings entry")
+        XCTAssertFalse(app.scrollViews["voice.precall.settings.scroll"].exists)
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "an idle composer must not have an active call")
+    }
+
+    func testAccessibilityDynamicTypeKeepsVoiceEntryAndSettingsUsableWithoutAudio() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_OPEN_ASSISTANT"] = "1"
+        app.launchEnvironment["ALMA_ASSISTANT_PARITY"] = "1"
+        app.launchEnvironment["ALMA_MERGE_MOCK"] = "library"
+        app.launchEnvironment["ALMA_UI_TEST_DISABLE_BIOMETRIC_LOCK"] = "1"
+        configureAccessibilityDynamicType(for: app)
+        app.launch()
+
+        let call = app.buttons["voice.live-call.start"]
+        if !call.waitForExistence(timeout: 8) {
+            let assistantTab = app.tabBars.buttons["Assistant"]
+            XCTAssertTrue(assistantTab.waitForExistence(timeout: 3))
+            assistantTab.tap()
+        }
+
+        XCTAssertTrue(call.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitUntilHittable(call, timeout: 12),
+                      "the primary call entry must remain usable at accessibility Dynamic Type")
+        XCTAssertFalse(app.buttons["voice.precall.settings.open"].exists,
+                       "the composer must not show a duplicate voice-settings entry at any Dynamic Type")
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "an idle composer must not have an active call")
+
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_SELFTEST"] = "1"
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_V1"] = "1"
+        app.launchEnvironment["ALMA_UI_TEST_DISABLE_BIOMETRIC_LOCK"] = "1"
+        configureAccessibilityDynamicType(for: app)
+        app.launch()
+
+        // This DEBUG fixture installs the real active-call settings sheet while
+        // explicitly bypassing microphone, token mint, websocket, and provider audio.
+        XCTAssertTrue(app.staticTexts["বাংলা লাইভ ভয়েস"].waitForExistence(timeout: 5))
+        let liveSettingsScroll = app.scrollViews["voice.settings.scroll"]
+        XCTAssertTrue(liveSettingsScroll.waitForExistence(timeout: 3))
+        let unavailable = app.staticTexts[
+            "voice.settings.preview-unavailable-during-call"
+        ]
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 3))
+        for _ in 0..<24 where !unavailable.isHittable {
+            liveSettingsScroll.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(unavailable.isHittable)
+        XCTAssertTrue(unavailable.label.contains("preview বাজে না"))
+        XCTAssertFalse(app.buttons["voice.live-call.end"].exists,
+                       "the no-audio settings fixture must not create an active audio console")
     }
 
     func testSettledOwnerMessageShowsEditWithoutSendAgain() {
@@ -820,6 +887,40 @@ final class AssistantParityV2UITests: XCTestCase {
         XCTAssertTrue(app.buttons["Hub"].exists)
     }
 
+    func testLiveVoiceEvidenceFixtureExportsWithoutNetwork() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_SELFTEST"] = "1"
+        app.launchEnvironment["ALMA_LIVE_VOICE_EVIDENCE_V1"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["বাংলা লাইভ ভয়েস"].waitForExistence(timeout: 5))
+        let scroll = app.scrollViews["voice.settings.scroll"]
+        XCTAssertTrue(scroll.exists)
+        let export = app.buttons["voice.evidence.export"]
+        for _ in 0..<7 where !export.isHittable { scroll.swipeUp(velocity: .slow) }
+
+        let sessionID = app.staticTexts["voice.evidence.session-id"]
+        XCTAssertTrue(sessionID.waitForExistence(timeout: 3))
+        XCTAssertEqual(sessionID.label, "voice-debug-no-network")
+        let disclosure = app.staticTexts["voice.evidence.privacy-disclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 3))
+        XCTAssertTrue(disclosure.label.contains("typed lifecycle/transport/tool identity"))
+        XCTAssertTrue(disclosure.label.contains("কোনো recording/PCM"))
+        XCTAssertTrue(disclosure.label.contains("transcript, prompt, tool arguments/results"))
+        XCTAssertTrue(disclosure.label.contains("Raw energy মানেই owner speech নয়"))
+        XCTAssertTrue(disclosure.label.contains("queued মানেই sent নয়"))
+        XCTAssertTrue(disclosure.label.contains("local send completion Gemini receipt নয়"))
+        XCTAssertTrue(export.isHittable)
+        export.tap()
+        XCTAssertTrue(app.buttons["voice.evidence.share"].waitForExistence(timeout: 3))
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "live-voice-typed-evidence-offline-fixture"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
     private func relaunch(fixture: String, mock: String,
                           extraEnvironment: [String: String] = [:]) {
         app.terminate()
@@ -863,6 +964,24 @@ final class AssistantParityV2UITests: XCTestCase {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.94)).tap()
         }
         XCTAssertTrue(title.waitForExistence(timeout: 5))
+    }
+
+    private func configureAccessibilityDynamicType(for application: XCUIApplication) {
+        application.launchArguments += [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+    }
+
+    private func waitUntilHittable(
+        _ element: XCUIElement,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private var hasIOS265WebAccessibilityConflict: Bool {

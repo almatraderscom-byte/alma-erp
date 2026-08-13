@@ -558,15 +558,24 @@ async function stepEscalation(row: any, cfg: ProactiveCallConfig): Promise<strin
     return 'still_awaiting_approval'
   }
 
-  // Stage-0 app ring: answered ends the ladder; unanswered falls to the phone
-  // legs (which themselves resolve to a push when the abroad toggle is on);
-  // an explicit DECLINE is the boss saying "not now" — report, don't chase.
+  // Stage-0 app ring: only a terminal COMPLETED call proves delivery. Merely
+  // answering keeps the ladder open because startup/auth/mic can still close
+  // the native call as FAILED. Unanswered/failed falls to the phone legs (which
+  // themselves resolve to a push when the abroad toggle is on); an explicit
+  // DECLINE is the boss saying "not now" — report, don't chase.
   if (row.status === 'app_ringing') {
     const { getAgentAppCallStatus } = await import('@/agent/lib/agent-app-call')
     const st = row.appCallId ? await getAgentAppCallStatus(row.appCallId) : 'failed'
-    if (st === 'answered' || st === 'completed') {
+    if (st === 'completed') {
       await resolve(row.id, 'answered')
       return 'answered'
+    }
+    if (st === 'answered') {
+      await db.agentCallEscalation.update({
+        where: { id: row.id },
+        data: { nextCheckAt: new Date(Date.now() + 30_000) },
+      })
+      return 'waiting_app_answered'
     }
     const timedOut = row.nextCheckAt && new Date(row.nextCheckAt).getTime() <= Date.now()
     if (st === 'ringing' && !timedOut) return 'waiting_app'
