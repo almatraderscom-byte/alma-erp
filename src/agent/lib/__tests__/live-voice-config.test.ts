@@ -208,5 +208,6 @@ describe('live voice configuration', () => {
 
     expect(route).toContain('buildBareClientLiveVoiceTokenConfig(voice, model)')
     expect(route).toContain("typeof requested.contractVersion === 'string'")
+    expect(route).toContain('=== LIVE_VOICE_CONTRACT.contractVersion')
   })
 })
