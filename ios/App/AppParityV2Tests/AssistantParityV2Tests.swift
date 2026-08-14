@@ -4591,7 +4591,8 @@ final class AssistantParityV2Tests: XCTestCase {
         revision: Int = 1,
         status: String = "running",
         boundMessageId: String? = nil,
-        stepTwoStatus: String = "running"
+        stepTwoStatus: String = "running",
+        updatedAt: String = "2026-08-11T00:00:03Z"
     ) -> String {
         """
         {
@@ -4619,7 +4620,7 @@ final class AssistantParityV2Tests: XCTestCase {
             {"id": "s3", "position": 3, "title": "Verify the result", "status": "pending",
              "toolCallIds": [], "startedAt": null, "finishedAt": null}
           ],
-          "updatedAt": "2026-08-11T00:00:03Z"
+          "updatedAt": \(updatedAt.debugDescription)
         }
         """
     }
@@ -4666,10 +4667,12 @@ final class AssistantParityV2Tests: XCTestCase {
     }
 
     private func snapshotFixture(
-        revision: Int, status: String = "running", boundMessageId: String? = nil
+        revision: Int, status: String = "running", boundMessageId: String? = nil,
+        updatedAt: String = "2026-08-11T00:00:03Z"
     ) throws -> AgentWorkStepsSnapshot {
         let event = try decodeTurnEvent(workStepsJSON(
-            revision: revision, status: status, boundMessageId: boundMessageId))
+            revision: revision, status: status, boundMessageId: boundMessageId,
+            updatedAt: updatedAt))
         guard case .workSteps(let snapshot) = event else {
             throw NSError(domain: "fixture", code: 1)
         }
@@ -4704,17 +4707,30 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "paused"))
         XCTAssertNil(vm.activeWorkTracker)
 
-        // A dropped final snapshot leaves status "running" with no stream —
-        // the same lingering chip through a different door.
+        // A dropped final snapshot leaves a STALE "running" row with no
+        // stream — it ages out of the dock (freshness window, build 104 fix).
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "running"))
         vm.isStreaming = false
         XCTAssertNil(vm.activeWorkTracker)
 
+        // Away work (salah call, background/worker turn) has NO app stream but
+        // a FRESH running snapshot — the chip must show (owner report
+        // 2026-08-15: the stream requirement hid real work on build 104).
+        let freshStamp = ISO8601DateFormatter.almaWorkStepsLenient
+            .string(from: Date())
+        vm.debugMergeWorkSteps(try snapshotFixture(
+            revision: 5, status: "running", updatedAt: freshStamp))
+        XCTAssertEqual(vm.activeWorkTracker?.status, "running")
+        // The freshness window EXPIRES: the same snapshot evaluated 200s later
+        // is gone — the dock's 30s clock tick drives this re-evaluation in the
+        // UI (Codex P1 #758).
+        XCTAssertNil(vm.activeWorkTracker(now: Date().addingTimeInterval(200)))
+
         // Waiting states genuinely await someone and stay visible without a
         // stream; terminal never shows.
-        vm.debugMergeWorkSteps(try snapshotFixture(revision: 5, status: "waiting_owner"))
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 6, status: "waiting_owner"))
         XCTAssertEqual(vm.activeWorkTracker?.status, "waiting_owner")
-        vm.debugMergeWorkSteps(try snapshotFixture(revision: 6, status: "completed"))
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 7, status: "completed"))
         XCTAssertNil(vm.activeWorkTracker)
     }
 
