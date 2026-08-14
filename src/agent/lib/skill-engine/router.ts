@@ -394,6 +394,10 @@ function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end:
  * English nouns are whole-word ("freelancer" must not match "reel"); Bangla
  * skips \b (it does not work across the Bangla script). */
 const VIDEO_OUTPUT = /(?:\bvideos?\b|\breels?\b|ভিডিও|রিল|রীল)/i
+/** Markers that the ask refers to media the owner ALREADY has. */
+const EXISTING_SOURCE_HINT =
+  /(?:টা|টি|এইটা|এটা|ওটা|আমার|ফাইল|\bta\b|\bei\b|\beta\b|\bamar\b|\bthis\b|\bthe\b|\bmy\b|\bexisting\b|\battached\b|\buploaded\b|\bfile\b|\.mp4\b|\.mov\b|\.png\b|\.jpe?g\b)/i
+
 /** "video cards"/"video script" are answer/text artifacts, not video-making. */
 const NON_VIDEO_OUTPUT_SUFFIX =
   /^\s*(?:cards?|players?|tags?|elements?|embeds?|scripts?|briefs?|plans?|prompts?|ideas?|titles?|captions?|স্ক্রিপ্ট|আইডিয়া|ক্যাপশন)\b/i
@@ -401,8 +405,10 @@ const NON_VIDEO_OUTPUT_SUFFIX =
 export const isVideoCreationAsk = (text: string): boolean => {
   if (MEDIA_DERIVE_ASK.test(text)) return false
   // Editing/shrinking an EXISTING video is the converter/editor path — this
-  // pipeline only makes new videos from an idea.
-  if (MEDIA_CONVERT_ASK.test(text)) return false
+  // pipeline only makes new videos from an idea. The veto needs a reference to
+  // an actual source asset ("video TA resize koro", "compress this file") —
+  // "create a video ABOUT video compression" is still a creation ask.
+  if (MEDIA_CONVERT_ASK.test(text) && EXISTING_SOURCE_HINT.test(text)) return false
   // Same proximity discipline as the image detector: a creation verb must sit
   // near the video noun in the same sentence, and formatting-only answer asks
   // ("rendered LaTeX … video cards") belong to the unrestricted head.
