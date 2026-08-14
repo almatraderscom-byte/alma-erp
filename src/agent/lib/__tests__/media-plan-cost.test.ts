@@ -37,6 +37,14 @@ describe('normalizeMediaPlan', () => {
     expect(plan.scenes.map((s) => s.idx)).toEqual([1, 2])
   })
 
+  it('rejects VO mode when any scene lacks a voScript', () => {
+    const scenes = [rawPlan.scenes[0], { ...rawPlan.scenes[1], voScript: '' }]
+    expect(() => normalizeMediaPlan({ ...rawPlan, scenes })).toThrow(/S2/)
+    // music-only mode is fine without scripts
+    const plan = normalizeMediaPlan({ ...rawPlan, scenes, audio: { mode: 'music', musicBrief: 'calm' } })
+    expect(plan.scenes).toHaveLength(2)
+  })
+
   it('falls back to safe model defaults on unknown ids', () => {
     const plan = normalizeMediaPlan({ ...rawPlan, models: { image: 'bogus', video: 'bogus' } })
     expect(plan.models.image).toBe('gemini-3-pro-image')

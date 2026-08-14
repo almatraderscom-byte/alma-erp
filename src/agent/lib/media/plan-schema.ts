@@ -100,6 +100,15 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
       ? audioRaw.mode
       : 'vo'
 
+  // VO mode with narration-less scenes would quote ৳0 voiceover while the card
+  // still advertises VO — reject so the planner retries with complete scripts.
+  if (mode === 'vo' || mode === 'vo+music') {
+    const missing = scenes.filter((s) => !s.voScript).map((s) => `S${s.idx}`)
+    if (missing.length > 0) {
+      throw new Error(`audio mode "${mode}" needs a voScript for every scene — missing: ${missing.join(', ')}`)
+    }
+  }
+
   const modelsRaw = (p.models && typeof p.models === 'object' ? p.models : {}) as Record<string, unknown>
   const image = MEDIA_IMAGE_MODELS.includes(modelsRaw.image as MediaImageModel)
     ? (modelsRaw.image as MediaImageModel)

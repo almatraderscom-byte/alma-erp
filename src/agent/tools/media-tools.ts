@@ -29,7 +29,9 @@ function planSummaryBn(plan: MediaPlan, estimateBlock: string): string {
     `দৃশ্য ${plan.scenes.length}টি | ছবি: ${mediaModelLabel(plan.models.image)} | ক্লিপ: ${mediaModelLabel(plan.models.video)} | অডিও: ${audioLabel}\n\n` +
     `${sceneLines}\n\n` +
     `খরচ (exact):\n${estimateBlock}\n\n` +
-    `Approve করলে সব দৃশ্যের অডিও → ছবি → ক্লিপ একে একে চ্যাটে আসবে, শেষে সব জোড়া দিয়ে ফাইনাল ভিডিও।`
+    // M0 honesty: approval LOCKS the plan+quote; generation starts when the M1
+    // render engine ships. Update this line when M1 lands.
+    `Approve করলে এই প্ল্যান আর খরচটা লক হবে। রেন্ডার ইঞ্জিন (দৃশ্য ধরে অডিও → ছবি → ক্লিপ → ফাইনাল ভিডিও) পরের বিল্ডে চালু হচ্ছে — চালু হলেই লক-করা প্রজেক্ট অটো শুরু হবে; এখনই কিছু জেনারেট হবে না।`
   )
 }
 
@@ -81,94 +83,114 @@ const plan_media_video: AgentTool = {
         }
       }
 
-      let project
-      if (existing) {
-        // Revision: supersede the old card, refresh scenes in place.
-        // CAS on status so a concurrent Approve (which flips planned→approved)
-        // can't be overwritten by this revision — mirror of the approve-side CAS.
-        const revised = await db.agentMediaProject.updateMany({
-          where: { id: existing.id, status: { in: ['draft', 'planned'] } },
-          data: {
-            title: plan.title,
-            planJson: plan,
-            planRevision: { increment: 1 },
-            aspect: plan.aspect,
-            language: plan.language,
-            totalEstimateUsd: estimate.totalUsd,
-            status: 'planned',
-          },
+      // Project + scenes + card move together in ONE transaction. The revision
+      // CAS pins the exact (planRevision, pendingActionId) read above, so two
+      // overlapping revisions can't interleave a card quoting one plan against
+      // a project storing the other — the loser aborts and the head retries.
+      const REVISION_LOST = 'MEDIA_PLAN_REVISION_CONFLICT'
+      let project: { id: string; planRevision: number }
+      let actionId: string
+      try {
+        const result = await db.$transaction(async (tx: typeof db) => {
+          let proj
+          if (existing) {
+            const revised = await tx.agentMediaProject.updateMany({
+              where: {
+                id: existing.id,
+                status: { in: ['draft', 'planned'] },
+                planRevision: existing.planRevision,
+                pendingActionId: existing.pendingActionId,
+              },
+              data: {
+                title: plan.title,
+                planJson: plan,
+                planRevision: { increment: 1 },
+                aspect: plan.aspect,
+                language: plan.language,
+                totalEstimateUsd: estimate.totalUsd,
+                status: 'planned',
+              },
+            })
+            if (revised.count === 0) throw new Error(REVISION_LOST)
+            proj = await tx.agentMediaProject.findUnique({ where: { id: existing.id } })
+            await tx.agentMediaScene.deleteMany({ where: { projectId: existing.id } })
+            if (existing.pendingActionId) {
+              await tx.agentPendingAction.updateMany({
+                where: { id: existing.pendingActionId, status: 'pending' },
+                data: { status: 'superseded', resolvedAt: new Date() },
+              })
+            }
+          } else {
+            proj = await tx.agentMediaProject.create({
+              data: {
+                conversationId,
+                title: plan.title,
+                planJson: plan,
+                aspect: plan.aspect,
+                language: plan.language,
+                totalEstimateUsd: estimate.totalUsd,
+                status: 'planned',
+              },
+            })
+          }
+
+          await tx.agentMediaScene.createMany({
+            data: plan.scenes.map((s) => ({
+              projectId: proj.id,
+              idx: s.idx,
+              brief: s.brief,
+              voScript: s.voScript,
+              imagePrompt: s.imagePrompt,
+              clipBrief: s.clipBrief,
+              durationSec: s.durationSec,
+            })),
+          })
+
+          const card = await tx.agentPendingAction.create({
+            data: {
+              conversationId,
+              type: 'media_plan',
+              payload: {
+                projectId: proj.id,
+                planRevision: proj.planRevision,
+                conversationId,
+              },
+              summary,
+              costEstimate: estimate.totalBdt,
+              status: 'pending',
+            },
+          })
+          await tx.agentMediaProject.update({
+            where: { id: proj.id },
+            data: { pendingActionId: card.id },
+          })
+          return { proj, cardId: card.id as string }
         })
-        if (revised.count === 0) {
+        project = result.proj
+        actionId = result.cardId
+      } catch (err) {
+        if (err instanceof Error && err.message === REVISION_LOST) {
           return {
             success: false,
-            error: 'প্ল্যানটা এর মধ্যে approve হয়ে গেছে — রিভাইজ আর সম্ভব না; নতুন প্রজেক্ট খুলুন।',
+            error:
+              'প্ল্যানটা এর মধ্যে অন্য জায়গা থেকে বদলে/approve হয়ে গেছে — get_media_project দিয়ে সর্বশেষ অবস্থা পড়ে আবার চেষ্টা করুন।',
           }
         }
-        project = await db.agentMediaProject.findUnique({ where: { id: existing.id } })
-        await db.agentMediaScene.deleteMany({ where: { projectId: existing.id } })
-        if (existing.pendingActionId) {
-          await db.agentPendingAction.updateMany({
-            where: { id: existing.pendingActionId, status: 'pending' },
-            data: { status: 'superseded', resolvedAt: new Date() },
-          })
-        }
-      } else {
-        project = await db.agentMediaProject.create({
-          data: {
-            conversationId,
-            title: plan.title,
-            planJson: plan,
-            aspect: plan.aspect,
-            language: plan.language,
-            totalEstimateUsd: estimate.totalUsd,
-            status: 'planned',
-          },
-        })
+        throw err
       }
-
-      await db.agentMediaScene.createMany({
-        data: plan.scenes.map((s) => ({
-          projectId: project.id,
-          idx: s.idx,
-          brief: s.brief,
-          voScript: s.voScript,
-          imagePrompt: s.imagePrompt,
-          clipBrief: s.clipBrief,
-          durationSec: s.durationSec,
-        })),
-      })
-
-      const action = await db.agentPendingAction.create({
-        data: {
-          conversationId,
-          type: 'media_plan',
-          payload: {
-            projectId: project.id,
-            planRevision: project.planRevision,
-            conversationId,
-          },
-          summary,
-          costEstimate: estimate.totalBdt,
-          status: 'pending',
-        },
-      })
-      await db.agentMediaProject.update({
-        where: { id: project.id },
-        data: { pendingActionId: action.id },
-      })
 
       return {
         success: true,
         data: {
-          pendingActionId: action.id as string,
-          projectId: project.id as string,
-          planRevision: project.planRevision as number,
+          pendingActionId: actionId,
+          projectId: project.id,
+          planRevision: project.planRevision,
           totalUsd: estimate.totalUsd,
           totalBdt: estimate.totalBdt,
           sceneCount: plan.scenes.length,
           message: existing
             ? 'প্ল্যান রিভাইজ হয়েছে — নতুন খরচসহ নতুন কার্ড এসেছে, আগেরটা বাতিল।'
-            : 'ভিডিও প্ল্যান কার্ড তৈরি — Boss approve করলে জেনারেশন শুরু হবে।',
+            : 'ভিডিও প্ল্যান কার্ড তৈরি — approve করলে প্ল্যান+খরচ লক হবে (রেন্ডার ইঞ্জিন M1-এ)।',
         },
       }
     } catch (err) {
