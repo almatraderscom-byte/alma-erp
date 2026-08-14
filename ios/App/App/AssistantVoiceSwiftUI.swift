@@ -5580,7 +5580,7 @@ final class AlmaVoiceEngine {
         // tool). If Boss's own words ask to hang up, the call ends after the
         // model's goodbye finishes — model cooperation not required.
         if Self.hangupContext(in: transcript) { lastHangupContextAt = Date() }
-        if Self.hangupIntent(in: transcript) {
+        if Self.hangupIntent(in: transcript, finalized: finalized) {
             #if DEBUG
             NSLog("ALMA-VOICE hang-up intent heard in input transcript")
             #endif
@@ -5623,7 +5623,7 @@ final class AlmaVoiceEngine {
     /// hang-up): bare "রেখে দাও/রাখো" counts only as a short standalone closing
     /// utterance; longer sentences need explicit call/phone context or a
     /// salutation formula.
-    static func hangupIntent(in text: String) -> Bool {
+    static func hangupIntent(in text: String, finalized: Bool = true) -> Bool {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         // Closing salutations.
         if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") || t.contains("খোদা হাফেজ") { return true }
@@ -5641,7 +5641,11 @@ final class AlmaVoiceEngine {
         // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
         // এখন/ওকে), and never with a location word, a question form, or a
         // memory instruction.
-        if t.count <= 25,
+        // Ambiguous short forms wait for the FINAL transcript: an incremental
+        // prefix of "আচ্ছা তাহলে রাখো এখানে" must not schedule an
+        // irreversible end before the location word arrives (Codex P1 #759
+        // round 3).
+        if finalized, t.count <= 25,
            t.contains("রাখো") || t.contains("রাখেন") || t.contains("রাখি") || t.contains("রেখে দ"),
            t.contains("তাহলে") || t.contains("আচ্ছা") || t.contains("ঠিক আছে")
                || t.contains("এখন") || t.contains("ওকে") || t.contains("okay") || t.contains("ok "),
