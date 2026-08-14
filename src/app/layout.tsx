@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
+import './fonts.css'
 import './globals.css'
 import '@/styles/ios27.css'
 import '@/components/providers/AppBootSplash.css'
@@ -19,21 +19,6 @@ import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
 import { buildMismatchReloadScript } from '@/lib/build-reload-script'
-
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
-const notoBengali = Noto_Sans_Bengali({
-  subsets: ['bengali', 'latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-bengali',
-  display: 'swap',
-})
-const hindSiliguri = Hind_Siliguri({
-  subsets: ['bengali', 'latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-hind',
-  display: 'swap',
-})
-const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
 export const metadata: Metadata = {
   title: { default: 'Alma ERP', template: '%s · Alma ERP' },
@@ -86,11 +71,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       lang="en"
       data-theme={themeMode}
       style={accentStyle(themeAccent) as React.CSSProperties}
-      className={`${inter.variable} ${notoBengali.variable} ${hindSiliguri.variable} ${mono.variable}`}
       suppressHydrationWarning
     >
       <head>
         <meta name="theme-color" content={themeMode === 'light' ? '#f6f4ef' : '#0c0b12'} />
+        {/* next/font used to emit these preloads itself. Keep them for the two
+            faces every screen needs — the Bangla text body and the latin UI —
+            so self-hosting does not cost a flash of fallback text. */}
+        <link rel="preload" href="/fonts/webfonts/noto-sans-bengali-bengali-400.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/webfonts/inter-latin-100900.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
