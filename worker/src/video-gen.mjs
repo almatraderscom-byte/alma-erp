@@ -175,7 +175,18 @@ async function processSeedanceVideo(job, { supabase, callJobResult }) {
     if (st.status === 'COMPLETED') {
       const resultRes = await fetch(responseUrl, { headers: falHeaders, signal: AbortSignal.timeout(30_000) })
       const result = await resultRes.json().catch(() => ({}))
-      videoUrl = result?.video?.url ?? result?.video_url ?? null
+      // fal response shapes vary per model version — probe every known spot.
+      videoUrl =
+        result?.video?.url ??
+        result?.video_url ??
+        (Array.isArray(result?.videos) ? result.videos[0]?.url : null) ??
+        result?.output?.video?.url ??
+        result?.output?.video_url ??
+        result?.data?.video?.url ??
+        null
+      if (!videoUrl) {
+        console.error(`[worker] video-gen ${pendingActionId} — seedance COMPLETED but no url; raw: ${JSON.stringify(result).slice(0, 400)}`)
+      }
       break
     }
     if (st.status === 'FAILED' || st.status === 'ERROR') {
