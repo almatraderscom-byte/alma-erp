@@ -820,7 +820,7 @@ async function* runAlternateProviderTurn(
               data: { status: 'answered', selectedOption: lastUserText.slice(0, 1200) },
             }).catch(() => {})
             exact.status = 'answered'
-            exact.selectedOption = lastUserText.slice(0, 500)
+            exact.selectedOption = lastUserText.slice(0, 1200)
           }
           matchedAskCard = exact
         }

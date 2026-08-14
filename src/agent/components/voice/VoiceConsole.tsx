@@ -507,8 +507,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     if (!card?.questions || qi in (card.multiAnswers ?? {})) return
     const answers = { ...(card.multiAnswers ?? {}), [qi]: option }
     const remaining = card.questions.map((_, i) => i).filter((i) => !(i in answers))
-    stopTts()
     if (remaining.length > 0) {
+      // No stopTts here: it DISPOSES the player and the next prompt would be a
+      // silent no-op (Codex P2 #754) — say() supersedes the current utterance.
       const next = card.questions[remaining[0]]
       playerRef.current?.say(`${next.question} — ${next.options.join(', নাকি ')}?`)
       return
@@ -516,14 +517,23 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     const combined = card.questions
       .map((entry, i) => `${i + 1}. ${entry.question} — ${answers[i]}`)
       .join('\n')
-    if (card.askCardId) {
-      void fetch(`/api/assistant/ask-cards/${card.askCardId}/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ option: combined }),
-      }).catch(() => { /* runTurn still carries the combined answer */ })
-    }
-    void runTurn(combined)
+    stopTts()
+    void (async () => {
+      // Await the answer write BEFORE the continuation (same order as the web
+      // card): the combined text starts with a question label, so the turn's
+      // pending-card self-heal cannot re-match it — the row must already be
+      // answered when the turn starts (Codex P1 #754, round 3).
+      if (card.askCardId) {
+        try {
+          await fetch(`/api/assistant/ask-cards/${card.askCardId}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ option: combined }),
+          })
+        } catch { /* runTurn still carries the combined answer */ }
+      }
+      await runTurn(combined)
+    })()
   }, [runTurn, stopTts])
 
   /** Premium-model permission: approve re-runs the SAME question with resume. */
