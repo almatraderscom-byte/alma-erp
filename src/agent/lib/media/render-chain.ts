@@ -421,16 +421,21 @@ export async function advanceMediaChain(
     })
   }
 
-  // FINAL stage settled → project done (or failed).
+  // FINAL stage settled → project done (or failed). A failed RE-stitch on a
+  // project that already delivered a final keeps the previous video and stays
+  // 'final' — the owner must not lose a working video to a failed rebuild.
   if (tag.stage === 'final') {
+    const hasPreviousFinal = Boolean((project as { finalAssetPath?: string | null }).finalAssetPath)
     await db.agentMediaProject.updateMany({
       where: { id: tag.projectId, status: 'rendering_final' },
       data:
         status === 'success' && storagePath
           ? { status: 'final', finalAssetPath: storagePath, totalActualUsd: spent }
-          : { status: 'failed', totalActualUsd: spent },
+          : hasPreviousFinal
+            ? { status: 'final', totalActualUsd: spent } // old finalAssetPath stays
+            : { status: 'failed', totalActualUsd: spent },
     })
-    return status === 'success' ? 'final-delivered' : 'final-failed'
+    return status === 'success' ? 'final-delivered' : hasPreviousFinal ? 'restitch-failed-kept-previous' : 'final-failed'
   }
 
   // Stage transitions — CAS + next-stage enqueue in ONE transaction. Only the
@@ -565,7 +570,21 @@ export async function regenerateMediaAsset(args: {
   const scene = scenes.find((s) => s.idx === args.sceneIdx)
   if (!scene) return { success: false, error: `S${args.sceneIdx} নেই — দৃশ্য 1..${scenes.length}` }
   const plan = project.planJson
-  if (args.kind === 'vo' && !scene.voScript) return { success: false, error: `S${args.sceneIdx} এর কোনো ভয়েসওভার নেই` }
+  if (args.kind === 'vo') {
+    if (!scene.voScript) return { success: false, error: `S${args.sceneIdx} এর কোনো ভয়েসওভার নেই` }
+    // Music-only/silent plans keep their scripts in planJson but never rendered
+    // VO — regenerating one here would smuggle narration into a video the owner
+    // explicitly approved without it. Require a previously rendered VO asset.
+    const existingVo = await db.agentMediaAsset.findFirst({
+      where: { projectId: args.projectId, sceneId: scene.id, kind: 'vo' },
+    })
+    if (!existingVo) {
+      return {
+        success: false,
+        error: 'এই ভিডিওটা ভয়েস ছাড়া বানানো — ভয়েস যোগ করতে চাইলে plan_media_video দিয়ে প্ল্যান রিভাইজ করুন।',
+      }
+    }
+  }
   if (args.kind === 'vo' && (args.note ?? '').trim()) {
     // A VO note can't reach the model: the spoken text IS the script, and
     // delivery/emotion tuning isn't wired yet. Refuse instead of billing a
