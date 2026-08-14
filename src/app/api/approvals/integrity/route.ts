@@ -35,6 +35,11 @@ export const POST = withApiRoute('approvals.integrity.repair', async (req: NextR
     dispatchApprovalsUpdated()
     return apiDataSuccess(result as Record<string, unknown>)
   } catch (e) {
-    return apiFailure('integrity_repair_failed', (e as Error).message || 'Repair failed', { status: 500 })
+    // Domain event pinned: the code does not contain "approval", but a failed
+    // orphan repair IS an approval-system failure and must reach that alert.
+    return apiFailure('integrity_repair_failed', (e as Error).message || 'Repair failed', {
+      status: 500,
+      event: 'approval.api.failed',
+    })
   }
 })
