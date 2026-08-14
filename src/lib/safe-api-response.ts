@@ -169,12 +169,19 @@ export function apiFailure(
   init?: { status?: number; rolledBack?: boolean; extra?: Record<string, unknown> },
 ) {
   const status = init?.status ?? 400
+  // The fallback used to be `approval.api.failed`, so EVERY unrelated failure —
+  // an internal_error from a debug route, a 404, a rate limit — arrived in
+  // Sentry tagged as a critical approval failure. Verified live on 2026-08-14: a
+  // throw from /api/debug/sentry-test raised `erp.event: approval.api.failed`.
+  // That makes the approval alert rule untrustworthy, which is worse than no
+  // rule. Unmapped codes now get a neutral event (still critical at 5xx via the
+  // `.failed$` pattern, just no longer disguised as approvals).
   const event =
     code.includes('attendance') ? 'attendance.api.failed'
     : code.includes('approval') || code.includes('wallet') ? 'approval.api.failed'
     : code.includes('archive') ? 'archive.filter.failed'
     : code.includes('telegram') ? 'telegram.queue.failed'
-    : 'approval.api.failed'
+    : 'api.failed'
 
   logEvent(status >= 500 ? 'error' : 'warn', event, { code, message, status })
 
