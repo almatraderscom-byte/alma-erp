@@ -166,7 +166,19 @@ export function apiDataSuccess<T extends Record<string, unknown>>(
 export function apiFailure(
   code: string,
   message: string,
-  init?: { status?: number; rolledBack?: boolean; extra?: Record<string, unknown> },
+  init?: {
+    status?: number
+    rolledBack?: boolean
+    extra?: Record<string, unknown>
+    /**
+     * Domain event override for routes whose failure CODE does not name their
+     * domain — e.g. `/api/approvals/integrity` fails as `integrity_repair_failed`,
+     * which is a genuine approval-system failure that the code-substring mapping
+     * below cannot see. Pass the domain event so it keeps reaching the approval
+     * alert rule.
+     */
+    event?: string
+  },
 ) {
   const status = init?.status ?? 400
   // The fallback used to be `approval.api.failed`, so EVERY unrelated failure —
@@ -177,11 +189,12 @@ export function apiFailure(
   // rule. Unmapped codes now get a neutral event (still critical at 5xx via the
   // `.failed$` pattern, just no longer disguised as approvals).
   const event =
-    code.includes('attendance') ? 'attendance.api.failed'
+    init?.event
+    ?? (code.includes('attendance') ? 'attendance.api.failed'
     : code.includes('approval') || code.includes('wallet') ? 'approval.api.failed'
     : code.includes('archive') ? 'archive.filter.failed'
     : code.includes('telegram') ? 'telegram.queue.failed'
-    : 'api.failed'
+    : 'api.failed')
 
   logEvent(status >= 500 ? 'error' : 'warn', event, { code, message, status })
 

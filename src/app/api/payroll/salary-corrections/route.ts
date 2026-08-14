@@ -89,9 +89,17 @@ export const POST = withApiRoute('payroll.salary_corrections.create', async (req
       },
     })
   } catch (e) {
+    // Salary corrections move money through the approval pipeline, so their
+    // failures stay on the approval alert regardless of the specific code.
     if (e instanceof SalaryCorrectionError) {
-      return apiFailure(e.code || 'salary_correction_failed', e.message, { status: e.status })
+      return apiFailure(e.code || 'salary_correction_failed', e.message, {
+        status: e.status,
+        event: 'approval.api.failed',
+      })
     }
-    return apiFailure('salary_correction_failed', (e as Error).message, { status: 500 })
+    return apiFailure('salary_correction_failed', (e as Error).message, {
+      status: 500,
+      event: 'approval.api.failed',
+    })
   }
 })

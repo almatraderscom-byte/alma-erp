@@ -38,6 +38,16 @@ describe('apiFailure Sentry event tagging', () => {
     expect(taggedEvent()).toBe('telegram.queue.failed')
   })
 
+  it('lets an approval-domain route pin its event when the code does not name it', () => {
+    // /api/approvals/integrity fails as `integrity_repair_failed` — a real
+    // approval-system failure the substring mapping cannot see.
+    apiFailure('integrity_repair_failed', 'repair blew up', {
+      status: 500,
+      event: 'approval.api.failed',
+    })
+    expect(taggedEvent()).toBe('approval.api.failed')
+  })
+
   it('logs 5xx at error level and 4xx at warn level', () => {
     apiFailure('internal_error', 'boom', { status: 500 })
     expect(logEvent.mock.calls.at(-1)?.[0]).toBe('error')
