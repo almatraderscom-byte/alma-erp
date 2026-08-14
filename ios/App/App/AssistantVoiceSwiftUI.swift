@@ -5641,22 +5641,12 @@ final class AlmaVoiceEngine {
         // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
         // এখন/ওকে), and never with a location word, a question form, or a
         // memory instruction.
-        // Short first-person closings ("আচ্ছা রাখি", "ঠিক আছে রাখি এখন").
-        // ONLY the first-person রাখি form qualifies — in a call it means "I am
-        // hanging up"; the second-person রাখো/রাখেন is a polysemous placement
-        // command ("ব্যাগটা রাখো তাহলে") and never ends the call by itself
-        // (Codex P1 #759 rounds 2-4). Finalized transcripts only, and object
-        // classifiers (টা/টি/গুলো), location words, question forms and memory
-        // instructions still exclude.
-        if finalized, t.count <= 25, t.contains("রাখি"),
-           t.contains("তাহলে") || t.contains("আচ্ছা") || t.contains("ঠিক আছে")
-               || t.contains("এখন") || t.contains("ওকে") || t.contains("okay") || t.contains("ok "),
-           !t.contains("টা রাখি"), !t.contains("টি রাখি"), !t.contains("গুলো রাখি"), !t.contains("রাখিনি"),
-           !t.contains("এখানে"), !t.contains("ওখানে"), !t.contains("সেখানে"), !t.contains("খানে"),
-           !t.contains("?"), !t.contains("কি "), !t.contains("কী"), !t.contains("কেন"),
-           !t.contains("মনে"), !t.contains("নোট"), !t.contains("সেভ"), !t.contains("save") {
-            return true
-        }
+        // NO generic short-form branch. Four review rounds proved every
+        // রাখ-family heuristic misfires on some placement/keeping sentence
+        // ("ব্যাগটা রাখো তাহলে", "এটা আমি রাখি") — only the explicit
+        // salutation/phone-context phrases above are deterministic. Softer
+        // farewells end the call through the model's end_call, which is
+        // corroboration-gated separately.
         return false
     }
 
