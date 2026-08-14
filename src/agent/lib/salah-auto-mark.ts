@@ -14,6 +14,16 @@ export type AutoMarkResult = {
   marked: Array<{ date: string; waqt: string; status: string; fromText: string }>
 }
 
+export type AutoMarkOptions = {
+  /**
+   * Spoken live-call path only (Codex P1 round 5, PR #762): the owner's LATER
+   * words replace an earlier settled status ("I prayed Isha" → "no, I missed
+   * Isha"), instead of the chat helper's settled-record short circuit. Chat
+   * keeps the default (false) — there the head + mark_salah own corrections.
+   */
+  allowSettledCorrection?: boolean
+}
+
 async function loadDayRecords(dateYmd: string) {
   return db.agentSalahRecord.findMany({
     where: { date: dhakaMidnightUtc(dateYmd) },
@@ -23,6 +33,7 @@ async function loadDayRecords(dateYmd: string) {
     status: string
     windowStart: Date
     windowEnd: Date
+    confirmedAt: Date | null
   }>>
 }
 
@@ -40,6 +51,7 @@ function waqtWindowStarted(
 export async function applySalahAutoMarkFromUserTexts(
   texts: string[],
   now = new Date(),
+  opts: AutoMarkOptions = {},
 ): Promise<AutoMarkResult> {
   const result: AutoMarkResult = { marked: [] }
   const cleaned = texts.map((t) => t.trim()).filter(Boolean)
@@ -84,6 +96,28 @@ export async function applySalahAutoMarkFromUserTexts(
     let targetWaqt: string | undefined = signal.waqt
     let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
+    if (!targetWaqt && opts.allowSettledCorrection) {
+      // Implicit spoken correction (Codex P1 round 6): "no, I missed it"
+      // seconds after a confirm names no waqt, and the just-settled record
+      // has already left the accountable list — the record confirmed within
+      // the last 3 minutes with a DIFFERENT kind is the natural target.
+      const newKind = mode === 'prayed' ? 'prayed' : mode
+      const recent = [
+        ...todayRecords.map((r) => ({ r, d: todayYmd })),
+        ...yesterdayRecords.map((r) => ({ r, d: yesterdayYmd })),
+      ]
+        .filter(({ r }) => r.confirmedAt && isSalahSettled(r.status)
+          && now.getTime() - new Date(r.confirmedAt).getTime() < 3 * 60_000)
+        .sort((a, b) =>
+          new Date(b.r.confirmedAt as Date).getTime() - new Date(a.r.confirmedAt as Date).getTime())[0]
+      if (recent) {
+        const recentKind = recent.r.status.startsWith('prayed') ? 'prayed' : recent.r.status
+        if (recentKind !== newKind) {
+          targetWaqt = recent.r.waqt
+          dateYmd = recent.d
+        }
+      }
+    }
     if (!targetWaqt) {
       const candidate = accountable.find((a) => {
         const { waqt, isYesterday } = parseWaqtLabel(a.waqt)
@@ -112,7 +146,7 @@ export async function applySalahAutoMarkFromUserTexts(
 
     const records = dateYmd === todayYmd ? todayRecords : yesterdayRecords
     const existing = records.find((r) => r.waqt === targetWaqt)
-    if (existing && isSalahSettled(existing.status)) {
+    if (existing && isSalahSettled(existing.status) && !opts.allowSettledCorrection) {
       markedKeys.add(key)
       continue
     }
@@ -128,6 +162,18 @@ export async function applySalahAutoMarkFromUserTexts(
         : 'prayed_on_time'
     } else {
       status = mode // 'qaza' | 'missed'
+    }
+
+    // Correction mode: only touch a settled record when the KIND changes
+    // (prayed-family ↔ qaza/missed). A repeated "পড়েছি" later in the call
+    // must not churn confirmedAt or downgrade prayed_on_time to prayed_late.
+    if (existing && isSalahSettled(existing.status)) {
+      const existingKind = existing.status.startsWith('prayed') ? 'prayed' : existing.status
+      const newKind = mode === 'prayed' ? 'prayed' : mode
+      if (existingKind === newKind) {
+        markedKeys.add(key)
+        continue
+      }
     }
 
     await db.agentSalahRecord.upsert({

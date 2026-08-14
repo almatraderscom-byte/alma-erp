@@ -105,6 +105,64 @@ export function detectSalahQaza(text: string): SalahQazaIntent | null {
   return { kind, dateHint }
 }
 
+/**
+ * STRICT gate for the spoken live-call path (/api/assistant/salah/confirm-spoken).
+ * detectSalahQaza accepts a bare topic mention ("কাযা") and hasPrayedSignal
+ * accepts the stem "আদায় কর" — fine for chat (long-standing behavior, the
+ * owner types deliberately) but too loose for every finalized call utterance
+ * (Codex P1, PR #762): "কাযা নামাজের নিয়ম বলো" or "নামাজ আদায় করার জন্য
+ * reminder তৈরি করো" must never auto-mark. Require a real declaration and
+ * reject request/question/future-intent wording outright.
+ */
+export function isSpokenSalahDeclaration(text: string): boolean {
+  const t = text.trim()
+  if (!t || t.length < 3) return false
+  // Every finalized call transcript reaches this gate, so an unrelated
+  // business sentence that merely names a waqt ("ইশার কাজ শেষ করেছি") must
+  // not be trusted to the broad `waqt.*শেষ/করেছি` detector patterns (Codex
+  // P1 round 4). Require an unambiguous prayer noun or a পড়/pray verb —
+  // and "পড়াশোনা" (studying) is reading, not praying.
+  const prayerContext =
+    /নামাজ|নামায|সালাত|সালাহ|namaz|namaj|salah|salat|কাযা|কাজা|qaza|kaza|আদায়|pray/i.test(t)
+    || (/পড়/.test(t) && !/পড়াশোনা|পড়াশুনা|বই\s*পড়/.test(t))
+    || /porech|porl|porin|pora\s*hoyni/i.test(t)
+    // A waqt name IMMEDIATELY carrying a miss signal ("ফজর মিস হয়ে গেছে") is
+    // a prayer declaration; a waqt used as a time-of-day for something else
+    // ("ইশার মিটিং মিস করেছি") is not.
+    || /(?:ফজর|যোহর|জোহর|জুহর|আসর|মাগরিব|ইশা|fajr|fozr|dhuhr|zuhr|johr|asr|maghrib|isha|esha)(?:র|ের)?\s*(?:মিস|miss)/i.test(t)
+  if (!prayerContext) return false
+  // Requests, questions, instructions and future intent are not declarations.
+  if (
+    /নিয়ম|কিভাবে|কীভাবে|কখন|কয়টায়|reminder|রিমাইন্ড|মনে করিয়ে|তৈরি|বানাও|সেট কর|বলো|বলে দাও|শোনাও|জানাও|শেখাও/i.test(t)
+    || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|পড়ে ফেলব|পড়ে ফেলবো|পড়তে হবে|হয়ে যাবে|porbo|pore nibo|pore nebo|pore felbo|porte hobe|hoye jabe|will pray/i.test(t)
+    // English negation: "I haven't/never/had not prayed Isha" contains
+    // "prayed" and would otherwise mark the OPPOSITE of what the owner said
+    // (Codex P1 rounds 3–5).
+    || /have?n'?t|hasn'?t|didn'?t|did not|have not|had not|couldn'?t|could not|never|not sure/i.test(t)
+    // Bengali doubt/negative clause around a completed verb: "পড়েছি বলে মনে
+    // হয় না" (Codex P1 round 5).
+    || /মনে হয় না|মনে নেই|bole mone hoy na|mone nei/i.test(t)
+    // English interrogative without punctuation, ANY subject: "Have I prayed
+    // Isha", "Has Rahim prayed Isha", "Did you pray fajr" (Codex P1 rounds
+    // 4–5). A declaration never LEADS with an auxiliary/wh-word.
+    || /^(?:have|has|had|did|do|does|am|is|are|was|were|when|what|why|who|whom)\b/i.test(t)
+    || /\b(?:have|has|did|do|does|am|was|when|what)\s+i\b/i.test(t)
+    // Unpunctuated first-person status question: "পড়েছি কি(না)" — voice
+    // transcripts carry no guaranteed "?". The lookahead keeps "পড়েছি
+    // কিছুক্ষণ আগে" (a real declaration) out of the net.
+    || /পড়েছি\s*কি(?:না|(?=\s|$|\?))/.test(t)
+    || /porechi\s*ki(?:na|(?=\s|$|\?))/i.test(t)
+  ) return false
+  // Owner attribution (Codex P1 round 6): a declaration about someone ELSE
+  // ("Rahim prayed Isha", "রহিম ইশার নামাজ পড়েছে") must not mark the owner's
+  // record. English pray-sentences need a first-person subject; Bangla
+  // third-person completed verbs (word-final পড়েছে / পড়েছেন / করেছে-after-
+  // আদায়) are about someone else — the owner's own forms are পড়েছি/পড়লাম.
+  if (/pray/i.test(t) && !/\b(?:i|i've|ami)\b/i.test(t) && !/আমি/.test(t)) return false
+  if (/পড়েছে(?!\S)|পড়েছেন|পড়ে ফেলেছে|আদায় করেছে(?!\S)/.test(t)) return false
+  return Boolean(detectSalahConfirmation(t) || detectSalahQaza(t))
+}
+
 /** Strip "(গতকাল)" suffix from accountability waqt labels */
 export function parseWaqtLabel(label: string): { waqt: string; isYesterday: boolean } {
   const isYesterday = /গতকাল/.test(label)

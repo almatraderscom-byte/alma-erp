@@ -664,6 +664,15 @@ enum AlmaLiveVoiceToolIntentClassifier {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         guard !normalized.isEmpty else { return .unclassified }
+        // Boss REPORTING his prayer state ("নামাজ পড়েছি", "ইশা মিস হয়েছে", "কাযা
+        // পড়ে নিয়েছি") is not a status question: the old "নামাজ পড়" quick-route
+        // marker pinned it to get_salah_status (a read), so the model's
+        // run_agent_turn → mark_salah was refused as a route mismatch and the
+        // prayer was never marked (live salah call 2026-08-15, Isha stuck
+        // pending). Checked before the hang-up pin on purpose — "পড়েছি, রাখো"
+        // must let mark_salah through; the deterministic hangupIntent path ends
+        // the call regardless of this route. Ambiguous ⇒ pin nothing.
+        if isSalahDeclaration(normalized) { return .unclassified }
         let hangupMarkers = [
             "আল্লাহ হাফেজ", "আল্লাহহাফেজ", "খোদা হাফেজ", "ফোন রাখ", "ফোন কাট",
             "কল রাখ", "কল কাট", "hang up",
@@ -709,6 +718,48 @@ enum AlmaLiveVoiceToolIntentClassifier {
         ]
         if casualMarkers.contains(where: normalized.contains) { return .casual }
         return .unclassified
+    }
+
+    /// Salah context word + a prayed/missed/qaza declaration in the same
+    /// sentence. Mirrors the server's salah-confirm-intent heuristics just
+    /// closely enough to UNPIN the route — persistence stays server-owned
+    /// (auto-mark + mark_salah), the client only refuses to stand in the way.
+    private static let salahContextMarkers = [
+        "নামাজ", "সালাহ", "ওয়াক্ত", "namaz", "namaj", "salah", "waqt",
+        "ফজর", "যোহর", "জোহর", "জুহর", "আসর", "মাগরিব", "ইশা",
+        "fajr", "fozr", "dhuhr", "zuhr", "johr", "asr", "maghrib", "isha", "esha",
+        "কাযা", "কাজা", "qaza", "kaza",
+    ]
+    // COMPLETED/PAST forms only (Codex P1, PR #762): a bare topic word like
+    // "কাযা" or the stem "আদায় কর" also appears in questions and requests
+    // ("কাযা নামাজের নিয়ম বলো", "নামাজ আদায় করার জন্য reminder তৈরি করো") and
+    // must never read as a declaration — the server would auto-mark it.
+    private static let salahDeclarationMarkers = [
+        "পড়েছি", "পড়লাম", "পড়ে নিয়েছি", "পড়ে ফেল", "পড়ে গেছি",
+        "আদায় করেছি", "আদায় করলাম", "porechi", "porlam", "pore nilam",
+        "pore nisi", "aday korechi",
+        "পড়িনি", "পড়া হয়নি", "পড়তে পারিনি", "porini", "pora hoyni",
+        "মিস হয়ে", "মিস করেছি", "miss hoye", "miss korechi",
+    ]
+    // Future-inflected completion stems (Codex P1 round 2): "পড়ে ফেলব" contains
+    // the completed stem "পড়ে ফেল" — a future promise must never read as done.
+    private static let salahFutureMarkers = [
+        "পড়ব", "পড়বো", "পড়ে নিব", "পড়ে নেব", "পড়ে ফেলব", "পড়ে ফেলবো",
+        "porbo", "pore nibo", "pore nebo", "pore felbo", "porte hobe",
+    ]
+    static func isSalahDeclaration(_ normalized: String) -> Bool {
+        salahContextMarkers.contains(where: normalized.contains)
+            && salahDeclarationMarkers.contains(where: normalized.contains)
+            && !salahFutureMarkers.contains(where: normalized.contains)
+    }
+
+    /// Raw-transcript entry for callers outside classify's own pipeline.
+    static func isSalahDeclarationSentence(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return !normalized.isEmpty && isSalahDeclaration(normalized)
     }
 }
 
@@ -5589,7 +5640,56 @@ final class AlmaVoiceEngine {
         if state != .speaking { state = .listening }
         if finalized {
             expectedLiveToolRoute = AlmaLiveVoiceToolIntentClassifier.classify(transcript)
+            // DETERMINISTIC salah persistence (live salah call 2026-08-15: Boss
+            // said "নামাজ পড়েছি", the Live model never called run_agent_turn, and
+            // Isha stayed pending). Chat runs the server's salah auto-mark on
+            // EVERY owner message — give the call path the same parity by
+            // posting every finalized transcript; the server's strict detectors
+            // decide (Codex P1 round 2: a client vocabulary prefilter silently
+            // dropped declarations the server understands, e.g. "I prayed
+            // Isha"). Idempotent with a later mark_salah.
+            postSpokenSalahConfirmation(transcript)
             feedFinalizeUser()
+        }
+    }
+
+    /// Fire-and-forget: the server's salah-auto-mark owns detection and the
+    /// waqt-window rules; this only carries Boss's words to it. Bounded retry
+    /// (Codex P2): a transient 5xx/transport failure must not turn the
+    /// deterministic path back into a coin flip — but no durable outbox; the
+    /// scheduler's 15-minute re-call is the outer safety net.
+    /// Confirmation POSTs are CHAINED (Codex P2 round 4): two consecutive
+    /// corrections ("মিস হয়েছে" → "না না, পড়েছি") racing to the non-atomic
+    /// auto-mark writer could let the earlier utterance win; transcript order
+    /// must equal write order.
+    private var salahConfirmChain: Task<Void, Never>?
+
+    private func postSpokenSalahConfirmation(_ text: String) {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count >= 3 else { return }
+        let previous = salahConfirmChain
+        salahConfirmChain = Task {
+            await previous?.value
+            struct MarkedRow: Decodable { let waqt: String; let status: String }
+            struct ConfirmResp: Decodable { let success: Bool?; let marked: [MarkedRow]? }
+            for (attempt, delayNs) in [(0, UInt64(0)), (1, UInt64(2_000_000_000)), (2, UInt64(6_000_000_000))] {
+                if delayNs > 0 { try? await Task.sleep(nanoseconds: delayNs) }
+                await AlmaAPI.shared.syncCookies()
+                do {
+                    let resp: ConfirmResp = try await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/salah/confirm-spoken",
+                        body: ["text": clean])
+                    #if DEBUG
+                    let marked = resp.marked?.map { "\($0.waqt)=\($0.status)" }.joined(separator: ",") ?? "none"
+                    NSLog("ALMA-VOICE spoken salah confirm (attempt %d) → %@", attempt, marked)
+                    #endif
+                    return
+                } catch {
+                    #if DEBUG
+                    NSLog("ALMA-VOICE spoken salah confirm attempt %d failed: %@", attempt, String(describing: error))
+                    #endif
+                }
+            }
         }
     }
 
