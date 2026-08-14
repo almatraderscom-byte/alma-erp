@@ -438,6 +438,23 @@ export async function advanceMediaChain(
     return status === 'success' ? 'final-delivered' : hasPreviousFinal ? 'restitch-failed-kept-previous' : 'final-failed'
   }
 
+  // A FAILED regen goes straight back to 'final' with the previous video —
+  // an unchanged re-stitch would cost nothing but would announce a fresh
+  // "সম্পূর্ণ" for a video identical to the old one, right after the owner was
+  // told his replacement failed. The prior version is still 'ready' (supersede
+  // happens only on success), so nothing is lost.
+  if (
+    status === 'failed' &&
+    (settledAsset?.version ?? 1) > 1 &&
+    Boolean((project as { finalAssetPath?: string | null }).finalAssetPath)
+  ) {
+    await db.agentMediaProject.updateMany({
+      where: { id: tag.projectId, status: { in: [...MEDIA_RENDERING_STATUSES] } },
+      data: { status: 'final' },
+    })
+    return 'regen-failed-restored-final'
+  }
+
   // Stage transitions — CAS + next-stage enqueue in ONE transaction. Only the
   // callback that wins the CAS enqueues; ties and retries are safe. Targets are
   // EXISTENCE-AWARE: on the first pass the next stage is empty and gets its
