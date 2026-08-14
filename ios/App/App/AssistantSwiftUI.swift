@@ -2692,7 +2692,12 @@ final class AssistantVM {
     /// The dock projection: the newest non-terminal tracker of THIS chat. The
     /// dock is navigation/summary over the same store — never a second state
     /// machine and never a second set of controls.
-    var activeWorkTracker: AgentWorkStepsSnapshot? {
+    var activeWorkTracker: AgentWorkStepsSnapshot? { activeWorkTracker(now: Date()) }
+
+    /// `now` is a parameter so the dock can re-evaluate on a clock tick —
+    /// time passing is not observable state, and without the tick a stale
+    /// running chip would outlive its freshness window (Codex P1 #758).
+    func activeWorkTracker(now: Date) -> AgentWorkStepsSnapshot? {
         guard let cid = conversationId else { return nil }
         return workTrackers.values
             // The dock is LIVE work only. The turn-end projection honestly
@@ -2716,7 +2721,7 @@ final class AssistantVM {
                 if isStreaming { return true }
                 guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
                     .parseWorkStepsTimestamp(snapshot.updatedAt) else { return false }
-                return Date().timeIntervalSince(updated) < 180
+                return now.timeIntervalSince(updated) < 180
             }
             .max { $0.updatedAt < $1.updatedAt }
     }
@@ -20791,7 +20796,13 @@ struct AgentWorkStepsDockView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let snapshot = vm.activeWorkTracker {
+        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+            dockBody(now: timeline.date)
+        }
+    }
+
+    @ViewBuilder private func dockBody(now: Date) -> some View {
+        if let snapshot = vm.activeWorkTracker(now: now) {
             VStack(spacing: 6) {
                 if expanded {
                     ScrollView {

@@ -4721,6 +4721,10 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(try snapshotFixture(
             revision: 5, status: "running", updatedAt: freshStamp))
         XCTAssertEqual(vm.activeWorkTracker?.status, "running")
+        // The freshness window EXPIRES: the same snapshot evaluated 200s later
+        // is gone — the dock's 30s clock tick drives this re-evaluation in the
+        // UI (Codex P1 #758).
+        XCTAssertNil(vm.activeWorkTracker(now: Date().addingTimeInterval(200)))
 
         // Waiting states genuinely await someone and stay visible without a
         // stream; terminal never shows.
