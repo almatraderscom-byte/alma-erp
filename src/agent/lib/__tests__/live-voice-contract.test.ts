@@ -30,8 +30,8 @@ describe('versioned live voice contract', () => {
     expect(contract.voices.filter((voice) => voice.enabled).map((voice) => voice.id))
       .toEqual(['Aoede', 'Achernar', 'Kore', 'Charon', 'Orus', 'Sulafat'])
     expect(contract.defaults).toEqual({
-      modelID: 'gemini-2.5-flash-native-audio-preview-12-2025',
-      voiceID: 'Aoede',
+      modelID: 'gemini-3.1-flash-live-preview',
+      voiceID: 'Charon',
     })
     expect(contract.contextCompression).toMatchObject({
       triggerTokens: 25_000,
@@ -51,7 +51,7 @@ describe('versioned live voice contract', () => {
   it('owns model capabilities instead of inferring them from model names', () => {
     const [natural, fast] = LIVE_VOICE_CONTRACT.models
     expect(natural.capabilities).toMatchObject({
-      affectiveDialog: true,
+      affectiveDialog: false,
       functionCallingMode: 'synchronous-and-asynchronous',
       thinking: { mode: 'budget', budget: 0 },
     })
@@ -149,22 +149,24 @@ describe('versioned live voice contract', () => {
   })
 
   it('never selects a retired model even when its enabled flag remains true', () => {
+    // Retire the non-default model (2.5): the default (3.1) must stay
+    // enabled or the contract itself fails validation.
     const [natural, fast] = LIVE_VOICE_CONTRACT.models
     const fixture = structuredClone(LIVE_VOICE_CONTRACT)
-    fixture.models[1]!.enabled = true
-    fixture.models[1]!.lifecycle = 'retired'
+    fixture.models[0]!.enabled = true
+    fixture.models[0]!.lifecycle = 'retired'
     const contract = parseLiveVoiceContract(fixture)
 
-    expect(contract.models[1]).toMatchObject({ id: fast.id, enabled: true, lifecycle: 'retired' })
-    expect(liveVoiceModelContract(fast.id, contract)).toBeUndefined()
+    expect(contract.models[0]).toMatchObject({ id: natural.id, enabled: true, lifecycle: 'retired' })
+    expect(liveVoiceModelContract(natural.id, contract)).toBeUndefined()
     expect(liveVoiceRemoteModelAvailability(
       natural.id,
-      natural.id,
+      null as unknown as string | undefined,
       contract,
-    )).toEqual({ enabled: false, replacementModelID: null })
+    )).toEqual({ enabled: false, replacementModelID: fast.id })
     expect(migrateLiveVoiceSelection({
       selectionVersion: contract.schemaVersion,
-      modelID: fast.id,
+      modelID: natural.id,
       voiceID: contract.defaults.voiceID,
     }, contract).modelID).toBe(contract.defaults.modelID)
   })

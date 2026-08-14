@@ -182,13 +182,17 @@ enum AlmaLiveVoicePreferences {
         bundledContract?.sessionProtocol
     }
 
+    // Resolved by id, never by capability: affectiveDialog is false on BOTH
+    // models since the 2026-08-13 outage fix (it is unusable over the
+    // ephemeral-token transport), so a capability-based find would return the
+    // wrong model.
     static var gemini25: String {
-        activeContract?.enabledModels.first(where: { $0.capabilities.affectiveDialog })?.id
+        activeContract?.enabledModels.first(where: { $0.id == legacyGemini25 })?.id
             ?? legacyGemini25
     }
 
     static var gemini31: String {
-        activeContract?.enabledModels.first(where: { !$0.capabilities.affectiveDialog })?.id
+        activeContract?.enabledModels.first(where: { $0.id == legacyGemini31 })?.id
             ?? legacyGemini31
     }
 

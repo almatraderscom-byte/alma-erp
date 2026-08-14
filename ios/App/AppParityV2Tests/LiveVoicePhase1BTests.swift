@@ -20,8 +20,11 @@ final class LiveVoicePhase1BTests: XCTestCase {
         let contract = try contract()
         XCTAssertEqual(contract.contractVersion, "live-voice-2026-08-12-v2")
         XCTAssertEqual(contract.schemaVersion, 1)
-        XCTAssertEqual(contract.defaults.modelID, contract.enabledModels[0].id)
-        XCTAssertEqual(contract.defaults.voiceID, "Aoede")
+        // 2026-08-14: the proven 3.1/Charon pair is the default (July bake-off
+        // verdict, restored after the build-103 outage); 2.5 stays selectable.
+        XCTAssertEqual(contract.defaults.modelID, contract.enabledModels[1].id)
+        XCTAssertEqual(contract.defaults.modelID, "gemini-3.1-flash-live-preview")
+        XCTAssertEqual(contract.defaults.voiceID, "Charon")
         XCTAssertEqual(contract.contextCompression.triggerTokens, 25_000)
         XCTAssertEqual(contract.contextCompression.targetTokens, 8_000)
         XCTAssertEqual(
@@ -32,7 +35,9 @@ final class LiveVoicePhase1BTests: XCTestCase {
         XCTAssertLessThan(
             contract.contextCompression.targetTokens,
             contract.contextCompression.triggerTokens)
-        XCTAssertTrue(contract.enabledModels[0].capabilities.affectiveDialog)
+        // Affective dialog is off contract-wide: unusable over the
+        // ephemeral-token transport (build-103 outage root cause).
+        XCTAssertFalse(contract.enabledModels[0].capabilities.affectiveDialog)
         XCTAssertEqual(
             contract.enabledModels[1].capabilities.functionCallingMode,
             "synchronous-only")
@@ -96,12 +101,9 @@ final class LiveVoicePhase1BTests: XCTestCase {
         var source = try XCTUnwrap(String(data: contractData(), encoding: .utf8))
         let legacyID = "gemini-2.5-flash-native-audio-preview-12-2025"
         let replacementID = "gemini-3.1-flash-live-preview"
-        let defaultNeedle = #""modelID": "gemini-2.5-flash-native-audio-preview-12-2025""#
+        // The shipping default is already the replacement (3.1) — only the
+        // legacy model needs retiring for this scenario.
         let modelNeedle = "\"id\": \"gemini-2.5-flash-native-audio-preview-12-2025\",\n      \"enabled\": true"
-        let defaultRange = try XCTUnwrap(source.range(of: defaultNeedle))
-        source.replaceSubrange(
-            defaultRange,
-            with: #""modelID": "gemini-3.1-flash-live-preview""#)
         let modelRange = try XCTUnwrap(source.range(of: modelNeedle))
         source.replaceSubrange(
             modelRange,
@@ -136,15 +138,18 @@ final class LiveVoicePhase1BTests: XCTestCase {
                 body: try XCTUnwrap(String(data: data, encoding: .utf8)))
         }
 
+        // The model with a declared replacement is 2.5 (its replacement is the
+        // 3.1 default); the default itself declares none.
+        let killableModelID = "gemini-2.5-flash-native-audio-preview-12-2025"
         XCTAssertEqual(
             AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
                 for: try failure(),
-                currentModelID: contract.defaults.modelID,
+                currentModelID: killableModelID,
                 contract: contract),
             replacement)
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(status: 500),
-            currentModelID: contract.defaults.modelID,
+            currentModelID: killableModelID,
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(contractVersion: "stale-contract"),
@@ -156,7 +161,7 @@ final class LiveVoicePhase1BTests: XCTestCase {
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(replacementModel: nil),
-            currentModelID: contract.defaults.modelID,
+            currentModelID: killableModelID,
             contract: contract))
         XCTAssertNil(AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
             for: try failure(replacementModel: contract.defaults.modelID),
@@ -172,7 +177,9 @@ final class LiveVoicePhase1BTests: XCTestCase {
 
     func testRetiredLifecycleIsNeverSelectableEvenWhenEnabled() throws {
         var source = try XCTUnwrap(String(data: contractData(), encoding: .utf8))
-        let retiredID = "gemini-3.1-flash-live-preview"
+        // Retiring the DEFAULT would fail contract validation outright, so the
+        // negative fixture retires the selectable non-default model instead.
+        let retiredID = "gemini-2.5-flash-native-audio-preview-12-2025"
         let selectableNeedle = "\"id\": \"\(retiredID)\",\n      \"enabled\": true,\n      \"lifecycle\": \"preview\""
         let retiredRange = try XCTUnwrap(source.range(of: selectableNeedle))
         source.replaceSubrange(
@@ -229,7 +236,8 @@ final class LiveVoicePhase1BTests: XCTestCase {
         XCTAssertEqual(
             AlmaLiveVoiceRemoteReplacementPolicy.replacementModelID(
                 for: delivery.underlyingError,
-                currentModelID: contract.defaults.modelID,
+                // 2.5 is the model with a declared replacement (3.1, the default).
+                currentModelID: "gemini-2.5-flash-native-audio-preview-12-2025",
                 contract: contract),
             replacement)
     }
@@ -250,8 +258,8 @@ final class LiveVoicePhase1BTests: XCTestCase {
                 of: #""schemaVersion": 1,"#,
                 with: #""schemaVersion": 1, "schema\u0056ersion": 1,"#),
             source.replacingOccurrences(
-                of: #""modelID": "gemini-2.5-flash-native-audio-preview-12-2025""#,
-                with: #""modelID": "gemini-3.1-flash-live-preview", "modelID": "gemini-2.5-flash-native-audio-preview-12-2025""#),
+                of: #""modelID": "gemini-3.1-flash-live-preview""#,
+                with: #""modelID": "gemini-2.5-flash-native-audio-preview-12-2025", "modelID": "gemini-3.1-flash-live-preview""#),
             source.replacingOccurrences(
                 of: #""enabled": true,"#,
                 with: #""enabled": false, "enabled": true,"#),

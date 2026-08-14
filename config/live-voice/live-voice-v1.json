@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "contractVersion": "live-voice-2026-08-12-v2",
   "defaults": {
-    "modelID": "gemini-2.5-flash-native-audio-preview-12-2025",
-    "voiceID": "Aoede"
+    "modelID": "gemini-3.1-flash-live-preview",
+    "voiceID": "Charon"
   },
   "contextCompression": {
     "triggerTokens": 25000,
@@ -74,7 +74,7 @@
       "lifecycle": "preview",
       "replacementModelID": "gemini-3.1-flash-live-preview",
       "capabilities": {
-        "affectiveDialog": true,
+        "affectiveDialog": false,
         "proactiveAudio": false,
         "functionCallingMode": "synchronous-and-asynchronous",
         "thinking": {
