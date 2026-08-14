@@ -107,7 +107,11 @@ describe('Creative Studio paid-run production boundary', () => {
     const paidGuards = imageWorker.match(
       /paidAttempt \+= 1\s*\n\s*await assertStudioRunPaidAttempt\(pendingActionId, payload, paidAttempt\)/g,
     ) ?? []
-    const paidGenerations = [...imageWorker.matchAll(/await generateImageToStorage\(/g)]
+    // Every INVOCATION counts, not just awaited ones: `return generate…(`,
+    // `void generate…(` or a bare call would otherwise slip past the guard
+    // count. The declaration (`async function generateImageToStorage(`) is the
+    // only non-call occurrence, so it is the only thing excluded.
+    const paidGenerations = [...imageWorker.matchAll(/(?<!function )generateImageToStorage\(/g)]
     expect(paidGuards.length).toBeGreaterThan(0)
     // One guard per paid provider call — no unguarded spend, no dead guard.
     expect(paidGuards.length).toBe(paidGenerations.length)
