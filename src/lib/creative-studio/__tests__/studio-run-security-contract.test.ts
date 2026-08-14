@@ -103,10 +103,9 @@ describe('Creative Studio paid-run production boundary', () => {
     // test pinned those literals, so it went red the day the worker improved
     // and stayed red. Pin the invariant instead: every paid generation call is
     // immediately preceded by an incremented guard.
-    const guardCall = 'await assertStudioRunPaidAttempt(pendingActionId, payload, paidAttempt)'
-    const paidGuards = imageWorker.match(
+    const paidGuards = [...imageWorker.matchAll(
       /paidAttempt \+= 1\s*\n\s*await assertStudioRunPaidAttempt\(pendingActionId, payload, paidAttempt\)/g,
-    ) ?? []
+    )]
     // Every INVOCATION counts, not just awaited ones: `return generate…(`,
     // `void generate…(` or a bare call would otherwise slip past the guard
     // count. The declaration (`async function generateImageToStorage(`) is the
@@ -115,14 +114,18 @@ describe('Creative Studio paid-run production boundary', () => {
     expect(paidGuards.length).toBeGreaterThan(0)
     // One guard per paid provider call — no unguarded spend, no dead guard.
     expect(paidGuards.length).toBe(paidGenerations.length)
-    for (const generation of paidGenerations) {
-      const before = imageWorker.slice(0, generation.index)
-      const guardIndex = before.lastIndexOf(guardCall)
-      expect(guardIndex).toBeGreaterThan(-1)
+    // Pair them IN ORDER so each guard is consumed exactly once. Matching each
+    // generation to its nearest preceding guard instead would let two calls
+    // share one guard while a second guard sat dead elsewhere — precisely the
+    // prohibited state (one unguarded spend + one useless guard) with the
+    // totals still balancing.
+    paidGenerations.forEach((generation, index) => {
+      const guardIndex = paidGuards[index].index
+      expect(guardIndex).toBeLessThan(generation.index)
       // The guard must be the thing right before the spend, not somewhere far
       // above it with other logic in between.
       expect(generation.index - guardIndex).toBeLessThan(400)
-    }
+    })
     expect(videoWorker.indexOf(
       'await assertStudioRunPaidAttempt(pendingActionId, payload, attempt)',
     )).toBeLessThan(videoWorker.indexOf(
