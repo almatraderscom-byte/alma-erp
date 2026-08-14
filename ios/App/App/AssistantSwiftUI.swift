@@ -170,6 +170,21 @@ struct AlmaDrawerSurface: ViewModifier {
     }
 }
 
+/// A circular glass control (scroll-to-bottom FAB and friends): Liquid Glass
+/// on iOS 26, the original thin material elsewhere.
+@available(iOS 17.0, *)
+struct AlmaGlassCircle: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}
+
 /// A small status/progress chip: Liquid Glass capsule on iOS 26 (optionally
 /// tinted), the original flat capsule fill everywhere else.
 @available(iOS 17.0, *)
@@ -20739,7 +20754,8 @@ struct AgentOpenTasksChipView: View {
                     .foregroundStyle(AgentPalette.coral.opacity(0.6))
             }
             .padding(.horizontal, 13).padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: Capsule())
+            .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.14),
+                                    tint: AgentPalette.coral.opacity(0.25)))
             .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
@@ -22543,7 +22559,8 @@ private struct AgentPlanDriveCard: View {
             ForEach(working) { workingRow($0) }
         }
         .padding(13)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 20, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
             .strokeBorder(AgentPalette.coral.opacity(0.22), lineWidth: 1))
         .confirmationDialog(
@@ -23791,7 +23808,7 @@ struct AssistantScreen: View {
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(pal.muted)
                                 .frame(width: 40, height: 40)
-                                .background(.ultraThinMaterial, in: Circle())
+                                .modifier(AlmaGlassCircle())
                                 .overlay(Circle().strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
                         }
                         .padding(.bottom, 10)
@@ -24393,7 +24410,8 @@ struct AssistantScreen: View {
             .font(.system(size: 12.5, weight: .medium))
             .foregroundStyle(pal.ink)
             .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 14, style: .continuous), pal: pal))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(AgentPalette.coral.opacity(0.5), lineWidth: 1))
             .padding(.bottom, 92)
