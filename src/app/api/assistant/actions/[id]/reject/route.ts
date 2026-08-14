@@ -92,12 +92,32 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   // have executed — an unconditional update would then stamp `rejected` over it
   // and report success while, for a permission card, the grant kept running
   // (review bot, #667).
-  const rejected = await db.agentPendingAction.updateMany({
-    where: { id: actionId, status: 'pending' },
-    // ownerDecided: rejection is always his — nothing in this system auto-rejects.
-    data: { status: 'rejected', resolvedAt: new Date(), ownerDecided: true },
-  })
-  if (rejected.count === 0) {
+  // media_plan: the card claim and the project cancellation must land TOGETHER —
+  // a crash after a lone claim would leave a rejected card on a 'planned'
+  // project with no retry path (retries 409 already_resolved). Same claim
+  // semantics as the generic path, plus the CAS-guarded project settle.
+  const mediaProjectId =
+    action.type === 'media_plan' &&
+    typeof (action.payload as { projectId?: unknown } | null)?.projectId === 'string'
+      ? String((action.payload as { projectId: string }).projectId)
+      : null
+  const rejectedCount = (await db.$transaction(async (tx: typeof db) => {
+    const rejected = await tx.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      // ownerDecided: rejection is always his — nothing in this system auto-rejects.
+      data: { status: 'rejected', resolvedAt: new Date(), ownerDecided: true },
+    })
+    if (rejected.count > 0 && mediaProjectId) {
+      await tx.agentMediaProject.updateMany({
+        // CAS on pendingActionId: only THIS card may cancel the project — a
+        // fresh revision card (which swapped pendingActionId) stays alive.
+        where: { id: mediaProjectId, status: { in: ['draft', 'planned'] }, pendingActionId: actionId },
+        data: { status: 'cancelled' },
+      })
+    }
+    return rejected.count
+  })) as number
+  if (rejectedCount === 0) {
     const now = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
     return Response.json({ error: 'already_resolved', status: now?.status }, { status: 409 })
   }
@@ -155,6 +175,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   const payload = action.payload as Record<string, unknown>
+
+  // Media mode: the project was already cancelled atomically with the claim
+  // above — this branch only shapes the response.
+  if (action.type === 'media_plan') {
+    return Response.json({ success: true, status: 'rejected', projectCancelled: Boolean(mediaProjectId) })
+  }
 
   // Office-absence ❌ না: owner did NOT send anyone out → ask WHICH staffer is
   // missing so the chosen one gets the camera frame + a nudge.

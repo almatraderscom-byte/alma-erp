@@ -35,6 +35,9 @@ export const REVISABLE_ACTION_TYPES = new Set<string>([
   'content_gate1',
   'content_gate2',
   'ad_creative_gate',
+  // Media mode plan card — plan_media_video(projectId) redraws the card in place
+  // with a fresh server-computed quote, so free-text revise is safe here.
+  'media_plan',
 ])
 
 export function isRevisableAction(type?: string | null): boolean {
@@ -52,8 +55,14 @@ export function buildReviseDirective(args: {
   type: string
   summary: string
   feedback: string
+  /** Type-specific anchor ids from the action payload (e.g. media projectId) so
+   * the head edits THIS card's subject, never "the latest" one it can find. */
+  anchor?: Record<string, string>
 }): string {
   const summary = (args.summary ?? '').trim()
+  const anchorLines = Object.entries(args.anchor ?? {})
+    .map(([k, v]) => `${k}: ${v}\n`)
+    .join('')
   return (
     `[BOSS-এর মতামত — pending কার্ড রিভাইজ করো]\n` +
     `Boss নিচের অনুমোদন-অপেক্ষমাণ কার্ডটা দেখে একটা মতামত দিয়েছেন। কার্ডটা approve/reject না করে ` +
@@ -61,6 +70,7 @@ export function buildReviseDirective(args: {
     `যেন Boss শেষে নিজে Approve করতে পারেন। নতুন অপ্রাসঙ্গিক কাজ শুরু করবে না।\n\n` +
     `কার্ড টাইপ: ${args.type}\n` +
     `কার্ড আইডি: ${args.id}\n` +
+    anchorLines +
     `বর্তমান কার্ড:\n${summary || '(সারাংশ নেই)'}\n\n` +
     `Boss-এর মতামত: ${args.feedback.trim()}\n\n` +
     `রিভাইজ শেষে Boss-কে এক লাইনে বাংলায় জানাও কী পরিবর্তন করলে (emoji নয়)। এখনই কার্ড কার্যকর কোরো না।`

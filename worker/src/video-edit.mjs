@@ -534,6 +534,14 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
     return
   }
 
+  // Media mode: final assembly — concat scene clips + mix VO/music (one encode)
+  if (payload?.mediaConcat) {
+    const { processMediaConcat } = await import('./video-post.mjs')
+    await ensureFfmpeg()
+    await processMediaConcat(job, { supabase, callJobResult, reportProgress })
+    return
+  }
+
   if (!payload?.videoPath || !payload?.recipeId || !payload?.targetSec) {
     await callJobResult(pendingActionId, 'failed', undefined, 'video_edit payload incomplete')
     return

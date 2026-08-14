@@ -2616,6 +2616,84 @@ model AgentPendingAction {
   @@map("agent_pending_actions")
 }
 
+/// Media mode (CapCut-class video engine) — one row per video project.
+/// planJson holds the versioned MediaPlan contract (docs/MEDIA_MODE_ROADMAP.md §4);
+/// the server-side cost estimator recomputes estimate lines, never the LLM.
+model AgentMediaProject {
+  id               String    @id @default(uuid())
+  conversationId   String?   @map("conversation_id")
+  title            String
+  /// draft | planned | approved | rendering_audio | rendering_image |
+  /// rendering_clip | rendering_final | final | failed | cancelled
+  /// (per-stage rendering statuses are the CAS tokens for chain transitions)
+  status           String    @default("draft")
+  planJson         Json      @map("plan_json")
+  /// Monotonic revision — every accepted plan revision (আমার মত) increments it.
+  planRevision     Int       @default(0) @map("plan_revision")
+  aspect           String    @default("9:16")
+  language         String    @default("bn")
+  totalEstimateUsd Float?    @map("total_estimate_usd")
+  totalActualUsd   Float?    @map("total_actual_usd")
+  finalAssetPath   String?   @map("final_asset_path")
+  pendingActionId  String?   @map("pending_action_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  scenes AgentMediaScene[]
+  assets AgentMediaAsset[]
+
+  @@index([status])
+  @@index([conversationId])
+  @@map("agent_media_projects")
+}
+
+model AgentMediaScene {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  idx         Int
+  brief       String   @db.Text
+  voScript    String?  @map("vo_script") @db.Text
+  imagePrompt String?  @map("image_prompt") @db.Text
+  clipBrief   String?  @map("clip_brief") @db.Text
+  durationSec Float    @map("duration_sec")
+  /// planned | rendering | ready | failed
+  status      String   @default("planned")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project AgentMediaProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, idx])
+  @@map("agent_media_scenes")
+}
+
+/// Every generated artifact, versioned — regenerate bumps version, stitch always
+/// consumes the newest `ready` version per scene.
+model AgentMediaAsset {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  sceneId     String?  @map("scene_id")
+  /// vo | music | sfx | image | clip | stitch | final
+  kind        String
+  version     Int      @default(1)
+  /// queued | rendering | ready | failed | superseded
+  status      String   @default("queued")
+  jobId       String?  @map("job_id")
+  storagePath String?  @map("storage_path")
+  mimeType    String?  @map("mime_type")
+  durationSec Float?   @map("duration_sec")
+  costUsd     Float?   @map("cost_usd")
+  modelId     String?  @map("model_id")
+  meta        Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  project AgentMediaProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, kind, status])
+  @@index([sceneId])
+  @@map("agent_media_assets")
+}
+
 model FamilyContact {
   id        String   @id @default(uuid())
   ownerId   String?  @map("owner_id")

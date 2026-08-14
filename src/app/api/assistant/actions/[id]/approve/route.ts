@@ -1113,6 +1113,84 @@ async function runApprove(
     })
   }
 
+  if (action.type === 'media_plan') {
+    // Media mode (M0): approve locks the plan + project. The render graph (M1)
+    // picks up 'approved' projects; until it ships, the card is honest about it.
+    // Claim + project CAS + terminal action state travel in ONE transaction so a
+    // crash between them can never strand an 'approved' card on a 'planned'
+    // project (retries would 409 already_resolved with no repair path).
+    const mediaPayload = payload as { projectId?: string | null; planRevision?: number | null }
+    const projectId = typeof mediaPayload.projectId === 'string' ? mediaPayload.projectId : null
+    const quotedRevision = typeof mediaPayload.planRevision === 'number' ? mediaPayload.planRevision : null
+    const outcome = (await db.$transaction(async (tx: typeof db) => {
+      const claimed = await tx.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date(), ownerDecided: true },
+      })
+      if (claimed.count === 0) return 'already_resolved'
+      if (projectId) {
+        // CAS: lock ONLY the exact plan revision this card quoted, and only
+        // while this card is still the project's current card. If a chat
+        // revision won the race, this stale card must NOT lock the new
+        // plan+price the owner never saw together.
+        const lockedProject = await tx.agentMediaProject.updateMany({
+          where: {
+            id: projectId,
+            status: 'planned',
+            pendingActionId: actionId,
+            ...(quotedRevision === null ? {} : { planRevision: quotedRevision }),
+          },
+          data: { status: 'approved' },
+        })
+        if (lockedProject.count === 0) {
+          await tx.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'superseded', result: { projectId, reason: 'plan_revised_during_approval' } },
+          })
+          return 'plan_revised'
+        }
+      }
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { projectId, approvedAt: new Date().toISOString() } },
+      })
+      return 'approved'
+    })) as 'already_resolved' | 'plan_revised' | 'approved'
+    if (outcome === 'already_resolved') {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    if (outcome === 'plan_revised') {
+      return Response.json(
+        { error: 'plan_revised', message: 'প্ল্যানটা এর মধ্যে রিভাইজ হয়েছে — নতুন কার্ড দেখে approve করুন।' },
+        { status: 409 },
+      )
+    }
+    // M1: approval is the only money gate — kick off the render chain now.
+    let renderQueued = 0
+    if (projectId) {
+      try {
+        const { startMediaRender } = await import('@/agent/lib/media/render-chain')
+        const started = await startMediaRender(projectId)
+        renderQueued = started.queued
+      } catch (err) {
+        console.error('[approve] media render start failed:', err)
+      }
+    }
+    await appendConversationNote(
+      db,
+      action,
+      renderQueued > 0
+        ? `✅ ভিডিও প্ল্যান approved — রেন্ডার শুরু! প্রথমে অডিও (${renderQueued}টি কাজ), তারপর প্রতি দৃশ্যের ছবি, তারপর ক্লিপ — প্রতিটা রেডি হলেই এই চ্যাটে আসবে, শেষে ফাইনাল ভিডিও।`
+        : `✅ ভিডিও প্ল্যান approved — কিন্তু রেন্ডার শুরু করা যায়নি; "ভিডিওটা আবার শুরু করো" বললে আমি আবার চেষ্টা করব।`,
+    )
+    return Response.json({
+      success: true,
+      message: 'Media plan approved — render chain started.',
+      projectId,
+      renderQueued,
+    })
+  }
+
   if (action.type === 'video_reel_gate') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

@@ -451,6 +451,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // ── ad creatives / video ───────────────────────────────────────────────────
   make_ad_creatives: stage('creative'),
   make_product_reel: stage('creative'),
+  plan_media_video: stage('creative'),
+  get_media_project: read('creative'),
   save_brand_asset: write('brand'),
 
   // ── work todos / orchestration / plans ─────────────────────────────────────

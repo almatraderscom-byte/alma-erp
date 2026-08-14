@@ -540,3 +540,147 @@ export async function applyPostLayers({ supabase, workDir, reelFile, payload, ou
     },
   }
 }
+
+/**
+ * Media mode final assembly: concat per-scene clips (crossfade) and mix the
+ * scene voiceovers (offset to each scene's start) + a looped music bed over
+ * the clips' own audio. One encode. Payload shape (render-chain.ts):
+ *   mediaConcat: { scenes: [{sceneIdx, durationSec, clipPath, voPath}],
+ *                  musicPath, aspect, title }
+ */
+export async function processMediaConcat(job, { supabase, callJobResult, reportProgress }) {
+  const { pendingActionId, payload } = job.data
+  const spec = payload?.mediaConcat ?? {}
+  const scenes = Array.isArray(spec.scenes) ? spec.scenes.filter((s) => s?.clipPath) : []
+  if (scenes.length === 0) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'mediaConcat needs at least 1 clip')
+    return
+  }
+  const fadeSec = 0.4
+  const { mkdir, rm, readFile: rf } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const workDir = join(tmpdir(), `alma-media-concat-${pendingActionId}`)
+  await mkdir(workDir, { recursive: true })
+  try {
+    await reportProgress(supabase, pendingActionId, 1)
+    const clipFiles = []
+    for (let i = 0; i < scenes.length; i++) {
+      clipFiles.push(await downloadSmall(supabase, scenes[i].clipPath, join(workDir, `clip-${i}.mp4`)))
+    }
+    const voFiles = []
+    for (let i = 0; i < scenes.length; i++) {
+      voFiles.push(
+        scenes[i].voPath
+          ? await downloadSmall(supabase, scenes[i].voPath, join(workDir, `vo-${i}.mp3`))
+          : null,
+      )
+    }
+    const musicFile = spec.musicPath
+      ? await downloadSmall(supabase, spec.musicPath, join(workDir, 'music'))
+      : null
+
+    await reportProgress(supabase, pendingActionId, 3)
+    const lens = []
+    const hasA = []
+    for (const f of clipFiles) {
+      lens.push(await mediaDuration(f))
+      hasA.push(await hasAudioStream(f))
+    }
+
+    // Scene start offsets in the final timeline (xfade overlaps eat fadeSec).
+    const offsets = []
+    let cursor = 0
+    for (let i = 0; i < clipFiles.length; i++) {
+      offsets.push(Math.max(0, Math.round(cursor * 100) / 100))
+      cursor += lens[i] - (i < clipFiles.length - 1 ? fadeSec : 0)
+    }
+    const outLen = Math.round(cursor * 100) / 100
+
+    const parts = []
+    clipFiles.forEach((_, i) => {
+      parts.push(`[${i}:v]fps=30,setsar=1,format=yuv420p[v${i}]`)
+      parts.push(
+        hasA[i]
+          ? `[${i}:a]${fmt('')}[a${i}]`
+          : `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${lens[i]}[a${i}]`,
+      )
+    })
+    // Video chain: xfade; clip-audio chain: acrossfade (kept low under the VO).
+    let vT = '[v0]'
+    let aT = '[a0]'
+    let runLen = lens[0]
+    for (let i = 1; i < clipFiles.length; i++) {
+      const off = Math.round((runLen - fadeSec) * 100) / 100
+      const vO = i === clipFiles.length - 1 ? '[vout]' : `[vx${i}]`
+      const aO = i === clipFiles.length - 1 ? '[aclip]' : `[ax${i}]`
+      parts.push(`${vT}[v${i}]xfade=transition=fade:duration=${fadeSec}:offset=${off}${vO}`)
+      parts.push(`${aT}[a${i}]acrossfade=d=${fadeSec}${aO}`)
+      vT = vO; aT = aO
+      runLen = runLen + lens[i] - fadeSec
+    }
+    if (clipFiles.length === 1) {
+      parts.push(`[v0]null[vout]`)
+      parts.push(`[a0]anull[aclip]`)
+    }
+
+    const mixLabels = []
+    const clipVol = voFiles.some(Boolean) ? 0.3 : 1.0
+    parts.push(`[aclip]volume=${clipVol}[aclipv]`)
+    mixLabels.push('[aclipv]')
+    let inputIdx = clipFiles.length
+    voFiles.forEach((f, i) => {
+      if (!f) return
+      const delayMs = Math.round(offsets[i] * 1000)
+      parts.push(`[${inputIdx}:a]${fmt('')},adelay=${delayMs}|${delayMs},apad=whole_dur=${outLen}[vo${i}]`)
+      mixLabels.push(`[vo${i}]`)
+      inputIdx++
+    })
+    if (musicFile) {
+      parts.push(`[${inputIdx}:a]aloop=loop=-1:size=2e9,atrim=0:${outLen},${fmt('')},volume=0.25[amusic]`)
+      mixLabels.push('[amusic]')
+      inputIdx++
+    }
+    parts.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0,alimiter=limit=0.9[aout]`)
+
+    const inputs = [
+      ...clipFiles.flatMap((f) => ['-i', f]),
+      ...voFiles.filter(Boolean).flatMap((f) => ['-i', f]),
+      ...(musicFile ? ['-i', musicFile] : []),
+    ]
+    const outFile = join(workDir, 'final.mp4')
+    await reportProgress(supabase, pendingActionId, 5)
+    await execFileAsync('ffmpeg', [
+      '-y', ...inputs,
+      '-filter_complex', parts.join(';'),
+      '-map', '[vout]', '-map', '[aout]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outFile,
+    ], { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 })
+
+    const thumbFile = join(workDir, 'thumb.jpg')
+    await execFileAsync('ffmpeg', ['-y', '-ss', '0.5', '-i', outFile, '-frames:v', '1', '-vf', 'scale=480:-2', thumbFile], { timeout: 60_000 }).catch(() => {})
+
+    const storagePath = `generated/${pendingActionId}.mp4`
+    const { error: upErr } = await supabase.storage.from('agent-files').upload(storagePath, await rf(outFile), { contentType: 'video/mp4', upsert: true })
+    if (upErr) throw new Error(upErr.message)
+    let thumbPath = null
+    try {
+      thumbPath = `generated/${pendingActionId}-thumb.jpg`
+      await supabase.storage.from('agent-files').upload(thumbPath, await rf(thumbFile), { contentType: 'image/jpeg', upsert: true })
+    } catch { thumbPath = null }
+
+    await callJobResult(pendingActionId, 'success', {
+      storagePath,
+      thumbPath,
+      mediaType: 'video',
+      durationSec: outLen,
+      conversationId: payload.conversationId ?? null,
+      costUsd: 0,
+    })
+    console.log(`[worker] media-concat ${pendingActionId} — done → ${storagePath} (${outLen}s, ${scenes.length} scenes)`)
+  } catch (err) {
+    await callJobResult(pendingActionId, 'failed', undefined, `mediaConcat failed: ${err?.message ?? err}`)
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
