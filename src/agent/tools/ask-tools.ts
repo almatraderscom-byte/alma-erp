@@ -77,8 +77,9 @@ export function currentOwnerRequestText(rowsNewestFirst: OwnerMessageRow[]): str
 const ask_user: AgentTool = {
   name: 'ask_user',
   description:
-    'When a request is ambiguous and the answer materially changes the work, ask ONE clarifying question with 2–4 specific tappable options. ' +
-    'Never open-ended questions. At most one ask per request.\n' +
+    'When a request is ambiguous and the answer materially changes the work, ask your clarifying question(s) with 2–4 specific tappable options each. ' +
+    'Never open-ended questions. At most ONE ask_user call per request — if you need answers to SEVERAL things, put them ALL in the `questions` array of that one call (max 4); ' +
+    'never split one decision moment across multiple cards or turns. Boss answers everything on one card in one go.\n' +
     'RECOMMEND FIRST (owner rule): options[0] MUST be the option YOU would choose — it is shown to Boss with a ' +
     '"প্রস্তাবিত" badge. Never hand him a flat list of equal choices and make him decide alone; you have the ' +
     'context, so take a position and put it first.\n' +
@@ -95,19 +96,60 @@ const ask_user: AgentTool = {
         maxItems: 4,
         description: '2–4 specific answer options the owner can tap',
       },
+      questions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 4,
+        description: 'Use when you have MORE THAN ONE question: every question of this request, each with its own 2–4 options. When present, top-level question/options may be omitted (the first entry stands in for them).',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', description: 'The question in Bangla' },
+            options: {
+              type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 4,
+              description: '2–4 tappable options; options[0] = your recommendation',
+            },
+          },
+          required: ['question', 'options'],
+        },
+      },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
-    required: ['question', 'options'],
+    required: [],
   },
   handler: async (input) => {
-    const question = String(input.question ?? '').trim()
-    const rawOptions = Array.isArray(input.options) ? input.options.map(String) : []
-    const options = rawOptions.map((o) => o.trim()).filter(Boolean)
-
-    if (!question) return { success: false, error: 'question is required' }
-    if (options.length < 2 || options.length > 4) {
-      return { success: false, error: 'options must have 2–4 items' }
+    // Normalize to a question GROUP. `questions` (1–4 entries) is the
+    // multi-question path; bare question/options remains valid and equals a
+    // one-entry group. The first entry mirrors into the legacy question/options
+    // columns and wire fields so pre-multi clients keep working.
+    type AskEntry = { question: string; options: string[] }
+    const entries: AskEntry[] = []
+    if (Array.isArray(input.questions) && input.questions.length > 0) {
+      for (const raw of input.questions) {
+        const q = String((raw as { question?: unknown })?.question ?? '').trim()
+        const rawOpts = (raw as { options?: unknown })?.options
+        const opts = (Array.isArray(rawOpts) ? rawOpts.map(String) : [])
+          .map((o) => o.trim()).filter(Boolean)
+        if (!q) return { success: false, error: 'every questions[] entry needs a question' }
+        if (opts.length < 2 || opts.length > 4) {
+          return { success: false, error: 'every questions[] entry needs 2–4 options' }
+        }
+        entries.push({ question: q, options: opts })
+      }
+      if (entries.length > 4) return { success: false, error: 'questions supports at most 4 entries' }
+    } else {
+      const question = String(input.question ?? '').trim()
+      const rawOptions = Array.isArray(input.options) ? input.options.map(String) : []
+      const options = rawOptions.map((o) => o.trim()).filter(Boolean)
+      if (!question) return { success: false, error: 'question is required' }
+      if (options.length < 2 || options.length > 4) {
+        return { success: false, error: 'options must have 2–4 items' }
+      }
+      entries.push({ question, options })
     }
+    const question = entries[0].question
+    const options = entries[0].options
+    const questionsJson = entries.length > 1 ? JSON.stringify(entries) : null
 
     const conversationId = input.conversationId ? String(input.conversationId) : null
     if (!conversationId) return { success: false, error: 'conversationId is required' }
@@ -121,7 +163,9 @@ const ask_user: AgentTool = {
       })
       const latestOwner = ownerRows[0]
       const ownerText = currentOwnerRequestText(ownerRows)
-      if (!shouldCreateAskCard({ ownerText, question, options })) {
+      const combinedQuestion = entries.map((e) => e.question).join(' ')
+      const combinedOptions = entries.flatMap((e) => e.options)
+      if (!shouldCreateAskCard({ ownerText, question: combinedQuestion, options: combinedOptions })) {
         return {
           success: false,
           error: 'Boss already gave a clear drafting instruction. Complete it in chat; do not ask for review or permission to publish elsewhere.',
@@ -153,12 +197,20 @@ const ask_user: AgentTool = {
           const parsed = JSON.parse(String(existing.options))
           if (Array.isArray(parsed)) existingOptions = parsed.map(String)
         } catch { /* keep validated current options as display fallback */ }
+        let existingQuestions: AskEntry[] | null = null
+        try {
+          const parsedGroup = existing.questions ? JSON.parse(String(existing.questions)) : null
+          if (Array.isArray(parsedGroup) && parsedGroup.length > 0) {
+            existingQuestions = parsedGroup as AskEntry[]
+          }
+        } catch { /* single-question card */ }
         return {
           success: true,
           data: {
             askCardId: existing.id as string,
             question: existing.question as string,
             options: existingOptions,
+            ...(existingQuestions ? { questions: existingQuestions } : {}),
             message: 'Existing clarifying question reused — wait for the owner choice.',
             deduplicated: true,
           },
@@ -185,6 +237,7 @@ const ask_user: AgentTool = {
           conversationId,
           question,
           options: serializedOptions,
+          ...(questionsJson ? { questions: questionsJson } : {}),
           status: 'pending',
           ...(workflowRunId ? { workflowRunId } : {}),
         },
@@ -197,13 +250,24 @@ const ask_user: AgentTool = {
         if (Array.isArray(parsed)) persistedOptions = parsed.map(String)
       } catch { /* keep the validated options for display */ }
 
+      let persistedQuestions: AskEntry[] | null = entries.length > 1 ? entries : null
+      try {
+        const parsedGroup = card.questions ? JSON.parse(String(card.questions)) : null
+        if (Array.isArray(parsedGroup) && parsedGroup.length > 0) {
+          persistedQuestions = parsedGroup as AskEntry[]
+        }
+      } catch { /* keep validated entries */ }
+
       return {
         success: true,
         data: {
           askCardId: card.id as string,
           question: String(card.question),
           options: persistedOptions,
-          message: 'Clarifying question shown to owner — wait for their choice.',
+          ...(persistedQuestions ? { questions: persistedQuestions } : {}),
+          message: entries.length > 1
+            ? 'All questions shown to the owner on ONE card — wait for the combined answer.'
+            : 'Clarifying question shown to owner — wait for their choice.',
         },
       }
     } catch (err) {

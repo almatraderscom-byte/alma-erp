@@ -1864,7 +1864,7 @@ async function* runAlternateProviderTurn(
   // Ask-user question cards emitted this turn — persisted as breadcrumbs in the
   // saved assistant message (mirrors the confirm-card pattern in core.ts) so the
   // card survives the message poll / page reload, not just the live SSE stream.
-  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[] }> = []
+  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }> = []
   // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
   // "Thought for Ns" block instead of vanishing when the live stream ends. Stored in
   // usage metadata (display-only) so it survives reload on the cheap-head path too.
@@ -3216,17 +3216,24 @@ async function* runAlternateProviderTurn(
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
             if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
               workStepsBlocker = { kind: 'question', refId: d.askCardId }
+              // Multi-question group rides along; question/options stay the
+              // first entry so pre-multi clients render a working card.
+              const questionGroup = Array.isArray(d.questions) && d.questions.length > 0
+                ? (d.questions as Array<{ question: string; options: string[] }>)
+                : undefined
               yield {
                 type: 'ask_card',
                 askCardId: d.askCardId,
                 question: typeof d.question === 'string' ? d.question : '',
                 options: d.options as string[],
+                ...(questionGroup ? { questions: questionGroup } : {}),
               }
               emittedAskCards.push({
                 type: 'ask_card',
                 askCardId: d.askCardId,
                 question: typeof d.question === 'string' ? d.question : '',
                 options: d.options.map(String),
+                ...(questionGroup ? { questions: questionGroup } : {}),
               })
             }
           }

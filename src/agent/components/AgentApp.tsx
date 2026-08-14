@@ -209,6 +209,9 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             id: askBlock.askCardId as string,
             question: askBlock.question ?? '',
             options: Array.isArray(askBlock.options) ? askBlock.options : [],
+            questions: Array.isArray((askBlock as { questions?: unknown }).questions)
+              ? ((askBlock as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
+              : undefined,
             status: askBlock.status,
             selectedOption: askBlock.selectedOption,
             // Pending in the DB but the owner already answered by typing — render
@@ -1391,6 +1394,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                     id: evt.askCardId as string,
                     question: evt.question as string,
                     options: evt.options as string[],
+                    questions: Array.isArray((evt as { questions?: unknown }).questions)
+                      ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
+                      : undefined,
                   },
                 }
               : m

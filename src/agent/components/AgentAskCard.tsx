@@ -8,6 +8,10 @@ export interface AskCard {
   id: string
   question: string
   options: string[]
+  /** Multi-question group (Claude-Code-style batched card). When present with
+   *  more than one entry, the card renders every question and submits ONE
+   *  combined answer; question/options mirror the first entry for old paths. */
+  questions?: Array<{ question: string; options: string[] }>
   /** Durable state from agent_ask_cards (poll/reload path). Absent on the live SSE path. */
   status?: string
   /** The answer recorded in the DB (tap or free text), when already answered. */
@@ -33,11 +37,29 @@ interface AgentAskCardProps {
  */
 export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardProps) {
   const [phase, setPhase] = useState<AskPhase>('idle')
-  const [chosen, setChosen] = useState<string | null>(null)
-  const [otherActive, setOtherActive] = useState(false)
-  const [otherText, setOtherText] = useState('')
+  const [chosenByIndex, setChosenByIndex] = useState<Record<number, string | null>>({})
+  const [otherActiveByIndex, setOtherActiveByIndex] = useState<Record<number, boolean>>({})
+  const [otherTextByIndex, setOtherTextByIndex] = useState<Record<number, string>>({})
 
-  const answer = otherActive ? otherText.trim() : chosen
+  // One rendering model for both shapes: a single question is a one-entry group.
+  const group = card.questions && card.questions.length > 0
+    ? card.questions
+    : [{ question: card.question, options: card.options }]
+  const multi = group.length > 1
+
+  const answerFor = (i: number): string | null => {
+    if (otherActiveByIndex[i]) {
+      const t = (otherTextByIndex[i] ?? '').trim()
+      return t || null
+    }
+    return chosenByIndex[i] ?? null
+  }
+  const allAnswers = group.map((_, i) => answerFor(i))
+  const answer = multi
+    ? (allAnswers.every(Boolean)
+        ? group.map((entry, i) => `${entry.question} — ${allAnswers[i]}`).join('\n')
+        : null)
+    : allAnswers[0]
   const canSubmit = !disabled && !!answer
 
   // Durable state (poll/reload path): the card may arrive already settled — either
@@ -99,94 +121,120 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className="mt-3 overflow-hidden rounded-3xl border border-white/[0.08] bg-card/80 shadow-float"
     >
-      {/* Question title */}
-      <div className="px-5 pb-2 pt-5">
-        <p className="text-[15px] font-semibold leading-snug text-cream">{card.question}</p>
-      </div>
+      {multi && (
+        <div className="px-5 pt-4">
+          <span className="rounded-full border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-2.5 py-0.5 text-[11px] font-semibold text-[#E07A5F]">
+            {group.length}টি প্রশ্ন — সব উত্তর দিয়ে একবারে পাঠান
+          </span>
+        </div>
+      )}
+      {group.map((entry, qi) => {
+        const otherActive = !!otherActiveByIndex[qi]
+        const chosen = chosenByIndex[qi] ?? null
+        return (
+          <div key={qi}>
+            {/* Question title */}
+            <div className={`px-5 pb-2 ${qi === 0 && !multi ? 'pt-5' : 'pt-4'}`}>
+              <p className="text-[15px] font-semibold leading-snug text-cream">
+                {multi ? `${qi + 1}. ${entry.question}` : entry.question}
+              </p>
+            </div>
 
-      {/* Options — divider-separated list rows with a radio dot (Claude-app feel) */}
-      <div className="mt-1 flex flex-col">
-        {card.options.map((opt, i) => {
-          const active = !otherActive && chosen === opt
-          // Boss must never have to guess what the agent itself would pick
-          // (owner rule 2026-07-25). ask_user requires the FIRST option to be
-          // the agent's own recommendation, so it wears the badge.
-          const recommended = i === 0 && card.options.length > 1
-          return (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => { if (!disabled) { selection(); setChosen(opt); setOtherActive(false) } }}
-              disabled={disabled}
-              className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
-            >
-              <span
-                className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border transition-colors ${
-                  active ? 'border-[#E07A5F]' : 'border-white/25'
-                }`}
+            {/* Options — divider-separated list rows with a radio dot (Claude-app feel) */}
+            <div className="mt-1 flex flex-col">
+              {entry.options.map((opt, i) => {
+                const active = !otherActive && chosen === opt
+                // Boss must never have to guess what the agent itself would pick
+                // (owner rule 2026-07-25): options[0] is the recommendation.
+                const recommended = i === 0 && entry.options.length > 1
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      if (disabled) return
+                      selection()
+                      setChosenByIndex((m) => ({ ...m, [qi]: opt }))
+                      setOtherActiveByIndex((m) => ({ ...m, [qi]: false }))
+                    }}
+                    disabled={disabled}
+                    className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <span
+                      className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border transition-colors ${
+                        active ? 'border-[#E07A5F]' : 'border-white/25'
+                      }`}
+                    >
+                      {active && (
+                        <motion.span
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                          className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
+                        />
+                      )}
+                    </span>
+                    <span className="text-[14px] font-medium text-cream">{opt}</span>
+                    {recommended && (
+                      <span className="ml-auto shrink-0 rounded-full border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-2 py-0.5 text-[11px] font-semibold text-[#E07A5F]">
+                        প্রস্তাবিত
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+
+              {/* Always-present "Other" row — the owner's own words are a valid answer */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (disabled) return
+                  selection()
+                  setOtherActiveByIndex((m) => ({ ...m, [qi]: true }))
+                  setChosenByIndex((m) => ({ ...m, [qi]: null }))
+                }}
+                disabled={disabled}
+                className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
               >
-                {active && (
-                  <motion.span
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                    className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
-                  />
-                )}
-              </span>
-              <span className="text-[14px] font-medium text-cream">{opt}</span>
-              {recommended && (
-                <span className="ml-auto shrink-0 rounded-full border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-2 py-0.5 text-[11px] font-semibold text-[#E07A5F]">
-                  প্রস্তাবিত
+                <span
+                  className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border transition-colors ${
+                    otherActive ? 'border-[#E07A5F]' : 'border-white/25'
+                  }`}
+                >
+                  {otherActive && (
+                    <motion.span
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                      className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
+                    />
+                  )}
                 </span>
+                <span className={`text-[14px] font-medium ${otherActive ? 'text-cream' : 'text-muted'}`}>
+                  অন্য কিছু (নিজে লিখুন)
+                </span>
+              </button>
+
+              {otherActive && (
+                <div className="border-t border-white/[0.06] px-5 py-3">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={otherTextByIndex[qi] ?? ''}
+                    onChange={(e) => setOtherTextByIndex((m) => ({ ...m, [qi]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+                    disabled={disabled}
+                    placeholder="আপনার মতামত লিখুন…"
+                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-cream outline-none transition-colors placeholder:text-muted focus:border-[#E07A5F]/50 disabled:opacity-40"
+                  />
+                </div>
               )}
-            </button>
-          )
-        })}
-
-        {/* Always-present "Other" row — owner can share his own opinion in free text */}
-        <button
-          type="button"
-          onClick={() => { if (!disabled) { selection(); setOtherActive(true); setChosen(null) } }}
-          disabled={disabled}
-          className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
-        >
-          <span
-            className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border transition-colors ${
-              otherActive ? 'border-[#E07A5F]' : 'border-white/25'
-            }`}
-          >
-            {otherActive && (
-              <motion.span
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
-              />
-            )}
-          </span>
-          <span className={`text-[14px] font-medium ${otherActive ? 'text-cream' : 'text-muted'}`}>
-            অন্য কিছু (নিজে লিখুন)
-          </span>
-        </button>
-
-        {otherActive && (
-          <div className="border-t border-white/[0.06] px-5 py-3">
-            <input
-              autoFocus
-              type="text"
-              value={otherText}
-              onChange={(e) => setOtherText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
-              disabled={disabled}
-              placeholder="আপনার মতামত লিখুন…"
-              className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-[14px] text-cream outline-none transition-colors placeholder:text-muted focus:border-[#E07A5F]/50 disabled:opacity-40"
-            />
+            </div>
           </div>
-        )}
-      </div>
+        )
+      })}
 
-      {/* Submit pill */}
+      {/* Submit pill — one submission answers every question on the card */}
       <div className="flex justify-end px-5 py-4">
         <button
           type="button"
