@@ -90,6 +90,16 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // public/ is served with `Cache-Control: public, max-age=0` by default,
+        // so every returning visit revalidates each font. The old next/font
+        // files sat under hashed /_next/static/media URLs and were immutable —
+        // keep that property: these filenames only change when the font does.
+        source: '/fonts/webfonts/:file*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
+      {
         source: '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|OneSignalSDKWorker.js|OneSignalSDKUpdaterWorker.js|offline.html|download.html|fonts/|releases/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|apk|html)$).*)',
         headers: [
           { key: 'Cache-Control', value: 'no-store, must-revalidate' },
