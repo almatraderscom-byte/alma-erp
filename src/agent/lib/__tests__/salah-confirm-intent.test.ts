@@ -75,6 +75,14 @@ describe('spoken salah confirmations (live-call auto-mark path)', () => {
     expect(isSpokenSalahDeclaration('Did I pray fajr today')).toBe(false)
   })
 
+  // Codex P1 round 5.
+  it('strict spoken gate rejects questions about other people and remaining negations', () => {
+    expect(isSpokenSalahDeclaration('Has Rahim prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('Have you prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('I had not prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি বলে মনে হয় না')).toBe(false)
+  })
+
   it('strict spoken gate rejects unpunctuated first-person status questions', () => {
     expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি কি')).toBe(false)
     expect(isSpokenSalahDeclaration('আজ ফজর পড়েছি কিনা মনে নেই')).toBe(false)

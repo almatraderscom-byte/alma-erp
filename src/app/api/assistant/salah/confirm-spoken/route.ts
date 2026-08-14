@@ -43,6 +43,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ success: true, marked: [] })
   }
 
-  const result = await applySalahAutoMarkFromUserTexts([text.slice(0, 500)])
+  // allowSettledCorrection: on a call, the owner's LATER words win — "I
+  // prayed Isha" then "no, I missed Isha" must land as missed (Codex P1
+  // round 5); requests are serialized client-side in transcript order.
+  const result = await applySalahAutoMarkFromUserTexts(
+    [text.slice(0, 500)],
+    new Date(),
+    { allowSettledCorrection: true },
+  )
   return Response.json({ success: true, marked: result.marked })
 }

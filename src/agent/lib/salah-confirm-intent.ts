@@ -135,12 +135,17 @@ export function isSpokenSalahDeclaration(text: string): boolean {
   if (
     /নিয়ম|কিভাবে|কীভাবে|কখন|কয়টায়|reminder|রিমাইন্ড|মনে করিয়ে|তৈরি|বানাও|সেট কর|বলো|বলে দাও|শোনাও|জানাও|শেখাও/i.test(t)
     || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|পড়ে ফেলব|পড়ে ফেলবো|পড়তে হবে|হয়ে যাবে|porbo|pore nibo|pore nebo|pore felbo|porte hobe|hoye jabe|will pray/i.test(t)
-    // English negation: "I haven't/never prayed Isha" contains "prayed" and
-    // would otherwise mark the OPPOSITE of what the owner said (Codex P1
-    // rounds 3–4).
-    || /have?n'?t|hasn'?t|didn'?t|did not|have not|couldn'?t|could not|never/i.test(t)
-    // English interrogative without punctuation: "Have I prayed Isha" /
-    // "Did I pray fajr" (Codex P1 round 4).
+    // English negation: "I haven't/never/had not prayed Isha" contains
+    // "prayed" and would otherwise mark the OPPOSITE of what the owner said
+    // (Codex P1 rounds 3–5).
+    || /have?n'?t|hasn'?t|didn'?t|did not|have not|had not|couldn'?t|could not|never|not sure/i.test(t)
+    // Bengali doubt/negative clause around a completed verb: "পড়েছি বলে মনে
+    // হয় না" (Codex P1 round 5).
+    || /মনে হয় না|মনে নেই|bole mone hoy na|mone nei/i.test(t)
+    // English interrogative without punctuation, ANY subject: "Have I prayed
+    // Isha", "Has Rahim prayed Isha", "Did you pray fajr" (Codex P1 rounds
+    // 4–5). A declaration never LEADS with an auxiliary/wh-word.
+    || /^(?:have|has|had|did|do|does|am|is|are|was|were|when|what|why|who|whom)\b/i.test(t)
     || /\b(?:have|has|did|do|does|am|was|when|what)\s+i\b/i.test(t)
     // Unpunctuated first-person status question: "পড়েছি কি(না)" — voice
     // transcripts carry no guaranteed "?". The lookahead keeps "পড়েছি
