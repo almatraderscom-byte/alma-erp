@@ -390,13 +390,19 @@ function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end:
   return matches
 }
 
-/** VIDEO/reel creation — routes to alma-media-video, never the image pipeline. */
-const VIDEO_OUTPUT = /(?:videos?|ভিডিও|reels?|রিল|রীল)/i
-/** "video cards"/"video player" are UI artifacts in an answer, not video-making. */
-const NON_VIDEO_OUTPUT_SUFFIX = /^\s*(?:cards?|players?|tags?|elements?|embeds?)\b/i
+/** VIDEO/reel creation — routes to alma-media-video, never the image pipeline.
+ * English nouns are whole-word ("freelancer" must not match "reel"); Bangla
+ * skips \b (it does not work across the Bangla script). */
+const VIDEO_OUTPUT = /(?:\bvideos?\b|\breels?\b|ভিডিও|রিল|রীল)/i
+/** "video cards"/"video script" are answer/text artifacts, not video-making. */
+const NON_VIDEO_OUTPUT_SUFFIX =
+  /^\s*(?:cards?|players?|tags?|elements?|embeds?|scripts?|briefs?|plans?|prompts?|ideas?|titles?|captions?|স্ক্রিপ্ট|আইডিয়া|ক্যাপশন)\b/i
 
 export const isVideoCreationAsk = (text: string): boolean => {
   if (MEDIA_DERIVE_ASK.test(text)) return false
+  // Editing/shrinking an EXISTING video is the converter/editor path — this
+  // pipeline only makes new videos from an idea.
+  if (MEDIA_CONVERT_ASK.test(text)) return false
   // Same proximity discipline as the image detector: a creation verb must sit
   // near the video noun in the same sentence, and formatting-only answer asks
   // ("rendered LaTeX … video cards") belong to the unrestricted head.
