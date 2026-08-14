@@ -115,10 +115,14 @@ const plan_media_video: AgentTool = {
             proj = await tx.agentMediaProject.findUnique({ where: { id: existing.id } })
             await tx.agentMediaScene.deleteMany({ where: { projectId: existing.id } })
             if (existing.pendingActionId) {
-              await tx.agentPendingAction.updateMany({
+              const superseded = await tx.agentPendingAction.updateMany({
                 where: { id: existing.pendingActionId, status: 'pending' },
                 data: { status: 'superseded', resolvedAt: new Date() },
               })
+              // Owner decision wins: if the current card is no longer pending
+              // (approve/reject claimed it first), this revision must abort —
+              // otherwise a mid-flight revise would silently undo a বাতিল.
+              if (superseded.count === 0) throw new Error(REVISION_LOST)
             }
           } else {
             proj = await tx.agentMediaProject.create({

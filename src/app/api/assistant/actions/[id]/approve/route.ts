@@ -1116,45 +1116,55 @@ async function runApprove(
   if (action.type === 'media_plan') {
     // Media mode (M0): approve locks the plan + project. The render graph (M1)
     // picks up 'approved' projects; until it ships, the card is honest about it.
-    const claimed = await db.agentPendingAction.updateMany({
-      where: { id: actionId, status: 'pending' },
-      data: { status: 'approved', resolvedAt: new Date(), ownerDecided: true },
-    })
-    if (claimed.count === 0) {
-      return Response.json({ error: 'already_resolved' }, { status: 409 })
-    }
+    // Claim + project CAS + terminal action state travel in ONE transaction so a
+    // crash between them can never strand an 'approved' card on a 'planned'
+    // project (retries would 409 already_resolved with no repair path).
     const mediaPayload = payload as { projectId?: string | null; planRevision?: number | null }
     const projectId = typeof mediaPayload.projectId === 'string' ? mediaPayload.projectId : null
     const quotedRevision = typeof mediaPayload.planRevision === 'number' ? mediaPayload.planRevision : null
-    if (projectId) {
-      // CAS: lock ONLY the exact plan revision this card quoted, and only while
-      // this card is still the project's current card. If a chat revision won
-      // the race (bumped planRevision / swapped pendingActionId), this stale
-      // card must NOT lock the new plan+price the owner never saw together.
-      const lockedProject = await db.agentMediaProject.updateMany({
-        where: {
-          id: projectId,
-          status: 'planned',
-          pendingActionId: actionId,
-          ...(quotedRevision === null ? {} : { planRevision: quotedRevision }),
-        },
-        data: { status: 'approved' },
+    const outcome = (await db.$transaction(async (tx: typeof db) => {
+      const claimed = await tx.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date(), ownerDecided: true },
       })
-      if (lockedProject.count === 0) {
-        await db.agentPendingAction.update({
-          where: { id: actionId },
-          data: { status: 'superseded', result: { projectId, reason: 'plan_revised_during_approval' } },
+      if (claimed.count === 0) return 'already_resolved'
+      if (projectId) {
+        // CAS: lock ONLY the exact plan revision this card quoted, and only
+        // while this card is still the project's current card. If a chat
+        // revision won the race, this stale card must NOT lock the new
+        // plan+price the owner never saw together.
+        const lockedProject = await tx.agentMediaProject.updateMany({
+          where: {
+            id: projectId,
+            status: 'planned',
+            pendingActionId: actionId,
+            ...(quotedRevision === null ? {} : { planRevision: quotedRevision }),
+          },
+          data: { status: 'approved' },
         })
-        return Response.json(
-          { error: 'plan_revised', message: 'প্ল্যানটা এর মধ্যে রিভাইজ হয়েছে — নতুন কার্ড দেখে approve করুন।' },
-          { status: 409 },
-        )
+        if (lockedProject.count === 0) {
+          await tx.agentPendingAction.update({
+            where: { id: actionId },
+            data: { status: 'superseded', result: { projectId, reason: 'plan_revised_during_approval' } },
+          })
+          return 'plan_revised'
+        }
       }
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { projectId, approvedAt: new Date().toISOString() } },
+      })
+      return 'approved'
+    })) as 'already_resolved' | 'plan_revised' | 'approved'
+    if (outcome === 'already_resolved') {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data: { status: 'executed', result: { projectId, approvedAt: new Date().toISOString() } },
-    })
+    if (outcome === 'plan_revised') {
+      return Response.json(
+        { error: 'plan_revised', message: 'প্ল্যানটা এর মধ্যে রিভাইজ হয়েছে — নতুন কার্ড দেখে approve করুন।' },
+        { status: 409 },
+      )
+    }
     await appendConversationNote(
       db,
       action,

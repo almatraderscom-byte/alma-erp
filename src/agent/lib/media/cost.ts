@@ -19,8 +19,9 @@ import type { MediaPlan, MediaPlanEstimate, MediaPlanEstimateLine } from './plan
 
 export const MEDIA_USD_TO_BDT = 125
 
-/** Seedream 5.0 Pro via fal — mirrors worker rate (~$0.03/image, estimate). */
-const SEEDREAM_PER_IMAGE_USD = 0.03
+/** Seedream 5.0 Pro via fal at the DEFAULT 2K render path — must mirror the
+ * worker's charge table (worker/src/index.mjs: 1K $0.0675 / 2K $0.135). */
+const SEEDREAM_PER_IMAGE_USD = 0.135
 
 function imageUnitUsd(model: MediaPlan['models']['image']): number {
   if (model === 'gemini-3-pro-image') return calcGeminiImageCostUsd('pro', '2K')
