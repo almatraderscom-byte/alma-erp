@@ -199,7 +199,9 @@ describe('live voice configuration', () => {
       activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
       turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY',
     })
-    expect(bare25.enableAffectiveDialog).toBe(true)
+    // Affective is not locked for bare clients: the mint response answers
+    // affectiveDialog=false, so no generation sends the field (Codex P1 #746).
+    expect(bare25.enableAffectiveDialog).toBeUndefined()
     expect(bare25.thinkingConfig).toEqual({ thinkingBudget: 0 })
     expect(bare31.enableAffectiveDialog).toBeUndefined()
     expect(bare31.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })

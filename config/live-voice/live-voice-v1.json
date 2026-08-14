@@ -40,9 +40,7 @@
               ]
             }
           },
-          "required": [
-            "tool"
-          ]
+          "required": ["tool"]
         }
       },
       {
@@ -64,9 +62,7 @@
               "description": "Boss-এর সম্পূর্ণ বক্তব্য বা অনুরোধ"
             }
           },
-          "required": [
-            "request"
-          ]
+          "required": ["request"]
         }
       }
     ]

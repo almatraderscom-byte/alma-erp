@@ -198,8 +198,12 @@ export function buildBareClientLiveVoiceTokenConfig(
       turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
     },
   }
+  // enableAffectiveDialog is deliberately ABSENT from the lock: the mint
+  // response now answers affectiveDialog=false for every model, so no client
+  // generation sends the field any more — locking it true would make the
+  // token contradict every setup (Codex P1, PR #746). July's bake-off proved
+  // the field is unusable over this transport anyway.
   if (model === FROZEN_BARE_CLIENT_GEMINI_25) {
-    locked.enableAffectiveDialog = true
     locked.thinkingConfig = { thinkingBudget: 0 }
   } else {
     locked.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL }
