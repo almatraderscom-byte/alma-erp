@@ -45,6 +45,15 @@ describe('normalizeMediaPlan', () => {
     expect(plan.scenes).toHaveLength(2)
   })
 
+  it('scene-level usesOwnerPhoto flips global personalization on', () => {
+    const plan = normalizeMediaPlan({
+      ...rawPlan,
+      personalization: { useOwnerPhotos: false, photoPaths: [] },
+    })
+    // rawPlan.scenes[0].usesOwnerPhoto === true
+    expect(plan.personalization.useOwnerPhotos).toBe(true)
+  })
+
   it('falls back to safe model defaults on unknown ids', () => {
     const plan = normalizeMediaPlan({ ...rawPlan, models: { image: 'bogus', video: 'bogus' } })
     expect(plan.models.image).toBe('gemini-3-pro-image')

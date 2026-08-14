@@ -35,8 +35,8 @@ describe('SPEC-083 tool mapping (live catalog vs G08)', () => {
   })
   it('the catalog covers every G08 tool exactly once (partition)', () => {
     const cov = coverage()
-    expect(cov.totalTools).toBe(329)
-    expect(cov.routedTools).toBe(329)
+    expect(cov.totalTools).toBe(330)
+    expect(cov.routedTools).toBe(330)
     expect(cov.uncovered).toEqual([])
     expect(cov.duplicated).toEqual([])
   })

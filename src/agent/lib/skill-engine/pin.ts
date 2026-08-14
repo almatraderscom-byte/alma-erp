@@ -61,6 +61,9 @@ export function shouldReleaseRouterPin(pinnedSkill: string, text: string): boole
   const staleNarrowPins = new Set([
     'alma-staff-dispatch',
     'alma-agent-incident-diagnosis',
+    // Five-tool video allowlist: a later explicit ERP ask ("kalker order gulo
+    // dekhao") in the same chat must release it or the order tools stay hidden.
+    'alma-media-video',
   ])
 
   if (staleNarrowPins.has(pinnedSkill)) {
