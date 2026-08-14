@@ -32,20 +32,20 @@ function req(payload: unknown, overrides: Partial<Record<string, unknown>> = {})
 }
 
 describe('SPEC-071 inventory snapshot integrity', () => {
-  it('captured the full monolith surface (329 tools, all classified + pooled)', () => {
-    expect(TOOL_INVENTORY.length).toBe(329)
+  it('captured the full monolith surface (330 tools, all classified + pooled)', () => {
+    expect(TOOL_INVENTORY.length).toBe(330)
     const s = summarize()
-    expect(s.total).toBe(329)
+    expect(s.total).toBe(330)
     expect(s.unclassified).toEqual([])
     expect(s.unpooled).toEqual([])
     // Mode/risk partitions sum to the whole.
     const modeSum = Object.values(s.byMode).reduce((a, b) => a + b, 0)
     const riskSum = Object.values(s.byRisk).reduce((a, b) => a + b, 0)
-    expect(modeSum).toBe(329)
-    expect(riskSum).toBe(329)
+    expect(modeSum).toBe(330)
+    expect(riskSum).toBe(330)
     // Known-good shape from the baseline measurement.
-    expect(s.byMode).toEqual({ read: 180, stage: 62, write: 87 })
-    expect(s.byRisk).toEqual({ low: 242, medium: 57, high: 30 })
+    expect(s.byMode).toEqual({ read: 180, stage: 62, write: 88 })
+    expect(s.byRisk).toEqual({ low: 242, medium: 58, high: 30 })
   })
 
   it('every row validates against the row schema', () => {
@@ -94,7 +94,7 @@ describe('SPEC-071 identity-enforced boundary', () => {
     const r = queryInventory(req({ kind: 'summary' }))
     expect(r.status).toBe('COMPLETED')
     if (r.status === 'COMPLETED' && r.value.kind === 'summary') {
-      expect(r.value.summary.total).toBe(329)
+      expect(r.value.summary.total).toBe(330)
     }
   })
 

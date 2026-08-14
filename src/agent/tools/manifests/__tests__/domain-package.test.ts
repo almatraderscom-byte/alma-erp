@@ -32,9 +32,9 @@ function m(name: string, domain: string, over: Partial<ToolManifest> = {}): Tool
 }
 
 describe('SPEC-073 generated packages', () => {
-  it('partitions the full monolith surface (329 manifests, 63 domains)', () => {
-    expect(manifestCount()).toBe(329)
-    expect(ALL_MANIFESTS.length).toBe(329)
+  it('partitions the full monolith surface (330 manifests, 63 domains)', () => {
+    expect(manifestCount()).toBe(330)
+    expect(ALL_MANIFESTS.length).toBe(330)
     expect(domains().length).toBe(63)
   })
   it('the aggregate is globally valid (loader would throw otherwise)', () => {
@@ -103,10 +103,10 @@ describe('SPEC-073 package validation catches corruption', () => {
 })
 
 describe('SPEC-073 loader boundary', () => {
-  it('count query returns 329', () => {
+  it('count query returns 330', () => {
     const r = queryManifests({ identity, contractVersion: LOADER_CONTRACT_VERSION, payload: { kind: 'count' } })
     expect(r.status).toBe('COMPLETED')
-    if (isSuccess(r) && r.value.kind === 'count') expect(r.value.count).toBe(329)
+    if (isSuccess(r) && r.value.kind === 'count') expect(r.value.count).toBe(330)
   })
   it('missing tenant fails closed', () => {
     const r = queryManifests({ identity: { ...identity, tenantId: '' }, contractVersion: LOADER_CONTRACT_VERSION, payload: { kind: 'count' } })

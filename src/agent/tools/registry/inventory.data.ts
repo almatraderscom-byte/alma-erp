@@ -269,6 +269,7 @@ export const INVENTORY_ROWS: readonly InventoryRow[] = [
   {"name":"read_source_file","domain":"diag","mode":"read","risk":"low","groups":["diag","trading"],"pools":["lifestyle","trading"],"hasSchema":true},
   {"name":"recall_business_knowledge","domain":"erp","mode":"read","risk":"low","groups":["erp"],"pools":["lifestyle","staff"],"hasSchema":true},
   {"name":"recommend_ad_actions","domain":"ads","mode":"read","risk":"low","groups":["growth"],"pools":["lifestyle"],"hasSchema":true},
+  {"name":"regenerate_media_scene","domain":"creative","mode":"write","risk":"medium","groups":["content"],"pools":["lifestyle"],"hasSchema":true},
   {"name":"reject_playbook","domain":"playbook","mode":"write","risk":"low","groups":["base"],"pools":["lifestyle","trading"],"hasSchema":true},
   {"name":"reply_to_comment","domain":"social","mode":"stage","risk":"high","groups":["erp","trading"],"pools":["lifestyle","trading"],"hasSchema":true},
   {"name":"request_agent_action","domain":"coworker","mode":"stage","risk":"low","groups":[],"pools":["lifestyle"],"hasSchema":true},
