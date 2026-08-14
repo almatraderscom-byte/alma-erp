@@ -16349,7 +16349,7 @@ struct AgentConfirmCardView: View {
                         .foregroundStyle(pal.muted)
                 }
                 .padding(11)
-                .background(Color.white.opacity(0.04),
+                .background(Color(UIColor.secondarySystemFill).opacity(0.55),
                             in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("agent.confirm-card.image-model")
@@ -19649,12 +19649,11 @@ struct AgentSideDrawer: View {
                         }
                         .foregroundStyle(item.2 == nil ? AgentPalette.coral : pal.mutedHi)
                         .frame(width: 58, height: 52)
-                        .background(pal.card.opacity(0.44),
-                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(item.2 == nil
-                                ? AgentPalette.coral.opacity(0.35) : pal.borderSubtle,
-                                lineWidth: 1))
+                        .background(
+                            item.2 == nil
+                                ? AnyShapeStyle(AgentPalette.coral.opacity(0.14))
+                                : AnyShapeStyle(Color(UIColor.tertiarySystemFill)),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(AlmaAgentPressStyle())
                     .accessibilityLabel(item.0)
@@ -19672,8 +19671,7 @@ struct AgentSideDrawer: View {
             tabButton("আর্কাইভ", icon: "archivebox", index: 2, pal: pal)
         }
         .padding(4)
-        .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
-        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+        .background(Color(UIColor.tertiarySystemFill), in: Capsule())
     }
 
     private func tabButton(_ label: String, icon: String, index: Int, pal: AgentPalette) -> some View {
@@ -19760,8 +19758,10 @@ struct AgentSideDrawer: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Color.white.opacity(scheme == .dark ? 0.06 : 0.5),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            // Native iOS search-field look: adaptive system fill, no hand-mixed
+            // white washes (owner round-4 report: drawer controls read web-ish).
+            .background(Color(UIColor.tertiarySystemFill),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 14)
 
             // Office is intentionally not a second conversation section. Keep
@@ -19901,8 +19901,10 @@ struct AgentSideDrawer: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Color.white.opacity(scheme == .dark ? 0.06 : 0.5),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            // Native iOS search-field look: adaptive system fill, no hand-mixed
+            // white washes (owner round-4 report: drawer controls read web-ish).
+            .background(Color(UIColor.tertiarySystemFill),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 14)
             .padding(.top, 12)
 
@@ -20043,7 +20045,7 @@ struct AgentSideDrawer: View {
                                 .foregroundStyle(pal.ink)
                                 .padding(.horizontal, 8).padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(Color(UIColor.secondarySystemFill).opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
                     divider(pal)
@@ -20063,7 +20065,7 @@ struct AgentSideDrawer: View {
                             .font(.system(size: 9)).foregroundStyle(pal.muted)
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Color(UIColor.secondarySystemFill).opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(pal.borderSubtle, lineWidth: 1))
                 }
@@ -20166,7 +20168,7 @@ struct AgentSideDrawer: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(m.pinned ? AgentPalette.coral.opacity(0.04) : Color.white.opacity(0.04),
+        .background(m.pinned ? AgentPalette.coral.opacity(0.04) : Color(UIColor.secondarySystemFill).opacity(0.55),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(m.pinned ? AgentPalette.coral.opacity(0.2) : pal.borderSubtle, lineWidth: 1))
@@ -20943,7 +20945,8 @@ struct AgentPendingTasksSheet: View {
             }
         }
         .padding(14)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
             .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
     }
