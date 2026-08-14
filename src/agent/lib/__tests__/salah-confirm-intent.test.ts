@@ -60,6 +60,21 @@ describe('spoken salah confirmations (live-call auto-mark path)', () => {
     expect(isSpokenSalahDeclaration('I did not pray fajr')).toBe(false)
   })
 
+  // Codex P1 round 4.
+  it('strict spoken gate requires prayer context for ambiguous waqt names', () => {
+    expect(isSpokenSalahDeclaration('ইশার কাজ শেষ করেছি')).toBe(false)
+    expect(isSpokenSalahDeclaration('ইশার আগে মিটিং শেষ হয়ে গেছে')).toBe(false)
+    expect(isSpokenSalahDeclaration('ইশার মিটিং মিস করেছি')).toBe(false)
+    // …but a waqt with a পড় verb or an adjacent miss needs no "নামাজ" noun.
+    expect(isSpokenSalahDeclaration('ইশা পড়েছি')).toBe(true)
+  })
+
+  it('strict spoken gate rejects never + unpunctuated English questions', () => {
+    expect(isSpokenSalahDeclaration('I never prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('Have I prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('Did I pray fajr today')).toBe(false)
+  })
+
   it('strict spoken gate rejects unpunctuated first-person status questions', () => {
     expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি কি')).toBe(false)
     expect(isSpokenSalahDeclaration('আজ ফজর পড়েছি কিনা মনে নেই')).toBe(false)

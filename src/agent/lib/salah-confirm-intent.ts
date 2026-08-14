@@ -117,13 +117,31 @@ export function detectSalahQaza(text: string): SalahQazaIntent | null {
 export function isSpokenSalahDeclaration(text: string): boolean {
   const t = text.trim()
   if (!t || t.length < 3) return false
+  // Every finalized call transcript reaches this gate, so an unrelated
+  // business sentence that merely names a waqt ("ইশার কাজ শেষ করেছি") must
+  // not be trusted to the broad `waqt.*শেষ/করেছি` detector patterns (Codex
+  // P1 round 4). Require an unambiguous prayer noun or a পড়/pray verb —
+  // and "পড়াশোনা" (studying) is reading, not praying.
+  const prayerContext =
+    /নামাজ|নামায|সালাত|সালাহ|namaz|namaj|salah|salat|কাযা|কাজা|qaza|kaza|আদায়|pray/i.test(t)
+    || (/পড়/.test(t) && !/পড়াশোনা|পড়াশুনা|বই\s*পড়/.test(t))
+    || /porech|porl|porin|pora\s*hoyni/i.test(t)
+    // A waqt name IMMEDIATELY carrying a miss signal ("ফজর মিস হয়ে গেছে") is
+    // a prayer declaration; a waqt used as a time-of-day for something else
+    // ("ইশার মিটিং মিস করেছি") is not.
+    || /(?:ফজর|যোহর|জোহর|জুহর|আসর|মাগরিব|ইশা|fajr|fozr|dhuhr|zuhr|johr|asr|maghrib|isha|esha)(?:র|ের)?\s*(?:মিস|miss)/i.test(t)
+  if (!prayerContext) return false
   // Requests, questions, instructions and future intent are not declarations.
   if (
     /নিয়ম|কিভাবে|কীভাবে|কখন|কয়টায়|reminder|রিমাইন্ড|মনে করিয়ে|তৈরি|বানাও|সেট কর|বলো|বলে দাও|শোনাও|জানাও|শেখাও/i.test(t)
     || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|পড়ে ফেলব|পড়ে ফেলবো|পড়তে হবে|হয়ে যাবে|porbo|pore nibo|pore nebo|pore felbo|porte hobe|hoye jabe|will pray/i.test(t)
-    // English negation: "I haven't prayed Isha" contains "prayed" and would
-    // otherwise mark the OPPOSITE of what the owner said (Codex P1 round 3).
-    || /have?n'?t|hasn'?t|didn'?t|did not|have not|couldn'?t|could not/i.test(t)
+    // English negation: "I haven't/never prayed Isha" contains "prayed" and
+    // would otherwise mark the OPPOSITE of what the owner said (Codex P1
+    // rounds 3–4).
+    || /have?n'?t|hasn'?t|didn'?t|did not|have not|couldn'?t|could not|never/i.test(t)
+    // English interrogative without punctuation: "Have I prayed Isha" /
+    // "Did I pray fajr" (Codex P1 round 4).
+    || /\b(?:have|has|did|do|does|am|was|when|what)\s+i\b/i.test(t)
     // Unpunctuated first-person status question: "পড়েছি কি(না)" — voice
     // transcripts carry no guaranteed "?". The lookahead keeps "পড়েছি
     // কিছুক্ষণ আগে" (a real declaration) out of the net.

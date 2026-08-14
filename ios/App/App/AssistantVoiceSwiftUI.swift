@@ -5658,10 +5658,18 @@ final class AlmaVoiceEngine {
     /// (Codex P2): a transient 5xx/transport failure must not turn the
     /// deterministic path back into a coin flip — but no durable outbox; the
     /// scheduler's 15-minute re-call is the outer safety net.
+    /// Confirmation POSTs are CHAINED (Codex P2 round 4): two consecutive
+    /// corrections ("মিস হয়েছে" → "না না, পড়েছি") racing to the non-atomic
+    /// auto-mark writer could let the earlier utterance win; transcript order
+    /// must equal write order.
+    private var salahConfirmChain: Task<Void, Never>?
+
     private func postSpokenSalahConfirmation(_ text: String) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard clean.count >= 3 else { return }
-        Task {
+        let previous = salahConfirmChain
+        salahConfirmChain = Task {
+            await previous?.value
             struct MarkedRow: Decodable { let waqt: String; let status: String }
             struct ConfirmResp: Decodable { let success: Bool?; let marked: [MarkedRow]? }
             for (attempt, delayNs) in [(0, UInt64(0)), (1, UInt64(2_000_000_000)), (2, UInt64(6_000_000_000))] {
