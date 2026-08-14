@@ -730,12 +730,16 @@ enum AlmaLiveVoiceToolIntentClassifier {
         "fajr", "fozr", "dhuhr", "zuhr", "johr", "asr", "maghrib", "isha", "esha",
         "কাযা", "কাজা", "qaza", "kaza",
     ]
+    // COMPLETED/PAST forms only (Codex P1, PR #762): a bare topic word like
+    // "কাযা" or the stem "আদায় কর" also appears in questions and requests
+    // ("কাযা নামাজের নিয়ম বলো", "নামাজ আদায় করার জন্য reminder তৈরি করো") and
+    // must never read as a declaration — the server would auto-mark it.
     private static let salahDeclarationMarkers = [
         "পড়েছি", "পড়লাম", "পড়ে নিয়েছি", "পড়ে ফেল", "পড়ে গেছি",
-        "আদায় কর", "porechi", "porlam", "pore nilam", "pore nisi",
+        "আদায় করেছি", "আদায় করলাম", "porechi", "porlam", "pore nilam",
+        "pore nisi", "aday korechi",
         "পড়িনি", "পড়া হয়নি", "পড়তে পারিনি", "porini", "pora hoyni",
         "মিস হয়ে", "মিস করেছি", "miss hoye", "miss korechi",
-        "কাযা", "কাজা", "qaza", "kaza",
     ]
     static func isSalahDeclaration(_ normalized: String) -> Bool {
         salahContextMarkers.contains(where: normalized.contains)

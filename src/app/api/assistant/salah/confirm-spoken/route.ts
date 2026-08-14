@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
+import { isSpokenSalahDeclaration } from '@/agent/lib/salah-confirm-intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,13 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   if (!text) return Response.json({ error: 'text_required' }, { status: 400 })
+
+  // Codex P1 (PR #762): a question, request, or future intent about salah
+  // ("কাযা নামাজের নিয়ম বলো", "…reminder তৈরি করো", "পরে পড়ব") must never
+  // reach the auto-mark writer from this path.
+  if (!isSpokenSalahDeclaration(text)) {
+    return Response.json({ success: true, marked: [] })
+  }
 
   const result = await applySalahAutoMarkFromUserTexts([text.slice(0, 500)])
   return Response.json({ success: true, marked: result.marked })

@@ -377,6 +377,13 @@ final class LiveVoicePreviewTests: XCTestCase {
             AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("  নামাজ   পড়েছি  "))
         XCTAssertFalse(
             AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("সালাহ status দেখাও"))
+        // Codex P1: topic mentions and requests are NOT declarations — a bare
+        // "কাযা" or the stem "আদায় কর" must never trigger the confirm POST.
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("কাযা নামাজের নিয়ম বলো"))
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence(
+                "ইশার নামাজ আদায় করার জন্য reminder তৈরি করো"))
     }
 
     func testToolIntentRouteRejectsProviderMismatchWithoutChangingOpaqueIdentity() {

@@ -105,6 +105,26 @@ export function detectSalahQaza(text: string): SalahQazaIntent | null {
   return { kind, dateHint }
 }
 
+/**
+ * STRICT gate for the spoken live-call path (/api/assistant/salah/confirm-spoken).
+ * detectSalahQaza accepts a bare topic mention ("কাযা") and hasPrayedSignal
+ * accepts the stem "আদায় কর" — fine for chat (long-standing behavior, the
+ * owner types deliberately) but too loose for every finalized call utterance
+ * (Codex P1, PR #762): "কাযা নামাজের নিয়ম বলো" or "নামাজ আদায় করার জন্য
+ * reminder তৈরি করো" must never auto-mark. Require a real declaration and
+ * reject request/question/future-intent wording outright.
+ */
+export function isSpokenSalahDeclaration(text: string): boolean {
+  const t = text.trim()
+  if (!t || t.length < 3) return false
+  // Requests, questions, instructions and future intent are not declarations.
+  if (
+    /নিয়ম|কিভাবে|কীভাবে|কখন|কয়টায়|reminder|রিমাইন্ড|মনে করিয়ে|তৈরি|বানাও|সেট কর|বলো|বলে দাও|শোনাও|জানাও|শেখাও/i.test(t)
+    || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|porbo|pore nibo|pore nebo|porte hobe/i.test(t)
+  ) return false
+  return Boolean(detectSalahConfirmation(t) || detectSalahQaza(t))
+}
+
 /** Strip "(গতকাল)" suffix from accountability waqt labels */
 export function parseWaqtLabel(label: string): { waqt: string; isYesterday: boolean } {
   const isYesterday = /গতকাল/.test(label)
