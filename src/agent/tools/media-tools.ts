@@ -183,6 +183,10 @@ const plan_media_video: AgentTool = {
         success: true,
         data: {
           pendingActionId: actionId,
+          // Live-card emitters (core.ts / run-owner-turn.ts) read the event type
+          // from d.actionType — without it the fresh card lands typeless and the
+          // client revise path only works after a reload.
+          actionType: 'media_plan',
           projectId: project.id,
           planRevision: project.planRevision,
           totalUsd: estimate.totalUsd,
