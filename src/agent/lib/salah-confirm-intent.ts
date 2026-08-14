@@ -153,6 +153,13 @@ export function isSpokenSalahDeclaration(text: string): boolean {
     || /পড়েছি\s*কি(?:না|(?=\s|$|\?))/.test(t)
     || /porechi\s*ki(?:na|(?=\s|$|\?))/i.test(t)
   ) return false
+  // Owner attribution (Codex P1 round 6): a declaration about someone ELSE
+  // ("Rahim prayed Isha", "রহিম ইশার নামাজ পড়েছে") must not mark the owner's
+  // record. English pray-sentences need a first-person subject; Bangla
+  // third-person completed verbs (word-final পড়েছে / পড়েছেন / করেছে-after-
+  // আদায়) are about someone else — the owner's own forms are পড়েছি/পড়লাম.
+  if (/pray/i.test(t) && !/\b(?:i|i've|ami)\b/i.test(t) && !/আমি/.test(t)) return false
+  if (/পড়েছে(?!\S)|পড়েছেন|পড়ে ফেলেছে|আদায় করেছে(?!\S)/.test(t)) return false
   return Boolean(detectSalahConfirmation(t) || detectSalahQaza(t))
 }
 

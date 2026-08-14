@@ -33,6 +33,7 @@ async function loadDayRecords(dateYmd: string) {
     status: string
     windowStart: Date
     windowEnd: Date
+    confirmedAt: Date | null
   }>>
 }
 
@@ -95,6 +96,28 @@ export async function applySalahAutoMarkFromUserTexts(
     let targetWaqt: string | undefined = signal.waqt
     let dateYmd = signal.dateHint === 'yesterday' ? yesterdayYmd : todayYmd
 
+    if (!targetWaqt && opts.allowSettledCorrection) {
+      // Implicit spoken correction (Codex P1 round 6): "no, I missed it"
+      // seconds after a confirm names no waqt, and the just-settled record
+      // has already left the accountable list — the record confirmed within
+      // the last 3 minutes with a DIFFERENT kind is the natural target.
+      const newKind = mode === 'prayed' ? 'prayed' : mode
+      const recent = [
+        ...todayRecords.map((r) => ({ r, d: todayYmd })),
+        ...yesterdayRecords.map((r) => ({ r, d: yesterdayYmd })),
+      ]
+        .filter(({ r }) => r.confirmedAt && isSalahSettled(r.status)
+          && now.getTime() - new Date(r.confirmedAt).getTime() < 3 * 60_000)
+        .sort((a, b) =>
+          new Date(b.r.confirmedAt as Date).getTime() - new Date(a.r.confirmedAt as Date).getTime())[0]
+      if (recent) {
+        const recentKind = recent.r.status.startsWith('prayed') ? 'prayed' : recent.r.status
+        if (recentKind !== newKind) {
+          targetWaqt = recent.r.waqt
+          dateYmd = recent.d
+        }
+      }
+    }
     if (!targetWaqt) {
       const candidate = accountable.find((a) => {
         const { waqt, isYesterday } = parseWaqtLabel(a.waqt)

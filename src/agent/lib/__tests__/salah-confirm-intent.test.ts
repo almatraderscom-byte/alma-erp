@@ -83,6 +83,14 @@ describe('spoken salah confirmations (live-call auto-mark path)', () => {
     expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি বলে মনে হয় না')).toBe(false)
   })
 
+  // Codex P1 round 6: declarations about someone else.
+  it('strict spoken gate requires owner attribution', () => {
+    expect(isSpokenSalahDeclaration('Rahim prayed Isha')).toBe(false)
+    expect(isSpokenSalahDeclaration('রহিম ইশার নামাজ পড়েছে')).toBe(false)
+    expect(isSpokenSalahDeclaration('উনি নামাজ পড়েছেন')).toBe(false)
+    expect(isSpokenSalahDeclaration('আমি ইশা পড়েছি')).toBe(true)
+  })
+
   it('strict spoken gate rejects unpunctuated first-person status questions', () => {
     expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি কি')).toBe(false)
     expect(isSpokenSalahDeclaration('আজ ফজর পড়েছি কিনা মনে নেই')).toBe(false)
