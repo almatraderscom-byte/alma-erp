@@ -5634,6 +5634,17 @@ final class AlmaVoiceEngine {
         // Standalone closings.
         if t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") || t.contains("তাহলে রাখি") || t.contains("রাখি তাহলে") { return true }
         if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
+        // Short standalone closings like "আচ্ছা ঠিক আছে রাখো তাহলে" (owner
+        // report 2026-08-15: his real wording missed the list above and the
+        // call hung open). Still narrow: no question forms, no memory
+        // instructions (মনে/নোট/সেভ), and only as a SHORT utterance so a
+        // রাখ-word inside a longer sentence keeps meaning what it says.
+        if t.count <= 25,
+           t.contains("রাখো") || t.contains("রাখেন") || t.contains("রাখি") || t.contains("রেখে দ"),
+           !t.contains("?"), !t.contains("কি "), !t.contains("কী"), !t.contains("কেন"),
+           !t.contains("মনে"), !t.contains("নোট"), !t.contains("সেভ"), !t.contains("save") {
+            return true
+        }
         return false
     }
 
@@ -5642,20 +5653,6 @@ final class AlmaVoiceEngine {
         replyText = spoken
         nowLine = spoken
         feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: spoken)
-        // Deterministic hang-up, second door (owner report 2026-08-15: Boss's
-        // wording missed the narrow intent list, the model spoke its goodbye
-        // but skipped end_call, and the call hung open). When the MODEL's own
-        // goodbye salutation plays and Boss said something in the রাখ/বিদায়
-        // word family within the last 25s, the call ends after the goodbye —
-        // the same corroboration window the model's end_call is held to.
-        if spoken.contains("আল্লাহ হাফেজ") || spoken.contains("আল্লাহহাফেজ")
-            || spoken.contains("খোদা হাফেজ"),
-           Date().timeIntervalSince(lastHangupContextAt) <= 25 {
-            #if DEBUG
-            NSLog("ALMA-VOICE model goodbye + owner hangup context — ending after playback")
-            #endif
-            scheduleModelRequestedEnd(hardFallback: 12)
-        }
     }
 
     func livePlaybackChanged(active: Bool, level: Double) {
