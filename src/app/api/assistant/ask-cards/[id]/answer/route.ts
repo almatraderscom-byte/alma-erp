@@ -35,7 +35,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const option = typeof body.option === 'string' ? body.option.trim() : ''
   if (!option) return Response.json({ error: 'option_required' }, { status: 400 })
-  if (option.length > 500) return Response.json({ error: 'option_too_long' }, { status: 400 })
+  // 1200 (was 500): a multi-question card submits every answer as one
+  // combined text ("১. … · ২. …").
+  if (option.length > 1200) return Response.json({ error: 'option_too_long' }, { status: 400 })
 
   // Phase 34: one idempotent, run-binding answer path (ask-cards.ts).
   // Free-text answers are FIRST-CLASS: the card always shows an "Other (write

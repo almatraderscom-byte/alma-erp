@@ -145,7 +145,7 @@ export type AgentEvent =
   // A tool filed a document as a conversation artifact — the UI drops a file
   // card into the reply flow and opens the artifacts panel on it.
   | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
-  | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  | { type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }
   // Speak-first (owner rule 2026-07-25): the line the head wrote BEFORE it ran
   // anything — "বস, … বুঝেছি — … দেখছি"। It is emitted as ordinary text_delta
   // first (so every client streams it live), then this marker closes it. The
@@ -370,7 +370,7 @@ type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }
-  | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  | { type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }
   | FileRefBlock
 
 // ── History loading with file reconstruction ───────────────────────────────
@@ -1110,7 +1110,7 @@ export async function* runAgentTurn(
   // Ask-user question cards emitted this turn — persisted as breadcrumbs (same
   // pattern as confirm cards) so the card survives the message poll / reload
   // instead of living only in the SSE stream.
-  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[] }> = []
+  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }> = []
   // Interactive question cards surfaced this turn (owner-facing yes/no / choice).
   // Tracked alongside confirm cards so the card-detection rule knows whether ANY
   // card actually reached the owner before the head claimed one did.
@@ -2040,17 +2040,22 @@ export async function* runAgentTurn(
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
             if (!emittedAskCards.some((card) => card.askCardId === d.askCardId)) {
               askCardsEmitted++
+              const questionGroup = Array.isArray(d.questions) && d.questions.length > 0
+                ? (d.questions as Array<{ question: string; options: string[] }>)
+                : undefined
               yield {
                 type: 'ask_card',
                 askCardId: d.askCardId,
                 question: typeof d.question === 'string' ? d.question : '',
                 options: d.options as string[],
+                ...(questionGroup ? { questions: questionGroup } : {}),
               }
               emittedAskCards.push({
                 type: 'ask_card',
                 askCardId: d.askCardId,
                 question: typeof d.question === 'string' ? d.question : '',
                 options: d.options.map(String),
+                ...(questionGroup ? { questions: questionGroup } : {}),
               })
             }
           }

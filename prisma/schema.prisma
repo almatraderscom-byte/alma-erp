@@ -4647,6 +4647,10 @@ model AgentAskCard {
   options        String   @db.Text
   status         String   @default("pending")
   selectedOption String?  @map("selected_option")
+  /// Multi-question card (owner ask 2026-08-14): JSON [{question, options[]}]
+  /// covering EVERY question; `question`/`options` keep the first entry so
+  /// pre-multi clients and readers stay correct. NULL = single-question card.
+  questions      String?  @db.Text
   /// Phase 4: the WorkflowRun this question belongs to (structured reply link).
   workflowRunId  String?  @map("workflow_run_id")
   createdAt      DateTime @default(now()) @map("created_at")

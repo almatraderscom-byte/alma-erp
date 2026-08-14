@@ -740,6 +740,9 @@ struct AgentSSEEvent: Decodable {
     let askCardId: String?
     let question: String?
     let options: [String]?
+    /// Multi-question ask card (Claude-Code-style): every question with its
+    /// own options; question/options above mirror the first entry.
+    let questions: [AgentAskQuestionWire]?
     let message: String?
     let error: String?
     let title: String?          // artifact_saved
@@ -839,7 +842,7 @@ enum AgentTurnEvent: Sendable {
     case turnProgress(round: Int, elapsedSec: Int, lastToolLabel: String?, text: String)
     /// Build 103 Issue 3 — full authoritative work-step tracker snapshot.
     case workSteps(AgentWorkStepsSnapshot)
-    case askCard(id: String, question: String, options: [String])
+    case askCard(id: String, question: String, options: [String], questions: [AgentAskQuestionWire]?)
     case verificationRetry(attempt: Int, maxAttempts: Int)
     /// Speak-first (owner rule 2026-07-25): the opening line the head wrote
     /// BEFORE it ran anything. It already arrived as text_delta; this marker
@@ -937,7 +940,8 @@ enum AgentTurnEvent: Sendable {
             ).map(AgentTurnEvent.workSteps) ?? .unknown(type: "work_steps_snapshot/invalid")
         case "ask_card":
             self = ev.askCardId.map {
-                .askCard(id: $0, question: ev.question ?? "", options: ev.options ?? [])
+                .askCard(id: $0, question: ev.question ?? "", options: ev.options ?? [],
+                         questions: ev.questions)
             } ?? .unknown(type: "ask_card/noid")
         case "verification_retry":
             self = .verificationRetry(attempt: ev.attempt ?? 1, maxAttempts: ev.maxAttempts ?? 1)
@@ -1299,4 +1303,11 @@ final class AssistantRedirectBlocker: NSObject, URLSessionTaskDelegate {
         #endif
         completionHandler(nil)
     }
+}
+
+
+/// One entry of a multi-question ask card ("questions" on the ask_card event).
+struct AgentAskQuestionWire: Decodable, Equatable, Sendable {
+    let question: String
+    let options: [String]
 }

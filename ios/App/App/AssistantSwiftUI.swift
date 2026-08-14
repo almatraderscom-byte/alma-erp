@@ -449,6 +449,8 @@ struct AgentContentBlock: Decodable {
     let question: String?
     let options: [String]?
     let selectedOption: String?
+    /// Multi-question ask card group (nil = single-question card).
+    let questions: [AgentAskQuestionWire]?
 }
 
 /// The server stores attachment paths and the one-time Gemini vision transcript as
@@ -1584,6 +1586,9 @@ struct AgentChatMessage: Identifiable, Equatable {
         var options: [String]
         var status: String        // pending | answered | superseded
         var selectedOption: String?
+        /// Multi-question group (Claude-Code-style): every question with its
+        /// own options; question/options mirror the first entry. nil = single.
+        var questions: [AgentAskQuestionWire]? = nil
     }
     /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
     enum TimelineEntry: Equatable {
@@ -1804,7 +1809,8 @@ struct AgentChatMessage: Identifiable, Equatable {
                     m.askCards.append(.init(id: aid, question: block.question ?? "",
                                             options: block.options ?? [],
                                             status: block.status ?? "pending",
-                                            selectedOption: block.selectedOption))
+                                            selectedOption: block.selectedOption,
+                                            questions: block.questions))
                 }
             default: break
             }
@@ -8121,13 +8127,14 @@ final class AssistantVM {
             case .workSteps(let snapshot):
                 mergeWorkStepsSnapshot(snapshot)
                 touchedStream = true
-            case .askCard(let aid, let question, let options):
+            case .askCard(let aid, let question, let options, let questionGroup):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }),
                    !messages[i].askCards.contains(where: { $0.id == aid }) {
                     messages[i].askCards.append(.init(id: aid, question: question,
                                                       options: options, status: "pending",
-                                                      selectedOption: nil))
+                                                      selectedOption: nil,
+                                                      questions: questionGroup))
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
             case .skillPinned(let skill, let source, let reason, let isolated):
@@ -8975,6 +8982,36 @@ final class AssistantVM {
     /// Build 103 Issue 3 — work-step tracker proof: canonical in-turn block +
     /// composer dock projected from the SAME store, in running / waiting-owner
     /// / settled variants.
+    /// Multi-question ask-card proof (owner ask 2026-08-14): one card, every
+    /// question with its own options, one combined submit.
+    func loadMultiAskProofFixture() {
+        var answer = AgentChatMessage(
+            id: "fix-multi-ask-message", role: .assistant,
+            text: "রিপোর্টটা বানানোর আগে কয়েকটা বিষয় নিশ্চিত করে নিই —")
+        answer.createdAt = "2026-08-14T09:00:00.000Z"
+        answer.serverId = "fix-multi-ask-message"
+        answer.askCards = [.init(
+            id: "fix-multi-ask-card",
+            question: "কোন রিপোর্ট format দরকার Boss?",
+            options: ["PDF", "Markdown", "দুটোই"],
+            status: "pending",
+            selectedOption: nil,
+            questions: [
+                .init(question: "কোন রিপোর্ট format দরকার Boss?",
+                      options: ["PDF", "Markdown", "দুটোই"]),
+                .init(question: "কোন সময়ের ডেটা ধরব?",
+                      options: ["গত ৭ দিন", "গত ৩০ দিন", "এই মাস"]),
+                .init(question: "রিপোর্টটা কাকে পাঠাব?",
+                      options: ["শুধু আপনাকে", "আপনি + ম্যানেজার"]),
+            ])]
+        answer.blocks = [.askCard(id: "bq-fix-multi-ask", askCardId: "fix-multi-ask-card")]
+        messages = [answer]
+        conversationId = "fixture-multi-ask-conversation"
+        #if DEBUG
+        debugSetSessionSurface(.readyConversation(conversationId: "fixture-multi-ask-conversation"))
+        #endif
+    }
+
     func loadWorkStepsProofFixture(variant: String = "running") {
         var answer = AgentChatMessage(
             id: "fix-work-steps-message", role: .assistant,
@@ -16955,6 +16992,12 @@ struct AgentAskCardView: View {
     @Binding var otherActive: Bool
     @Binding var otherText: String
     let onAnswer: (String) -> Void
+    // Multi-question (Claude-Code-style) per-question local state. The external
+    // bindings above stay the single-question path; a multi card is one page,
+    // so its selections live here and submit as ONE combined answer.
+    @State private var multiChosen: [Int: String] = [:]
+    @State private var multiOtherActive: Set<Int> = []
+    @State private var multiOtherText: [Int: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -16999,6 +17042,11 @@ struct AgentAskCardView: View {
                 }
                 .foregroundStyle(pal.muted)
 
+                if let group = card.questions, group.count > 1 {
+                    ForEach(Array(group.enumerated()), id: \.offset) { qi, entry in
+                        multiQuestionSection(qi: qi, entry: entry)
+                    }
+                } else {
                 Text(card.question)
                     .font(.system(size: 15.5, weight: .semibold))
                     .foregroundStyle(pal.ink)
@@ -17064,6 +17112,7 @@ struct AgentAskCardView: View {
                             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
                     }
                 }
+                }
 
                 Button { submitAnswer() } label: {
                     HStack(spacing: 7) {
@@ -17098,14 +17147,121 @@ struct AgentAskCardView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var multiGroup: [AgentAskQuestionWire]? {
+        guard let group = card.questions, group.count > 1 else { return nil }
+        return group
+    }
+
+    private func multiAnswer(_ qi: Int) -> String? {
+        if multiOtherActive.contains(qi) {
+            let t = (multiOtherText[qi] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
+        return multiChosen[qi]
+    }
+
     private var answerReady: Bool {
+        if let group = multiGroup {
+            return group.indices.allSatisfy { multiAnswer($0) != nil }
+        }
         if otherActive {
             return !otherText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         return chosen?.isEmpty == false
     }
 
+    @ViewBuilder private func multiQuestionSection(qi: Int, entry: AgentAskQuestionWire) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(almaBn(qi + 1)). \(entry.question)")
+                .font(.system(size: 15.5, weight: .semibold))
+                .foregroundStyle(pal.ink)
+                .lineSpacing(4)
+            VStack(spacing: 8) {
+                ForEach(Array(entry.options.enumerated()), id: \.offset) { idx, opt in
+                    multiOptionRow(qi: qi, idx: idx, opt: opt)
+                }
+                multiOtherRow(qi: qi)
+                if multiOtherActive.contains(qi) {
+                    TextField("উত্তর লিখুন…", text: Binding(
+                        get: { multiOtherText[qi] ?? "" },
+                        set: { multiOtherText[qi] = $0 }), axis: .vertical)
+                        .font(.system(size: 14)).lineLimit(2...4)
+                        .padding(12)
+                        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(pal.borderSubtle))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func multiOptionRow(qi: Int, idx: Int, opt: String) -> some View {
+        let active = !multiOtherActive.contains(qi) && multiChosen[qi] == opt
+        Button {
+            AlmaAgentHaptics.light()
+            multiChosen[qi] = opt
+            multiOtherActive.remove(qi)
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: active ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(active ? AgentPalette.coral : pal.muted.opacity(0.6))
+                Text(opt)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(pal.ink)
+                    .multilineTextAlignment(.leading)
+                Spacer()
+                Text(almaBn(idx + 1))
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+            }
+            .padding(.horizontal, 13).frame(minHeight: 46)
+            .background(active ? AgentPalette.coral.opacity(0.09) : Color.white.opacity(0.035),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(active ? AgentPalette.coral.opacity(0.45) : pal.borderSubtle,
+                              lineWidth: 1))
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .disabled(submitting)
+    }
+
+    @ViewBuilder private func multiOtherRow(qi: Int) -> some View {
+        let active = multiOtherActive.contains(qi)
+        Button {
+            AlmaAgentHaptics.light()
+            multiOtherActive.insert(qi)
+            multiChosen[qi] = nil
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 13))
+                    .foregroundStyle(active ? AgentPalette.coral : pal.muted)
+                    .frame(width: 18, alignment: .center)
+                Text("নিজের উত্তর লিখুন")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(active ? pal.ink : pal.muted)
+                Spacer()
+            }
+            .padding(.horizontal, 13).frame(minHeight: 44)
+            .background(Color.white.opacity(0.035),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(active ? AgentPalette.coral.opacity(0.45) : pal.borderSubtle))
+        }
+        .buttonStyle(AlmaAgentPressStyle())
+        .disabled(submitting)
+    }
+
     private func submitAnswer() {
+        if let group = multiGroup {
+            var parts: [String] = []
+            for (qi, entry) in group.enumerated() {
+                guard let a = multiAnswer(qi) else { return }
+                parts.append("\(almaBn(qi + 1)). \(entry.question) — \(a)")
+            }
+            onAnswer(parts.joined(separator: "\n"))
+            return
+        }
         let answer = otherActive
             ? otherText.trimmingCharacters(in: .whitespacesAndNewlines)
             : (chosen ?? "")
@@ -24103,6 +24259,11 @@ struct AssistantScreen: View {
                     status: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_STATUS"] ?? "pending",
                     aspect: rawEnv["ALMA_ASSISTANT_IMAGE_SETUP_ASPECT"] ?? "4:5")
                 AlmaTurnLog.event("assistant.contentReady", "fixture=image-setup-proof")
+                return
+            }
+            if argFlag("ALMA_ASSISTANT_MULTI_ASK_PROOF") {
+                vm.loadMultiAskProofFixture()
+                AlmaTurnLog.event("assistant.contentReady", "fixture=multi-ask-proof")
                 return
             }
             if argFlag("ALMA_ASSISTANT_WORK_STEPS_PROOF") {

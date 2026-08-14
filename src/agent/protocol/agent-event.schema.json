@@ -1175,6 +1175,29 @@
           "items": {
             "type": "string"
           }
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "question",
+              "options"
+            ]
+          }
         }
       },
       "required": [

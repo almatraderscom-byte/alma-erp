@@ -14,7 +14,7 @@ export type VoiceTurnEvent =
   | { type: 'subagent_end'; id: string; success?: boolean }
   | { type: 'text_delta'; delta: string }
   | { type: 'confirm_card'; pendingActionId?: string; summary?: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown }
-  | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
+  | { type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }
   | { type: 'error'; message?: string }
   | { type: 'verification_retry' }
   | { type: 'model_switch_required' }

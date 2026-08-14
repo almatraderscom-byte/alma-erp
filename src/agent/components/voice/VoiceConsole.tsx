@@ -63,6 +63,10 @@ interface FeedCard {
   /** ask cards only */
   askCardId?: string
   options?: string[]
+  /** Multi-question ask card: every question with its options; answered
+   *  per-question, submitted once as ONE combined answer. */
+  questions?: Array<{ question: string; options: string[] }>
+  multiAnswers?: Record<number, string>
 }
 
 const bnTime = () =>
@@ -80,6 +84,10 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [spoken, setSpoken] = useState<string[]>([])
   const [currentLine, setCurrentLine] = useState<string | null>(null)
   const [cards, setCards] = useState<FeedCard[]>([])
+  /// Render-fresh mirror so effect code outside setCards updaters (multi-ask
+  /// answers) reads current card state without impure updaters.
+  const cardsRef = useRef<FeedCard[]>([])
+  cardsRef.current = cards
   /** Conversation mode (Siri+): when the reply finishes speaking, the mic
    *  re-opens by itself — no tap between turns. Silence for 8s ends the loop. */
   const [convoMode, setConvoMode] = useState(true)
@@ -243,13 +251,25 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           // The head is ASKING — speak the question and show tappable options.
           sawInteraction = true
           lastAudioRef.current = Date.now()
-          player.say(evt.question)
-          if (evt.options.length > 0) {
-            player.say(`${evt.options.join(', নাকি ')} — কোনটা, বস?`)
+          const group = evt.questions && evt.questions.length > 1 ? evt.questions : null
+          if (group) {
+            // Multi-question card: say how many, then question 1 — the next
+            // question is spoken as each answer lands (Codex P1 #754).
+            player.say(`${group.length}টা প্রশ্ন আছে, বস। প্রথমটা: ${group[0].question}`)
+            if (group[0].options.length > 0) {
+              player.say(`${group[0].options.join(', নাকি ')} — কোনটা?`)
+            }
+          } else {
+            player.say(evt.question)
+            if (evt.options.length > 0) {
+              player.say(`${evt.options.join(', নাকি ')} — কোনটা, বস?`)
+            }
           }
           setCards((prev) => [...prev, {
             id: `ask-${evt.askCardId || prev.length}`, kind: 'ask', icon: '❓',
-            title: evt.question.slice(0, 120), options: evt.options,
+            title: group ? `${group.length}টি প্রশ্ন — সব উত্তর দিন` : evt.question.slice(0, 120),
+            options: evt.options,
+            ...(group ? { questions: group, multiAnswers: {} } : {}),
             askCardId: evt.askCardId, done: false, at: bnTime(),
           }])
         } else if (evt.type === 'model_switch_required') {
@@ -464,6 +484,58 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     void runTurn(option)
   }, [runTurn, stopTts])
 
+  /** Multi-question card: collect the answer for ONE question; speak the next
+   *  unanswered question, and only when every question is answered submit the
+   *  combined text once (same shape as the chat card — Codex P1 #754). */
+  const answerMultiAsk = useCallback((cardId: string, qi: number, option: string) => {
+    // Effects (TTS, POST, runTurn) stay OUTSIDE the state updater: React
+    // Strict Mode may run updaters twice to detect impurity, which would
+    // start two voice turns on the final tap (Codex P2 #754).
+    setCards((prev) => {
+      const card = prev.find((c) => c.id === cardId)
+      if (!card?.questions || qi in (card.multiAnswers ?? {})) return prev
+      const answers = { ...(card.multiAnswers ?? {}), [qi]: option }
+      const complete = card.questions.every((_, i) => i in answers)
+      return prev.map((c) => c.id === cardId
+        ? {
+            ...c, multiAnswers: answers,
+            ...(complete ? { done: true, success: true, sub: '✓ সব উত্তর পাঠানো হয়েছে' } : {}),
+          }
+        : c)
+    })
+    const card = cardsRef.current.find((c) => c.id === cardId)
+    if (!card?.questions || qi in (card.multiAnswers ?? {})) return
+    const answers = { ...(card.multiAnswers ?? {}), [qi]: option }
+    const remaining = card.questions.map((_, i) => i).filter((i) => !(i in answers))
+    if (remaining.length > 0) {
+      // No stopTts here: it DISPOSES the player and the next prompt would be a
+      // silent no-op (Codex P2 #754) — say() supersedes the current utterance.
+      const next = card.questions[remaining[0]]
+      playerRef.current?.say(`${next.question} — ${next.options.join(', নাকি ')}?`)
+      return
+    }
+    const combined = card.questions
+      .map((entry, i) => `${i + 1}. ${entry.question} — ${answers[i]}`)
+      .join('\n')
+    stopTts()
+    void (async () => {
+      // Await the answer write BEFORE the continuation (same order as the web
+      // card): the combined text starts with a question label, so the turn's
+      // pending-card self-heal cannot re-match it — the row must already be
+      // answered when the turn starts (Codex P1 #754, round 3).
+      if (card.askCardId) {
+        try {
+          await fetch(`/api/assistant/ask-cards/${card.askCardId}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ option: combined }),
+          })
+        } catch { /* runTurn still carries the combined answer */ }
+      }
+      await runTurn(combined)
+    })()
+  }, [runTurn, stopTts])
+
   /** Premium-model permission: approve re-runs the SAME question with resume. */
   const resolveModelSwitch = useCallback((cardId: string, approve: boolean) => {
     setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, done: true, success: approve, sub: approve ? '✓ অনুমতি দেওয়া হয়েছে' : 'বাতিল' } : c))
@@ -647,7 +719,30 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
                       {c.title}
                       {c.sub ? <small>{c.sub}</small> : null}
                     </span>
-                    {c.kind === 'ask' && !c.done && (c.options?.length ?? 0) > 0 ? (
+                    {c.kind === 'ask' && !c.done && c.questions && c.questions.length > 1 ? (
+                      <span className="acts wrap" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+                        {c.questions.map((entry, qi) => (
+                          <span key={qi} style={{ display: 'block' }}>
+                            <small style={{ display: 'block', opacity: 0.85, marginBottom: 3 }}>
+                              {qi + 1}. {entry.question}
+                              {(c.multiAnswers ?? {})[qi] ? ` — ✓ ${(c.multiAnswers ?? {})[qi]}` : ''}
+                            </small>
+                            {!(qi in (c.multiAnswers ?? {})) && (
+                              <span className="acts wrap">
+                                {entry.options.slice(0, 4).map((opt) => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    className="rejectbtn"
+                                    onClick={() => answerMultiAsk(c.id, qi, opt)}
+                                  >{opt}</button>
+                                ))}
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </span>
+                    ) : c.kind === 'ask' && !c.done && (c.options?.length ?? 0) > 0 ? (
                       <span className="acts wrap">
                         {c.options!.slice(0, 4).map((opt) => (
                           <button
