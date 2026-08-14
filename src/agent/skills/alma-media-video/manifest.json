@@ -1,0 +1,45 @@
+{
+  "name": "alma-media-video",
+  "description": "Use when the owner asks to CREATE A VIDEO from an idea — scene-by-scene AI video (CapCut-style): plan card with exact cost, approval, then automatic VO/music, per-scene images, clips and the stitched final video, all delivered in chat. Also covers regenerating one scene of a finished video.",
+  "version": "1.0.0",
+  "publisher": "alma-native",
+  "license": "proprietary",
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "ALMA_TRADING",
+    "CDIT"
+  ],
+  "riskTier": "medium",
+  "extends": "alma-base",
+  "requiredCapabilities": [
+    "plan_media_video",
+    "get_media_project",
+    "regenerate_media_scene",
+    "make_product_reel",
+    "list_product_assets"
+  ],
+  "networkPolicy": "allowlist",
+  "writePolicy": "owner_gated",
+  "approvalPolicy": "always",
+  "maxSteps": 6,
+  "status": "active",
+  "whenNotToUse": "A single standalone image or poster is alma-image-generation. A product reel from an existing catalog image is make_product_reel. Editing an uploaded video file is the Creative Studio editor, not this pipeline.",
+  "outputContract": {
+    "kind": "approval_card_then_video",
+    "mustInclude": [
+      "scenes",
+      "exact_cost",
+      "pending_action_id"
+    ]
+  },
+  "stopConditions": [
+    "Never state costs yourself — the media_plan card carries the server-computed exact estimate",
+    "Never claim any asset or the final video exists before its worker result is present in the conversation",
+    "Never start generation before the media_plan card is approved"
+  ],
+  "done": [
+    {
+      "tool": "plan_media_video"
+    }
+  ]
+}

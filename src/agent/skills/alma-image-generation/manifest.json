@@ -4,10 +4,19 @@
   "version": "1.0.0",
   "publisher": "alma-native",
   "license": "proprietary",
-  "businessScopes": ["ALMA_LIFESTYLE", "ALMA_TRADING", "CDIT"],
+  "businessScopes": [
+    "ALMA_LIFESTYLE",
+    "ALMA_TRADING",
+    "CDIT"
+  ],
   "riskTier": "medium",
   "extends": "alma-base",
-  "requiredCapabilities": ["generate_image"],
+  "requiredCapabilities": [
+    "generate_image",
+    "plan_media_video",
+    "get_media_project",
+    "regenerate_media_scene"
+  ],
   "networkPolicy": "allowlist",
   "writePolicy": "owner_gated",
   "approvalPolicy": "always",
@@ -16,12 +25,20 @@
   "whenNotToUse": "An existing image that only needs inspection or conversion is not generation. Product-faithful imagery needs a real product reference first. Charts and live dashboards are structured UI, not generated pictures.",
   "outputContract": {
     "kind": "approval_card_then_image",
-    "mustInclude": ["prompt", "aspect_ratio", "pending_action_id"]
+    "mustInclude": [
+      "prompt",
+      "aspect_ratio",
+      "pending_action_id"
+    ]
   },
   "stopConditions": [
     "Never claim an image was generated before the worker result is present in the conversation",
     "Never replace the approval card with a prose-only permission question",
     "Never use incident-diagnosis, health-scan, or browser tools for a standalone image request"
   ],
-  "done": [{ "tool": "generate_image" }]
+  "done": [
+    {
+      "tool": "generate_image"
+    }
+  ]
 }
