@@ -558,14 +558,24 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // true circle and the hamburger sits dead-centre. Icon colour is BAKED
         // (.alwaysOriginal) so the dark glyph reads over the frosted-white body.
         container.translatesAutoresizingMaskIntoConstraints = false
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: light ? .systemThinMaterialLight : .systemThinMaterialDark))
+        // iOS 26: the disc is real Liquid Glass (UIGlassEffect) with no manual
+        // frost tint — the system material carries legibility itself. Earlier
+        // systems keep the proven hand-frosted blur.
+        let blur: UIVisualEffectView
+        if #available(iOS 26.0, *), !UIAccessibility.isReduceTransparencyEnabled {
+            let glass = UIGlassEffect()
+            glass.isInteractive = true
+            blur = UIVisualEffectView(effect: glass)
+        } else {
+            blur = UIVisualEffectView(effect: UIBlurEffect(style: light ? .systemThinMaterialLight : .systemThinMaterialDark))
+            blur.contentView.backgroundColor = light
+                ? UIColor(white: 1, alpha: 0.34)   // frosted-white body
+                : UIColor(white: 0, alpha: 0.14)   // deepen so it reads dark over light content
+        }
         blur.translatesAutoresizingMaskIntoConstraints = false
         blur.layer.cornerRadius = size / 2
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
-        blur.contentView.backgroundColor = light
-            ? UIColor(white: 1, alpha: 0.34)   // frosted-white body
-            : UIColor(white: 0, alpha: 0.14)   // deepen so it reads dark over light content
         container.addSubview(blur)
         let iconView = UIImageView(image: UIImage(systemName: icon,
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))?

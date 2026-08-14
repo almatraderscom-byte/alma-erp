@@ -149,8 +149,101 @@ enum AlmaAgentHaptics {
     static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
 }
 
-/// Material fallback used by newly-added Agent surfaces and adopted incrementally
-/// by existing cards. Reduce Transparency gets a solid ALMA card, never clear text.
+/// The conversation drawer's panel surface. iOS 26: one Liquid Glass layer;
+/// earlier: the original glassFill + ultraThin material stack. Drawer text
+/// sits directly on this, so Reduce Transparency gets the solid card.
+@available(iOS 17.0, *)
+struct AlmaDrawerSurface: ViewModifier {
+    let pal: AgentPalette
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(pal.card)
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: Rectangle())
+        } else {
+            content
+                .background(pal.glassFill)
+                .background(.ultraThinMaterial)
+        }
+    }
+}
+
+/// The image viewer's bottom action bar: Liquid Glass on iOS 26, thin
+/// material earlier. Sits over a full-bleed photo, so no solid fallback tint.
+@available(iOS 17.0, *)
+struct AlmaViewerBarGlass: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(
+                .regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        } else {
+            content.background(
+                .ultraThinMaterial,
+                in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+    }
+}
+
+/// A circular glass control (scroll-to-bottom FAB and friends): Liquid Glass
+/// on iOS 26, the original thin material elsewhere.
+@available(iOS 17.0, *)
+struct AlmaGlassCircle: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(.regular.interactive(), in: Circle())
+        } else {
+            content.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}
+
+/// A small status/progress chip: Liquid Glass capsule on iOS 26 (optionally
+/// tinted), the original flat capsule fill everywhere else.
+@available(iOS 17.0, *)
+struct AlmaGlassChip: ViewModifier {
+    let fallback: Color
+    var tint: Color? = nil
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            if let tint {
+                content.glassEffect(.regular.tint(tint), in: Capsule())
+            } else {
+                content.glassEffect(.regular, in: Capsule())
+            }
+        } else {
+            content.background(fallback, in: Capsule())
+        }
+    }
+}
+
+/// A coral-tinted Liquid Glass capsule for small call-to-action chips (auth
+/// banner and friends). iOS 26 tints real glass; earlier systems keep the
+/// solid coral capsule those builds always had.
+@available(iOS 17.0, *)
+struct AlmaCoralGlassCapsule: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(.regular.tint(AgentPalette.coral).interactive(), in: Capsule())
+        } else {
+            content.background(AgentPalette.coral, in: Capsule())
+        }
+    }
+}
+
+/// The one glass surface every Agent card shares. On iOS 26 it is real Liquid
+/// Glass (edge highlight, refraction, scroll reaction); before 26 it stays the
+/// proven ultraThin material. Reduce Transparency gets a solid ALMA card,
+/// never clear text.
 @available(iOS 17.0, *)
 struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     let shape: S
@@ -158,12 +251,12 @@ struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        content.background {
-            if reduceTransparency {
-                shape.fill(pal.card)
-            } else {
-                shape.fill(.ultraThinMaterial)
-            }
+        if reduceTransparency {
+            content.background { shape.fill(pal.card) }
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content.background { shape.fill(.ultraThinMaterial) }
         }
     }
 }
@@ -2596,7 +2689,22 @@ final class AssistantVM {
     var activeWorkTracker: AgentWorkStepsSnapshot? {
         guard let cid = conversationId else { return nil }
         return workTrackers.values
-            .filter { !$0.isTerminal && ($0.conversationId.isEmpty || $0.conversationId == cid) }
+            // The dock is LIVE work only. The turn-end projection honestly
+            // parks an unfinished tracker as "paused" (nothing is running),
+            // and a paused chip lingering after the answer landed is what the
+            // owner reported on build 103 — waiting_* states stay visible
+            // because they genuinely await someone; paused and terminal hide.
+            // A "running" chip with no stream behind it is the same bug via a
+            // dropped final snapshot, so running/preparing require the stream.
+            .filter { snapshot in
+                guard !snapshot.isTerminal, snapshot.status != "paused",
+                      snapshot.conversationId.isEmpty || snapshot.conversationId == cid
+                else { return false }
+                if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
+                    return true
+                }
+                return isStreaming
+            }
             .max { $0.updatedAt < $1.updatedAt }
     }
     func clearWorkTrackersForConversationSwitch() {
@@ -13346,7 +13454,8 @@ private struct AgentGeneratedImageGallery: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(maxWidth: 640, alignment: .leading)
-        .background(pal.card.opacity(0.38), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 12, style: .continuous), pal: pal))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("agent.generated-image.render-cost")
         .accessibilityLabel(
@@ -13575,7 +13684,7 @@ private struct AgentGeneratedImageViewer: View {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
+                            .modifier(AlmaGlassCircle())
                     }
                     .accessibilityLabel("Close")
                     Spacer()
@@ -13583,7 +13692,7 @@ private struct AgentGeneratedImageViewer: View {
                         Text("\(index + 1) / \(preview.urls.count)")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .modifier(AlmaGlassChip(fallback: Color.white.opacity(0.08)))
                     }
                 }
                 .foregroundStyle(.white)
@@ -13623,7 +13732,7 @@ private struct AgentGeneratedImageViewer: View {
             }
         }
         .padding(8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .modifier(AlmaViewerBarGlass())
         .padding(.horizontal, 10).padding(.bottom, 10)
     }
 
@@ -13835,7 +13944,8 @@ struct AgentChatImage: View {
                     }
                     .foregroundStyle(pal.muted)
                     .frame(width: 80, height: 80)
-                    .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .modifier(AlmaAgentGlassBackground(
+                        shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
                 }
                 .buttonStyle(AlmaAgentPressStyle())
             } else if let url {
@@ -13907,7 +14017,8 @@ struct AgentMessageRow: View {
                         .foregroundStyle(AgentPalette.coral.opacity(0.9))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 4)
-                .background(AgentPalette.coral.opacity(0.06), in: Capsule())
+                .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.06),
+                                        tint: AgentPalette.coral.opacity(0.18)))
                 .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.25), lineWidth: 1))
                 .fixedSize()
                 Rectangle().fill(pal.borderSubtle).frame(height: 1)
@@ -13926,7 +14037,8 @@ struct AgentMessageRow: View {
                             .foregroundStyle(AgentPalette.coral)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(AgentPalette.coral.opacity(0.15), in: Capsule())
+                    .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.15),
+                                            tint: AgentPalette.coral.opacity(0.3)))
                     let status = voiceTurnStatus
                     HStack(spacing: 4) {
                         if status == .working {
@@ -13938,9 +14050,12 @@ struct AgentMessageRow: View {
                                              : status == .working ? Color.orange : pal.muted)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background((status == .done ? Color.green.opacity(0.12)
-                                 : status == .working ? Color.orange.opacity(0.12)
-                                 : pal.borderSubtle.opacity(0.4)), in: Capsule())
+                    .modifier(AlmaGlassChip(
+                        fallback: status == .done ? Color.green.opacity(0.12)
+                            : status == .working ? Color.orange.opacity(0.12)
+                            : pal.borderSubtle.opacity(0.4),
+                        tint: status == .done ? Color.green.opacity(0.25)
+                            : status == .working ? Color.orange.opacity(0.25) : nil))
                 }
                 if !message.voiceInstructionBody.isEmpty {
                     AlmaSelectableRichText(plain: message.voiceInstructionBody,
@@ -16234,7 +16349,7 @@ struct AgentConfirmCardView: View {
                         .foregroundStyle(pal.muted)
                 }
                 .padding(11)
-                .background(Color.white.opacity(0.04),
+                .background(Color(UIColor.secondarySystemFill).opacity(0.55),
                             in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("agent.confirm-card.image-model")
@@ -17548,7 +17663,7 @@ struct AgentTurnBlocksView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(pal.muted.opacity(0.10)))
+                .modifier(AlmaGlassChip(fallback: pal.muted.opacity(0.10)))
                 .accessibilityLabel("\(skill.name) skill ব্যবহার করছি")
             } else if let held = message.skillHeldBack,
                       !held.ownerFacingText.isEmpty {
@@ -17892,7 +18007,8 @@ struct AgentModelSwitchCardView: View {
             }
         }
         .padding(14)
-        .background(pal.glassFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(AgentPalette.coral.opacity(0.35), lineWidth: 1))
         .padding(.vertical, 4)
@@ -19393,8 +19509,7 @@ struct AgentSideDrawer: View {
             drawer(pal)
                 .frame(width: Self.drawerWidth)
                 .frame(maxHeight: .infinity)
-                .background(pal.glassFill)
-                .background(.ultraThinMaterial)
+                .modifier(AlmaDrawerSurface(pal: pal))
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
                                                   bottomTrailingRadius: 24, topTrailingRadius: 24,
                                                   style: .continuous))
@@ -19534,12 +19649,11 @@ struct AgentSideDrawer: View {
                         }
                         .foregroundStyle(item.2 == nil ? AgentPalette.coral : pal.mutedHi)
                         .frame(width: 58, height: 52)
-                        .background(pal.card.opacity(0.44),
-                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(item.2 == nil
-                                ? AgentPalette.coral.opacity(0.35) : pal.borderSubtle,
-                                lineWidth: 1))
+                        .background(
+                            item.2 == nil
+                                ? AnyShapeStyle(AgentPalette.coral.opacity(0.14))
+                                : AnyShapeStyle(Color(UIColor.tertiarySystemFill)),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     .buttonStyle(AlmaAgentPressStyle())
                     .accessibilityLabel(item.0)
@@ -19557,8 +19671,7 @@ struct AgentSideDrawer: View {
             tabButton("আর্কাইভ", icon: "archivebox", index: 2, pal: pal)
         }
         .padding(4)
-        .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
-        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+        .background(Color(UIColor.tertiarySystemFill), in: Capsule())
     }
 
     private func tabButton(_ label: String, icon: String, index: Int, pal: AgentPalette) -> some View {
@@ -19645,8 +19758,10 @@ struct AgentSideDrawer: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Color.white.opacity(scheme == .dark ? 0.06 : 0.5),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            // Native iOS search-field look: adaptive system fill, no hand-mixed
+            // white washes (owner round-4 report: drawer controls read web-ish).
+            .background(Color(UIColor.tertiarySystemFill),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 14)
 
             // Office is intentionally not a second conversation section. Keep
@@ -19786,8 +19901,10 @@ struct AgentSideDrawer: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(Color.white.opacity(scheme == .dark ? 0.06 : 0.5),
-                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            // Native iOS search-field look: adaptive system fill, no hand-mixed
+            // white washes (owner round-4 report: drawer controls read web-ish).
+            .background(Color(UIColor.tertiarySystemFill),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .padding(.horizontal, 14)
             .padding(.top, 12)
 
@@ -19928,7 +20045,7 @@ struct AgentSideDrawer: View {
                                 .foregroundStyle(pal.ink)
                                 .padding(.horizontal, 8).padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .background(Color(UIColor.secondarySystemFill).opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
                     divider(pal)
@@ -19948,7 +20065,7 @@ struct AgentSideDrawer: View {
                             .font(.system(size: 9)).foregroundStyle(pal.muted)
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Color(UIColor.secondarySystemFill).opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(pal.borderSubtle, lineWidth: 1))
                 }
@@ -20051,7 +20168,7 @@ struct AgentSideDrawer: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(m.pinned ? AgentPalette.coral.opacity(0.04) : Color.white.opacity(0.04),
+        .background(m.pinned ? AgentPalette.coral.opacity(0.04) : Color(UIColor.secondarySystemFill).opacity(0.55),
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(m.pinned ? AgentPalette.coral.opacity(0.2) : pal.borderSubtle, lineWidth: 1))
@@ -20542,7 +20659,7 @@ struct AgentWorkStepsDockView: View {
                         .foregroundStyle(pal.ink)
                         .lineLimit(1)
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color.white.opacity(0.07), in: Capsule())
+                        .modifier(AlmaGlassChip(fallback: Color.white.opacity(0.07)))
                     Button {
                         AlmaAgentHaptics.light()
                         withAnimation(reduceMotion ? nil
@@ -20563,7 +20680,8 @@ struct AgentWorkStepsDockView: View {
                         }
                         .foregroundStyle(pal.ink)
                         .padding(.horizontal, 11).padding(.vertical, 6)
-                        .background(AgentPalette.coral.opacity(0.14), in: Capsule())
+                        .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.14),
+                                                tint: AgentPalette.coral.opacity(0.35)))
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -20662,7 +20780,8 @@ struct AgentOpenTasksChipView: View {
                     .foregroundStyle(AgentPalette.coral.opacity(0.6))
             }
             .padding(.horizontal, 13).padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: Capsule())
+            .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.14),
+                                    tint: AgentPalette.coral.opacity(0.25)))
             .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
             .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
@@ -20826,7 +20945,8 @@ struct AgentPendingTasksSheet: View {
             }
         }
         .padding(14)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
             .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
     }
@@ -22106,7 +22226,8 @@ private struct AgentBackgroundTasksSheet: View {
             .font(.system(size: 12.5)).foregroundStyle(pal.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .background(pal.card.opacity(0.42), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
     }
 
     private var runningControlBusy: Bool {
@@ -22465,7 +22586,8 @@ private struct AgentPlanDriveCard: View {
             ForEach(working) { workingRow($0) }
         }
         .padding(13)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 20, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
             .strokeBorder(AgentPalette.coral.opacity(0.22), lineWidth: 1))
         .confirmationDialog(
@@ -23713,7 +23835,7 @@ struct AssistantScreen: View {
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(pal.muted)
                                 .frame(width: 40, height: 40)
-                                .background(.ultraThinMaterial, in: Circle())
+                                .modifier(AlmaGlassCircle())
                                 .overlay(Circle().strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
                         }
                         .padding(.bottom, 10)
@@ -24305,7 +24427,7 @@ struct AssistantScreen: View {
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(AgentPalette.coral, in: Capsule())
+            .modifier(AlmaCoralGlassCapsule())
         }
         .padding(.top, 6)
     }
@@ -24315,7 +24437,8 @@ struct AssistantScreen: View {
             .font(.system(size: 12.5, weight: .medium))
             .foregroundStyle(pal.ink)
             .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 14, style: .continuous), pal: pal))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(AgentPalette.coral.opacity(0.5), lineWidth: 1))
             .padding(.bottom, 92)
@@ -24366,7 +24489,15 @@ struct AgentScrollViewportKey: PreferenceKey {
 /// Claude-style buttons the web Assistant tab already had) into the SwiftUI screen.
 @MainActor
 final class AssistantModelPillButton: UIButton {
-    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    // iOS 26: real Liquid Glass pill; earlier systems keep the thin material.
+    private let blur: UIVisualEffectView = {
+        if #available(iOS 26.0, *), !UIAccessibility.isReduceTransparencyEnabled {
+            let glass = UIGlassEffect()
+            glass.isInteractive = true
+            return UIVisualEffectView(effect: glass)
+        }
+        return UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    }()
     private let modelText = UILabel()
 
     override init(frame: CGRect) {

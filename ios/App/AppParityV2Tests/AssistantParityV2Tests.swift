@@ -4690,6 +4690,34 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "completed")
     }
 
+    func testDockShowsOnlyLiveWorkNeverPausedOrStalledChips() throws {
+        let vm = AssistantVM()
+        vm.conversationId = "conversation-1"
+
+        // Streaming turn with a running tracker: the dock chip shows.
+        vm.isStreaming = true
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 2))
+        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-1")
+
+        // Turn-end honest projection parks it paused: the chip must leave
+        // (build 103 owner report — chip lingered after the answer landed).
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "paused"))
+        XCTAssertNil(vm.activeWorkTracker)
+
+        // A dropped final snapshot leaves status "running" with no stream —
+        // the same lingering chip through a different door.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "running"))
+        vm.isStreaming = false
+        XCTAssertNil(vm.activeWorkTracker)
+
+        // Waiting states genuinely await someone and stay visible without a
+        // stream; terminal never shows.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 5, status: "waiting_owner"))
+        XCTAssertEqual(vm.activeWorkTracker?.status, "waiting_owner")
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 6, status: "completed"))
+        XCTAssertNil(vm.activeWorkTracker)
+    }
+
     func testSameRevisionSamePayloadIsIdempotentNoOp() throws {
         let vm = AssistantVM()
         let snapshot = try snapshotFixture(revision: 2)
