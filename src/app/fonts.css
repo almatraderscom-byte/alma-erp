@@ -179,11 +179,52 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+
+/* Metric-matched fallbacks, copied verbatim from what next/font generated for
+   these same four families. They keep the pre-swap layout identical to the
+   loaded face, so removing next/font costs no extra layout shift. */
+@font-face {
+  font-family: 'Inter Fallback';
+  src: local('Arial');
+  ascent-override: 90.44%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+  size-adjust: 107.12%;
+}
+
+@font-face {
+  font-family: 'Noto Sans Bengali Fallback';
+  src: local('Arial');
+  ascent-override: 86.24%;
+  descent-override: 38.37%;
+  line-gap-override: 0%;
+  size-adjust: 106.33%;
+}
+
+@font-face {
+  font-family: 'Hind Siliguri Fallback';
+  src: local('Arial');
+  ascent-override: 116.79%;
+  descent-override: 52.43%;
+  line-gap-override: 0%;
+  size-adjust: 95.56%;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Fallback';
+  src: local('Arial');
+  ascent-override: 75.79%;
+  descent-override: 22.29%;
+  line-gap-override: 0%;
+  size-adjust: 134.59%;
+}
+
 :root {
-  /* Same variable names next/font used to generate, so every existing
-     font-family stack in globals.css / tailwind.config.ts keeps working. */
-  --font-inter: 'Inter';
-  --font-bengali: 'Noto Sans Bengali';
-  --font-hind: 'Hind Siliguri';
-  --font-mono: 'JetBrains Mono';
+  /* Same variable names next/font used to generate, and the same
+     real-face-then-metric-fallback pairing, so every font-family stack in
+     globals.css / tailwind.config.ts keeps working unchanged. */
+  --font-inter: 'Inter', 'Inter Fallback';
+  --font-bengali: 'Noto Sans Bengali', 'Noto Sans Bengali Fallback';
+  --font-hind: 'Hind Siliguri', 'Hind Siliguri Fallback';
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback';
 }
