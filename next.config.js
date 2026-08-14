@@ -124,9 +124,14 @@ const sentryBuildOptions = {
   silent: !process.env.CI,
   widenClientFileUpload: true,
   hideSourceMaps: true,
-  disableLogger: true,
-  automaticVercelMonitors: true,
   tunnelRoute: '/monitoring',
+  // Renamed in @sentry/nextjs v10 — the old top-level `disableLogger` and
+  // `automaticVercelMonitors` now print a deprecation warning on every build
+  // (visible since the wrapper stopped being skipped).
+  webpack: {
+    treeshake: { removeDebugLogging: true },
+    automaticVercelMonitors: true,
+  },
 }
 
 // ALWAYS wrap. The old build-time `SENTRY_DSN ? wrap : raw` gate silently
