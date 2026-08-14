@@ -36,7 +36,7 @@ export interface AnswerAskCardResult {
 
 const SELECT = {
   id: true, conversationId: true, question: true, status: true,
-  selectedOption: true, options: true, workflowRunId: true,
+  selectedOption: true, options: true, questions: true, workflowRunId: true,
 } as const
 
 function toView(row: Record<string, unknown>): AskCardView {
@@ -71,7 +71,9 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
   // Atomic claim: only the FIRST writer flips pending → answered.
   const claimed = await db.agentAskCard.updateMany({
     where: { id: cardId, status: 'pending' },
-    data: { status: 'answered', selectedOption: option.slice(0, 500) },
+    // 1200 matches the answer route: a multi-question card submits every
+    // answer as one combined text (Codex P1 #754 — 500 silently truncated it).
+    data: { status: 'answered', selectedOption: option.slice(0, 1200) },
   })
   if (claimed.count === 0) {
     // Raced: someone answered between the read and the claim — re-read and
@@ -99,7 +101,13 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
   if (card.workflowRunId) {
     try {
       const { advanceWorkflowOnAskAnswer } = await import('@/agent/lib/workflow-run')
-      await advanceWorkflowOnAskAnswer(card.workflowRunId, option, cause)
+      // Multi-question card: the run binds to the PRIMARY (first) question, so
+      // only its answer line drives the state machine — a "না"/"change" in an
+      // unrelated later answer must not flip it (Codex P1 #754).
+      const isMulti = typeof (row as { questions?: unknown }).questions === 'string'
+        && String((row as { questions?: unknown }).questions).trim().length > 0
+      const workflowAnswer = isMulti ? (option.split('\n')[0] ?? option) : option
+      await advanceWorkflowOnAskAnswer(card.workflowRunId, workflowAnswer, cause)
     } catch (err) {
       console.warn('[ask-cards] run advance failed open:', err instanceof Error ? err.message : err)
     }

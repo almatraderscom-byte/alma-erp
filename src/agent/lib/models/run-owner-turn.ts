@@ -785,7 +785,7 @@ async function* runAlternateProviderTurn(
   // tool), and (b) the answer-anchoring note below reuses the same match.
   // Match by OPTION TEXT across recent cards, never "latest answered by
   // createdAt" (2026-07-12: the head bound the reply to the wrong question).
-  type MatchedAskCard = { id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }
+  type MatchedAskCard = { id: string; question: string; status: string; selectedOption: string | null; options: unknown; questions?: string | null; workflowRunId?: string | null }
   let matchedAskCard: MatchedAskCard | undefined
   // AGENT-IOS-001 (client side): an option tap ships the tapped card's id as an
   // `ask_card_ref` marker block on the user message row — bind to that EXACT card
@@ -808,7 +808,7 @@ async function* runAlternateProviderTurn(
         const exact: (MatchedAskCard & { conversationId?: string }) | null =
           await (prisma as any).agentAskCard.findUnique({
             where: { id: explicitAskCardId },
-            select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true, conversationId: true },
+            select: { id: true, question: true, status: true, selectedOption: true, options: true, questions: true, workflowRunId: true, conversationId: true },
           })
         if (exact && exact.conversationId === conversationId) {
           if (!exact.selectedOption) {
@@ -817,7 +817,7 @@ async function* runAlternateProviderTurn(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (prisma as any).agentAskCard.update({
               where: { id: exact.id },
-              data: { status: 'answered', selectedOption: lastUserText.slice(0, 500) },
+              data: { status: 'answered', selectedOption: lastUserText.slice(0, 1200) },
             }).catch(() => {})
             exact.status = 'answered'
             exact.selectedOption = lastUserText.slice(0, 500)
@@ -832,7 +832,7 @@ async function* runAlternateProviderTurn(
           where: { conversationId },
           orderBy: { createdAt: 'desc' },
           take: 5,
-          select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true },
+          select: { id: true, question: true, status: true, selectedOption: true, options: true, questions: true, workflowRunId: true },
         })
       const matchesText = (opt: unknown): boolean =>
         typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
@@ -859,7 +859,14 @@ async function* runAlternateProviderTurn(
       // router, snapshot note and tool_choice binding all see the NEW step.
       if (matchedAskCard?.workflowRunId && matchedAskCard.selectedOption) {
         const { advanceWorkflowOnAskAnswer, listActiveWorkflowRuns: relist } = await import('@/agent/lib/workflow-run')
-        await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, matchedAskCard.selectedOption, 'turn')
+        // Multi-question card: the state machine binds to the PRIMARY (first)
+        // question, so only its answer line drives onAskAnswer — a "না" in an
+        // unrelated later answer must not flip the workflow (Codex P1 #754).
+        const isMulti = typeof matchedAskCard.questions === 'string' && matchedAskCard.questions.trim().length > 0
+        const workflowAnswer = isMulti
+          ? (matchedAskCard.selectedOption.split('\n')[0] ?? matchedAskCard.selectedOption)
+          : matchedAskCard.selectedOption
+        await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, workflowAnswer, 'turn')
         workflowRuns = await relist(conversationId)
       }
     } catch { /* fail-open — the note/advance are aids, never blockers */ }
@@ -1446,7 +1453,11 @@ async function* runAlternateProviderTurn(
   // message is never a card answer, and we must not pull prior work into it).
   if (!listenMode && matchedAskCard?.selectedOption) {
     const matched = matchedAskCard
-    const others = Array.isArray(matched.options)
+    // Multi-question card: selectedOption is the COMBINED per-question answer
+    // text, never one entry of the first question's options — listing those as
+    // "not chosen" would contradict the actual answers (Codex P1 #754).
+    const isMultiAnswer = typeof matched.questions === 'string' && matched.questions.trim().length > 0
+    const others = !isMultiAnswer && Array.isArray(matched.options)
       ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched.selectedOption)
       : []
     // Phase 4 (AGENT-IOS-001, server-side): the matched card carries its
@@ -1460,8 +1471,10 @@ async function* runAlternateProviderTurn(
       ? ` এই উত্তরটা চলমান কাজ [${wfRef.kind}] "${wfRef.goal.slice(0, 80)}" (ধাপ: ${wfRef.state})-এর — ঠিক ওই ধাপ থেকেই এগোও।`
       : ''
     const answerNote =
-      `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
-      `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` + wfLine +
+      (isMultiAnswer
+        ? `[ASK-CARD উত্তর] Boss তোমার কার্ডের প্রতিটি প্রশ্নের উত্তর একসাথে দিয়েছেন — প্রতিটি লাইন এক-একটি প্রশ্নের উত্তর:\n${matched.selectedOption}।`
+        : `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
+          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।`) + wfLine +
       (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
       ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
       'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'

@@ -234,11 +234,12 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     options: string
     status: string
     selectedOption: string | null
+    questions?: string | null
     createdAt: Date
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }> = await (prisma as any).agentAskCard.findMany({
     where: { conversationId: id },
-    select: { id: true, question: true, options: true, status: true, selectedOption: true, createdAt: true },
+    select: { id: true, question: true, options: true, questions: true, status: true, selectedOption: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   })
 
@@ -264,11 +265,22 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       assistantMsgs[assistantMsgs.length - 1]
     if (!target) continue
     const list = syntheticAskByMsg.get(target.id) ?? []
+    // Multi-question group rehydrates from the durable row too — without it a
+    // crash/reconnect reload would demote the card to question 1 only and lose
+    // the other answers (Codex P2 #754).
+    let questionGroup: Array<{ question: string; options: string[] }> | undefined
+    try {
+      const parsedGroup = a.questions ? JSON.parse(String(a.questions)) : null
+      if (Array.isArray(parsedGroup) && parsedGroup.length > 0) {
+        questionGroup = parsedGroup as Array<{ question: string; options: string[] }>
+      }
+    } catch { /* single-question card */ }
     list.push({
       type: 'ask_card',
       askCardId: a.id,
       question: decodeUnicodeEscapes(a.question ?? ''),
       options: parseOptions(a.options),
+      ...(questionGroup ? { questions: questionGroup } : {}),
       status: a.status,
       selectedOption: a.selectedOption ?? undefined,
     })

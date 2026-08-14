@@ -1908,6 +1908,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               askCardId: String(evt.askCardId ?? ''),
               question: String(evt.question ?? ''),
               options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
+              questions: Array.isArray((evt as { questions?: unknown }).questions)
+                ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
+                : undefined,
             })
           } else if (evt.type === 'error') {
             onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
