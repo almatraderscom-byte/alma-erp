@@ -5641,14 +5641,17 @@ final class AlmaVoiceEngine {
         // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
         // এখন/ওকে), and never with a location word, a question form, or a
         // memory instruction.
-        // Ambiguous short forms wait for the FINAL transcript: an incremental
-        // prefix of "আচ্ছা তাহলে রাখো এখানে" must not schedule an
-        // irreversible end before the location word arrives (Codex P1 #759
-        // round 3).
-        if finalized, t.count <= 25,
-           t.contains("রাখো") || t.contains("রাখেন") || t.contains("রাখি") || t.contains("রেখে দ"),
+        // Short first-person closings ("আচ্ছা রাখি", "ঠিক আছে রাখি এখন").
+        // ONLY the first-person রাখি form qualifies — in a call it means "I am
+        // hanging up"; the second-person রাখো/রাখেন is a polysemous placement
+        // command ("ব্যাগটা রাখো তাহলে") and never ends the call by itself
+        // (Codex P1 #759 rounds 2-4). Finalized transcripts only, and object
+        // classifiers (টা/টি/গুলো), location words, question forms and memory
+        // instructions still exclude.
+        if finalized, t.count <= 25, t.contains("রাখি"),
            t.contains("তাহলে") || t.contains("আচ্ছা") || t.contains("ঠিক আছে")
                || t.contains("এখন") || t.contains("ওকে") || t.contains("okay") || t.contains("ok "),
+           !t.contains("টা রাখি"), !t.contains("টি রাখি"), !t.contains("গুলো রাখি"), !t.contains("রাখিনি"),
            !t.contains("এখানে"), !t.contains("ওখানে"), !t.contains("সেখানে"), !t.contains("খানে"),
            !t.contains("?"), !t.contains("কি "), !t.contains("কী"), !t.contains("কেন"),
            !t.contains("মনে"), !t.contains("নোট"), !t.contains("সেভ"), !t.contains("save") {
