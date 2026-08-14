@@ -5636,11 +5636,16 @@ final class AlmaVoiceEngine {
         if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
         // Short standalone closings like "আচ্ছা ঠিক আছে রাখো তাহলে" (owner
         // report 2026-08-15: his real wording missed the list above and the
-        // call hung open). Still narrow: no question forms, no memory
-        // instructions (মনে/নোট/সেভ), and only as a SHORT utterance so a
-        // রাখ-word inside a longer sentence keeps meaning what it says.
+        // call hung open). Narrow on purpose (Codex P1 #759 round 2 —
+        // "ফাইলটা এখানে রাখো" is a placement command, not a farewell): the
+        // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
+        // এখন/ওকে), and never with a location word, a question form, or a
+        // memory instruction.
         if t.count <= 25,
            t.contains("রাখো") || t.contains("রাখেন") || t.contains("রাখি") || t.contains("রেখে দ"),
+           t.contains("তাহলে") || t.contains("আচ্ছা") || t.contains("ঠিক আছে")
+               || t.contains("এখন") || t.contains("ওকে") || t.contains("okay") || t.contains("ok "),
+           !t.contains("এখানে"), !t.contains("ওখানে"), !t.contains("সেখানে"), !t.contains("খানে"),
            !t.contains("?"), !t.contains("কি "), !t.contains("কী"), !t.contains("কেন"),
            !t.contains("মনে"), !t.contains("নোট"), !t.contains("সেভ"), !t.contains("save") {
             return true
