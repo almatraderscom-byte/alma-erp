@@ -58,10 +58,10 @@ describe('SPEC-076 whole-set', () => {
   })
   it('rollup + codeowners proposal are deterministic', () => {
     const roll = ownershipByDomain(ALL_MANIFESTS)
-    expect(roll.length).toBe(63)
+    expect(roll.length).toBe(64)
     expect(roll).toEqual([...roll].sort((a, b) => a.domain.localeCompare(b.domain)))
     const total = roll.reduce((a, d) => a + d.toolCount, 0)
-    expect(total).toBe(327)
+    expect(total).toBe(355)
     expect(renderToolCodeowners(ALL_MANIFESTS)).toMatch(/GENERATED proposal/)
   })
 })
