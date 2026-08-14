@@ -5580,7 +5580,7 @@ final class AlmaVoiceEngine {
         // tool). If Boss's own words ask to hang up, the call ends after the
         // model's goodbye finishes — model cooperation not required.
         if Self.hangupContext(in: transcript) { lastHangupContextAt = Date() }
-        if Self.hangupIntent(in: transcript) {
+        if Self.hangupIntent(in: transcript, finalized: finalized) {
             #if DEBUG
             NSLog("ALMA-VOICE hang-up intent heard in input transcript")
             #endif
@@ -5623,7 +5623,7 @@ final class AlmaVoiceEngine {
     /// hang-up): bare "রেখে দাও/রাখো" counts only as a short standalone closing
     /// utterance; longer sentences need explicit call/phone context or a
     /// salutation formula.
-    static func hangupIntent(in text: String) -> Bool {
+    static func hangupIntent(in text: String, finalized: Bool = true) -> Bool {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         // Closing salutations.
         if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") || t.contains("খোদা হাফেজ") { return true }
@@ -5634,6 +5634,19 @@ final class AlmaVoiceEngine {
         // Standalone closings.
         if t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") || t.contains("তাহলে রাখি") || t.contains("রাখি তাহলে") { return true }
         if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
+        // Short standalone closings like "আচ্ছা ঠিক আছে রাখো তাহলে" (owner
+        // report 2026-08-15: his real wording missed the list above and the
+        // call hung open). Narrow on purpose (Codex P1 #759 round 2 —
+        // "ফাইলটা এখানে রাখো" is a placement command, not a farewell): the
+        // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
+        // এখন/ওকে), and never with a location word, a question form, or a
+        // memory instruction.
+        // NO generic short-form branch. Four review rounds proved every
+        // রাখ-family heuristic misfires on some placement/keeping sentence
+        // ("ব্যাগটা রাখো তাহলে", "এটা আমি রাখি") — only the explicit
+        // salutation/phone-context phrases above are deterministic. Softer
+        // farewells end the call through the model's end_call, which is
+        // corroboration-gated separately.
         return false
     }
 
