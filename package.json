@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "prisma generate && node scripts/migrate-on-deploy.mjs && node scripts/build-companion-dist.mjs && rm -rf .next/cache/.tsbuildinfo .next/cache/eslint && next build",
+    "build": "prisma generate && node scripts/migrate-on-deploy.mjs && node scripts/build-companion-dist.mjs && rm -rf .next/cache/.tsbuildinfo .next/cache/eslint .next/cache/turbopack && next build",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",

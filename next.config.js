@@ -54,6 +54,22 @@ const nextConfig = {
   // the deploy build only builds. Do NOT remove without re-checking the hang.
   typescript: { ignoreBuildErrors: true },
   compress: true,
+  // Next 16.3 turned Turbopack's build filesystem cache ON by default, and
+  // Vercel restores `.next/cache` between deploys — so every build has been
+  // rolling the dice on a cache written by a different Turbopack runtime. When
+  // the restored cache loses, the build dies evaluating postcss.config.js:
+  //
+  //   Error: Turbopack build failed with 1 error:
+  //   ./src/app/globals.css
+  //   TypeError: __turbopack_context__.a is not a function
+  //       at mod (postcss.config.js_.loader.mjs:11:31)
+  //
+  // Intermittently, which is the worst kind: 2026-08-14 alone lost the
+  // PRODUCTION deploy of 9a766add and a preview, while neighbouring builds of
+  // the same tree passed. A green deploy matters far more here than a warm
+  // cache, so opt out (documented flag) — `.next/cache/turbopack` is also wiped
+  // in the build script so an already-poisoned restored cache cannot be read.
+  experimental: { turbopackFileSystemCacheForBuild: false },
   env: {
     /** Surfaced by /api/health + optional client reads */
     NEXT_PUBLIC_VERCEL_GIT_COMMIT: process.env.VERCEL_GIT_COMMIT_SHA || '',
@@ -108,9 +124,14 @@ const sentryBuildOptions = {
   silent: !process.env.CI,
   widenClientFileUpload: true,
   hideSourceMaps: true,
-  disableLogger: true,
-  automaticVercelMonitors: true,
   tunnelRoute: '/monitoring',
+  // Renamed in @sentry/nextjs v10 — the old top-level `disableLogger` and
+  // `automaticVercelMonitors` now print a deprecation warning on every build
+  // (visible since the wrapper stopped being skipped).
+  webpack: {
+    treeshake: { removeDebugLogging: true },
+    automaticVercelMonitors: true,
+  },
 }
 
 // ALWAYS wrap. The old build-time `SENTRY_DSN ? wrap : raw` gate silently
