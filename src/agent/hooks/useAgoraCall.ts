@@ -24,7 +24,9 @@ type AnyClient = {
   renewToken: (token: string) => Promise<void>
   on: (event: string, cb: (...args: unknown[]) => void) => void
   removeAllListeners: () => void
-  getRTCStats?: () => Promise<Record<string, unknown>>
+  /** SYNCHRONOUS in agora-rtc-sdk-ng — declaring it as a Promise is what led to
+   *  `getRTCStats().catch(...)` and the live-call TypeError. Do not re-add. */
+  getRTCStats?: () => Record<string, unknown>
   getRemoteAudioStats?: () => Record<string, Record<string, unknown>>
 }
 type AnyLocalAudioTrack = {
@@ -366,8 +368,17 @@ export function useAgoraCall(): UseAgoraCall {
         if (!stillCurrent() || now - lastQualityAtRef.current < 10_000) return
         lastQualityAtRef.current = now
         void (async () => {
-          const rtc = (await localClient?.getRTCStats?.().catch(() => ({})) ?? {}) as Record<string, unknown>
-          const remote = Object.values(localClient?.getRemoteAudioStats?.() ?? {})[0] ?? {}
+          // agora-rtc-sdk-ng returns these stats SYNCHRONOUSLY — they are plain
+          // objects, not promises. `getRTCStats().catch(...)` therefore threw
+          // "e.call(l).catch is not a function" inside Agora's own safeEmit,
+          // which aborts the remaining listeners for that event on the live call
+          // (seen on iOS WKWebView at /portal/office). Read them defensively.
+          let rtc: Record<string, unknown> = {}
+          let remote: Record<string, unknown> = {}
+          try {
+            rtc = (localClient?.getRTCStats?.() ?? {}) as Record<string, unknown>
+            remote = (Object.values(localClient?.getRemoteAudioStats?.() ?? {})[0] ?? {}) as Record<string, unknown>
+          } catch { /* stats are telemetry only — never break the call */ }
           if (!stillCurrent()) return
           emitWebOfficeCallEvent({
             channel: ch,

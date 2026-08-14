@@ -1,3 +1,17 @@
+/**
+ * Browser-side Sentry init.
+ *
+ * This file replaces `sentry.client.config.ts`, which Next 16 (Turbopack builds)
+ * no longer loads — the SDK's own words: "When using Turbopack
+ * `sentry.client.config.ts` will no longer work." The Next 14 → 16 upgrade on
+ * 2026-08-09 therefore silenced every browser error report; Sentry's last event
+ * of any kind is 2026-08-08 19:02, and a live check on production found the SDK
+ * bundle loaded but `getClient()` undefined. Keep the init here.
+ *
+ * Redaction rules below are unchanged from the old client config — attendance
+ * face photos, employee names, HR ids, wallet balances and request bodies must
+ * never leave the device.
+ */
 import * as Sentry from '@sentry/nextjs'
 import {
   baseSentryOptions,
@@ -52,3 +66,6 @@ if (isSentryEnabled()) {
     ],
   })
 }
+
+/** App Router navigation spans — required since Sentry v9 / Next 15. */
+export const onRouterTransitionStart = Sentry.captureRouterTransitionStart
