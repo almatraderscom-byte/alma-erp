@@ -29,6 +29,14 @@ describe('normalizeMediaPlan', () => {
     expect(() => normalizeMediaPlan({ ...rawPlan, scenes: [] })).toThrow()
   })
 
+  it('keeps scene indices contiguous when an invalid scene sits between valid ones', () => {
+    const plan = normalizeMediaPlan({
+      ...rawPlan,
+      scenes: [{ durationSec: 5, brief: '', imagePrompt: '' }, ...rawPlan.scenes],
+    })
+    expect(plan.scenes.map((s) => s.idx)).toEqual([1, 2])
+  })
+
   it('falls back to safe model defaults on unknown ids', () => {
     const plan = normalizeMediaPlan({ ...rawPlan, models: { image: 'bogus', video: 'bogus' } })
     expect(plan.models.image).toBe('gemini-3-pro-image')

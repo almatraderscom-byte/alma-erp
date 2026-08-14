@@ -84,8 +84,10 @@ const plan_media_video: AgentTool = {
       let project
       if (existing) {
         // Revision: supersede the old card, refresh scenes in place.
-        project = await db.agentMediaProject.update({
-          where: { id: existing.id },
+        // CAS on status so a concurrent Approve (which flips planned→approved)
+        // can't be overwritten by this revision — mirror of the approve-side CAS.
+        const revised = await db.agentMediaProject.updateMany({
+          where: { id: existing.id, status: { in: ['draft', 'planned'] } },
           data: {
             title: plan.title,
             planJson: plan,
@@ -96,6 +98,13 @@ const plan_media_video: AgentTool = {
             status: 'planned',
           },
         })
+        if (revised.count === 0) {
+          return {
+            success: false,
+            error: 'প্ল্যানটা এর মধ্যে approve হয়ে গেছে — রিভাইজ আর সম্ভব না; নতুন প্রজেক্ট খুলুন।',
+          }
+        }
+        project = await db.agentMediaProject.findUnique({ where: { id: existing.id } })
         await db.agentMediaScene.deleteMany({ where: { projectId: existing.id } })
         if (existing.pendingActionId) {
           await db.agentPendingAction.updateMany({

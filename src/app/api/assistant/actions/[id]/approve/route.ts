@@ -1123,13 +1123,33 @@ async function runApprove(
     if (claimed.count === 0) {
       return Response.json({ error: 'already_resolved' }, { status: 409 })
     }
-    const mediaPayload = payload as { projectId?: string | null }
+    const mediaPayload = payload as { projectId?: string | null; planRevision?: number | null }
     const projectId = typeof mediaPayload.projectId === 'string' ? mediaPayload.projectId : null
+    const quotedRevision = typeof mediaPayload.planRevision === 'number' ? mediaPayload.planRevision : null
     if (projectId) {
-      await db.agentMediaProject.updateMany({
-        where: { id: projectId, status: 'planned' },
+      // CAS: lock ONLY the exact plan revision this card quoted, and only while
+      // this card is still the project's current card. If a chat revision won
+      // the race (bumped planRevision / swapped pendingActionId), this stale
+      // card must NOT lock the new plan+price the owner never saw together.
+      const lockedProject = await db.agentMediaProject.updateMany({
+        where: {
+          id: projectId,
+          status: 'planned',
+          pendingActionId: actionId,
+          ...(quotedRevision === null ? {} : { planRevision: quotedRevision }),
+        },
         data: { status: 'approved' },
       })
+      if (lockedProject.count === 0) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'superseded', result: { projectId, reason: 'plan_revised_during_approval' } },
+        })
+        return Response.json(
+          { error: 'plan_revised', message: 'প্ল্যানটা এর মধ্যে রিভাইজ হয়েছে — নতুন কার্ড দেখে approve করুন।' },
+          { status: 409 },
+        )
+      }
     }
     await db.agentPendingAction.update({
       where: { id: actionId },

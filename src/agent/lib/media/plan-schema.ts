@@ -77,8 +77,11 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
   const language = str(p.language, 'bn') || 'bn'
 
   const rawScenes = Array.isArray(p.scenes) ? p.scenes : []
+  // Filter invalid entries BEFORE assigning idx — S-numbers must stay contiguous
+  // (S1..Sn) because they are persisted and the owner addresses scenes by them.
   const scenes: MediaScenePlan[] = rawScenes
     .filter((s): s is Record<string, unknown> => Boolean(s) && typeof s === 'object')
+    .filter((s) => str(s.brief).length > 0 && str(s.imagePrompt).length > 0)
     .slice(0, MEDIA_MAX_SCENES)
     .map((s, i) => ({
       idx: i + 1,
@@ -89,7 +92,6 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
       clipBrief: str(s.clipBrief) || str(s.brief),
       usesOwnerPhoto: Boolean(s.usesOwnerPhoto),
     }))
-    .filter((s) => s.brief.length > 0 && s.imagePrompt.length > 0)
   if (scenes.length === 0) throw new Error('media plan needs at least one scene with brief + imagePrompt')
 
   const audioRaw = (p.audio && typeof p.audio === 'object' ? p.audio : {}) as Record<string, unknown>
