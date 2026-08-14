@@ -301,10 +301,16 @@ async function enqueueFinalStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]
   // Honesty over silence: a scene whose clip failed is stitched AROUND, and the
   // final card says so — the owner can then regenerate exactly that scene
   // (regenerate_media_scene works from 'final').
-  const missing = scenes
-    .filter((s) => !clips.get(s.id))
-    .map((s) => `S${s.idx}`)
-  const missingNote = missing.length > 0 ? ` — ${missing.join(', ')} বাদ পড়েছে (ক্লিপ fail; "S${missing[0]?.slice(1)} আবার বানাও" বললে যোগ হবে)` : ''
+  const images = byScene('image')
+  const missing = scenes.filter((s) => !clips.get(s.id))
+  // The remedy depends on WHAT failed: no ready image → image regen (which
+  // auto-rebuilds the clip); image fine → clip regen.
+  const missingNote =
+    missing.length > 0
+      ? ` — ${missing
+          .map((s) => `S${s.idx} বাদ (${images.get(s.id) ? `ক্লিপ fail; "S${s.idx} এর ক্লিপ আবার বানাও"` : `ছবি fail; "S${s.idx} এর ছবি আবার বানাও"`} বললে যোগ হবে)`)
+          .join(', ')}`
+      : ''
   await enqueueAsset(tx, {
     project,
     stage: 'final',
