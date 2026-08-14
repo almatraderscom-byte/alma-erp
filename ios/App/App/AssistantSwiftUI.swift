@@ -149,8 +149,68 @@ enum AlmaAgentHaptics {
     static func error() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
 }
 
-/// Material fallback used by newly-added Agent surfaces and adopted incrementally
-/// by existing cards. Reduce Transparency gets a solid ALMA card, never clear text.
+/// The conversation drawer's panel surface. iOS 26: one Liquid Glass layer;
+/// earlier: the original glassFill + ultraThin material stack. Drawer text
+/// sits directly on this, so Reduce Transparency gets the solid card.
+@available(iOS 17.0, *)
+struct AlmaDrawerSurface: ViewModifier {
+    let pal: AgentPalette
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if reduceTransparency {
+            content.background(pal.card)
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: Rectangle())
+        } else {
+            content
+                .background(pal.glassFill)
+                .background(.ultraThinMaterial)
+        }
+    }
+}
+
+/// A small status/progress chip: Liquid Glass capsule on iOS 26 (optionally
+/// tinted), the original flat capsule fill everywhere else.
+@available(iOS 17.0, *)
+struct AlmaGlassChip: ViewModifier {
+    let fallback: Color
+    var tint: Color? = nil
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            if let tint {
+                content.glassEffect(.regular.tint(tint), in: Capsule())
+            } else {
+                content.glassEffect(.regular, in: Capsule())
+            }
+        } else {
+            content.background(fallback, in: Capsule())
+        }
+    }
+}
+
+/// A coral-tinted Liquid Glass capsule for small call-to-action chips (auth
+/// banner and friends). iOS 26 tints real glass; earlier systems keep the
+/// solid coral capsule those builds always had.
+@available(iOS 17.0, *)
+struct AlmaCoralGlassCapsule: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(.regular.tint(AgentPalette.coral).interactive(), in: Capsule())
+        } else {
+            content.background(AgentPalette.coral, in: Capsule())
+        }
+    }
+}
+
+/// The one glass surface every Agent card shares. On iOS 26 it is real Liquid
+/// Glass (edge highlight, refraction, scroll reaction); before 26 it stays the
+/// proven ultraThin material. Reduce Transparency gets a solid ALMA card,
+/// never clear text.
 @available(iOS 17.0, *)
 struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     let shape: S
@@ -158,12 +218,12 @@ struct AlmaAgentGlassBackground<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
-        content.background {
-            if reduceTransparency {
-                shape.fill(pal.card)
-            } else {
-                shape.fill(.ultraThinMaterial)
-            }
+        if reduceTransparency {
+            content.background { shape.fill(pal.card) }
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content.background { shape.fill(.ultraThinMaterial) }
         }
     }
 }
@@ -13361,7 +13421,8 @@ private struct AgentGeneratedImageGallery: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(maxWidth: 640, alignment: .leading)
-        .background(pal.card.opacity(0.38), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 12, style: .continuous), pal: pal))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("agent.generated-image.render-cost")
         .accessibilityLabel(
@@ -13850,7 +13911,8 @@ struct AgentChatImage: View {
                     }
                     .foregroundStyle(pal.muted)
                     .frame(width: 80, height: 80)
-                    .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .modifier(AlmaAgentGlassBackground(
+                        shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
                 }
                 .buttonStyle(AlmaAgentPressStyle())
             } else if let url {
@@ -19408,8 +19470,7 @@ struct AgentSideDrawer: View {
             drawer(pal)
                 .frame(width: Self.drawerWidth)
                 .frame(maxHeight: .infinity)
-                .background(pal.glassFill)
-                .background(.ultraThinMaterial)
+                .modifier(AlmaDrawerSurface(pal: pal))
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
                                                   bottomTrailingRadius: 24, topTrailingRadius: 24,
                                                   style: .continuous))
@@ -20557,7 +20618,7 @@ struct AgentWorkStepsDockView: View {
                         .foregroundStyle(pal.ink)
                         .lineLimit(1)
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Color.white.opacity(0.07), in: Capsule())
+                        .modifier(AlmaGlassChip(fallback: Color.white.opacity(0.07)))
                     Button {
                         AlmaAgentHaptics.light()
                         withAnimation(reduceMotion ? nil
@@ -20578,7 +20639,8 @@ struct AgentWorkStepsDockView: View {
                         }
                         .foregroundStyle(pal.ink)
                         .padding(.horizontal, 11).padding(.vertical, 6)
-                        .background(AgentPalette.coral.opacity(0.14), in: Capsule())
+                        .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.14),
+                                                tint: AgentPalette.coral.opacity(0.35)))
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -22121,7 +22183,8 @@ private struct AgentBackgroundTasksSheet: View {
             .font(.system(size: 12.5)).foregroundStyle(pal.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .background(pal.card.opacity(0.42), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .modifier(AlmaAgentGlassBackground(
+                shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
     }
 
     private var runningControlBusy: Bool {
@@ -24320,7 +24383,7 @@ struct AssistantScreen: View {
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14).padding(.vertical, 9)
-            .background(AgentPalette.coral, in: Capsule())
+            .modifier(AlmaCoralGlassCapsule())
         }
         .padding(.top, 6)
     }
@@ -24381,7 +24444,15 @@ struct AgentScrollViewportKey: PreferenceKey {
 /// Claude-style buttons the web Assistant tab already had) into the SwiftUI screen.
 @MainActor
 final class AssistantModelPillButton: UIButton {
-    private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    // iOS 26: real Liquid Glass pill; earlier systems keep the thin material.
+    private let blur: UIVisualEffectView = {
+        if #available(iOS 26.0, *), !UIAccessibility.isReduceTransparencyEnabled {
+            let glass = UIGlassEffect()
+            glass.isInteractive = true
+            return UIVisualEffectView(effect: glass)
+        }
+        return UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    }()
     private let modelText = UILabel()
 
     override init(frame: CGRect) {
