@@ -97,12 +97,28 @@ describe('Creative Studio paid-run production boundary', () => {
     expect(imageWorker).toContain(
       '{ jobId: job.id, ...studioRunQueueJobOptions(job.payload) }',
     )
-    expect(imageWorker).toContain(
-      'await assertStudioRunPaidAttempt(pendingActionId, payload, 1)',
-    )
-    expect(imageWorker).toContain(
-      'await assertStudioRunPaidAttempt(pendingActionId, payload, attemptNum)',
-    )
+    // The image worker counts paid generations with a monotonic `paidAttempt`
+    // since 1b3cf609 — variation 2's FIRST generation is paid attempt 2, not
+    // attempt 1 again, which the old literal arguments could not express. This
+    // test pinned those literals, so it went red the day the worker improved
+    // and stayed red. Pin the invariant instead: every paid generation call is
+    // immediately preceded by an incremented guard.
+    const guardCall = 'await assertStudioRunPaidAttempt(pendingActionId, payload, paidAttempt)'
+    const paidGuards = imageWorker.match(
+      /paidAttempt \+= 1\s*\n\s*await assertStudioRunPaidAttempt\(pendingActionId, payload, paidAttempt\)/g,
+    ) ?? []
+    const paidGenerations = [...imageWorker.matchAll(/await generateImageToStorage\(/g)]
+    expect(paidGuards.length).toBeGreaterThan(0)
+    // One guard per paid provider call — no unguarded spend, no dead guard.
+    expect(paidGuards.length).toBe(paidGenerations.length)
+    for (const generation of paidGenerations) {
+      const before = imageWorker.slice(0, generation.index)
+      const guardIndex = before.lastIndexOf(guardCall)
+      expect(guardIndex).toBeGreaterThan(-1)
+      // The guard must be the thing right before the spend, not somewhere far
+      // above it with other logic in between.
+      expect(generation.index - guardIndex).toBeLessThan(400)
+    }
     expect(videoWorker.indexOf(
       'await assertStudioRunPaidAttempt(pendingActionId, payload, attempt)',
     )).toBeLessThan(videoWorker.indexOf(
