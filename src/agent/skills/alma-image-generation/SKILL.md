@@ -31,3 +31,7 @@ keywords: generate image, create image, make image, design poster, image variati
 ## Done
 
 `generate_image` approval card stage হয়েছে; approve-এর পর actual image block conversation-এ এসেছে—তবেই generated result complete।
+
+## ভিডিও চাইলে
+
+Boss ছবি নয় **ভিডিও** চাইলে (নিজের ছবি দিয়ে হলেও) এই pipeline নয় — `plan_media_video` দিয়ে media-video plan card stage করো (alma-media-video ধাপ অনুযায়ী)। `generate_image` দিয়ে ভিডিওর দৃশ্য বানাতে যেও না।
