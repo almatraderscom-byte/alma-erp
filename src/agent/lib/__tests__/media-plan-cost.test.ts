@@ -72,6 +72,28 @@ describe('estimateMediaPlanCost', () => {
     expect(music.lines.some((l) => l.label.includes('ভয়েসওভার'))).toBe(false)
   })
 
+  it('music quote floors at the worker 10s minimum', () => {
+    // 1 scene × 3s music-only plan: worker clamps music_length_ms to ≥10s,
+    // so the quote must price 10s, same as a true 10s plan.
+    const short = estimateMediaPlanCost(
+      normalizeMediaPlan({
+        ...rawPlan,
+        audio: { mode: 'music', musicBrief: 'calm' },
+        scenes: [{ ...rawPlan.scenes[0], durationSec: 3 }],
+      }),
+    )
+    const shortMusic = short.lines.find((l) => l.label.includes('মিউজিক'))
+    const ten = estimateMediaPlanCost(
+      normalizeMediaPlan({
+        ...rawPlan,
+        audio: { mode: 'music', musicBrief: 'calm' },
+        scenes: [{ ...rawPlan.scenes[0], durationSec: 10 }],
+      }),
+    )
+    const tenMusic = ten.lines.find((l) => l.label.includes('মিউজিক'))
+    expect(shortMusic?.usd).toBe(tenMusic?.usd)
+  })
+
   it('cheaper clip model lowers the total', () => {
     const pro = estimateMediaPlanCost(normalizeMediaPlan(rawPlan))
     const lite = estimateMediaPlanCost(

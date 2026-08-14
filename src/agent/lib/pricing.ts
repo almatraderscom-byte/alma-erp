@@ -255,9 +255,11 @@ export function calcElevenLabsTtsCostUsd(charCount: number): number {
   return roundUsd((Math.max(0, charCount) / 1_000_000) * PRICING_META.elevenlabs_tts.perMillionChars)
 }
 
-/** ElevenLabs Music — per generated minute (estimate). */
+/** ElevenLabs Music — per generated minute (estimate). The worker clamps
+ * music_length_ms to ≥10s (audio-lab.mjs), so the quote floors there too. */
+export const ELEVENLABS_MUSIC_MIN_SECONDS = 10
 export function calcElevenLabsMusicCostUsd(durationSeconds: number): number {
-  const minutes = Math.max(durationSeconds / 60, 0.1)
+  const minutes = Math.max(durationSeconds, ELEVENLABS_MUSIC_MIN_SECONDS) / 60
   return roundUsd(minutes * PRICING_META.elevenlabs_music.perMinute)
 }
 

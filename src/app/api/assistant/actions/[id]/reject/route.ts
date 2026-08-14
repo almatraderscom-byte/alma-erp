@@ -156,6 +156,23 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const payload = action.payload as Record<string, unknown>
 
+  // Media mode: বাতিল on a plan card settles the PROJECT too — otherwise it
+  // stays 'planned' with pendingActionId pointing at a terminal card and can be
+  // revised/reopened as if the cancellation never happened.
+  if (action.type === 'media_plan') {
+    const p = payload as { projectId?: unknown }
+    const projectId = typeof p.projectId === 'string' ? p.projectId : null
+    if (projectId) {
+      await db.agentMediaProject.updateMany({
+        // CAS on pendingActionId: only THIS card may cancel the project — a
+        // fresh revision card (which swapped pendingActionId) stays alive.
+        where: { id: projectId, status: { in: ['draft', 'planned'] }, pendingActionId: actionId },
+        data: { status: 'cancelled' },
+      })
+    }
+    return Response.json({ success: true, status: 'rejected', projectCancelled: Boolean(projectId) })
+  }
+
   // Office-absence ❌ না: owner did NOT send anyone out → ask WHICH staffer is
   // missing so the chosen one gets the camera frame + a nudge.
   if (action.type === 'office_absence_confirm') {
