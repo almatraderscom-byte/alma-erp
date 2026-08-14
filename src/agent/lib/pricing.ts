@@ -137,7 +137,16 @@ export const PRICING_META = {
     source: 'https://fal.ai/models/fal-ai/bytedance/seedance/v1/pro',
     perSecondPro: 0.125,
     perSecondLite: 0.037,
-    note: 'Seedance via fal (~$0.62/5s pro 1080p, ~$0.18/5s lite) — verify exact fal rate at M2 wiring',
+    note: 'Seedance 1.0 via fal (~$0.62/5s pro 1080p, ~$0.18/5s lite)',
+  },
+  seedance_25_video: {
+    model: 'bytedance/seedance-2.5/image-to-video',
+    lastVerifiedAt: '2026-08-14',
+    verified: false,
+    source: 'https://fal.ai/models/bytedance/seedance-2.5/image-to-video',
+    perSecond720p: 0.473,
+    perSecond480p: 0.2205,
+    note: 'Seedance 2.5 via fal — token-billed ($0.0214/1k tok); ~$0.473/s at 720p, ~$0.2205/s at 480p',
   },
 } as const
 
@@ -267,6 +276,13 @@ export function calcElevenLabsMusicCostUsd(durationSeconds: number): number {
 export function calcSeedanceCostUsd(durationSeconds: number, tier: 'pro' | 'lite' = 'pro'): number {
   const secs = Math.max(1, Math.round(durationSeconds))
   const rate = tier === 'lite' ? PRICING_META.seedance_video.perSecondLite : PRICING_META.seedance_video.perSecondPro
+  return roundUsd(secs * rate)
+}
+
+/** Seedance 2.5 (fal) image-to-video — per second; pro=720p, lite=480p. */
+export function calcSeedance25CostUsd(durationSeconds: number, tier: 'pro' | 'lite' = 'pro'): number {
+  const secs = Math.max(1, Math.round(durationSeconds))
+  const rate = tier === 'lite' ? PRICING_META.seedance_25_video.perSecond480p : PRICING_META.seedance_25_video.perSecond720p
   return roundUsd(secs * rate)
 }
 

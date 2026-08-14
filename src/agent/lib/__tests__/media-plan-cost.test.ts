@@ -94,6 +94,15 @@ describe('estimateMediaPlanCost', () => {
     expect(shortMusic?.usd).toBe(tenMusic?.usd)
   })
 
+  it('Seedance 2.5 quotes its own (higher) rate', () => {
+    const s25 = estimateMediaPlanCost(
+      normalizeMediaPlan({ ...rawPlan, models: { ...rawPlan.models, video: 'seedance-2.5-pro' } }),
+    )
+    const s1 = estimateMediaPlanCost(normalizeMediaPlan(rawPlan))
+    expect(s25.totalUsd).toBeGreaterThan(s1.totalUsd)
+    expect(s25.lines.some((l) => l.label.includes('Seedance 2.5'))).toBe(true)
+  })
+
   it('cheaper clip model lowers the total', () => {
     const pro = estimateMediaPlanCost(normalizeMediaPlan(rawPlan))
     const lite = estimateMediaPlanCost(

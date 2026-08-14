@@ -1165,15 +1165,29 @@ async function runApprove(
         { status: 409 },
       )
     }
+    // M1: approval is the only money gate — kick off the render chain now.
+    let renderQueued = 0
+    if (projectId) {
+      try {
+        const { startMediaRender } = await import('@/agent/lib/media/render-chain')
+        const started = await startMediaRender(projectId)
+        renderQueued = started.queued
+      } catch (err) {
+        console.error('[approve] media render start failed:', err)
+      }
+    }
     await appendConversationNote(
       db,
       action,
-      `✅ ভিডিও প্ল্যান approved — প্রজেক্ট লক হয়েছে। রেন্ডার ইঞ্জিন (দৃশ্য ধরে অডিও→ছবি→ক্লিপ→ফাইনাল) পরের বিল্ডে চালু হচ্ছে; চালু হলেই এই প্রজেক্ট অটো শুরু হবে।`,
+      renderQueued > 0
+        ? `✅ ভিডিও প্ল্যান approved — রেন্ডার শুরু! প্রথমে অডিও (${renderQueued}টি কাজ), তারপর প্রতি দৃশ্যের ছবি, তারপর ক্লিপ — প্রতিটা রেডি হলেই এই চ্যাটে আসবে, শেষে ফাইনাল ভিডিও।`
+        : `✅ ভিডিও প্ল্যান approved — কিন্তু রেন্ডার শুরু করা যায়নি; "ভিডিওটা আবার শুরু করো" বললে আমি আবার চেষ্টা করব।`,
     )
     return Response.json({
       success: true,
-      message: 'Media plan approved — project locked for the render engine.',
+      message: 'Media plan approved — render chain started.',
       projectId,
+      renderQueued,
     })
   }
 

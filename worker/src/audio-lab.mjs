@@ -119,7 +119,16 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
     return
   }
 
-  if (kind === 'music' || kind === 'wish_song') {
+  if (kind === 'media_vo') {
+    // Media mode voiceover: generic ElevenLabs voices only. voice values:
+    // 'elevenlabs' → default male profile, 'elevenlabs:<voiceId>' → explicit
+    // voice. The owner clone deliberately rides kind:'owner_voice' instead —
+    // its kv guardrail stays intact.
+    const { synthesizeElevenLabs } = await import('./tts-elevenlabs.mjs')
+    const voice = String(payload.voice ?? 'elevenlabs')
+    const explicitId = voice.startsWith('elevenlabs:') ? voice.slice('elevenlabs:'.length).trim() : null
+    audio = await synthesizeElevenLabs(String(payload.text ?? ''), explicitId ? { voiceId: explicitId } : { voiceProfile: 'male' })
+  } else if (kind === 'music' || kind === 'wish_song') {
     const res = await elFetch('/music', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

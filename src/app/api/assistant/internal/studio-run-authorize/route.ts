@@ -10,7 +10,7 @@ import {
 import { assertStudioRunExecutionGate } from '@/lib/creative-studio/studio-run-execution-gate'
 import { isPreviewApprovedCreativeStudioImageAction } from '@/lib/creative-studio/preview-worker-scope'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 const db = prisma as any
 
 export const runtime = 'nodejs'
@@ -72,6 +72,28 @@ export async function POST(req: NextRequest) {
     if (action.status !== 'approved' && !nonPaidLocalCampaign && !previewApproved) {
       throw new StudioRunAuthorizationError('run_job_not_approved', 409)
     }
+    // Media mode render-chain jobs: the approved media_plan card IS the spend
+    // confirmation. Authorize only when the chain tag round-trips to a real
+    // asset row that points back at THIS action and the project is rendering —
+    // a forged mediaChain payload on some other row fails this bind.
+    const mediaTag = asRecord(payload.mediaChain)
+    if (typeof mediaTag.assetId === 'string' && typeof mediaTag.projectId === 'string') {
+       
+      const mediaDb = prisma as any
+      const asset = await mediaDb.agentMediaAsset.findUnique({ where: { id: mediaTag.assetId } })
+      const project = asset
+        ? await mediaDb.agentMediaProject.findUnique({ where: { id: mediaTag.projectId } })
+        : null
+      if (
+        asset?.jobId === action.id &&
+        asset?.projectId === mediaTag.projectId &&
+        project?.status === 'rendering'
+      ) {
+        return Response.json({ authorized: true, mediaChain: true })
+      }
+      throw new StudioRunAuthorizationError('media_chain_bind_failed', 409)
+    }
+
     const authorization = asRecord(payload.studioRunAuthorization)
     if (!authorization.receipt) {
       if (

@@ -29,9 +29,7 @@ function planSummaryBn(plan: MediaPlan, estimateBlock: string): string {
     `দৃশ্য ${plan.scenes.length}টি | ছবি: ${mediaModelLabel(plan.models.image)} | ক্লিপ: ${mediaModelLabel(plan.models.video)} | অডিও: ${audioLabel}\n\n` +
     `${sceneLines}\n\n` +
     `খরচ (exact):\n${estimateBlock}\n\n` +
-    // M0 honesty: approval LOCKS the plan+quote; generation starts when the M1
-    // render engine ships. Update this line when M1 lands.
-    `Approve করলে এই প্ল্যান আর খরচটা লক হবে। রেন্ডার ইঞ্জিন (দৃশ্য ধরে অডিও → ছবি → ক্লিপ → ফাইনাল ভিডিও) পরের বিল্ডে চালু হচ্ছে — চালু হলেই লক-করা প্রজেক্ট অটো শুরু হবে; এখনই কিছু জেনারেট হবে না।`
+    `Approve করলেই জেনারেশন শুরু: আগে প্রতি দৃশ্যের অডিও, তারপর ছবি, তারপর ক্লিপ — প্রতিটা রেডি হলে এই চ্যাটে আসবে, শেষে সব জোড়া দিয়ে ফাইনাল ভিডিও। Approve-ই একমাত্র খরচের গেট।`
   )
 }
 
@@ -246,5 +244,5 @@ export const MEDIA_TOOLS: AgentTool[] = [plan_media_video, get_media_project]
 
 export const MEDIA_ROLE_PROMPT = `
 ## MEDIA MODE (CapCut-class video engine)
-Owner shares ANY idea → you produce a COMPLETE video plan via plan_media_video: scene-by-scene (3-10s each), per-scene Bangla VO script + rich English imagePrompt/clipBrief, model choices (image: Nano Banana Pro default; clip: seedance-1.0-pro default; VO: ElevenLabs owner_clone default), owner photos composited where asked. Server recomputes the EXACT cost and stages the approval card — never state costs yourself, never generate before approval. Plan revisions (model swap, language change, drop VO→music, add scenes) = call plan_media_video again WITH projectId; it re-quotes and replaces the card. get_media_project reads plan/scenes/assets. Rendering after approval arrives in a later build — do not promise instant generation timing.
+Owner shares ANY idea → you produce a COMPLETE video plan via plan_media_video: scene-by-scene (3-10s each), per-scene Bangla VO script + rich English imagePrompt/clipBrief, model choices. Defaults: image gemini-3-pro-image (Nano Banana Pro); clip seedance-1.0-pro — seedance-2.5-pro (720p, best, priciest), seedance-2.5-lite (480p), veo-3.1-fast also selectable, honor the owner's pick; VO voice "elevenlabs" (generic ElevenLabs voice — NOT the owner clone; owner_clone only if he explicitly asks), music via ElevenLabs Music (musicBrief). Server recomputes the EXACT cost and stages the approval card — never state costs yourself, never generate before approval. On approve the render chain runs the whole thing automatically: per-scene VO → images → clips → final stitched video, each asset landing in chat as it finishes. Plan revisions (model swap, language change, drop VO→music, add scenes) = call plan_media_video again WITH projectId; it re-quotes and replaces the card. get_media_project reads plan/scenes/assets and render progress.
 `

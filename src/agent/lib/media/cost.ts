@@ -10,6 +10,7 @@ import {
   calcElevenLabsMusicCostUsd,
   calcElevenLabsTtsCostUsd,
   calcGeminiImageCostUsd,
+  calcSeedance25CostUsd,
   calcSeedanceCostUsd,
   calcTtsCostUsd,
   calcVeoCostUsd,
@@ -30,6 +31,8 @@ function imageUnitUsd(model: MediaPlan['models']['image']): number {
 }
 
 function clipUsd(model: MediaPlan['models']['video'], durationSec: number): number {
+  if (model === 'seedance-2.5-pro') return calcSeedance25CostUsd(durationSec, 'pro')
+  if (model === 'seedance-2.5-lite') return calcSeedance25CostUsd(durationSec, 'lite')
   if (model === 'seedance-1.0-pro') return calcSeedanceCostUsd(durationSec, 'pro')
   if (model === 'seedance-1.0-lite') return calcSeedanceCostUsd(durationSec, 'lite')
   // Veo fast আর standard এখন একই veo_video রেট শেয়ার করে (fast আলাদা রেট এলে pricing.ts এ যাবে)
@@ -40,6 +43,8 @@ const MODEL_LABELS_BN: Record<string, string> = {
   'gemini-3-pro-image': 'Nano Banana Pro',
   'gemini-3.1-flash-image': 'Nano Banana 2',
   'seedream-5.0-pro': 'Seedream 5.0 Pro',
+  'seedance-2.5-pro': 'Seedance 2.5 (720p)',
+  'seedance-2.5-lite': 'Seedance 2.5 (480p)',
   'seedance-1.0-pro': 'Seedance Pro',
   'seedance-1.0-lite': 'Seedance Lite',
   'veo-3.1-fast': 'Veo 3.1 Fast',

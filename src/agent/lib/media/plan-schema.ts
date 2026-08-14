@@ -11,7 +11,14 @@ export const MEDIA_PLAN_VERSION = 1
 export const MEDIA_IMAGE_MODELS = ['gemini-3-pro-image', 'gemini-3.1-flash-image', 'seedream-5.0-pro'] as const
 export type MediaImageModel = (typeof MEDIA_IMAGE_MODELS)[number]
 
-export const MEDIA_VIDEO_MODELS = ['seedance-1.0-pro', 'seedance-1.0-lite', 'veo-3.1-fast', 'veo-3.1'] as const
+export const MEDIA_VIDEO_MODELS = [
+  'seedance-2.5-pro', // fal bytedance/seedance-2.5 image-to-video 720p — best quality, priciest
+  'seedance-2.5-lite', // same endpoint at 480p
+  'seedance-1.0-pro',
+  'seedance-1.0-lite',
+  'veo-3.1-fast',
+  'veo-3.1',
+] as const
 export type MediaVideoModel = (typeof MEDIA_VIDEO_MODELS)[number]
 
 export type MediaAudioMode = 'vo' | 'music' | 'vo+music' | 'none'
@@ -42,7 +49,7 @@ export type MediaPlan = {
   durationSec: number
   audio: {
     mode: MediaAudioMode
-    /** 'owner_clone' | 'elevenlabs:<voiceId>' | 'google' */
+    /** 'elevenlabs' (default profile) | 'elevenlabs:<voiceId>' | 'owner_clone' | 'google' */
     voice: string | null
     musicBrief: string | null
   }
@@ -130,7 +137,9 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
     durationSec: scenes.reduce((acc, s) => acc + s.durationSec, 0),
     audio: {
       mode,
-      voice: str(audioRaw.voice) || (mode === 'vo' || mode === 'vo+music' ? 'owner_clone' : null),
+      // Default = generic ElevenLabs voice (any of its voices/styles work);
+      // the owner's cloned voice is an explicit opt-in, never the default.
+      voice: str(audioRaw.voice) || (mode === 'vo' || mode === 'vo+music' ? 'elevenlabs' : null),
       musicBrief: str(audioRaw.musicBrief) || null,
     },
     models: { image, video },
