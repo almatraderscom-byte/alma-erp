@@ -298,12 +298,19 @@ async function enqueueFinalStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]
     }))
     .filter((s) => Boolean(s.clipPath))
   if (ordered.length === 0) return 0
+  // Honesty over silence: a scene whose clip failed is stitched AROUND, and the
+  // final card says so — the owner can then regenerate exactly that scene
+  // (regenerate_media_scene works from 'final').
+  const missing = scenes
+    .filter((s) => !clips.get(s.id))
+    .map((s) => `S${s.idx}`)
+  const missingNote = missing.length > 0 ? ` — ${missing.join(', ')} বাদ পড়েছে (ক্লিপ fail; "S${missing[0]?.slice(1)} আবার বানাও" বললে যোগ হবে)` : ''
   await enqueueAsset(tx, {
     project,
     stage: 'final',
     actionType: 'video_edit',
     modelId: 'ffmpeg:mediaConcat',
-    summary: `🎬 ${project.title} — ফাইনাল ভিডিও (স্টিচ + অডিও মিক্স)`,
+    summary: `🎬 ${project.title} — ফাইনাল ভিডিও (স্টিচ + অডিও মিক্স)${missingNote}`,
     buildPayload: () => ({
       mediaConcat: {
         scenes: ordered,
