@@ -550,8 +550,17 @@ export async function regenerateMediaAsset(args: {
   const loaded = await loadProject(db, args.projectId)
   if (!loaded) return { success: false, error: 'project not found' }
   const { project, scenes } = loaded
-  if (!['final', 'failed'].includes(project.status)) {
-    return { success: false, error: `project is ${project.status} — রেন্ডার চলা অবস্থায় regenerate করা যায় না` }
+  // Only COMPLETED projects are regen-able: from 'failed', a lone replacement
+  // clip would drain its stage and stitch a final containing only that scene.
+  // Failed runs need a full resume (not built) — refuse with a clear reason.
+  if (project.status !== 'final') {
+    return {
+      success: false,
+      error:
+        project.status === 'failed'
+          ? 'প্রজেক্টটা অসম্পূর্ণ (failed) — এক দৃশ্য regenerate করলে শুধু সেই দৃশ্যের ভিডিও তৈরি হয়ে যেত; নতুন প্ল্যান বানিয়ে আবার চালান।'
+          : `project is ${project.status} — রেন্ডার চলা অবস্থায় regenerate করা যায় না`,
+    }
   }
   const scene = scenes.find((s) => s.idx === args.sceneIdx)
   if (!scene) return { success: false, error: `S${args.sceneIdx} নেই — দৃশ্য 1..${scenes.length}` }
@@ -573,7 +582,7 @@ export async function regenerateMediaAsset(args: {
   try {
     return await db.$transaction(async (tx: Tx) => {
       const claimed = await tx.agentMediaProject.updateMany({
-        where: { id: args.projectId, status: { in: ['final', 'failed'] } },
+        where: { id: args.projectId, status: 'final' },
         data: { status: entry },
       })
       if (claimed.count === 0) return { success: false, error: 'project busy — আরেকটা regenerate চলছে' }
