@@ -82,8 +82,10 @@ describe('live voice configuration', () => {
   })
 
   it('offers exactly two Gemini Native Audio models and a validated voice catalog', () => {
-    expect(DEFAULT_LIVE_VOICE_MODEL).toBe(GEMINI_25_LIVE_MODEL)
-    expect(DEFAULT_LIVE_VOICE_NAME).toBe('Aoede')
+    // July bake-off verdict, reaffirmed by the 2026-08-13 outage: 3.1/Charon
+    // is the proven default; 2.5 stays selectable in the voice section.
+    expect(DEFAULT_LIVE_VOICE_MODEL).toBe(GEMINI_31_LIVE_MODEL)
+    expect(DEFAULT_LIVE_VOICE_NAME).toBe('Charon')
     expect(LIVE_VOICE_MODEL_IDS).toEqual([GEMINI_25_LIVE_MODEL, GEMINI_31_LIVE_MODEL])
     expect(LIVE_VOICE_NAMES).toEqual(['Aoede', 'Achernar', 'Kore', 'Charon', 'Orus', 'Sulafat'])
     expect(isSupportedLiveVoiceModel(GEMINI_25_LIVE_MODEL)).toBe(true)
@@ -96,8 +98,11 @@ describe('live voice configuration', () => {
     const natural = buildLiveVoiceConfig('Aoede', GEMINI_25_LIVE_MODEL)
     const fast = buildLiveVoiceConfig('Charon', GEMINI_31_LIVE_MODEL)
     const naturalToken = buildLiveVoiceTokenConfig('Aoede', GEMINI_25_LIVE_MODEL)
-    expect(natural.enableAffectiveDialog).toBe(true)
-    expect(naturalToken.enableAffectiveDialog).toBe(true)
+    // Affective dialog is dead on the ephemeral-token transport (the token
+    // proto lacks the field; the client sending it kills the session) — the
+    // contract must never re-enable it for token-minted sessions.
+    expect(natural.enableAffectiveDialog).toBeUndefined()
+    expect(naturalToken.enableAffectiveDialog).toBeUndefined()
     expect(natural.thinkingConfig?.thinkingBudget).toBe(0)
     expect(fast.enableAffectiveDialog).toBeUndefined()
     expect(fast.thinkingConfig?.thinkingLevel).toBe('MINIMAL')

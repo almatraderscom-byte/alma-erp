@@ -16,12 +16,19 @@ import {
 } from '@/agent/lib/live-voice-contract'
 
 const enabledModels = LIVE_VOICE_CONTRACT.models.filter(isSelectableLiveVoiceModel)
-export const GEMINI_25_LIVE_MODEL = enabledModels.find(
-  (model) => model.capabilities.affectiveDialog,
-)!.id
-export const GEMINI_31_LIVE_MODEL = enabledModels.find(
-  (model) => !model.capabilities.affectiveDialog,
-)!.id
+// Resolved by id, not by capability: affectiveDialog is now false on BOTH
+// models (July bake-off + the 2026-08-13 outage both proved 2.5 affective is
+// unusable over the ephemeral-token transport), so a capability-based find
+// would crash at import.
+function contractModelID(id: string): string {
+  const model = enabledModels.find((candidate) => candidate.id === id)
+  if (!model) throw new Error(`live-voice contract is missing model ${id}`)
+  return model.id
+}
+export const GEMINI_25_LIVE_MODEL = contractModelID(
+  'gemini-2.5-flash-native-audio-preview-12-2025',
+)
+export const GEMINI_31_LIVE_MODEL = contractModelID('gemini-3.1-flash-live-preview')
 export const LIVE_VOICE_MODEL_IDS = enabledModels.map((model) => model.id)
 export const LIVE_VOICE_NAMES = LIVE_VOICE_CONTRACT.voices
   .filter((voice) => voice.enabled)
