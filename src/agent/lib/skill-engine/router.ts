@@ -390,8 +390,36 @@ function matchRanges(pattern: RegExp, text: string): Array<{ start: number; end:
   return matches
 }
 
+/** VIDEO/reel creation — routes to alma-media-video, never the image pipeline. */
+const VIDEO_OUTPUT = /(?:videos?|ভিডিও|reels?|রিল|রীল)/i
+/** "video cards"/"video player" are UI artifacts in an answer, not video-making. */
+const NON_VIDEO_OUTPUT_SUFFIX = /^\s*(?:cards?|players?|tags?|elements?|embeds?)\b/i
+
+export const isVideoCreationAsk = (text: string): boolean => {
+  if (MEDIA_DERIVE_ASK.test(text)) return false
+  // Same proximity discipline as the image detector: a creation verb must sit
+  // near the video noun in the same sentence, and formatting-only answer asks
+  // ("rendered LaTeX … video cards") belong to the unrestricted head.
+  if (ANSWER_FORMAT.test(text) && ANSWER_VERB.test(text)) return false
+  const outputs = matchRanges(VIDEO_OUTPUT, text)
+  const verbs = matchRanges(IMAGE_GENERATION_VERB, text)
+  return verbs.some((verb) => outputs.some((output) => {
+    const distance = Math.max(verb.start, output.start) - Math.min(verb.end, output.end)
+    if (distance > 160) return false
+    const between = verb.end <= output.start
+      ? text.slice(verb.end, output.start)
+      : text.slice(output.end, verb.start)
+    if (/[.!?\n]/.test(between)) return false
+    return !NON_VIDEO_OUTPUT_SUFFIX.test(text.slice(output.end, output.end + 40))
+  }))
+}
+
 export const isImageGenerationAsk = (text: string): boolean => {
   if (MEDIA_DERIVE_ASK.test(text)) return false
+  // "chobi diye VIDEO banao" is a video ask that happens to mention images —
+  // the video pipeline owns it (hit live: the image rule pinned it and its
+  // allowlist starved plan_media_video).
+  if (isVideoCreationAsk(text)) return false
   const outputs = matchRanges(IMAGE_OUTPUT, text)
   const verbs = matchRanges(IMAGE_GENERATION_VERB, text)
 
@@ -488,6 +516,14 @@ export interface RouterRule {
  * the wrong place; the `why` is what gets stored in the trace.
  */
 export const RULES: RouterRule[] = [
+  {
+    // BEFORE image-generation: "ছবি দিয়ে ভিডিও বানাও" contains both an image
+    // noun and a creation verb — the video pipeline must win deterministically.
+    id: 'media-video',
+    skill: 'alma-media-video',
+    test: (t) => isVideoCreationAsk(t),
+    why: 'ভিডিও/রিল বানাতে বলা হয়েছে — media-video plan pipeline (plan card → approve → auto render)',
+  },
   {
     id: 'image-generation',
     skill: 'alma-image-generation',
