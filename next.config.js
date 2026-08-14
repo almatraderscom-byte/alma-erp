@@ -113,7 +113,12 @@ const sentryBuildOptions = {
   tunnelRoute: '/monitoring',
 }
 
-module.exports =
-  process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN
-    ? withSentryConfig(nextConfig, sentryBuildOptions)
-    : nextConfig
+// ALWAYS wrap. The old build-time `SENTRY_DSN ? wrap : raw` gate silently
+// disabled the whole Sentry integration whenever the DSN was not exposed to the
+// BUILD (it is a runtime var on Vercel) — and with the wrapper skipped there is
+// no `/monitoring` rewrite, so every browser event POSTs into the app's own HTML
+// 404 and disappears. Production was in exactly that state after the Next 16
+// upgrade: `curl /monitoring` returned the app shell, not the Sentry tunnel.
+// Wrapping unconditionally is safe: without an auth token the wrapper simply
+// skips source-map upload, and `Sentry.init()` still no-ops without a DSN.
+module.exports = withSentryConfig(nextConfig, sentryBuildOptions)

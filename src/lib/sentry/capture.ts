@@ -2,7 +2,7 @@
  * Structured Sentry capture — wired from logger, API routes, Prisma, and React boundaries.
  */
 import type { SeverityLevel } from '@sentry/nextjs'
-import { isSentryEnabled } from '@/lib/sentry/config'
+import { baseSentryOptions, isSentryEnabled } from '@/lib/sentry/config'
 
 export type SentryCategory =
   | 'api'
@@ -64,10 +64,34 @@ function levelToSeverity(level: string): SeverityLevel {
   return 'info'
 }
 
+/**
+ * Server-side safety net: initialise the SDK here if nothing else did.
+ *
+ * Server capture depends on `instrumentation.ts` → `sentry.server.config.ts`
+ * having run. After the Next 16 upgrade that stopped happening in production —
+ * `/api/debug/sentry-test?mode=event` returned ok while Sentry received nothing,
+ * and `isSentryEnabled()` was true, so the DSN was present and only the init was
+ * missing. A capture path that silently drops errors is worse than a duplicate
+ * init, so we make the capture path self-sufficient: init once, only when no
+ * client exists, and never in the browser (that is what instrumentation-client
+ * is for, and re-initialising there would drop the replay integration).
+ */
+function ensureServerClient(Sentry: typeof import('@sentry/nextjs')): void {
+  if (typeof window !== 'undefined') return
+  try {
+    if (Sentry.getClient()) return
+    Sentry.init({ ...baseSentryOptions(), integrations: [] })
+  } catch {
+    /* never let observability wiring break a request */
+  }
+}
+
 async function getSentry() {
   if (!isSentryEnabled()) return null
   try {
-    return await import('@sentry/nextjs')
+    const Sentry = await import('@sentry/nextjs')
+    ensureServerClient(Sentry)
+    return Sentry
   } catch {
     return null
   }

@@ -165,6 +165,8 @@ export default function VpsLiveBrowserPanel() {
 
   const onKeyDown = (ev: React.KeyboardEvent) => {
     if (!status.running || !interactive) return
+    // `key` is undefined on IME / autofill-synthesised events — see HapticBridge.
+    if (typeof ev.key !== 'string') return
     // A single printable character types; everything else is a named key.
     if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
       ev.preventDefault()

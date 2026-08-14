@@ -67,6 +67,17 @@ declare global {
 const PROMPT_DISMISSED_KEY = 'alma_push_prompt_dismissed_at'
 const REGISTERED_KEY_PREFIX = 'alma_push_registered:'
 const PROMPT_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000
+/**
+ * How stale a stored registration must be before a window-focus re-registers.
+ *
+ * The silent re-register used to run on EVERY focus event. Alt-tabbing re-POSTed
+ * `/api/notifications/subscriptions`, whose limiter allows one call per 12s per
+ * user, so ordinary window switching produced a stream of 429s — the single
+ * noisiest error of the month (55 events across /, /orders, /approvals, /agent…).
+ * The subscription itself changes at most once per device, so a 6-hour refresh
+ * is generous.
+ */
+const SILENT_REREGISTER_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000
 const SDK_LOAD_TIMEOUT_MS = 15_000
 const PUSH_ENABLE_TIMEOUT_MS = 30_000
 
@@ -228,6 +239,12 @@ export function OneSignalPushManager() {
         enabled: true,
       }),
     })
+    if (res.status === 429) {
+      // Server-side backpressure, not a failure: the device is already known and
+      // another call landed within the limiter window. Throwing here is what put
+      // this in Sentry 55 times last month.
+      return false
+    }
     if (!res.ok) throw new Error(`Subscription registration failed with ${res.status}`)
     markRegistered()
     return true
@@ -405,7 +422,12 @@ export function OneSignalPushManager() {
     }
     function registerSilently() {
       if (!webSupported || Notification.permission !== 'granted' || !window.OneSignal) return
-      void registerWebSubscription(window.OneSignal)
+      if (!userId) return
+      const registeredAt = Number(localStorage.getItem(`${REGISTERED_KEY_PREFIX}${userId}`) || 0)
+      if (registeredAt && Date.now() - registeredAt < SILENT_REREGISTER_MIN_INTERVAL_MS) return
+      // Background nicety: a failure here must never surface as an unhandled
+      // rejection (which is how it reached Sentry).
+      void registerWebSubscription(window.OneSignal).catch(() => {})
     }
     window.addEventListener('alma-enable-push', openPrompt)
     window.addEventListener('focus', registerSilently)
@@ -413,7 +435,7 @@ export function OneSignalPushManager() {
       window.removeEventListener('alma-enable-push', openPrompt)
       window.removeEventListener('focus', registerSilently)
     }
-  }, [pushReady, registerWebSubscription, webSupported])
+  }, [pushReady, registerWebSubscription, userId, webSupported])
 
   if (!showPrompt || registered || !pushReady) return null
 

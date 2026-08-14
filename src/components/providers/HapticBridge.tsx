@@ -23,8 +23,17 @@ import { impactLight, selection } from '@/lib/haptics'
 const INTERACTIVE_SELECTOR =
   'button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="switch"], summary, [data-haptic]'
 
-function isEditableKey(e: KeyboardEvent): boolean {
+/**
+ * `e.key` is NOT always a string. Password managers, IME composition and the
+ * mobile-Chrome/iOS autofill path all dispatch keydown events with `key`
+ * undefined — reading `.length` off it threw on every one of them. It was the
+ * top client crash of the month (20 events, most of them on /login, where
+ * autofill runs): "Cannot read properties of undefined (reading 'length')" /
+ * "undefined is not an object (evaluating 'e.key.length')".
+ */
+export function isEditableKey(e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey'>): boolean {
   if (e.metaKey || e.ctrlKey || e.altKey) return false
+  if (typeof e.key !== 'string') return false
   return e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter'
 }
 
