@@ -3,18 +3,19 @@
  * clips → final concat, one stage at a time, every asset delivered to the
  * conversation as it lands (CapCut order: fail cheap-first).
  *
- * Mechanics mirror veo-chain: each stage enqueues already-approved pending
- * actions (the plan card was the ONLY money gate); the worker executes them and
- * `advanceMediaChain` (called from the job-result route on `payload.mediaChain`)
- * records the asset and starts the next stage when the current one drains.
- * State lives in agent_media_assets rows — no in-memory chain state, so a
- * Vercel restart or worker retry re-derives everything from the DB.
+ * Concurrency model: the project row carries a per-stage status
+ * (rendering_audio → rendering_image → rendering_clip → rendering_final) and
+ * every stage transition is a compare-and-set on that status INSIDE the same
+ * transaction that inserts the next stage's assets+jobs. Two parallel
+ * job-result callbacks can both see a drained stage, but only one wins the CAS
+ * — the loser's transaction rolls back having enqueued nothing. A crash
+ * mid-transaction rolls back the claim too, so the worker's retried callback
+ * (job-result returns 503 on advance failure) re-runs the transition cleanly.
  */
 import { prisma } from '@/lib/prisma'
 import type { MediaPlan, MediaVideoModel } from './plan-schema'
 
- 
-const db = prisma as any
+const db = prisma as any // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export type MediaChainStage = 'vo' | 'music' | 'image' | 'clip' | 'final'
 
@@ -27,6 +28,19 @@ export type MediaChainTag = {
 
 /** Actual spend may exceed the locked estimate by at most this factor. */
 export const MEDIA_BUDGET_MULTIPLIER = 1.25
+
+/** Per-stage project statuses — the CAS tokens for stage transitions. */
+export const MEDIA_RENDERING_STATUSES = [
+  'rendering_audio',
+  'rendering_image',
+  'rendering_clip',
+  'rendering_final',
+] as const
+export type MediaRenderingStatus = (typeof MEDIA_RENDERING_STATUSES)[number]
+
+export function isMediaRendering(status: string | null | undefined): boolean {
+  return MEDIA_RENDERING_STATUSES.includes(status as MediaRenderingStatus)
+}
 
 const VIDEO_PROVIDER: Record<MediaVideoModel, { provider: 'veo' | 'seedance'; endpoint?: string; resolution?: string }> = {
   'seedance-2.5-pro': { provider: 'seedance', endpoint: 'bytedance/seedance-2.5/image-to-video', resolution: '720p' },
@@ -60,18 +74,23 @@ type SceneRow = {
   durationSec: number
 }
 
-async function loadProject(projectId: string): Promise<{ project: ProjectRow; scenes: SceneRow[] } | null> {
-  const project = await db.agentMediaProject.findUnique({ where: { id: projectId } })
+// Loose transaction-client type — the generated prisma client type is not
+// available here (same seam as video-tools/media-tools).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Tx = any
+
+async function loadProject(client: Tx, projectId: string): Promise<{ project: ProjectRow; scenes: SceneRow[] } | null> {
+  const project = await client.agentMediaProject.findUnique({ where: { id: projectId } })
   if (!project) return null
-  const scenes = await db.agentMediaScene.findMany({
+  const scenes = await client.agentMediaScene.findMany({
     where: { projectId },
     orderBy: { idx: 'asc' },
   })
   return { project, scenes }
 }
 
-/** Create one queued asset row + its already-approved worker action. */
-async function enqueueAsset(args: {
+/** Create one asset row + its already-approved worker action (inside tx). */
+async function enqueueAsset(tx: Tx, args: {
   project: ProjectRow
   stage: MediaChainStage
   scene?: SceneRow | null
@@ -80,12 +99,12 @@ async function enqueueAsset(args: {
   buildPayload: (tag: MediaChainTag) => Record<string, unknown>
   summary: string
 }): Promise<string> {
-  const asset = await db.agentMediaAsset.create({
+  const asset = await tx.agentMediaAsset.create({
     data: {
       projectId: args.project.id,
       sceneId: args.scene?.id ?? null,
       kind: args.stage,
-      status: 'queued',
+      status: 'rendering',
       modelId: args.modelId,
     },
   })
@@ -95,7 +114,7 @@ async function enqueueAsset(args: {
     stage: args.stage,
     sceneId: args.scene?.id ?? null,
   }
-  const action = await db.agentPendingAction.create({
+  const action = await tx.agentPendingAction.create({
     data: {
       conversationId: args.project.conversationId,
       type: args.actionType,
@@ -105,7 +124,7 @@ async function enqueueAsset(args: {
       status: 'approved',
     },
   })
-  await db.agentMediaAsset.update({ where: { id: asset.id }, data: { jobId: action.id, status: 'rendering' } })
+  await tx.agentMediaAsset.update({ where: { id: asset.id }, data: { jobId: action.id } })
   return asset.id as string
 }
 
@@ -113,25 +132,36 @@ function sceneLabel(project: ProjectRow, scene: SceneRow, what: string): string 
   return `🎬 ${project.title} — S${scene.idx} ${what}`
 }
 
+/** Owner-photo references for a scene, when the plan asked for them. */
+function ownerPhotoRefs(plan: MediaPlan, sceneIdx: number): Record<string, unknown> {
+  const planScene = plan.scenes.find((s) => s.idx === sceneIdx)
+  const photos = plan.personalization.photoPaths
+  if (!planScene?.usesOwnerPhoto || photos.length === 0) return {}
+  return {
+    referenceImageId: photos[0],
+    ...(photos.length > 1 ? { referenceImageIds: photos.slice(0, 3) } : {}),
+  }
+}
+
 /** Stage 1: every scene's VO (+ the music bed) in parallel — cheapest first. */
-async function enqueueAudioStage(project: ProjectRow, scenes: SceneRow[]): Promise<number> {
+async function enqueueAudioStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]): Promise<number> {
   const plan = project.planJson
   let queued = 0
   if (plan.audio.mode === 'vo' || plan.audio.mode === 'vo+music') {
     for (const scene of scenes) {
       if (!scene.voScript) continue
       const voice = plan.audio.voice ?? 'elevenlabs'
-      await enqueueAsset({
+      await enqueueAsset(tx, {
         project,
         stage: 'vo',
         scene,
         actionType: 'audio_gen',
-        modelId: `elevenlabs:${voice}`,
+        modelId: voice.startsWith('google') ? 'google_tts' : `elevenlabs:${voice}`,
         summary: sceneLabel(project, scene, `ভয়েসওভার`),
         buildPayload: () => ({
           kind: voice === 'owner_clone' ? 'owner_voice' : 'media_vo',
           // owner_voice resolves the cloned voice id from kv (legacy path);
-          // media_vo uses generic ElevenLabs voices only.
+          // media_vo handles generic ElevenLabs voices AND Google TTS.
           ...(voice === 'owner_clone' ? { legacyOwnerVoice: true } : {}),
           text: scene.voScript,
           voice,
@@ -143,7 +173,7 @@ async function enqueueAudioStage(project: ProjectRow, scenes: SceneRow[]): Promi
   }
   if (plan.audio.mode === 'music' || plan.audio.mode === 'vo+music') {
     const totalSec = scenes.reduce((acc, s) => acc + s.durationSec, 0)
-    await enqueueAsset({
+    await enqueueAsset(tx, {
       project,
       stage: 'music',
       actionType: 'audio_gen',
@@ -162,10 +192,10 @@ async function enqueueAudioStage(project: ProjectRow, scenes: SceneRow[]): Promi
 }
 
 /** Stage 2: one keyframe image per scene. */
-async function enqueueImageStage(project: ProjectRow, scenes: SceneRow[]): Promise<number> {
+async function enqueueImageStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]): Promise<number> {
   const plan = project.planJson
   for (const scene of scenes) {
-    await enqueueAsset({
+    await enqueueAsset(tx, {
       project,
       stage: 'image',
       scene,
@@ -179,6 +209,9 @@ async function enqueueImageStage(project: ProjectRow, scenes: SceneRow[]): Promi
         imageModel: plan.models.image,
         aspectRatio: plan.aspect,
         variationCount: 1,
+        // Plan promised the owner's face in this scene → bind his photo(s)
+        // as generation references, not just the text prompt.
+        ...ownerPhotoRefs(plan, scene.idx),
         skipTelegramCard: true,
       }),
     })
@@ -186,11 +219,11 @@ async function enqueueImageStage(project: ProjectRow, scenes: SceneRow[]): Promi
   return scenes.length
 }
 
-/** Stage 3: image→video clip per scene. */
-async function enqueueClipStage(project: ProjectRow, scenes: SceneRow[]): Promise<number> {
+/** Stage 3: image→video clip per scene (reads ready images inside the tx). */
+async function enqueueClipStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]): Promise<number> {
   const plan = project.planJson
   const video = VIDEO_PROVIDER[plan.models.video] ?? VIDEO_PROVIDER['veo-3.1-fast']
-  const images = await db.agentMediaAsset.findMany({
+  const images = await tx.agentMediaAsset.findMany({
     where: { projectId: project.id, kind: 'image', status: 'ready' },
     orderBy: { createdAt: 'asc' },
   })
@@ -200,7 +233,7 @@ async function enqueueClipStage(project: ProjectRow, scenes: SceneRow[]): Promis
   for (const scene of scenes) {
     const image = imageByScene.get(scene.id)
     if (!image?.storagePath) continue
-    await enqueueAsset({
+    await enqueueAsset(tx, {
       project,
       stage: 'clip',
       scene,
@@ -212,7 +245,7 @@ async function enqueueClipStage(project: ProjectRow, scenes: SceneRow[]): Promis
         referenceImageId: image.storagePath,
         // Veo caps clips at 8s; Seedance handles up to 15s.
         durationSec: video.provider === 'veo' ? Math.min(8, scene.durationSec) : scene.durationSec,
-        aspect: plan.aspect === '1:1' ? '9:16' : plan.aspect,
+        aspect: plan.aspect,
         provider: video.provider,
         falEndpoint: video.endpoint,
         falResolution: video.resolution,
@@ -225,9 +258,9 @@ async function enqueueClipStage(project: ProjectRow, scenes: SceneRow[]): Promis
 }
 
 /** Stage 4: concat clips + mix VO/music into the final video. */
-async function enqueueFinalStage(project: ProjectRow, scenes: SceneRow[]): Promise<number> {
+async function enqueueFinalStage(tx: Tx, project: ProjectRow, scenes: SceneRow[]): Promise<number> {
   const plan = project.planJson
-  const assets = await db.agentMediaAsset.findMany({
+  const assets = await tx.agentMediaAsset.findMany({
     where: { projectId: project.id, status: 'ready' },
     orderBy: { createdAt: 'asc' },
   })
@@ -248,7 +281,7 @@ async function enqueueFinalStage(project: ProjectRow, scenes: SceneRow[]): Promi
     }))
     .filter((s) => Boolean(s.clipPath))
   if (ordered.length === 0) return 0
-  await enqueueAsset({
+  await enqueueAsset(tx, {
     project,
     stage: 'final',
     actionType: 'video_edit',
@@ -268,29 +301,44 @@ async function enqueueFinalStage(project: ProjectRow, scenes: SceneRow[]): Promi
 }
 
 /**
- * Kick off rendering for an approved project. Idempotent: refuses when the
- * project is not 'approved' (already rendering/final) so an approve-route retry
- * can't double-render.
+ * Kick off rendering for an approved project. The status CAS + first-stage
+ * enqueue share one transaction, so an approve-route retry can't double-start
+ * and a crash can't leave a claimed-but-empty stage.
  */
 export async function startMediaRender(projectId: string): Promise<{ started: boolean; queued: number }> {
-  const claimed = await db.agentMediaProject.updateMany({
-    where: { id: projectId, status: 'approved' },
-    data: { status: 'rendering' },
-  })
-  if (claimed.count === 0) return { started: false, queued: 0 }
-  const loaded = await loadProject(projectId)
+  const loaded = await loadProject(db, projectId)
   if (!loaded) return { started: false, queued: 0 }
   const { project, scenes } = loaded
-  let queued = await enqueueAudioStage(project, scenes)
-  if (queued === 0) queued = await enqueueImageStage(project, scenes) // silent plan: straight to images
-  return { started: true, queued }
+  const plan = project.planJson
+  const hasAudio = plan.audio.mode !== 'none'
+  const firstStatus: MediaRenderingStatus = hasAudio ? 'rendering_audio' : 'rendering_image'
+  return await db.$transaction(async (tx: Tx) => {
+    const claimed = await tx.agentMediaProject.updateMany({
+      where: { id: projectId, status: 'approved' },
+      data: { status: firstStatus },
+    })
+    if (claimed.count === 0) return { started: false, queued: 0 }
+    const projectRunning = { ...project, status: firstStatus }
+    const queued = hasAudio
+      ? await enqueueAudioStage(tx, projectRunning, scenes)
+      : await enqueueImageStage(tx, projectRunning, scenes)
+    return { started: true, queued }
+  })
 }
 
 type JobResultData = { storagePath?: unknown; costUsd?: unknown; durationSec?: unknown } | null | undefined
 
+async function failProject(projectId: string, spent?: number): Promise<void> {
+  await db.agentMediaProject.updateMany({
+    where: { id: projectId, status: { in: [...MEDIA_RENDERING_STATUSES] } },
+    data: { status: 'failed', ...(spent === undefined ? {} : { totalActualUsd: spent }) },
+  })
+}
+
 /**
  * Advance the chain after a worker job settles. Returns a short note for logs.
- * Called with the action row + parsed result data from the job-result route.
+ * Idempotent under job-result retries: the asset update is a plain overwrite
+ * and every stage transition is CAS-guarded inside its transaction.
  */
 export async function advanceMediaChain(
   action: { id: string; payload: unknown },
@@ -311,20 +359,17 @@ export async function advanceMediaChain(
     },
   })
 
-  const loaded = await loadProject(tag.projectId)
+  const loaded = await loadProject(db, tag.projectId)
   if (!loaded) return 'project-missing'
   const { project, scenes } = loaded
-  if (project.status !== 'rendering') return `project-${project.status}`
+  if (!isMediaRendering(project.status)) return `project-${project.status}`
 
   const assets = await db.agentMediaAsset.findMany({ where: { projectId: tag.projectId } })
+  const ofKind = (kinds: MediaChainStage[]) => assets.filter((a: { kind: MediaChainStage }) => kinds.includes(a.kind))
   const pendingOf = (kinds: MediaChainStage[]) =>
-    assets.filter(
-      (a: { kind: MediaChainStage; status: string }) =>
-        kinds.includes(a.kind) && (a.status === 'queued' || a.status === 'rendering'),
-    ).length
-  const anyOf = (kind: MediaChainStage) => assets.some((a: { kind: string }) => a.kind === kind)
-  const failedOf = (kinds: MediaChainStage[]) =>
-    assets.filter((a: { kind: MediaChainStage; status: string }) => kinds.includes(a.kind) && a.status === 'failed').length
+    ofKind(kinds).filter((a: { status: string }) => a.status === 'queued' || a.status === 'rendering').length
+  const readyOf = (kinds: MediaChainStage[]) =>
+    ofKind(kinds).filter((a: { status: string }) => a.status === 'ready').length
 
   // Budget guard: actual spend beyond estimate × multiplier aborts the chain.
   const spent = assets.reduce(
@@ -333,17 +378,14 @@ export async function advanceMediaChain(
   )
   const budget = (project.totalEstimateUsd ?? 0) * MEDIA_BUDGET_MULTIPLIER
   if (budget > 0 && spent > budget) {
-    await db.agentMediaProject.updateMany({
-      where: { id: tag.projectId, status: 'rendering' },
-      data: { status: 'failed' },
-    })
+    await failProject(tag.projectId, spent)
     return `budget-exceeded ($${spent.toFixed(2)} > $${budget.toFixed(2)})`
   }
 
   // FINAL stage settled → project done (or failed).
   if (tag.stage === 'final') {
     await db.agentMediaProject.updateMany({
-      where: { id: tag.projectId, status: 'rendering' },
+      where: { id: tag.projectId, status: 'rendering_final' },
       data:
         status === 'success' && storagePath
           ? { status: 'final', finalAssetPath: storagePath, totalActualUsd: spent }
@@ -352,42 +394,61 @@ export async function advanceMediaChain(
     return status === 'success' ? 'final-delivered' : 'final-failed'
   }
 
-  // A whole stage failing (every scene failed) kills the run honestly.
-  if (pendingOf(['vo', 'music']) === 0 && anyOf('vo') && failedOf(['vo']) === assets.filter((a: { kind: string }) => a.kind === 'vo').length && failedOf(['vo']) > 0) {
-    await db.agentMediaProject.updateMany({ where: { id: tag.projectId, status: 'rendering' }, data: { status: 'failed' } })
-    return 'audio-stage-failed'
-  }
-
-  // Stage transitions — only when the current stage fully drains.
+  // Stage transitions — CAS + next-stage enqueue in ONE transaction. Only the
+  // callback that wins the CAS enqueues; ties and retries are safe.
   if ((tag.stage === 'vo' || tag.stage === 'music') && pendingOf(['vo', 'music']) === 0) {
-    if (!anyOf('image')) {
-      const queued = await enqueueImageStage(project, scenes)
-      return `images-queued(${queued})`
+    const voCount = ofKind(['vo']).length
+    if (voCount > 0 && readyOf(['vo']) === 0) {
+      await failProject(tag.projectId)
+      return 'audio-stage-failed'
     }
-    return 'audio-drained'
+    const queued = await db.$transaction(async (tx: Tx) => {
+      const claimed = await tx.agentMediaProject.updateMany({
+        where: { id: tag.projectId, status: 'rendering_audio' },
+        data: { status: 'rendering_image' },
+      })
+      if (claimed.count === 0) return -1
+      return await enqueueImageStage(tx, project, scenes)
+    })
+    return queued === -1 ? 'audio-transition-lost' : `images-queued(${queued})`
   }
   if (tag.stage === 'image' && pendingOf(['image']) === 0) {
-    if (!anyOf('clip')) {
-      const readyImages = assets.filter((a: { kind: string; status: string }) => a.kind === 'image' && a.status === 'ready').length
-      if (readyImages === 0) {
-        await db.agentMediaProject.updateMany({ where: { id: tag.projectId, status: 'rendering' }, data: { status: 'failed' } })
-        return 'image-stage-failed'
-      }
-      const queued = await enqueueClipStage(project, scenes)
-      return `clips-queued(${queued})`
+    if (readyOf(['image']) === 0) {
+      await failProject(tag.projectId)
+      return 'image-stage-failed'
     }
-    return 'images-drained'
+    const queued = await db.$transaction(async (tx: Tx) => {
+      const claimed = await tx.agentMediaProject.updateMany({
+        where: { id: tag.projectId, status: 'rendering_image' },
+        data: { status: 'rendering_clip' },
+      })
+      if (claimed.count === 0) return -1
+      return await enqueueClipStage(tx, project, scenes)
+    })
+    if (queued === 0) {
+      await failProject(tag.projectId)
+      return 'clip-stage-empty'
+    }
+    return queued === -1 ? 'image-transition-lost' : `clips-queued(${queued})`
   }
   if (tag.stage === 'clip' && pendingOf(['clip']) === 0) {
-    if (!anyOf('final')) {
-      const queued = await enqueueFinalStage(project, scenes)
-      if (queued === 0) {
-        await db.agentMediaProject.updateMany({ where: { id: tag.projectId, status: 'rendering' }, data: { status: 'failed' } })
-        return 'clip-stage-failed'
-      }
-      return 'final-queued'
+    if (readyOf(['clip']) === 0) {
+      await failProject(tag.projectId)
+      return 'clip-stage-failed'
     }
-    return 'clips-drained'
+    const queued = await db.$transaction(async (tx: Tx) => {
+      const claimed = await tx.agentMediaProject.updateMany({
+        where: { id: tag.projectId, status: 'rendering_clip' },
+        data: { status: 'rendering_final' },
+      })
+      if (claimed.count === 0) return -1
+      return await enqueueFinalStage(tx, project, scenes)
+    })
+    if (queued === 0) {
+      await failProject(tag.projectId)
+      return 'final-stage-empty'
+    }
+    return queued === -1 ? 'clip-transition-lost' : 'final-queued'
   }
   return 'stage-progress'
 }

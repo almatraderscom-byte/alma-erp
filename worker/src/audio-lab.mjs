@@ -120,14 +120,20 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
   }
 
   if (kind === 'media_vo') {
-    // Media mode voiceover: generic ElevenLabs voices only. voice values:
-    // 'elevenlabs' → default male profile, 'elevenlabs:<voiceId>' → explicit
-    // voice. The owner clone deliberately rides kind:'owner_voice' instead —
-    // its kv guardrail stays intact.
-    const { synthesizeElevenLabs } = await import('./tts-elevenlabs.mjs')
+    // Media mode voiceover. voice values: 'elevenlabs' → default male profile,
+    // 'elevenlabs:<voiceId>' → explicit ElevenLabs voice, 'google' → Google
+    // Chirp3 (cheap fallback). The owner clone deliberately rides
+    // kind:'owner_voice' instead — its kv guardrail stays intact.
     const voice = String(payload.voice ?? 'elevenlabs')
-    const explicitId = voice.startsWith('elevenlabs:') ? voice.slice('elevenlabs:'.length).trim() : null
-    audio = await synthesizeElevenLabs(String(payload.text ?? ''), explicitId ? { voiceId: explicitId } : { voiceProfile: 'male' })
+    const text = String(payload.text ?? '')
+    if (voice === 'google' || voice.startsWith('google:')) {
+      const { synthesizeSpeech } = await import('./tts.mjs')
+      audio = await synthesizeSpeech(text, 2000, { purpose: 'media_vo' })
+    } else {
+      const { synthesizeElevenLabs } = await import('./tts-elevenlabs.mjs')
+      const explicitId = voice.startsWith('elevenlabs:') ? voice.slice('elevenlabs:'.length).trim() : null
+      audio = await synthesizeElevenLabs(text, explicitId ? { voiceId: explicitId, purpose: 'media_vo' } : { voiceProfile: 'male', purpose: 'media_vo' })
+    }
   } else if (kind === 'music' || kind === 'wish_song') {
     const res = await elFetch('/music', {
       method: 'POST',

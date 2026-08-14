@@ -710,7 +710,11 @@ export async function POST(req: NextRequest) {
       )
       console.log(`[job-result] media chain ${pendingActionId}: ${note}`)
     } catch (chainErr) {
+      // Non-2xx → the worker's durable outbox retries the callback; swallowing
+      // here would strand the project in 'rendering' with nothing left to
+      // advance it. advanceMediaChain is idempotent under retry.
       console.error('[job-result] media chain advance failed:', chainErr)
+      return Response.json({ error: 'media_chain_advance_failed' }, { status: 503 })
     }
   }
 

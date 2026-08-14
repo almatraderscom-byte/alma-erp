@@ -44,7 +44,7 @@ export type MediaPlanEstimate = {
 export type MediaPlan = {
   version: number
   title: string
-  aspect: '9:16' | '16:9' | '1:1'
+  aspect: '9:16' | '16:9'
   language: string
   durationSec: number
   audio: {
@@ -80,7 +80,9 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
   const title = str(p.title)
   if (!title) throw new Error('media plan needs a title')
 
-  const aspect = p.aspect === '16:9' || p.aspect === '1:1' ? p.aspect : '9:16'
+  // '1:1' rejected: neither Veo nor Seedance renders square natively and the
+  // concat worker does not crop — a square card would promise what we can't ship.
+  const aspect = p.aspect === '16:9' ? '16:9' : '9:16'
   const language = str(p.language, 'bn') || 'bn'
 
   const rawScenes = Array.isArray(p.scenes) ? p.scenes : []
@@ -145,6 +147,8 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
     models: { image, video },
     personalization: { useOwnerPhotos: Boolean(persRaw.useOwnerPhotos) || photoPaths.length > 0, photoPaths },
     scenes,
-    captions: p.captions === undefined ? true : Boolean(p.captions),
+    // Burned-in captions land in M3 (Bangla PNG overlay pipeline) — until the
+    // concat worker renders them, a plan must not promise them.
+    captions: false,
   }
 }

@@ -84,12 +84,16 @@ export async function POST(req: NextRequest) {
       const project = asset
         ? await mediaDb.agentMediaProject.findUnique({ where: { id: mediaTag.projectId } })
         : null
+      const { isMediaRendering } = await import('@/agent/lib/media/render-chain')
       if (
         asset?.jobId === action.id &&
         asset?.projectId === mediaTag.projectId &&
-        project?.status === 'rendering'
+        isMediaRendering(project?.status)
       ) {
-        return Response.json({ authorized: true, mediaChain: true })
+        // legacy:true — the worker's assertStudioRunPaidAttempt accepts the
+        // legacy/unsigned contract; without it the first image_gen call dies
+        // on a missing paidAttemptLimit and no media project can render.
+        return Response.json({ authorized: true, mediaChain: true, legacy: true })
       }
       throw new StudioRunAuthorizationError('media_chain_bind_failed', 409)
     }

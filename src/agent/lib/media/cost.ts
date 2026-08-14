@@ -93,8 +93,8 @@ export function estimateMediaPlanCost(plan: MediaPlan): MediaPlanEstimate {
     })
   }
 
-  // স্টিচ + ক্যাপশন VPS worker-এ চলে — প্রোভাইডার খরচ শূন্য, তাই লাইন দেখাই ০ ডলারে।
-  lines.push({ label: 'স্টিচ + ক্যাপশন (VPS)', usd: 0 })
+  // স্টিচ VPS worker-এ চলে — প্রোভাইডার খরচ শূন্য, তাই লাইন দেখাই ০ ডলারে।
+  lines.push({ label: 'স্টিচ + অডিও মিক্স (VPS)', usd: 0 })
 
   const totalUsd = roundUsd(lines.reduce((acc, l) => acc + l.usd, 0))
   return { lines, totalUsd, totalBdt: roundMoney(totalUsd * MEDIA_USD_TO_BDT) }

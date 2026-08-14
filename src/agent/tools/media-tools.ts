@@ -46,7 +46,7 @@ const plan_media_video: AgentTool = {
       plan: {
         type: 'object',
         description:
-          'MediaPlan JSON: {title, aspect(9:16|16:9|1:1), language(bn|en|...), ' +
+          'MediaPlan JSON: {title, aspect(9:16|16:9), language(bn|en|...), ' +
           'audio:{mode(vo|music|vo+music|none), voice(owner_clone|google|elevenlabs:<id>), musicBrief}, ' +
           'models:{image(gemini-3-pro-image|gemini-3.1-flash-image|seedream-5.0-pro), video(seedance-1.0-pro|seedance-1.0-lite|veo-3.1-fast|veo-3.1)}, ' +
           'personalization:{useOwnerPhotos, photoPaths[]}, captions, ' +

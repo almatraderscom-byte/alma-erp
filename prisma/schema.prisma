@@ -2623,7 +2623,9 @@ model AgentMediaProject {
   id               String    @id @default(uuid())
   conversationId   String?   @map("conversation_id")
   title            String
-  /// draft | planned | approved | rendering | review | final | failed | cancelled
+  /// draft | planned | approved | rendering_audio | rendering_image |
+  /// rendering_clip | rendering_final | final | failed | cancelled
+  /// (per-stage rendering statuses are the CAS tokens for chain transitions)
   status           String    @default("draft")
   planJson         Json      @map("plan_json")
   /// Monotonic revision — every accepted plan revision (আমার মত) increments it.
