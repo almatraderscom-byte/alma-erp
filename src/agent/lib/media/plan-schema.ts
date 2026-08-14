@@ -145,7 +145,14 @@ export function normalizeMediaPlan(raw: unknown): MediaPlan {
       musicBrief: str(audioRaw.musicBrief) || null,
     },
     models: { image, video },
-    personalization: { useOwnerPhotos: Boolean(persRaw.useOwnerPhotos) || photoPaths.length > 0, photoPaths },
+    personalization: {
+      // ANY scene asking for the owner's face counts — a scene-level flag with
+      // the global flag left false must still trigger photo resolution, or the
+      // card would promise "Boss-এর ছবি" while the render gets no reference.
+      useOwnerPhotos:
+        Boolean(persRaw.useOwnerPhotos) || photoPaths.length > 0 || scenes.some((s) => s.usesOwnerPhoto),
+      photoPaths,
+    },
     scenes,
     // Burned-in captions land in M3 (Bangla PNG overlay pipeline) — until the
     // concat worker renders them, a plan must not promise them.
