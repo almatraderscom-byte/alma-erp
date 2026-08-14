@@ -78,7 +78,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {/* next/font used to emit these preloads itself. Keep them for the two
             faces every screen needs — the Bangla text body and the latin UI —
             so self-hosting does not cost a flash of fallback text. */}
-        <link rel="preload" href="/fonts/webfonts/noto-sans-bengali-bengali-400.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+        <link rel="preload" href="/fonts/webfonts/noto-sans-bengali-bengali-var.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         <link rel="preload" href="/fonts/webfonts/inter-latin-100900.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
