@@ -79,6 +79,7 @@ export const IO_SCHEMAS: Readonly<Record<string, unknown>> = {
   "creative.make_ad_creatives.input": {"type":"object","properties":{},"additionalProperties":true},
   "creative.make_product_reel.input": {"type":"object","properties":{},"additionalProperties":true},
   "creative.plan_media_video.input": {"type":"object","properties":{},"additionalProperties":true},
+  "creative.regenerate_media_scene.input": {"type":"object","properties":{},"additionalProperties":true},
   "cs.create_order_draft.input": {"type":"object","properties":{},"additionalProperties":true},
   "cs.cs_autonomy_status.input": {"type":"object","properties":{},"additionalProperties":true},
   "cs.get_customer_intelligence.input": {"type":"object","properties":{},"additionalProperties":true},

@@ -1139,7 +1139,10 @@ async function processImageGen(job) {
 
   const { effectiveQcLevel, fetchQcLevel, runImageQcLoop } = await import('./image-qc.mjs')
   const configuredQcLevel = await fetchQcLevel(supabase)
-  const qcLevel = effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
+  // Media-mode scene images are arbitrary subjects (landscapes, travel, the
+  // owner) — the ALMA fashion-brand QC rubric (garment/model axes) is wrong
+  // for them and only burns a vision call. Deterministic checks still run.
+  const qcLevel = payload.mediaChain ? 'off' : effectiveQcLevel(configuredQcLevel, payload.pipelineMode)
   const imageModels = payload.imageModel
     ? {
         standard: assertGenericImageModel(payload.imageModel),

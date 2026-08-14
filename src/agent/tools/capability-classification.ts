@@ -453,6 +453,7 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   make_product_reel: stage('creative'),
   plan_media_video: stage('creative'),
   get_media_project: read('creative'),
+  regenerate_media_scene: write('creative', 'medium'),
   save_brand_asset: write('brand'),
 
   // ── work todos / orchestration / plans ─────────────────────────────────────

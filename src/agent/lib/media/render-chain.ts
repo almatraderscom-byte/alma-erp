@@ -15,7 +15,7 @@
 import { prisma } from '@/lib/prisma'
 import type { MediaPlan, MediaVideoModel } from './plan-schema'
 
-const db = prisma as any // eslint-disable-line @typescript-eslint/no-explicit-any
+const db = prisma as any  
 
 export type MediaChainStage = 'vo' | 'music' | 'image' | 'clip' | 'final'
 
@@ -76,7 +76,7 @@ type SceneRow = {
 
 // Loose transaction-client type — the generated prisma client type is not
 // available here (same seam as video-tools/media-tools).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 type Tx = any
 
 async function loadProject(client: Tx, projectId: string): Promise<{ project: ProjectRow; scenes: SceneRow[] } | null> {
@@ -98,6 +98,7 @@ async function enqueueAsset(tx: Tx, args: {
   modelId: string
   buildPayload: (tag: MediaChainTag) => Record<string, unknown>
   summary: string
+  version?: number
 }): Promise<string> {
   const asset = await tx.agentMediaAsset.create({
     data: {
@@ -106,6 +107,7 @@ async function enqueueAsset(tx: Tx, args: {
       kind: args.stage,
       status: 'rendering',
       modelId: args.modelId,
+      ...(args.version ? { version: args.version } : {}),
     },
   })
   const tag: MediaChainTag = {
@@ -377,7 +379,11 @@ export async function advanceMediaChain(
     0,
   )
   const budget = (project.totalEstimateUsd ?? 0) * MEDIA_BUDGET_MULTIPLIER
-  if (budget > 0 && spent > budget) {
+  const settledAsset = assets.find((a: { id: string }) => a.id === tag.assetId)
+  // Regen jobs (version > 1) are each an explicit owner ask — the original
+  // plan's budget cap only polices the automatic first render.
+  const isRegen = (settledAsset?.version ?? 1) > 1
+  if (!isRegen && budget > 0 && spent > budget) {
     await failProject(tag.projectId, spent)
     return `budget-exceeded ($${spent.toFixed(2)} > $${budget.toFixed(2)})`
   }
@@ -395,41 +401,51 @@ export async function advanceMediaChain(
   }
 
   // Stage transitions — CAS + next-stage enqueue in ONE transaction. Only the
-  // callback that wins the CAS enqueues; ties and retries are safe.
+  // callback that wins the CAS enqueues; ties and retries are safe. Targets are
+  // EXISTENCE-AWARE: on the first pass the next stage is empty and gets its
+  // jobs; after a regenerate (later stages already populated) the chain jumps
+  // straight to the final rebuild instead of re-buying downstream stages.
+  const anyOf = (kind: MediaChainStage) => ofKind([kind]).length > 0
   if ((tag.stage === 'vo' || tag.stage === 'music') && pendingOf(['vo', 'music']) === 0) {
     const voCount = ofKind(['vo']).length
     if (voCount > 0 && readyOf(['vo']) === 0) {
       await failProject(tag.projectId)
       return 'audio-stage-failed'
     }
+    const goFinal = anyOf('clip') // regen path: clips already exist → just re-stitch
     const queued = await db.$transaction(async (tx: Tx) => {
       const claimed = await tx.agentMediaProject.updateMany({
         where: { id: tag.projectId, status: 'rendering_audio' },
-        data: { status: 'rendering_image' },
+        data: { status: goFinal ? 'rendering_final' : 'rendering_image' },
       })
       if (claimed.count === 0) return -1
-      return await enqueueImageStage(tx, project, scenes)
+      return goFinal
+        ? await enqueueFinalStage(tx, project, scenes)
+        : await enqueueImageStage(tx, project, scenes)
     })
-    return queued === -1 ? 'audio-transition-lost' : `images-queued(${queued})`
+    return queued === -1 ? 'audio-transition-lost' : goFinal ? 'final-requeued' : `images-queued(${queued})`
   }
   if (tag.stage === 'image' && pendingOf(['image']) === 0) {
     if (readyOf(['image']) === 0) {
       await failProject(tag.projectId)
       return 'image-stage-failed'
     }
+    const goFinal = anyOf('clip') // regen path: image redone, clips untouched
     const queued = await db.$transaction(async (tx: Tx) => {
       const claimed = await tx.agentMediaProject.updateMany({
         where: { id: tag.projectId, status: 'rendering_image' },
-        data: { status: 'rendering_clip' },
+        data: { status: goFinal ? 'rendering_final' : 'rendering_clip' },
       })
       if (claimed.count === 0) return -1
-      return await enqueueClipStage(tx, project, scenes)
+      return goFinal
+        ? await enqueueFinalStage(tx, project, scenes)
+        : await enqueueClipStage(tx, project, scenes)
     })
     if (queued === 0) {
       await failProject(tag.projectId)
-      return 'clip-stage-empty'
+      return goFinal ? 'final-stage-empty' : 'clip-stage-empty'
     }
-    return queued === -1 ? 'image-transition-lost' : `clips-queued(${queued})`
+    return queued === -1 ? 'image-transition-lost' : goFinal ? 'final-requeued' : `clips-queued(${queued})`
   }
   if (tag.stage === 'clip' && pendingOf(['clip']) === 0) {
     if (readyOf(['clip']) === 0) {
@@ -451,4 +467,138 @@ export async function advanceMediaChain(
     return queued === -1 ? 'clip-transition-lost' : 'final-queued'
   }
   return 'stage-progress'
+}
+
+const REGEN_KINDS = ['vo', 'image', 'clip'] as const
+export type MediaRegenKind = (typeof REGEN_KINDS)[number]
+
+const REGEN_ENTRY_STATUS: Record<MediaRegenKind, MediaRenderingStatus> = {
+  vo: 'rendering_audio',
+  image: 'rendering_image',
+  clip: 'rendering_clip',
+}
+
+/**
+ * Regenerate ONE scene asset of a finished (or failed) project — the CapCut
+ * per-asset 🔁. Supersedes the current version, enqueues v(n+1) with the
+ * owner's tweak folded into the prompt, and re-enters the stage machine at
+ * that asset's stage; the existence-aware transitions then rebuild only the
+ * final stitch, never re-buying untouched scenes.
+ */
+export async function regenerateMediaAsset(args: {
+  projectId: string
+  sceneIdx: number
+  kind: MediaRegenKind
+  note?: string | null
+}): Promise<{ success: boolean; error?: string; assetId?: string; version?: number }> {
+  if (!REGEN_KINDS.includes(args.kind)) return { success: false, error: `kind must be one of ${REGEN_KINDS.join('/')}` }
+  const loaded = await loadProject(db, args.projectId)
+  if (!loaded) return { success: false, error: 'project not found' }
+  const { project, scenes } = loaded
+  if (!['final', 'failed'].includes(project.status)) {
+    return { success: false, error: `project is ${project.status} — রেন্ডার চলা অবস্থায় regenerate করা যায় না` }
+  }
+  const scene = scenes.find((s) => s.idx === args.sceneIdx)
+  if (!scene) return { success: false, error: `S${args.sceneIdx} নেই — দৃশ্য 1..${scenes.length}` }
+  const plan = project.planJson
+  if (args.kind === 'vo' && !scene.voScript) return { success: false, error: `S${args.sceneIdx} এর কোনো ভয়েসওভার নেই` }
+
+  const entry = REGEN_ENTRY_STATUS[args.kind]
+  const note = (args.note ?? '').trim()
+  try {
+    return await db.$transaction(async (tx: Tx) => {
+      const claimed = await tx.agentMediaProject.updateMany({
+        where: { id: args.projectId, status: { in: ['final', 'failed'] } },
+        data: { status: entry },
+      })
+      if (claimed.count === 0) return { success: false, error: 'project busy — আরেকটা regenerate চলছে' }
+      const prior = await tx.agentMediaAsset.findMany({
+        where: { projectId: args.projectId, sceneId: scene.id, kind: args.kind },
+        orderBy: { version: 'desc' },
+      })
+      const version = (prior[0]?.version ?? 0) + 1
+      await tx.agentMediaAsset.updateMany({
+        where: { projectId: args.projectId, sceneId: scene.id, kind: args.kind, status: 'ready' },
+        data: { status: 'superseded' },
+      })
+      const projectRunning = { ...project, status: entry }
+      let assetId: string
+      if (args.kind === 'vo') {
+        const voice = plan.audio.voice ?? 'elevenlabs'
+        assetId = await enqueueAsset(tx, {
+          project: projectRunning,
+          stage: 'vo',
+          scene,
+          actionType: 'audio_gen',
+          modelId: voice.startsWith('google') ? 'google_tts' : `elevenlabs:${voice}`,
+          summary: sceneLabel(projectRunning, scene, `ভয়েসওভার v${version}`),
+          version,
+          buildPayload: () => ({
+            kind: voice === 'owner_clone' ? 'owner_voice' : 'media_vo',
+            ...(voice === 'owner_clone' ? { legacyOwnerVoice: true } : {}),
+            text: scene.voScript,
+            voice,
+            skipTelegramCard: true,
+          }),
+        })
+      } else if (args.kind === 'image') {
+        assetId = await enqueueAsset(tx, {
+          project: projectRunning,
+          stage: 'image',
+          scene,
+          actionType: 'image_gen',
+          modelId: plan.models.image,
+          summary: sceneLabel(projectRunning, scene, `ছবি v${version}`),
+          version,
+          buildPayload: () => ({
+            prompt: note ? `${scene.imagePrompt}\n\nOwner revision note: ${note}` : scene.imagePrompt,
+            quality: imageQuality(plan.models.image),
+            imageModel: plan.models.image,
+            aspectRatio: plan.aspect,
+            variationCount: 1,
+            ...ownerPhotoRefs(plan, scene.idx),
+            skipTelegramCard: true,
+          }),
+        })
+      } else {
+        const video = VIDEO_PROVIDER[plan.models.video] ?? VIDEO_PROVIDER['veo-3.1-fast']
+        const image =
+          (await tx.agentMediaAsset.findFirst({
+            where: { projectId: args.projectId, sceneId: scene.id, kind: 'image', status: 'ready' },
+            orderBy: { version: 'desc' },
+          })) ??
+          (await tx.agentMediaAsset.findFirst({
+            where: { projectId: args.projectId, sceneId: scene.id, kind: 'image', status: 'superseded' },
+            orderBy: { version: 'desc' },
+          }))
+        if (!image?.storagePath) {
+          throw new Error(`S${args.sceneIdx} এর কোনো ছবি নেই — আগে ছবিটা regenerate করুন`)
+        }
+        assetId = await enqueueAsset(tx, {
+          project: projectRunning,
+          stage: 'clip',
+          scene,
+          actionType: 'video_gen',
+          modelId: plan.models.video,
+          summary: sceneLabel(projectRunning, scene, `ক্লিপ v${version}`),
+          version,
+          buildPayload: () => ({
+            prompt: note ? `${scene.clipBrief || scene.brief}\n\nOwner revision note: ${note}` : (scene.clipBrief || scene.brief),
+            referenceImageId: image.storagePath,
+            durationSec: video.provider === 'veo' ? Math.min(8, scene.durationSec) : scene.durationSec,
+            aspect: plan.aspect,
+            provider: video.provider,
+            falEndpoint: video.endpoint,
+            falResolution: video.resolution,
+            skipTelegramCard: true,
+          }),
+        })
+      }
+      return { success: true, assetId, version }
+    })
+  } catch (err) {
+    // Transaction rolled back (project back to final/failed is NOT automatic —
+    // the CAS write also rolled back, so the status is untouched).
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }

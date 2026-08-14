@@ -61,6 +61,24 @@ const plan_media_video: AgentTool = {
   handler: async (input) => {
     try {
       const plan = normalizeMediaPlan(input.plan)
+      // Owner asked for his photo but the head has no storage paths — resolve
+      // them server-side from the known-people registry (role 'owner', else
+      // the owner's name). The head never needs to guess storage paths.
+      if (plan.personalization.useOwnerPhotos && plan.personalization.photoPaths.length === 0) {
+        const owner =
+          (await db.agentKnownPerson.findFirst({ where: { role: 'owner', active: true } })) ??
+          (await db.agentKnownPerson.findFirst({ where: { name: { contains: 'Maruf' }, active: true } }))
+        const photos = Array.isArray(owner?.photoPaths)
+          ? (owner.photoPaths as unknown[]).filter((p): p is string => typeof p === 'string').slice(0, 3)
+          : []
+        if (photos.length === 0) {
+          return {
+            success: false,
+            error: 'Boss-এর কোনো রেফারেন্স ছবি known-people রেজিস্ট্রিতে নেই — চ্যাটে একটা ছবি attach করতে বলুন।',
+          }
+        }
+        plan.personalization.photoPaths = photos
+      }
       const estimate = estimateMediaPlanCost(plan)
       plan.estimate = estimate
       const estimateBlock = formatEstimateBn(estimate)
@@ -240,9 +258,49 @@ const get_media_project: AgentTool = {
   },
 }
 
-export const MEDIA_TOOLS: AgentTool[] = [plan_media_video, get_media_project]
+const regenerate_media_scene: AgentTool = {
+  name: 'regenerate_media_scene',
+  description:
+    'Media mode: regenerate ONE scene asset (image | clip | vo) of a FINISHED media video and rebuild the final stitch — ' +
+    "the per-asset 🔁. Use when the owner says e.g. 'S2 আবার বানাও আরো realistic'. Costs only that one asset + a free re-stitch. " +
+    'Pass the owner\'s tweak as note — it is folded into the generation prompt.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      projectId: { type: 'string', description: 'Media project id (get_media_project finds the latest).' },
+      sceneIdx: { type: 'number', description: 'Scene number (S2 → 2).' },
+      kind: { type: 'string', enum: ['image', 'clip', 'vo'], description: 'Which asset of the scene to redo.' },
+      note: { type: 'string', description: "Owner's revision wish in English, e.g. 'more realistic, golden-hour light'." },
+    },
+    required: ['projectId', 'sceneIdx', 'kind'],
+  },
+  handler: async (input) => {
+    try {
+      const { regenerateMediaAsset } = await import('@/agent/lib/media/render-chain')
+      const res = await regenerateMediaAsset({
+        projectId: String(input.projectId),
+        sceneIdx: Number(input.sceneIdx),
+        kind: String(input.kind) as 'image' | 'clip' | 'vo',
+        note: input.note ? String(input.note) : null,
+      })
+      if (!res.success) return { success: false, error: res.error }
+      return {
+        success: true,
+        data: {
+          assetId: res.assetId,
+          version: res.version,
+          message: `S${input.sceneIdx} ${input.kind} v${res.version} জেনারেট হচ্ছে — রেডি হলে চ্যাটে আসবে, তারপর ফাইনাল ভিডিও নিজে নিজে নতুন করে জোড়া লাগবে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const MEDIA_TOOLS: AgentTool[] = [plan_media_video, get_media_project, regenerate_media_scene]
 
 export const MEDIA_ROLE_PROMPT = `
 ## MEDIA MODE (CapCut-class video engine)
-Owner shares ANY idea → you produce a COMPLETE video plan via plan_media_video: scene-by-scene (3-10s each), per-scene Bangla VO script + rich English imagePrompt/clipBrief, model choices. Defaults: image gemini-3-pro-image (Nano Banana Pro); clip seedance-1.0-pro — seedance-2.5-pro (720p, best, priciest), seedance-2.5-lite (480p), veo-3.1-fast also selectable, honor the owner's pick; VO voice "elevenlabs" (generic ElevenLabs voice — NOT the owner clone; owner_clone only if he explicitly asks), music via ElevenLabs Music (musicBrief). Server recomputes the EXACT cost and stages the approval card — never state costs yourself, never generate before approval. On approve the render chain runs the whole thing automatically: per-scene VO → images → clips → final stitched video, each asset landing in chat as it finishes. Plan revisions (model swap, language change, drop VO→music, add scenes) = call plan_media_video again WITH projectId; it re-quotes and replaces the card. get_media_project reads plan/scenes/assets and render progress.
+Owner shares ANY idea → you produce a COMPLETE video plan via plan_media_video: scene-by-scene (3-10s each), per-scene Bangla VO script + rich English imagePrompt/clipBrief, model choices. Defaults: image gemini-3-pro-image (Nano Banana Pro); clip seedance-1.0-pro — seedance-2.5-pro (720p, best, priciest), seedance-2.5-lite (480p), veo-3.1-fast also selectable, honor the owner's pick; VO voice "elevenlabs" (generic ElevenLabs voice — NOT the owner clone; owner_clone only if he explicitly asks), music via ElevenLabs Music (musicBrief). Server recomputes the EXACT cost and stages the approval card — never state costs yourself, never generate before approval. On approve the render chain runs the whole thing automatically: per-scene VO → images → clips → final stitched video, each asset landing in chat as it finishes. Plan revisions (model swap, language change, drop VO→music, add scenes) = call plan_media_video again WITH projectId; it re-quotes and replaces the card. get_media_project reads plan/scenes/assets and render progress. After the final video: 'S2 আবার বানাও …' = regenerate_media_scene(projectId, sceneIdx, kind, note) — one asset re-renders and the final re-stitches automatically. Owner photos: set personalization.useOwnerPhotos true with EMPTY photoPaths — the server resolves his reference photos itself.
 `
