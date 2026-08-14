@@ -65,9 +65,15 @@ const plan_media_video: AgentTool = {
       // them server-side from the known-people registry (role 'owner', else
       // the owner's name). The head never needs to guess storage paths.
       if (plan.personalization.useOwnerPhotos && plan.personalization.photoPaths.length === 0) {
+        // Scoped to the primary business — a namesake/owner row of another
+        // business must never leak its photos into a generation request.
         const owner =
-          (await db.agentKnownPerson.findFirst({ where: { role: 'owner', active: true } })) ??
-          (await db.agentKnownPerson.findFirst({ where: { name: { contains: 'Maruf' }, active: true } }))
+          (await db.agentKnownPerson.findFirst({
+            where: { role: 'owner', active: true, businessId: 'ALMA_LIFESTYLE' },
+          })) ??
+          (await db.agentKnownPerson.findFirst({
+            where: { name: { contains: 'Maruf' }, active: true, businessId: 'ALMA_LIFESTYLE' },
+          }))
         const photos = Array.isArray(owner?.photoPaths)
           ? (owner.photoPaths as unknown[]).filter((p): p is string => typeof p === 'string').slice(0, 3)
           : []
@@ -262,8 +268,9 @@ const regenerate_media_scene: AgentTool = {
   name: 'regenerate_media_scene',
   description:
     'Media mode: regenerate ONE scene asset (image | clip | vo) of a FINISHED media video and rebuild the final stitch — ' +
-    "the per-asset 🔁. Use when the owner says e.g. 'S2 আবার বানাও আরো realistic'. Costs only that one asset + a free re-stitch. " +
-    'Pass the owner\'s tweak as note — it is folded into the generation prompt.',
+    "the per-asset 🔁. Use when the owner says e.g. 'S2 আবার বানাও আরো realistic'. A clip regen costs that clip + free re-stitch; " +
+    'an image regen ALSO auto-rebuilds that scene\'s clip from the new image (extra clip cost) — tell the owner. ' +
+    "vo regen takes no note (delivery tuning absent) — a bare retake only. Pass the owner's tweak as note for image/clip.",
   input_schema: {
     type: 'object' as const,
     properties: {
