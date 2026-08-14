@@ -48,4 +48,23 @@ describe('spoken salah confirmations (live-call auto-mark path)', () => {
     expect(isSpokenSalahDeclaration('ইশার নামাজ পড়ে ফেলব')).toBe(false)
     expect(isSpokenSalahDeclaration('নামাজ কয়টায়?')).toBe(false)
   })
+
+  // Codex P1 round 3: the remaining spoken edges.
+  it('strict spoken gate rejects Bengali future constructions', () => {
+    expect(isSpokenSalahDeclaration('ইশার নামাজ পড়তে হবে')).toBe(false)
+    expect(isSpokenSalahDeclaration('মাগরিব মিস হয়ে যাবে')).toBe(false)
+  })
+
+  it('strict spoken gate rejects negated English prayer statements', () => {
+    expect(isSpokenSalahDeclaration("I haven't prayed Isha")).toBe(false)
+    expect(isSpokenSalahDeclaration('I did not pray fajr')).toBe(false)
+  })
+
+  it('strict spoken gate rejects unpunctuated first-person status questions', () => {
+    expect(isSpokenSalahDeclaration('ইশার নামাজ পড়েছি কি')).toBe(false)
+    expect(isSpokenSalahDeclaration('আজ ফজর পড়েছি কিনা মনে নেই')).toBe(false)
+    expect(isSpokenSalahDeclaration('asr porechi ki')).toBe(false)
+    // …but a trailing adverbial that merely STARTS with "কি" stays accepted.
+    expect(isSpokenSalahDeclaration('যোহরের নামাজ পড়েছি কিছুক্ষণ আগে')).toBe(true)
+  })
 })
