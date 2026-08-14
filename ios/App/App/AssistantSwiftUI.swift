@@ -2700,8 +2700,12 @@ final class AssistantVM {
             // and a paused chip lingering after the answer landed is what the
             // owner reported on build 103 — waiting_* states stay visible
             // because they genuinely await someone; paused and terminal hide.
-            // A "running" chip with no stream behind it is the same bug via a
-            // dropped final snapshot, so running/preparing require the stream.
+            // A running/preparing chip is judged by FRESHNESS, not the app
+            // stream: away work (salah calls, background/worker turns) runs
+            // with no stream in this app at all, and the stream requirement
+            // hid those real chips on build 104 (owner report 2026-08-15).
+            // The live stream still counts, and a stale snapshot — the
+            // dropped-final-snapshot case — ages out of the dock on its own.
             .filter { snapshot in
                 guard !snapshot.isTerminal, snapshot.status != "paused",
                       snapshot.conversationId.isEmpty || snapshot.conversationId == cid
@@ -2709,7 +2713,10 @@ final class AssistantVM {
                 if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
                     return true
                 }
-                return isStreaming
+                if isStreaming { return true }
+                guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
+                    .parseWorkStepsTimestamp(snapshot.updatedAt) else { return false }
+                return Date().timeIntervalSince(updated) < 180
             }
             .max { $0.updatedAt < $1.updatedAt }
     }
@@ -25195,5 +25202,22 @@ struct AgentArtifactViewerSheet: View {
                 loadError = "Preview file প্রস্তুত করা গেল না"
             }
         }
+    }
+}
+
+
+extension ISO8601DateFormatter {
+    /// Work-steps timestamps arrive both with and without fractional seconds.
+    static let almaWorkStepsLenient: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    func parseWorkStepsTimestamp(_ value: String) -> Date? {
+        if let d = date(from: value) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 }
