@@ -120,7 +120,7 @@ export function isSpokenSalahDeclaration(text: string): boolean {
   // Requests, questions, instructions and future intent are not declarations.
   if (
     /নিয়ম|কিভাবে|কীভাবে|কখন|কয়টায়|reminder|রিমাইন্ড|মনে করিয়ে|তৈরি|বানাও|সেট কর|বলো|বলে দাও|শোনাও|জানাও|শেখাও/i.test(t)
-    || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|porbo|pore nibo|pore nebo|porte hobe/i.test(t)
+    || /পড়ব|পড়বো|পড়ে নিব|পড়ে নেব|পড়ে ফেলব|পড়ে ফেলবো|porbo|pore nibo|pore nebo|pore felbo|porte hobe|will pray/i.test(t)
   ) return false
   return Boolean(detectSalahConfirmation(t) || detectSalahQaza(t))
 }

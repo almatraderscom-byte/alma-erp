@@ -35,12 +35,17 @@ describe('spoken salah confirmations (live-call auto-mark path)', () => {
     expect(isSpokenSalahDeclaration('নামাজ পড়েছি')).toBe(true)
     expect(isSpokenSalahDeclaration('আসরের কাযা পড়েছি')).toBe(true)
     expect(isSpokenSalahDeclaration('ফজর মিস হয়ে গেছে')).toBe(true)
+    // The client posts EVERY finalized transcript — server vocabulary is the
+    // only gate, so English declarations must pass here (Codex P1 round 2).
+    expect(isSpokenSalahDeclaration('I prayed Isha')).toBe(true)
   })
 
   it('strict spoken gate rejects requests, questions and future intent', () => {
     expect(isSpokenSalahDeclaration('কাযা নামাজের নিয়ম বলো')).toBe(false)
     expect(isSpokenSalahDeclaration('ইশার নামাজ আদায় করার জন্য reminder তৈরি করো')).toBe(false)
     expect(isSpokenSalahDeclaration('মাগরিবের পরে কাযা পড়ে নিব')).toBe(false)
+    // Future-inflected completion stem: "পড়ে ফেলব" contains "পড়ে ফেল".
+    expect(isSpokenSalahDeclaration('ইশার নামাজ পড়ে ফেলব')).toBe(false)
     expect(isSpokenSalahDeclaration('নামাজ কয়টায়?')).toBe(false)
   })
 })

@@ -384,6 +384,10 @@ final class LiveVoicePreviewTests: XCTestCase {
         XCTAssertFalse(
             AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence(
                 "ইশার নামাজ আদায় করার জন্য reminder তৈরি করো"))
+        // Codex P1 round 2: future-inflected completion stem — "পড়ে ফেলব"
+        // contains "পড়ে ফেল" but promises, not reports.
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("ইশার নামাজ পড়ে ফেলব"))
     }
 
     func testToolIntentRouteRejectsProviderMismatchWithoutChangingOpaqueIdentity() {
