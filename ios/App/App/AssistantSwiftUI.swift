@@ -2596,7 +2596,22 @@ final class AssistantVM {
     var activeWorkTracker: AgentWorkStepsSnapshot? {
         guard let cid = conversationId else { return nil }
         return workTrackers.values
-            .filter { !$0.isTerminal && ($0.conversationId.isEmpty || $0.conversationId == cid) }
+            // The dock is LIVE work only. The turn-end projection honestly
+            // parks an unfinished tracker as "paused" (nothing is running),
+            // and a paused chip lingering after the answer landed is what the
+            // owner reported on build 103 — waiting_* states stay visible
+            // because they genuinely await someone; paused and terminal hide.
+            // A "running" chip with no stream behind it is the same bug via a
+            // dropped final snapshot, so running/preparing require the stream.
+            .filter { snapshot in
+                guard !snapshot.isTerminal, snapshot.status != "paused",
+                      snapshot.conversationId.isEmpty || snapshot.conversationId == cid
+                else { return false }
+                if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
+                    return true
+                }
+                return isStreaming
+            }
             .max { $0.updatedAt < $1.updatedAt }
     }
     func clearWorkTrackersForConversationSwitch() {

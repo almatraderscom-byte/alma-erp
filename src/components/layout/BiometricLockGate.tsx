@@ -25,7 +25,11 @@ import {
  * owner can never be permanently locked out.
  */
 
-const RELOCK_AFTER_MS = 60_000
+// 30 min, was 60s: a gallery browse while attaching an image routinely takes
+// over a minute, and the owner was re-Face-ID'd on every return (reported on
+// build 103, 2026-08-14). Cold start still always locks — this only governs
+// how long a foreground round-trip may take before the gate re-arms.
+const RELOCK_AFTER_MS = 30 * 60_000
 
 /**
  * Native builds below this number ship WITHOUT NSFaceIDUsageDescription in
