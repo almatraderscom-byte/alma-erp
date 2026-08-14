@@ -7,6 +7,7 @@
  */
 
 import { sendTwilioWaText, twilioWaConfigured } from './wa/twilio-wa'
+import { isDemoDeployment } from '@/lib/demo-mode'
 
 function telegramApiBase(): string {
   const override = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '')
@@ -121,6 +122,8 @@ export async function sendTelegramPhoto(
   caption?: string,
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   const token = process.env.ASSISTANT_BOT_TOKEN
   if (!token || !chatId) {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or chatId not set' }
@@ -145,6 +148,8 @@ export async function sendTelegramText(
   chatId: string,
   text: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   const token = process.env.ASSISTANT_BOT_TOKEN
   if (!token || !chatId) {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or chatId not set' }

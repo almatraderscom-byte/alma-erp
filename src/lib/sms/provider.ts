@@ -1,4 +1,5 @@
 import type { SmsDeliveryReport, SmsProviderSendResult } from '@/lib/sms/types'
+import { DEMO_SUPPRESSED_ID, isDemoDeployment } from '@/lib/demo-mode'
 
 const DEFAULT_SMS_API_URL = 'https://api.sms.net.bd'
 const SMS_TIMEOUT_MS = 8_000
@@ -48,6 +49,11 @@ export async function sendSmsViaProvider(input: {
   schedule?: string | null
   contentId?: string | null
 }): Promise<SmsProviderSendResult> {
+  // Demo deployment: report sent, dispatch nothing. Demo phone numbers are fake and
+  // the owner pays per message.
+  if (isDemoDeployment()) {
+    return { ok: true, requestId: DEMO_SUPPRESSED_ID }
+  }
   if (!smsProviderConfigured()) {
     return { ok: false, errorCode: 'CONFIG', errorMessage: 'SMS_API_KEY is not configured.' }
   }

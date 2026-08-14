@@ -1,0 +1,63 @@
+# Nightly reset of the DEMO instance.
+#
+# The demo is handed out to customers and app reviewers, so whatever a visitor
+# types, deletes or breaks has to disappear on its own — otherwise the demo
+# degrades into junk within a week and someone has to babysit it. The seed is
+# deterministic, so this restores the identical dataset every night while the
+# dates stay relative to the run day (the demo never looks abandoned).
+#
+# Runs against DEMO_DATABASE_URL only. The seed itself refuses to touch a
+# database that contains any non-demo user or order, so a mis-set secret aborts
+# instead of overwriting real data.
+name: Demo reset
+
+on:
+  schedule:
+    # 20:00 UTC = 02:00 Asia/Dhaka — after business hours, before the morning.
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Until the owner adds the secret there is no demo database to reset;
+      # skip quietly rather than failing a scheduled run every night.
+      - name: Check demo database is configured
+        id: check
+        run: |
+          if [ -z "${{ secrets.DEMO_DATABASE_URL }}" ]; then
+            echo "DEMO_DATABASE_URL is not set — skipping."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.configured == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (postinstall runs prisma generate)
+        if: steps.check.outputs.configured == 'true'
+        run: npm ci --no-audit --no-fund
+
+      # Schema first: a migration merged since the last reset must land before
+      # the seed writes rows shaped for it.
+      - name: Apply migrations
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Reseed demo data
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+          ALMA_DEMO_SEED_CONFIRM: ALMA_DEMO_YES
+          DEMO_USER_PASSWORD: ${{ secrets.DEMO_USER_PASSWORD }}
+        run: node scripts/demo-seed.mjs
