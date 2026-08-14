@@ -170,6 +170,24 @@ struct AlmaDrawerSurface: ViewModifier {
     }
 }
 
+/// The image viewer's bottom action bar: Liquid Glass on iOS 26, thin
+/// material earlier. Sits over a full-bleed photo, so no solid fallback tint.
+@available(iOS 17.0, *)
+struct AlmaViewerBarGlass: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            content.glassEffect(
+                .regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        } else {
+            content.background(
+                .ultraThinMaterial,
+                in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+    }
+}
+
 /// A circular glass control (scroll-to-bottom FAB and friends): Liquid Glass
 /// on iOS 26, the original thin material elsewhere.
 @available(iOS 17.0, *)
@@ -13666,7 +13684,7 @@ private struct AgentGeneratedImageViewer: View {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial, in: Circle())
+                            .modifier(AlmaGlassCircle())
                     }
                     .accessibilityLabel("Close")
                     Spacer()
@@ -13674,7 +13692,7 @@ private struct AgentGeneratedImageViewer: View {
                         Text("\(index + 1) / \(preview.urls.count)")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .modifier(AlmaGlassChip(fallback: Color.white.opacity(0.08)))
                     }
                 }
                 .foregroundStyle(.white)
@@ -13714,7 +13732,7 @@ private struct AgentGeneratedImageViewer: View {
             }
         }
         .padding(8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .modifier(AlmaViewerBarGlass())
         .padding(.horizontal, 10).padding(.bottom, 10)
     }
 
@@ -13999,7 +14017,8 @@ struct AgentMessageRow: View {
                         .foregroundStyle(AgentPalette.coral.opacity(0.9))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 4)
-                .background(AgentPalette.coral.opacity(0.06), in: Capsule())
+                .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.06),
+                                        tint: AgentPalette.coral.opacity(0.18)))
                 .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.25), lineWidth: 1))
                 .fixedSize()
                 Rectangle().fill(pal.borderSubtle).frame(height: 1)
@@ -14018,7 +14037,8 @@ struct AgentMessageRow: View {
                             .foregroundStyle(AgentPalette.coral)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(AgentPalette.coral.opacity(0.15), in: Capsule())
+                    .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.15),
+                                            tint: AgentPalette.coral.opacity(0.3)))
                     let status = voiceTurnStatus
                     HStack(spacing: 4) {
                         if status == .working {
@@ -14030,9 +14050,12 @@ struct AgentMessageRow: View {
                                              : status == .working ? Color.orange : pal.muted)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background((status == .done ? Color.green.opacity(0.12)
-                                 : status == .working ? Color.orange.opacity(0.12)
-                                 : pal.borderSubtle.opacity(0.4)), in: Capsule())
+                    .modifier(AlmaGlassChip(
+                        fallback: status == .done ? Color.green.opacity(0.12)
+                            : status == .working ? Color.orange.opacity(0.12)
+                            : pal.borderSubtle.opacity(0.4),
+                        tint: status == .done ? Color.green.opacity(0.25)
+                            : status == .working ? Color.orange.opacity(0.25) : nil))
                 }
                 if !message.voiceInstructionBody.isEmpty {
                     AlmaSelectableRichText(plain: message.voiceInstructionBody,
@@ -17640,7 +17663,7 @@ struct AgentTurnBlocksView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(pal.muted.opacity(0.10)))
+                .modifier(AlmaGlassChip(fallback: pal.muted.opacity(0.10)))
                 .accessibilityLabel("\(skill.name) skill ব্যবহার করছি")
             } else if let held = message.skillHeldBack,
                       !held.ownerFacingText.isEmpty {
@@ -17984,7 +18007,8 @@ struct AgentModelSwitchCardView: View {
             }
         }
         .padding(14)
-        .background(pal.glassFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .modifier(AlmaAgentGlassBackground(
+            shape: RoundedRectangle(cornerRadius: 16, style: .continuous), pal: pal))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(AgentPalette.coral.opacity(0.35), lineWidth: 1))
         .padding(.vertical, 4)
