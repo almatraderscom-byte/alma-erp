@@ -84,6 +84,10 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [spoken, setSpoken] = useState<string[]>([])
   const [currentLine, setCurrentLine] = useState<string | null>(null)
   const [cards, setCards] = useState<FeedCard[]>([])
+  /// Render-fresh mirror so effect code outside setCards updaters (multi-ask
+  /// answers) reads current card state without impure updaters.
+  const cardsRef = useRef<FeedCard[]>([])
+  cardsRef.current = cards
   /** Conversation mode (Siri+): when the reply finishes speaking, the mic
    *  re-opens by itself — no tap between turns. Silence for 8s ends the loop. */
   const [convoMode, setConvoMode] = useState(true)
@@ -484,35 +488,42 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
    *  unanswered question, and only when every question is answered submit the
    *  combined text once (same shape as the chat card — Codex P1 #754). */
   const answerMultiAsk = useCallback((cardId: string, qi: number, option: string) => {
+    // Effects (TTS, POST, runTurn) stay OUTSIDE the state updater: React
+    // Strict Mode may run updaters twice to detect impurity, which would
+    // start two voice turns on the final tap (Codex P2 #754).
     setCards((prev) => {
       const card = prev.find((c) => c.id === cardId)
-      if (!card?.questions) return prev
+      if (!card?.questions || qi in (card.multiAnswers ?? {})) return prev
       const answers = { ...(card.multiAnswers ?? {}), [qi]: option }
-      const remaining = card.questions
-        .map((_, i) => i)
-        .filter((i) => !(i in answers))
-      if (remaining.length > 0) {
-        const next = card.questions[remaining[0]]
-        stopTts()
-        playerRef.current?.say(`${next.question} — ${next.options.join(', নাকি ')}?`)
-        return prev.map((c) => c.id === cardId ? { ...c, multiAnswers: answers } : c)
-      }
-      const combined = card.questions
-        .map((entry, i) => `${i + 1}. ${entry.question} — ${answers[i]}`)
-        .join('\n')
-      if (card.askCardId) {
-        void fetch(`/api/assistant/ask-cards/${card.askCardId}/answer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ option: combined }),
-        }).catch(() => { /* runTurn still carries the combined answer */ })
-      }
-      stopTts()
-      void runTurn(combined)
+      const complete = card.questions.every((_, i) => i in answers)
       return prev.map((c) => c.id === cardId
-        ? { ...c, multiAnswers: answers, done: true, success: true, sub: `✓ সব উত্তর পাঠানো হয়েছে` }
+        ? {
+            ...c, multiAnswers: answers,
+            ...(complete ? { done: true, success: true, sub: '✓ সব উত্তর পাঠানো হয়েছে' } : {}),
+          }
         : c)
     })
+    const card = cardsRef.current.find((c) => c.id === cardId)
+    if (!card?.questions || qi in (card.multiAnswers ?? {})) return
+    const answers = { ...(card.multiAnswers ?? {}), [qi]: option }
+    const remaining = card.questions.map((_, i) => i).filter((i) => !(i in answers))
+    stopTts()
+    if (remaining.length > 0) {
+      const next = card.questions[remaining[0]]
+      playerRef.current?.say(`${next.question} — ${next.options.join(', নাকি ')}?`)
+      return
+    }
+    const combined = card.questions
+      .map((entry, i) => `${i + 1}. ${entry.question} — ${answers[i]}`)
+      .join('\n')
+    if (card.askCardId) {
+      void fetch(`/api/assistant/ask-cards/${card.askCardId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ option: combined }),
+      }).catch(() => { /* runTurn still carries the combined answer */ })
+    }
+    void runTurn(combined)
   }, [runTurn, stopTts])
 
   /** Premium-model permission: approve re-runs the SAME question with resume. */

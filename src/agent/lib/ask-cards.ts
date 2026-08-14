@@ -106,7 +106,14 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
       // unrelated later answer must not flip it (Codex P1 #754).
       const isMulti = typeof (row as { questions?: unknown }).questions === 'string'
         && String((row as { questions?: unknown }).questions).trim().length > 0
-      const workflowAnswer = isMulti ? (option.split('\n')[0] ?? option) : option
+      // The first line is "১. <question> — <answer>": strip the question label
+      // before the state machine sees it, or a negative word in the QUESTION
+      // itself ("বদল দরকার?") outweighs an affirmative answer (Codex P1 #754).
+      const firstLine = option.split('\n')[0] ?? option
+      const sepIndex = firstLine.lastIndexOf(' — ')
+      const workflowAnswer = isMulti
+        ? (sepIndex >= 0 ? firstLine.slice(sepIndex + 3).trim() : firstLine)
+        : option
       await advanceWorkflowOnAskAnswer(card.workflowRunId, workflowAnswer, cause)
     } catch (err) {
       console.warn('[ask-cards] run advance failed open:', err instanceof Error ? err.message : err)

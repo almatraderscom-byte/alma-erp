@@ -863,8 +863,12 @@ async function* runAlternateProviderTurn(
         // question, so only its answer line drives onAskAnswer — a "না" in an
         // unrelated later answer must not flip the workflow (Codex P1 #754).
         const isMulti = typeof matchedAskCard.questions === 'string' && matchedAskCard.questions.trim().length > 0
+        // Strip the "১. <question> — " label: only the ANSWER may drive the
+        // state machine (Codex P1 #754, second round).
+        const firstLine = matchedAskCard.selectedOption.split('\n')[0] ?? matchedAskCard.selectedOption
+        const sepIndex = firstLine.lastIndexOf(' — ')
         const workflowAnswer = isMulti
-          ? (matchedAskCard.selectedOption.split('\n')[0] ?? matchedAskCard.selectedOption)
+          ? (sepIndex >= 0 ? firstLine.slice(sepIndex + 3).trim() : firstLine)
           : matchedAskCard.selectedOption
         await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, workflowAnswer, 'turn')
         workflowRuns = await relist(conversationId)
