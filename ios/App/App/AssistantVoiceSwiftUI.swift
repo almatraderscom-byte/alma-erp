@@ -5642,6 +5642,20 @@ final class AlmaVoiceEngine {
         replyText = spoken
         nowLine = spoken
         feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: spoken)
+        // Deterministic hang-up, second door (owner report 2026-08-15: Boss's
+        // wording missed the narrow intent list, the model spoke its goodbye
+        // but skipped end_call, and the call hung open). When the MODEL's own
+        // goodbye salutation plays and Boss said something in the রাখ/বিদায়
+        // word family within the last 25s, the call ends after the goodbye —
+        // the same corroboration window the model's end_call is held to.
+        if spoken.contains("আল্লাহ হাফেজ") || spoken.contains("আল্লাহহাফেজ")
+            || spoken.contains("খোদা হাফেজ"),
+           Date().timeIntervalSince(lastHangupContextAt) <= 25 {
+            #if DEBUG
+            NSLog("ALMA-VOICE model goodbye + owner hangup context — ending after playback")
+            #endif
+            scheduleModelRequestedEnd(hardFallback: 12)
+        }
     }
 
     func livePlaybackChanged(active: Bool, level: Double) {
