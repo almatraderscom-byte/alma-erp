@@ -1113,6 +1113,40 @@ async function runApprove(
     })
   }
 
+  if (action.type === 'media_plan') {
+    // Media mode (M0): approve locks the plan + project. The render graph (M1)
+    // picks up 'approved' projects; until it ships, the card is honest about it.
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date(), ownerDecided: true },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+    const mediaPayload = payload as { projectId?: string | null }
+    const projectId = typeof mediaPayload.projectId === 'string' ? mediaPayload.projectId : null
+    if (projectId) {
+      await db.agentMediaProject.updateMany({
+        where: { id: projectId, status: 'planned' },
+        data: { status: 'approved' },
+      })
+    }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', result: { projectId, approvedAt: new Date().toISOString() } },
+    })
+    await appendConversationNote(
+      db,
+      action,
+      `✅ ভিডিও প্ল্যান approved — প্রজেক্ট লক হয়েছে। রেন্ডার ইঞ্জিন (দৃশ্য ধরে অডিও→ছবি→ক্লিপ→ফাইনাল) পরের বিল্ডে চালু হচ্ছে; চালু হলেই এই প্রজেক্ট অটো শুরু হবে।`,
+    )
+    return Response.json({
+      success: true,
+      message: 'Media plan approved — project locked for the render engine.',
+      projectId,
+    })
+  }
+
   if (action.type === 'video_reel_gate') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },

@@ -114,6 +114,31 @@ export const PRICING_META = {
     perMinute: 0.014,
     note: 'US outbound estimate; actual rate varies by destination',
   },
+  elevenlabs_tts: {
+    model: 'eleven_v3',
+    lastVerifiedAt: '2026-08-14',
+    verified: false,
+    source: 'https://elevenlabs.io/pricing/api',
+    perMillionChars: 100.0,
+    note: 'Multilingual v3 ~$0.10/1k chars (credit-plan dependent) — Media mode VO',
+  },
+  elevenlabs_music: {
+    model: 'eleven_music',
+    lastVerifiedAt: '2026-08-14',
+    verified: false,
+    source: 'https://elevenlabs.io/pricing/api',
+    perMinute: 0.5,
+    note: 'Music generation estimate — verify against credit burn before M2 ships',
+  },
+  seedance_video: {
+    model: 'fal-ai/bytedance/seedance/v1/pro',
+    lastVerifiedAt: '2026-08-14',
+    verified: false,
+    source: 'https://fal.ai/models/fal-ai/bytedance/seedance/v1/pro',
+    perSecondPro: 0.125,
+    perSecondLite: 0.037,
+    note: 'Seedance via fal (~$0.62/5s pro 1080p, ~$0.18/5s lite) — verify exact fal rate at M2 wiring',
+  },
 } as const
 
 /** Anthropic chat cost from token usage (matches legacy calcCostUsd). */
@@ -223,6 +248,24 @@ export function calcGeminiImageCostUsd(
 export function calcVeoCostUsd(durationSeconds: number): number {
   const secs = Math.max(1, Math.round(durationSeconds))
   return roundUsd(secs * PRICING_META.veo_video.perSecond)
+}
+
+/** ElevenLabs TTS — per-character (Media mode VO). */
+export function calcElevenLabsTtsCostUsd(charCount: number): number {
+  return roundUsd((Math.max(0, charCount) / 1_000_000) * PRICING_META.elevenlabs_tts.perMillionChars)
+}
+
+/** ElevenLabs Music — per generated minute (estimate). */
+export function calcElevenLabsMusicCostUsd(durationSeconds: number): number {
+  const minutes = Math.max(durationSeconds / 60, 0.1)
+  return roundUsd(minutes * PRICING_META.elevenlabs_music.perMinute)
+}
+
+/** Seedance (fal) image-to-video — per second, pro/lite tier. */
+export function calcSeedanceCostUsd(durationSeconds: number, tier: 'pro' | 'lite' = 'pro'): number {
+  const secs = Math.max(1, Math.round(durationSeconds))
+  const rate = tier === 'lite' ? PRICING_META.seedance_video.perSecondLite : PRICING_META.seedance_video.perSecondPro
+  return roundUsd(secs * rate)
 }
 
 export function calcTwilioCallCostUsd(durationSeconds = 60): number {

@@ -69,6 +69,7 @@ import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { COWORKER_TOOLS } from './coworker-tools'
 import { AD_CREATIVE_TOOLS } from './ad-creative-tools' // make_ad_creatives
 import { VIDEO_TOOLS } from './video-tools' // make_product_reel
+import { MEDIA_TOOLS } from './media-tools' // plan_media_video, get_media_project
 import { MARKETING_TOOLS } from './marketing-tools' // plan_marketing, marketing_report
 import { BRAND_TOOLS } from './brand-tools'
 import { TRADING_READ_TOOLS } from './trading-tools'
@@ -696,6 +697,7 @@ export const TOOLS: AgentTool[] = [
   ...COWORKER_TOOLS,
   ...AD_CREATIVE_TOOLS,
   ...VIDEO_TOOLS,
+  ...MEDIA_TOOLS,
   ...BRAND_TOOLS,
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,

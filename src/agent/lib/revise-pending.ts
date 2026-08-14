@@ -35,6 +35,9 @@ export const REVISABLE_ACTION_TYPES = new Set<string>([
   'content_gate1',
   'content_gate2',
   'ad_creative_gate',
+  // Media mode plan card — plan_media_video(projectId) redraws the card in place
+  // with a fresh server-computed quote, so free-text revise is safe here.
+  'media_plan',
 ])
 
 export function isRevisableAction(type?: string | null): boolean {

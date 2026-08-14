@@ -26,6 +26,7 @@ import { CONTENT_ENGINE_ROLE_PROMPT } from '@/agent/tools/content-engine-tools'
 import { AD_CREATIVE_ROLE_PROMPT } from '@/agent/tools/ad-creative-tools'
 import { ADS_ROLE_PROMPT } from '@/agent/tools/ads-tools'
 import { VIDEO_ROLE_PROMPT } from '@/agent/tools/video-tools'
+import { MEDIA_ROLE_PROMPT } from '@/agent/tools/media-tools'
 import { BRAND_ROLE_PROMPT } from '@/agent/tools/brand-tools'
 import { TRADING_READ_ROLE_PROMPT } from '@/agent/tools/trading-tools'
 import { PLAYBOOK_ROLE_PROMPT } from '@/agent/tools/playbook-tools'
@@ -1143,7 +1144,7 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
 
   if (has('website')) parts.push(WEBSITE_ROLE_PROMPT)
   if (has('growth')) parts.push(RESEARCH_ROLE_PROMPT, SEO_ROLE_PROMPT, ANALYTICS_ROLE_PROMPT, CAMPAIGN_ROLE_PROMPT, GBP_ROLE_PROMPT, GROWTH_ROLE_PROMPT, COMPETITOR_ROLE_PROMPT, ADVISOR_ROLE_PROMPT, ADS_ROLE_PROMPT)
-  if (has('content')) parts.push(CONTENT_ENGINE_ROLE_PROMPT, AD_CREATIVE_ROLE_PROMPT, VIDEO_ROLE_PROMPT, BRAND_ROLE_PROMPT, TRYON_ROLE_PROMPT)
+  if (has('content')) parts.push(CONTENT_ENGINE_ROLE_PROMPT, AD_CREATIVE_ROLE_PROMPT, VIDEO_ROLE_PROMPT, MEDIA_ROLE_PROMPT, BRAND_ROLE_PROMPT, TRYON_ROLE_PROMPT)
   if (has('diag')) parts.push(DIAGNOSTIC_ROLE_PROMPT)
   if (has('vision')) parts.push(VISION_ROLE_PROMPT)
   // simulate tools live in both finance and growth groups
