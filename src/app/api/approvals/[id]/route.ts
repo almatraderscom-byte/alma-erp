@@ -25,7 +25,7 @@ import {
   stampApprovalActionResponse,
 } from '@/lib/approval-action-server'
 import { apiDataSuccess, apiFailure, classifyApprovalTxError } from '@/lib/safe-api-response'
-import { withApiRoute } from '@/lib/core/safe-route-helpers'
+import { routeParams, withApiRoute } from '@/lib/core/safe-route-helpers'
 import { deferAfterApprovalCommit, runApprovalTransaction } from '@/lib/prisma-transaction'
 import {
   TRADING_BUSINESS_ID,
@@ -47,8 +47,6 @@ import { processLeaveApproval } from '@/lib/attendance-leave'
 import { persistExpenseFromPayload } from '@/lib/finance-expense'
 import { processReimbursementApproval } from '@/lib/staff-reimbursement'
 import { processOfficeAdvanceApproval, processOfficeAdvanceReconcileApproval } from '@/lib/office-advance'
-
-type RouteContext = { params: { id: string } }
 
 type AuditEntry = {
   action: 'DELETE_APPROVED' | 'DELETE_REJECTED'
@@ -87,12 +85,13 @@ function tradeSnapshot(trade: {
 }
 
 export const GET = withApiRoute('approvals.detail', async (req: NextRequest, routeCtx?: unknown) => {
-  const { params } = (routeCtx ?? {}) as RouteContext
+  const approvalId = (await routeParams<{ id: string }>(routeCtx)).id ?? ''
   const token = await getJwt(req)
   if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
+  if (!approvalId) return apiFailure('approval_id_required', 'Approval id missing from the request URL.', { status: 400 })
 
   const approval = await prisma.approvalRequest.findUnique({
-    where: { id: params.id },
+    where: { id: approvalId },
     select: {
       id: true,
       status: true,
@@ -110,9 +109,10 @@ export const GET = withApiRoute('approvals.detail', async (req: NextRequest, rou
 })
 
 export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, routeCtx?: unknown) => {
-  const { params } = (routeCtx ?? {}) as RouteContext
+  const approvalId = (await routeParams<{ id: string }>(routeCtx)).id ?? ''
   const token = await getJwt(req)
   if (!token?.sub) return apiFailure('unauthorized', 'Unauthorized', { status: 401 })
+  if (!approvalId) return apiFailure('approval_id_required', 'Approval id missing from the request URL.', { status: 400 })
   const role = normalizeAlmaRole(token.role as string)
 
   const body = await req.json().catch(() => ({})) as {
@@ -131,7 +131,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
   }
 
   const meta = buildApprovalActionMeta({
-    approvalId: params.id,
+    approvalId: approvalId,
     adminId: token.sub,
     action: body.action,
     operationId: body.operation_id,
@@ -140,10 +140,10 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
   logApprovalActionPhase('processing', meta)
 
   try {
-    const approval = await prisma.approvalRequest.findUnique({ where: { id: params.id } })
+    const approval = await prisma.approvalRequest.findUnique({ where: { id: approvalId } })
     if (!approval) {
       logEvent('warn', 'approval.pending.lookup_failed', {
-        approvalId: params.id,
+        approvalId: approvalId,
         actualStatus: 'missing',
         adminId: token.sub,
         action: body.action,
@@ -162,7 +162,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       // or re-fire Telegram pushes.
       if (approval.status === requestedTerminal) {
         logEvent('info', 'approval.action.idempotent_replay', {
-          approvalId: params.id,
+          approvalId: approvalId,
           status: approval.status,
           action: body.action,
           module: approval.module,
@@ -178,7 +178,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       // Mismatched terminal state — operator likely has a stale view; surface
       // it so they refresh.
       logEvent('warn', 'approval.pending.lookup_failed', {
-        approvalId: params.id,
+        approvalId: approvalId,
         actualStatus: approval.status,
         module: approval.module,
         type: approval.type,
@@ -343,7 +343,7 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
   } catch (e) {
     const classified = classifyApprovalTxError(e)
     logEvent('error', 'approval.execute_failed', {
-      approvalId: params.id,
+      approvalId: approvalId,
       error: classified.error,
       message: classified.message,
     })

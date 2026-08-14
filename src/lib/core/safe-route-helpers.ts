@@ -5,7 +5,7 @@ import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { apiFailure } from '@/lib/safe-api-response'
 import type { AlmaRole } from '@/lib/roles'
 
-export { withApiRoute, apiDataSuccess, apiFailure, apiSuccess } from '@/lib/core/safe-api'
+export { withApiRoute, apiDataSuccess, apiFailure, apiSuccess, routeParams } from '@/lib/core/safe-api'
 
 export async function parseJsonBody<T extends Record<string, unknown>>(
   req: NextRequest,

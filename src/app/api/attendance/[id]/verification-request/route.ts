@@ -3,11 +3,12 @@ import { prisma } from '@/lib/prisma'
 import { getWalletContext } from '@/lib/payroll-wallet-access'
 import { attendanceRecordDto } from '@/lib/attendance'
 import { notifyUser } from '@/lib/notifications'
-import { withApiRoute } from '@/lib/core/safe-api'
+import { routeParams, withApiRoute } from '@/lib/core/safe-api'
 import { attachAttendanceContext } from '@/lib/sentry/capture'
 
 export const POST = withApiRoute('attendance.verification_request', async (req: NextRequest, ctxParam) => {
-  const { params } = ctxParam as { params: { id: string } }
+  const recordId = (await routeParams<{ id: string }>(ctxParam)).id ?? ''
+  if (!recordId) return NextResponse.json({ error: 'attendance record id missing from the request URL' }, { status: 400 })
   const body = (await req.json().catch(() => ({}))) as { business_id?: string; note?: string }
   const ctx = await getWalletContext(req, body.business_id)
   if ('error' in ctx) return ctx.error
@@ -17,13 +18,13 @@ export const POST = withApiRoute('attendance.verification_request', async (req: 
 
   await attachAttendanceContext({
     businessId: ctx.businessIds[0],
-    attendanceRecordId: params.id,
+    attendanceRecordId: recordId,
     requestId: req.headers.get('x-request-id') || undefined,
     route: 'attendance.verification_request',
   })
 
   const record = await prisma.attendanceRecord.update({
-    where: { id: params.id },
+    where: { id: recordId },
     data: {
       verificationRequired: true,
       verificationRequestedById: ctx.userId,

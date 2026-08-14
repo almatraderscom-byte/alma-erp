@@ -21,14 +21,14 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getTradingContext, TRADING_BUSINESS_ID } from '@/lib/trading'
-import { withApiRoute, apiDataSuccess, apiFailure } from '@/lib/core/safe-route-helpers'
+import { withApiRoute, apiDataSuccess, apiFailure, routeParams } from '@/lib/core/safe-route-helpers'
 import { logEvent } from '@/lib/logger'
 
 export const DELETE = withApiRoute(
   'trading.telegram.users.remove',
   async (req: NextRequest, ctx?: unknown) => {
-    const { params } = (ctx as { params: { id: string } } | undefined) || { params: { id: '' } }
-    const id = String(params?.id || '').trim()
+    const params = await routeParams<{ id: string }>(ctx)
+    const id = String(params.id || '').trim()
     if (!id) {
       return apiFailure('invalid_request', 'Telegram user id required', { status: 400 })
     }

@@ -11,6 +11,27 @@ export { apiSuccess, apiFailure } from '@/lib/safe-api-response'
 type RouteHandler = (req: NextRequest, ctx?: unknown) => Promise<NextResponse | undefined>
 
 /**
+ * Read a dynamic route segment (`[id]`) out of the handler context.
+ *
+ * Next 16 (the 14.2.35 → 16.3.0 bump in 3493ab78) removed synchronous access to
+ * `params`: the framework now hands the handler a PROMISE. Code that kept doing
+ * `(ctx as { params: { id: string } }).params.id` read `undefined` off that
+ * Promise, which reached Prisma as `where: { id: undefined }` and surfaced as an
+ * HTTP 500 — that is what made every Approve tap in the app fail from 2026-08-09
+ * onward. Resolve every dynamic segment through this helper.
+ *
+ * Stays tolerant of a plain (non-Promise) object so unit tests and any direct
+ * handler invocation keep working.
+ */
+export async function routeParams<T extends Record<string, string | string[]>>(
+  ctx: unknown,
+): Promise<Partial<T>> {
+  const raw = (ctx as { params?: T | Promise<T> } | undefined)?.params
+  if (!raw) return {}
+  return ((await raw) ?? {}) as Partial<T>
+}
+
+/**
  * Pre-compute infra geometry once per cold start. These never change for the
  * lifetime of the lambda, so reading process.env inside every request would
  * be wasteful — and detecting the DB region from DATABASE_URL on every call

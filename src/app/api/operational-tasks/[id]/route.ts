@@ -1,12 +1,13 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resendSpotlight } from '@/lib/operational-tasks'
-import { withApiRoute, apiDataSuccess, apiFailure, requireJwtRoles, guardViewerWrite, parseJsonBody } from '@/lib/core/safe-route-helpers'
+import { withApiRoute, apiDataSuccess, apiFailure, requireJwtRoles, guardViewerWrite, parseJsonBody, routeParams } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
 export const PATCH = withApiRoute('operational_tasks.update', async (req: NextRequest, routeCtx?: unknown) => {
-  const { params } = (routeCtx ?? {}) as { params: { id: string } }
+  const taskId = (await routeParams<{ id: string }>(routeCtx)).id ?? ''
+  if (!taskId) return apiFailure('task_id_required', 'Task id missing from the request URL.', { status: 400 })
   const write = await guardViewerWrite(req)
   if (!write.ok) return write.response
   const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
@@ -27,11 +28,11 @@ export const PATCH = withApiRoute('operational_tasks.update', async (req: NextRe
 
   if (body.action === 'archive') {
     await prisma.operationalTask.update({
-      where: { id: params.id },
+      where: { id: taskId },
       data: { status: 'ARCHIVED' },
     })
     await prisma.operationalTaskAssignment.updateMany({
-      where: { taskId: params.id, status: { not: 'COMPLETED' } },
+      where: { taskId: taskId, status: { not: 'COMPLETED' } },
       data: { status: 'ARCHIVED', archivedAt: new Date() },
     })
     return apiDataSuccess({ archived: true })
@@ -53,18 +54,19 @@ export const PATCH = withApiRoute('operational_tasks.update', async (req: NextRe
   if (body.show_on_check_in !== undefined) data.showOnCheckIn = body.show_on_check_in
 
   if (Object.keys(data).length) {
-    await prisma.operationalTask.update({ where: { id: params.id }, data })
+    await prisma.operationalTask.update({ where: { id: taskId }, data })
   }
   return apiDataSuccess({ updated: true })
 })
 
 export const DELETE = withApiRoute('operational_tasks.delete', async (req: NextRequest, routeCtx?: unknown) => {
-  const { params } = (routeCtx ?? {}) as { params: { id: string } }
+  const taskId = (await routeParams<{ id: string }>(routeCtx)).id ?? ''
+  if (!taskId) return apiFailure('task_id_required', 'Task id missing from the request URL.', { status: 400 })
   const auth = await requireJwtRoles(req, ['SUPER_ADMIN'])
   if (!auth.ok) return auth.response
 
   await prisma.operationalTask.update({
-    where: { id: params.id },
+    where: { id: taskId },
     data: { status: 'ARCHIVED' },
   })
   return apiDataSuccess({ archived: true })

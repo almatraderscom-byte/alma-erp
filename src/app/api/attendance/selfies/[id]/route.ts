@@ -5,12 +5,13 @@ import { attendanceSelfieDto } from '@/lib/attendance'
 import { resolveAttendanceImageRefForDisplay } from '@/lib/attendance-photo-storage'
 import { resolveSelfieForAdminReview } from '@/lib/attendance-selfie-review'
 import { notifyUser } from '@/lib/notifications'
-import { withApiRoute } from '@/lib/core/safe-api'
+import { routeParams, withApiRoute } from '@/lib/core/safe-api'
 import { logEvent } from '@/lib/logger'
 import { attachAttendanceContext } from '@/lib/sentry/capture'
 
 export const GET = withApiRoute('attendance.selfies.detail', async (req: NextRequest, ctxParam) => {
-  const { params } = ctxParam as { params: { id: string } }
+  const selfieId = (await routeParams<{ id: string }>(ctxParam)).id ?? ''
+  if (!selfieId) return NextResponse.json({ error: 'selfie id missing from the request URL' }, { status: 400 })
   const url = new URL(req.url)
   const ctx = await getWalletContext(req, url.searchParams.get('business_id'))
   if ('error' in ctx) return ctx.error
@@ -20,14 +21,14 @@ export const GET = withApiRoute('attendance.selfies.detail', async (req: NextReq
   const requestedBusinessId = url.searchParams.get('business_id')?.trim() || ctx.businessIds[0] || null
   await attachAttendanceContext({
     businessId: requestedBusinessId || ctx.businessIds[0],
-    attendanceRecordId: params.id,
+    attendanceRecordId: selfieId,
     requestId,
     route: 'attendance.selfies.detail',
   })
 
   const attendanceRecordId = url.searchParams.get('attendance_record_id')
   const lookup = await resolveSelfieForAdminReview({
-    id: params.id,
+    id: selfieId,
     businessId: requestedBusinessId,
     attendanceRecordId,
     isSuperAdmin: ctx.role === 'SUPER_ADMIN',
@@ -36,8 +37,8 @@ export const GET = withApiRoute('attendance.selfies.detail', async (req: NextReq
     logEvent('warn', 'attendance.review.photo_missing', {
       requestId,
       businessId: requestedBusinessId,
-      selfieId: params.id,
-      attendanceRecordId: attendanceRecordId || params.id,
+      selfieId,
+      attendanceRecordId: attendanceRecordId || selfieId,
       lookup: 'detail',
       code: lookup.code,
     })
@@ -74,7 +75,8 @@ export const GET = withApiRoute('attendance.selfies.detail', async (req: NextReq
 })
 
 export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextRequest, ctxParam) => {
-  const { params } = ctxParam as { params: { id: string } }
+  const selfieId = (await routeParams<{ id: string }>(ctxParam)).id ?? ''
+  if (!selfieId) return NextResponse.json({ error: 'selfie id missing from the request URL' }, { status: 400 })
   const body = (await req.json().catch(() => ({}))) as {
     business_id?: string
     action?: 'APPROVE' | 'REJECT'
@@ -94,13 +96,13 @@ export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextR
   const requestedBusinessId = String(body.business_id || '').trim() || null
   await attachAttendanceContext({
     businessId: requestedBusinessId || ctx.businessIds[0],
-    attendanceRecordId: body.attendance_record_id || params.id,
+    attendanceRecordId: body.attendance_record_id || selfieId,
     requestId,
     route: 'attendance.selfies.review',
   })
 
   const lookup = await resolveSelfieForAdminReview({
-    id: params.id,
+    id: selfieId,
     businessId: requestedBusinessId,
     attendanceRecordId: body.attendance_record_id || null,
     isSuperAdmin: true,
@@ -109,8 +111,8 @@ export const PATCH = withApiRoute('attendance.selfies.review', async (req: NextR
     logEvent('warn', 'attendance.review.photo_missing', {
       requestId,
       businessId: requestedBusinessId,
-      selfieId: params.id,
-      attendanceRecordId: body.attendance_record_id || params.id,
+      selfieId,
+      attendanceRecordId: body.attendance_record_id || selfieId,
       lookup: 'review',
       action: body.action,
       code: lookup.code,
