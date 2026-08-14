@@ -2,7 +2,12 @@
 
 ## Project
 
-- Next.js 14 (App Router) + Supabase Postgres + Vercel (region hnd1 Tokyo). Production: alma-erp-six.vercel.app
+- Next.js 16 (App Router) + Supabase Postgres + Vercel (region hnd1 Tokyo). Production: alma-erp-six.vercel.app
+  - Upgraded 14.2.35 → 16.3.0 on 2026-08-09 (3493ab78). Next 16 removed SYNCHRONOUS access to
+    `params` / `searchParams` / `cookies()` / `headers()`: a route handler receives `params` as a
+    **Promise**. Reading `ctx.params.id` off it yields `undefined` — which is what silently broke
+    every business Approve for five days. Read dynamic segments via `routeParams()` from
+    `@/lib/core/safe-api`, never by casting the context to a plain object.
 - Live business ERP for ALMA Lifestyle / ALMA Trading / CDIT. Owner: Maruf (non-engineer business owner).
 - New work: personal AI agent module being built INSIDE this repo, phase by phase (Phase 0 → 8). One phase per session, scoped exactly to the phase prompt file provided.
 

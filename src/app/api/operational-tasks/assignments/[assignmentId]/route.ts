@@ -2,12 +2,12 @@ import { NextRequest } from 'next/server'
 import { transitionAssignment } from '@/lib/operational-tasks'
 import { prisma } from '@/lib/prisma'
 import { queueOperationalTaskStatusToAdmin } from '@/lib/operational-task-telegram'
-import { withApiRoute, apiDataSuccess, apiFailure, requireJwt, guardViewerWrite, parseJsonBody } from '@/lib/core/safe-route-helpers'
+import { withApiRoute, apiDataSuccess, apiFailure, requireJwt, guardViewerWrite, parseJsonBody, routeParams } from '@/lib/core/safe-route-helpers'
 
 export const dynamic = 'force-dynamic'
 
 export const PATCH = withApiRoute('operational_tasks.assignment', async (req: NextRequest, routeCtx?: unknown) => {
-  const { params } = (routeCtx ?? {}) as { params: { assignmentId: string } }
+  const routeSegments = await routeParams<{ assignmentId: string }>(routeCtx)
   const write = await guardViewerWrite(req)
   if (!write.ok) return write.response
   const auth = await requireJwt(req)
@@ -17,7 +17,7 @@ export const PATCH = withApiRoute('operational_tasks.assignment', async (req: Ne
   const action = body.action
   if (!action) return apiFailure('invalid_request', 'action required', { status: 400 })
 
-  const assignmentId = params.assignmentId
+  const assignmentId = routeSegments.assignmentId ?? ''
   const owned = await prisma.operationalTaskAssignment.findFirst({
     where: { id: assignmentId, userId: auth.token.sub },
     select: { id: true },

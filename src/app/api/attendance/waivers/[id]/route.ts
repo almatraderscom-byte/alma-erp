@@ -2,10 +2,11 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { PENALTY_APPEAL_MODULE, PENALTY_APPEAL_TYPE, canReviewPenaltyAppeals, reviewPenaltyAppeal } from '@/lib/penalty-appeal'
 import { resolveApprovalRequest } from '@/lib/approvals'
-import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
+import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody, routeParams } from '@/lib/core/safe-route-helpers'
 
 export const PATCH = withApiRoute('attendance.waivers.review', async (req: NextRequest, ctx?: unknown) => {
-  const { params } = (ctx || {}) as { params: { id: string } }
+  const waiverId = (await routeParams<{ id: string }>(ctx)).id ?? ''
+  if (!waiverId) return apiFailure('waiver_id_required', 'Appeal id missing from the request URL.', { status: 400 })
   const body = await parseJsonBody<{
     business_id?: string
     action?: 'APPROVE' | 'REJECT'
@@ -21,7 +22,7 @@ export const PATCH = withApiRoute('attendance.waivers.review', async (req: NextR
   }
 
   const result = await reviewPenaltyAppeal({
-    waiverId: params.id,
+    waiverId: waiverId,
     businessId: wallet.businessIds[0],
     actorUserId: wallet.userId,
     action: body.action === 'REJECT' ? 'REJECT' : 'APPROVE',
@@ -37,14 +38,15 @@ export const PATCH = withApiRoute('attendance.waivers.review', async (req: NextR
 })
 
 export const DELETE = withApiRoute('attendance.waivers.cancel', async (req: NextRequest, ctx?: unknown) => {
-  const { params } = (ctx || {}) as { params: { id: string } }
+  const waiverId = (await routeParams<{ id: string }>(ctx)).id ?? ''
+  if (!waiverId) return apiFailure('waiver_id_required', 'Appeal id missing from the request URL.', { status: 400 })
   const url = new URL(req.url)
   const auth = await requireWalletContext(req, url.searchParams.get('business_id'))
   if (!auth.ok) return auth.response
   const { ctx: wallet } = auth
 
   const waiver = await prisma.attendanceWaiverRequest.findFirst({
-    where: { id: params.id, businessId: wallet.businessIds[0] },
+    where: { id: waiverId, businessId: wallet.businessIds[0] },
   })
   if (!waiver) return apiFailure('not_found', 'Appeal not found.', { status: 404 })
   if (waiver.status !== 'PENDING') {

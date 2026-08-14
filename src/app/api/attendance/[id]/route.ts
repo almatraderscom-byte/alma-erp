@@ -1,12 +1,12 @@
 import { NextRequest } from 'next/server'
 import { resetAttendanceRecordByAdmin } from '@/lib/attendance-reset'
-import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext } from '@/lib/core/safe-route-helpers'
+import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, routeParams } from '@/lib/core/safe-route-helpers'
 import { forbidden } from '@/lib/payroll-wallet-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 
 export const DELETE = withApiRoute('attendance.reset', async (req: NextRequest, routeCtx?: unknown) => {
-  const params = (routeCtx as { params?: { id?: string } })?.params
-  const recordId = String(params?.id || '').trim()
+  const params = await routeParams<{ id: string }>(routeCtx)
+  const recordId = String(params.id || '').trim()
   if (!recordId) {
     return apiFailure('invalid_request', 'Attendance record id is required', { status: 400 })
   }
