@@ -13194,7 +13194,11 @@ private struct AgentMediaCard: View {
                 }
             }
             await MainActor.run {
-                // Nudge off 0 so AVPlayer decodes a visible poster frame.
+                // Nudge off 0 so AVPlayer decodes a visible poster frame — but
+                // ONLY while idle at the start; racing an active playback (or a
+                // re-appear mid-video) must never yank the position back.
+                guard player.timeControlStatus != .playing,
+                      CMTimeGetSeconds(player.currentTime()) < 0.05 else { return }
                 player.seek(to: CMTime(seconds: 0.1, preferredTimescale: 600))
             }
         }
