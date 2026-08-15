@@ -3360,6 +3360,10 @@ final class AlmaVoiceEngine {
     var activeAgentCallId: String?
     var pendingAgentCallBrief: String?
     private var agentBriefSent = false
+    /// Model produced ANY spoken output since THIS live session opened —
+    /// per-session on purpose (liveFeed persists across calls and would give
+    /// a stale answer). Gates the late-brief note's re-greeting.
+    private var agentSpokeThisLiveSession = false
     /// Installed only by AgentCallController. The controller captures the exact
     /// logical generation + CallKit UUID, so a delayed permission/socket failure
     /// can never end a replacement call that happens to reuse this engine path.
@@ -3447,9 +3451,16 @@ final class AlmaVoiceEngine {
     }
 
     private func sendAgentBriefNote(_ brief: String) {
+        // Owner bug 2026-08-15: the brief used to arrive only after the answer
+        // (network fetch), and this note's unconditional "সালাম দিয়ে শুরু করো"
+        // made the model RE-greet mid-conversation. If the model has already
+        // spoken this call, the reason must slot into the flow — no second
+        // salam, no fresh greeting.
+        let opening = agentSpokeThisLiveSession
+            ? "কথার মাঝে আবার সালাম বা নতুন greeting একদম নয় — চলতি কথার সাথে মিলিয়ে এক লাইনে কারণটা নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।"
+            : "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।"
         live.sendRealtimeText(
-            "তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
-            "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+            "তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " + opening)
     }
 
     struct Card: Identifiable, Equatable {
@@ -3827,6 +3838,7 @@ final class AlmaVoiceEngine {
         }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         agentBriefSent = false
+        agentSpokeThisLiveSession = false
         closed = false
         // A hang-up left half-scheduled on the previous call must not reject
         // the next one's end request (Codex P2 round 6 — the console reuses
@@ -5752,6 +5764,7 @@ final class AlmaVoiceEngine {
 
     func liveOutputTranscript(_ text: String) {
         let spoken = AlmaLiveVoiceSpokenText.plain(text)
+        if !spoken.isEmpty { agentSpokeThisLiveSession = true }
         replyText = spoken
         nowLine = spoken
         feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: spoken)
@@ -8241,12 +8254,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             "sessionResumption": resumption,
             "contextWindowCompression": contextWindowCompression,
             "realtimeInputConfig": [
+                // Owner latency report 2026-08-15 ("reply onk late, ja age chilo
+                // na"): 896af620 raised turn-end wait 650→1200ms and end
+                // sensitivity HIGH→LOW to stop long sentences being cut — but
+                // that added ≥1.2s before EVERY reply. 800ms + HIGH restores the
+                // snappy feel; long-input protection keeps its other guards
+                // (START_SENSITIVITY_LOW, 250ms prefix padding, VAD flush).
                 "automaticActivityDetection": [
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
-                    "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
                     "prefixPaddingMs": 250,
-                    "silenceDurationMs": 1200,
+                    "silenceDurationMs": 800,
                 ],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
@@ -9394,7 +9413,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // ~90 ms in ("এজেন্ট একটু কথা বলেই থেমে যায়"). Only sustained
             // above-floor signal opens the gate; a ~300 ms pre-roll preserves
             // the speech onset, and the ~1.1 s hangover (55 frames) exceeds the
-            // server's 1200 ms silenceDuration so endpointing still belongs to
+            // server's 800 ms silenceDuration so endpointing still belongs to
             // the server VAD, never to this gate. Bonus on weak abroad
             // networks: idle uplink drops to zero.
             listenPreRoll.append(capturedInputChunk)
