@@ -497,7 +497,7 @@ async function* runAlternateProviderTurn(
   headVia = 'unknown',
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
-  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
   const chatMode = normalizeChatMode(options.chatMode)
   // PM-1 — the permission axis, read from the conversation row by the caller.
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
@@ -2167,7 +2167,8 @@ async function* runAlternateProviderTurn(
       // step (opener-drop, contract, verification) replaces the round's prose,
       // the reconciliation below supersedes the streamed draft, which every
       // client already handles. AGENT_LIVE_PROSE_STREAM=false reverts.
-      const liveProseEnabled = process.env.AGENT_LIVE_PROSE_STREAM !== 'false'
+      // Voice turns stay buffered: audio cannot be un-spoken (Codex P1 #765).
+      const liveProseEnabled = process.env.AGENT_LIVE_PROSE_STREAM !== 'false' && !voiceTurn
       const proseStream = createMarkupStreamFilter()
       let streamedProse = ''
 
@@ -2499,15 +2500,14 @@ async function* runAlternateProviderTurn(
       // the live draft is a prefix of the truth, and supersede the draft when
       // a later step rewrote it (verification_retry is the existing
       // client-side 'drop the draft, render the replacement' contract).
-      const reconcileStreamedProse = function* (text: string): Generator<AgentEvent> {
+      const reconcileStreamedProse = function* (text: string, sepBefore: string): Generator<AgentEvent> {
         // flush() returns what the filter HELD BACK — text the client never
         // saw. Reconcile against what was actually shown, or a reply ending in
         // a held token (closing fence, <b>) loses its tail (Codex P2 #765).
         if (liveProseEnabled) proseStream.flush()
         const streamed = streamedProse
         if (!liveProseEnabled || !streamed) {
-          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
-          if (text) yield { type: 'text_delta', delta: sep + text }
+          if (text) yield { type: 'text_delta', delta: sepBefore + text }
           return
         }
         if (text.startsWith(streamed)) {
@@ -2517,14 +2517,13 @@ async function* runAlternateProviderTurn(
         }
         // The round's prose was replaced (opener drop / contract / verify).
         yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
-        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
-        if (text) yield { type: 'text_delta', delta: sep + text }
+        if (text) yield { type: 'text_delta', delta: sepBefore + text }
       }
 
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
-        yield* reconcileStreamedProse(iterationText)
+        yield* reconcileStreamedProse(iterationText, sep)
         // Boss heard something this round — the progress clock starts over.
         roundsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
@@ -2879,7 +2878,7 @@ async function* runAlternateProviderTurn(
         if (iterationText) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           finalText += sep + iterationText
-          yield* reconcileStreamedProse(iterationText)
+          yield* reconcileStreamedProse(iterationText, sep)
         }
         break
       }
