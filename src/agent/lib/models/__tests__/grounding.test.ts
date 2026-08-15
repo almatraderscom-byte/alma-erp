@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest'
 import {
   isGroundingSatisfied,
   groundingEvidence,
+  hasSubstantiveToolAttempt,
   SHALLOW_GROUNDING_TOOLS,
   BOOKKEEPING_TOOLS,
   MAX_GROUNDING_FORCE_ROUNDS,
@@ -52,6 +53,39 @@ describe('groundingEvidence', () => {
 
   it('is empty on the turn that looked grounded and was not', () => {
     expect(groundingEvidence([ok('get_current_datetime')])).toEqual([])
+  })
+})
+
+describe('always-on core tools cannot discharge the requirement (Codex P2)', () => {
+  // These ship on EVERY turn regardless of the question, so a forced round could
+  // call one and permanently satisfy grounding without reading anything.
+  // `ask_user` is the worst: staging a card strips tools from the next round.
+  for (const name of ['ask_user', 'get_pending_approvals', 'delegate_to_specialist', 'request_standing_permission']) {
+    it(`${name} is not grounding`, () => {
+      expect(isGroundingSatisfied([ok(name)])).toBe(false)
+      expect(hasSubstantiveToolAttempt([ok(name)])).toBe(false)
+    })
+  }
+})
+
+describe('hasSubstantiveToolAttempt', () => {
+  it('is NOT satisfied by a clock read before an incapacity plea', () => {
+    // The reproduction Codex gave: `get_current_datetime` succeeds on "Mac live
+    // dekhaw", then the reply says no browser tool is connected. The clock sits
+    // outside BOOKKEEPING_TOOLS, so the old check went quiet here.
+    expect(hasSubstantiveToolAttempt([ok('get_current_datetime')])).toBe(false)
+  })
+
+  it('counts a FAILED real call — an attempt that errored is still evidence', () => {
+    expect(hasSubstantiveToolAttempt([failed('mac_desk_control')])).toBe(true)
+  })
+
+  it('counts a successful real call', () => {
+    expect(hasSubstantiveToolAttempt([ok('get_current_datetime'), ok('mac_desk_control')])).toBe(true)
+  })
+
+  it('is not satisfied by an empty turn', () => {
+    expect(hasSubstantiveToolAttempt([])).toBe(false)
   })
 })
 

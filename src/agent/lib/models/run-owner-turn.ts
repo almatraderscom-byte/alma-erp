@@ -11,6 +11,7 @@ import {
   BOOKKEEPING_TOOLS,
   MAX_GROUNDING_FORCE_ROUNDS,
   groundingEvidence,
+  hasSubstantiveToolAttempt,
   isGroundingSatisfied,
 } from '@/agent/lib/models/grounding'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
@@ -2844,7 +2845,11 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0) {
             violations.push(...detectUnattemptedIncapacity(iterationText.trim(), {
               actionRequested: ownerRequirements.actionAttemptExpected,
-              realToolAttempted: liveToolAttempted,
+              // NOT `liveToolAttempted` (Codex P2): that only excludes
+              // bookkeeping, so a clock read before "no browser tool is
+              // connected" silenced this rule — the exact skipped-action failure
+              // it exists to catch, one irrelevant call later.
+              realToolAttempted: hasSubstantiveToolAttempt(toolRecords),
               toolsAvailable: iterationTools.length > 0,
             }))
           }

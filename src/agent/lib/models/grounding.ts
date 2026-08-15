@@ -20,15 +20,45 @@ export const BOOKKEEPING_TOOLS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Cannot ground an answer, whatever else they are good for. A clock read, a
- * memory search and a tool lookup answer questions about the AGENT, not about
- * the thing that was asked. `find_tool` belongs here for the same reason it
- * exists: it is the step before the read, never the read.
+ * Cannot evidence work on Boss's request, whatever else they are good for.
+ *
+ * A clock read, a memory search and a tool lookup answer questions about the
+ * AGENT, not about the thing that was asked. `find_tool` belongs here for the
+ * same reason it exists: it is the step before the read, never the read.
+ *
+ * The second group is the rest of CORE_PACK — the tools shipped on EVERY turn
+ * regardless of what was asked (Codex P2). Leaving them out made a denylist
+ * that a forced round could discharge with `ask_user` or
+ * `get_pending_approvals` and never read the requested data at all; `ask_user`
+ * is the worst of them, because staging a card strips the tools from the next
+ * iteration. Anything always present must never count as evidence that THIS
+ * question was worked on.
+ *
+ * A positive list of "relevant reads" would be stricter still, but it needs a
+ * per-domain mapping of question → tools that does not exist yet, and getting
+ * it wrong fails CLOSED (a turn that can never satisfy grounding). This list
+ * plus MAX_GROUNDING_FORCE_ROUNDS fails open, which is the right direction
+ * while the mapping is still being built.
  */
 export const SHALLOW_GROUNDING_TOOLS: ReadonlySet<string> = new Set([
   ...BOOKKEEPING_TOOLS,
   'get_current_datetime', 'find_tool', 'search_memory', 'recall_business_knowledge',
+  'ask_user', 'get_pending_approvals', 'delegate_to_specialist',
+  'request_standing_permission', 'resolve_open_task',
 ])
+
+/**
+ * Did this turn attempt anything that bears on what Boss asked?
+ *
+ * The same question as grounding, asked of the incapacity verifier: a reply
+ * that pleads "no browser tool is connected" must not be excused because the
+ * model happened to read the clock first (Codex P2). Attempt counts failures
+ * too — a call that ran and errored is evidence, and the honesty rules for that
+ * case already exist.
+ */
+export function hasSubstantiveToolAttempt(records: readonly GroundingToolRecord[]): boolean {
+  return records.some((r) => !SHALLOW_GROUNDING_TOOLS.has(r.toolName))
+}
 
 /**
  * Consecutive forced grounding rounds. The requirement now survives a shallow
