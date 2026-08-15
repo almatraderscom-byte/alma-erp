@@ -122,6 +122,7 @@ import {
   detectRoboticStyleViolations,
   detectAsyncCompletionViolation,
   detectToolExecutionClaims,
+  detectFabricatedToolResponse,
   summarizeAsyncJobEvidence,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
@@ -2717,6 +2718,12 @@ async function* runAlternateProviderTurn(
                 (name) => Boolean(getCapability(name)),
               ),
             )
+          }
+          // A hand-written <tool_response> block is fabricated evidence — real
+          // tool results never appear inline (owner incident 2026-08-15: fake
+          // regen "success" typed as <tool_response> JSON after failed calls).
+          if (violations.length === 0) {
+            violations.push(...detectFabricatedToolResponse(iterationText.trim()))
           }
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
