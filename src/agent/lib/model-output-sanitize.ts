@@ -238,6 +238,29 @@ export function dropRepeatedBlocks(text: string): string {
  */
 const MAX_HOLD = 300
 
+/** Short, well-known HTML tags a business reply may legitimately contain. */
+const HTML_TAGS = new Set([
+  'b', 'i', 'u', 'p', 'em', 'br', 'hr', 'ul', 'ol', 'li', 'a', 'code', 'pre',
+  'strong', 'small', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'table', 'tr', 'td', 'th',
+])
+
+/** A tag name that looks like TOOL markup, not prose formatting. */
+function isToolishTag(name: string): boolean {
+  const n = name.toLowerCase()
+  if (HTML_TAGS.has(n)) return false
+  return n.includes('_') || n.length >= 4
+}
+
+/** First bare (non-closing) tool-ish opener, or -1. */
+function toolishOpenerAt(s: string): number {
+  const re = /<([a-z_][a-z0-9_]*)>/gi
+  for (let m = re.exec(s); m; m = re.exec(s)) {
+    if (isToolishTag(m[1])) return m.index
+  }
+  return -1
+}
+
+
 /**
  * Where the still-unresolved tail begins, or -1.
  *
@@ -250,6 +273,18 @@ const MAX_HOLD = 300
 function holdFrom(s: string): number {
   const lt = s.lastIndexOf('<')
   if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
+  // A CLOSED tag can still be the opener of named-tool markup — the pattern is
+  // only recognisable once <arg_key>/<parameter …> follows in a later delta
+  // (Codex P1 #765). Hold a lone `<identifier>` (never a real prose token, and
+  // never a closing `</…>`) until the next chunk proves it is not tool syntax.
+  // A bare `<identifier>` opener anywhere in the tail: named-tool markup is a
+  // CHAIN (<tool><arg_key>k</arg_key>…), and stripToolCallMarkup erases the
+  // half-arrived links, so by the time the tail looks clean the opener has
+  // already been released (Codex P1 #765 rounds 2-3). Hold from the opener
+  // until the chain resolves or MAX_HOLD passes — ordinary prose with an
+  // HTML-ish token is released a few hundred characters later, never lost.
+  const openerAt = toolishOpenerAt(s)
+  if (openerAt !== -1 && s.length - openerAt <= MAX_HOLD) return openerAt
   const fence = s.lastIndexOf('```')
   if (fence !== -1 && s.indexOf('```', fence + 3) === -1 && s.length - fence <= MAX_HOLD) return fence
   const brace = s.lastIndexOf('{')
@@ -269,12 +304,33 @@ export interface MarkupStreamFilter {
   flush(): string
 }
 
+/**
+ * Widen a hold point backwards over a run of complete simple tags and spaces.
+ *
+ * `<get_website_catalog>` + `<arg` (partial) would otherwise release the named
+ * opener the moment the argument tag STARTS, because the unclosed `<arg` is a
+ * later hold point (Codex P1 #765 round 2). Tool markup is a chain of such
+ * tags, so once any part of the tail is suspicious the whole chain is.
+ */
+function extendHoldBackwards(s: string, cut: number): number {
+  let at = cut
+  for (;;) {
+    const before = s.slice(0, at)
+    const chain = /(?:<\/?[a-z_][a-z0-9_]*>\s*)$/i.exec(before)
+    if (!chain) return at
+    const next = at - chain[0].length
+    if (next < 0 || s.length - next > MAX_HOLD) return at
+    at = next
+  }
+}
+
 export function createMarkupStreamFilter(): MarkupStreamFilter {
   let held = ''
   return {
     push(delta: string): string {
       held = stripToolCallMarkup(held + delta)
-      const cut = holdFrom(held)
+      const rawCut = holdFrom(held)
+      const cut = rawCut === -1 ? -1 : extendHoldBackwards(held, rawCut)
       // An opener that has not closed yet: keep it back until it resolves, or
       // until it grows past MAX_HOLD without becoming markup — ordinary prose
       // with a "<" in it must never stall the live thought.
@@ -288,7 +344,12 @@ export function createMarkupStreamFilter(): MarkupStreamFilter {
       return out
     },
     flush(): string {
-      const out = stripToolCallMarkup(held)
+      // A chain that never resolved is markup the stream simply ended inside:
+      // the whole-round sanitiser cannot recognise a half-arrived chain either,
+      // so drop it here rather than spill it at the end (Codex P1 #765).
+      let out = stripToolCallMarkup(held)
+      const dangling = toolishOpenerAt(out)
+      if (dangling !== -1) out = out.slice(0, dangling)
       held = ''
       return out
     },

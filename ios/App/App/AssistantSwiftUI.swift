@@ -577,6 +577,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
     let originAssistantMessageId: String?
     let revision: Int?
     let sourceId: String?
+    let source: String?
     let goal: String?
     let status: String?
     let headline: String?
@@ -589,7 +590,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
             version: version, trackerId: trackerId, originTurnId: originTurnId,
             currentTurnId: currentTurnId, turnIds: turnIds, conversationId: conversationId,
             originAssistantMessageId: originAssistantMessageId, revision: revision,
-            sourceId: sourceId, goal: goal, status: status, headline: headline,
+            sourceId: sourceId, source: source, goal: goal, status: status, headline: headline,
             blockedBy: blockedBy, steps: steps, updatedAt: updatedAt)
     }
 }
@@ -2699,6 +2700,11 @@ final class AssistantVM {
     /// running chip would outlive its freshness window (Codex P1 #758).
     func activeWorkTracker(now: Date) -> AgentWorkStepsSnapshot? {
         guard let cid = conversationId else { return nil }
+        // The turn the runtime projection says is running right now (nil before
+        // its first snapshot) — used to keep stale rows out of the dock.
+        let currentRuntimeTurnId = workTrackers.values
+            .filter { $0.source == "turn_runtime" && !$0.isTerminal }
+            .max { $0.updatedAt < $1.updatedAt }?.currentTurnId
         return workTrackers.values
             // The dock is LIVE work only. The turn-end projection honestly
             // parks an unfinished tracker as "paused" (nothing is running),
@@ -2718,12 +2724,42 @@ final class AssistantVM {
                 if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
                     return true
                 }
-                if isStreaming { return true }
-                guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
-                    .parseWorkStepsTimestamp(snapshot.updatedAt) else { return false }
-                return now.timeIntervalSince(updated) < 180
+                // Freshness first. The live stream alone is NOT enough: a
+                // previous turn's row that missed settlement would ride every
+                // new stream forever (Codex P2 #765). Streaming only rescues a
+                // tracker that belongs to the turn now running.
+                if let updated = ISO8601DateFormatter.almaWorkStepsLenient
+                    .parseWorkStepsTimestamp(snapshot.updatedAt),
+                   now.timeIntervalSince(updated) < 180 {
+                    return true
+                }
+                guard isStreaming, let live = currentRuntimeTurnId else { return false }
+                return snapshot.currentTurnId == live || snapshot.turnIds.contains(live)
             }
-            .max { $0.updatedAt < $1.updatedAt }
+            // The plan tracker is the REAL step list; turn_runtime is a coarse
+            // per-turn projection (owner 2026-08-15: the dock said "১ of ২"
+            // while the work detail showed 5 plan steps). Prefer the plan
+            // tracker — but ONLY when it belongs to the turn now running, or a
+            // previous turn that died without its terminal snapshot would
+            // outrank the live one forever (Codex P2 #765).
+            .max { a, b in
+                let currentTurn = currentRuntimeTurnId
+                func planIsCurrent(_ s: AgentWorkStepsSnapshot) -> Bool {
+                    guard s.source == "agent_plan" else { return false }
+                    if let currentTurn {
+                        return s.currentTurnId == currentTurn || s.turnIds.contains(currentTurn)
+                    }
+                    // No runtime snapshot yet (first round, or a tool-free
+                    // turn): only a FRESH plan may hold the dock, or a previous
+                    // turn's unsettled row would occupy it (Codex P2 #765).
+                    guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
+                        .parseWorkStepsTimestamp(s.updatedAt) else { return false }
+                    return now.timeIntervalSince(updated) < 180
+                }
+                let aPlan = planIsCurrent(a), bPlan = planIsCurrent(b)
+                if aPlan != bPlan { return bPlan }   // the current plan wins
+                return a.updatedAt < b.updatedAt
+            }
     }
     func clearWorkTrackersForConversationSwitch() {
         workTrackers = [:]
@@ -9053,6 +9089,7 @@ final class AssistantVM {
             originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
             revision: variant == "settled" ? 7 : 3,
             sourceId: "fixture-plan-1",
+            source: "agent_plan",
             goal: "Ship the Build 103 three-issue candidate",
             status: status,
             headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"

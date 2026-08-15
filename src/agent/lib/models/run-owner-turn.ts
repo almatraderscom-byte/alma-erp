@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
+import { countTypedToolCalls, createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -2159,6 +2159,17 @@ async function* runAlternateProviderTurn(
       // survives a call split across deltas. One per round: what it holds back
       // belongs to this round and is released when the round ends.
       const thinkingStream = createThinkingStreamFilter()
+      // Owner ask 2026-08-15: the reply must TYPE OUT like Claude Code instead
+      // of landing as one block. The model already streams; we buffered the
+      // whole round because a tool-call fragment can straddle deltas. The
+      // markup stream filter solves exactly that — it holds back only a
+      // suspicious opener and releases everything else immediately. If a later
+      // step (opener-drop, contract, verification) replaces the round's prose,
+      // the reconciliation below supersedes the streamed draft, which every
+      // client already handles. AGENT_LIVE_PROSE_STREAM=false reverts.
+      const liveProseEnabled = process.env.AGENT_LIVE_PROSE_STREAM !== 'false'
+      const proseStream = createMarkupStreamFilter()
+      let streamedProse = ''
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -2349,10 +2360,17 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
-          // NOTE: sanitising happens once on the finished round below, not here.
-          // A tool-call fragment arrives split across deltas, so a per-delta
-          // strip would miss it — and the whole round's prose is emitted as one
-          // block, so waiting costs Boss nothing.
+          // Live typing: the filter releases prose the moment it is provably
+          // not tool markup; the round-end reconciliation below still owns the
+          // final, sanitised text.
+          if (liveProseEnabled) {
+            const safe = proseStream.push(ev.text)
+            if (safe) {
+              const sep = !streamedProse && finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+              streamedProse += safe
+              yield { type: 'text_delta', delta: sep + safe }
+            }
+          }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -2442,6 +2460,18 @@ async function* runAlternateProviderTurn(
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      // Every corrective path that DISCARDS this round's prose must also drop
+      // the copy already on the owner's screen (Codex P1 #765 round 2):
+      // typed-tool retry, act-now nudge, grounding retry, requirement retry and
+      // late steering all reuse this.
+      const supersedeStreamedDraft = function* (): Generator<AgentEvent> {
+        if (!liveProseEnabled) return
+        proseStream.flush()
+        if (!streamedProse) return
+        streamedProse = ''
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+      }
+
       // Tool-round prose streams right away so the live view and reload both keep
       // the narration between steps; final-round text is emitted AFTER the
       // requirement-contract checks below (which may replace it).
@@ -2460,11 +2490,41 @@ async function* runAlternateProviderTurn(
       ) {
         console.info('[speak-first] dropped a restated opening line', { conversationId })
         iterationText = ''
+        // The restated opener may already be on screen now that prose streams
+        // live — drop the visible copy too (Codex P2 #765).
+        yield* supersedeStreamedDraft()
       }
+      // Reconcile what was TYPED LIVE with the round's final sanitised text.
+      // Same shape for both emit sites below: emit only the missing tail when
+      // the live draft is a prefix of the truth, and supersede the draft when
+      // a later step rewrote it (verification_retry is the existing
+      // client-side 'drop the draft, render the replacement' contract).
+      const reconcileStreamedProse = function* (text: string): Generator<AgentEvent> {
+        // flush() returns what the filter HELD BACK — text the client never
+        // saw. Reconcile against what was actually shown, or a reply ending in
+        // a held token (closing fence, <b>) loses its tail (Codex P2 #765).
+        if (liveProseEnabled) proseStream.flush()
+        const streamed = streamedProse
+        if (!liveProseEnabled || !streamed) {
+          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+          if (text) yield { type: 'text_delta', delta: sep + text }
+          return
+        }
+        if (text.startsWith(streamed)) {
+          const tail = text.slice(streamed.length)
+          if (tail) yield { type: 'text_delta', delta: tail }
+          return
+        }
+        // The round's prose was replaced (opener drop / contract / verify).
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        if (text) yield { type: 'text_delta', delta: sep + text }
+      }
+
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
-        yield { type: 'text_delta', delta: sep + iterationText }
+        yield* reconcileStreamedProse(iterationText)
         // Boss heard something this round — the progress clock starts over.
         roundsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
@@ -2484,6 +2544,10 @@ async function* runAlternateProviderTurn(
             .filter(Boolean)
             .join('\n')
           supersedeLastDraft()
+          // The draft may already be ON SCREEN now that prose streams live —
+          // drop it client-side too, or the replacement round appends to an
+          // obsolete answer (Codex P1 #765).
+          yield* supersedeStreamedDraft()
           messages = [
             ...messages,
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
@@ -2532,6 +2596,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Fully empty round → nudge the model to continue instead of silently
@@ -2555,6 +2620,7 @@ async function* runAlternateProviderTurn(
                 'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // The model signed off by PROMISING the next step instead of doing it —
@@ -2596,6 +2662,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         if (
@@ -2624,6 +2691,7 @@ async function* runAlternateProviderTurn(
             { role: 'user', content: adapterActNowNudge(intentNudges) },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Speak-first grounding retry (owner rule 2026-07-25): round 0 is no
@@ -2652,6 +2720,7 @@ async function* runAlternateProviderTurn(
                 + 'এখনই relevant read tool (get_/list_/check_/recommend_…) চালিয়ে আসল মানটা আনো, তারপর উত্তর দাও।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
@@ -2787,6 +2856,7 @@ async function* runAlternateProviderTurn(
                   `The server requirement contract is incomplete. Call ${needed} now; do not write another owner-facing answer first.`,
               },
             ]
+            yield* supersedeStreamedDraft()
             continue
           }
           iterationText = batchStatus
@@ -2809,7 +2879,7 @@ async function* runAlternateProviderTurn(
         if (iterationText) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           finalText += sep + iterationText
-          yield { type: 'text_delta', delta: sep + iterationText }
+          yield* reconcileStreamedProse(iterationText)
         }
         break
       }

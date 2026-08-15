@@ -657,6 +657,9 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
     let originAssistantMessageId: String?
     let revision: Int
     let sourceId: String
+    /// "agent_plan" (the real step plan) or "turn_runtime" (the coarse
+    /// per-turn projection). The dock prefers the plan tracker.
+    let source: String
     let goal: String
     let status: String
     let headline: String
@@ -681,7 +684,7 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
     static func from(
         version: Int?, trackerId: String?, originTurnId: String?, currentTurnId: String?,
         turnIds: [String]?, conversationId: String?, originAssistantMessageId: String?,
-        revision: Int?, sourceId: String?, goal: String?, status: String?, headline: String?,
+        revision: Int?, sourceId: String?, source: String?, goal: String?, status: String?, headline: String?,
         blockedBy: AgentWorkStepsBlockerWire?, steps: [AgentWireStep]?, updatedAt: String?
     ) -> AgentWorkStepsSnapshot? {
         guard version == 1,
@@ -710,6 +713,7 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
             originAssistantMessageId: originAssistantMessageId,
             revision: revision,
             sourceId: sourceId ?? trackerId,
+            source: source ?? "agent_plan",
             goal: goal,
             status: status,
             headline: headline ?? "",
@@ -934,7 +938,7 @@ enum AgentTurnEvent: Sendable {
                 originTurnId: ev.originTurnId, currentTurnId: ev.currentTurnId,
                 turnIds: ev.turnIds, conversationId: ev.conversationId,
                 originAssistantMessageId: ev.originAssistantMessageId,
-                revision: ev.revision, sourceId: ev.sourceId, goal: ev.goal,
+                revision: ev.revision, sourceId: ev.sourceId, source: ev.source, goal: ev.goal,
                 status: ev.status, headline: ev.headline, blockedBy: ev.blockedBy,
                 steps: ev.steps, updatedAt: ev.updatedAt,
             ).map(AgentTurnEvent.workSteps) ?? .unknown(type: "work_steps_snapshot/invalid")
