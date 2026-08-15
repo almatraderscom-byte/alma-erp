@@ -734,6 +734,10 @@ export async function POST(req: NextRequest) {
       ].filter(Boolean).join('\n\n') || null,
     personalMode,
     telegramFastPath,
+    // Voice turns must NOT type out live: spoken audio cannot be retracted, so
+    // a draft a later check rejects would be HEARD before its replacement
+    // (Codex P1 #765 round 4). Voice keeps the buffered whole-round emission.
+    voiceTurn: body.voice === true,
     businessId,
     modelId: isInternalCall
       ? defaultHeadModelId
