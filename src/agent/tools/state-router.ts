@@ -318,7 +318,10 @@ const INTENT_RULES: Array<{ pack: PackKey; re: RegExp }> = [
   { pack: 'browser', re: /browser|ব্রাউজার|chrome|খুলে দেখ|website.*(খোল|open)|login কর|সাইটে (যাও|ঢোক)|live.*(দেখ|browser)/i },
   { pack: 'website', re: /almatraders|আমাদের (সাইট|website)|publish|আনপাবলিশ|catalog|ক্যাটালগ|featured|ওয়েবসাইটে/i },
   { pack: 'seo', re: /seo|এসইও|keyword|কিওয়ার্ড|rank|র‍্যাংক|google.*(দেখা|position)|indexing|search console|ga4|analytics|অডিট/i },
-  { pack: 'creative', re: /ছবি|image|ইমেজ|creative|ক্রিয়েটিভ|poster|পোস্টার|reel|রিল|video বানাও|ভিডিও বানাও|studio|স্টুডিও|try.?on|model (ছবি|photo)|banao.*(chobi|image)/i },
+  // clip/scene-regen phrasing ("S2 er clip ta abar banao") must land here too —
+  // hit live 2026-08-15: the regen ask matched NO pack, the head got a toolset
+  // without the media tools and fabricated a success instead.
+  { pack: 'creative', re: /ছবি|image|ইমেজ|creative|ক্রিয়েটিভ|poster|পোস্টার|reel|রিল|video বানাও|ভিডিও বানাও|studio|স্টুডিও|try.?on|model (ছবি|photo)|banao.*(chobi|image)|clip|ক্লিপ|\bS[0-9]+\b.*(abar|আবার)|(abar|আবার).*(banao|বানাও)|scene|দৃশ্য/i },
   { pack: 'cs', re: /customer service|winback|segment|সেগমেন্ট|churn|কাস্টমার.*(মেসেজ|জানাও)|cs (mode|auto)/i },
   { pack: 'reminders', re: /remind|রিমাইন্ডার|মনে করিয়ে|call (দাও|কর|দিও|dio|diyo)|কল (দাও|কর|দিও)|ফোন (দাও|কর|দিও)|alert|এলার্ট|জরুরি জানাও/i },
   { pack: 'plan', re: /plan (বানাও|কর|দেখাও)|প্ল্যান|পরিকল্পনা|step by step|ধাপে ধাপে/i },
@@ -438,7 +441,7 @@ async function readStateSignals(conversationId: string): Promise<{
     for (const p of ps) if (!packs.includes(p)) packs.push(p)
     signals.push(label)
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const db = prisma as any
   const [pending, checkpoints, plans, workflows] = await Promise.all([
     db.agentPendingAction

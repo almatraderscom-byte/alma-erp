@@ -38,6 +38,9 @@ export type ClaimViolationCategory =
   | 'phantom_card_state'
   /** Boss just answered a question and the reply asks him another one. */
   | 'redundant_question'
+  /** The reply contains a hand-written <tool_response> block — real tool
+   * results never appear inline as text, so this is always fabricated. */
+  | 'fabricated_tool_response'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -378,6 +381,26 @@ export function detectToolExecutionClaims(
     }
   }
   return []
+}
+
+/**
+ * A reply that WRITES a <tool_response>/<tool_result> block is fabricating
+ * evidence: real tool results are injected by the harness and never appear
+ * inline in assistant text. Hit live 2026-08-15 — the head's regen tool calls
+ * failed, then it typed fake <tool_response> JSON + "the work is DONE" while
+ * the DB showed nothing ran. No negation and no tool-ledger escape: the block
+ * itself is the violation regardless of what actually ran this turn.
+ */
+export function detectFabricatedToolResponse(replyText: string): ClaimViolation[] {
+  const m = /<\/?tool_(?:response|result|call|output)>/i.exec(replyText)
+  if (!m) return []
+  const at = Math.max(0, (m.index ?? 0) - 40)
+  return [{
+    category: 'fabricated_tool_response',
+    ruleId: 'inline_tool_response_block',
+    matchedSnippet: stripWhitespace(replyText.slice(at, at + 120)),
+    requiredTools: [],
+  }]
 }
 
 /**
@@ -1034,6 +1057,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +
     'এখন হয় সত্যিই কার্ড তৈরির tool কল করুন, নয়তো সরাসরি লিখুন "কার্ড তৈরি করতে পারিনি" এবং কেন — ' +
     'চুপ করে অন্য কথা বলা চলবে না।',
+  fabricated_tool_response:
+    'আপনার উত্তরে হাতে-লেখা <tool_response> ব্লক আছে — আসল tool result কখনো টেক্সটে আসে না, ' +
+    'এটা বানানো প্রমাণ। ব্লকটা মুছে ফেলুন। tool call ব্যর্থ হলে সত্যিটা বলুন: কোন call ব্যর্থ, কেন, ' +
+    'এরপর কী করা যাবে। ব্যর্থতার পর "কাজ শেষ/সম্পূর্ণ" দাবি একেবারে নিষেধ।',
   redundant_question:
     'Boss এইমাত্র আপনার প্রশ্নের উত্তর দিয়েছেন — আর আপনি আবার তাঁকেই জিজ্ঞেস করছেন। ' +
     'এটাই তাঁর সবচেয়ে পুরোনো অভিযোগ: এক প্রশ্নের উত্তর দিলে পরের কার্ড, তার উত্তর দিলে আরেকটা। ' +
