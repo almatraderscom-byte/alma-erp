@@ -133,31 +133,63 @@ const STRAY_MARKERS =
 const HAS_TOOL_MARKUP =
   /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
 
-export function stripToolCallMarkup(text: string): string {
+/**
+ * Complete-block variants of the `$`-tailed patterns above, for STREAMING use.
+ *
+ * Mid-stream, the "or end of string" alternative is a trap: it eats an
+ * UNCLOSED `<tool_call>\nname` tail — opener and all — so when the rest of the
+ * block arrives in the next delta there is no opener context left and the
+ * remainder (`_ad_actions\n</tool_call>`) sails through as prose (live repro
+ * 2026-08-15). The stream filter must strip only what has provably COMPLETED;
+ * an unclosed opener stays in the held tail where `holdFrom` keeps it back.
+ */
+const TOOL_CALL_BLOCK_COMPLETE = /<tool_call>[\s\S]*?<\/tool_call>/gi
+const FUNCTION_CALLS_BLOCK_COMPLETE =
+  /<function_(?:calls|results)>[\s\S]*?<\/function_(?:calls|results)>/gi
+const INVOKE_BLOCK_COMPLETE = /<invoke\b[\s\S]*?<\/invoke>/gi
+const PARAMETER_BLOCK_COMPLETE = /<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi
+const FENCED_TOOL_BLOCK_COMPLETE =
+  /```(?:tool|tool_call|tool_code|function_calls?)\b[\s\S]*?```/gi
+const FENCED_TOOL_CALL_COMPLETE =
+  /```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?[a-z0-9_ \t-]*\r?\n[\s\S]*?```/gi
+const FENCED_TOOL_JSON_COMPLETE =
+  /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?```/gi
+
+export function stripToolCallMarkup(
+  text: string,
+  opts?: { streaming?: boolean },
+): string {
   if (!text) return text
   if (!HAS_TOOL_MARKUP.test(text)) return text
+  const streaming = opts?.streaming === true
   const cleaned = text
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
-    .replace(FENCED_TOOL_BLOCK, '')
-    .replace(FENCED_TOOL_CALL, '')
-    .replace(FENCED_TOOL_JSON, '')
+    .replace(streaming ? FENCED_TOOL_BLOCK_COMPLETE : FENCED_TOOL_BLOCK, '')
+    .replace(streaming ? FENCED_TOOL_CALL_COMPLETE : FENCED_TOOL_CALL, '')
+    .replace(streaming ? FENCED_TOOL_JSON_COMPLETE : FENCED_TOOL_JSON, '')
     .replace(JSON_TOOL_USE, '')
     .replace(JSON_NAME_ARGS, '')
-    .replace(FUNCTION_CALLS_BLOCK, '')
-    .replace(INVOKE_BLOCK, '')
-    .replace(PARAMETER_BLOCK, '')
-    .replace(TOOL_CALL_BLOCK, '')
+    .replace(streaming ? FUNCTION_CALLS_BLOCK_COMPLETE : FUNCTION_CALLS_BLOCK, '')
+    .replace(streaming ? INVOKE_BLOCK_COMPLETE : INVOKE_BLOCK, '')
+    .replace(streaming ? PARAMETER_BLOCK_COMPLETE : PARAMETER_BLOCK, '')
+    .replace(streaming ? TOOL_CALL_BLOCK_COMPLETE : TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
-    .replace(STRAY_MARKERS, '')
+    // NEVER in streaming mode: `<\/?tool_call>` matches the OPENING tag too,
+    // so this line was deleting a held opener out from under `holdFrom` and
+    // the block's body then streamed through as prose (live repro 2026-08-15).
+    // Stray single markers are a settled-text cleanup; the whole-round
+    // sanitiser and flush() still run it.
+    .replace(streaming ? /$^/ : STRAY_MARKERS, '')
     // The removal usually leaves the blank line the markup sat on.
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
   // Never turn a reply into nothing: if the markup WAS the whole message, the
   // caller's own "this round said nothing" handling is the right outcome, and
   // that is what an empty string gives it.
-  return cleaned
+  // Streaming keeps boundary whitespace — a trim here would glue the next
+  // delta's first word onto the previous one.
+  return streaming ? cleaned : cleaned.trim()
 }
 
 /**
@@ -271,6 +303,12 @@ function toolishOpenerAt(s: string): number {
  * "is there an opener here that has not closed yet".
  */
 function holdFrom(s: string): number {
+  // The EARLIEST toolish opener wins over the latest bare '<': a held
+  // `<tool_call>` whose body has begun must keep holding even when the body
+  // itself contains a new partial tag (`…xyz</tool_c`) — returning the later
+  // '<' released the opener and body as prose (live repro 2026-08-15).
+  const earlyOpener = toolishOpenerAt(s)
+  if (earlyOpener !== -1 && s.length - earlyOpener <= MAX_HOLD) return earlyOpener
   const lt = s.lastIndexOf('<')
   if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
   // A CLOSED tag can still be the opener of named-tool markup — the pattern is
@@ -328,7 +366,7 @@ export function createMarkupStreamFilter(): MarkupStreamFilter {
   let held = ''
   return {
     push(delta: string): string {
-      held = stripToolCallMarkup(held + delta)
+      held = stripToolCallMarkup(held + delta, { streaming: true })
       const rawCut = holdFrom(held)
       const cut = rawCut === -1 ? -1 : extendHoldBackwards(held, rawCut)
       // An opener that has not closed yet: keep it back until it resolves, or

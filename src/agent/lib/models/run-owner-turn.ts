@@ -2054,6 +2054,11 @@ async function* runAlternateProviderTurn(
   ) {
     try {
       let line = ''
+      // The opening line streams RAW to the owner's screen, and Qwen sometimes
+      // appends typed `<tool_call>` markup to its narration (owner screenshot
+      // 2026-08-15) — the settled copy below was stripped but the live deltas
+      // were not. Same holdback filter as the main loop's prose stream.
+      const preambleStream = createMarkupStreamFilter()
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
@@ -2067,7 +2072,8 @@ async function* runAlternateProviderTurn(
           line += ev.text
           // The model is narrating — the status line stays quiet while it does.
           if (ev.text.trim()) spokeSinceProgress = true
-          yield { type: 'text_delta', delta: ev.text }
+          const safe = preambleStream.push(ev.text)
+          if (safe) yield { type: 'text_delta', delta: safe }
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
@@ -2075,6 +2081,12 @@ async function* runAlternateProviderTurn(
           totalCacheReadTokens += ev.cacheRead ?? 0
           apiRounds++
         }
+      }
+      // Release whatever the filter still held (cleaned) so the live line the
+      // owner watched matches the settled one below.
+      {
+        const tailSafe = preambleStream.flush()
+        if (tailSafe) yield { type: 'text_delta', delta: tailSafe }
       }
       // The opening line is a whole round of its own, so it can carry the same
       // leaked markup — clean it before it becomes the first thing Boss reads.

@@ -255,6 +255,34 @@ describe('the STREAMING case — his screen, live, 2026-07-28', () => {
     f.push('<')
     expect(f.flush()).toBe('<')
   })
+
+  // His screen, live, 2026-08-15 — Qwen 3.7's speak-first line carried a whole
+  // <tool_call> block. Two filter bugs stacked: the $-tailed strip ate an
+  // UNCLOSED opener at push time (its body then streamed through with no
+  // context), and STRAY_MARKERS deleted a held opening tag out from under
+  // holdFrom. Both are pinned here across the real chunk boundaries.
+  it('a <tool_call> block split across deltas never leaks any part', () => {
+    const out = run(['বস, লাইভ ডেটা টেনে দেখছি।\n\n<tool', '_call>\nrecommend', '_ad_actions\n</tool_call>', ' এরপর রিপোর্ট।'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('recommend_ad_actions')
+    expect(out).toContain('লাইভ ডেটা টেনে দেখছি')
+    expect(out).toContain('এরপর রিপোর্ট')
+  })
+
+  it('a held opener keeps holding while its body grows a partial closer', () => {
+    const out = run(['hello <tool_call>x', 'yz</tool_c', 'all> world'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('xyz')
+    expect(out).toContain('hello')
+    expect(out).toContain('world')
+  })
+
+  it('a stream that ends inside an unclosed block drops the block at flush', () => {
+    const out = run(['ঠিক আছে। ', '<tool_call>\nget_orders'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('get_orders')
+    expect(out).toContain('ঠিক আছে')
+  })
 })
 
 describe('live streaming holds split named-tool markup', () => {
