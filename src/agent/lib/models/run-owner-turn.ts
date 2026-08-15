@@ -2484,8 +2484,11 @@ async function* runAlternateProviderTurn(
       // a later step rewrote it (verification_retry is the existing
       // client-side 'drop the draft, render the replacement' contract).
       const reconcileStreamedProse = function* (text: string): Generator<AgentEvent> {
-        const held = liveProseEnabled ? proseStream.flush() : ''
-        const streamed = streamedProse + held
+        // flush() returns what the filter HELD BACK — text the client never
+        // saw. Reconcile against what was actually shown, or a reply ending in
+        // a held token (closing fence, <b>) loses its tail (Codex P2 #765).
+        if (liveProseEnabled) proseStream.flush()
+        const streamed = streamedProse
         if (!liveProseEnabled || !streamed) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           if (text) yield { type: 'text_delta', delta: sep + text }
@@ -2514,6 +2517,18 @@ async function* runAlternateProviderTurn(
         preambleSpoken = true
       }
 
+      // Every corrective path that DISCARDS this round's prose must also drop
+      // the copy already on the owner's screen (Codex P1 #765 round 2):
+      // typed-tool retry, act-now nudge, grounding retry, requirement retry and
+      // late steering all reuse this.
+      const supersedeStreamedDraft = function* (): Generator<AgentEvent> {
+        if (!liveProseEnabled) return
+        proseStream.flush()
+        if (!streamedProse) return
+        streamedProse = ''
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+      }
+
       if (calls.length === 0 || signal?.aborted) {
         // A follow-up can land while the provider is producing its final draft.
         // Claim once more before committing it; the same turn then re-runs with
@@ -2528,10 +2543,7 @@ async function* runAlternateProviderTurn(
           // The draft may already be ON SCREEN now that prose streams live —
           // drop it client-side too, or the replacement round appends to an
           // obsolete answer (Codex P1 #765).
-          if (liveProseEnabled && (streamedProse || proseStream.flush())) {
-            yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
-            streamedProse = ''
-          }
+          yield* supersedeStreamedDraft()
           messages = [
             ...messages,
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
@@ -2580,6 +2592,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Fully empty round → nudge the model to continue instead of silently
@@ -2603,6 +2616,7 @@ async function* runAlternateProviderTurn(
                 'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // The model signed off by PROMISING the next step instead of doing it —
@@ -2644,6 +2658,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         if (
@@ -2672,6 +2687,7 @@ async function* runAlternateProviderTurn(
             { role: 'user', content: adapterActNowNudge(intentNudges) },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Speak-first grounding retry (owner rule 2026-07-25): round 0 is no
@@ -2700,6 +2716,7 @@ async function* runAlternateProviderTurn(
                 + 'এখনই relevant read tool (get_/list_/check_/recommend_…) চালিয়ে আসল মানটা আনো, তারপর উত্তর দাও।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s

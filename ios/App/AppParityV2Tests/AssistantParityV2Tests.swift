@@ -4593,16 +4593,17 @@ final class AssistantParityV2Tests: XCTestCase {
         boundMessageId: String? = nil,
         stepTwoStatus: String = "running",
         updatedAt: String = "2026-08-11T00:00:03Z",
-        source: String = "agent_plan"
+        source: String = "agent_plan",
+        turnId: String = "turn-1"
     ) -> String {
         """
         {
           "type": "work_steps_snapshot",
           "version": 1,
-          "trackerId": "\(source == "turn_runtime" ? "turn:turn-1" : "plan-1")",
-          "originTurnId": "turn-1",
-          "currentTurnId": "turn-1",
-          "turnIds": ["turn-1"],
+          "trackerId": "\(source == "turn_runtime" ? "turn:\(turnId)" : "plan-\(turnId)")",
+          "originTurnId": "\(turnId)",
+          "currentTurnId": "\(turnId)",
+          "turnIds": ["\(turnId)"],
           "conversationId": "conversation-1",
           "originAssistantMessageId": \(boundMessageId.map { "\"\($0)\"" } ?? "null"),
           "revision": \(revision),
@@ -4636,7 +4637,7 @@ final class AssistantParityV2Tests: XCTestCase {
         guard case .workSteps(let snapshot) = event else {
             return XCTFail("work_steps_snapshot must decode typed, got \(event)")
         }
-        XCTAssertEqual(snapshot.trackerId, "plan-1")
+        XCTAssertEqual(snapshot.trackerId, "plan-turn-1")
         XCTAssertEqual(snapshot.revision, 1)
         XCTAssertEqual(snapshot.steps.count, 3)
         XCTAssertEqual(snapshot.steps.map(\.status), ["completed", "running", "pending"])
@@ -4669,11 +4670,12 @@ final class AssistantParityV2Tests: XCTestCase {
 
     private func snapshotFixture(
         revision: Int, status: String = "running", boundMessageId: String? = nil,
-        updatedAt: String = "2026-08-11T00:00:03Z", source: String = "agent_plan"
+        updatedAt: String = "2026-08-11T00:00:03Z", source: String = "agent_plan",
+        turnId: String = "turn-1"
     ) throws -> AgentWorkStepsSnapshot {
         let event = try decodeTurnEvent(workStepsJSON(
             revision: revision, status: status, boundMessageId: boundMessageId,
-            updatedAt: updatedAt, source: source))
+            updatedAt: updatedAt, source: source, turnId: turnId))
         guard case .workSteps(let snapshot) = event else {
             throw NSError(domain: "fixture", code: 1)
         }
@@ -4685,13 +4687,13 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 2))
         // A lower revision (replay overlap) never regresses the store.
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 1, status: "preparing"))
-        XCTAssertEqual(vm.workTrackers["plan-1"]?.revision, 2)
-        XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "running")
+        XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.revision, 2)
+        XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.status, "running")
         // Terminal state cannot regress to running from a late higher revision
         // replay of a non-terminal frame.
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "completed"))
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "running"))
-        XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "completed")
+        XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.status, "completed")
     }
 
     func testDockPrefersThePlanTrackerOverTheRuntimeProjection() throws {
@@ -4704,8 +4706,18 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 3))
         vm.debugMergeWorkSteps(try snapshotFixture(
             revision: 9, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
-        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-1")
+        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-turn-1")
         XCTAssertEqual(vm.activeWorkTracker?.source, "agent_plan")
+
+        // A plan tracker from a PREVIOUS turn (died without its terminal
+        // snapshot) must not outrank the live runtime tracker (Codex P2 #765).
+        let stale = AssistantVM()
+        stale.conversationId = "conversation-1"
+        stale.isStreaming = true
+        stale.debugMergeWorkSteps(try snapshotFixture(revision: 4, turnId: "turn-OLD"))
+        stale.debugMergeWorkSteps(try snapshotFixture(
+            revision: 5, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
+        XCTAssertEqual(stale.activeWorkTracker?.source, "turn_runtime")
 
         // With no plan tracker at all, the runtime projection still shows.
         let runtimeOnly = AssistantVM()
@@ -4723,7 +4735,7 @@ final class AssistantParityV2Tests: XCTestCase {
         // Streaming turn with a running tracker: the dock chip shows.
         vm.isStreaming = true
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 2))
-        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-1")
+        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-turn-1")
 
         // Turn-end honest projection parks it paused: the chip must leave
         // (build 103 owner report — chip lingered after the answer landed).
@@ -4763,18 +4775,18 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(snapshot)
         vm.debugMergeWorkSteps(snapshot)
         XCTAssertEqual(vm.workTrackers.count, 1)
-        XCTAssertEqual(vm.workTrackers["plan-1"]?.revision, 2)
+        XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.revision, 2)
     }
 
     func testTerminalBoundSnapshotReparentsSameTrackerNeverTwo() throws {
         let vm = AssistantVM()
         // Live: unbound snapshot anchored to the streaming message.
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 1), anchoredMessageId: "stream-1")
-        XCTAssertEqual(vm.workTrackerAnchors["stream-1"], ["plan-1"])
+        XCTAssertEqual(vm.workTrackerAnchors["stream-1"], ["plan-turn-1"])
         // Settlement: bound snapshot reparents to the canonical message id.
         vm.debugMergeWorkSteps(
             try snapshotFixture(revision: 2, status: "completed", boundMessageId: "msg-9"))
-        XCTAssertEqual(vm.workTrackerAnchors["msg-9"], ["plan-1"])
+        XCTAssertEqual(vm.workTrackerAnchors["msg-9"], ["plan-turn-1"])
         XCTAssertEqual(vm.workTrackerAnchors["stream-1"], [],
                        "the same logical tracker must move, never duplicate")
         XCTAssertEqual(vm.workTrackers.count, 1)

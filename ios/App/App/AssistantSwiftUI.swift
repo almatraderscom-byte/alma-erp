@@ -2727,12 +2727,20 @@ final class AssistantVM {
             // The plan tracker is the REAL step list; turn_runtime is a coarse
             // per-turn projection (owner 2026-08-15: the dock said "১ of ২"
             // while the work detail showed 5 plan steps). Prefer the plan
-            // tracker whenever one is live; runtime only stands in when no
-            // plan tracker exists for this conversation.
+            // tracker — but ONLY when it belongs to the turn now running, or a
+            // previous turn that died without its terminal snapshot would
+            // outrank the live one forever (Codex P2 #765).
             .max { a, b in
-                if a.source != b.source {
-                    return a.source == "turn_runtime"   // plan wins
+                let currentTurn = self.workTrackers.values
+                    .filter { $0.source == "turn_runtime" && !$0.isTerminal }
+                    .max { $0.updatedAt < $1.updatedAt }?.currentTurnId
+                func planIsCurrent(_ s: AgentWorkStepsSnapshot) -> Bool {
+                    guard s.source == "agent_plan" else { return false }
+                    guard let currentTurn else { return true }   // no runtime → trust the plan
+                    return s.currentTurnId == currentTurn || s.turnIds.contains(currentTurn)
                 }
+                let aPlan = planIsCurrent(a), bPlan = planIsCurrent(b)
+                if aPlan != bPlan { return bPlan }   // the current plan wins
                 return a.updatedAt < b.updatedAt
             }
     }

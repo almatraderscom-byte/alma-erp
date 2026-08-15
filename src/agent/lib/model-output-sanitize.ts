@@ -278,12 +278,33 @@ export interface MarkupStreamFilter {
   flush(): string
 }
 
+/**
+ * Widen a hold point backwards over a run of complete simple tags and spaces.
+ *
+ * `<get_website_catalog>` + `<arg` (partial) would otherwise release the named
+ * opener the moment the argument tag STARTS, because the unclosed `<arg` is a
+ * later hold point (Codex P1 #765 round 2). Tool markup is a chain of such
+ * tags, so once any part of the tail is suspicious the whole chain is.
+ */
+function extendHoldBackwards(s: string, cut: number): number {
+  let at = cut
+  for (;;) {
+    const before = s.slice(0, at)
+    const chain = /(?:<\/?[a-z_][a-z0-9_]*>\s*)$/i.exec(before)
+    if (!chain) return at
+    const next = at - chain[0].length
+    if (next < 0 || s.length - next > MAX_HOLD) return at
+    at = next
+  }
+}
+
 export function createMarkupStreamFilter(): MarkupStreamFilter {
   let held = ''
   return {
     push(delta: string): string {
       held = stripToolCallMarkup(held + delta)
-      const cut = holdFrom(held)
+      const rawCut = holdFrom(held)
+      const cut = rawCut === -1 ? -1 : extendHoldBackwards(held, rawCut)
       // An opener that has not closed yet: keep it back until it resolves, or
       // until it grows past MAX_HOLD without becoming markup — ordinary prose
       // with a "<" in it must never stall the live thought.
