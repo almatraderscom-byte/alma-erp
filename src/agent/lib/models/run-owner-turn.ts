@@ -10,7 +10,7 @@ import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-to
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
+import { countTypedToolCalls, createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -2158,6 +2158,17 @@ async function* runAlternateProviderTurn(
       // survives a call split across deltas. One per round: what it holds back
       // belongs to this round and is released when the round ends.
       const thinkingStream = createThinkingStreamFilter()
+      // Owner ask 2026-08-15: the reply must TYPE OUT like Claude Code instead
+      // of landing as one block. The model already streams; we buffered the
+      // whole round because a tool-call fragment can straddle deltas. The
+      // markup stream filter solves exactly that — it holds back only a
+      // suspicious opener and releases everything else immediately. If a later
+      // step (opener-drop, contract, verification) replaces the round's prose,
+      // the reconciliation below supersedes the streamed draft, which every
+      // client already handles. AGENT_LIVE_PROSE_STREAM=false reverts.
+      const liveProseEnabled = process.env.AGENT_LIVE_PROSE_STREAM !== 'false'
+      const proseStream = createMarkupStreamFilter()
+      let streamedProse = ''
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -2348,10 +2359,17 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
-          // NOTE: sanitising happens once on the finished round below, not here.
-          // A tool-call fragment arrives split across deltas, so a per-delta
-          // strip would miss it — and the whole round's prose is emitted as one
-          // block, so waiting costs Boss nothing.
+          // Live typing: the filter releases prose the moment it is provably
+          // not tool markup; the round-end reconciliation below still owns the
+          // final, sanitised text.
+          if (liveProseEnabled) {
+            const safe = proseStream.push(ev.text)
+            if (safe) {
+              const sep = !streamedProse && finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+              streamedProse += safe
+              yield { type: 'text_delta', delta: sep + safe }
+            }
+          }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -2460,10 +2478,34 @@ async function* runAlternateProviderTurn(
         console.info('[speak-first] dropped a restated opening line', { conversationId })
         iterationText = ''
       }
+      // Reconcile what was TYPED LIVE with the round's final sanitised text.
+      // Same shape for both emit sites below: emit only the missing tail when
+      // the live draft is a prefix of the truth, and supersede the draft when
+      // a later step rewrote it (verification_retry is the existing
+      // client-side 'drop the draft, render the replacement' contract).
+      const reconcileStreamedProse = function* (text: string): Generator<AgentEvent> {
+        const held = liveProseEnabled ? proseStream.flush() : ''
+        const streamed = streamedProse + held
+        if (!liveProseEnabled || !streamed) {
+          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+          if (text) yield { type: 'text_delta', delta: sep + text }
+          return
+        }
+        if (text.startsWith(streamed)) {
+          const tail = text.slice(streamed.length)
+          if (tail) yield { type: 'text_delta', delta: tail }
+          return
+        }
+        // The round's prose was replaced (opener drop / contract / verify).
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        if (text) yield { type: 'text_delta', delta: sep + text }
+      }
+
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
-        yield { type: 'text_delta', delta: sep + iterationText }
+        yield* reconcileStreamedProse(iterationText)
         // Boss heard something this round — the progress clock starts over.
         roundsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
@@ -2802,7 +2844,7 @@ async function* runAlternateProviderTurn(
         if (iterationText) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           finalText += sep + iterationText
-          yield { type: 'text_delta', delta: sep + iterationText }
+          yield* reconcileStreamedProse(iterationText)
         }
         break
       }

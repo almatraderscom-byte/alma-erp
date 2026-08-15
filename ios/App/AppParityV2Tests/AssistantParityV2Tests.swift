@@ -4592,20 +4592,21 @@ final class AssistantParityV2Tests: XCTestCase {
         status: String = "running",
         boundMessageId: String? = nil,
         stepTwoStatus: String = "running",
-        updatedAt: String = "2026-08-11T00:00:03Z"
+        updatedAt: String = "2026-08-11T00:00:03Z",
+        source: String = "agent_plan"
     ) -> String {
         """
         {
           "type": "work_steps_snapshot",
           "version": 1,
-          "trackerId": "plan-1",
+          "trackerId": "\(source == "turn_runtime" ? "turn:turn-1" : "plan-1")",
           "originTurnId": "turn-1",
           "currentTurnId": "turn-1",
           "turnIds": ["turn-1"],
           "conversationId": "conversation-1",
           "originAssistantMessageId": \(boundMessageId.map { "\"\($0)\"" } ?? "null"),
           "revision": \(revision),
-          "source": "agent_plan",
+          "source": "\(source)",
           "sourceId": "plan-1",
           "goal": "Prepare the requested deliverable",
           "status": "\(status)",
@@ -4668,11 +4669,11 @@ final class AssistantParityV2Tests: XCTestCase {
 
     private func snapshotFixture(
         revision: Int, status: String = "running", boundMessageId: String? = nil,
-        updatedAt: String = "2026-08-11T00:00:03Z"
+        updatedAt: String = "2026-08-11T00:00:03Z", source: String = "agent_plan"
     ) throws -> AgentWorkStepsSnapshot {
         let event = try decodeTurnEvent(workStepsJSON(
             revision: revision, status: status, boundMessageId: boundMessageId,
-            updatedAt: updatedAt))
+            updatedAt: updatedAt, source: source))
         guard case .workSteps(let snapshot) = event else {
             throw NSError(domain: "fixture", code: 1)
         }
@@ -4691,6 +4692,28 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "completed"))
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 4, status: "running"))
         XCTAssertEqual(vm.workTrackers["plan-1"]?.status, "completed")
+    }
+
+    func testDockPrefersThePlanTrackerOverTheRuntimeProjection() throws {
+        let vm = AssistantVM()
+        vm.conversationId = "conversation-1"
+        vm.isStreaming = true
+        // The runtime projection arrives LAST (it re-emits every round), but
+        // the dock must still show the real plan tracker — owner 2026-08-15:
+        // the chip said "১ of ২" while the work detail listed 5 plan steps.
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 3))
+        vm.debugMergeWorkSteps(try snapshotFixture(
+            revision: 9, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
+        XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-1")
+        XCTAssertEqual(vm.activeWorkTracker?.source, "agent_plan")
+
+        // With no plan tracker at all, the runtime projection still shows.
+        let runtimeOnly = AssistantVM()
+        runtimeOnly.conversationId = "conversation-1"
+        runtimeOnly.isStreaming = true
+        runtimeOnly.debugMergeWorkSteps(try snapshotFixture(
+            revision: 2, source: "turn_runtime"))
+        XCTAssertEqual(runtimeOnly.activeWorkTracker?.source, "turn_runtime")
     }
 
     func testDockShowsOnlyLiveWorkNeverPausedOrStalledChips() throws {

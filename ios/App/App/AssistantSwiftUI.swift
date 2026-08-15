@@ -577,6 +577,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
     let originAssistantMessageId: String?
     let revision: Int?
     let sourceId: String?
+    let source: String?
     let goal: String?
     let status: String?
     let headline: String?
@@ -589,7 +590,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
             version: version, trackerId: trackerId, originTurnId: originTurnId,
             currentTurnId: currentTurnId, turnIds: turnIds, conversationId: conversationId,
             originAssistantMessageId: originAssistantMessageId, revision: revision,
-            sourceId: sourceId, goal: goal, status: status, headline: headline,
+            sourceId: sourceId, source: source, goal: goal, status: status, headline: headline,
             blockedBy: blockedBy, steps: steps, updatedAt: updatedAt)
     }
 }
@@ -2723,7 +2724,17 @@ final class AssistantVM {
                     .parseWorkStepsTimestamp(snapshot.updatedAt) else { return false }
                 return now.timeIntervalSince(updated) < 180
             }
-            .max { $0.updatedAt < $1.updatedAt }
+            // The plan tracker is the REAL step list; turn_runtime is a coarse
+            // per-turn projection (owner 2026-08-15: the dock said "১ of ২"
+            // while the work detail showed 5 plan steps). Prefer the plan
+            // tracker whenever one is live; runtime only stands in when no
+            // plan tracker exists for this conversation.
+            .max { a, b in
+                if a.source != b.source {
+                    return a.source == "turn_runtime"   // plan wins
+                }
+                return a.updatedAt < b.updatedAt
+            }
     }
     func clearWorkTrackersForConversationSwitch() {
         workTrackers = [:]
@@ -9053,6 +9064,7 @@ final class AssistantVM {
             originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
             revision: variant == "settled" ? 7 : 3,
             sourceId: "fixture-plan-1",
+            source: "agent_plan",
             goal: "Ship the Build 103 three-issue candidate",
             status: status,
             headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"
