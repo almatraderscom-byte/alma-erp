@@ -33,6 +33,31 @@ export function resolveGenerationParams(opts: { thinking?: string | undefined })
   return params
 }
 
+/**
+ * The head's TOOL-SELECTION sampler — deliberately NOT gated on
+ * AGENT_UNIFORM_SAMPLING.
+ *
+ * That flag governs a cross-provider parity experiment. This is a different
+ * thing: a correctness fix for a request WE de-reasoned ourselves. When the
+ * adapter forces `reasoning_effort: 'none'` on a tool-bearing request (raw
+ * OpenAI rejects tools + effort on /v1/chat/completions), the model picks its
+ * tool with no reasoning AND at the provider's default temperature. Tool choice
+ * then comes out different on identical input — measured live 2026-08-15: the
+ * byte-identical message "Mac live dekhaw" ran the same route and same tool at
+ * $0.0129 and $0.0039 on consecutive turns, and an earlier phrasing of the same
+ * request called no tool at all and claimed the tool was unavailable.
+ *
+ * The exemption in resolveGenerationParams ("reasoning models reject a custom
+ * sampler") does not apply here precisely BECAUSE the request is no longer a
+ * reasoning request. Owner kill switch: AGENT_TOOL_SAMPLER=off.
+ */
+export function resolveToolSelectionSampler(): { temperature: number } | null {
+  if (process.env.AGENT_TOOL_SAMPLER === 'off') return null
+  const raw = Number(process.env.AGENT_TOOL_SELECTION_TEMPERATURE ?? '0.2')
+  if (!Number.isFinite(raw) || raw < 0 || raw > 2) return { temperature: 0.2 }
+  return { temperature: raw }
+}
+
 /** Map the neutral params onto OpenAI/OpenRouter/xAI wire field names. */
 export function toOpenAiGenerationParams(p: NeutralGenerationParams): Record<string, number> {
   const out: Record<string, number> = {}

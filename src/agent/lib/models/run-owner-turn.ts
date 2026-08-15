@@ -117,6 +117,7 @@ import {
   detectProseChoiceViolation,
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
+  detectUnattemptedIncapacity,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
@@ -2804,6 +2805,18 @@ async function* runAlternateProviderTurn(
           // regen "success" typed as <tool_response> JSON after failed calls).
           if (violations.length === 0) {
             violations.push(...detectFabricatedToolResponse(iterationText.trim()))
+          }
+          // "পারব না" with nothing attempted. The grounding + live-execution
+          // retries above already cover this shape, but both key on ERP business
+          // nouns, so a Mac / camera / browser / ads request reached here with no
+          // guard at all (owner incident 2026-08-15). This one keys on the
+          // imperative + the plea, so it holds in every domain.
+          if (violations.length === 0) {
+            violations.push(...detectUnattemptedIncapacity(iterationText.trim(), {
+              actionRequested: ownerRequirements.actionAttemptExpected,
+              realToolAttempted: liveToolAttempted,
+              toolsAvailable: iterationTools.length > 0,
+            }))
           }
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {

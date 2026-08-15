@@ -26,6 +26,20 @@ export interface OwnerTurnRequirements {
   planFirst: boolean
   /** P2 — live-data question → must read before answering (only true when AGENT_GROUNDING_GATE on). */
   groundingRequired: boolean
+  /**
+   * Boss told the agent to DO or LOOK AT something — domain-neutral.
+   *
+   * `groundingRequired` above (and `requiresLiveToolExecution` below) both key on
+   * ERP business NOUNS: order, stock, sales, balance, staff, customer, cash.
+   * That was measured against the owner's own recent messages on 2026-08-15 and
+   * covered 1 of 14 — every Mac, camera, browser, ads, salah and media request
+   * fell through all of them, so on those turns nothing at all obliged the head
+   * to touch a tool. This one keys on the IMPERATIVE instead, so it holds for
+   * any domain. It never forces a tool by itself: it is one half of the
+   * unattempted-incapacity check, whose other half is the reply admitting it did
+   * not or could not do the thing.
+   */
+  actionAttemptExpected: boolean
 }
 
 // P3/P2 — narrow, high-precision classifiers. Deliberately conservative: a false
@@ -40,6 +54,32 @@ function classifyPlanFirst(t: string): boolean {
   if (PLAN_REQUEST_RE.test(t)) return true
   const markers = t.match(SEQUENCE_MARKER_RE)
   return markers ? markers.length >= 2 : false // ≥2 "then"-markers ⇒ ≥3 sequential steps
+}
+
+// Domain-neutral action request: an imperative aimed at the agent. Bangla,
+// Banglish and English, because the owner mixes all three in one sentence.
+// Deliberately verb-only — the moment a NOUN list is introduced here it acquires
+// the same blind spot as DATA_NOUN_RE above.
+const ACTION_VERB_RE = new RegExp(
+  [
+    'দেখাও', 'দেখা\\s*ও', 'দেখো', 'দেখে\\s*নাও', 'চালাও', 'খোলো', 'খুলে\\s*দাও',
+    'বানাও', 'তৈরি\\s*কর', 'পাঠাও', 'আনো', 'বের\\s*কর', 'যাচাই\\s*কর', 'মার্ক\\s*কর',
+    'সেট\\s*কর', 'নাও', 'কর(?:ো|ে\\s*দাও)',
+    'dekhaw', 'dekhao', 'dekho', 'chalao', 'cholao', 'khulo', 'banao', 'pathao', 'koro', 'kore\\s*daw',
+    '\\bshow\\b', '\\bcheck\\b', '\\brun\\b', '\\bopen\\b', '\\bstart\\b', '\\bfetch\\b',
+    '\\blist\\b', '\\bsend\\b', '\\bmark\\b', '\\bmake\\b', '\\bcreate\\b', '\\bset\\b',
+    '\\bget\\b', '\\bpull\\b', '\\bread\\b', '\\btake\\b', '\\bfind\\b', '\\bsearch\\b',
+  ].join('|'),
+  'i',
+)
+// Boss explicitly asked for prose only ("no tools", "শুধু লিখে দাও"). Never push
+// a turn he scoped as writing back into the tool loop.
+const NO_TOOL_REQUEST_RE = /\bno\s+tools?\b|tool\s*(?:ছাড়া|বাদ)|শুধু\s*লিখ|just\s+write\b/i
+
+export function classifyActionAttemptExpected(t: string): boolean {
+  if (!t.trim()) return false
+  if (NO_TOOL_REQUEST_RE.test(t)) return false
+  return ACTION_VERB_RE.test(t)
 }
 
 function classifyGroundingRequired(t: string): boolean {
@@ -122,7 +162,10 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   const planFirst = AGENT_PLAN_GATE && classifyPlanFirst(t)
   const groundingRequired = AGENT_GROUNDING_GATE && classifyGroundingRequired(t) && !remember && !liveBrowser
   const deepWork = DEEP_SCOPE_RE.test(t) || clientSeo
-  return { liveBrowser, clientSeo, reportArtifact, remember, targets, deepWork, planFirst, groundingRequired }
+  // Unflagged on purpose: it forces nothing on its own (see the field comment),
+  // and the failure it guards — "পারব না" with no attempt — has no domain.
+  const actionAttemptExpected = classifyActionAttemptExpected(t)
+  return { liveBrowser, clientSeo, reportArtifact, remember, targets, deepWork, planFirst, groundingRequired, actionAttemptExpected }
 }
 
 /**

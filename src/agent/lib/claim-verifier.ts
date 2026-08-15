@@ -34,6 +34,8 @@ export type ClaimViolationCategory =
   | 'tool_not_called'
   /** The opening line promised something; the work failed and the reply never said so. */
   | 'stale_promise'
+  /** Boss asked for work; the reply says it cannot be done, and NO tool was ever tried. */
+  | 'unattempted_incapacity'
   /** The reply asserts a card is waiting for Boss when no card exists. */
   | 'phantom_card_state'
   /** Boss just answered a question and the reply asks him another one. */
@@ -712,6 +714,60 @@ export function detectUncorrectedOpeningPromise(openingLine: string, replyText: 
   }]
 }
 
+// ── Claimed incapacity with no attempt (owner incident 2026-08-15) ────────────
+//
+// The existing rules cover the model saying it DID something it did not
+// (`tool_not_called`) and promising a card that never came (`stale_promise`).
+// Neither covers the opposite and, in the owner's traffic, more common shape:
+// the model says the thing CANNOT be done, having never tried.
+//
+// Live case: "ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।" → one API round, zero tool
+// calls, reply "Maxstream লাইভ দেখতে গিয়ে কোনো browser tool চালু নেই"। The tool
+// it needed (`mac_desk_control`) was in the request the whole time — the same
+// words on the third ask ran it first try. Nothing in the pipeline objected,
+// because the reply was internally consistent: it promised, then admitted it had
+// not delivered. Honest, and still the wrong turn.
+//
+// Deliberately narrow: it fires only when Boss used an imperative, the reply
+// pleads incapacity, and NOT ONE non-bookkeeping tool was attempted. A single
+// real attempt — even a failed one — makes the plea evidence-backed, and the
+// existing rules take over from there.
+
+const INCAPACITY_PLEA = new RegExp(
+  [
+    // "কোনো browser tool চালু নেই", "টুল নেই", "tool available নেই"
+    '(?:tool|টুল)[^।.!?\\n]{0,25}(?:নেই|চালু\\s*নেই|available\\s*নেই)',
+    '(?:নেই|not\\s+available|unavailable)[^।.!?\\n]{0,20}(?:tool|টুল)',
+    // "পাওয়া যায়নি", "দেখা যাচ্ছে না", "সম্ভব হয়নি"
+    'পাওয়া\\s*যায়নি', 'দেখা\\s*যাচ্ছে\\s*না', 'সম্ভব\\s*(?:হয়নি|হচ্ছে\\s*না)',
+    // "করতে পারছি না", "চালাতে পারিনি", "পারলাম না"
+    '(?:পারছি\\s*না|পারিনি|পারলাম\\s*না)',
+    // "access নেই", "connect করা নেই"
+    '(?:access|connect(?:ed|ion)?|পেয়ার|পেয়ারিং)[^।.!?\\n]{0,20}নেই',
+    // English equivalents
+    "\\b(?:can(?:'|no)?t|cannot|unable\\s+to|couldn(?:'|o)?t)\\b",
+    '\\bno\\s+(?:such\\s+)?(?:tool|access|browser)\\b',
+  ].join('|'),
+  'i',
+)
+
+export function detectUnattemptedIncapacity(
+  replyText: string,
+  opts: { actionRequested: boolean; realToolAttempted: boolean; toolsAvailable: boolean },
+): ClaimViolation[] {
+  if (!opts.actionRequested || opts.realToolAttempted || !opts.toolsAvailable) return []
+  const text = replyText.trim()
+  if (!text) return []
+  const hit = text.match(INCAPACITY_PLEA)
+  if (!hit) return []
+  return [{
+    category: 'unattempted_incapacity',
+    ruleId: 'incapacity_claimed_without_attempt',
+    matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+    requiredTools: [],
+  }]
+}
+
 // ── "Waiting for approval" with nothing to approve (owner incident 2026-07-26) ─
 //
 // The mirror image of a promised-but-missing card: the head parks the turn on a
@@ -1052,6 +1108,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
     'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
     'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
+  unattempted_incapacity:
+    'আপনি বলেছেন কাজটা করা যাচ্ছে না / টুল নেই — কিন্তু এই turn-এ আপনি একটাও আসল tool কল করেননি। '
+    + 'চেষ্টা না করে "পারব না" বলা Boss-এর কাছে মিথ্যার সমান, কারণ টুলটা আপনার তালিকাতেই ছিল। '
+    + 'এখনই request-এর জন্য সবচেয়ে সরাসরি tool-টা কল করুন। তালিকায় সত্যিই না থাকলে আগে find_tool দিয়ে খুঁজুন। '
+    + 'কল করার পরও ব্যর্থ হলে তখন আসল error দেখিয়ে বলুন কী আটকাল — অনুমান করে অক্ষমতা ঘোষণা নয়।',
   stale_promise:
     'আপনার প্রথম লাইনে Boss-কে বলেছিলেন কার্ড বানাচ্ছেন/পাঠাচ্ছেন, কিন্তু এই turn-এ কোনো কার্ডই তৈরি হয়নি। ' +
     'ওই লাইনটা Boss-এর স্ক্রিনে থেকে গেছে — মুছে ফেলা যায় না, তাই উত্তরে স্পষ্ট করে সংশোধন করতে হবে। ' +

@@ -5,7 +5,7 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
-import { resolveGenerationParams, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
+import { resolveGenerationParams, resolveToolSelectionSampler, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
 import { repairToolArgs } from '@/agent/lib/models/tool-arg-repair'
 import { AGENT_UNIFORM_SAMPLING, openAiSchemaSanitizeEnabled } from '@/agent/config'
 import { sanitizeSchemaPortable } from '@/agent/lib/models/adapters/portable-schema'
@@ -289,9 +289,26 @@ export class OpenAiAdapter implements ProviderAdapter {
     const providerPrefs = this.requireParameters && args.tools.length > 0
       ? { provider: { require_parameters: true } }
       : {}
+    // The registry's `thinking` flag describes the MODEL, not the request we are
+    // about to send. On raw OpenAI a tool-bearing request is forced to
+    // reasoning_effort 'none' below, so a model registered as 'level' (Luna)
+    // actually runs NON-reasoning here. Resolving the sampler off the registry
+    // label applied the "reasoning providers reject a custom sampler" exemption
+    // to a request that is not a reasoning request — the head then chose tools at
+    // the provider's default temperature. Resolve off the EFFECTIVE state.
+    const reasoningSuppressed = this.rawOpenAi && args.tools.length > 0
+    const effectiveThinking = reasoningSuppressed ? 'none' : args.thinking
     // P9 — shared sampling/output contract (temperature/top_p/max_tokens). When
     // AGENT_UNIFORM_SAMPLING is off this is {} → exact pre-parity request.
-    const rawGenParams = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
+    const rawGenParams = toOpenAiGenerationParams(resolveGenerationParams({ thinking: effectiveThinking }))
+    // Tool-selection sampler for the de-reasoned request. Carried as its own
+    // optional param (NOT folded into genParams) so it rides only the first
+    // attempt: a model that rejects `temperature` degrades on the standard retry
+    // below with everything else intact, exactly like the other extensions.
+    const toolSampler = reasoningSuppressed ? resolveToolSelectionSampler() : null
+    const samplerParam = toolSampler && rawGenParams.temperature === undefined
+      ? { temperature: toolSampler.temperature }
+      : {}
     // Raw-OpenAI dialect: max_tokens → max_completion_tokens + explicit
     // reasoning_effort 'none' on tool-bearing requests (see toRawOpenAiCompatParams).
     const genParams = this.rawOpenAi
@@ -354,11 +371,12 @@ export class OpenAiAdapter implements ProviderAdapter {
         ...baseParams,
         ...providerPrefs,
         ...reasoningParam,
+        ...samplerParam,
       } as ChatCompletionCreateParamsStreaming, reqOptions)
     } catch (err) {
       if (args.signal?.aborted) throw err
       console.warn(
-        `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters:`,
+        `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters/sampler:`,
         errDetail(err),
       )
       try {

@@ -19,7 +19,7 @@ describe('owner turn requirement contract', () => {
   it('does not turn an ordinary office question into work requirements', () => {
     expect(deriveOwnerTurnRequirements('Ajker office kemon jacche?')).toEqual({
       liveBrowser: false, clientSeo: false, reportArtifact: false, remember: false, targets: [],
-      deepWork: false, planFirst: false, groundingRequired: false,
+      deepWork: false, planFirst: false, groundingRequired: false, actionAttemptExpected: false,
     })
   })
 
