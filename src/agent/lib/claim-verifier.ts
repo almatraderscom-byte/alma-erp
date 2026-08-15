@@ -36,6 +36,8 @@ export type ClaimViolationCategory =
   | 'stale_promise'
   /** Boss asked for work; the reply says it cannot be done, and NO tool was ever tried. */
   | 'unattempted_incapacity'
+  /** The reply named a tool as missing while that exact tool was in the request. */
+  | 'phantom_missing_tool'
   /** The reply asserts a card is waiting for Boss when no card exists. */
   | 'phantom_card_state'
   /** Boss just answered a question and the reply asks him another one. */
@@ -768,6 +770,56 @@ export function detectUnattemptedIncapacity(
   }]
 }
 
+// ── A tool declared missing that is sitting in the request (owner, preview 2026-08-15) ─
+//
+// `detectToolExecutionClaims` covers the reply NAMING a tool and saying it ran
+// when it did not. This is the mirror image, and it survived the first fix:
+//
+//   "এখন লাইভ স্ক্রিন দেখাতে `mac_desk_control` দরকার, কিন্তু এই টার্নে সেই টুলটি
+//    উপলভ্য নেই—তাই স্ক্রিনশট/লাইভ ভিউ খুলতে পারলাম না।"
+//
+// `mac_desk_control` was in that turn's request. Replaying the router over the
+// exact message shows the mac pack shipping all twelve of its tools with nothing
+// trimmed — the model called its neighbour `mac_agent_status` successfully in the
+// same turn. So the sentence is not a limit being reported, it is a limit being
+// invented, and `unattempted_incapacity` cannot see it because a real tool DID
+// run.
+//
+// This one needs no heuristic: the turn's tool list is a fact we hold. If the
+// reply names a tool that is IN that list and calls it unavailable, that is
+// decidable, not a guess.
+
+const TOOL_UNAVAILABLE_CLAIM = /(?:উপলভ্য\s*নেই|available\s*নেই|পাওয়া\s*যাচ্ছে\s*না|নেই|not\s+available|unavailable|no\s+access|isn'?t\s+available)/i
+
+export function detectFalseToolUnavailability(
+  replyText: string,
+  availableToolNames: readonly string[],
+): ClaimViolation[] {
+  const text = replyText.trim()
+  if (!text || availableToolNames.length === 0) return []
+  for (const name of availableToolNames) {
+    // Tool names are snake_case and long enough that a bare substring match is
+    // safe; require the claim to sit close to the mention so an unrelated "নেই"
+    // elsewhere in a long reply cannot trip it.
+    let from = 0
+    for (;;) {
+      const at = text.indexOf(name, from)
+      if (at === -1) break
+      const window = text.slice(at + name.length, at + name.length + 90)
+      if (TOOL_UNAVAILABLE_CLAIM.test(window)) {
+        return [{
+          category: 'phantom_missing_tool',
+          ruleId: 'tool_declared_missing_but_supplied',
+          matchedSnippet: stripWhitespace(text.slice(at, at + name.length + 60)).slice(0, 120),
+          requiredTools: [name],
+        }]
+      }
+      from = at + name.length
+    }
+  }
+  return []
+}
+
 // ── "Waiting for approval" with nothing to approve (owner incident 2026-07-26) ─
 //
 // The mirror image of a promised-but-missing card: the head parks the turn on a
@@ -1108,6 +1160,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
     'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
     'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
+  phantom_missing_tool:
+    'আপনি নাম ধরে বলেছেন একটা tool "উপলভ্য নেই" — কিন্তু ওই tool-টা এই turn-এ আপনার তালিকাতেই আছে। '
+    + 'সার্ভার তালিকাটা জানে, তাই এটা অনুমান নয়, যাচাই করা। আপনি সীমা জানাননি, সীমা বানিয়েছেন। '
+    + 'এখনই ওই tool-টা সঠিক argument দিয়ে কল করুন। কল করার পর সত্যিই error এলে তখন সেই আসল error দেখান।',
   unattempted_incapacity:
     'আপনি বলেছেন কাজটা করা যাচ্ছে না / টুল নেই — কিন্তু এই turn-এ আপনি একটাও আসল tool কল করেননি। '
     + 'চেষ্টা না করে "পারব না" বলা Boss-এর কাছে মিথ্যার সমান, কারণ টুলটা আপনার তালিকাতেই ছিল। '

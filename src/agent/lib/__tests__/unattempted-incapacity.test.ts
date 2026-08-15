@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { classifyActionAttemptExpected } from '../owner-turn-requirements'
-import { detectUnattemptedIncapacity } from '../claim-verifier'
+import { detectUnattemptedIncapacity, detectFalseToolUnavailability } from '../claim-verifier'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -81,6 +81,48 @@ describe('detectUnattemptedIncapacity', () => {
   it('catches the English shapes too', () => {
     expect(detectUnattemptedIncapacity("Boss, I can't reach your Mac right now.", unattempted)).toHaveLength(1)
     expect(detectUnattemptedIncapacity('Boss, no browser tool is connected.', unattempted)).toHaveLength(1)
+  })
+})
+
+describe('detectFalseToolUnavailability', () => {
+  // Verbatim from the preview run that defeated the first fix. Replaying the
+  // router over this exact message ships all twelve mac tools, nothing trimmed —
+  // so the sentence is inventing a limit, and `mac_agent_status` had already run
+  // successfully in the same turn.
+  const PHANTOM =
+    'বস, **MacBook-Air.local অনলাইন আছে**। এখন লাইভ স্ক্রিন দেখাতে `mac_desk_control` দরকার, '
+    + 'কিন্তু এই টার্নে সেই টুলটি উপলভ্য নেই—তাই স্ক্রিনশট/লাইভ ভিউ খুলতে পারলাম না।'
+  const SHIPPED = ['find_tool', 'mac_agent_status', 'mac_desk_control', 'run_mac_command']
+
+  it('catches a tool declared missing while it sits in the request', () => {
+    const v = detectFalseToolUnavailability(PHANTOM, SHIPPED)
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('phantom_missing_tool')
+    expect(v[0].requiredTools).toEqual(['mac_desk_control'])
+  })
+
+  it('fires even though a real tool ran this turn — that is what let it through before', () => {
+    // No ledger argument at all: availability is decided by the request, not by
+    // what happened to be called.
+    expect(detectFalseToolUnavailability(PHANTOM, SHIPPED)).toHaveLength(1)
+  })
+
+  it('stays silent when the tool genuinely was not supplied — an honest limit', () => {
+    expect(detectFalseToolUnavailability(PHANTOM, ['find_tool', 'mac_agent_status'])).toEqual([])
+  })
+
+  it('stays silent when the tool is named without any missing-claim near it', () => {
+    const honest = 'বস, `mac_desk_control` দিয়ে স্ক্রিনশট নিলাম — Xcode খোলা আছে।'
+    expect(detectFalseToolUnavailability(honest, SHIPPED)).toEqual([])
+  })
+
+  it('does not reach across a long reply to pair a mention with an unrelated "নেই"', () => {
+    const far = '`mac_desk_control` দিয়ে স্ক্রিন দেখলাম। ' + 'সব ঠিক আছে। '.repeat(12) + 'আজ কোনো নতুন অর্ডার নেই।'
+    expect(detectFalseToolUnavailability(far, SHIPPED)).toEqual([])
+  })
+
+  it('handles an empty tool list without claiming anything', () => {
+    expect(detectFalseToolUnavailability(PHANTOM, [])).toEqual([])
   })
 })
 

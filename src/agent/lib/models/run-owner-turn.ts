@@ -118,6 +118,7 @@ import {
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
   detectUnattemptedIncapacity,
+  detectFalseToolUnavailability,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
@@ -2805,6 +2806,16 @@ async function* runAlternateProviderTurn(
           // regen "success" typed as <tool_response> JSON after failed calls).
           if (violations.length === 0) {
             violations.push(...detectFabricatedToolResponse(iterationText.trim()))
+          }
+          // A tool called missing while it sits in this very request. Decidable,
+          // not heuristic — we hold the list. Ran ahead of the incapacity rule
+          // below because it survives a turn where a real tool DID run, which is
+          // exactly how it got past the first fix on the preview.
+          if (violations.length === 0) {
+            violations.push(...detectFalseToolUnavailability(
+              iterationText.trim(),
+              iterationTools.map((t) => t.name),
+            ))
           }
           // "পারব না" with nothing attempted. The grounding + live-execution
           // retries above already cover this shape, but both key on ERP business
