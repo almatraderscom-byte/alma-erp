@@ -622,7 +622,7 @@ const CARD_NOUN = '(?:approval|approve|confirm(?:ation)?|question|yes[\\s/-]*no|
 // বানা- family (বানাচ্ছি / বানালাম / বানিয়েছি / বানাব) was missing while its
 // synonym তৈরি করছি was covered. Making a card IS delivering it here: the owner
 // is told something is now in front of him either way.
-const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*(?:কর[ছিলােয]+|হ(?:চ্ছে|য়েছে|ল))|বানা(?:চ্ছি|চ্ছে|লাম|বো?|নো\\s*হ(?:চ্ছে|য়েছে|ল))|বানিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম|\\s*ফেললাম)?|surfac|show|sent|sending|creat(?:e|ed|ing)|pathacchi|pathalam|pathiyechi|dilam|diyechi|banacchi|banalam|baniyechi)'
+const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*(?:কর[ছিলােয]+|হ(?:চ্ছে|য়েছে|ল))|বানা(?:চ্ছি|চ্ছে|লাম|বো?|নো\\s*হ(?:চ্ছে|য়েছে|ল))|বানিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম|\\s*ফেললাম)?|জিজ্ঞেস\\s*কর(?:ছি|ব|লাম)|জিজ্ঞাসা\\s*কর(?:ছি|ব|লাম)|জানতে\\s*চা(?:ইছি|ইব|চ্ছি)|surfac|show|sent|sending|creat(?:e|ed|ing)|ask(?:ing)?|pathacchi|pathalam|pathiyechi|dilam|diyechi|banacchi|banalam|baniyechi|jigg?es(?:h)?)'
 
 const CARD_PROMISE = new RegExp(
   `${CARD_NOUN}[^।.!?\\n]{0,45}?${CARD_DELIVERY}`,

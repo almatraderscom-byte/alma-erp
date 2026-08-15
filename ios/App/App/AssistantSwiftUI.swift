@@ -2722,6 +2722,18 @@ final class AssistantVM {
                       snapshot.conversationId.isEmpty || snapshot.conversationId == cid
                 else { return false }
                 if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
+                    // A waiting chip lives exactly as long as its blocker: the
+                    // answer/decision resumes the turn in a NEW tracker row, so
+                    // the paused turn's row never hears the resolution and
+                    // would hold the dock forever (owner report 2026-08-15,
+                    // answered ask card). The action registry is the durable
+                    // fate of every ask/approval ref — a terminal ref means
+                    // nothing here is actually waiting. Unknown refs keep the
+                    // honest waiting default.
+                    if let refId = snapshot.blockedByRefId,
+                       let record = actionRegistry[refId], record.state.isTerminal {
+                        return false
+                    }
                     return true
                 }
                 // Freshness first. The live stream alone is NOT enough: a
@@ -16122,6 +16134,25 @@ struct AgentConfirmCardView: View {
     let pal: AgentPalette
     let vm: AssistantVM
     let onDecide: (Bool) -> Void
+
+    /// Card summaries are server-authored multi-line text with INLINE markdown
+    /// only (**bold** totals). Parse per line — whole-string parsing would
+    /// collapse the newlines that give the card its shape.
+    static func inlineSummaryMarkdown(_ s: String) -> AttributedString {
+        var out = AttributedString()
+        var first = true
+        for line in s.components(separatedBy: "\n") {
+            if !first { out += AttributedString("\n") }
+            first = false
+            if let md = try? AttributedString(markdown: line,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                out += md
+            } else {
+                out += AttributedString(line)
+            }
+        }
+        return out
+    }
     @State private var showImageModelPicker = false
     @State private var showImageSetupSheet = false
     private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
@@ -16190,7 +16221,10 @@ struct AgentConfirmCardView: View {
                 }
             }
 
-            Text(card.summary)
+            // Inline markdown, line by line: server card summaries carry
+            // **bold** emphasis (media plan totals) — plain Text printed the
+            // raw asterisks (sim finding, Build 105 checklist).
+            Text(Self.inlineSummaryMarkdown(card.summary))
                 .font(.system(size: 14.5, weight: .regular))
                 .foregroundStyle(pal.ink)
                 .lineSpacing(4)
@@ -20919,16 +20953,15 @@ struct AgentWorkStepsDockView: View {
                         .padding(.vertical, 6)
                     }
                     .frame(maxHeight: 236)
-                    // Owner 2026-08-13: the 0.35 wash let the chat text bleed
-                    // through the expanded list. Opaque panel — material base
-                    // plus a solid tint — so the steps are the only thing read.
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(.thinMaterial)
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color(red: 0.09, green: 0.09, blue: 0.13).opacity(0.94))))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    // Owner 2026-08-15: the solid near-black panel looked
+                    // unfinished next to the Liquid Glass chips — the panel is
+                    // now the shared Agent glass surface (real glass on iOS 26,
+                    // ultraThin material before, solid card under Reduce
+                    // Transparency). Glass BLURS the chat behind it, so the
+                    // 2026-08-13 bleed-through complaint about the 0.35 wash
+                    // stays fixed; step text reads in theme ink, not white.
+                    .modifier(AlmaAgentGlassBackground(
+                        shape: RoundedRectangle(cornerRadius: 18, style: .continuous), pal: pal))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .accessibilityIdentifier("agent.work-steps.dock.panel")
                 }
@@ -21003,7 +21036,9 @@ struct AgentWorkStepsDockView: View {
             .frame(width: 17)
             Text("\(step.position). \(step.title)")
                 .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
-                .foregroundStyle(.white.opacity(step.status == "completed" ? 0.6 : 0.92))
+                // Theme ink, not white: the panel behind is glass now, so the
+                // rows must read on light and dark alike.
+                .foregroundStyle(pal.ink.opacity(step.status == "completed" ? 0.55 : 0.92))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
         }

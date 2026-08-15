@@ -18,6 +18,15 @@ describe('card-promise detection', () => {
     expect(caught('কার্ড বানানো হয়েছে')).toBe(true)
   })
 
+  it('catches the জিজ্ঞেস family — sim incident 2026-08-15 (Build 105 checklist)', () => {
+    // Luna's exact flake: promised the multi-question card, never called ask_user.
+    expect(caught('বস, সাপ্তাহিক রিপোর্ট বানাতে কোন সময়সীমা ও কোন বিষয়গুলো রাখব—এটাই নিশ্চিত করা দরকার; এক কার্ডে জিজ্ঞেস করছি।')).toBe(true)
+    expect(caught('এক কার্ডে জিজ্ঞেস করছি')).toBe(true)
+    expect(caught('কার্ডে জিজ্ঞাসা করব')).toBe(true)
+    expect(caught('প্রশ্ন কার্ডে জানতে চাইছি')).toBe(true)
+    expect(caught('asking in one card')).toBe(true)
+  })
+
   it('still catches what it caught before', () => {
     expect(caught('approval card পাঠাচ্ছি')).toBe(true)
     expect(caught('অনুমোদন কার্ড তৈরি করছি')).toBe(true)
