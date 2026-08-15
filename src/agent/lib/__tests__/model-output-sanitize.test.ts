@@ -269,6 +269,21 @@ describe('live streaming holds split named-tool markup', () => {
     expect(f.flush()).not.toContain('get_website_catalog')
   })
 
+  it('holds the opener when the argument tag arrives partially, in any split', () => {
+    for (const chunks of [
+      ['দেখছি <get_website_catalog>', '<arg', '_key>limit</arg_key>'],
+      ['দেখছি <get_website_catalog>', '<arg_key>limit', '</arg_key>'],
+      ['দেখছি <get_web', 'site_catalog><arg_key>', 'limit</arg_key>'],
+    ]) {
+      const f = createMarkupStreamFilter()
+      let shown = ''
+      for (const c of chunks) shown += f.push(c)
+      shown += f.flush()
+      expect(shown).not.toContain('get_website_catalog')
+      expect(shown).not.toContain('arg_key')
+    }
+  })
+
   it('still streams ordinary prose that ends in a closed HTML-ish token', () => {
     const f = createMarkupStreamFilter()
     f.push('আজকের হিসাব <b>')

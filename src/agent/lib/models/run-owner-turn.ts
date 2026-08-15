@@ -2459,6 +2459,18 @@ async function* runAlternateProviderTurn(
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      // Every corrective path that DISCARDS this round's prose must also drop
+      // the copy already on the owner's screen (Codex P1 #765 round 2):
+      // typed-tool retry, act-now nudge, grounding retry, requirement retry and
+      // late steering all reuse this.
+      const supersedeStreamedDraft = function* (): Generator<AgentEvent> {
+        if (!liveProseEnabled) return
+        proseStream.flush()
+        if (!streamedProse) return
+        streamedProse = ''
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+      }
+
       // Tool-round prose streams right away so the live view and reload both keep
       // the narration between steps; final-round text is emitted AFTER the
       // requirement-contract checks below (which may replace it).
@@ -2477,6 +2489,9 @@ async function* runAlternateProviderTurn(
       ) {
         console.info('[speak-first] dropped a restated opening line', { conversationId })
         iterationText = ''
+        // The restated opener may already be on screen now that prose streams
+        // live — drop the visible copy too (Codex P2 #765).
+        yield* supersedeStreamedDraft()
       }
       // Reconcile what was TYPED LIVE with the round's final sanitised text.
       // Same shape for both emit sites below: emit only the missing tail when
@@ -2515,18 +2530,6 @@ async function* runAlternateProviderTurn(
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
         preambleSpoken = true
-      }
-
-      // Every corrective path that DISCARDS this round's prose must also drop
-      // the copy already on the owner's screen (Codex P1 #765 round 2):
-      // typed-tool retry, act-now nudge, grounding retry, requirement retry and
-      // late steering all reuse this.
-      const supersedeStreamedDraft = function* (): Generator<AgentEvent> {
-        if (!liveProseEnabled) return
-        proseStream.flush()
-        if (!streamedProse) return
-        streamedProse = ''
-        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
       }
 
       if (calls.length === 0 || signal?.aborted) {
@@ -2846,6 +2849,7 @@ async function* runAlternateProviderTurn(
                   `The server requirement contract is incomplete. Call ${needed} now; do not write another owner-facing answer first.`,
               },
             ]
+            yield* supersedeStreamedDraft()
             continue
           }
           iterationText = batchStatus

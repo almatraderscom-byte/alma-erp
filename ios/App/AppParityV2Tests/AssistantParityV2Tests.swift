@@ -4719,6 +4719,24 @@ final class AssistantParityV2Tests: XCTestCase {
             revision: 5, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
         XCTAssertEqual(stale.activeWorkTracker?.source, "turn_runtime")
 
+        // A stale RUNNING plan with no runtime tracker (first round of a new
+        // turn) must not hold the dock (Codex P2 #765) …
+        let staleAlone = AssistantVM()
+        staleAlone.conversationId = "conversation-1"
+        staleAlone.isStreaming = true
+        staleAlone.debugMergeWorkSteps(try snapshotFixture(
+            revision: 2, status: "running", turnId: "turn-OLD"))
+        XCTAssertNil(staleAlone.activeWorkTracker)
+
+        // … but a plan WAITING ON THE OWNER stays visible however old it is:
+        // it blocks on a decision he still owes, which is exactly what the
+        // dock is for.
+        let waitingOld = AssistantVM()
+        waitingOld.conversationId = "conversation-1"
+        waitingOld.debugMergeWorkSteps(try snapshotFixture(
+            revision: 2, status: "waiting_owner", turnId: "turn-OLD"))
+        XCTAssertEqual(waitingOld.activeWorkTracker?.status, "waiting_owner")
+
         // With no plan tracker at all, the runtime projection still shows.
         let runtimeOnly = AssistantVM()
         runtimeOnly.conversationId = "conversation-1"
@@ -4732,14 +4750,18 @@ final class AssistantParityV2Tests: XCTestCase {
         let vm = AssistantVM()
         vm.conversationId = "conversation-1"
 
-        // Streaming turn with a running tracker: the dock chip shows.
+        // Streaming turn with a running tracker: the dock chip shows. A live
+        // turn emits FRESH snapshots — streaming alone no longer rescues a
+        // stale row (Codex P2 #765).
+        let liveStamp = ISO8601DateFormatter.almaWorkStepsLenient.string(from: Date())
         vm.isStreaming = true
-        vm.debugMergeWorkSteps(try snapshotFixture(revision: 2))
+        vm.debugMergeWorkSteps(try snapshotFixture(revision: 2, updatedAt: liveStamp))
         XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-turn-1")
 
         // Turn-end honest projection parks it paused: the chip must leave
         // (build 103 owner report — chip lingered after the answer landed).
-        vm.debugMergeWorkSteps(try snapshotFixture(revision: 3, status: "paused"))
+        vm.debugMergeWorkSteps(try snapshotFixture(
+            revision: 3, status: "paused", updatedAt: liveStamp))
         XCTAssertNil(vm.activeWorkTracker)
 
         // A dropped final snapshot leaves a STALE "running" row with no
