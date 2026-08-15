@@ -1042,6 +1042,10 @@ actor AgentEventBuffer {
     /// another event.
     private var proseBacklog = ""
     private var flushScheduled = false
+    /// Bumped by every flush; a scheduled tick that lost the race to a control
+    /// flush sees a newer generation and dies instead of double-ticking the
+    /// cadence (Codex P2 #770).
+    private var flushGeneration = 0
     private var flushCount = 0
     private let apply: @MainActor ([AgentTurnEvent]) -> Void
 
@@ -1101,14 +1105,27 @@ actor AgentEventBuffer {
     private func scheduleFlush() {
         guard !flushScheduled else { return }
         flushScheduled = true
+        let generation = flushGeneration
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
-            await self?.flushNow(paced: true)
+            await self?.pacedTick(ifGeneration: generation)
         }
+    }
+
+    /// Scheduled-tick entry: a control flush that ran meanwhile already carried
+    /// everything this tick was for — a stale tick must not add a second beat.
+    private func pacedTick(ifGeneration generation: Int) async {
+        guard generation == flushGeneration else {
+            flushScheduled = false
+            if !proseBacklog.isEmpty { scheduleFlush() }
+            return
+        }
+        await flushNow(paced: true)
     }
 
     func flushNow(paced: Bool = false) async {
         flushScheduled = false
+        flushGeneration += 1
         if paced {
             if let slice = nextProseSlice() {
                 if case .textDelta(let prev)? = batch.last {
