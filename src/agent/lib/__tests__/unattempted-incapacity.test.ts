@@ -35,8 +35,24 @@ describe('classifyActionAttemptExpected (domain-neutral)', () => {
       'মাগরিবের নামাজ পড়েছি, মার্ক করে দাও।',
       'Quick stock summary please: show me the list',
       'Ok audit koro',
+      // Routed imperative forms the repo's own fixtures use (Codex P2).
+      'FB পেজে নতুন পোস্ট দাও',
+      'কালকের জন্য একটা reminder দিও',
     ]) {
       expect(classifyActionAttemptExpected(msg), msg).toBe(true)
+    }
+  })
+
+  it('does not read a question as an order just because it contains an action verb', () => {
+    // Codex P2: these carry `open`/`দেখাও` but Boss is asking, not ordering —
+    // and a reply that honestly says it could not would then be punished.
+    for (const msg of [
+      "Why can't I open the orders page?",
+      'কেন খুলতে পারছি না?',
+      'কীভাবে রিপোর্ট দেখাও তোমরা?',
+      'TMI stop hole keno?',
+    ]) {
+      expect(classifyActionAttemptExpected(msg), msg).toBe(false)
     }
   })
 
@@ -119,6 +135,15 @@ describe('detectFalseToolUnavailability', () => {
   it('does not reach across a long reply to pair a mention with an unrelated "নেই"', () => {
     const far = '`mac_desk_control` দিয়ে স্ক্রিন দেখলাম। ' + 'সব ঠিক আছে। '.repeat(12) + 'আজ কোনো নতুন অর্ডার নেই।'
     expect(detectFalseToolUnavailability(far, SHIPPED)).toEqual([])
+  })
+
+  it('does not cross a sentence boundary to reach the next clause (Codex P2)', () => {
+    const truthful = '`mac_desk_control` দিয়ে স্ক্রিন দেখলাম। আজ কোনো নতুন অর্ডার নেই।'
+    expect(detectFalseToolUnavailability(truthful, SHIPPED)).toEqual([])
+  })
+
+  it('still catches the real one, whose clause runs on past a dash', () => {
+    expect(detectFalseToolUnavailability(PHANTOM, SHIPPED)).toHaveLength(1)
   })
 
   it('handles an empty tool list without claiming anything', () => {

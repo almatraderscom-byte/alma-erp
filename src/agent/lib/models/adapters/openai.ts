@@ -305,10 +305,15 @@ export class OpenAiAdapter implements ProviderAdapter {
     // optional param (NOT folded into genParams) so it rides only the first
     // attempt: a model that rejects `temperature` degrades on the standard retry
     // below with everything else intact, exactly like the other extensions.
+    // It OVERRIDES the uniform-sampling temperature rather than deferring to it
+    // (Codex P2). AGENT_UNIFORM_SAMPLING is auto-on in previews and supplies
+    // GENERATION_DEFAULTS.temperature (0.7) once `effectiveThinking` is 'none' —
+    // deferring meant the de-reasoned head kept picking tools at 0.7 on the very
+    // environment this fix is verified in. Parity's job is to make providers
+    // agree; this one exists to make tool choice repeatable, and it is the
+    // narrower, later rule.
     const toolSampler = reasoningSuppressed ? resolveToolSelectionSampler() : null
-    const samplerParam = toolSampler && rawGenParams.temperature === undefined
-      ? { temperature: toolSampler.temperature }
-      : {}
+    const samplerParam = toolSampler ? { temperature: toolSampler.temperature } : {}
     // Raw-OpenAI dialect: max_tokens → max_completion_tokens + explicit
     // reasoning_effort 'none' on tool-bearing requests (see toRawOpenAiCompatParams).
     const genParams = this.rawOpenAi

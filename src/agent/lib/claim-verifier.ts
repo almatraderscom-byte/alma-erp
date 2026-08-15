@@ -805,7 +805,11 @@ export function detectFalseToolUnavailability(
     for (;;) {
       const at = text.indexOf(name, from)
       if (at === -1) break
-      const window = text.slice(at + name.length, at + name.length + 90)
+      // Same SENTENCE, not merely the next 90 characters (Codex P2): a truthful
+      // "`mac_desk_control` দিয়ে স্ক্রিন দেখলাম। আজ কোনো অর্ডার নেই।" pairs a
+      // real mention with an unrelated absence one clause later.
+      const rest = text.slice(at + name.length, at + name.length + 90)
+      const window = rest.split(/[।.!?\n]/)[0] ?? ''
       if (TOOL_UNAVAILABLE_CLAIM.test(window)) {
         return [{
           category: 'phantom_missing_tool',
