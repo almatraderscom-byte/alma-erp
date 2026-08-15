@@ -283,6 +283,37 @@ describe('the STREAMING case — his screen, live, 2026-07-28', () => {
     expect(out).not.toContain('get_orders')
     expect(out).toContain('ঠিক আছে')
   })
+
+  // Codex P1 #771 — an ATTRIBUTED opener split from its closer must hold.
+  it('holds an attributed <parameter> opener until its closer arrives', () => {
+    const out = run(['ইনবক্স। <parameter name="limit">20', '</parameter>', ' শেষ।'])
+    expect(out).not.toContain('parameter')
+    expect(out).not.toContain('limit')
+    expect(out).toContain('ইনবক্স')
+    expect(out).toContain('শেষ')
+  })
+
+  // Codex P1 #771 — a confirmed tool block longer than the generic hold cap
+  // must keep holding until its closer (or be dropped at flush), never spill.
+  it('a confirmed tool block outgrowing the hold cap never spills', () => {
+    const out = run(['<tool_call>\n', 'x'.repeat(400), '\n</tool_call>', ' পরে।'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('xxxx')
+    expect(out).toContain('পরে')
+  })
+
+  // Codex P2 #771 — pipe sentinels cannot be held; they must still be stripped.
+  it('strips DeepSeek/Qwen pipe sentinels while streaming', () => {
+    expect(run(['আগে <|tool_calls_begin|>', ' পরে'])).not.toContain('tool_calls_begin')
+    expect(run(['ক <｜tool▁calls▁begin｜>', ' খ'])).not.toContain('tool▁calls▁begin')
+  })
+
+  it('ordinary long prose after a bare "<" still releases past the cap', () => {
+    const filler = 'y'.repeat(400)
+    const out = run(['স্টক < ', filler])
+    expect(out).toContain('স্টক')
+    expect(out).toContain(filler)
+  })
 })
 
 describe('live streaming holds split named-tool markup', () => {

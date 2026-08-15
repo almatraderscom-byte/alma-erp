@@ -117,6 +117,14 @@ const FENCED_TOOL_CALL =
 const FENCED_TOOL_JSON =
   /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?(?:```|$)/gi
 
+/**
+ * The streaming-safe subset of STRAY_MARKERS: closing tags and the pipe
+ * sentinels only. Opening tags stay out — a held opener must survive the
+ * push-time strip or its body leaks (see createMarkupStreamFilter).
+ */
+const STREAMING_SAFE_MARKERS =
+  /<\/tool_call>|<\/arg_key>|<\/arg_value>|<\/function_(?:calls|results)>|<\/invoke>|<\/parameter>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
+
 /** Leftovers when a stream is cut mid-call, plus the DeepSeek/Qwen sentinels. */
 const STRAY_MARKERS =
   /<\/?tool_call>|<\/?arg_key>|<\/?arg_value>|<\/?function_(?:calls|results)>|<\/?invoke\b[^>]*>|<\/?parameter\b[^>]*>|<\|?tool[_▁]?calls?[_▁]?(?:begin|end|sep)\|?>|<｜tool▁calls?▁(?:begin|end|sep)｜>/gi
@@ -175,12 +183,14 @@ export function stripToolCallMarkup(
     .replace(streaming ? PARAMETER_BLOCK_COMPLETE : PARAMETER_BLOCK, '')
     .replace(streaming ? TOOL_CALL_BLOCK_COMPLETE : TOOL_CALL_BLOCK, '')
     .replace(NAMED_TOOL_ARGS, '')
-    // NEVER in streaming mode: `<\/?tool_call>` matches the OPENING tag too,
-    // so this line was deleting a held opener out from under `holdFrom` and
-    // the block's body then streamed through as prose (live repro 2026-08-15).
-    // Stray single markers are a settled-text cleanup; the whole-round
-    // sanitiser and flush() still run it.
-    .replace(streaming ? /$^/ : STRAY_MARKERS, '')
+    // The full STRAY_MARKERS never runs in streaming mode: `<\/?tool_call>`
+    // matches the OPENING tag too, so it deleted a held opener out from under
+    // `holdFrom` and the block's body then streamed through as prose (live
+    // repro 2026-08-15). What streaming DOES strip is the safe subset —
+    // CLOSING tags (never a held opener) and the DeepSeek/Qwen pipe
+    // sentinels, which `holdFrom` cannot hold and would otherwise stream
+    // straight through (Codex P2 #771).
+    .replace(streaming ? STREAMING_SAFE_MARKERS : STRAY_MARKERS, '')
     // The removal usually leaves the blank line the markup sat on.
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -283,14 +293,29 @@ function isToolishTag(name: string): boolean {
   return n.includes('_') || n.length >= 4
 }
 
-/** First bare (non-closing) tool-ish opener, or -1. */
+/**
+ * First (non-closing) tool-ish opener, or -1. Matches ATTRIBUTED openers too —
+ * `<parameter name="limit">` split from its closer leaked because only bare
+ * `<tag>` was recognised here (Codex P1 #771).
+ */
 function toolishOpenerAt(s: string): number {
-  const re = /<([a-z_][a-z0-9_]*)>/gi
+  const re = /<([a-z_][a-z0-9_]*)(?:\s[^<>]*)?>/gi
   for (let m = re.exec(s); m; m = re.exec(s)) {
     if (isToolishTag(m[1])) return m.index
   }
   return -1
 }
+
+/**
+ * A tail that BEGINS with unambiguous tool markup. Ordinary prose can contain a
+ * `<` or an HTML-ish token — those stay under MAX_HOLD so the live thought is
+ * never stalled — but a confirmed opener IS markup, and releasing it because
+ * its body outgrew the cap put the opener and whole body on the owner's screen
+ * (Codex P1 #771). Confirmed markup holds until it closes or the stream ends
+ * (flush() drops an unclosed block).
+ */
+const CONFIRMED_TOOL_OPENER =
+  /^(?:<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
 
 
 /**
@@ -307,8 +332,14 @@ function holdFrom(s: string): number {
   // `<tool_call>` whose body has begun must keep holding even when the body
   // itself contains a new partial tag (`…xyz</tool_c`) — returning the later
   // '<' released the opener and body as prose (live repro 2026-08-15).
+  // CONFIRMED tool markup is exempt from the cap (Codex P1 #771): a long call
+  // body must not spill at 300 chars merely because its closer is still on
+  // the wire.
   const earlyOpener = toolishOpenerAt(s)
-  if (earlyOpener !== -1 && s.length - earlyOpener <= MAX_HOLD) return earlyOpener
+  if (earlyOpener !== -1
+      && (CONFIRMED_TOOL_OPENER.test(s.slice(earlyOpener)) || s.length - earlyOpener <= MAX_HOLD)) {
+    return earlyOpener
+  }
   const lt = s.lastIndexOf('<')
   if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
   // A CLOSED tag can still be the opener of named-tool markup — the pattern is
@@ -324,7 +355,8 @@ function holdFrom(s: string): number {
   const openerAt = toolishOpenerAt(s)
   if (openerAt !== -1 && s.length - openerAt <= MAX_HOLD) return openerAt
   const fence = s.lastIndexOf('```')
-  if (fence !== -1 && s.indexOf('```', fence + 3) === -1 && s.length - fence <= MAX_HOLD) return fence
+  if (fence !== -1 && s.indexOf('```', fence + 3) === -1
+      && (CONFIRMED_TOOL_OPENER.test(s.slice(fence)) || s.length - fence <= MAX_HOLD)) return fence
   const brace = s.lastIndexOf('{')
   if (
     brace !== -1
