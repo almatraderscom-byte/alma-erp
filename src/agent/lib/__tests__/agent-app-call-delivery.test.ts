@@ -37,7 +37,7 @@ vi.mock('@/agent/lib/fcm-call', () => ({
   sendFcmCall: mocks.sendFcm,
 }))
 
-import { ringOwnerApp } from '@/agent/lib/agent-app-call'
+import { payloadPurposePreview, ringOwnerApp } from '@/agent/lib/agent-app-call'
 
 describe('agent app call delivery registry', () => {
   beforeEach(() => {
@@ -78,6 +78,9 @@ describe('agent app call delivery registry', () => {
       1, [sandbox], expect.objectContaining({
         type: 'agent_call',
         claimReceipt: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        // Ring payload carries the brief so the Live model knows why it
+        // called BEFORE the owner answers (owner bug 2026-08-15).
+        purpose: 'device test',
       }), { environment: 'sandbox' },
     )
     expect(mocks.sendVoip).toHaveBeenNthCalledWith(
@@ -133,5 +136,22 @@ describe('agent app call delivery registry', () => {
     await expect(ring).resolves.toMatchObject({ ok: true })
     expect(mocks.activeFindFirst).toHaveBeenCalledTimes(1)
     expect(mocks.create).toHaveBeenCalledTimes(1)
+  })
+
+  // A rejected VoIP push means NO RING AT ALL, so the payload brief must stay
+  // well under the ~5KB limit even for maximum-length Bangla purposes.
+  it('byte-caps the ring payload purpose without splitting characters', () => {
+    const bangla = 'নামাজ'.repeat(400) // 2000 chars ≈ 6KB UTF-8
+    const preview = payloadPurposePreview(bangla)
+    expect(Buffer.byteLength(preview, 'utf8')).toBeLessThanOrEqual(2800)
+    expect(bangla.startsWith(preview)).toBe(true)
+    // The cap counts SERIALIZED bytes: JSON escaping doubles backslashes and
+    // expands newlines, so the wire body stays bounded for hostile input too.
+    const escapey = '\\"\n'.repeat(2000)
+    const escapedPreview = payloadPurposePreview(escapey)
+    expect(Buffer.byteLength(JSON.stringify(escapedPreview), 'utf8')).toBeLessThanOrEqual(2810)
+    // A typical salah brief fits whole.
+    const brief = 'এটা নামাজ-তাগাদার কল। '.repeat(30).slice(0, 900)
+    expect(payloadPurposePreview(brief)).toBe(brief)
   })
 })

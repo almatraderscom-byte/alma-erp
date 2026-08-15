@@ -127,6 +127,13 @@ export type VoipCallPayload = {
   /** 'ring' (default) reports a new CallKit incoming call; 'cancel' ends the call
    *  already showing for this broadcastId (caller hung up / callee answered elsewhere). */
   event?: 'ring' | 'cancel'
+  /** agent_call only: the call's brief, byte-capped to fit the VoIP payload
+   *  limit — present so the Live model knows WHY it called BEFORE the owner
+   *  answers (owner bug 2026-08-15: brief arrived after answer via a separate
+   *  fetch, so the model opened generic and re-greeted with salam when the
+   *  brief landed). The post-answer fetch remains the full-length fallback.
+   *  Additive; legacy clients ignore it. */
+  purpose?: string
 }
 
 export type ApnsVoipSendResult = {
