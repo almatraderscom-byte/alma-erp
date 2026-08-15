@@ -1405,6 +1405,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // The honesty guard caught a draft that must be rewritten. Keep it in
           // the raw audit timeline as superseded, but remove it from the visible
           // answer accumulator so the owner sees only the verified replacement.
+          // Drop any BUFFERED deltas of the rejected draft first: a pending
+          // batch would otherwise be flushed on the next animation frame and
+          // re-append the text this event just removed (Codex P1 #765).
+          if (streamBufferRef.current?.msgId === assistantMsgId) {
+            streamBufferRef.current.pending = ''
+          }
           setStreamMode('searching')
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) => {

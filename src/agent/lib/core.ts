@@ -706,6 +706,8 @@ export interface RunAgentTurnOptions {
   personalMode?: boolean
   /** Telegram owner path — skip expensive cross-surface context loads. */
   telegramFastPath?: boolean
+  /** Voice turn: prose stays buffered (spoken audio cannot be retracted). */
+  voiceTurn?: boolean
   /** AbortSignal from the HTTP request — cancels the stream early if client disconnects. */
   signal?: AbortSignal
   /** Business scope — drives prompt operations rule, tool registry, staff/dispatch filters. */
