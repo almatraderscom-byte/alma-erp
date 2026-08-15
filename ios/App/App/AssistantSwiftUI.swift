@@ -13130,6 +13130,12 @@ private struct AgentMediaCard: View {
                 .frame(maxHeight: 460)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .onAppear { loadVideoCanvasAndPoster() }
+                // Overlay visibility follows the PLAYER's truth, not an
+                // optimistic flag — pause/stall/failure all bring the explicit
+                // play control back (Codex P2).
+                .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                    isVideoPlaying = (status == .playing)
+                }
             } else {
                 HStack {
                     Button { startAudioPlayback() } label: { Image(systemName: "play.fill") }
