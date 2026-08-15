@@ -255,6 +255,65 @@ describe('the STREAMING case — his screen, live, 2026-07-28', () => {
     f.push('<')
     expect(f.flush()).toBe('<')
   })
+
+  // His screen, live, 2026-08-15 — Qwen 3.7's speak-first line carried a whole
+  // <tool_call> block. Two filter bugs stacked: the $-tailed strip ate an
+  // UNCLOSED opener at push time (its body then streamed through with no
+  // context), and STRAY_MARKERS deleted a held opening tag out from under
+  // holdFrom. Both are pinned here across the real chunk boundaries.
+  it('a <tool_call> block split across deltas never leaks any part', () => {
+    const out = run(['বস, লাইভ ডেটা টেনে দেখছি।\n\n<tool', '_call>\nrecommend', '_ad_actions\n</tool_call>', ' এরপর রিপোর্ট।'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('recommend_ad_actions')
+    expect(out).toContain('লাইভ ডেটা টেনে দেখছি')
+    expect(out).toContain('এরপর রিপোর্ট')
+  })
+
+  it('a held opener keeps holding while its body grows a partial closer', () => {
+    const out = run(['hello <tool_call>x', 'yz</tool_c', 'all> world'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('xyz')
+    expect(out).toContain('hello')
+    expect(out).toContain('world')
+  })
+
+  it('a stream that ends inside an unclosed block drops the block at flush', () => {
+    const out = run(['ঠিক আছে। ', '<tool_call>\nget_orders'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('get_orders')
+    expect(out).toContain('ঠিক আছে')
+  })
+
+  // Codex P1 #771 — an ATTRIBUTED opener split from its closer must hold.
+  it('holds an attributed <parameter> opener until its closer arrives', () => {
+    const out = run(['ইনবক্স। <parameter name="limit">20', '</parameter>', ' শেষ।'])
+    expect(out).not.toContain('parameter')
+    expect(out).not.toContain('limit')
+    expect(out).toContain('ইনবক্স')
+    expect(out).toContain('শেষ')
+  })
+
+  // Codex P1 #771 — a confirmed tool block longer than the generic hold cap
+  // must keep holding until its closer (or be dropped at flush), never spill.
+  it('a confirmed tool block outgrowing the hold cap never spills', () => {
+    const out = run(['<tool_call>\n', 'x'.repeat(400), '\n</tool_call>', ' পরে।'])
+    expect(out).not.toContain('tool_call')
+    expect(out).not.toContain('xxxx')
+    expect(out).toContain('পরে')
+  })
+
+  // Codex P2 #771 — pipe sentinels cannot be held; they must still be stripped.
+  it('strips DeepSeek/Qwen pipe sentinels while streaming', () => {
+    expect(run(['আগে <|tool_calls_begin|>', ' পরে'])).not.toContain('tool_calls_begin')
+    expect(run(['ক <｜tool▁calls▁begin｜>', ' খ'])).not.toContain('tool▁calls▁begin')
+  })
+
+  it('ordinary long prose after a bare "<" still releases past the cap', () => {
+    const filler = 'y'.repeat(400)
+    const out = run(['স্টক < ', filler])
+    expect(out).toContain('স্টক')
+    expect(out).toContain(filler)
+  })
 })
 
 describe('live streaming holds split named-tool markup', () => {
