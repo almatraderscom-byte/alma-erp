@@ -2525,6 +2525,13 @@ async function* runAlternateProviderTurn(
             .filter(Boolean)
             .join('\n')
           supersedeLastDraft()
+          // The draft may already be ON SCREEN now that prose streams live —
+          // drop it client-side too, or the replacement round appends to an
+          // obsolete answer (Codex P1 #765).
+          if (liveProseEnabled && (streamedProse || proseStream.flush())) {
+            yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+            streamedProse = ''
+          }
           messages = [
             ...messages,
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),

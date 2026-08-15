@@ -250,6 +250,15 @@ const MAX_HOLD = 300
 function holdFrom(s: string): number {
   const lt = s.lastIndexOf('<')
   if (lt !== -1 && !s.includes('>', lt) && s.length - lt <= MAX_HOLD) return lt
+  // A CLOSED tag can still be the opener of named-tool markup — the pattern is
+  // only recognisable once <arg_key>/<parameter …> follows in a later delta
+  // (Codex P1 #765). Hold a lone `<identifier>` (never a real prose token, and
+  // never a closing `</…>`) until the next chunk proves it is not tool syntax.
+  const tag = /<([a-z_][a-z0-9_]*)>\s*$/i.exec(s)
+  if (tag) {
+    const at = s.length - tag[0].length
+    if (s.length - at <= MAX_HOLD) return at
+  }
   const fence = s.lastIndexOf('```')
   if (fence !== -1 && s.indexOf('```', fence + 3) === -1 && s.length - fence <= MAX_HOLD) return fence
   const brace = s.lastIndexOf('{')

@@ -256,3 +256,23 @@ describe('the STREAMING case — his screen, live, 2026-07-28', () => {
     expect(f.flush()).toBe('<')
   })
 })
+
+describe('live streaming holds split named-tool markup', () => {
+  it('never releases a bare <tool_name> opener before the next chunk resolves it', () => {
+    const f = createMarkupStreamFilter()
+    const first = f.push('দেখছি <get_website_catalog>')
+    expect(first).toBe('দেখছি ')
+    // The argument arrives in the NEXT delta — the opener must never have been
+    // shown (Codex P1 #765).
+    const second = f.push('<arg_key>limit</arg_key><arg_value>5</arg_value>')
+    expect(second).not.toContain('get_website_catalog')
+    expect(f.flush()).not.toContain('get_website_catalog')
+  })
+
+  it('still streams ordinary prose that ends in a closed HTML-ish token', () => {
+    const f = createMarkupStreamFilter()
+    f.push('আজকের হিসাব <b>')
+    const out = f.push(' ভালো।') + f.flush()
+    expect(out).toContain('ভালো')
+  })
+})
