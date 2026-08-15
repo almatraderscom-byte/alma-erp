@@ -753,7 +753,7 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
+  const { projectSystemInstructions, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
   let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
@@ -1430,7 +1430,12 @@ export async function* runAgentTurn(
               thinkingMs = Date.now() - thinkingStartedAt
             }
             activeBlockText += delta.text
-            yield { type: 'text_delta', delta: delta.text }
+            // Voice turns hold the prose until the block completes: spoken
+            // audio cannot be retracted, so a draft a later check rejects must
+            // never be HEARD before its replacement (Codex P1 #768 — the
+            // native Anthropic loop is the documented rollback path and had
+            // kept streaming every token to TTS).
+            if (!voiceTurn) yield { type: 'text_delta', delta: delta.text }
           } else if (delta.type === 'thinking_delta') {
             // Surface the model's extended-thinking stream so the UI can show a
             // live "Thought for Ns" block — how the agent is reasoning about the
@@ -1445,6 +1450,10 @@ export async function* runAgentTurn(
           }
         } else if (event.type === 'content_block_stop') {
           if (activeBlockType === 'text') {
+            // The buffered voice copy is released once, as one block.
+            if (voiceTurn && activeBlockText) {
+              yield { type: 'text_delta', delta: activeBlockText }
+            }
             currentBlocks.push({ type: 'text', text: activeBlockText })
           } else if (activeBlockType === 'tool_use') {
             let parsedInput: Record<string, unknown> = {}
