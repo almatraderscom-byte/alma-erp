@@ -302,7 +302,10 @@ export async function processVeoConcat(job, { supabase, callJobResult, reportPro
       '-y', ...files.flatMap((f) => ['-i', f]),
       '-filter_complex', parts.join(';'),
       '-map', '[vout]', '-map', '[aout]',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+      // iOS hardware decoders reject H.264 4:4:4 — without an explicit 420p
+      // pin, xfade's format negotiation can upconvert and the phone shows a
+      // black frame while audio plays (owner report 2026-08-15).
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outFile,
     ], { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 })
 
@@ -653,7 +656,10 @@ export async function processMediaConcat(job, { supabase, callJobResult, reportP
       '-y', ...inputs,
       '-filter_complex', parts.join(';'),
       '-map', '[vout]', '-map', '[aout]',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+      // iOS hardware decoders reject H.264 4:4:4 — without an explicit 420p
+      // pin, xfade's format negotiation can upconvert and the phone shows a
+      // black frame while audio plays (owner report 2026-08-15).
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outFile,
     ], { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 })
 

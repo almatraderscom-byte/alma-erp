@@ -13089,6 +13089,10 @@ private struct AgentMediaCard: View {
     @State private var audioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
     @State private var audioClaimGeneration: UUID?
     @State private var audioSessionLease: AssistantNonCallAudioSessionLease?
+    /// True canvas ratio, loaded from the video track (portrait reels must not
+    /// sit in a 16:9 letterbox). 16:9 only until the asset reports itself.
+    @State private var videoAspect: CGFloat = 16.0 / 9.0
+    @State private var isVideoPlaying = false
     init(title: String, url: URL, pal: AgentPalette) {
         self.title = title; self.url = url; self.pal = pal
         _player = State(initialValue: AVPlayer(url: url))
@@ -13104,8 +13108,34 @@ private struct AgentMediaCard: View {
             }
             .foregroundStyle(pal.mutedHi)
             if isVideo {
-                VideoPlayer(player: player).aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                ZStack {
+                    VideoPlayer(player: player)
+                        .aspectRatio(videoAspect, contentMode: .fit)
+                    // Explicit play control: inside the chat scroll view the
+                    // player's built-in controls often never receive the tap,
+                    // leaving a dead black canvas (owner report 2026-08-15).
+                    if !isVideoPlaying {
+                        Button {
+                            player.play()
+                            isVideoPlaying = true
+                        } label: {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 54))
+                                .foregroundStyle(.white.opacity(0.95), .black.opacity(0.4))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("agent.video-card.play")
+                    }
+                }
+                .frame(maxHeight: 460)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .onAppear { loadVideoCanvasAndPoster() }
+                // Overlay visibility follows the PLAYER's truth, not an
+                // optimistic flag — pause/stall/failure all bring the explicit
+                // play control back (Codex P2).
+                .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                    isVideoPlaying = (status == .playing)
+                }
             } else {
                 HStack {
                     Button { startAudioPlayback() } label: { Image(systemName: "play.fill") }
@@ -13122,7 +13152,13 @@ private struct AgentMediaCard: View {
         .onReceive(NotificationCenter.default.publisher(
             for: AVPlayerItem.didPlayToEndTimeNotification,
             object: player.currentItem)) { _ in
-                guard !isVideo, let generation = audioClaimGeneration else { return }
+                if isVideo {
+                    // Rewind so the poster frame returns and replay is one tap.
+                    isVideoPlaying = false
+                    player.seek(to: .zero)
+                    return
+                }
+                guard let generation = audioClaimGeneration else { return }
                 releaseAudioOwnership(
                     generation: generation,
                     mode: .restoreBeforeNextAppMutation)
@@ -13138,6 +13174,33 @@ private struct AgentMediaCard: View {
         .onDisappear {
             guard !isVideo else { return }
             stopAudioPlayback()
+        }
+    }
+
+    /// Load the real canvas ratio + a poster frame; a portrait reel gets its
+    /// true 9:16 canvas and the card never opens as a featureless black box.
+    private func loadVideoCanvasAndPoster() {
+        guard isVideo else { return }
+        let asset = AVURLAsset(url: url)
+        Task {
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let size = try? await track.load(.naturalSize),
+               let transform = try? await track.load(.preferredTransform) {
+                let rect = CGRect(origin: .zero, size: size).applying(transform)
+                let w = abs(rect.width)
+                let h = abs(rect.height)
+                if w > 0, h > 0 {
+                    await MainActor.run { videoAspect = w / h }
+                }
+            }
+            await MainActor.run {
+                // Nudge off 0 so AVPlayer decodes a visible poster frame — but
+                // ONLY while idle at the start; racing an active playback (or a
+                // re-appear mid-video) must never yank the position back.
+                guard player.timeControlStatus != .playing,
+                      CMTimeGetSeconds(player.currentTime()) < 0.05 else { return }
+                player.seek(to: CMTime(seconds: 0.1, preferredTimescale: 600))
+            }
         }
     }
 
@@ -15940,6 +16003,11 @@ enum AgentConfirmCardCostPresentation {
     static func monetaryText(actionType: String?, costEstimate: Double?) -> String? {
         guard actionType != "image_gen", let costEstimate,
               costEstimate.isFinite, costEstimate > 0 else { return nil }
+        // media_plan cards carry a BDT total (the card body shows the exact
+        // USD+৳ lines) — labeling it "$" overstated the cost 125×.
+        if actionType == "media_plan" {
+            return String(format: "~৳%.0f", costEstimate)
+        }
         return String(format: "~$%.2f", costEstimate)
     }
 
