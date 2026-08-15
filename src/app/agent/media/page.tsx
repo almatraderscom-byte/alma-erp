@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { agentStorageSignedUrls } from '@/agent/lib/storage'
 
 export const metadata = { title: 'ALMA Agent — Media' }
 export const dynamic = 'force-dynamic'
@@ -39,16 +39,19 @@ export default async function AgentMediaPage() {
     orderBy: { createdAt: 'desc' },
     take: 40,
   })
-  const rows = await Promise.all(
-    projects.map(async (p: {
-      id: string; title: string; status: string; aspect: string
-      totalEstimateUsd: number | null; totalActualUsd: number | null
-      finalAssetPath: string | null; createdAt: Date
-    }) => ({
-      ...p,
-      finalUrl: p.finalAssetPath ? await agentStorageSignedUrl(p.finalAssetPath, 3600).catch(() => null) : null,
-    })),
-  )
+  // ONE batch signing request for every final — 40 sequential signs made a
+  // slow/throttled request stall the whole server render (Codex P2).
+  type ProjectRow = {
+    id: string; title: string; status: string; aspect: string
+    totalEstimateUsd: number | null; totalActualUsd: number | null
+    finalAssetPath: string | null; createdAt: Date
+  }
+  const finalPaths = (projects as ProjectRow[]).map((p) => p.finalAssetPath).filter((p): p is string => Boolean(p))
+  const signed = await agentStorageSignedUrls(finalPaths, 3600).catch(() => ({} as Record<string, string>))
+  const rows = (projects as ProjectRow[]).map((p) => ({
+    ...p,
+    finalUrl: p.finalAssetPath ? signed[p.finalAssetPath] ?? null : null,
+  }))
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
