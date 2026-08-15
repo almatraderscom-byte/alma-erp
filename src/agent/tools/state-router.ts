@@ -181,13 +181,13 @@ export const DOMAIN_PACKS = {
     'save_artifact',
   ],
   creative: [
+    // Media mode (CapCut-class engine) rides UP FRONT: multi-pack matches
+    // round-robin the ≤24 slots, and tools at the tail get cut — which is
+    // exactly how a regen ask once lost regenerate_media_scene (Codex P2).
+    'plan_media_video', 'get_media_project', 'regenerate_media_scene',
     'generate_image', 'run_creative_studio', 'check_studio_job', 'make_ad_creatives',
     'make_product_reel', 'generate_on_model_image', 'generate_on_model_batch',
     'manage_model_library', 'list_creative_studio_assets', 'list_product_assets',
-    // Media mode (CapCut-class engine): "ভিডিও বানাও" lands in this pack, so the
-    // plan tool pair must ride here too — the legacy `content` group alone
-    // leaves the media prompt active with the tools withheld under the router.
-    'plan_media_video', 'get_media_project', 'regenerate_media_scene',
   ],
   cs: [
     'get_fb_messenger_inbox', 'get_customer_intelligence', 'get_customer_segments',

@@ -92,6 +92,7 @@ import {
   type ClaimViolation,
   type ToolLedgerEntry,
   verifyClaimsAgainstLedger,
+  detectFabricatedToolResponse,
 } from '@/agent/lib/claim-verifier'
 
 // ── Event types ────────────────────────────────────────────────────────────
@@ -1529,6 +1530,12 @@ export async function* runAgentTurn(
           const violations: ClaimViolation[] = finalText
             ? verifyClaimsAgainstLedger(finalText, ledger)
             : []
+          // A hand-written <tool_response> block is fabricated evidence — parity
+          // with run-owner-turn (the native-loop path must not accept what the
+          // legacy loop rejects; Codex P1 on #767).
+          if (finalText && violations.length === 0) {
+            violations.push(...detectFabricatedToolResponse(finalText))
+          }
           // Card-detection: reply promises an owner-facing approval/question card
           // but NO interactive card surfaced this turn (head forgot to call the
           // approval tool, or a sub-agent made a DB-only pending action). Force the
