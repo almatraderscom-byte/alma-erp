@@ -85,7 +85,11 @@ export function payloadPurposePreview(purpose: string, maxBytes = 2800): string 
   let out = ''
   let bytes = 0
   for (const ch of purpose) {
-    const b = Buffer.byteLength(ch, 'utf8')
+    // Count the bytes the character occupies INSIDE the serialized JSON body
+    // (Codex P2: quotes/backslashes/newlines expand under JSON.stringify —
+    // capping raw UTF-8 bytes could still push the wire payload past APNs'
+    // limit and kill the ring).
+    const b = Buffer.byteLength(JSON.stringify(ch).slice(1, -1), 'utf8')
     if (bytes + b > maxBytes) break
     out += ch
     bytes += b

@@ -5774,6 +5774,10 @@ final class AlmaVoiceEngine {
         live.setToolResponsePlaybackBlocked(active)
         ttsLevel = level
         if active {
+            // Playback can begin before the matching outputTranscription event
+            // lands (Codex P2) — audio alone proves the model spoke, so the
+            // late-brief note must already know not to re-greet.
+            agentSpokeThisLiveSession = true
             liveToolSettleTask?.cancel()
             spokenTurnHadToolCall = false
             state = .speaking

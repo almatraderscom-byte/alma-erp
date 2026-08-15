@@ -145,6 +145,11 @@ describe('agent app call delivery registry', () => {
     const preview = payloadPurposePreview(bangla)
     expect(Buffer.byteLength(preview, 'utf8')).toBeLessThanOrEqual(2800)
     expect(bangla.startsWith(preview)).toBe(true)
+    // The cap counts SERIALIZED bytes: JSON escaping doubles backslashes and
+    // expands newlines, so the wire body stays bounded for hostile input too.
+    const escapey = '\\"\n'.repeat(2000)
+    const escapedPreview = payloadPurposePreview(escapey)
+    expect(Buffer.byteLength(JSON.stringify(escapedPreview), 'utf8')).toBeLessThanOrEqual(2810)
     // A typical salah brief fits whole.
     const brief = 'এটা নামাজ-তাগাদার কল। '.repeat(30).slice(0, 900)
     expect(payloadPurposePreview(brief)).toBe(brief)
