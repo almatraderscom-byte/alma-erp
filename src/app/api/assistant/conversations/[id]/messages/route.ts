@@ -435,6 +435,17 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // of living only in code and cost logs (audit §F).
       headVia: typeof u.headVia === 'string' ? u.headVia : undefined,
       headTier: typeof u.headTier === 'string' ? u.headTier : undefined,
+      // What the turn was allowed to CHOOSE from, alongside what it called.
+      // Without these, "why did it pick that tool" can only be answered by
+      // re-running the router offline against the message text — which is how
+      // the 2026-08-15 audit had to establish that a tool the reply called
+      // missing was in the request all along.
+      toolRouter: typeof u.tool_router === 'string' ? u.tool_router : undefined,
+      toolsShipped: num(u.tools_shipped) ?? undefined,
+      toolsTrimmed: Array.isArray(u.tools_trimmed)
+        ? (u.tools_trimmed as unknown[]).filter((n): n is string => typeof n === 'string')
+        : undefined,
+      grounding: u.grounding && typeof u.grounding === 'object' ? u.grounding : undefined,
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,

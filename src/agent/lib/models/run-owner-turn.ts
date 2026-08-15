@@ -7,6 +7,13 @@ import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
+import {
+  BOOKKEEPING_TOOLS,
+  MAX_GROUNDING_FORCE_ROUNDS,
+  groundingEvidence,
+  hasSubstantiveToolAttempt,
+  isGroundingSatisfied,
+} from '@/agent/lib/models/grounding'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
@@ -117,6 +124,8 @@ import {
   detectProseChoiceViolation,
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
+  detectUnattemptedIncapacity,
+  detectFalseToolUnavailability,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
@@ -387,10 +396,6 @@ const INTERNAL_NUDGE_MARKER =
  * Tools that record what happened rather than move the job forward. A push is
  * never "earned" by one of these.
  */
-const BOOKKEEPING_TOOLS = new Set([
-  'save_memory', 'update_memory', 'delete_memory', 'graph_remember',
-  'save_task_checkpoint', 'track_open_task', 'add_owner_todo', 'manage_work_todos',
-])
 
 function adapterActNowNudge(attempt: number): string {
   if (attempt <= 1) {
@@ -1859,6 +1864,11 @@ async function* runAlternateProviderTurn(
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
+  // How many rounds the grounding force has been applied. The requirement now
+  // survives a shallow tool (see SHALLOW_GROUNDING_TOOLS), so it needs its own
+  // ceiling: without one, a model that answers every forced round with another
+  // clock read would loop until the iteration budget ran out.
+  let groundingForceRounds = 0
   // Explicit live operational reads (health scan / order issues / audit
   // summary) may not finish as prose that merely says no tools ran. Two bounded
   // retries give the provider a real chance to use its supplied interface.
@@ -2284,10 +2294,21 @@ async function* runAlternateProviderTurn(
           : iteration === 0 ? (boundToolName ?? planBoundTool) : null
       // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
       // round 0 of a live-data question so the head cannot answer from memory.
+      //
+      // "ANY tool" is the loophole (owner turn 2026-08-15, "Ok audit koro"): the
+      // force was satisfied by `get_current_datetime`, the requirement then went
+      // away because it only looked at round 0 and at ANY success, and the turn
+      // ended on "Ads-এর live tool result পাওয়া যায়নি" — a data question answered
+      // without ever reading the data. A clock read is not grounding. The wire
+      // cannot express "required, from this subset" (OpenAI takes 'required' or
+      // one named function), so the requirement instead PERSISTS until a tool
+      // that could actually answer has succeeded, capped so it can never spin.
+      const groundingSatisfied = isGroundingSatisfied(toolRecords)
       const groundingRequiredThisRound =
-        ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
+        ownerRequirements.groundingRequired && !roundBoundToolName
           && iterationTools.length > 0
-          && !toolRecords.some((r) => r.status === 'success')
+          && !groundingSatisfied
+          && groundingForceRounds < MAX_GROUNDING_FORCE_ROUNDS
       // Speak-first note: `tool_choice: 'required'` is what MECHANICALLY silences
       // round 0 — a forced tool call leaves the provider no room for text. The
       // first attempt at this fix dropped the force so the head could speak, and
@@ -2297,6 +2318,7 @@ async function* runAlternateProviderTurn(
       // The preamble now has its own dedicated round BEFORE this loop, so Boss
       // already has his line and the force can stay exactly as it was.
       const forceGroundingToolChoice = groundingRequiredThisRound
+      if (forceGroundingToolChoice) groundingForceRounds++
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -2804,6 +2826,32 @@ async function* runAlternateProviderTurn(
           // regen "success" typed as <tool_response> JSON after failed calls).
           if (violations.length === 0) {
             violations.push(...detectFabricatedToolResponse(iterationText.trim()))
+          }
+          // A tool called missing while it sits in this very request. Decidable,
+          // not heuristic — we hold the list. Ran ahead of the incapacity rule
+          // below because it survives a turn where a real tool DID run, which is
+          // exactly how it got past the first fix on the preview.
+          if (violations.length === 0) {
+            violations.push(...detectFalseToolUnavailability(
+              iterationText.trim(),
+              iterationTools.map((t) => t.name),
+            ))
+          }
+          // "পারব না" with nothing attempted. The grounding + live-execution
+          // retries above already cover this shape, but both key on ERP business
+          // nouns, so a Mac / camera / browser / ads request reached here with no
+          // guard at all (owner incident 2026-08-15). This one keys on the
+          // imperative + the plea, so it holds in every domain.
+          if (violations.length === 0) {
+            violations.push(...detectUnattemptedIncapacity(iterationText.trim(), {
+              actionRequested: ownerRequirements.actionAttemptExpected,
+              // NOT `liveToolAttempted` (Codex P2): that only excludes
+              // bookkeeping, so a clock read before "no browser tool is
+              // connected" silenced this rule — the exact skipped-action failure
+              // it exists to catch, one irrelevant call later.
+              realToolAttempted: hasSubstantiveToolAttempt(toolRecords),
+              toolsAvailable: iterationTools.length > 0,
+            }))
           }
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
@@ -3983,7 +4031,20 @@ async function* runAlternateProviderTurn(
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
-          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined,
+          // Selection facts, on the MESSAGE (owner audit 2026-08-15). They are
+          // already written to the route span, but a span needs DB access, so
+          // every "why did it pick that tool" question so far has been answered
+          // by re-deriving the router offline instead of reading what the turn
+          // actually did. These four make the same question answerable from the
+          // conversation itself.
+          tool_router: toolSelection.router,
+          tools_shipped: neutralTools.length,
+          tools_trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : undefined,
+          grounding: ownerRequirements.groundingRequired
+            ? { required: true, satisfiedBy: groundingEvidence(toolRecords) }
+            : undefined,
+          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
