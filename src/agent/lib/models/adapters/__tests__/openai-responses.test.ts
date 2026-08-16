@@ -127,7 +127,7 @@ describe('openai Responses API mapping (Luna visible thought)', () => {
     // The 14.8s ask the owner captured live MUST be honoured in full.
     expect(rateLimitRetryDelaySeconds(Object.assign(new Error('rate limit. Please try again in 14.803s.'), { status: 429 }))).toBeCloseTo(15.303, 2)
     // Cap: a "try again in 1200s" answer must not stall the turn.
-    expect(rateLimitRetryDelaySeconds(Object.assign(new Error('rate limit — try again in 1200s'), { status: 429 }))).toBe(30)
+    expect(rateLimitRetryDelaySeconds(Object.assign(new Error('rate limit — try again in 1200s'), { status: 429 }))).toBe(61)
     expect(rateLimitRetryDelaySeconds(Object.assign(new Error('Bad request'), { status: 400 }))).toBeNull()
   })
 

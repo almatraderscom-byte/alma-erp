@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type {
+  ChatCompletionChunk,
   ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
@@ -117,7 +118,7 @@ export function openAiResponsesEnabled(): boolean {
  * the suggested wait must actually be honoured, and a ~150k-token turn is far
  * too expensive to burn on premature retries).
  */
-export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 30): number | null {
+export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 61): number | null {
   const status = (err as { status?: number })?.status
   const message = err instanceof Error ? err.message : String(err)
   if (status !== 429 && !/rate limit/i.test(message)) return null
@@ -542,7 +543,7 @@ export class OpenAiAdapter implements ProviderAdapter {
       for (let attempt = 0; attempt < 3 && !responsesStream; attempt++) {
         try {
           responsesStream = await this.client.responses.create(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             responsesParams as any,
             // maxRetries 0 (Codex P2): the SDK's built-in 429 retries would
             // multiply with this loop (3×3 requests) — this loop is the single
@@ -669,9 +670,14 @@ export class OpenAiAdapter implements ProviderAdapter {
     const stickyHeaders = this.stickyCacheHeader && args.cacheKey
       ? { 'x-grok-conv-id': args.cacheKey }
       : undefined
-    const reqOptions = args.signal || stickyHeaders
-      ? { ...(args.signal ? { signal: args.signal } : {}), ...(stickyHeaders ? { headers: stickyHeaders } : {}) }
-      : undefined
+    // maxRetries 0 on every rung (Codex P1 on PR #783, same class as #780):
+    // the SDK's built-in 429/5xx retries would multiply with the manual
+    // rate-limit loop — the loop is the single retry mechanism.
+    const reqOptions = {
+      maxRetries: 0,
+      ...(args.signal ? { signal: args.signal } : {}),
+      ...(stickyHeaders ? { headers: stickyHeaders } : {}),
+    }
     // Pull OpenRouter's upstream detail out of an APIError — `error.metadata.raw`
     // carries the provider's real reason ("Provider returned error" alone is
     // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
@@ -689,27 +695,61 @@ export class OpenAiAdapter implements ProviderAdapter {
     // (no exacto, no cache_control, no stream_options). A provider that 400s on
     // ANY optional extension must degrade, never knock the head over to the
     // fallback model (Grok-4.20 was silently DeepSeek all day, 2026-07-13).
+    // A RATE LIMIT is not a rung on this ladder (full-chain diagnosis
+    // 2026-08-16): stepping down re-sends the same tokens into the same
+    // throttled minute — every rung 429s in turn and the turn dies. Wait the
+    // provider's suggested delay (abortable) and retry the SAME request; only
+    // non-429 failures descend the ladder.
+    // Same-request 429 handling for EVERY rung (Codex P1 ×2 on PR #783): the
+    // wait-loop retries the identical request; an exhausted 429 SURFACES
+    // (descending would re-send the same tokens into the same throttled
+    // minute); only non-429 errors return to the caller for a ladder step.
+    const createWith429Wait = async (
+      params: ChatCompletionCreateParamsStreaming,
+    ): Promise<AsyncIterable<ChatCompletionChunk>> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await this.client.chat.completions.create(params, reqOptions) as AsyncIterable<ChatCompletionChunk>
+        } catch (err) {
+          if (args.signal?.aborted) throw err
+          // Transient network/5xx failures also deserve an IDENTICAL-request
+          // retry (Codex P2: maxRetries 0 removed the SDK's, and a one-off
+          // outage must not read as parameter incompatibility and descend).
+          const status = (err as { status?: number })?.status
+          const message = err instanceof Error ? err.message : String(err)
+          const transient = (typeof status === 'number' && (status >= 500 || status === 408 || status === 409))
+            || /ECONNRESET|ETIMEDOUT|fetch failed|Connection error|network|timed? ?out/i.test(message)
+          const rlDelay = rateLimitRetryDelaySeconds(err) ?? (transient ? 1.5 : null)
+          if (rlDelay == null) throw err
+          if (attempt >= 2) throw err // exhausted — surface, never descend
+          console.warn(`[openai-adapter] ${modelSlug} retryable failure — waiting ${rlDelay}s (attempt ${attempt + 1})`)
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, rlDelay * 1000)
+            args.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+          })
+          if (args.signal?.aborted) throw err
+        }
+      }
+    }
+    const isRateLimit = (err: unknown): boolean => rateLimitRetryDelaySeconds(err) != null
     let stream
     try {
-      stream = await this.client.chat.completions.create({
+      stream = await createWith429Wait({
         ...baseParams,
         ...providerPrefs,
         ...reasoningParam,
         ...samplerParam,
-      } as ChatCompletionCreateParamsStreaming, reqOptions)
+      } as ChatCompletionCreateParamsStreaming)
     } catch (err) {
-      if (args.signal?.aborted) throw err
+      if (args.signal?.aborted || isRateLimit(err)) throw err
       console.warn(
         `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters/sampler:`,
         errDetail(err),
       )
       try {
-        stream = await this.client.chat.completions.create(
-          baseParams as ChatCompletionCreateParamsStreaming,
-          reqOptions,
-        )
+        stream = await createWith429Wait(baseParams as ChatCompletionCreateParamsStreaming)
       } catch (err2) {
-        if (args.signal?.aborted) throw err2
+        if (args.signal?.aborted || isRateLimit(err2)) throw err2
         console.warn(
           `[openai-adapter] ${modelSlug} rejected the standard request too — final bare retry (no exacto/cache_control/stream_options):`,
           errDetail(err2),
@@ -724,10 +764,7 @@ export class OpenAiAdapter implements ProviderAdapter {
           // doesn't fix it, so the bare retry must still say 'none'.
           ...(this.rawOpenAi && args.tools.length > 0 ? { reasoning_effort: 'none' } : {}),
         }
-        stream = await this.client.chat.completions.create(
-          bareParams as ChatCompletionCreateParamsStreaming,
-          reqOptions,
-        )
+        stream = await createWith429Wait(bareParams as ChatCompletionCreateParamsStreaming)
       }
     }
 
