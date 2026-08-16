@@ -104,6 +104,63 @@ async function demoFinance(businessId: string): Promise<ERPFinanceResponse> {
   }
 }
 
+/**
+ * `financial_report` is a different shape from `finance` — the Finance page reads
+ * `report.cashflow.inflow` with the optional chain on `report` only, so a response
+ * missing `cashflow` throws and the whole page renders its error boundary.
+ */
+async function demoFinancialReport(businessId: string, params: URLSearchParams) {
+  const startDate = params.get('startDate')
+  const endDate = params.get('endDate')
+  const start = startDate ? new Date(startDate) : null
+  const end = endDate ? new Date(endDate) : null
+  const dateFilter = start || end
+    ? { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) }
+    : undefined
+
+  const [orders, expenseTotal, monthlyOrders] = await Promise.all([
+    prisma.lifestyleOrder.aggregate({
+      where: { businessId, status: 'Delivered', ...(dateFilter ? { date: dateFilter } : {}) },
+      _sum: { sellPrice: true, profit: true },
+    }),
+    prisma.lifestyleExpense.aggregate({
+      where: { businessId, deletedAt: null, ...(dateFilter ? { expenseDate: dateFilter } : {}) },
+      _sum: { amount: true },
+    }),
+    prisma.lifestyleOrder.findMany({
+      where: { businessId, status: 'Delivered' },
+      select: { date: true, sellPrice: true, profit: true },
+    }),
+  ])
+
+  const revenue = orders._sum.sellPrice || 0
+  const expenses = expenseTotal._sum.amount || 0
+  const netProfit = revenue - expenses
+
+  const byMonth = new Map<string, { revenue: number; profit: number }>()
+  for (const o of monthlyOrders) {
+    const key = o.date.toISOString().slice(0, 7)
+    const row = byMonth.get(key) || { revenue: 0, profit: 0 }
+    row.revenue += o.sellPrice
+    row.profit += o.profit
+    byMonth.set(key, row)
+  }
+
+  return {
+    period_label: startDate && endDate ? `${startDate} → ${endDate}` : 'All time',
+    profit_loss: {
+      revenue,
+      expenses,
+      net_profit: netProfit,
+      margin_pct: revenue ? Math.round((netProfit / revenue) * 1000) / 10 : 0,
+    },
+    monthly_revenue: [...byMonth.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({ month, revenue: v.revenue, profit: v.profit })),
+    cashflow: { inflow: revenue, outflow: expenses, net: netProfit },
+  }
+}
+
 /** Payroll is not seeded as transactions — the roll is derived so the page still balances. */
 function payrollRoll(employees: HREmployee[]): EmployeePayrollRoll[] {
   return employees
@@ -130,8 +187,10 @@ async function handleRoute(route: string, params: URLSearchParams) {
     }
 
     case 'finance':
-    case 'financial_report':
       return demoFinance(businessId)
+
+    case 'financial_report':
+      return demoFinancialReport(businessId, params)
 
     case 'hr_dashboard': {
       const [employees, finance] = await Promise.all([
