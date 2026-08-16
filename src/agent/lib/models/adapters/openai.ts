@@ -112,8 +112,12 @@ export function openAiResponsesEnabled(): boolean {
  * turn is ~150k tokens, so back-to-back turns trip it routinely — a bounded
  * wait-and-retry makes that invisible instead of an error card. Returns the
  * seconds to wait, capped, or null when the error is not a rate limit.
+ * Cap 30s (owner capture 2026-08-16: the provider asked for 14.8s — a 12s cap
+ * made both retries land INSIDE the throttle window and the turn still died;
+ * the suggested wait must actually be honoured, and a ~150k-token turn is far
+ * too expensive to burn on premature retries).
  */
-export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 12): number | null {
+export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 30): number | null {
   const status = (err as { status?: number })?.status
   const message = err instanceof Error ? err.message : String(err)
   if (status !== 429 && !/rate limit/i.test(message)) return null
