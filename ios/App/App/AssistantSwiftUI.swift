@@ -5488,6 +5488,8 @@ final class AssistantVM {
         settleLiveMode()
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
         guard let cid = conversationId else { return false }
+        // He is looking at this reply as it settles — it is read.
+        Task { await self.markActiveConversationRead() }
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
             guard streamTaskGeneration == expectedGeneration,
                   selectedSessionIdentity == expectedSessionIdentity,
@@ -5870,6 +5872,7 @@ final class AssistantVM {
         }
         reconnecting = false
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        await markActiveConversationRead()
         if terminalStatus != "error" {
             AlmaAgentTickHaptic.turnCompleted()
         }
@@ -5928,10 +5931,20 @@ final class AssistantVM {
     private struct UnreadCountResponse: Decodable { let count: Int }
 
     /// Cheap poll for the badge: one integer, no conversation list attached.
+    /// The chat he is CURRENTLY looking at is read first — a reply that arrived
+    /// while he watched it must never come back as a badge.
     func refreshUnreadCount() async {
+        await markActiveConversationRead()
         guard let resp: UnreadCountResponse = try? await AlmaAPI.shared.getQuietAuth(
             "/api/assistant/conversations/unread") else { return }
         unreadConversationCount = resp.count
+    }
+
+    /// Advance the watermark of the open chat to what is on screen right now.
+    /// Called when a turn settles, so a reply he WATCHED arrive is already read.
+    func markActiveConversationRead() async {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        await markConversationRead(cid)
     }
 
     /// Opening a chat reads it. Optimistic locally so the badge drops instantly,
