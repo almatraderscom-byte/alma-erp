@@ -538,9 +538,12 @@ export class OpenAiAdapter implements ProviderAdapter {
       for (let attempt = 0; attempt < 3 && !responsesStream; attempt++) {
         try {
           responsesStream = await this.client.responses.create(
-             
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             responsesParams as any,
-            args.signal ? { signal: args.signal } : undefined,
+            // maxRetries 0 (Codex P2): the SDK's built-in 429 retries would
+            // multiply with this loop (3×3 requests) — this loop is the single
+            // retry mechanism, and it honors the provider's suggested delay.
+            { maxRetries: 0, ...(args.signal ? { signal: args.signal } : {}) },
           ) as unknown as AsyncIterable<unknown>
         } catch (err) {
           if (args.signal?.aborted) throw err
