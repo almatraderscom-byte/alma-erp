@@ -48,4 +48,27 @@ describe('what must still NOT be an order', () => {
     expect(allows('এটা আমাকে দেখাচ্ছে না')).toBe(false)
     expect(allows('আমি কাজটা করছি')).toBe(false)
   })
+
+  // Codex P1: an unbounded alternation substring-matches inside ordinary words,
+  // and this branch runs BEFORE the question guard — so these plain questions
+  // would have shipped every write-class tool.
+  it('does not read an imperative out of the middle of an ordinary word', () => {
+    for (const msg of [
+      'প্রতিদিন বিক্রি কেমন?',   // দিন
+      'সেদিন কী হয়েছিল?',        // দিন
+      'শেষ লেনদেন কত ছিল?',      // দেন
+      'গত ৭ দিনের অর্ডার কত?',   // দিন
+      'করোনার সময় কী হয়েছিল?',  // করো
+      'আমাকে জানাও নি কেন?',     // নাও — inside জানাও
+    ]) {
+      expect(allows(msg), msg).toBe(false)
+    }
+  })
+
+  it('leaves out forms a boundary cannot disambiguate from nouns', () => {
+    // বানান = spelling, চালান = invoice, খোল = husk. Excluded rather than
+    // tokenised: no boundary can tell these from the imperative.
+    expect(allows('এই শব্দের বানান কী?')).toBe(false)
+    expect(allows('চালান নম্বর কত?')).toBe(false)
+  })
 })

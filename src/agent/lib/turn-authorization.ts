@@ -52,10 +52,21 @@ const BANGLISH_IMPERATIVE_RE =
 //
 // Scoped deliberately to the Bangla spellings of verbs the Banglish list ALREADY
 // grants — this removes an inconsistency, it does not open a new class of action.
-// Bare stems (কর, দেখা) are excluded: `\b` is ASCII-only in JS, so they would
-// also match inside করছি / দেখাচ্ছে and turn a plain statement into an order.
-const BANGLA_IMPERATIVE_RE =
-  /(?:দাও|দিও|দিন|দেন|করো|কোরো|করুন|বানাও|বানান|চালাও|চালান|পাঠাও|পাঠান|খোলো|খুলুন|খোল|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)/
+//
+// TOKEN BOUNDARIES ARE LOAD-BEARING (Codex P1). `\b` is ASCII-only in JS, so a
+// bare alternation substring-matches inside ordinary words and would authorize
+// writes on a plain question: দিন inside প্রতিদিন / সেদিন, দেন inside লেনদেন,
+// নাও inside জানাও, করো inside করোনা. The Bengali-block lookaround below is what
+// makes each alternative a whole token. Bare stems (কর, দেখা) stay out entirely —
+// even tokenised they would fire on করছি / দেখাচ্ছে.
+//
+// Ambiguous forms are excluded rather than tokenised, because a boundary cannot
+// tell a noun from an imperative: বানান (spelling), চালান (invoice), দিন (day),
+// দেন (he gives), খোল (husk). The owner writes the informal imperative anyway.
+const BN = '\\u0980-\\u09FF'
+const BANGLA_IMPERATIVE_RE = new RegExp(
+  `(?<![${BN}])(?:দাও|দিও|করো|কোরো|করুন|বানাও|চালাও|পাঠাও|খোলো|খুলুন|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)(?![${BN}])`,
+)
 
 const EXPLICIT_ACTION_RE =
   /(\b(?:fix|create|make|add|update|change|edit|delete|remove|cancel|approve|reject|send|dispatch|assign|post|publish|upload|download|open|click|run|execute|start|continue|resume|retry|call|notify|schedule|set|save|remember|mark|log|generate|prepare|merge|apply|enable|disable)\b|(?:task|টাস্ক|কাজ)\s*(?:দাও|দেন|পাঠাও|assign|বানাও|তৈরি\s*করো)|(?:sms|message|মেসেজ|announcement|নোটিশ)\s*(?:দাও|পাঠাও|send)|(?:ছবি|image|photo|ভিডিও|video|reel|রিল|creative|ক্রিয়েটিভ)\s*(?:বানাও|তৈরি\s*করো|generate|make)|(?:audit|অডিট|research|রিসার্চ|বিশ্লেষণ|analysis|report|রিপোর্ট)\s*(?:করো|চালাও|run|বানাও|তৈরি\s*করো|prepare)|(?:website|ওয়েবসাইট|সাইট|browser|ব্রাউজার)\s*(?:খোলো|খুলে\s*দাও|open|fix|update|change|publish)|(?:যোগ|আপডেট|বদল|পরিবর্তন|ডিলিট|মুছ|বাতিল|ক্যানসেল|সেভ|পোস্ট|পাবলিশ|আপলোড|ডাউনলোড|শুরু|বন্ধ|চালু|লক|রিমাইন্ডার)\s*(?:করো|করুন|করে\s*দাও|দাও)?|মনে\s*(?:রাখো|রেখো|রাখবেন)|(?:kaj|task).*(?:koro|dao|daw|pathao|banao)|(?:kore|korey)\s*(?:dao|daw)|(?:কল|ফোন|call|fon|kol)\s*(?:করে|কোরে|kore|korey)[^\n।?]{0,24}?(?:জানা|জানি|jana|jani)|(?:কল|ফোন)\s*(?:দাও|দিও|দিবে|দিস|করো|কোরো|করবে))/i
