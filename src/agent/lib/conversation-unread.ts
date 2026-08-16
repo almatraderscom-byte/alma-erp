@@ -80,11 +80,17 @@ export async function markConversationRead(id: string, upTo?: Date | null): Prom
   }
   const readAt = upTo < now ? upTo : now
 
-  const res = await prisma.agentConversation.updateMany({
-    where: { id, OR: [{ lastReadAt: null }, { lastReadAt: { lt: readAt } }] },
-    data: { lastReadAt: readAt },
-  })
-  if (res.count > 0) return true
+  // RAW on purpose: a Prisma update would also bump `@updatedAt`, and the
+  // conversation list orders and paginates by it — so merely READING an old chat
+  // would jump it to the top of his sidebar and rewrite its activity date.
+  // Reading is not activity.
+  const count = await prisma.$executeRaw`
+    UPDATE "agent_conversations"
+    SET "last_read_at" = ${readAt}
+    WHERE "id" = ${id}
+      AND ("last_read_at" IS NULL OR "last_read_at" < ${readAt})
+  `
+  if (count > 0) return true
   // Nothing updated: either the row is gone, or it was already read past this
   // point — which is success, not failure.
   const exists = await prisma.agentConversation.count({ where: { id } })
