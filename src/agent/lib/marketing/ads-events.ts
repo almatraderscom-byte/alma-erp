@@ -30,7 +30,11 @@ export const DETAIL_MAX_OBJECTS = 25
 /** Concurrent Graph reads per batch — bounded so a wide event can't stampede. */
 export const DETAIL_BATCH = 5
 
-export type AdsEventStatus = 'new' | 'seen' | 'actioned' | 'dismissed'
+/**
+ * `logged` is for events the parser deliberately marks non-push (a LOW creative
+ * fatigue reading): worth keeping as history, never an item asking for a decision.
+ */
+export type AdsEventStatus = 'new' | 'seen' | 'actioned' | 'dismissed' | 'logged'
 export const OPEN_STATUSES: AdsEventStatus[] = ['new', 'seen']
 
 export type AdsEventRecord = {
@@ -181,7 +185,10 @@ export async function recordAdsEvent(
       create: {
         dedupeKey: event.key,
         ...common,
-        status: 'new',
+        // A non-push event is explicitly log-only; filing it as `new` would put a
+        // LOW fatigue reading in the inbox forever, asking for a decision nobody
+        // ever intended to request.
+        status: event.push ? 'new' : 'logged',
         // Notification state is stamped by markAdsEventNotified AFTER a channel
         // accepts the alert — never on the attempt.
         notifyCount: 0,

@@ -772,7 +772,7 @@ const get_ad_recommendations: AgentTool = {
 
     try {
       const events = await listAdsEvents({
-        status: (['open', 'all', 'new', 'seen', 'actioned', 'dismissed'].includes(status)
+        status: (['open', 'all', 'new', 'seen', 'actioned', 'dismissed', 'logged'].includes(status)
           ? status
           : 'open') as 'open',
         limit,

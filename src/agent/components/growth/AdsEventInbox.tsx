@@ -37,7 +37,7 @@ type AdsEvent = {
   title: string
   message: string
   tier: number
-  status: 'new' | 'seen' | 'actioned' | 'dismissed'
+  status: 'new' | 'seen' | 'actioned' | 'dismissed' | 'logged'
   detail: AdObjectDetail[] | null
   detailError: string | null
   notifyCount: number

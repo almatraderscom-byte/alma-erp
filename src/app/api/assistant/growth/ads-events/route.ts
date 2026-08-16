@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const statusParam = req.nextUrl.searchParams.get('status') ?? 'open'
-  const status = ['open', 'all', 'new', 'seen', 'actioned', 'dismissed'].includes(statusParam)
-    ? (statusParam as 'open' | 'all' | 'new' | 'seen' | 'actioned' | 'dismissed')
+  const status = ['open', 'all', 'new', 'seen', 'actioned', 'dismissed', 'logged'].includes(statusParam)
+    ? (statusParam as 'open' | 'all' | 'new' | 'seen' | 'actioned' | 'dismissed' | 'logged')
     : 'open'
   const limit = Number(req.nextUrl.searchParams.get('limit') ?? 20)
 
