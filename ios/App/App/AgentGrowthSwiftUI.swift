@@ -366,6 +366,11 @@ final class AgentGrowthVM {
     var adsShowResolved = false
     var adsDetailLoading: String? = nil
     var adsBusyId: String? = nil
+    /// Event id from a push tap (/agent/growth?rec=…). Set once by the screen.
+    var focusRecId: String? = nil
+    /// Cleared once the owner decides on the focused event, so the open-only list
+    /// stops pulling the row he just resolved back onto the screen.
+    func clearAdsFocus() { focusRecId = nil }
     var loading = false            // GSC card (web `loading`)
     var featuresLoading = false    // feature board loads independently (web parity)
     var disconnecting = false      // NP-4: native disconnect in flight
@@ -446,6 +451,10 @@ final class AgentGrowthVM {
             "/api/assistant/growth/ads-events",
             query: ["status": adsShowResolved ? "all" : "open", "limit": "30"])
         adsEvents = resp?.events ?? []
+        // Recovery lives INSIDE the load, not in a second task: a separate task
+        // keyed on the list would be cancelled by this very assignment, and the
+        // assignment would overwrite anything that task had inserted.
+        if let focus = focusRecId { await ensureFocusedAdsEvent(focus) }
     }
 
     /// Pull Meta's real recommendation text for one event. The webhook never does
@@ -465,6 +474,9 @@ final class AgentGrowthVM {
     func decideAdsEvent(_ id: String, status: String) async {
         adsBusyId = id
         defer { adsBusyId = nil }
+        // Once he has decided on the deep-linked event, stop recovering it: a
+        // later refresh would otherwise pull the row he just resolved back in.
+        if focusRecId == id { clearAdsFocus() }
         do {
             let resp: AdsEventResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/growth/ads-events/\(id)", body: AdsDecision(status: status))
@@ -519,7 +531,6 @@ struct AgentGrowthScreen: View {
     @State private var metaConnectResult: String? = nil
     @State private var confirmDisconnect = false
     @State private var openAdsEventId: String? = nil
-    @State private var focusHandled = false
     /// Set when the owner arrived by tapping an ads push (/agent/growth?rec=<id>).
     let focusRecId: String?
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -551,18 +562,15 @@ struct AgentGrowthScreen: View {
         .background(AgentGrowthAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
-        // A push tap deep-links to one event — open it as soon as the list lands.
-        // Runs ONCE on arrival: deciding on the focused event removes it from the
-        // open-only list, which changes the count — without the latch this would
-        // fetch the row straight back and the decision would look like a no-op.
-        .task(id: vm.adsEvents.count) {
-            guard let focus = focusRecId, !focusHandled else { return }
-            focusHandled = true
-            // Resolved events are filtered out of the list — fetch the focused one
-            // directly so a live push never opens to an empty card.
-            await vm.ensureFocusedAdsEvent(focus)
-            guard vm.adsEvents.contains(where: { $0.id == focus }) else { return }
+        // ONE task, in order: the load fetches the list and, inside it, recovers
+        // the focused event (which may be resolved and therefore filtered out of
+        // the open-only list); only then does its detail open. Splitting this into
+        // a second task keyed on the list made the recovery cancel itself the
+        // moment the list arrived and changed the key.
+        .task {
+            vm.focusRecId = focusRecId
+            await vm.load()
+            guard let focus = focusRecId, vm.adsEvents.contains(where: { $0.id == focus }) else { return }
             openAdsEventId = focus
             await vm.loadAdsDetail(focus)
         }
