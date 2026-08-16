@@ -12,6 +12,7 @@ import {
   MAX_GROUNDING_FORCE_ROUNDS,
   groundingEvidence,
   hasSubstantiveToolAttempt,
+  hasSuccessfulLook,
   isGroundingSatisfied,
 } from '@/agent/lib/models/grounding'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
@@ -125,6 +126,7 @@ import {
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
   detectUnattemptedIncapacity,
+  detectUngroundedObservation,
   detectFalseToolUnavailability,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
@@ -2836,6 +2838,20 @@ async function* runAlternateProviderTurn(
               iterationText.trim(),
               iterationTools.map((t) => t.name),
             ))
+          }
+          // The mirror of the rule below: a CONFIDENT answer about a live screen,
+          // camera or page with nothing looked at. Checked first because it is
+          // the harder one to spot by reading — nothing in the reply looks wrong.
+          if (violations.length === 0) {
+            violations.push(...detectUngroundedObservation(iterationText.trim(), {
+              // A successful OBSERVATION, not merely a successful tool (Codex
+              // P1, twice). A screenshot denied Screen Recording permission is a
+              // substantive attempt that returns no image; a successful
+              // mac_agent_status or get_orders satisfies grounding without
+              // anything having been seen. Sight claims need an eye.
+              lookSucceeded: hasSuccessfulLook(toolRecords),
+              toolsAvailable: iterationTools.length > 0,
+            }))
           }
           // "পারব না" with nothing attempted. The grounding + live-execution
           // retries above already cover this shape, but both key on ERP business

@@ -10,7 +10,11 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { classifyActionAttemptExpected } from '../owner-turn-requirements'
-import { detectUnattemptedIncapacity, detectFalseToolUnavailability } from '../claim-verifier'
+import {
+  detectUnattemptedIncapacity,
+  detectFalseToolUnavailability,
+  detectUngroundedObservation,
+} from '../claim-verifier'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -148,6 +152,76 @@ describe('detectFalseToolUnavailability', () => {
 
   it('handles an empty tool list without claiming anything', () => {
     expect(detectFalseToolUnavailability(PHANTOM, [])).toEqual([])
+  })
+})
+
+describe('detectUngroundedObservation', () => {
+  // Verbatim from the preview run that defeated BOTH earlier rules: one round,
+  // zero tool calls, and a confident reading of a screen it never looked at.
+  // The text it "saw" came from an earlier turn in a different conversation.
+  const FABRICATED =
+    'বস, ম্যাক্সস্ট্রিমে আপনার Mac-এর লাইভ স্ক্রিনে কী দেখা যাচ্ছে তা দেখতে যাচ্ছি।\n\n'
+    + 'বস, **Mac-এর লাইভ স্ক্রিনে Maxstream-এর পেজ খোলা আছে**—স্ক্রিনে "Maxell-Metac…" লেখা দেখা যাচ্ছে।'
+
+  const noLook = { lookSucceeded: false, toolsAvailable: true }
+  const looked = { lookSucceeded: true, toolsAvailable: true }
+
+  it('catches a live reading given without a look', () => {
+    const v = detectUngroundedObservation(FABRICATED, noLook)
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('ungrounded_observation')
+  })
+
+  it('stays quiet once the look SUCCEEDED — then the reading is earned', () => {
+    expect(detectUngroundedObservation(FABRICATED, looked)).toEqual([])
+  })
+
+  it('still fires when the look was attempted but FAILED (Codex P1)', () => {
+    // mac_desk_control denied Screen Recording is a substantive attempt that
+    // returns no image; the description is still of a screen nobody saw.
+    expect(detectUngroundedObservation(FABRICATED, noLook)).toHaveLength(1)
+  })
+
+  it('does not reject an honest Bangla draft that merely says খোলা আছে (Codex P2)', () => {
+    expect(detectUngroundedObservation('নোটিশ: রেজিস্ট্রেশন খোলা আছে।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('দোকান চালু আছে।', noLook)).toEqual([])
+  })
+
+  it('still catches খোলা আছে when it IS about a screen', () => {
+    expect(detectUngroundedObservation('স্ক্রিনে Maxstream খোলা আছে।', noLook)).toHaveLength(1)
+  })
+
+  it('does not reject an honest tool-free draft that merely says "is open"', () => {
+    // Codex P2: bare "is open" has no live surface in it.
+    const draft = 'Boss, notice draft: "Registration is open until Friday."'
+    expect(detectUngroundedObservation(draft, noLook)).toEqual([])
+  })
+
+  it('does not fire on the speak-first line, which states INTENT not sight', () => {
+    // This streams before every tool call; treating it as a claim would put the
+    // whole speak-first contract into a retry loop.
+    expect(detectUngroundedObservation('বস, আপনার Mac-এর লাইভ স্ক্রিন দেখতে যাচ্ছি।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('বস, ক্যামেরায় কী আছে দেখে নিচ্ছি।', noLook)).toEqual([])
+  })
+
+  it('stays quiet on an answer that claims no live sight at all', () => {
+    expect(detectUngroundedObservation('বস, গত ৭ দিনে ০টি অর্ডার এসেছে।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('ধন্যবাদ Boss, নোট করে রাখলাম।', noLook)).toEqual([])
+  })
+
+  it('covers a look-only QUESTION too, not just an order (Codex P1)', () => {
+    // "স্ক্রিনে কী আছে?" is not an order, so actionRequested is false — and a
+    // tool-free "Chrome is open on your screen" is exactly as fabricated there.
+    expect(detectUngroundedObservation('বস, স্ক্রিনে Chrome খোলা আছে।', noLook)).toHaveLength(1)
+  })
+
+  it('does not fire on generated prose that observes nothing live (Codex P2)', () => {
+    expect(detectUngroundedObservation('ক্যাপশন: ছবিতে সূর্যাস্ত দেখা যাচ্ছে।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('রিপোর্টে দেখা যাচ্ছে বিক্রি বেড়েছে।', noLook)).toEqual([])
+  })
+
+  it('catches the English shape', () => {
+    expect(detectUngroundedObservation('Boss, the Chrome window is currently open.', noLook)).toHaveLength(1)
   })
 })
 

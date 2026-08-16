@@ -38,6 +38,8 @@ export type ClaimViolationCategory =
   | 'unattempted_incapacity'
   /** The reply named a tool as missing while that exact tool was in the request. */
   | 'phantom_missing_tool'
+  /** The reply describes what is live on a screen/camera/page with no tool run. */
+  | 'ungrounded_observation'
   /** The reply asserts a card is waiting for Boss when no card exists. */
   | 'phantom_card_state'
   /** Boss just answered a question and the reply asks him another one. */
@@ -824,6 +826,89 @@ export function detectFalseToolUnavailability(
   return []
 }
 
+// ── Describing a live surface it never looked at (owner, preview 2026-08-16) ───
+//
+// The rules above all catch the head EXCUSING itself. This is the opposite face
+// of the same failure and the more dangerous one, because nothing in the reply
+// looks wrong:
+//
+//   user:  "ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।"
+//   reply: "Mac-এর লাইভ স্ক্রিনে Maxstream-এর পেজ খোলা আছে — স্ক্রিনে
+//           'Maxell-Metac…' লেখা দেখা যাচ্ছে।"   ← one round, ZERO tool calls
+//
+// That reading was real, but it came from an EARLIER turn in a different
+// conversation; this one was two messages old. The model recalled a past result
+// and served it as a present observation. `unattempted_incapacity` needs a plea
+// and `detectToolExecutionClaims` needs a tool NAME, so a confident answer with
+// neither slipped past both. The grounding gate would have caught it, except
+// that gate keys on ERP business nouns and "দেখাও" carries none.
+//
+// Scoped the same way as unattempted_incapacity — Boss used an imperative and
+// not one substantive tool ran — so the only extra condition is that the reply
+// asserts a CURRENT observation. Present-tense intent ("দেখতে যাচ্ছি") is not a
+// claim and must not match; the speak-first line says exactly that before every
+// tool call.
+
+const LIVE_SURFACE =
+  '(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser|উইন্ডো|window|ট্যাব|tab|পেজ|page|ডেস্ক|desk|\\bmac\\b|ম্যাক|লাইভ|live)'
+
+const LIVE_OBSERVATION_CLAIM = new RegExp(
+  [
+    // Sight, anchored to a LIVE surface (Codex P2). Bare "দেখা যাচ্ছে" also
+    // matched generated prose that observes nothing live — a caption
+    // "ছবিতে সূর্যাস্ত দেখা যাচ্ছে", a drafted "রিপোর্টে দেখা যাচ্ছে বিক্রি
+    // বেড়েছে" — and forced honest drafts into a retry.
+    `${LIVE_SURFACE}[^।!?\\n]{0,60}(?:দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)|দেখতে\\s*পাচ্ছি)`,
+    `(?:দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)|দেখতে\\s*পাচ্ছি)[^।!?\\n]{0,60}${LIVE_SURFACE}`,
+    // "স্ক্রিনে … লেখা", "স্ক্রিনে … খোলা"
+    'স্ক্রিনে[^।!?\\n]{0,60}(?:লেখা|খোলা|দেখা)',
+    // "… খোলা আছে" / "… চালু আছে" ONLY next to a live surface (Codex P2): bare,
+    // it also matched an honest tool-free draft — "নোটিশ: রেজিস্ট্রেশন খোলা আছে",
+    // "দোকান চালু আছে" — and forced it into a verification retry. The two
+    // alternatives above carry their own anchor (স্ক্রিনে / দেখা); this one did
+    // not, despite the comment that used to claim it did.
+    '(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser|উইন্ডো|window|ট্যাব|tab|পেজ|page)[^।!?\\n]{0,40}(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে',
+    '(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে[^।!?\\n]{0,40}(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser)',
+    // English. The generic state phrases need a live surface NEAR them (Codex
+    // P2): bare "is open" also fires on a perfectly honest tool-free draft —
+    // "Create a short notice: registration is open" — and would force it into a
+    // verification retry. The Bangla alternatives above are already anchored on
+    // স্ক্রিনে / দেখা, so only the English side needed the anchor spelled out.
+    "\\bi can see\\b",
+    '(?:screen|camera|window|tab|page|desk)[^.!?\\n]{0,40}\\bis (?:currently )?(?:open|showing|running)\\b',
+    '\\bis (?:currently )?(?:open|showing|running)\\b[^.!?\\n]{0,40}(?:screen|camera|window|tab|page|desk)',
+    '\\bon (?:the |your )?screen\\b',
+  ].join('|'),
+  'i',
+)
+
+export function detectUngroundedObservation(
+  replyText: string,
+  /**
+   * `lookSucceeded` — NOT "a tool was attempted" (Codex P1). A screenshot that
+   * was DENIED Screen Recording permission is a substantive attempt and still
+   * returns no image, so accepting an attempt would let "Maxstream-এর পেজ খোলা
+   * আছে" ride on a failed look. Only a successful observation earns the claim.
+   */
+  opts: { lookSucceeded: boolean; toolsAvailable: boolean },
+): ClaimViolation[] {
+  // NO `actionRequested` precondition (Codex P1). "স্ক্রিনে কী আছে?" is a
+  // question, not an order, and a tool-free "Chrome is open on your screen" is
+  // exactly as fabricated there. A sight claim needs a look whatever the mood of
+  // the sentence that prompted it.
+  if (opts.lookSucceeded || !opts.toolsAvailable) return []
+  const text = replyText.trim()
+  if (!text) return []
+  const hit = text.match(LIVE_OBSERVATION_CLAIM)
+  if (!hit) return []
+  return [{
+    category: 'ungrounded_observation',
+    ruleId: 'live_observation_without_a_look',
+    matchedSnippet: stripWhitespace(hit[0]).slice(0, 120),
+    requiredTools: [],
+  }]
+}
+
 // ── "Waiting for approval" with nothing to approve (owner incident 2026-07-26) ─
 //
 // The mirror image of a promised-but-missing card: the head parks the turn on a
@@ -1164,6 +1249,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +
     'এখনই আসল tool-টা কল করুন এবং তার আসল ফলাফল থেকে উত্তর দিন; tool না থাকলে find_tool দিয়ে লোড করুন। ' +
     'কল করতে না পারলে সোজা বলুন "পারিনি" — বানানো id বা ধাপ কখনো নয়।',
+  ungrounded_observation:
+    'আপনি বলেছেন এখন কী দেখা যাচ্ছে / কী খোলা আছে — কিন্তু এই turn-এ একটাও আসল tool চলেনি, '
+    + 'অর্থাৎ আপনি কিছুই দেখেননি। আগের কোনো turn-এর ফল মনে রেখে সেটাকে এখনকার অবস্থা বলে চালানো '
+    + 'Boss-এর কাছে বানানো উত্তরের সমান — স্ক্রিন/ক্যামেরা/পেজ এক মিনিটেই বদলে যায়। '
+    + 'এখনই সংশ্লিষ্ট tool কল করে আসল অবস্থা দেখুন, তারপর যা দেখলেন সেটাই বলুন।',
   phantom_missing_tool:
     'আপনি নাম ধরে বলেছেন একটা tool "উপলভ্য নেই" — কিন্তু ওই tool-টা এই turn-এ আপনার তালিকাতেই আছে। '
     + 'সার্ভার তালিকাটা জানে, তাই এটা অনুমান নয়, যাচাই করা। আপনি সীমা জানাননি, সীমা বানিয়েছেন। '

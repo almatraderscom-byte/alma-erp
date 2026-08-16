@@ -96,7 +96,9 @@ const set_salah_override: AgentTool = {
   description:
     'Overrides the reminder time for a specific salah waqt. ' +
     'Use when the owner says "আজ Dhuhr ২:৩০-এ পড়বো" or "Asr skip করব (সফরে আছি)". ' +
-    'Creates a PENDING ACTION — owner must confirm before the override takes effect.',
+    'Creates a PENDING ACTION — owner must confirm before the override takes effect. ' +
+    'NOT for changing the standing schedule: this is a one-off exception for a single waqt and leaves the ' +
+    'configured times untouched. If he means "from now on, jamat is 1:45", that is set_salah_time.',
   input_schema: {
     type: 'object' as const,
     properties: {

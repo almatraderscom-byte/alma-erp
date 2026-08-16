@@ -376,7 +376,9 @@ const set_salah_time: AgentTool = {
   description:
     'Update configurable salah times for a waqt — azan (wakto start), prayer (jamat), and/or wakto end. ' +
     'Use when owner says e.g. "Dhuhr jamat 1:45 koro" or "Asr azan 4:15". Times HH:MM 24h Dhaka. ' +
-    'Only change what owner specifies. Duty-window reads the new jamat time automatically.',
+    'Only change what owner specifies. Duty-window reads the new jamat time automatically. ' +
+    'NOT for a one-off ("আজ Dhuhr ২:৩০-এ পড়বো") — this rewrites the STANDING schedule for every day after it. ' +
+    'A single-day exception is set_salah_override.',
   input_schema: {
     type: 'object' as const,
     properties: {

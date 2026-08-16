@@ -35,6 +35,15 @@ const BARE_CONTINUATION_RE =
 const BANGLISH_IMPERATIVE_RE =
   /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|ban(?:ao|aw|au)|bana|chal(?:ao|aw)|cal(?:ao|aw)|chala|chol(?:ao|aw)|cholo|path(?:ao|aw)|pat(?:ao|aw)|kholo|khulo|khol|dekh(?:ao|aw|o)|lag(?:ao|aw)|tham(?:ao|aw)|bondho|chalu|generate)\b/i
 
+// NOTE on Bangla imperatives: there is deliberately no Bangla counterpart to
+// BANGLISH_IMPERATIVE_RE above. One was written (2026-08-16) and removed the same
+// day: six review rounds found eleven P1s in it, because "order or question" in
+// Bengali is a semantic call, not a lexical one — দিবে is also the future tense,
+// নাও is also a boat, and the familiar 2nd-person present is spelled exactly like
+// the imperative. The single tool it was needed for now sits in
+// OWNER_SERVICE_TOOLS instead. If a future case needs this again, put the tool on
+// that list rather than teaching this file grammar.
+
 const EXPLICIT_ACTION_RE =
   /(\b(?:fix|create|make|add|update|change|edit|delete|remove|cancel|approve|reject|send|dispatch|assign|post|publish|upload|download|open|click|run|execute|start|continue|resume|retry|call|notify|schedule|set|save|remember|mark|log|generate|prepare|merge|apply|enable|disable)\b|(?:task|টাস্ক|কাজ)\s*(?:দাও|দেন|পাঠাও|assign|বানাও|তৈরি\s*করো)|(?:sms|message|মেসেজ|announcement|নোটিশ)\s*(?:দাও|পাঠাও|send)|(?:ছবি|image|photo|ভিডিও|video|reel|রিল|creative|ক্রিয়েটিভ)\s*(?:বানাও|তৈরি\s*করো|generate|make)|(?:audit|অডিট|research|রিসার্চ|বিশ্লেষণ|analysis|report|রিপোর্ট)\s*(?:করো|চালাও|run|বানাও|তৈরি\s*করো|prepare)|(?:website|ওয়েবসাইট|সাইট|browser|ব্রাউজার)\s*(?:খোলো|খুলে\s*দাও|open|fix|update|change|publish)|(?:যোগ|আপডেট|বদল|পরিবর্তন|ডিলিট|মুছ|বাতিল|ক্যানসেল|সেভ|পোস্ট|পাবলিশ|আপলোড|ডাউনলোড|শুরু|বন্ধ|চালু|লক|রিমাইন্ডার)\s*(?:করো|করুন|করে\s*দাও|দাও)?|মনে\s*(?:রাখো|রেখো|রাখবেন)|(?:kaj|task).*(?:koro|dao|daw|pathao|banao)|(?:kore|korey)\s*(?:dao|daw)|(?:কল|ফোন|call|fon|kol)\s*(?:করে|কোরে|kore|korey)[^\n।?]{0,24}?(?:জানা|জানি|jana|jani)|(?:কল|ফোন)\s*(?:দাও|দিও|দিবে|দিস|করো|কোরো|করবে))/i
 
@@ -75,7 +84,14 @@ const DEEP_TASK_NOUN_RE = new RegExp(
 const RECORDABLE_FACT_RE =
   /(poreci|porechi|porlam|পড়েছি|পড়েছি|পড়লাম|পড়লাম|qaza|কাযা|(?:namaz|নামাজ).*(?:missed|মিস)|(?:খরচ|expense|paid|payment|পেমেন্ট).*(?:\d|০|১|২|৩|৪|৫|৬|৭|৮|৯|টাকা|taka|৳|bdt|aed|usd)|(?:\d|০|১|২|৩|৪|৫|৬|৭|৮|৯).*(?:টাকা|taka|৳|bdt|aed|usd)?.*(?:খরচ|expense|paid|payment|পেমেন্ট)|(?:task|টাস্ক|কাজ).*(?:done|শেষ\s*করেছি|শেষ\s*করলাম|complete)|(?:ওষুধ|medicine|medication).*(?:খেয়েছি|খেয়েছি|took|নিয়েছি|নিয়েছি)|\+?\d{10,14}|\b(?:আমি|আমার|i)\b.*\b(?:prefer|পছন্দ|always|এখন\s*থেকে|from\s*now)\b)/i
 
-const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কোথায়|কারা|কোন)\s/i
+// The Bengali interrogatives took a literal `\s`, so a SENTENCE-FINAL question
+// word never matched: "তুমি করো কী" and "তুমি করো কী।" both read as statements
+// (Codex P1). Bengali questions routinely end on the interrogative, and Boss
+// often omits the question mark, so this was the common shape rather than an
+// edge case. Punctuation and end-of-input are boundaries too. Widening this
+// makes every branch that consults it STRICTER — more input is treated as a
+// question, never less.
+const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কখন|কীভাবে|কিভাবে|কাকে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
 
 export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorization {
   const t = text.trim()
@@ -138,6 +154,23 @@ function toolMode(name: string): 'read' | 'stage' | 'write' {
  *    was read as information-only and the head lost the pair tool entirely).
  */
 const OWNER_SERVICE_TOOLS = new Set([
+  // Showing Boss his own screen. `mac_desk_control` is classified write because a
+  // whole-desk capture is sensitive, and that classification is right — it is what
+  // keeps autonomous and scheduled runs from photographing his desk unasked (the
+  // permission-mode gate in registry.ts reads cap.mode, and is untouched by this
+  // list). But on a turn HE typed, the sensitivity argument is answered by the
+  // asking: it changes nothing, it only looks.
+  //
+  // This replaces a Bangla imperative classifier that tried to decide "order or
+  // question" from grammar. Six review rounds found eleven P1s in it — দিবে is
+  // also the future tense, নাও is also a boat — because the question is semantic,
+  // not lexical. The tool was only ever unreachable on ONE gate, so the exemption
+  // belongs on the gate, not in a language model made of regex.
+  //
+  // Scoped by name, so the tool's other actions (keep_awake / allow_sleep /
+  // power_status) ride along. They control sleep on his own Mac and touch no
+  // business state; the worst case is a battery left awake.
+  'mac_desk_control',
   'ask_user',
   'save_memory',
   'update_memory',
