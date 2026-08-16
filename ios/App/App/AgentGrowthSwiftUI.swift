@@ -377,6 +377,11 @@ final class AgentGrowthVM {
     /// Same order as the web: GSC status first, then the slower live-probe board —
     /// the second fetch never holds up the first card.
     func load() async {
+        // The ads inbox loads FIRST: a Meta Ads push deep-links straight to it, and
+        // it used to sit behind the slow Meta-MCP probe — the owner arrived at an
+        // "কোনো সুপারিশ নেই" card that was really still loading (caught in the sim).
+        await loadAdsEvents()
+
         loading = true
         error = nil
         do {
@@ -412,8 +417,6 @@ final class AgentGrowthVM {
         // backend as a growth card. The route owner-gates itself (403 for non-owners),
         // so `try?` leaves `meta` nil and the card simply doesn't render for them.
         meta = try? await AlmaAPI.shared.get("/api/assistant/meta-mcp/status")
-
-        await loadAdsEvents()
     }
 
     // ── Meta Ads event inbox (the phone notifications, finally addressable) ──

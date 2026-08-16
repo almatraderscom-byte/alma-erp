@@ -46,7 +46,11 @@ enum AlmaNavCoordinator {
     /// NP-4 (AU-02): typed QUERY routes — these native screens accept their query
     /// string (reset token), so a query no longer forces the web page for them.
     static let queryCapableRoutes: Set<String> = [
-        "/reset-password"
+        "/reset-password",
+        // A Meta Ads push taps through as /agent/growth?rec=<id>. The native
+        // Growth screen now reads that id and opens on that recommendation, so
+        // the query must no longer bounce the tap to the web page.
+        "/agent/growth"
     ]
 
     /// public-web-allowed: public informational/share pages — web is correct.
