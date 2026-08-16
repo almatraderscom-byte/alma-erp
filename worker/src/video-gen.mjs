@@ -63,6 +63,184 @@ async function clearPersistedOp(supabase, pendingActionId) {
   } catch { /* best-effort */ }
 }
 
+/** Seedance pricing mirror (see src/agent/lib/pricing.ts — keep in sync). */
+const SEEDANCE_PER_SECOND = {
+  'bytedance/seedance-2.5/image-to-video:720p': 0.473,
+  'bytedance/seedance-2.5/image-to-video:480p': 0.2205,
+  'fal-ai/bytedance/seedance/v1/pro/image-to-video:1080p': 0.125,
+  'fal-ai/bytedance/seedance/v1/lite/image-to-video:720p': 0.037,
+}
+
+const SEEDANCE_ALLOWED_ENDPOINTS = new Set([
+  'bytedance/seedance-2.5/image-to-video',
+  'fal-ai/bytedance/seedance/v1/pro/image-to-video',
+  'fal-ai/bytedance/seedance/v1/lite/image-to-video',
+])
+
+/**
+ * Seedance image-to-video via the fal queue API: submit → poll → download →
+ * upload to agent-files. Resumable like the Veo path — the fal request id is
+ * persisted to kv so a worker restart polls the SAME paid request.
+ */
+async function processSeedanceVideo(job, { supabase, callJobResult }) {
+  const { pendingActionId, payload } = job.data
+  const {
+    prompt,
+    referenceImageId,
+    durationSec = 6,
+    aspect = '9:16',
+    conversationId,
+    falEndpoint,
+    falResolution = '720p',
+  } = payload
+
+  const falKey = process.env.FAL_KEY ?? ''
+  if (!falKey) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'FAL_KEY missing on worker — Seedance unavailable')
+    return
+  }
+  const endpoint = SEEDANCE_ALLOWED_ENDPOINTS.has(String(falEndpoint)) ? String(falEndpoint) : null
+  if (!endpoint) {
+    await callJobResult(pendingActionId, 'failed', undefined, `seedance endpoint not allowed: ${falEndpoint}`)
+    return
+  }
+
+  // fal needs a fetchable image URL — short-lived signed URL from storage.
+  const { data: signed, error: signErr } = await supabase.storage
+    .from('agent-files')
+    .createSignedUrl(String(referenceImageId ?? ''), 3600)
+  if (signErr || !signed?.signedUrl) {
+    await callJobResult(pendingActionId, 'failed', undefined, `reference image sign failed: ${signErr?.message}`)
+    return
+  }
+
+  const falHeaders = { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' }
+  // Resume: kv-persisted fal request (with its queue URLs) survives worker
+  // restarts — the SAME paid request is polled, never re-submitted.
+  let statusUrl = null
+  let responseUrl = null
+  const persisted = await loadPersistedOp(supabase, pendingActionId)
+  if (persisted?.provider === 'seedance' && persisted.statusUrl && persisted.responseUrl) {
+    statusUrl = persisted.statusUrl
+    responseUrl = persisted.responseUrl
+    console.log(`[worker] video-gen ${pendingActionId} — resuming persisted fal request (no new paid gen)`)
+  }
+  if (!statusUrl) {
+    const submitRes = await fetch(`https://queue.fal.run/${endpoint}`, {
+      method: 'POST',
+      headers: falHeaders,
+      body: JSON.stringify({
+        prompt: String(prompt ?? ''),
+        image_url: signed.signedUrl,
+        duration: Math.min(15, Math.max(3, Math.round(Number(durationSec) || 6))),
+        resolution: falResolution,
+        aspect_ratio: aspect === '16:9' ? '16:9' : '9:16',
+      }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!submitRes.ok) {
+      const body = await submitRes.text().catch(() => '')
+      await callJobResult(pendingActionId, 'failed', undefined, `seedance submit ${submitRes.status}: ${body.slice(0, 200)}`)
+      return
+    }
+    const submitted = await submitRes.json()
+    // The queue API returns canonical URLs — use them, never hand-construct.
+    statusUrl = submitted.status_url
+    responseUrl = submitted.response_url
+    if (!submitted.request_id || !statusUrl || !responseUrl) {
+      await callJobResult(pendingActionId, 'failed', undefined, 'seedance submit returned no request/status url')
+      return
+    }
+    await persistOp(supabase, pendingActionId, {
+      name: submitted.request_id,
+      provider: 'seedance',
+      statusUrl,
+      responseUrl,
+      pollStartedAt: Date.now(),
+      attempt: 1,
+    })
+  }
+
+  const startedAt = Date.now()
+  let videoUrl = null
+  while (true) {
+    if (Date.now() - startedAt > MAX_POLL_MS) {
+      await callJobResult(pendingActionId, 'failed', undefined, 'seedance generation timed out')
+      return
+    }
+    await sleep(POLL_MS)
+    const stRes = await fetch(statusUrl, { headers: falHeaders, signal: AbortSignal.timeout(20_000) }).catch(() => null)
+    if (!stRes?.ok) continue
+    const st = await stRes.json().catch(() => ({}))
+    if (st.status === 'COMPLETED') {
+      const resultRes = await fetch(responseUrl, { headers: falHeaders, signal: AbortSignal.timeout(30_000) })
+      const result = await resultRes.json().catch(() => ({}))
+      // fal response shapes vary per model version — probe every known spot.
+      videoUrl =
+        result?.video?.url ??
+        result?.video_url ??
+        (Array.isArray(result?.videos) ? result.videos[0]?.url : null) ??
+        result?.output?.video?.url ??
+        result?.output?.video_url ??
+        result?.data?.video?.url ??
+        null
+      if (!videoUrl) {
+        console.error(`[worker] video-gen ${pendingActionId} — seedance COMPLETED but no url; raw: ${JSON.stringify(result).slice(0, 400)}`)
+      }
+      break
+    }
+    if (st.status === 'FAILED' || st.status === 'ERROR') {
+      await callJobResult(pendingActionId, 'failed', undefined, `seedance request failed: ${JSON.stringify(st).slice(0, 200)}`)
+      return
+    }
+  }
+  if (!videoUrl) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'seedance completed without a video url')
+    return
+  }
+
+  const dlRes = await fetch(videoUrl, { signal: AbortSignal.timeout(120_000) })
+  if (!dlRes.ok) {
+    await callJobResult(pendingActionId, 'failed', undefined, `seedance video download ${dlRes.status}`)
+    return
+  }
+  const videoBuffer = Buffer.from(await dlRes.arrayBuffer())
+  const storagePath = `generated/${pendingActionId}.mp4`
+  const { error: uploadErr } = await supabase.storage
+    .from('agent-files')
+    .upload(storagePath, videoBuffer, { contentType: 'video/mp4', upsert: true })
+  if (uploadErr) {
+    await callJobResult(pendingActionId, 'failed', undefined, `Supabase upload failed: ${uploadErr.message}`)
+    return
+  }
+  await clearPersistedOp(supabase, pendingActionId)
+
+  const rate = SEEDANCE_PER_SECOND[`${endpoint}:${falResolution}`] ?? SEEDANCE_PER_SECOND['bytedance/seedance-2.5/image-to-video:720p']
+  const costUsd = Math.round(rate * Math.max(1, Math.round(Number(durationSec) || 6)) * 1e6) / 1e6
+
+  await callJobResult(pendingActionId, 'success', {
+    storagePath,
+    conversationId,
+    aspect,
+    durationSec,
+    mediaType: 'video',
+    provider: 'seedance',
+    costUsd,
+  })
+
+  const { logCost } = await import('./cost-log.mjs')
+  void logCost({
+    provider: 'fal',
+    kind: 'video',
+    units: { model: endpoint, resolution: falResolution, durationSec, pendingActionId },
+    costUsd,
+    conversationId: conversationId ?? undefined,
+    jobId: pendingActionId,
+    dedupKey: `video:${pendingActionId}`,
+  })
+  console.log(`[worker] video-gen ${pendingActionId} — seedance done → ${storagePath}`)
+}
+
 /**
  * @param {import('bullmq').Job} job
  * @param {object} deps
@@ -97,6 +275,13 @@ export async function processVideoGen(job, { supabase, genai, callJobResult }) {
     conversationId,
     productCode,
   } = payload
+
+  // Media mode: Seedance (fal) image-to-video rides its own path — queue-based
+  // fal API, no Veo operation machinery. Veo jobs are untouched below.
+  if (payload.provider === 'seedance') {
+    await processSeedanceVideo(job, { supabase, callJobResult })
+    return
+  }
 
   console.log(`[worker] video-gen ${pendingActionId} — starting`)
 

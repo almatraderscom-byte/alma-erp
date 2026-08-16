@@ -12,6 +12,7 @@ import { FINANCE_AUTONOMY_TOOLS } from './finance-autonomy-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { AD_CREATIVE_TOOLS } from './ad-creative-tools'
 import { VIDEO_TOOLS } from './video-tools'
+import { MEDIA_TOOLS } from './media-tools'
 import { BRAND_TOOLS } from './brand-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { STUDIO_TOOLS } from './studio-tools'
@@ -146,7 +147,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   // STUDIO_TOOLS (run_creative_studio / check_studio_job) ride in `content`:
   // they were executable-but-ungrouped (Phase 2 audit) — the head saw the Studio
   // described in prompts but had no route to the tools outside the fixed set.
-  content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS, ...QC_TOOLS, ...STUDIO_TOOLS],
+  content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...MEDIA_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS, ...QC_TOOLS, ...STUDIO_TOOLS],
   // get_marketing_history also rides in `growth` (it lives in staff-tools): the
   // marketing head carries growth but NOT staff, and needs the "last promoted"
   // read for post planning — without this it was expected-but-unavailable there.

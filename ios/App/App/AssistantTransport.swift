@@ -657,6 +657,9 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
     let originAssistantMessageId: String?
     let revision: Int
     let sourceId: String
+    /// "agent_plan" (the real step plan) or "turn_runtime" (the coarse
+    /// per-turn projection). The dock prefers the plan tracker.
+    let source: String
     let goal: String
     let status: String
     let headline: String
@@ -681,7 +684,7 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
     static func from(
         version: Int?, trackerId: String?, originTurnId: String?, currentTurnId: String?,
         turnIds: [String]?, conversationId: String?, originAssistantMessageId: String?,
-        revision: Int?, sourceId: String?, goal: String?, status: String?, headline: String?,
+        revision: Int?, sourceId: String?, source: String?, goal: String?, status: String?, headline: String?,
         blockedBy: AgentWorkStepsBlockerWire?, steps: [AgentWireStep]?, updatedAt: String?
     ) -> AgentWorkStepsSnapshot? {
         guard version == 1,
@@ -710,6 +713,7 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
             originAssistantMessageId: originAssistantMessageId,
             revision: revision,
             sourceId: sourceId ?? trackerId,
+            source: source ?? "agent_plan",
             goal: goal,
             status: status,
             headline: headline ?? "",
@@ -934,7 +938,7 @@ enum AgentTurnEvent: Sendable {
                 originTurnId: ev.originTurnId, currentTurnId: ev.currentTurnId,
                 turnIds: ev.turnIds, conversationId: ev.conversationId,
                 originAssistantMessageId: ev.originAssistantMessageId,
-                revision: ev.revision, sourceId: ev.sourceId, goal: ev.goal,
+                revision: ev.revision, sourceId: ev.sourceId, source: ev.source, goal: ev.goal,
                 status: ev.status, headline: ev.headline, blockedBy: ev.blockedBy,
                 steps: ev.steps, updatedAt: ev.updatedAt,
             ).map(AgentTurnEvent.workSteps) ?? .unknown(type: "work_steps_snapshot/invalid")
@@ -1027,7 +1031,21 @@ struct AlmaSSEParser {
 /// fragment. Tool/card/control events still land immediately.
 actor AgentEventBuffer {
     private var batch: [AgentTurnEvent] = []
+    /// Owner-facing prose held back for the typewriter cadence (owner ask
+    /// 2026-08-15: replies should stream smooth-and-slow like Claude Code, not
+    /// land in sentence-sized chunks). Text deltas queue HERE; every flush tick
+    /// releases a small slice, so the visible reveal is paced even when the
+    /// provider sends whole paragraphs at once. Chronology stays exact: any
+    /// non-text event first drains the whole backlog ahead of itself, and a
+    /// control event (tool rows, cards, done) flushes everything instantly —
+    /// pacing may only ever delay pure prose against wall-clock, never against
+    /// another event.
+    private var proseBacklog = ""
     private var flushScheduled = false
+    /// Bumped by every flush; a scheduled tick that lost the race to a control
+    /// flush sees a newer generation and dies instead of double-ticking the
+    /// cadence (Codex P2 #770).
+    private var flushGeneration = 0
     private var flushCount = 0
     private let apply: @MainActor ([AgentTurnEvent]) -> Void
 
@@ -1037,32 +1055,90 @@ actor AgentEventBuffer {
 
     func push(_ ev: AgentTurnEvent) async {
         if ev.isControl {
+            drainProseIntoBatch()
             batch.append(ev)
             await flushNow()                       // deltas before it already queued in order
             return
         }
-        switch (ev, batch.last) {
-        case (.textDelta(let d), .textDelta(let prev)):
-            batch[batch.count - 1] = .textDelta(prev + d)
-        case (.thinkingDelta(let d), .thinkingDelta(let prev)):
-            batch[batch.count - 1] = .thinkingDelta(prev + d)
+        switch ev {
+        case .textDelta(let d):
+            proseBacklog += d
+        case .thinkingDelta(let d):
+            drainProseIntoBatch()                  // keep prose→thinking order exact
+            if case .thinkingDelta(let prev)? = batch.last {
+                batch[batch.count - 1] = .thinkingDelta(prev + d)
+            } else {
+                batch.append(.thinkingDelta(d))
+            }
         default:
+            drainProseIntoBatch()
             batch.append(ev)
         }
         scheduleFlush()
     }
 
+    /// Move the entire held-back prose into the ordered batch (order barrier —
+    /// used before any non-text event and on terminal flushes).
+    private func drainProseIntoBatch() {
+        guard !proseBacklog.isEmpty else { return }
+        if case .textDelta(let prev)? = batch.last {
+            batch[batch.count - 1] = .textDelta(prev + proseBacklog)
+        } else {
+            batch.append(.textDelta(proseBacklog))
+        }
+        proseBacklog = ""
+    }
+
+    /// One paced slice of the backlog per tick. Small when the model is keeping
+    /// pace (the smooth typewriter), growing with the backlog so a fast model
+    /// can never fall minutes behind the wire.
+    private func nextProseSlice() -> String? {
+        guard !proseBacklog.isEmpty else { return nil }
+        let target = max(6, proseBacklog.count / 8)
+        let idx = proseBacklog.index(proseBacklog.startIndex,
+                                     offsetBy: min(target, proseBacklog.count))
+        let slice = String(proseBacklog[..<idx])
+        proseBacklog = String(proseBacklog[idx...])
+        return slice
+    }
+
     private func scheduleFlush() {
         guard !flushScheduled else { return }
         flushScheduled = true
+        let generation = flushGeneration
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
-            await self?.flushNow()
+            await self?.pacedTick(ifGeneration: generation)
         }
     }
 
-    func flushNow() async {
+    /// Scheduled-tick entry: a control flush that ran meanwhile already carried
+    /// everything this tick was for — a stale tick must not add a second beat.
+    private func pacedTick(ifGeneration generation: Int) async {
+        guard generation == flushGeneration else {
+            flushScheduled = false
+            if !proseBacklog.isEmpty { scheduleFlush() }
+            return
+        }
+        await flushNow(paced: true)
+    }
+
+    func flushNow(paced: Bool = false) async {
         flushScheduled = false
+        flushGeneration += 1
+        if paced {
+            if let slice = nextProseSlice() {
+                if case .textDelta(let prev)? = batch.last {
+                    batch[batch.count - 1] = .textDelta(prev + slice)
+                } else {
+                    batch.append(.textDelta(slice))
+                }
+            }
+        } else {
+            drainProseIntoBatch()
+        }
+        // Keep the cadence alive while paced prose remains.
+        if !proseBacklog.isEmpty { scheduleFlush() }
         guard !batch.isEmpty else { return }
         let out = batch
         batch = []

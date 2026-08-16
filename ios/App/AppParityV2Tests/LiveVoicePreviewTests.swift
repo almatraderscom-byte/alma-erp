@@ -336,6 +336,60 @@ final class LiveVoicePreviewTests: XCTestCase {
         }
     }
 
+    /// Live salah call 2026-08-15: Boss said "নামাজ পড়েছি"; the classifier
+    /// pinned get_salah_status via the "নামাজ পড়" marker, so the model's
+    /// run_agent_turn (mark_salah) was refused as a route mismatch and Isha
+    /// stayed pending. A prayer DECLARATION must pin nothing — the model's
+    /// chosen tool runs and the server's auto-mark owns persistence.
+    func testToolIntentClassifierNeverPinsSalahDeclarations() {
+        let declarations = [
+            "নামাজ পড়েছি",
+            // Bare-ড় form: this one really did match the old "নামাজ পড়" marker
+            // (Swift `contains` is grapheme-based, so "পড়ে"/"পড়া" never matched
+            // but "পড়লাম"/"পড়ছি" did) — the pinning regression case.
+            "নামাজ পড়লাম",
+            "ইশার নামাজ পড়ে নিয়েছি",
+            "ফজর মিস হয়ে গেছে",
+            "আসরের কাযা পড়েছি",
+            "isha porechi",
+            // "পড়েছি, রাখো": the hang-up pin must not block mark_salah either —
+            // hangupIntent ends the call deterministically regardless of route.
+            "নামাজ পড়েছি, এখন ফোন রাখো",
+        ]
+        for text in declarations {
+            XCTAssertEqual(
+                AlmaLiveVoiceToolIntentClassifier.classify(text),
+                .unclassified,
+                "salah declaration must not pin a route: \(text)")
+            XCTAssertTrue(
+                AlmaLiveVoiceToolIntentRoute.unclassified.accepts(.init(
+                    callID: "salah-1",
+                    functionName: AlmaLiveVoiceToolName.runAgentTurn.rawValue,
+                    payload: .runAgentTurn(request: text))),
+                "run_agent_turn must be admitted for: \(text)")
+        }
+        // A status QUESTION (no declaration wording) still quick-routes.
+        XCTAssertEqual(
+            AlmaLiveVoiceToolIntentClassifier.classify("সালাহ status দেখাও"),
+            .quickLookup(tool: "get_salah_status"))
+        // Raw-transcript entry normalizes before matching.
+        XCTAssertTrue(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("  নামাজ   পড়েছি  "))
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("সালাহ status দেখাও"))
+        // Codex P1: topic mentions and requests are NOT declarations — a bare
+        // "কাযা" or the stem "আদায় কর" must never trigger the confirm POST.
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("কাযা নামাজের নিয়ম বলো"))
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence(
+                "ইশার নামাজ আদায় করার জন্য reminder তৈরি করো"))
+        // Codex P1 round 2: future-inflected completion stem — "পড়ে ফেলব"
+        // contains "পড়ে ফেল" but promises, not reports.
+        XCTAssertFalse(
+            AlmaLiveVoiceToolIntentClassifier.isSalahDeclarationSentence("ইশার নামাজ পড়ে ফেলব"))
+    }
+
     func testToolIntentRouteRejectsProviderMismatchWithoutChangingOpaqueIdentity() {
         let expected = AlmaLiveVoiceToolIntentRoute.quickLookup(
             tool: "get_sales_summary")

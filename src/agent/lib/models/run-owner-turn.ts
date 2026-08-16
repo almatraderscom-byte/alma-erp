@@ -7,10 +7,17 @@ import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
+import {
+  BOOKKEEPING_TOOLS,
+  MAX_GROUNDING_FORCE_ROUNDS,
+  groundingEvidence,
+  hasSubstantiveToolAttempt,
+  isGroundingSatisfied,
+} from '@/agent/lib/models/grounding'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, CONSTITUTION_REMINDER, STYLE_REMINDER, PROMPT_MODULES, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
-import { countTypedToolCalls, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
+import { countTypedToolCalls, createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
   claimsCompletion,
@@ -117,11 +124,14 @@ import {
   detectProseChoiceViolation,
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
+  detectUnattemptedIncapacity,
+  detectFalseToolUnavailability,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
   detectRoboticStyleViolations,
   detectAsyncCompletionViolation,
   detectToolExecutionClaims,
+  detectFabricatedToolResponse,
   summarizeAsyncJobEvidence,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
@@ -386,10 +396,6 @@ const INTERNAL_NUDGE_MARKER =
  * Tools that record what happened rather than move the job forward. A push is
  * never "earned" by one of these.
  */
-const BOOKKEEPING_TOOLS = new Set([
-  'save_memory', 'update_memory', 'delete_memory', 'graph_remember',
-  'save_task_checkpoint', 'track_open_task', 'add_owner_todo', 'manage_work_todos',
-])
 
 function adapterActNowNudge(attempt: number): string {
   if (attempt <= 1) {
@@ -496,7 +502,7 @@ async function* runAlternateProviderTurn(
   headVia = 'unknown',
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
-  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
   const chatMode = normalizeChatMode(options.chatMode)
   // PM-1 — the permission axis, read from the conversation row by the caller.
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
@@ -1858,6 +1864,11 @@ async function* runAlternateProviderTurn(
   // Speak-first: the ground-before-answer guarantee now runs AFTER round 0
   // instead of forcing a tool call that silences it. One retry per turn.
   let groundingNudgeSent = false
+  // How many rounds the grounding force has been applied. The requirement now
+  // survives a shallow tool (see SHALLOW_GROUNDING_TOOLS), so it needs its own
+  // ceiling: without one, a model that answers every forced round with another
+  // clock read would loop until the iteration budget ran out.
+  let groundingForceRounds = 0
   // Explicit live operational reads (health scan / order issues / audit
   // summary) may not finish as prose that merely says no tools ran. Two bounded
   // retries give the provider a real chance to use its supplied interface.
@@ -2053,6 +2064,11 @@ async function* runAlternateProviderTurn(
   ) {
     try {
       let line = ''
+      // The opening line streams RAW to the owner's screen, and Qwen sometimes
+      // appends typed `<tool_call>` markup to its narration (owner screenshot
+      // 2026-08-15) — the settled copy below was stripped but the live deltas
+      // were not. Same holdback filter as the main loop's prose stream.
+      const preambleStream = createMarkupStreamFilter()
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
@@ -2066,7 +2082,8 @@ async function* runAlternateProviderTurn(
           line += ev.text
           // The model is narrating — the status line stays quiet while it does.
           if (ev.text.trim()) spokeSinceProgress = true
-          yield { type: 'text_delta', delta: ev.text }
+          const safe = preambleStream.push(ev.text)
+          if (safe) yield { type: 'text_delta', delta: safe }
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
@@ -2074,6 +2091,12 @@ async function* runAlternateProviderTurn(
           totalCacheReadTokens += ev.cacheRead ?? 0
           apiRounds++
         }
+      }
+      // Release whatever the filter still held (cleaned) so the live line the
+      // owner watched matches the settled one below.
+      {
+        const tailSafe = preambleStream.flush()
+        if (tailSafe) yield { type: 'text_delta', delta: tailSafe }
       }
       // The opening line is a whole round of its own, so it can carry the same
       // leaked markup — clean it before it becomes the first thing Boss reads.
@@ -2158,6 +2181,18 @@ async function* runAlternateProviderTurn(
       // survives a call split across deltas. One per round: what it holds back
       // belongs to this round and is released when the round ends.
       const thinkingStream = createThinkingStreamFilter()
+      // Owner ask 2026-08-15: the reply must TYPE OUT like Claude Code instead
+      // of landing as one block. The model already streams; we buffered the
+      // whole round because a tool-call fragment can straddle deltas. The
+      // markup stream filter solves exactly that — it holds back only a
+      // suspicious opener and releases everything else immediately. If a later
+      // step (opener-drop, contract, verification) replaces the round's prose,
+      // the reconciliation below supersedes the streamed draft, which every
+      // client already handles. AGENT_LIVE_PROSE_STREAM=false reverts.
+      // Voice turns stay buffered: audio cannot be un-spoken (Codex P1 #765).
+      const liveProseEnabled = process.env.AGENT_LIVE_PROSE_STREAM !== 'false' && !voiceTurn
+      const proseStream = createMarkupStreamFilter()
+      let streamedProse = ''
 
       // Serverless deadline close → no more tools; force a Bangla progress
       // wrap-up instead of the function dying mid-task with a blank reply.
@@ -2259,10 +2294,21 @@ async function* runAlternateProviderTurn(
           : iteration === 0 ? (boundToolName ?? planBoundTool) : null
       // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
       // round 0 of a live-data question so the head cannot answer from memory.
+      //
+      // "ANY tool" is the loophole (owner turn 2026-08-15, "Ok audit koro"): the
+      // force was satisfied by `get_current_datetime`, the requirement then went
+      // away because it only looked at round 0 and at ANY success, and the turn
+      // ended on "Ads-এর live tool result পাওয়া যায়নি" — a data question answered
+      // without ever reading the data. A clock read is not grounding. The wire
+      // cannot express "required, from this subset" (OpenAI takes 'required' or
+      // one named function), so the requirement instead PERSISTS until a tool
+      // that could actually answer has succeeded, capped so it can never spin.
+      const groundingSatisfied = isGroundingSatisfied(toolRecords)
       const groundingRequiredThisRound =
-        ownerRequirements.groundingRequired && iteration === 0 && !roundBoundToolName
+        ownerRequirements.groundingRequired && !roundBoundToolName
           && iterationTools.length > 0
-          && !toolRecords.some((r) => r.status === 'success')
+          && !groundingSatisfied
+          && groundingForceRounds < MAX_GROUNDING_FORCE_ROUNDS
       // Speak-first note: `tool_choice: 'required'` is what MECHANICALLY silences
       // round 0 — a forced tool call leaves the provider no room for text. The
       // first attempt at this fix dropped the force so the head could speak, and
@@ -2272,6 +2318,7 @@ async function* runAlternateProviderTurn(
       // The preamble now has its own dedicated round BEFORE this loop, so Boss
       // already has his line and the force can stay exactly as it was.
       const forceGroundingToolChoice = groundingRequiredThisRound
+      if (forceGroundingToolChoice) groundingForceRounds++
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -2348,10 +2395,17 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
-          // NOTE: sanitising happens once on the finished round below, not here.
-          // A tool-call fragment arrives split across deltas, so a per-delta
-          // strip would miss it — and the whole round's prose is emitted as one
-          // block, so waiting costs Boss nothing.
+          // Live typing: the filter releases prose the moment it is provably
+          // not tool markup; the round-end reconciliation below still owns the
+          // final, sanitised text.
+          if (liveProseEnabled) {
+            const safe = proseStream.push(ev.text)
+            if (safe) {
+              const sep = !streamedProse && finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+              streamedProse += safe
+              yield { type: 'text_delta', delta: sep + safe }
+            }
+          }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -2441,6 +2495,18 @@ async function* runAlternateProviderTurn(
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      // Every corrective path that DISCARDS this round's prose must also drop
+      // the copy already on the owner's screen (Codex P1 #765 round 2):
+      // typed-tool retry, act-now nudge, grounding retry, requirement retry and
+      // late steering all reuse this.
+      const supersedeStreamedDraft = function* (): Generator<AgentEvent> {
+        if (!liveProseEnabled) return
+        proseStream.flush()
+        if (!streamedProse) return
+        streamedProse = ''
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+      }
+
       // Tool-round prose streams right away so the live view and reload both keep
       // the narration between steps; final-round text is emitted AFTER the
       // requirement-contract checks below (which may replace it).
@@ -2459,11 +2525,39 @@ async function* runAlternateProviderTurn(
       ) {
         console.info('[speak-first] dropped a restated opening line', { conversationId })
         iterationText = ''
+        // The restated opener may already be on screen now that prose streams
+        // live — drop the visible copy too (Codex P2 #765).
+        yield* supersedeStreamedDraft()
       }
+      // Reconcile what was TYPED LIVE with the round's final sanitised text.
+      // Same shape for both emit sites below: emit only the missing tail when
+      // the live draft is a prefix of the truth, and supersede the draft when
+      // a later step rewrote it (verification_retry is the existing
+      // client-side 'drop the draft, render the replacement' contract).
+      const reconcileStreamedProse = function* (text: string, sepBefore: string): Generator<AgentEvent> {
+        // flush() returns what the filter HELD BACK — text the client never
+        // saw. Reconcile against what was actually shown, or a reply ending in
+        // a held token (closing fence, <b>) loses its tail (Codex P2 #765).
+        if (liveProseEnabled) proseStream.flush()
+        const streamed = streamedProse
+        if (!liveProseEnabled || !streamed) {
+          if (text) yield { type: 'text_delta', delta: sepBefore + text }
+          return
+        }
+        if (text.startsWith(streamed)) {
+          const tail = text.slice(streamed.length)
+          if (tail) yield { type: 'text_delta', delta: tail }
+          return
+        }
+        // The round's prose was replaced (opener drop / contract / verify).
+        yield { type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] }
+        if (text) yield { type: 'text_delta', delta: sepBefore + text }
+      }
+
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
-        yield { type: 'text_delta', delta: sep + iterationText }
+        yield* reconcileStreamedProse(iterationText, sep)
         // Boss heard something this round — the progress clock starts over.
         roundsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
@@ -2483,6 +2577,10 @@ async function* runAlternateProviderTurn(
             .filter(Boolean)
             .join('\n')
           supersedeLastDraft()
+          // The draft may already be ON SCREEN now that prose streams live —
+          // drop it client-side too, or the replacement round appends to an
+          // obsolete answer (Codex P1 #765).
+          yield* supersedeStreamedDraft()
           messages = [
             ...messages,
             ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
@@ -2531,6 +2629,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Fully empty round → nudge the model to continue instead of silently
@@ -2554,6 +2653,7 @@ async function* runAlternateProviderTurn(
                 'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // The model signed off by PROMISING the next step instead of doing it —
@@ -2595,6 +2695,7 @@ async function* runAlternateProviderTurn(
             },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         if (
@@ -2623,6 +2724,7 @@ async function* runAlternateProviderTurn(
             { role: 'user', content: adapterActNowNudge(intentNudges) },
           ]
           finalText = preambleText
+          yield* supersedeStreamedDraft()
           continue
         }
         // Speak-first grounding retry (owner rule 2026-07-25): round 0 is no
@@ -2651,6 +2753,7 @@ async function* runAlternateProviderTurn(
                 + 'এখনই relevant read tool (get_/list_/check_/recommend_…) চালিয়ে আসল মানটা আনো, তারপর উত্তর দাও।',
             },
           ]
+          yield* supersedeStreamedDraft()
           continue
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
@@ -2718,6 +2821,38 @@ async function* runAlternateProviderTurn(
               ),
             )
           }
+          // A hand-written <tool_response> block is fabricated evidence — real
+          // tool results never appear inline (owner incident 2026-08-15: fake
+          // regen "success" typed as <tool_response> JSON after failed calls).
+          if (violations.length === 0) {
+            violations.push(...detectFabricatedToolResponse(iterationText.trim()))
+          }
+          // A tool called missing while it sits in this very request. Decidable,
+          // not heuristic — we hold the list. Ran ahead of the incapacity rule
+          // below because it survives a turn where a real tool DID run, which is
+          // exactly how it got past the first fix on the preview.
+          if (violations.length === 0) {
+            violations.push(...detectFalseToolUnavailability(
+              iterationText.trim(),
+              iterationTools.map((t) => t.name),
+            ))
+          }
+          // "পারব না" with nothing attempted. The grounding + live-execution
+          // retries above already cover this shape, but both key on ERP business
+          // nouns, so a Mac / camera / browser / ads request reached here with no
+          // guard at all (owner incident 2026-08-15). This one keys on the
+          // imperative + the plea, so it holds in every domain.
+          if (violations.length === 0) {
+            violations.push(...detectUnattemptedIncapacity(iterationText.trim(), {
+              actionRequested: ownerRequirements.actionAttemptExpected,
+              // NOT `liveToolAttempted` (Codex P2): that only excludes
+              // bookkeeping, so a clock read before "no browser tool is
+              // connected" silenced this rule — the exact skipped-action failure
+              // it exists to catch, one irrelevant call later.
+              realToolAttempted: hasSubstantiveToolAttempt(toolRecords),
+              toolsAvailable: iterationTools.length > 0,
+            }))
+          }
           // P1 — fabricated-stat gate (flag-gated inside → no-op when off).
           if (violations.length === 0) {
             violations.push(...detectFabricatedStatViolations(iterationText.trim(), ledger))
@@ -2780,6 +2915,7 @@ async function* runAlternateProviderTurn(
                   `The server requirement contract is incomplete. Call ${needed} now; do not write another owner-facing answer first.`,
               },
             ]
+            yield* supersedeStreamedDraft()
             continue
           }
           iterationText = batchStatus
@@ -2802,7 +2938,7 @@ async function* runAlternateProviderTurn(
         if (iterationText) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           finalText += sep + iterationText
-          yield { type: 'text_delta', delta: sep + iterationText }
+          yield* reconcileStreamedProse(iterationText, sep)
         }
         break
       }
@@ -3895,7 +4031,20 @@ async function* runAlternateProviderTurn(
           // P1-9: WHY this head ran, not just which one. Until now `via` lived
           // only in code and cost logs, so a surprising model choice had no
           // answer Boss could be shown ("routine_kw" / "task_pin" / "deny_kw").
-          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
+          headVia: headVia !== 'unknown' ? headVia : undefined, headTier: headTier ?? undefined, packs: toolSelection.packs ?? undefined,
+          // Selection facts, on the MESSAGE (owner audit 2026-08-15). They are
+          // already written to the route span, but a span needs DB access, so
+          // every "why did it pick that tool" question so far has been answered
+          // by re-deriving the router offline instead of reading what the turn
+          // actually did. These four make the same question answerable from the
+          // conversation itself.
+          tool_router: toolSelection.router,
+          tools_shipped: neutralTools.length,
+          tools_trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : undefined,
+          grounding: ownerRequirements.groundingRequired
+            ? { required: true, satisfiedBy: groundingEvidence(toolRecords) }
+            : undefined,
+          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])

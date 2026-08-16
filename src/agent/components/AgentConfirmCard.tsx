@@ -55,6 +55,7 @@ const REVISABLE_TYPES = new Set<string>([
   'content_gate1',
   'content_gate2',
   'ad_creative_gate',
+  'media_plan',
 ])
 
 // Server guard responses that are NOT real failures — the card was already

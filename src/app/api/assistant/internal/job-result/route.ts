@@ -697,6 +697,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Media mode: record the asset and advance the render chain (VO → images →
+  // clips → final). Runs on failure too — the chain decides whether a partial
+  // stage can continue or the project must settle 'failed'.
+  if (payload.mediaChain) {
+    try {
+      const { advanceMediaChain } = await import('@/agent/lib/media/render-chain')
+      const note = await advanceMediaChain(
+        action,
+        status === 'success' ? 'success' : 'failed',
+        data as { storagePath?: unknown; costUsd?: unknown } | null,
+      )
+      console.log(`[job-result] media chain ${pendingActionId}: ${note}`)
+    } catch (chainErr) {
+      // Non-2xx → the worker's durable outbox retries the callback; swallowing
+      // here would strand the project in 'rendering' with nothing left to
+      // advance it. advanceMediaChain is idempotent under retry.
+      console.error('[job-result] media chain advance failed:', chainErr)
+      return Response.json({ error: 'media_chain_advance_failed' }, { status: 503 })
+    }
+  }
+
   // V4 multi-clip Veo reel: a finished clip queues the next clip / the concat.
   if (payload.veoChain && status === 'success') {
     try {
@@ -751,6 +772,24 @@ export async function POST(req: NextRequest) {
     const callSid = typeof data?.callSid === 'string' ? data.callSid : undefined
     messageText = buildOutboundDialMessage(phone, callSid)
     pushTelegram = true
+  } else if (payload.mediaChain && status === 'success' && typeof data?.storagePath === 'string') {
+    // Media mode assets: every finished asset lands in the conversation as-is —
+    // no reel gate, no content pipeline. The final video also pings Telegram.
+    const stage = (payload.mediaChain as { stage?: string }).stage ?? ''
+    const mediaPath = data.storagePath.trim()
+    const mediaUrl = await agentStorageSignedUrl(mediaPath, IMAGE_SIGNED_URL_TTL_SEC)
+    const label = String(action.summary ?? '').split('\n')[0]
+    if (stage === 'image') {
+      messageImagePaths = [mediaPath]
+      messageText = `🖼️ ${label} রেডি`
+    } else if (stage === 'vo' || stage === 'music') {
+      messageText = `${stage === 'music' ? '🎵' : '🎙️'} ${label} রেডি — [শুনুন](${mediaUrl})`
+    } else if (stage === 'final') {
+      messageText = `✅ ${label} — সম্পূর্ণ! [ভিডিও দেখুন/ডাউনলোড](${mediaUrl})`
+      pushTelegram = true
+    } else {
+      messageText = `🎬 ${label} রেডি — [দেখুন](${mediaUrl})`
+    }
   } else if (status === 'success' && (data?.storagePath || data?.imageUrl)) {
     const storagePath = typeof data?.storagePath === 'string' ? data.storagePath.trim() : ''
     const isVideo = action.type === 'video_gen' || storagePath.endsWith('.mp4') || data?.mediaType === 'video'

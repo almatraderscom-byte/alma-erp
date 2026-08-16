@@ -664,6 +664,15 @@ enum AlmaLiveVoiceToolIntentClassifier {
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         guard !normalized.isEmpty else { return .unclassified }
+        // Boss REPORTING his prayer state ("নামাজ পড়েছি", "ইশা মিস হয়েছে", "কাযা
+        // পড়ে নিয়েছি") is not a status question: the old "নামাজ পড়" quick-route
+        // marker pinned it to get_salah_status (a read), so the model's
+        // run_agent_turn → mark_salah was refused as a route mismatch and the
+        // prayer was never marked (live salah call 2026-08-15, Isha stuck
+        // pending). Checked before the hang-up pin on purpose — "পড়েছি, রাখো"
+        // must let mark_salah through; the deterministic hangupIntent path ends
+        // the call regardless of this route. Ambiguous ⇒ pin nothing.
+        if isSalahDeclaration(normalized) { return .unclassified }
         let hangupMarkers = [
             "আল্লাহ হাফেজ", "আল্লাহহাফেজ", "খোদা হাফেজ", "ফোন রাখ", "ফোন কাট",
             "কল রাখ", "কল কাট", "hang up",
@@ -709,6 +718,48 @@ enum AlmaLiveVoiceToolIntentClassifier {
         ]
         if casualMarkers.contains(where: normalized.contains) { return .casual }
         return .unclassified
+    }
+
+    /// Salah context word + a prayed/missed/qaza declaration in the same
+    /// sentence. Mirrors the server's salah-confirm-intent heuristics just
+    /// closely enough to UNPIN the route — persistence stays server-owned
+    /// (auto-mark + mark_salah), the client only refuses to stand in the way.
+    private static let salahContextMarkers = [
+        "নামাজ", "সালাহ", "ওয়াক্ত", "namaz", "namaj", "salah", "waqt",
+        "ফজর", "যোহর", "জোহর", "জুহর", "আসর", "মাগরিব", "ইশা",
+        "fajr", "fozr", "dhuhr", "zuhr", "johr", "asr", "maghrib", "isha", "esha",
+        "কাযা", "কাজা", "qaza", "kaza",
+    ]
+    // COMPLETED/PAST forms only (Codex P1, PR #762): a bare topic word like
+    // "কাযা" or the stem "আদায় কর" also appears in questions and requests
+    // ("কাযা নামাজের নিয়ম বলো", "নামাজ আদায় করার জন্য reminder তৈরি করো") and
+    // must never read as a declaration — the server would auto-mark it.
+    private static let salahDeclarationMarkers = [
+        "পড়েছি", "পড়লাম", "পড়ে নিয়েছি", "পড়ে ফেল", "পড়ে গেছি",
+        "আদায় করেছি", "আদায় করলাম", "porechi", "porlam", "pore nilam",
+        "pore nisi", "aday korechi",
+        "পড়িনি", "পড়া হয়নি", "পড়তে পারিনি", "porini", "pora hoyni",
+        "মিস হয়ে", "মিস করেছি", "miss hoye", "miss korechi",
+    ]
+    // Future-inflected completion stems (Codex P1 round 2): "পড়ে ফেলব" contains
+    // the completed stem "পড়ে ফেল" — a future promise must never read as done.
+    private static let salahFutureMarkers = [
+        "পড়ব", "পড়বো", "পড়ে নিব", "পড়ে নেব", "পড়ে ফেলব", "পড়ে ফেলবো",
+        "porbo", "pore nibo", "pore nebo", "pore felbo", "porte hobe",
+    ]
+    static func isSalahDeclaration(_ normalized: String) -> Bool {
+        salahContextMarkers.contains(where: normalized.contains)
+            && salahDeclarationMarkers.contains(where: normalized.contains)
+            && !salahFutureMarkers.contains(where: normalized.contains)
+    }
+
+    /// Raw-transcript entry for callers outside classify's own pipeline.
+    static func isSalahDeclarationSentence(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return !normalized.isEmpty && isSalahDeclaration(normalized)
     }
 }
 
@@ -3309,6 +3360,10 @@ final class AlmaVoiceEngine {
     var activeAgentCallId: String?
     var pendingAgentCallBrief: String?
     private var agentBriefSent = false
+    /// Model produced ANY spoken output since THIS live session opened —
+    /// per-session on purpose (liveFeed persists across calls and would give
+    /// a stale answer). Gates the late-brief note's re-greeting.
+    private var agentSpokeThisLiveSession = false
     /// Installed only by AgentCallController. The controller captures the exact
     /// logical generation + CallKit UUID, so a delayed permission/socket failure
     /// can never end a replacement call that happens to reuse this engine path.
@@ -3396,9 +3451,16 @@ final class AlmaVoiceEngine {
     }
 
     private func sendAgentBriefNote(_ brief: String) {
+        // Owner bug 2026-08-15: the brief used to arrive only after the answer
+        // (network fetch), and this note's unconditional "সালাম দিয়ে শুরু করো"
+        // made the model RE-greet mid-conversation. If the model has already
+        // spoken this call, the reason must slot into the flow — no second
+        // salam, no fresh greeting.
+        let opening = agentSpokeThisLiveSession
+            ? "কথার মাঝে আবার সালাম বা নতুন greeting একদম নয় — চলতি কথার সাথে মিলিয়ে এক লাইনে কারণটা নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।"
+            : "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।"
         live.sendRealtimeText(
-            "তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " +
-            "সালাম দিয়ে শুরু করে কারণটা সংক্ষেপে নিজের ভাষায় বলো, তারপর Boss-এর কথা শোনো।")
+            "তুমি নিজে Boss-কে কল করেছ (Boss এইমাত্র ধরেছেন)। কারণ: \(String(brief.prefix(800)))। " + opening)
     }
 
     struct Card: Identifiable, Equatable {
@@ -3776,6 +3838,7 @@ final class AlmaVoiceEngine {
         }
         if #available(iOS 17.0, *) { AlmaCallBarBridge.shared.engine = self }
         agentBriefSent = false
+        agentSpokeThisLiveSession = false
         closed = false
         // A hang-up left half-scheduled on the previous call must not reject
         // the next one's end request (Codex P2 round 6 — the console reuses
@@ -5580,7 +5643,7 @@ final class AlmaVoiceEngine {
         // tool). If Boss's own words ask to hang up, the call ends after the
         // model's goodbye finishes — model cooperation not required.
         if Self.hangupContext(in: transcript) { lastHangupContextAt = Date() }
-        if Self.hangupIntent(in: transcript) {
+        if Self.hangupIntent(in: transcript, finalized: finalized) {
             #if DEBUG
             NSLog("ALMA-VOICE hang-up intent heard in input transcript")
             #endif
@@ -5589,7 +5652,56 @@ final class AlmaVoiceEngine {
         if state != .speaking { state = .listening }
         if finalized {
             expectedLiveToolRoute = AlmaLiveVoiceToolIntentClassifier.classify(transcript)
+            // DETERMINISTIC salah persistence (live salah call 2026-08-15: Boss
+            // said "নামাজ পড়েছি", the Live model never called run_agent_turn, and
+            // Isha stayed pending). Chat runs the server's salah auto-mark on
+            // EVERY owner message — give the call path the same parity by
+            // posting every finalized transcript; the server's strict detectors
+            // decide (Codex P1 round 2: a client vocabulary prefilter silently
+            // dropped declarations the server understands, e.g. "I prayed
+            // Isha"). Idempotent with a later mark_salah.
+            postSpokenSalahConfirmation(transcript)
             feedFinalizeUser()
+        }
+    }
+
+    /// Fire-and-forget: the server's salah-auto-mark owns detection and the
+    /// waqt-window rules; this only carries Boss's words to it. Bounded retry
+    /// (Codex P2): a transient 5xx/transport failure must not turn the
+    /// deterministic path back into a coin flip — but no durable outbox; the
+    /// scheduler's 15-minute re-call is the outer safety net.
+    /// Confirmation POSTs are CHAINED (Codex P2 round 4): two consecutive
+    /// corrections ("মিস হয়েছে" → "না না, পড়েছি") racing to the non-atomic
+    /// auto-mark writer could let the earlier utterance win; transcript order
+    /// must equal write order.
+    private var salahConfirmChain: Task<Void, Never>?
+
+    private func postSpokenSalahConfirmation(_ text: String) {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.count >= 3 else { return }
+        let previous = salahConfirmChain
+        salahConfirmChain = Task {
+            await previous?.value
+            struct MarkedRow: Decodable { let waqt: String; let status: String }
+            struct ConfirmResp: Decodable { let success: Bool?; let marked: [MarkedRow]? }
+            for (attempt, delayNs) in [(0, UInt64(0)), (1, UInt64(2_000_000_000)), (2, UInt64(6_000_000_000))] {
+                if delayNs > 0 { try? await Task.sleep(nanoseconds: delayNs) }
+                await AlmaAPI.shared.syncCookies()
+                do {
+                    let resp: ConfirmResp = try await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/salah/confirm-spoken",
+                        body: ["text": clean])
+                    #if DEBUG
+                    let marked = resp.marked?.map { "\($0.waqt)=\($0.status)" }.joined(separator: ",") ?? "none"
+                    NSLog("ALMA-VOICE spoken salah confirm (attempt %d) → %@", attempt, marked)
+                    #endif
+                    return
+                } catch {
+                    #if DEBUG
+                    NSLog("ALMA-VOICE spoken salah confirm attempt %d failed: %@", attempt, String(describing: error))
+                    #endif
+                }
+            }
         }
     }
 
@@ -5623,7 +5735,7 @@ final class AlmaVoiceEngine {
     /// hang-up): bare "রেখে দাও/রাখো" counts only as a short standalone closing
     /// utterance; longer sentences need explicit call/phone context or a
     /// salutation formula.
-    static func hangupIntent(in text: String) -> Bool {
+    static func hangupIntent(in text: String, finalized: Bool = true) -> Bool {
         let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         // Closing salutations.
         if t.contains("আল্লাহ হাফেজ") || t.contains("আল্লাহহাফেজ") || t.contains("খোদা হাফেজ") { return true }
@@ -5634,11 +5746,25 @@ final class AlmaVoiceEngine {
         // Standalone closings.
         if t.contains("এখন রাখি") || t.contains("আচ্ছা রাখি") || t.contains("তাহলে রাখি") || t.contains("রাখি তাহলে") { return true }
         if t.count <= 12, t.contains("রেখে দাও") || t.contains("রেখে দেন") || t == "রাখো" || t == "রাখেন" || t == "রাখি" { return true }
+        // Short standalone closings like "আচ্ছা ঠিক আছে রাখো তাহলে" (owner
+        // report 2026-08-15: his real wording missed the list above and the
+        // call hung open). Narrow on purpose (Codex P1 #759 round 2 —
+        // "ফাইলটা এখানে রাখো" is a placement command, not a farewell): the
+        // রাখ-word must come WITH a closing companion (তাহলে/আচ্ছা/ঠিক আছে/
+        // এখন/ওকে), and never with a location word, a question form, or a
+        // memory instruction.
+        // NO generic short-form branch. Four review rounds proved every
+        // রাখ-family heuristic misfires on some placement/keeping sentence
+        // ("ব্যাগটা রাখো তাহলে", "এটা আমি রাখি") — only the explicit
+        // salutation/phone-context phrases above are deterministic. Softer
+        // farewells end the call through the model's end_call, which is
+        // corroboration-gated separately.
         return false
     }
 
     func liveOutputTranscript(_ text: String) {
         let spoken = AlmaLiveVoiceSpokenText.plain(text)
+        if !spoken.isEmpty { agentSpokeThisLiveSession = true }
         replyText = spoken
         nowLine = spoken
         feedAgentLineId = feedUpsert(id: feedAgentLineId, kind: .agent, text: spoken)
@@ -5648,6 +5774,10 @@ final class AlmaVoiceEngine {
         live.setToolResponsePlaybackBlocked(active)
         ttsLevel = level
         if active {
+            // Playback can begin before the matching outputTranscription event
+            // lands (Codex P2) — audio alone proves the model spoke, so the
+            // late-brief note must already know not to re-greet.
+            agentSpokeThisLiveSession = true
             liveToolSettleTask?.cancel()
             spokenTurnHadToolCall = false
             state = .speaking
@@ -8128,12 +8258,18 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             "sessionResumption": resumption,
             "contextWindowCompression": contextWindowCompression,
             "realtimeInputConfig": [
+                // Owner latency report 2026-08-15 ("reply onk late, ja age chilo
+                // na"): 896af620 raised turn-end wait 650→1200ms and end
+                // sensitivity HIGH→LOW to stop long sentences being cut — but
+                // that added ≥1.2s before EVERY reply. 800ms + HIGH restores the
+                // snappy feel; long-input protection keeps its other guards
+                // (START_SENSITIVITY_LOW, 250ms prefix padding, VAD flush).
                 "automaticActivityDetection": [
                     "disabled": false,
                     "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
-                    "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+                    "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
                     "prefixPaddingMs": 250,
-                    "silenceDurationMs": 1200,
+                    "silenceDurationMs": 800,
                 ],
                 "activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                 "turnCoverage": "TURN_INCLUDES_ONLY_ACTIVITY",
@@ -9281,7 +9417,7 @@ final class AlmaGeminiLiveSession: NSObject, URLSessionWebSocketDelegate {
             // ~90 ms in ("এজেন্ট একটু কথা বলেই থেমে যায়"). Only sustained
             // above-floor signal opens the gate; a ~300 ms pre-roll preserves
             // the speech onset, and the ~1.1 s hangover (55 frames) exceeds the
-            // server's 1200 ms silenceDuration so endpointing still belongs to
+            // server's 800 ms silenceDuration so endpointing still belongs to
             // the server VAD, never to this gate. Bonus on weak abroad
             // networks: idle uplink drops to zero.
             listenPreRoll.append(capturedInputChunk)

@@ -59,7 +59,7 @@ export async function runAdapterToolLoop(args: {
   for (let i = 0; i < maxIterations; i++) {
     if (args.signal?.aborted) break
 
-    const calls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
+    const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
     const toolNames = new Map<string, string>()
     let iterationText = ''
 
@@ -74,7 +74,13 @@ export async function runAdapterToolLoop(args: {
       if (ev.type === 'text_delta') iterationText += ev.text
       else if (ev.type === 'tool_start') toolNames.set(ev.id, ev.name)
       else if (ev.type === 'tool_input') {
-        calls.push({ id: ev.id, name: toolNames.get(ev.id) ?? ev.id, input: ev.input })
+        // thoughtSignature must round-trip (Gemini signatures; OpenAI
+        // Responses encrypted reasoning) — dropping it broke Luna-routed
+        // workers' second tool round (Codex P2 on PR #778).
+        calls.push({
+          id: ev.id, name: toolNames.get(ev.id) ?? ev.id, input: ev.input,
+          thoughtSignature: ev.thoughtSignature,
+        })
       } else if (ev.type === 'usage') {
         inputTokens += ev.inputTokens
         outputTokens += ev.outputTokens
@@ -92,7 +98,7 @@ export async function runAdapterToolLoop(args: {
 
     messages = [
       ...messages,
-      { role: 'assistant', toolCalls: calls.map((c) => ({ id: c.id, name: c.name, input: c.input })) },
+      { role: 'assistant', toolCalls: calls.map((c) => ({ id: c.id, name: c.name, input: c.input, thoughtSignature: c.thoughtSignature })) },
     ]
 
     for (const call of calls) {

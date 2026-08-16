@@ -577,6 +577,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
     let originAssistantMessageId: String?
     let revision: Int?
     let sourceId: String?
+    let source: String?
     let goal: String?
     let status: String?
     let headline: String?
@@ -589,7 +590,7 @@ struct AgentWorkStepsSnapshotColdWire: Decodable {
             version: version, trackerId: trackerId, originTurnId: originTurnId,
             currentTurnId: currentTurnId, turnIds: turnIds, conversationId: conversationId,
             originAssistantMessageId: originAssistantMessageId, revision: revision,
-            sourceId: sourceId, goal: goal, status: status, headline: headline,
+            sourceId: sourceId, source: source, goal: goal, status: status, headline: headline,
             blockedBy: blockedBy, steps: steps, updatedAt: updatedAt)
     }
 }
@@ -2692,26 +2693,85 @@ final class AssistantVM {
     /// The dock projection: the newest non-terminal tracker of THIS chat. The
     /// dock is navigation/summary over the same store — never a second state
     /// machine and never a second set of controls.
-    var activeWorkTracker: AgentWorkStepsSnapshot? {
+    var activeWorkTracker: AgentWorkStepsSnapshot? { activeWorkTracker(now: Date()) }
+
+    /// `now` is a parameter so the dock can re-evaluate on a clock tick —
+    /// time passing is not observable state, and without the tick a stale
+    /// running chip would outlive its freshness window (Codex P1 #758).
+    func activeWorkTracker(now: Date) -> AgentWorkStepsSnapshot? {
         guard let cid = conversationId else { return nil }
+        // The turn the runtime projection says is running right now (nil before
+        // its first snapshot) — used to keep stale rows out of the dock.
+        let currentRuntimeTurnId = workTrackers.values
+            .filter { $0.source == "turn_runtime" && !$0.isTerminal }
+            .max { $0.updatedAt < $1.updatedAt }?.currentTurnId
         return workTrackers.values
             // The dock is LIVE work only. The turn-end projection honestly
             // parks an unfinished tracker as "paused" (nothing is running),
             // and a paused chip lingering after the answer landed is what the
             // owner reported on build 103 — waiting_* states stay visible
             // because they genuinely await someone; paused and terminal hide.
-            // A "running" chip with no stream behind it is the same bug via a
-            // dropped final snapshot, so running/preparing require the stream.
+            // A running/preparing chip is judged by FRESHNESS, not the app
+            // stream: away work (salah calls, background/worker turns) runs
+            // with no stream in this app at all, and the stream requirement
+            // hid those real chips on build 104 (owner report 2026-08-15).
+            // The live stream still counts, and a stale snapshot — the
+            // dropped-final-snapshot case — ages out of the dock on its own.
             .filter { snapshot in
                 guard !snapshot.isTerminal, snapshot.status != "paused",
                       snapshot.conversationId.isEmpty || snapshot.conversationId == cid
                 else { return false }
                 if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
+                    // A waiting chip lives exactly as long as its blocker: the
+                    // answer/decision resumes the turn in a NEW tracker row, so
+                    // the paused turn's row never hears the resolution and
+                    // would hold the dock forever (owner report 2026-08-15,
+                    // answered ask card). The action registry is the durable
+                    // fate of every ask/approval ref — a terminal ref means
+                    // nothing here is actually waiting. Unknown refs keep the
+                    // honest waiting default.
+                    if let refId = snapshot.blockedByRefId,
+                       let record = actionRegistry[refId], record.state.isTerminal {
+                        return false
+                    }
                     return true
                 }
-                return isStreaming
+                // Freshness first. The live stream alone is NOT enough: a
+                // previous turn's row that missed settlement would ride every
+                // new stream forever (Codex P2 #765). Streaming only rescues a
+                // tracker that belongs to the turn now running.
+                if let updated = ISO8601DateFormatter.almaWorkStepsLenient
+                    .parseWorkStepsTimestamp(snapshot.updatedAt),
+                   now.timeIntervalSince(updated) < 180 {
+                    return true
+                }
+                guard isStreaming, let live = currentRuntimeTurnId else { return false }
+                return snapshot.currentTurnId == live || snapshot.turnIds.contains(live)
             }
-            .max { $0.updatedAt < $1.updatedAt }
+            // The plan tracker is the REAL step list; turn_runtime is a coarse
+            // per-turn projection (owner 2026-08-15: the dock said "১ of ২"
+            // while the work detail showed 5 plan steps). Prefer the plan
+            // tracker — but ONLY when it belongs to the turn now running, or a
+            // previous turn that died without its terminal snapshot would
+            // outrank the live one forever (Codex P2 #765).
+            .max { a, b in
+                let currentTurn = currentRuntimeTurnId
+                func planIsCurrent(_ s: AgentWorkStepsSnapshot) -> Bool {
+                    guard s.source == "agent_plan" else { return false }
+                    if let currentTurn {
+                        return s.currentTurnId == currentTurn || s.turnIds.contains(currentTurn)
+                    }
+                    // No runtime snapshot yet (first round, or a tool-free
+                    // turn): only a FRESH plan may hold the dock, or a previous
+                    // turn's unsettled row would occupy it (Codex P2 #765).
+                    guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
+                        .parseWorkStepsTimestamp(s.updatedAt) else { return false }
+                    return now.timeIntervalSince(updated) < 180
+                }
+                let aPlan = planIsCurrent(a), bPlan = planIsCurrent(b)
+                if aPlan != bPlan { return bPlan }   // the current plan wins
+                return a.updatedAt < b.updatedAt
+            }
     }
     func clearWorkTrackersForConversationSwitch() {
         workTrackers = [:]
@@ -9041,6 +9101,7 @@ final class AssistantVM {
             originAssistantMessageId: variant == "settled" ? "fix-work-steps-message" : nil,
             revision: variant == "settled" ? 7 : 3,
             sourceId: "fixture-plan-1",
+            source: "agent_plan",
             goal: "Ship the Build 103 three-issue candidate",
             status: status,
             headline: variant == "waiting" ? "আপনার সিদ্ধান্তের অপেক্ষায়"
@@ -13077,6 +13138,10 @@ private struct AgentMediaCard: View {
     @State private var audioClaimToken: AlmaLiveVoiceNonCallAudioRegistry.Token?
     @State private var audioClaimGeneration: UUID?
     @State private var audioSessionLease: AssistantNonCallAudioSessionLease?
+    /// True canvas ratio, loaded from the video track (portrait reels must not
+    /// sit in a 16:9 letterbox). 16:9 only until the asset reports itself.
+    @State private var videoAspect: CGFloat = 16.0 / 9.0
+    @State private var isVideoPlaying = false
     init(title: String, url: URL, pal: AgentPalette) {
         self.title = title; self.url = url; self.pal = pal
         _player = State(initialValue: AVPlayer(url: url))
@@ -13092,8 +13157,34 @@ private struct AgentMediaCard: View {
             }
             .foregroundStyle(pal.mutedHi)
             if isVideo {
-                VideoPlayer(player: player).aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                ZStack {
+                    VideoPlayer(player: player)
+                        .aspectRatio(videoAspect, contentMode: .fit)
+                    // Explicit play control: inside the chat scroll view the
+                    // player's built-in controls often never receive the tap,
+                    // leaving a dead black canvas (owner report 2026-08-15).
+                    if !isVideoPlaying {
+                        Button {
+                            player.play()
+                            isVideoPlaying = true
+                        } label: {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 54))
+                                .foregroundStyle(.white.opacity(0.95), .black.opacity(0.4))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("agent.video-card.play")
+                    }
+                }
+                .frame(maxHeight: 460)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .onAppear { loadVideoCanvasAndPoster() }
+                // Overlay visibility follows the PLAYER's truth, not an
+                // optimistic flag — pause/stall/failure all bring the explicit
+                // play control back (Codex P2).
+                .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                    isVideoPlaying = (status == .playing)
+                }
             } else {
                 HStack {
                     Button { startAudioPlayback() } label: { Image(systemName: "play.fill") }
@@ -13110,7 +13201,13 @@ private struct AgentMediaCard: View {
         .onReceive(NotificationCenter.default.publisher(
             for: AVPlayerItem.didPlayToEndTimeNotification,
             object: player.currentItem)) { _ in
-                guard !isVideo, let generation = audioClaimGeneration else { return }
+                if isVideo {
+                    // Rewind so the poster frame returns and replay is one tap.
+                    isVideoPlaying = false
+                    player.seek(to: .zero)
+                    return
+                }
+                guard let generation = audioClaimGeneration else { return }
                 releaseAudioOwnership(
                     generation: generation,
                     mode: .restoreBeforeNextAppMutation)
@@ -13126,6 +13223,33 @@ private struct AgentMediaCard: View {
         .onDisappear {
             guard !isVideo else { return }
             stopAudioPlayback()
+        }
+    }
+
+    /// Load the real canvas ratio + a poster frame; a portrait reel gets its
+    /// true 9:16 canvas and the card never opens as a featureless black box.
+    private func loadVideoCanvasAndPoster() {
+        guard isVideo else { return }
+        let asset = AVURLAsset(url: url)
+        Task {
+            if let track = try? await asset.loadTracks(withMediaType: .video).first,
+               let size = try? await track.load(.naturalSize),
+               let transform = try? await track.load(.preferredTransform) {
+                let rect = CGRect(origin: .zero, size: size).applying(transform)
+                let w = abs(rect.width)
+                let h = abs(rect.height)
+                if w > 0, h > 0 {
+                    await MainActor.run { videoAspect = w / h }
+                }
+            }
+            await MainActor.run {
+                // Nudge off 0 so AVPlayer decodes a visible poster frame — but
+                // ONLY while idle at the start; racing an active playback (or a
+                // re-appear mid-video) must never yank the position back.
+                guard player.timeControlStatus != .playing,
+                      CMTimeGetSeconds(player.currentTime()) < 0.05 else { return }
+                player.seek(to: CMTime(seconds: 0.1, preferredTimescale: 600))
+            }
         }
     }
 
@@ -14881,7 +15005,7 @@ struct AgentThoughtProcessSheet: View {
                             if request.kind == .summary {
                                 summaryTimelineBody(pal)
                             } else {
-                                thoughtProcessBody(pal)
+                                thoughtProcessBody(pal, proxy: proxy)
                             }
                             Color.clear.frame(height: 1).id("activity-sheet-live-bottom")
                         }
@@ -14919,7 +15043,50 @@ struct AgentThoughtProcessSheet: View {
         }
     }
 
-    @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
+    /// Owner ask 2026-08-16: the REPLY types out live, but the thought pane
+    /// filled in whole blocks — providers emit reasoning line-wise (the
+    /// plumbing filter holds until newline) or in one lump, so the text
+    /// "appears" instead of streaming. This reveals only the APPENDED suffix
+    /// progressively; finished turns render instantly.
+    @available(iOS 17.0, *)
+    private struct AlmaTypewriterText: View {
+        let text: String
+        let live: Bool
+        /// Throttled reveal-progress signal (~5/s) so the sheet can keep the
+        /// live tail scrolled into view (Codex P2) without a 45fps scroll storm.
+        var onReveal: (() -> Void)? = nil
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var revealed = 0
+        @State private var lastNotify = Date.distantPast
+
+        var body: some View {
+            Text(String(text.prefix(revealed)))
+                .task(id: "\(live)|\(reduceMotion)|\(text.count)") {
+                    // Reduce Motion: no progressive reveal, same as the file's
+                    // other shimmer/motion effects (Codex P2).
+                    guard live, !reduceMotion else { revealed = text.count; return }
+                    if revealed > text.count { revealed = text.count } // trace replaced
+                    while revealed < text.count {
+                        // ~45fps × 3 chars ≈ 135 chars/s — faster than any
+                        // provider sustains, so the pane never falls behind;
+                        // Character-based prefix keeps Bangla clusters whole.
+                        try? await Task.sleep(nanoseconds: 22_000_000)
+                        // A canceled (replaced) task must not write its stale
+                        // count over the successor's progress (Codex P1).
+                        if Task.isCancelled { return }
+                        revealed = min(text.count, revealed + 3)
+                        if Date().timeIntervalSince(lastNotify) > 0.2 || revealed == text.count {
+                            lastNotify = Date()
+                            onReveal?()
+                        }
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder private func thoughtProcessBody(
+        _ pal: AgentPalette, proxy: ScrollViewProxy? = nil,
+    ) -> some View {
         // Row-scoped slice first (this step's OWN thought / the tapped text);
         // whole-trace fallback for the settled-summary header path.
         let liveSlice = liveScopedThoughtText
@@ -14934,7 +15101,15 @@ struct AgentThoughtProcessSheet: View {
                 .padding(.vertical, 24)
         } else {
             // Claude iOS: the thought is plain prose on the sheet — no box around it.
-            Text(prose)
+            // Live turns type out (owner ask 2026-08-16); settled turns render whole.
+            AlmaTypewriterText(text: prose, live: message.isStreaming, onReveal: {
+                // The reveal grows content AFTER sheetGrowthIdentity fired —
+                // follow the typed tail too (Codex P2).
+                guard request.kind == .thoughtProcess, message.isStreaming else { return }
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy?.scrollTo("activity-sheet-live-bottom", anchor: .bottom)
+                }
+            })
                 .font(.system(size: 16))
                 .foregroundStyle(pal.ink.opacity(0.92))
                 .lineSpacing(6)
@@ -15928,6 +16103,11 @@ enum AgentConfirmCardCostPresentation {
     static func monetaryText(actionType: String?, costEstimate: Double?) -> String? {
         guard actionType != "image_gen", let costEstimate,
               costEstimate.isFinite, costEstimate > 0 else { return nil }
+        // media_plan cards carry a BDT total (the card body shows the exact
+        // USD+৳ lines) — labeling it "$" overstated the cost 125×.
+        if actionType == "media_plan" {
+            return String(format: "~৳%.0f", costEstimate)
+        }
         return String(format: "~$%.2f", costEstimate)
     }
 
@@ -16005,6 +16185,25 @@ struct AgentConfirmCardView: View {
     let pal: AgentPalette
     let vm: AssistantVM
     let onDecide: (Bool) -> Void
+
+    /// Card summaries are server-authored multi-line text with INLINE markdown
+    /// only (**bold** totals). Parse per line — whole-string parsing would
+    /// collapse the newlines that give the card its shape.
+    static func inlineSummaryMarkdown(_ s: String) -> AttributedString {
+        var out = AttributedString()
+        var first = true
+        for line in s.components(separatedBy: "\n") {
+            if !first { out += AttributedString("\n") }
+            first = false
+            if let md = try? AttributedString(markdown: line,
+                options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                out += md
+            } else {
+                out += AttributedString(line)
+            }
+        }
+        return out
+    }
     @State private var showImageModelPicker = false
     @State private var showImageSetupSheet = false
     private var submitting: Bool { vm.isSubmittingAction("action:\(card.id)") }
@@ -16073,7 +16272,10 @@ struct AgentConfirmCardView: View {
                 }
             }
 
-            Text(card.summary)
+            // Inline markdown, line by line: server card summaries carry
+            // **bold** emphasis (media plan totals) — plain Text printed the
+            // raw asterisks (sim finding, Build 105 checklist).
+            Text(Self.inlineSummaryMarkdown(card.summary))
                 .font(.system(size: 14.5, weight: .regular))
                 .foregroundStyle(pal.ink)
                 .lineSpacing(4)
@@ -20784,7 +20986,13 @@ struct AgentWorkStepsDockView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let snapshot = vm.activeWorkTracker {
+        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+            dockBody(now: timeline.date)
+        }
+    }
+
+    @ViewBuilder private func dockBody(now: Date) -> some View {
+        if let snapshot = vm.activeWorkTracker(now: now) {
             VStack(spacing: 6) {
                 if expanded {
                     ScrollView {
@@ -20796,16 +21004,15 @@ struct AgentWorkStepsDockView: View {
                         .padding(.vertical, 6)
                     }
                     .frame(maxHeight: 236)
-                    // Owner 2026-08-13: the 0.35 wash let the chat text bleed
-                    // through the expanded list. Opaque panel — material base
-                    // plus a solid tint — so the steps are the only thing read.
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(.thinMaterial)
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color(red: 0.09, green: 0.09, blue: 0.13).opacity(0.94))))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    // Owner 2026-08-15: the solid near-black panel looked
+                    // unfinished next to the Liquid Glass chips — the panel is
+                    // now the shared Agent glass surface (real glass on iOS 26,
+                    // ultraThin material before, solid card under Reduce
+                    // Transparency). Glass BLURS the chat behind it, so the
+                    // 2026-08-13 bleed-through complaint about the 0.35 wash
+                    // stays fixed; step text reads in theme ink, not white.
+                    .modifier(AlmaAgentGlassBackground(
+                        shape: RoundedRectangle(cornerRadius: 18, style: .continuous), pal: pal))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .accessibilityIdentifier("agent.work-steps.dock.panel")
                 }
@@ -20880,7 +21087,9 @@ struct AgentWorkStepsDockView: View {
             .frame(width: 17)
             Text("\(step.position). \(step.title)")
                 .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
-                .foregroundStyle(.white.opacity(step.status == "completed" ? 0.6 : 0.92))
+                // Theme ink, not white: the panel behind is glass now, so the
+                // rows must read on light and dark alike.
+                .foregroundStyle(pal.ink.opacity(step.status == "completed" ? 0.55 : 0.92))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
         }
@@ -25195,5 +25404,22 @@ struct AgentArtifactViewerSheet: View {
                 loadError = "Preview file প্রস্তুত করা গেল না"
             }
         }
+    }
+}
+
+
+extension ISO8601DateFormatter {
+    /// Work-steps timestamps arrive both with and without fractional seconds.
+    static let almaWorkStepsLenient: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    func parseWorkStepsTimestamp(_ value: String) -> Date? {
+        if let d = date(from: value) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 }

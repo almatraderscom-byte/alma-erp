@@ -74,10 +74,34 @@ async function ownerUserIds(): Promise<string[]> {
   return rows.map((r) => r.id)
 }
 
+/**
+ * Byte-capped brief for the ring payload. VoIP pushes hard-fail over ~5KB and
+ * a rejected push means NO RING AT ALL, so the cap must leave generous room
+ * for the rest of the payload. Bangla is ~3 bytes/char — 2800 bytes carries a
+ * full salah brief; longer manual briefs arrive complete via the post-answer
+ * fetch, which stays authoritative.
+ */
+export function payloadPurposePreview(purpose: string, maxBytes = 2800): string {
+  let out = ''
+  let bytes = 0
+  for (const ch of purpose) {
+    // Count the bytes the character occupies INSIDE the serialized JSON body
+    // (Codex P2: quotes/backslashes/newlines expand under JSON.stringify —
+    // capping raw UTF-8 bytes could still push the wire payload past APNs'
+    // limit and kill the ring).
+    const b = Buffer.byteLength(JSON.stringify(ch).slice(1, -1), 'utf8')
+    if (bytes + b > maxBytes) break
+    out += ch
+    bytes += b
+  }
+  return out
+}
+
 function ringPayload(
   callId: string,
   event: 'ring' | 'cancel',
   claimReceipt?: string,
+  purpose?: string,
 ): VoipCallPayload {
   return {
     type: 'agent_call',
@@ -90,6 +114,7 @@ function ringPayload(
     expiresAt: new Date(Date.now() + RING_WINDOW_MS).toISOString(),
     event,
     ...(event === 'ring' && claimReceipt ? { claimReceipt } : {}),
+    ...(event === 'ring' && purpose ? { purpose: payloadPurposePreview(purpose) } : {}),
   }
 }
 
@@ -249,7 +274,7 @@ export async function ringOwnerApp(args: {
     return { ok: false, error: 'db_error' }
   }
 
-  const payload = ringPayload(callId, 'ring', claimReceipt)
+  const payload = ringPayload(callId, 'ring', claimReceipt, args.purpose)
   const delivery = await sendAgentCallPush(targets, payload)
   const { voipSent, fcmSent } = delivery
 

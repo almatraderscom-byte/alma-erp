@@ -86,6 +86,11 @@ final class CallKitVoIP: NSObject {
         /// Bearer proof delivered only in this exact agent ring push. Never log
         /// it and never copy it into a user-facing diagnostic.
         var agentClaimReceipt: String? = nil
+        /// Agent call brief carried IN the ring push (byte-capped server-side),
+        /// so the Live model knows why it called BEFORE Boss answers — the
+        /// post-answer fetch stays the full-length fallback (owner bug
+        /// 2026-08-15: late brief made the model open generic, then re-greet).
+        var agentPurpose: String? = nil
         var admissionToken: AlmaCallAudioAdmission.Token? = nil
         /// `answered` means the user initiated an answer and suppresses a
         /// multi-device cancel race. Only `answerFulfilled` is durable server
@@ -510,6 +515,7 @@ final class CallKitVoIP: NSObject {
     private func reportIncoming(broadcastId: String, channel: String, caller: String,
                                 kind: CallKind = .office,
                                 agentClaimReceipt: String? = nil,
+                                agentPurpose: String? = nil,
                                 completion: @escaping () -> Void) {
         guard let uuid = UUID(uuidString: broadcastId) else {
             reportPlaceholderAndEnd(caller: caller, completion: completion)
@@ -520,7 +526,8 @@ final class CallKitVoIP: NSObject {
             call: ActiveCall(
                 broadcastId: broadcastId.lowercased(), channel: channel,
                 peer: caller, direction: .incoming, kind: kind,
-                agentClaimReceipt: kind == .agent ? agentClaimReceipt : nil))
+                agentClaimReceipt: kind == .agent ? agentClaimReceipt : nil,
+                agentPurpose: kind == .agent ? agentPurpose : nil))
         if insertion.duplicate {
             completion() // duplicate PushKit/poll delivery: one deterministic system call
             return
@@ -1055,9 +1062,12 @@ extension CallKitVoIP: PKPushRegistryDelegate {
                 reportPlaceholderAndEnd(caller: caller0, completion: completion)
                 return
             }
+            let pushPurpose = ((d["purpose"] as? String) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             reportIncoming(broadcastId: callId, channel: "agent_\(callId)",
                            caller: "ALMA", kind: .agent,
                            agentClaimReceipt: claimReceipt,
+                           agentPurpose: pushPurpose.isEmpty ? nil : pushPurpose,
                            completion: completion)
             // Mint the Gemini ephemeral token WHILE the phone rings — answering
             // then skips the whole Vercel round trip (abroad latency fix).
@@ -1350,9 +1360,12 @@ extension CallKitVoIP: CXProviderDelegate {
                     self.replayPersistedAgentStatus(persisted)
                     return
                 }
+                // Ring-push brief (byte-capped) makes the model's FIRST words
+                // salam + reason; the fetch below still replaces it with the
+                // full purpose if it lands before the live socket opens.
                 guard let agentSession = AgentCallController.shared.start(
                     callId: call.broadcastId,
-                    purpose: "",
+                    purpose: call.agentPurpose ?? "",
                     callKitUUID: action.callUUID,
                     admissionToken: admissionToken)
                 else {

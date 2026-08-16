@@ -132,6 +132,10 @@ describe('SK-0 — skill selection on the owner’s real messages', () => {
       'alma-image-generation',
       'alma-invoice-to-erp',
       'alma-marketing',
+      // 2026-08-15: alma-media-video — the Media mode pipeline; without it the
+      // router pinned alma-image-generation on video asks and its allowlist
+      // withheld plan_media_video (hit live on the owner-photo demo).
+      'alma-media-video',
       'alma-meta-campaign-launch',
       'alma-owner-daily-briefing',
       'alma-product-listing',

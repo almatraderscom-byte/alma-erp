@@ -153,6 +153,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         type: String(action.type),
         summary: String(action.summary ?? ''),
         feedback,
+        // media_plan cards: pin the head to THIS card's project so a chat with
+        // several media projects can never revise/supersede the wrong one.
+        anchor:
+          action.type === 'media_plan' &&
+          typeof (action.payload as { projectId?: unknown } | null)?.projectId === 'string'
+            ? { 'media projectId (plan_media_video-এ এই projectId-ই দেবে)': String((action.payload as { projectId: string }).projectId) }
+            : undefined,
       }) }],
     },
   })
