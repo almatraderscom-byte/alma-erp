@@ -106,11 +106,13 @@ export function openAiResponsesEnabled(): boolean {
   return process.env.OPENAI_RESPONSES_API !== 'false'
 }
 
-/** Reasoning effort for Luna head turns — 'low' keeps the head snappy and the
- *  summaries brief; owner-tunable without redeploy semantics via env. */
+/** Reasoning effort for Luna head turns. 'medium' by default: live probes
+ *  2026-08-16 showed 'low' almost never yields a visible reasoning summary
+ *  (thinks=0 across multi-round tool turns) while 'medium' streams a real one
+ *  — and a visible thought pane is the entire point. Owner-tunable via env. */
 export function lunaReasoningEffort(): 'minimal' | 'low' | 'medium' | 'high' {
   const v = process.env.LUNA_REASONING_EFFORT?.trim()
-  return v === 'minimal' || v === 'medium' || v === 'high' ? v : 'low'
+  return v === 'minimal' || v === 'low' || v === 'high' ? v : 'medium'
 }
 
 /** OpenAI reasoning items ride the neutral thoughtSignature lane as JSON. */
