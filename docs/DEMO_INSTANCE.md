@@ -92,10 +92,19 @@ Ten accounts, all `@alma-erp.demo`, password `AlmaDemo2026!` (override with
 
 ## What the data looks like
 
-10 staff · 45 products · 157 stock rows · 90 customers · 320 orders over 120 days
-(187 delivered, ৳604,416 revenue, ৳279,177 profit) · 200 expenses · ~210 attendance
-records. Customer segment, CLV and return rate are derived from the generated orders, so
-the CRM agrees with the order list.
+10 staff · 45 products · 157 stock rows · 250 customers · 1,200 orders over 120 days
+(702 delivered, ৳24.1L revenue) · 150 expenses · ~219 attendance records. Customer
+segment, CLV and return rate are derived from the generated orders, so the CRM agrees
+with the order list.
+
+Volume is chosen so the business reads as healthy: the 30-day view lands near ৳6L
+revenue against ৳4.3L expenses — about 26–28% margin. An earlier pass with a third of
+the orders put the Finance page at −622%, which is the opposite of a demo's job.
+
+Dates pin the **Dhaka** calendar day to UTC midnight rather than the seeding machine's
+local midnight; seeding from another offset otherwise shifts the whole dataset by a day.
+Today's attendance is deliberately left open (checked in, no check-out) so the
+Attendance page opens on Present 8 / Absent 2.
 
 ## Open question
 
