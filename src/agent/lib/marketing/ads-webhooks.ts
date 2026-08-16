@@ -320,7 +320,7 @@ export async function handleAdsWebhook(
         // Suppress Meta's retries of THIS delivery only now — stamping on attempt
         // would let a failed push swallow the retry that would have succeeded.
         dedupe[kvKey] = now
-        if (recorded.id) await markAdsEventNotified(recorded.id)
+        if (recorded.id) await markAdsEventNotified(recorded.id, tag)
       } else {
         console.error('[ads-webhook] no channel accepted the alert:', JSON.stringify(delivery?.statuses ?? {}))
       }

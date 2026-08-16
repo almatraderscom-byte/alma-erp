@@ -169,7 +169,11 @@ export async function recordAdsEvent(
       tier: event.tier,
       raw: raw as object,
       lastSeenAt: now,
-      ...(occurrenceTag ? { occurrenceTag } : {}),
+      // NOTE: occurrenceTag is deliberately NOT advanced here. It records the last
+      // occurrence the owner was actually TOLD about, so it moves only after a
+      // channel accepts (see markAdsEventNotified). Advancing it on the attempt
+      // would make Meta's retry of a FAILED push look like an already-delivered
+      // occurrence and suppress it.
     }
 
     const row = await db.agentAdsEvent.upsert({
@@ -209,11 +213,16 @@ export async function recordAdsEvent(
  * push outage silence an urgent rejection alert for a whole day — the failure
  * would look exactly like a delivery.
  */
-export async function markAdsEventNotified(id: string): Promise<void> {
+export async function markAdsEventNotified(id: string, occurrenceTag?: string | null): Promise<void> {
   try {
     await db.agentAdsEvent.update({
       where: { id },
-      data: { notifyCount: { increment: 1 }, lastNotifiedAt: new Date() },
+      data: {
+        notifyCount: { increment: 1 },
+        lastNotifiedAt: new Date(),
+        // The delivered occurrence — only now is it true that he was told.
+        ...(occurrenceTag ? { occurrenceTag } : {}),
+      },
     })
   } catch (err) {
     console.error('[ads-events] notify stamp failed:', err instanceof Error ? err.message : err)

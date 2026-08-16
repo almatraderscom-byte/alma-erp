@@ -363,6 +363,7 @@ final class AgentGrowthVM {
     var meta: AgentGrowthMetaStatus? = nil   // Meta Ads MCP card (owner 2026-07-17)
     var adsEvents: [AgentAdsEvent] = []
     var adsLoading = false
+    var adsError: String? = nil
     var adsShowResolved = false
     var adsDetailLoading: String? = nil
     var adsBusyId: String? = nil
@@ -447,10 +448,20 @@ final class AgentGrowthVM {
     func loadAdsEvents() async {
         adsLoading = true
         defer { adsLoading = false }
-        let resp: AdsEventsResponse? = try? await AlmaAPI.shared.get(
-            "/api/assistant/growth/ads-events",
-            query: ["status": adsShowResolved ? "all" : "open", "limit": "30"])
-        adsEvents = resp?.events ?? []
+        do {
+            let resp: AdsEventsResponse = try await AlmaAPI.shared.get(
+                "/api/assistant/growth/ads-events",
+                query: ["status": adsShowResolved ? "all" : "open", "limit": "30"])
+            adsEvents = resp.events ?? []
+            adsError = nil
+        } catch {
+            // A failed read is NOT an empty inbox: clearing the rows here would
+            // make live alerts vanish and show "সব দেখা হয়ে গেছে" — the most
+            // misleading thing this screen could say.
+            if !Self.isCancellation(error) {
+                adsError = "সুপারিশ আনা যায়নি — টেনে রিফ্রেশ করুন।"
+            }
+        }
         // Recovery lives INSIDE the load, not in a second task: a separate task
         // keyed on the list would be cancelled by this very assignment, and the
         // assignment would overwrite anything that task had inserted.
@@ -609,6 +620,8 @@ struct AgentGrowthScreen: View {
                 Color.clear.frame(height: 54)
                     .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .agentGrowthShimmer()
+            } else if let err = vm.adsError, vm.adsEvents.isEmpty {
+                Text(err).font(.caption).foregroundStyle(AgentGrowthPalette.amber400)
             } else if vm.adsEvents.isEmpty {
                 Text(vm.adsShowResolved ? "কোনো ইভেন্ট নেই।" : "বাকি কোনো সুপারিশ নেই — সব দেখা হয়ে গেছে।")
                     .font(.caption).foregroundStyle(.secondary)

@@ -702,7 +702,7 @@ const manage_ads_webhooks: AgentTool = {
 }
 
 /** Owner-facing summary of one stored ads event (no ids the owner can't use). */
-function summariseAdsEvent(event: AdsEventRecord) {
+function summariseAdsEvent(event: AdsEventRecord, opts?: { detailResolved?: boolean }) {
   // Identity and live status belong to the OBJECT, not to its recommendation
   // rows: a delivery-status or issue alert legitimately has an empty
   // recommendations array, and nesting the name/status inside it left the agent
@@ -735,6 +735,13 @@ function summariseAdsEvent(event: AdsEventRecord) {
     notifyCount: event.notifyCount,
     metaRecommendations: recs,
     detailError: event.detailError,
+    // Without this the model cannot tell "Meta has nothing to say about this ad"
+    // from "we did not look" — and would report or dismiss the alert on the
+    // strength of an empty list it was never given.
+    detailResolved: opts?.detailResolved !== false,
+    ...(opts?.detailResolved === false
+      ? { detailNote: 'বিস্তারিত এখনো আনা হয়নি — এই ইভেন্টের জন্য আলাদা করে get_ad_recommendations চালান।' }
+      : {}),
   }
 }
 
@@ -783,10 +790,11 @@ const get_ad_recommendations: AgentTool = {
       }
 
       // Detail is a Graph call per ad object — resolve only the top few.
+      const DETAILED = 5
       const resolved = withDetail
         ? await Promise.all(
             events.map(async (e, i) =>
-              i < 5 ? ((await resolveAdsEventDetail(e.id).catch(() => e)) ?? e) : e,
+              i < DETAILED ? ((await resolveAdsEventDetail(e.id).catch(() => e)) ?? e) : e,
             ),
           )
         : events
@@ -794,7 +802,9 @@ const get_ad_recommendations: AgentTool = {
       return {
         success: true,
         data: {
-          events: resolved.map(summariseAdsEvent),
+          events: resolved.map((e, i) =>
+            summariseAdsEvent(e, { detailResolved: withDetail && i < DETAILED }),
+          ),
           openCount: resolved.filter((e) => e.status === 'new' || e.status === 'seen').length,
           hint: 'Boss সিদ্ধান্ত দিলে resolve_ad_recommendation দিয়ে actioned/dismissed করে দিন — তাহলে ওটা আর নোটিফাই করবে না।',
         },
