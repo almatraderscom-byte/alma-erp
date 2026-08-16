@@ -26,7 +26,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
 
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        AppDelegate.orientationLock
+        // Phones only. The target still ships iPad (TARGETED_DEVICE_FAMILY 1,2)
+        // and its Info.plist list allows every orientation; the breakage this lock
+        // exists for is the phone's, so an iPad keeps its freedom.
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return .all }
+        return AppDelegate.orientationLock
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
