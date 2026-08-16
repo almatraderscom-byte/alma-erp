@@ -430,7 +430,9 @@ function buildAttendance(users) {
   const rows = []
   const staff = users.filter(u => !u.email.startsWith('viewer'))
   let n = 0
-  for (let d = 1; d <= 30; d++) {
+  // Starts at 0 — today included. Skipping today made the Attendance page open on
+  // "Absent 10", which is the first thing a visitor sees on that screen.
+  for (let d = 0; d < 30; d++) {
     const day = daysAgo(d)
     if (day.getDay() === 5) continue // Friday — weekend in Bangladesh
     for (const u of staff) {
