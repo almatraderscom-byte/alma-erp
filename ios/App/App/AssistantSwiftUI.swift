@@ -4991,6 +4991,10 @@ final class AssistantVM {
         if !fresh.isEmpty {
             AlmaTurnLog.event("sync.deltaNew", "\(fresh.count)")
             await loadMessages()   // one windowed refresh folds them in with full pairing
+            // A reply written elsewhere (approval execution, Telegram, a long job)
+            // just landed in the chat he is LOOKING at — it is read, and must not
+            // come back as a badge when he switches away.
+            await markActiveConversationRead()
         }
     }
 
@@ -5547,6 +5551,11 @@ final class AssistantVM {
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
                 if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
+                // Chats OTHER than the open one go unread while he sits here —
+                // background jobs and Telegram turns land somewhere. Without this
+                // the badge only moved on a lifecycle transition. Every 5th tick
+                // (~60s) keeps it honest without a per-12s query.
+                if tick % 5 == 0 { await self.refreshUnreadCount() }
                 // Stall watchdog — a silently-dead mid-turn socket (no error, no
                 // events) previously hung "কাজ করছি…" forever: every recovery
                 // trigger bailed because isStreaming looked healthy. Marking it
