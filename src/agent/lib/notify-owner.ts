@@ -6,13 +6,34 @@ import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { isOwnerAppActive } from '@/agent/lib/owner-presence'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
-async function sendNtfy(topic: 'general' | 'critical', title: string, message: string, category?: string) {
+/**
+ * Absolute URL for a `/…` app path, for channels that can only carry a link
+ * (ntfy's Click header). Returns null when the path is absent or not app-local.
+ */
+function absoluteAppUrl(actionUrl?: string | null): string | null {
+  const path = (actionUrl ?? '').trim()
+  if (!path.startsWith('/') || path.startsWith('//')) return null
+  const base = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://alma-erp-six.vercel.app')
+    .replace(/\/$/, '')
+  return `${base}${path}`
+}
+
+async function sendNtfy(
+  topic: 'general' | 'critical',
+  title: string,
+  message: string,
+  category?: string,
+  actionUrl?: string | null,
+) {
   const server = (process.env.NTFY_SERVER ?? 'https://ntfy.sh').replace(/\/$/, '')
   const topicName = topic === 'critical'
     ? (process.env.NTFY_TOPIC_CRITICAL ?? 'alma-agent-crit')
     : (process.env.NTFY_TOPIC_GENERAL ?? 'alma-agent')
   const priority = topic === 'critical' ? '5' : '3'
   const tags = category === 'urgent' ? 'rotating_light,sos' : category === 'salah' ? 'salah,mosque' : ''
+  // Without this the ntfy copy of an alert is a dead end: only the native push
+  // carried the deep link, so tapping the ntfy one landed nowhere in particular.
+  const click = absoluteAppUrl(actionUrl)
 
   const res = await resilientFetch(`${server}/${topicName}`, {
     method: 'POST',
@@ -21,6 +42,7 @@ async function sendNtfy(topic: 'general' | 'critical', title: string, message: s
       Title: title,
       Priority: priority,
       ...(tags ? { Tags: tags } : {}),
+      ...(click ? { Click: click } : {}),
     },
     body: message,
     timeoutMs: 15_000,
@@ -56,8 +78,10 @@ export async function notifyOwner(opts: {
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
   /**
-   * P3: where a TAP on the native push lands the owner (app deep link), e.g.
-   * '/agent' or '/agent/live-watch'. Native-push only; ntfy/Telegram unaffected.
+   * Where a TAP on the notification lands the owner (app deep link), e.g.
+   * '/agent' or '/agent/growth?rec=<id>'. Carried by the native push AND by ntfy
+   * (as its Click header) — the ntfy copy used to be a dead end. Telegram is
+   * text-only and unaffected.
    */
   actionUrl?: string | null
   notificationKind?: 'completion' | 'approval' | 'alert'
@@ -96,7 +120,7 @@ export async function notifyOwner(opts: {
   const statuses: Record<string, string> = {}
 
   try {
-    await sendNtfy('general', opts.title, opts.message, opts.category)
+    await sendNtfy('general', opts.title, opts.message, opts.category, opts.actionUrl)
     statuses.ntfy_general = 'sent'
   } catch (err) {
     statuses.ntfy_general = `error: ${err instanceof Error ? err.message : String(err)}`
@@ -126,7 +150,7 @@ export async function notifyOwner(opts: {
   if (opts.tier >= 2) {
     channels.push('ntfy_critical')
     try {
-      await sendNtfy('critical', opts.title, opts.message, opts.category)
+      await sendNtfy('critical', opts.title, opts.message, opts.category, opts.actionUrl)
       statuses.ntfy_critical = 'sent'
     } catch (err) {
       statuses.ntfy_critical = `error: ${err instanceof Error ? err.message : String(err)}`

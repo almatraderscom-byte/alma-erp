@@ -320,12 +320,26 @@ struct AgentAdsEvent: Decodable, Equatable, Identifiable {
 
     var isResolved: Bool { status == "actioned" || status == "dismissed" }
 
-    /// Meta's own recommendation lines, flattened for display.
-    var recommendationLines: [(object: String, title: String?, message: String)] {
-        (detail ?? []).flatMap { obj in
-            obj.recommendations.map { r in
-                (object: obj.name ?? obj.objectId, title: r.title, message: r.message ?? "—")
-            }
+    /// One display block per ad object. Identity and live status are kept OUTSIDE
+    /// the recommendation rows: a delivery-status or issue alert legitimately has
+    /// zero recommendations, and flattening dropped exactly the status the owner
+    /// tapped an urgent notification to see.
+    struct DisplayObject: Identifiable {
+        let id: String
+        let name: String
+        let effectiveStatus: String?
+        let error: String?
+        let lines: [(title: String?, message: String)]
+    }
+
+    var displayObjects: [DisplayObject] {
+        (detail ?? []).map { obj in
+            DisplayObject(
+                id: obj.objectId,
+                name: obj.name ?? "অবজেক্ট \(obj.objectId)",
+                effectiveStatus: obj.effectiveStatus,
+                error: obj.error,
+                lines: obj.recommendations.map { (title: $0.title, message: $0.message ?? "—") })
         }
     }
 
@@ -649,20 +663,39 @@ struct AgentGrowthScreen: View {
                 if let meta = event.metaMessage, !meta.isEmpty {
                     Text("Meta-র বার্তা: \(meta)").font(.caption2)
                 }
-                ForEach(Array(event.recommendationLines.enumerated()), id: \.offset) { _, line in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(line.object).font(.system(size: 10, weight: .semibold))
-                        Text(line.title.map { "\($0): \(line.message)" } ?? line.message)
-                            .font(.caption2).foregroundStyle(.secondary)
+                ForEach(event.displayObjects) { obj in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            Text(obj.name).font(.system(size: 10, weight: .semibold))
+                            if let status = obj.effectiveStatus {
+                                Text(status)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if let err = obj.error {
+                            Text("Meta পড়া যায়নি: \(err)")
+                                .font(.caption2).foregroundStyle(AgentGrowthPalette.amber400)
+                        } else if obj.lines.isEmpty {
+                            // Status-only alert: the status above IS the answer.
+                            Text("এই অবজেক্টে এখন Meta-র কোনো খোলা সুপারিশ নেই।")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(obj.lines.enumerated()), id: \.offset) { _, line in
+                                Text(line.title.map { "\($0): \(line.message)" } ?? line.message)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 9).padding(.vertical, 7)
                     .background(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.35),
                                 in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
-                if vm.adsDetailLoading != event.id && event.recommendationLines.isEmpty {
+                if vm.adsDetailLoading != event.id && event.displayObjects.isEmpty {
                     Text(event.detailError.map { "বিস্তারিত আনা যায়নি: \($0)" }
-                         ?? "Meta এখন এই অ্যাডে কোনো খোলা সুপারিশ দেখাচ্ছে না — সম্ভবত মেয়াদ শেষ বা নিজেই মিটে গেছে।")
+                         ?? "Meta এখন এই অ্যাডের কোনো বিস্তারিত দিচ্ছে না — সম্ভবত মেয়াদ শেষ বা নিজেই মিটে গেছে।")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
 
