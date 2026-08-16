@@ -46,9 +46,20 @@ const between = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1))
 const taka = n => Math.round(n)
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const today = new Date()
-today.setHours(0, 0, 0, 0)
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000 // Asia/Dhaka is UTC+6 year round, no DST.
+
+/**
+ * Anchored to the Dhaka calendar day pinned at UTC midnight, NOT to this Mac's local
+ * midnight. The app reads dates as Dhaka days; seeding from a machine on any other
+ * offset shifts every row by a day, which showed up as the whole team reading
+ * "absent" today and order dates landing on the wrong date.
+ */
+const nowDhaka = new Date(Date.now() + DHAKA_OFFSET_MS)
+const today = new Date(Date.UTC(nowDhaka.getUTCFullYear(), nowDhaka.getUTCMonth(), nowDhaka.getUTCDate()))
 const daysAgo = n => new Date(today.getTime() - n * DAY_MS)
+/** Dhaka wall-clock time on a given day, as a UTC instant. */
+const dhakaTime = (day, minutesFromMidnight) =>
+  new Date(day.getTime() + minutesFromMidnight * 60 * 1000 - DHAKA_OFFSET_MS)
 
 // ── catalogue ────────────────────────────────────────────────────────────────
 const CATEGORIES = [
@@ -439,19 +450,23 @@ function buildAttendance(users) {
       if (rng() < 0.07) continue // occasional absence keeps the report honest
       n += 1
       const lateMinutes = rng() < 0.22 ? between(3, 45) : 0
-      const checkIn = new Date(day.getTime() + (9 * 60 + lateMinutes) * 60 * 1000)
+      const checkIn = dhakaTime(day, 9 * 60 + lateMinutes)
       const workMinutes = between(455, 545)
       const checkOut = new Date(checkIn.getTime() + workMinutes * 60 * 1000)
+      // Today stays open (checked in, no check-out). The Attendance page counts
+      // "Present" from PRESENT/LATE records, so closing today out would show the
+      // whole team as absent the moment a visitor lands on the page.
+      const isToday = d === 0
       rows.push({
         id: `${ID}ATT-${String(n).padStart(5, '0')}`,
         businessId: BUSINESS_ID,
         userId: u.id,
         employeeId: u.employeeIdGas,
         attendanceDate: day,
-        status: lateMinutes > 0 ? 'LATE' : 'COMPLETED',
+        status: lateMinutes > 0 ? 'LATE' : isToday ? 'PRESENT' : 'COMPLETED',
         checkInAt: checkIn,
-        checkOutAt: checkOut,
-        totalWorkMinutes: workMinutes,
+        checkOutAt: isToday ? null : checkOut,
+        totalWorkMinutes: isToday ? 0 : workMinutes,
         lateMinutes,
         penaltyAmount: lateMinutes > 15 ? 100 : 0,
         suspiciousReasons: [],
