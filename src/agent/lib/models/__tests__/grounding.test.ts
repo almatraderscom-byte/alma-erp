@@ -8,6 +8,7 @@ import {
   isGroundingSatisfied,
   groundingEvidence,
   hasSubstantiveToolAttempt,
+  hasSuccessfulLook,
   SHALLOW_GROUNDING_TOOLS,
   BOOKKEEPING_TOOLS,
   MAX_GROUNDING_FORCE_ROUNDS,
@@ -103,5 +104,26 @@ describe('the sets themselves', () => {
   it('caps the forced rounds so a repeat clock read cannot spin the loop', () => {
     expect(MAX_GROUNDING_FORCE_ROUNDS).toBeGreaterThan(0)
     expect(MAX_GROUNDING_FORCE_ROUNDS).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('hasSuccessfulLook (Codex P1, round 4)', () => {
+  it('is not satisfied by a successful tool that saw nothing', () => {
+    // The reproduction: mac_agent_status succeeds, and a fabricated claim that a
+    // page is visible then rides on it. isGroundingSatisfied says yes; sight
+    // needs an eye.
+    expect(isGroundingSatisfied([ok('mac_agent_status')])).toBe(true)
+    expect(hasSuccessfulLook([ok('mac_agent_status')])).toBe(false)
+    expect(hasSuccessfulLook([ok('get_orders')])).toBe(false)
+  })
+
+  it('is satisfied by the tools that actually look', () => {
+    for (const name of ['mac_desk_control', 'look_mac_app', 'get_office_camera_snapshot', 'live_browser_look']) {
+      expect(hasSuccessfulLook([ok(name)]), name).toBe(true)
+    }
+  })
+
+  it('does not count a look that FAILED — no image came back', () => {
+    expect(hasSuccessfulLook([failed('mac_desk_control')])).toBe(false)
   })
 })

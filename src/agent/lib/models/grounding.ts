@@ -78,6 +78,23 @@ export function isGroundingSatisfied(records: readonly GroundingToolRecord[]): b
   return records.some((r) => r.status === 'success' && !SHALLOW_GROUNDING_TOOLS.has(r.toolName))
 }
 
+/**
+ * Did a tool that can actually SEE the claimed surface succeed?
+ *
+ * Stricter than isGroundingSatisfied, and deliberately so (Codex P1): a
+ * successful `mac_agent_status` or `get_orders` satisfies grounding, but neither
+ * looked at a screen — so accepting them would let "Maxstream-এর পেজ খোলা আছে"
+ * ride on a status ping. Sight claims need an eye.
+ *
+ * Matched by pattern as well as by name so a newly added camera/screenshot tool
+ * is covered on the day it ships rather than the day someone remembers this list.
+ */
+const OBSERVATION_TOOL_RE = /screenshot|snapshot|camera|desk_control|look_|_look|read_screen|browser_look|qc_inspect/i
+
+export function hasSuccessfulLook(records: readonly GroundingToolRecord[]): boolean {
+  return records.some((r) => r.status === 'success' && OBSERVATION_TOOL_RE.test(r.toolName))
+}
+
 /** The successful reads that did the grounding — persisted for measurement. */
 export function groundingEvidence(records: readonly GroundingToolRecord[]): string[] {
   return records

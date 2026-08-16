@@ -122,6 +122,36 @@ const RECORDABLE_FACT_RE =
 // question, never less.
 const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
 
+const BANGLA_QUESTION_WORD_RE = /(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/gi
+
+/**
+ * Is this Bangla text an ORDER, or a question that happens to use the same verb?
+ *
+ * A blanket `!QUESTION_RE` guard was too blunt (Codex P1): it also rejected
+ * commands whose OBJECT is an embedded question — "স্ক্রিনে কী আছে দেখো",
+ * "ক্যামেরায় কী আছে দেখাও", which is the phrasing the system prompt itself uses
+ * — while the unguarded Banglish branch still authorized "screen e ki ache
+ * dekho". Same split, other direction.
+ *
+ * Bengali is verb-final, and that is what separates the two cases:
+ *
+ *   order:    "স্ক্রিনে কী আছে দেখো"   → question word, THEN the imperative
+ *   question: "তুমি করো কী"           → imperative form, THEN the question word
+ *
+ * So position decides. An explicit question mark still ends it either way.
+ */
+export function isBanglaOrder(t: string): boolean {
+  if (!BANGLA_IMPERATIVE_RE.test(t)) return false
+  if (/[?？]/.test(t)) return false
+  let lastQuestion = -1
+  for (const m of t.matchAll(BANGLA_QUESTION_WORD_RE)) lastQuestion = m.index ?? -1
+  if (lastQuestion === -1) return true
+  const verb = new RegExp(BANGLA_IMPERATIVE_RE.source, 'g')
+  let lastVerb = -1
+  for (const m of t.matchAll(verb)) lastVerb = m.index ?? -1
+  return lastVerb > lastQuestion
+}
+
 export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorization {
   const t = text.trim()
   if (EXPLICIT_NO_ACTION_RE.test(t)) {
@@ -131,13 +161,7 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
     BARE_CONTINUATION_RE.test(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
-    // Guarded by QUESTION_RE, unlike its Banglish twin (Codex P1). In Bengali the
-    // familiar 2nd-person present and the imperative are the SAME form, so
-    // "তুমি প্রতিদিন কী করো?" ("what do you do every day?") and "তুমি কেন ওকে
-    // থামাও?" carry করো / থামাও without ordering anything. Token boundaries fix
-    // compound words; they cannot fix grammar. The guard follows the pattern the
-    // two branches below already use.
-    || (!QUESTION_RE.test(t) && BANGLA_IMPERATIVE_RE.test(t))
+    || isBanglaOrder(t)
     || ENGLISH_IMPERATIVE_RE.test(t)
   ) {
     return { allowMutations: true, reason: 'explicit_action' }

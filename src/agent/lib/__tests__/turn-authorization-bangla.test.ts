@@ -108,6 +108,25 @@ describe('what must still NOT be an order', () => {
     }
   })
 
+  // Codex P1 (round 4): a blanket question guard also rejected commands whose
+  // OBJECT is an embedded question — the phrasing the system prompt itself uses.
+  // Bengali is verb-final, so position separates the two cases.
+  it('keeps an order whose object is an embedded question', () => {
+    for (const msg of ['স্ক্রিনে কী আছে দেখো', 'ক্যামেরায় কী আছে দেখাও', 'অফিসে কারা আছে দেখাও']) {
+      expect(allows(msg), msg).toBe(true)
+    }
+  })
+
+  it('still rejects the question, where the interrogative comes last', () => {
+    for (const msg of ['তুমি করো কী', 'তুমি দেখাও কী।', 'ম্যাক লাইভ দেখাও কেন']) {
+      expect(allows(msg), msg).toBe(false)
+    }
+  })
+
+  it('an explicit question mark ends it either way', () => {
+    expect(allows('স্ক্রিনে কী আছে দেখো?')).toBe(false)
+  })
+
   it('leaves out forms a boundary cannot disambiguate from nouns', () => {
     // বানান = spelling, চালান = invoice, খোল = husk. Excluded rather than
     // tokenised: no boundary can tell these from the imperative.

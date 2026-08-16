@@ -12,6 +12,7 @@ import {
   MAX_GROUNDING_FORCE_ROUNDS,
   groundingEvidence,
   hasSubstantiveToolAttempt,
+  hasSuccessfulLook,
   isGroundingSatisfied,
 } from '@/agent/lib/models/grounding'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
@@ -2844,11 +2845,12 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0) {
             violations.push(...detectUngroundedObservation(iterationText.trim(), {
               actionRequested: ownerRequirements.actionAttemptExpected,
-              // A SUCCESSFUL look, not merely an attempt (Codex P1): a screenshot
-              // denied Screen Recording permission is substantive and still
-              // returns no image, so an attempt would excuse a description of a
-              // screen nobody saw.
-              lookSucceeded: isGroundingSatisfied(toolRecords),
+              // A successful OBSERVATION, not merely a successful tool (Codex
+              // P1, twice). A screenshot denied Screen Recording permission is a
+              // substantive attempt that returns no image; a successful
+              // mac_agent_status or get_orders satisfies grounding without
+              // anything having been seen. Sight claims need an eye.
+              lookSucceeded: hasSuccessfulLook(toolRecords),
               toolsAvailable: iterationTools.length > 0,
             }))
           }

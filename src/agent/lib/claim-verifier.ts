@@ -855,8 +855,13 @@ const LIVE_OBSERVATION_CLAIM = new RegExp(
     'দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)', 'দেখতে\\s*পাচ্ছি',
     // "স্ক্রিনে … লেখা", "স্ক্রিনে … খোলা"
     'স্ক্রিনে[^।!?\\n]{0,60}(?:লেখা|খোলা|দেখা)',
-    // "… খোলা আছে", "… অনলাইনে আছে", "… চালু আছে" about a live surface
-    '(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে',
+    // "… খোলা আছে" / "… চালু আছে" ONLY next to a live surface (Codex P2): bare,
+    // it also matched an honest tool-free draft — "নোটিশ: রেজিস্ট্রেশন খোলা আছে",
+    // "দোকান চালু আছে" — and forced it into a verification retry. The two
+    // alternatives above carry their own anchor (স্ক্রিনে / দেখা); this one did
+    // not, despite the comment that used to claim it did.
+    '(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser|উইন্ডো|window|ট্যাব|tab|পেজ|page)[^।!?\\n]{0,40}(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে',
+    '(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে[^।!?\\n]{0,40}(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser)',
     // English. The generic state phrases need a live surface NEAR them (Codex
     // P2): bare "is open" also fires on a perfectly honest tool-free draft —
     // "Create a short notice: registration is open" — and would force it into a

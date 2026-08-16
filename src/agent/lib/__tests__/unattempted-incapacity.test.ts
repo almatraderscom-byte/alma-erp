@@ -182,6 +182,15 @@ describe('detectUngroundedObservation', () => {
     expect(detectUngroundedObservation(FABRICATED, noLook)).toHaveLength(1)
   })
 
+  it('does not reject an honest Bangla draft that merely says খোলা আছে (Codex P2)', () => {
+    expect(detectUngroundedObservation('নোটিশ: রেজিস্ট্রেশন খোলা আছে।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('দোকান চালু আছে।', noLook)).toEqual([])
+  })
+
+  it('still catches খোলা আছে when it IS about a screen', () => {
+    expect(detectUngroundedObservation('স্ক্রিনে Maxstream খোলা আছে।', noLook)).toHaveLength(1)
+  })
+
   it('does not reject an honest tool-free draft that merely says "is open"', () => {
     // Codex P2: bare "is open" has no live surface in it.
     const draft = 'Boss, notice draft: "Registration is open until Friday."'
