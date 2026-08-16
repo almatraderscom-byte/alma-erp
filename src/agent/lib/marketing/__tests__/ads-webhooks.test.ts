@@ -207,6 +207,37 @@ describe('handleAdsWebhook', () => {
     expect(notifyCalls).toHaveLength(2)
   })
 
+  it('a handled DELIVERY-STATUS alert reopens when the ad changes again', async () => {
+    // Object-keyed events repeat for every later change to the same ad: paused
+    // today (handled), rejected tomorrow must still reach him.
+    const payload = envelope([
+      { field: 'field_changed', value: { object_id: '77', object_type: 'ad', changed_fields: ['effective_status'] } },
+    ])
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+
+    eventStore['status:ad:77'].status = 'actioned'
+    kvStore = {}
+    await handleAdsWebhook(payload)
+
+    expect(notifyCalls).toHaveLength(2)
+    expect(eventStore['status:ad:77'].status).toBe('new')
+    expect(eventStore['status:ad:77'].detail).toBeNull()
+  })
+
+  it('a handled RECOMMENDATION stays closed — same key is the same news', async () => {
+    const payload = envelope([
+      { field: 'ad_recommendations', value: { recommendation_hash: 'h9', ad_object_ids: ['4'] } },
+    ])
+    await handleAdsWebhook(payload)
+    eventStore['rec:h9:4'].status = 'actioned'
+    kvStore = {}
+    await handleAdsWebhook(payload)
+
+    expect(notifyCalls).toHaveLength(1)
+    expect(eventStore['rec:h9:4'].status).toBe('actioned')
+  })
+
   it('DB down → the owner still gets the push (fail-open)', async () => {
     eventsDown = true
     const result = await handleAdsWebhook(

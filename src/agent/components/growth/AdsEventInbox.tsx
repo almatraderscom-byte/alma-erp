@@ -95,10 +95,14 @@ export default function AdsEventInbox() {
     void load(showResolved)
   }, [load, showResolved])
 
-  /** Opening an event pulls Meta's real text — the webhook never fetches it. */
+  /**
+   * Opening an event pulls Meta's real text — the webhook never fetches it.
+   * `keepOpen` is the non-toggling form: the deep-link path must OPEN the card,
+   * and a plain toggle would close it (openId already holds the focused id).
+   */
   const openEvent = useCallback(
-    async (id: string, opts?: { refresh?: boolean }) => {
-      const next = openId === id && !opts?.refresh ? null : id
+    async (id: string, opts?: { refresh?: boolean; keepOpen?: boolean }) => {
+      const next = openId === id && !opts?.refresh && !opts?.keepOpen ? null : id
       setOpenId(next)
       if (!next) return
 
@@ -125,7 +129,7 @@ export default function AdsEventInbox() {
   // A push tap deep-links straight to one event — open it without a click.
   useEffect(() => {
     if (!focusId || !events?.length) return
-    if (events.some((e) => e.id === focusId)) void openEvent(focusId)
+    if (events.some((e) => e.id === focusId)) void openEvent(focusId, { keepOpen: true })
     // Only on first arrival with a focus id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, events?.length])

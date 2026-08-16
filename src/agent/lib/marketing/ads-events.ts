@@ -129,11 +129,18 @@ export async function recordAdsEvent(
       select: { id: true, status: true, lastNotifiedAt: true, notifyCount: true },
     })
 
-    // Resolved by the owner → record the re-send, stay silent.
-    const resolved = existing && (existing.status === 'actioned' || existing.status === 'dismissed')
+    const wasResolved = Boolean(existing && (existing.status === 'actioned' || existing.status === 'dismissed'))
+    // Object-keyed events (delivery status, issues, thresholds) repeat for every
+    // LATER change to the same ad — a resolved row must reopen, or an ad that was
+    // paused-and-handled today goes silent when it is rejected tomorrow.
+    const reopen = wasResolved && event.reopenOnRepeat === true
+    // Resolved and content-keyed → the same news; record the re-send, stay silent.
+    const stillResolved = wasResolved && !reopen
     const recentlyPushed =
       existing?.lastNotifiedAt && now.getTime() - new Date(existing.lastNotifiedAt).getTime() < RENOTIFY_WINDOW_MS
-    const shouldPush = event.push && !resolved && !recentlyPushed
+    // A reopen is fresh news, so it pierces the once-a-day cap; the KV window
+    // upstream still absorbs Meta's retry storms.
+    const shouldPush = event.push && !stillResolved && (reopen || !recentlyPushed)
 
     const common = {
       field: event.field,
@@ -160,7 +167,12 @@ export async function recordAdsEvent(
       },
       update: {
         ...common,
-        // Fresh Graph read next time it is opened.
+        // A later change to the same object becomes an open item again, and its
+        // cached Graph detail is stale by definition — drop it so the next open
+        // re-reads Meta.
+        ...(reopen
+          ? { status: 'new', resolvedAt: null, resolvedNote: null, detail: null, detailFetchedAt: null }
+          : {}),
         ...(shouldPush ? { notifyCount: { increment: 1 }, lastNotifiedAt: now } : {}),
       },
       select: { id: true },

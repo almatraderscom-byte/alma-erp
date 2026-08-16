@@ -92,6 +92,15 @@ export type ParsedAdsEvent = {
   adAccountId?: string | null
   /** Meta's own message, verbatim (usually a stub sentence). */
   metaMessage?: string | null
+  /**
+   * True when the dedupe key identifies an OBJECT rather than a specific piece of
+   * news — `status:<type>:<id>` and `issues:<id>` repeat for every later change to
+   * the same ad. Resolving one of those must not silence the object forever: a
+   * fresh delivery is a NEW state change (paused today, rejected tomorrow), so the
+   * row reopens. Content-keyed events (recommendation hash, fatigue level) stay
+   * closed once handled — the same key really is the same news.
+   */
+  reopenOnRepeat?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +124,7 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
       push: true,
       field,
       adObjectIds: v.object_id ? [String(v.object_id)] : [],
+      reopenOnRepeat: true,
     }
   }
 
@@ -166,6 +176,7 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
       push: true,
       field,
       adObjectIds: v.object_id ? [String(v.object_id)] : (v.ad_object_ids ?? []).map((x) => String(x)),
+      reopenOnRepeat: true,
     }
   }
 
@@ -181,6 +192,7 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
       field,
       adObjectIds: (v.ad_object_ids ?? []).map((x) => String(x)),
       adAccountId: v.ad_account_id ?? null,
+      reopenOnRepeat: true,
     }
   }
 
