@@ -112,17 +112,23 @@ const STAFF = [
   { name: 'Farhana Sultana', role: 'VIEWER', local: 'viewer', salary: 0 },
 ]
 
+/**
+ * Sized against the order book, not in isolation. The first pass put the Finance
+ * page at −622% margin because the ledger carried a cost base a business several
+ * times this size would run. These ranges keep the demo profitable at ~10 orders
+ * a day, which is what makes the Finance and Insights screens worth showing.
+ */
 const EXPENSE_CATEGORIES = [
-  ['Marketing', 'Facebook Ads', 3000, 22000],
-  ['Marketing', 'Influencer', 2000, 12000],
-  ['Operations', 'Courier Charge', 1200, 9000],
-  ['Operations', 'Packaging', 800, 6000],
+  ['Marketing', 'Facebook Ads', 2000, 12000],
+  ['Marketing', 'Influencer', 1500, 7000],
+  ['Operations', 'Courier Charge', 1200, 6000],
+  ['Operations', 'Packaging', 800, 4000],
   ['Office', 'Rent', 25000, 25000],
-  ['Office', 'Utility Bill', 2500, 9000],
+  ['Office', 'Utility Bill', 2500, 7000],
   ['Office', 'Internet', 3500, 3500],
-  ['Inventory', 'Fabric Purchase', 15000, 90000],
-  ['Inventory', 'Tailoring', 6000, 35000],
-  ['Staff', 'Lunch Allowance', 1500, 5000],
+  ['Inventory', 'Fabric Purchase', 8000, 35000],
+  ['Inventory', 'Tailoring', 4000, 15000],
+  ['Staff', 'Lunch Allowance', 1500, 4000],
 ]
 
 // ── guards ───────────────────────────────────────────────────────────────────
@@ -469,14 +475,18 @@ async function main() {
   await prisma.lifestyleStockItem.createMany({ data: stock })
   console.log(`· ${products.length} products, ${stock.length} stock rows`)
 
-  const customers = buildCustomers(90)
-  const { orders, items } = buildOrders(customers, products, 320)
+  // Volume is chosen so the demo reads as a healthy business, not a failing one.
+  // 320 orders against 200 expenses put the Finance page at −622% margin: the
+  // expense ledger (rent, ads, fabric) is a real monthly cost base, so the order
+  // book has to be large enough to cover it. ~10 orders/day clears it comfortably.
+  const customers = buildCustomers(250)
+  const { orders, items } = buildOrders(customers, products, 1200)
   await prisma.lifestyleCustomer.createMany({ data: rollUpCustomers(customers, orders) })
   await prisma.lifestyleOrder.createMany({ data: orders })
   await prisma.lifestyleOrderItem.createMany({ data: items })
   console.log(`· ${customers.length} customers, ${orders.length} orders`)
 
-  const expenses = buildExpenses(200)
+  const expenses = buildExpenses(150)
   await prisma.lifestyleExpense.createMany({ data: expenses })
   console.log(`· ${expenses.length} expenses`)
 
