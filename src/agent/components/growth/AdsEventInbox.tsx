@@ -10,7 +10,7 @@
  * "করা হয়েছে" or "দরকার নেই".
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 type AdObjectDetail = {
@@ -74,6 +74,13 @@ export default function AdsEventInbox() {
   const [openId, setOpenId] = useState<string | null>(focusId)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  /**
+   * Focus recovery runs ONCE, on arrival. Without this latch, deciding on the
+   * focused event removes it from the open-only list, the effect re-runs, and the
+   * row it just removed is fetched back and re-inserted — the decision looks like
+   * it did nothing.
+   */
+  const focusHandled = useRef(false)
 
   const load = useCallback(async (resolved: boolean) => {
     setLoading(true)
@@ -133,11 +140,13 @@ export default function AdsEventInbox() {
    * on screen rather than showing the owner an empty card for a live push.
    */
   useEffect(() => {
-    if (!focusId || !events) return
+    if (!focusId || !events || focusHandled.current) return
     if (events.some((e) => e.id === focusId)) {
+      focusHandled.current = true
       void openEvent(focusId, { keepOpen: true })
       return
     }
+    focusHandled.current = true
     void (async () => {
       try {
         const res = await fetch(`${LIST_URL}/${focusId}`, { cache: 'no-store' })

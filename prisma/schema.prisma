@@ -6436,6 +6436,9 @@ model AgentAdsEvent {
   detailError        String?   @map("detail_error")
   /// Full webhook change value, so nothing Meta sent is ever lost.
   raw                Json
+  /// Identity of the last ACCEPTED delivery (entry time + payload). Outlives the
+  /// short KV window, so a late redelivery cannot masquerade as a new change.
+  occurrenceTag      String?   @map("occurrence_tag")
   notifyCount        Int       @default(0) @map("notify_count")
   lastNotifiedAt     DateTime? @map("last_notified_at")
   /// Last time Meta re-sent this same event.

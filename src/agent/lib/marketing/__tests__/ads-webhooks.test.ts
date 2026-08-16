@@ -224,19 +224,38 @@ describe('handleAdsWebhook', () => {
   it('a handled DELIVERY-STATUS alert reopens when the ad changes again', async () => {
     // Object-keyed events repeat for every later change to the same ad: paused
     // today (handled), rejected tomorrow must still reach him.
-    const payload = envelope([
-      { field: 'field_changed', value: { object_id: '77', object_type: 'ad', changed_fields: ['effective_status'] } },
-    ])
-    await handleAdsWebhook(payload)
+    const change = {
+      field: 'field_changed',
+      value: { object_id: '77', object_type: 'ad', changed_fields: ['effective_status'] },
+    }
+    await handleAdsWebhook({ object: 'ad_account', entry: [{ id: 'act_1', time: 1782862117, changes: [change] }] })
     expect(notifyCalls).toHaveLength(1)
 
     eventStore['status:ad:77'].status = 'actioned'
-    kvStore = {}
-    await handleAdsWebhook(payload)
+    eventStore['status:ad:77'].detail = [{ objectId: '77' }]
+    // A LATER change: new entry, new timestamp.
+    await handleAdsWebhook({ object: 'ad_account', entry: [{ id: 'act_1', time: 1782880000, changes: [change] }] })
 
     expect(notifyCalls).toHaveLength(2)
     expect(eventStore['status:ad:77'].status).toBe('new')
     expect(eventStore['status:ad:77'].detail).toBeNull()
+  })
+
+  it('a late REDELIVERY of the same entry never reopens a handled alert', async () => {
+    // The KV window is short and capped; the occurrence tag is persisted on the
+    // row so an old retry arriving after it lapses cannot pose as a new change.
+    const change = {
+      field: 'field_changed',
+      value: { object_id: '78', object_type: 'ad', changed_fields: ['effective_status'] },
+    }
+    const payload = { object: 'ad_account', entry: [{ id: 'act_1', time: 1782862117, changes: [change] }] }
+    await handleAdsWebhook(payload)
+    eventStore['status:ad:78'].status = 'dismissed'
+    kvStore = {} // KV window lapsed / key evicted
+
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+    expect(eventStore['status:ad:78'].status).toBe('dismissed')
   })
 
   it('a handled RECOMMENDATION stays closed — same key is the same news', async () => {

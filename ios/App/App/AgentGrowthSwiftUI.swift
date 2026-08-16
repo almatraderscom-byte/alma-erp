@@ -505,6 +505,7 @@ struct AgentGrowthScreen: View {
     @State private var metaConnectResult: String? = nil
     @State private var confirmDisconnect = false
     @State private var openAdsEventId: String? = nil
+    @State private var focusHandled = false
     /// Set when the owner arrived by tapping an ads push (/agent/growth?rec=<id>).
     let focusRecId: String?
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -538,8 +539,12 @@ struct AgentGrowthScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         // A push tap deep-links to one event — open it as soon as the list lands.
+        // Runs ONCE on arrival: deciding on the focused event removes it from the
+        // open-only list, which changes the count — without the latch this would
+        // fetch the row straight back and the decision would look like a no-op.
         .task(id: vm.adsEvents.count) {
-            guard let focus = focusRecId else { return }
+            guard let focus = focusRecId, !focusHandled else { return }
+            focusHandled = true
             // Resolved events are filtered out of the list — fetch the focused one
             // directly so a live push never opens to an empty card.
             await vm.ensureFocusedAdsEvent(focus)

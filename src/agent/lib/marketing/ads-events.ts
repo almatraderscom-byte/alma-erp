@@ -121,28 +121,36 @@ export type RecordedAdsEvent = {
 export async function recordAdsEvent(
   event: ParsedAdsEvent,
   raw: Record<string, unknown>,
+  opts?: { occurrenceTag?: string | null },
 ): Promise<RecordedAdsEvent> {
   const now = new Date()
+  const occurrenceTag = opts?.occurrenceTag ?? null
   try {
     const existing = await db.agentAdsEvent.findUnique({
       where: { dedupeKey: event.key },
-      select: { id: true, status: true, lastNotifiedAt: true, notifyCount: true },
+      select: { id: true, status: true, lastNotifiedAt: true, notifyCount: true, occurrenceTag: true },
     })
+
+    // The KV window is short (6h) and capped at 200 keys, so a late redelivery of
+    // the SAME entry can outlive it. The tag is persisted on the row precisely so
+    // that redelivery cannot masquerade as a new change and reopen a handled alert.
+    const freshOccurrence =
+      event.reopenOnRepeat === true &&
+      (!existing || occurrenceTag === null || existing.occurrenceTag !== occurrenceTag)
 
     const wasResolved = Boolean(existing && (existing.status === 'actioned' || existing.status === 'dismissed'))
     // Object-keyed events (delivery status, issues, thresholds) repeat for every
     // LATER change to the same ad — a resolved row must reopen, or an ad that was
     // paused-and-handled today goes silent when it is rejected tomorrow.
-    const reopen = wasResolved && event.reopenOnRepeat === true
-    // Resolved and content-keyed → the same news; record the re-send, stay silent.
+    const reopen = wasResolved && freshOccurrence
+    // Resolved and same-occurrence (or content-keyed) → the same news; record the
+    // re-send, stay silent.
     const stillResolved = wasResolved && !reopen
     const recentlyPushed =
       existing?.lastNotifiedAt && now.getTime() - new Date(existing.lastNotifiedAt).getTime() < RENOTIFY_WINDOW_MS
     // The once-a-day cap exists to stop a STANDING item (a recommendation, a
-    // fatigue level) from nagging on Meta's schedule. Object-keyed events are not
-    // standing items: reaching here means the caller's occurrence check already
-    // decided this is a change that has not been seen, so it pierces the cap.
-    const freshOccurrence = event.reopenOnRepeat === true
+    // fatigue level) from nagging on Meta's schedule. A genuinely new occurrence
+    // of an object event is not a nag — it is news — so it pierces the cap.
     const shouldPush = event.push && !stillResolved && (freshOccurrence || !recentlyPushed)
 
     const common = {
@@ -157,6 +165,7 @@ export async function recordAdsEvent(
       tier: event.tier,
       raw: raw as object,
       lastSeenAt: now,
+      ...(occurrenceTag ? { occurrenceTag } : {}),
     }
 
     const row = await db.agentAdsEvent.upsert({
@@ -172,12 +181,12 @@ export async function recordAdsEvent(
       },
       update: {
         ...common,
-        // A later change to the same object becomes an open item again, and its
-        // cached Graph detail is stale by definition — drop it so the next open
-        // re-reads Meta.
-        ...(reopen
-          ? { status: 'new', resolvedAt: null, resolvedNote: null, detail: null, detailFetchedAt: null }
-          : {}),
+        // ANY new occurrence invalidates the cached Graph read — an alert opened
+        // while the ad was PAUSED must not still say PAUSED after it is REJECTED
+        // inside the 30-minute detail TTL.
+        ...(freshOccurrence ? { detail: null, detailFetchedAt: null, detailError: null } : {}),
+        // A later change to the same object also becomes an open item again.
+        ...(reopen ? { status: 'new', resolvedAt: null, resolvedNote: null } : {}),
       },
       select: { id: true },
     })

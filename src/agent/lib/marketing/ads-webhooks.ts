@@ -284,9 +284,8 @@ export async function handleAdsWebhook(
     // the object: `status:<type>:<id>` repeats for every later change to the same
     // ad, so keying on identity alone would swallow a real rejection that lands
     // an hour after a pause.
-    const kvKey = event.reopenOnRepeat
-      ? `${event.key}#${occurrenceTag({ t: entryTime ?? null, v: change.value })}`
-      : event.key
+    const tag = event.reopenOnRepeat ? occurrenceTag({ t: entryTime ?? null, v: change.value }) : null
+    const kvKey = tag ? `${event.key}#${tag}` : event.key
     const last = dedupe[kvKey]
     if (last && now - last < DEDUPE_WINDOW_MS) continue
     if (seenThisRequest.has(kvKey)) continue
@@ -295,7 +294,9 @@ export async function handleAdsWebhook(
     // Layer 2 — the durable row. This is what the app and the agent read later,
     // and what decides whether the owner hears about it AGAIN: an event he has
     // actioned or dismissed never re-pushes, an open one nags once a day.
-    const recorded = await recordAdsEvent(event, (change.value ?? {}) as Record<string, unknown>)
+    const recorded = await recordAdsEvent(event, (change.value ?? {}) as Record<string, unknown>, {
+      occurrenceTag: tag,
+    })
     if (!recorded.degraded) stored += 1
     if (!recorded.shouldPush) continue
 
