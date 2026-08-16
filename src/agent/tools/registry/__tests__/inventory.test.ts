@@ -32,20 +32,20 @@ function req(payload: unknown, overrides: Partial<Record<string, unknown>> = {})
 }
 
 describe('SPEC-071 inventory snapshot integrity', () => {
-  it('captured the full monolith surface (358 tools, all classified + pooled)', () => {
-    expect(TOOL_INVENTORY.length).toBe(358)
+  it('captured the full monolith surface (360 tools, all classified + pooled)', () => {
+    expect(TOOL_INVENTORY.length).toBe(360)
     const s = summarize()
-    expect(s.total).toBe(358)
+    expect(s.total).toBe(360)
     expect(s.unclassified).toEqual([])
     expect(s.unpooled).toEqual([])
     // Mode/risk partitions sum to the whole.
     const modeSum = Object.values(s.byMode).reduce((a, b) => a + b, 0)
     const riskSum = Object.values(s.byRisk).reduce((a, b) => a + b, 0)
-    expect(modeSum).toBe(358)
-    expect(riskSum).toBe(358)
+    expect(modeSum).toBe(360)
+    expect(riskSum).toBe(360)
     // Known-good shape from the baseline measurement.
-    expect(s.byMode).toEqual({ read: 187, stage: 71, write: 100 })
-    expect(s.byRisk).toEqual({ low: 252, medium: 72, high: 34 })
+    expect(s.byMode).toEqual({ read: 188, stage: 71, write: 101 })
+    expect(s.byRisk).toEqual({ low: 254, medium: 72, high: 34 })
   })
 
   it('every row validates against the row schema', () => {
@@ -72,7 +72,7 @@ describe('SPEC-071 plain query helpers', () => {
   })
 
   it('partition helpers are consistent with the snapshot', () => {
-    expect(toolsByMode('read').length).toBe(187)
+    expect(toolsByMode('read').length).toBe(188)
     expect(toolsByRisk('high').length).toBe(34)
     expect(toolsByDomain('finance').every((r) => r.domain === 'finance')).toBe(true)
     expect(toolsByGroup('base').every((r) => r.groups.includes('base'))).toBe(true)
@@ -94,7 +94,7 @@ describe('SPEC-071 identity-enforced boundary', () => {
     const r = queryInventory(req({ kind: 'summary' }))
     expect(r.status).toBe('COMPLETED')
     if (r.status === 'COMPLETED' && r.value.kind === 'summary') {
-      expect(r.value.summary.total).toBe(358)
+      expect(r.value.summary.total).toBe(360)
     }
   })
 

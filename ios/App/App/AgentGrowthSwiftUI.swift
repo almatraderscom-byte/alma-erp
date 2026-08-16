@@ -286,12 +286,72 @@ struct AgentGrowthMetaStatus: Decodable, Equatable {
     }
 }
 
+/// One stored Meta Ads webhook event (GET /api/assistant/growth/ads-events).
+/// These are the pushes the owner gets on his phone; before this screen they had
+/// nowhere to land — a tap opened a chat with no record behind it.
+struct AgentAdsEvent: Decodable, Equatable, Identifiable {
+    let id: String
+    let field: String
+    let recommendationType: String?
+    let metaMessage: String?
+    let title: String
+    let message: String
+    let tier: Int
+    let status: String              // new | seen | actioned | dismissed
+    let detail: [AdObjectDetail]?
+    let detailError: String?
+    let notifyCount: Int
+    let lastSeenAt: Date?
+
+    struct AdObjectDetail: Decodable, Equatable {
+        let objectId: String
+        let name: String?
+        let effectiveStatus: String?
+        let recommendations: [Rec]
+        let error: String?
+
+        struct Rec: Decodable, Equatable {
+            let title: String?
+            let message: String?
+            let importance: String?
+            let blameField: String?
+        }
+    }
+
+    var isResolved: Bool { status == "actioned" || status == "dismissed" }
+
+    /// Meta's own recommendation lines, flattened for display.
+    var recommendationLines: [(object: String, title: String?, message: String)] {
+        (detail ?? []).flatMap { obj in
+            obj.recommendations.map { r in
+                (object: obj.name ?? obj.objectId, title: r.title, message: r.message ?? "—")
+            }
+        }
+    }
+
+    var typeLabel: String {
+        if let t = recommendationType, !t.isEmpty { return t }
+        switch field {
+        case "ad_recommendations": return "সুপারিশ"
+        case "creative_fatigue": return "ক্রিয়েটিভ ক্লান্তি"
+        case "field_changed": return "স্ট্যাটাস বদল"
+        case "with_issues_ad_objects": return "সমস্যা"
+        default: return field
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 @Observable
 final class AgentGrowthVM {
     var gsc: AgentGrowthGscStatus? = nil
     var features: AgentGrowthFeatureStatus? = nil
     var meta: AgentGrowthMetaStatus? = nil   // Meta Ads MCP card (owner 2026-07-17)
+    var adsEvents: [AgentAdsEvent] = []
+    var adsLoading = false
+    var adsShowResolved = false
+    var adsDetailLoading: String? = nil
+    var adsBusyId: String? = nil
     var loading = false            // GSC card (web `loading`)
     var featuresLoading = false    // feature board loads independently (web parity)
     var disconnecting = false      // NP-4: native disconnect in flight
@@ -352,6 +412,61 @@ final class AgentGrowthVM {
         // backend as a growth card. The route owner-gates itself (403 for non-owners),
         // so `try?` leaves `meta` nil and the card simply doesn't render for them.
         meta = try? await AlmaAPI.shared.get("/api/assistant/meta-mcp/status")
+
+        await loadAdsEvents()
+    }
+
+    // ── Meta Ads event inbox (the phone notifications, finally addressable) ──
+
+    private struct AdsEventsResponse: Decodable { let events: [AgentAdsEvent]? }
+    private struct AdsEventResponse: Decodable { let event: AgentAdsEvent? }
+    private struct AdsDecision: Encodable { let status: String }
+
+    func loadAdsEvents() async {
+        adsLoading = true
+        defer { adsLoading = false }
+        let resp: AdsEventsResponse? = try? await AlmaAPI.shared.get(
+            "/api/assistant/growth/ads-events",
+            query: ["status": adsShowResolved ? "all" : "open", "limit": "30"])
+        adsEvents = resp?.events ?? []
+    }
+
+    /// Pull Meta's real recommendation text for one event. The webhook never does
+    /// this (it must answer Meta fast), so the first open is where it happens.
+    func loadAdsDetail(_ id: String, refresh: Bool = false) async {
+        if !refresh, adsEvents.first(where: { $0.id == id })?.detail != nil { return }
+        adsDetailLoading = id
+        defer { adsDetailLoading = nil }
+        let path = "/api/assistant/growth/ads-events/\(id)"
+        let resp: AdsEventResponse? = try? await AlmaAPI.shared.get(
+            path, query: refresh ? ["refresh": "1"] : [:])
+        if let event = resp?.event { replaceAdsEvent(event) }
+    }
+
+    /// actioned / dismissed — this is what stops the same recommendation from
+    /// notifying him again tomorrow.
+    func decideAdsEvent(_ id: String, status: String) async {
+        adsBusyId = id
+        defer { adsBusyId = nil }
+        do {
+            let resp: AdsEventResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/growth/ads-events/\(id)", body: AdsDecision(status: status))
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            if let event = resp.event {
+                if adsShowResolved {
+                    replaceAdsEvent(event)
+                } else {
+                    adsEvents.removeAll { $0.id == id }
+                }
+            }
+        } catch {
+            self.error = "আপডেট হয়নি: \(error.localizedDescription)"
+        }
+    }
+
+    private func replaceAdsEvent(_ event: AgentAdsEvent) {
+        guard let idx = adsEvents.firstIndex(where: { $0.id == event.id }) else { return }
+        adsEvents[idx] = event
     }
 
     /// SwiftUI .refreshable cancels the task when the gesture ends — that's not an
@@ -375,7 +490,17 @@ struct AgentGrowthScreen: View {
     @State private var metaConnectBusy = false
     @State private var metaConnectResult: String? = nil
     @State private var confirmDisconnect = false
+    @State private var openAdsEventId: String? = nil
+    /// Set when the owner arrived by tapping an ads push (/agent/growth?rec=<id>).
+    let focusRecId: String?
     let openWeb: (_ path: String, _ title: String) -> Void
+
+    init(focusRecId: String? = nil,
+         openWeb: @escaping (_ path: String, _ title: String) -> Void) {
+        self.focusRecId = focusRecId
+        self.openWeb = openWeb
+        _openAdsEventId = State(initialValue: focusRecId)
+    }
 
     var body: some View {
         ScrollView {
@@ -384,6 +509,7 @@ struct AgentGrowthScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { warnCard(err) }
                 summaryChips
+                adsInboxCard
                 gscCard
                 metaCard
                 featureBoard
@@ -397,6 +523,167 @@ struct AgentGrowthScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        // A push tap deep-links to one event — open it as soon as the list lands.
+        .task(id: vm.adsEvents.count) {
+            guard let focus = focusRecId, vm.adsEvents.contains(where: { $0.id == focus }) else { return }
+            openAdsEventId = focus
+            await vm.loadAdsDetail(focus)
+        }
+    }
+
+    // ── Meta সুপারিশ inbox — where the ads notifications land ──
+
+    private var adsOpenCount: Int { vm.adsEvents.filter { !$0.isResolved }.count }
+
+    @ViewBuilder private var adsInboxCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(adsOpenCount > 0 ? "Meta সুপারিশ ও অ্যালার্ট (\(adsOpenCount))" : "Meta সুপারিশ ও অ্যালার্ট")
+                        .font(.footnote.weight(.bold))
+                    Text("ফোনে আসা Meta Ads নোটিফিকেশনগুলো এখানে জমা থাকে। খুললে Meta আসলে কী বলছে দেখাবে — সিদ্ধান্ত দিলে ওটা আর নোটিফাই করবে না।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    vm.adsShowResolved.toggle()
+                    Task { await vm.loadAdsEvents() }
+                } label: {
+                    Text(vm.adsShowResolved ? "শুধু বাকিগুলো" : "সব দেখুন")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if vm.adsLoading && vm.adsEvents.isEmpty {
+                Color.clear.frame(height: 54)
+                    .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    .agentGrowthShimmer()
+            } else if vm.adsEvents.isEmpty {
+                Text(vm.adsShowResolved ? "কোনো ইভেন্ট নেই।" : "বাকি কোনো সুপারিশ নেই — সব দেখা হয়ে গেছে।")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(vm.adsEvents) { event in
+                    adsEventRow(event)
+                }
+            }
+        }
+        .padding(14)
+        .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    @ViewBuilder private func adsEventRow(_ event: AgentAdsEvent) -> some View {
+        let isOpen = openAdsEventId == event.id
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                openAdsEventId = isOpen ? nil : event.id
+                if !isOpen { Task { await vm.loadAdsDetail(event.id) } }
+            } label: {
+                HStack(alignment: .top, spacing: 9) {
+                    Circle()
+                        .fill(event.isResolved ? AgentGrowthPalette.emerald400
+                              : (event.tier >= 2 ? AgentGrowthPalette.amber400 : AgentGrowthPalette.sky400))
+                        .frame(width: 8, height: 8).padding(.top, 5)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(event.title).font(.caption.weight(.bold))
+                            Text(event.typeLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+                            if event.isResolved {
+                                Text(event.status == "actioned" ? "করা হয়েছে" : "দরকার নেই")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(AgentGrowthPalette.emerald600)
+                            }
+                        }
+                        Text(event.message)
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                        if event.notifyCount > 1 {
+                            Text("\(event.notifyCount) বার নোটিফাই হয়েছে")
+                                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary).padding(.top, 3)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isOpen {
+                Divider().opacity(0.35)
+                if vm.adsDetailLoading == event.id {
+                    Text("Meta থেকে বিস্তারিত আনা হচ্ছে…").font(.caption2).foregroundStyle(.secondary)
+                }
+                if let meta = event.metaMessage, !meta.isEmpty {
+                    Text("Meta-র বার্তা: \(meta)").font(.caption2)
+                }
+                ForEach(Array(event.recommendationLines.enumerated()), id: \.offset) { _, line in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(line.object).font(.system(size: 10, weight: .semibold))
+                        Text(line.title.map { "\($0): \(line.message)" } ?? line.message)
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 9).padding(.vertical, 7)
+                    .background(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.35),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+                if vm.adsDetailLoading != event.id && event.recommendationLines.isEmpty {
+                    Text(event.detailError.map { "বিস্তারিত আনা যায়নি: \($0)" }
+                         ?? "Meta এখন এই অ্যাডে কোনো খোলা সুপারিশ দেখাচ্ছে না — সম্ভবত মেয়াদ শেষ বা নিজেই মিটে গেছে।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    if !event.isResolved {
+                        Button {
+                            Task { await vm.decideAdsEvent(event.id, status: "actioned") }
+                        } label: {
+                            Text("করা হয়েছে")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AgentGrowthPalette.coral)
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(AgentGrowthPalette.coral.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.plain).disabled(vm.adsBusyId == event.id)
+                        Button {
+                            Task { await vm.decideAdsEvent(event.id, status: "dismissed") }
+                        } label: {
+                            Text("দরকার নেই")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12).padding(.vertical, 7)
+                                .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+                        }
+                        .buttonStyle(.plain).disabled(vm.adsBusyId == event.id)
+                    }
+                    Button {
+                        Task { await vm.loadAdsDetail(event.id, refresh: true) }
+                    } label: {
+                        Text("আবার আনুন")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+                    }
+                    .buttonStyle(.plain).disabled(vm.adsDetailLoading == event.id)
+                }
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 9)
+        .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.30),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+            .strokeBorder(focusRecId == event.id ? AgentGrowthPalette.coral.opacity(0.55) : .clear, lineWidth: 1))
     }
 
     // ── Header intro (web subtitle, verbatim) ──

@@ -13,6 +13,7 @@
   "requiredCapabilities": [
     "marketing_report",
     "recommend_ad_actions",
+    "get_ad_recommendations",
     "research_competitor_creatives",
     "get_marketing_intel",
     "list_content_calendar",

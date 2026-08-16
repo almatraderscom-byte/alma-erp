@@ -263,6 +263,9 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   // status = read, enable = direct Meta webhook subscribe (no spend, notifications
   // only, owner-explicit ask) — direct effect ⇒ write, not stage
   manage_ads_webhooks: write('ads', 'medium'),
+  get_ad_recommendations: read('ads'),
+  // Marks OUR inbox row handled/dismissed — nothing changes on Meta, no spend.
+  resolve_ad_recommendation: write('ads', 'low'),
 
   // ── marketing analysis ─────────────────────────────────────────────────────
   plan_marketing: read('marketing'),

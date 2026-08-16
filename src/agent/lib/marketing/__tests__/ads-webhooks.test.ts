@@ -1,7 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let kvStore: Record<string, string> = {}
-const notifyCalls: Array<{ tier: number; title: string }> = []
+const notifyCalls: Array<{ tier: number; title: string; actionUrl?: string | null }> = []
+
+/** In-memory stand-in for the agent_ads_events table (dedupeKey → row). */
+type EventRow = {
+  id: string
+  dedupeKey: string
+  status: string
+  notifyCount: number
+  lastNotifiedAt: Date | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [k: string]: any
+}
+let eventStore: Record<string, EventRow> = {}
+/** Set to make every agent_ads_events call throw (DB-down / degraded path). */
+let eventsDown = false
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -18,12 +32,46 @@ vi.mock('@/lib/prisma', () => ({
         return { key: where.key, value: kvStore[where.key] }
       }),
     },
+    agentAdsEvent: {
+      findUnique: vi.fn(async ({ where }: { where: { dedupeKey?: string; id?: string } }) => {
+        if (eventsDown) throw new Error('db down')
+        if (where.dedupeKey) return eventStore[where.dedupeKey] ?? null
+        return Object.values(eventStore).find((r) => r.id === where.id) ?? null
+      }),
+      upsert: vi.fn(
+        async ({
+          where,
+          create,
+          update,
+        }: {
+          where: { dedupeKey: string }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          create: any
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          update: any
+        }) => {
+          if (eventsDown) throw new Error('db down')
+          const existing = eventStore[where.dedupeKey]
+          if (!existing) {
+            eventStore[where.dedupeKey] = { id: `evt-${Object.keys(eventStore).length + 1}`, ...create }
+          } else {
+            const inc = update.notifyCount?.increment
+            eventStore[where.dedupeKey] = {
+              ...existing,
+              ...update,
+              notifyCount: inc ? existing.notifyCount + inc : existing.notifyCount,
+            }
+          }
+          return eventStore[where.dedupeKey]
+        },
+      ),
+    },
   },
 }))
 
 vi.mock('@/agent/lib/notify-owner', () => ({
-  notifyOwner: vi.fn(async (opts: { tier: number; title: string }) => {
-    notifyCalls.push({ tier: opts.tier, title: opts.title })
+  notifyOwner: vi.fn(async (opts: { tier: number; title: string; actionUrl?: string | null }) => {
+    notifyCalls.push({ tier: opts.tier, title: opts.title, actionUrl: opts.actionUrl })
     return { channels: ['ntfy_general'], statuses: {} }
   }),
 }))
@@ -82,6 +130,8 @@ describe('parseAdsWebhookChange', () => {
 describe('handleAdsWebhook', () => {
   beforeEach(() => {
     kvStore = {}
+    eventStore = {}
+    eventsDown = false
     notifyCalls.length = 0
   })
 
@@ -95,16 +145,76 @@ describe('handleAdsWebhook', () => {
       { field: 'field_changed', value: { object_id: '55', object_type: 'campaign', changed_fields: ['effective_status'] } },
     ])
     const first = await handleAdsWebhook(payload)
-    expect(first).toEqual({ received: 1, notified: 1 })
+    expect(first).toEqual({ received: 1, notified: 1, stored: 1 })
 
     const second = await handleAdsWebhook(payload)
-    expect(second).toEqual({ received: 1, notified: 0 })
+    expect(second).toEqual({ received: 1, notified: 0, stored: 0 })
     expect(notifyCalls).toHaveLength(1)
   })
 
   it('ignores non-ad_account objects', async () => {
     const result = await handleAdsWebhook({ object: 'page', entry: [] })
-    expect(result).toEqual({ received: 0, notified: 0 })
+    expect(result).toEqual({ received: 0, notified: 0, stored: 0 })
     expect(notifyCalls).toHaveLength(0)
+  })
+
+  it('stores the event and points the push AT it, not at an empty chat', async () => {
+    await handleAdsWebhook(
+      envelope([
+        {
+          field: 'ad_recommendations',
+          value: { recommendation_hash: 'h1', ad_object_ids: ['77'], recommendation_type: 'BUDGET_LIMITED' },
+        },
+      ]),
+    )
+    const row = eventStore['rec:h1:77']
+    expect(row).toBeTruthy()
+    expect(row.recommendationType).toBe('BUDGET_LIMITED')
+    expect(row.adObjectIds).toEqual(['77'])
+    expect(notifyCalls[0]?.actionUrl).toBe(`/agent/growth?rec=${row.id}`)
+  })
+
+  it('a resolved recommendation never pushes again', async () => {
+    const payload = envelope([
+      {
+        field: 'ad_recommendations',
+        value: { recommendation_hash: 'h2', ad_object_ids: ['9'], recommendation_type: 'CTX_CREATION_PACKAGE' },
+      },
+    ])
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+
+    // Owner dismisses it, Meta re-sends it after the KV window has passed.
+    eventStore['rec:h2:9'].status = 'dismissed'
+    kvStore = {}
+    const again = await handleAdsWebhook(payload)
+    expect(again.notified).toBe(0)
+    expect(notifyCalls).toHaveLength(1)
+  })
+
+  it('an open recommendation re-pushes at most once a day', async () => {
+    const payload = envelope([
+      { field: 'ad_recommendations', value: { recommendation_hash: 'h3', ad_object_ids: ['5'] } },
+    ])
+    await handleAdsWebhook(payload)
+    kvStore = {} // KV window expired; the DB layer is what must hold the line
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+
+    eventStore['rec:h3:5'].lastNotifiedAt = new Date(Date.now() - 25 * 60 * 60 * 1000)
+    kvStore = {}
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(2)
+  })
+
+  it('DB down → the owner still gets the push (fail-open)', async () => {
+    eventsDown = true
+    const result = await handleAdsWebhook(
+      envelope([
+        { field: 'field_changed', value: { object_id: '55', object_type: 'campaign', changed_fields: ['effective_status'] } },
+      ]),
+    )
+    expect(result).toEqual({ received: 1, notified: 1, stored: 0 })
+    expect(notifyCalls[0]?.actionUrl).toBe('/agent/growth')
   })
 })

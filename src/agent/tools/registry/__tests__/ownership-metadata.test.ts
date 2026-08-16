@@ -61,7 +61,7 @@ describe('SPEC-076 whole-set', () => {
     expect(roll.length).toBe(64)
     expect(roll).toEqual([...roll].sort((a, b) => a.domain.localeCompare(b.domain)))
     const total = roll.reduce((a, d) => a + d.toolCount, 0)
-    expect(total).toBe(358)
+    expect(total).toBe(360)
     expect(renderToolCodeowners(ALL_MANIFESTS)).toMatch(/GENERATED proposal/)
   })
 })

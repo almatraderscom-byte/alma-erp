@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { recordAdsEvent } from '@/agent/lib/marketing/ads-events'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -59,6 +60,7 @@ export type AdsWebhookChange = {
     recommendation_type?: string
     recommendation_message?: string
     recommendation_hash?: string
+    recommendation_signature?: string
     recommendation_stage?: string
   }
 }
@@ -81,6 +83,15 @@ export type ParsedAdsEvent = {
   message: string
   /** false → log only, no owner push (e.g. in-process noise) */
   push: boolean
+  /** Webhook field this came from — kept so the stored row stays queryable. */
+  field: string
+  /** Meta ad object ids this event points at — what the Graph detail read uses. */
+  adObjectIds: string[]
+  recommendationType?: string | null
+  recommendationHash?: string | null
+  adAccountId?: string | null
+  /** Meta's own message, verbatim (usually a stub sentence). */
+  metaMessage?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +113,8 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, ${objType} (ID: ${v.object_id ?? '?'})-এর ডেলিভারি স্ট্যাটাস বদলে গেছে — ` +
         `রিজেক্ট, পজ বা আবার চালু হতে পারে। আমাকে "ads status check koro" বললে এখনই বিস্তারিত এনে দেব।`,
       push: true,
+      field,
+      adObjectIds: v.object_id ? [String(v.object_id)] : [],
     }
   }
 
@@ -116,19 +129,29 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `একই ছবি বারবার দেখে মানুষ আর ক্লিক করছে না। নতুন ছবি/ভিডিও দিয়ে রিফ্রেশ করলে খরচ কমবে। ` +
         `চাইলে আমি নতুন ক্রিয়েটিভ বানিয়ে কার্ড পাঠাতে পারি।`,
       push: level === 'HIGH' || level === 'MEDIUM',
+      field,
+      adObjectIds: v.adgroup_id ? [String(v.adgroup_id)] : [],
+      metaMessage: v.creative_fatigue_message ?? null,
     }
   }
 
   if (field === 'ad_recommendations') {
     return {
-      key: `rec:${v.recommendation_hash || v.recommendation_type}:${(v.ad_object_ids ?? []).join(',')}`,
+      key: `rec:${v.recommendation_hash || v.recommendation_signature || v.recommendation_type}:${(v.ad_object_ids ?? []).join(',')}`,
       tier: 1,
       title: 'Meta Ads: নতুন সুপারিশ এসেছে',
       message:
         `Boss, Meta নতুন পারফরম্যান্স সুপারিশ দিয়েছে (${v.recommendation_type ?? 'unknown'})। ` +
         `${v.recommendation_message ? `"${v.recommendation_message}" ` : ''}` +
-        `"ad recommendation dekho" বললে বিস্তারিত এনে ভালো-মন্দ জানাব।`,
+        `অ্যাপে ট্যাপ করলে পুরো সুপারিশটা দেখতে পাবেন, বা "ad recommendation dekho" বললে ` +
+        `আমি বিস্তারিত এনে ভালো-মন্দ জানাব।`,
       push: true,
+      field,
+      adObjectIds: (v.ad_object_ids ?? []).map((x) => String(x)),
+      recommendationType: v.recommendation_type ?? null,
+      recommendationHash: v.recommendation_hash ?? v.recommendation_signature ?? null,
+      adAccountId: v.ad_account_id ?? null,
+      metaMessage: v.recommendation_message ?? null,
     }
   }
 
@@ -141,6 +164,8 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, একটা অ্যাড অবজেক্টে সমস্যা (issue state) ধরা পড়েছে — ডেলিভারি আটকে থাকতে পারে। ` +
         `"ads status check koro" বললে কোনটায় কী সমস্যা বের করে দেব।`,
       push: true,
+      field,
+      adObjectIds: v.object_id ? [String(v.object_id)] : (v.ad_object_ids ?? []).map((x) => String(x)),
     }
   }
 
@@ -153,6 +178,9 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, আপনার সেট করা অ্যাড থ্রেশহোল্ড/মাইলস্টোনে একটা ঘটনা ঘটেছে। ` +
         `"ads status check koro" বললে বিস্তারিত দেখে জানাব।`,
       push: true,
+      field,
+      adObjectIds: (v.ad_object_ids ?? []).map((x) => String(x)),
+      adAccountId: v.ad_account_id ?? null,
     }
   }
 
@@ -197,23 +225,36 @@ async function saveDedupe(map: DedupeMap): Promise<void> {
 // Main handler — called from the webhook route POST
 // ---------------------------------------------------------------------------
 
-export async function handleAdsWebhook(envelope: AdsWebhookEnvelope): Promise<{ received: number; notified: number }> {
-  if (envelope.object !== 'ad_account') return { received: 0, notified: 0 }
+export async function handleAdsWebhook(
+  envelope: AdsWebhookEnvelope,
+): Promise<{ received: number; notified: number; stored: number }> {
+  if (envelope.object !== 'ad_account') return { received: 0, notified: 0, stored: 0 }
 
   const changes = (envelope.entry ?? []).flatMap((e) => e.changes ?? [])
-  if (!changes.length) return { received: 0, notified: 0 }
+  if (!changes.length) return { received: 0, notified: 0, stored: 0 }
 
   const dedupe = await loadDedupe()
   const now = Date.now()
   let notified = 0
 
+  let stored = 0
+
   for (const change of changes) {
     const event = parseAdsWebhookChange(change)
-    if (!event || !event.push) continue
+    if (!event) continue
 
+    // Layer 1 — KV short-window guard against Meta retry storms. Kept because it
+    // still works when the DB is unreachable.
     const last = dedupe[event.key]
     if (last && now - last < DEDUPE_WINDOW_MS) continue
     dedupe[event.key] = now
+
+    // Layer 2 — the durable row. This is what the app and the agent read later,
+    // and what decides whether the owner hears about it AGAIN: an event he has
+    // actioned or dismissed never re-pushes, an open one nags once a day.
+    const recorded = await recordAdsEvent(event, (change.value ?? {}) as Record<string, unknown>)
+    if (!recorded.degraded) stored += 1
+    if (!recorded.shouldPush) continue
 
     try {
       await notifyOwner({
@@ -221,7 +262,8 @@ export async function handleAdsWebhook(envelope: AdsWebhookEnvelope): Promise<{ 
         title: event.title,
         message: event.message,
         category: event.tier === 2 ? 'urgent' : 'task',
-        actionUrl: '/agent',
+        // A tap must land ON the event, not in an empty chat.
+        actionUrl: recorded.id ? `/agent/growth?rec=${recorded.id}` : '/agent/growth',
       })
       notified += 1
     } catch (err) {
@@ -230,7 +272,7 @@ export async function handleAdsWebhook(envelope: AdsWebhookEnvelope): Promise<{ 
   }
 
   await saveDedupe(dedupe)
-  return { received: changes.length, notified }
+  return { received: changes.length, notified, stored }
 }
 
 // ---------------------------------------------------------------------------

@@ -6404,3 +6404,48 @@ model AgentFinding {
   @@index([setId, family], map: "agent_findings_set_family_idx")
   @@map("agent_findings")
 }
+
+// ─── Meta Ads webhook events (durable inbox) ──────────────────────────────────
+// Before this table an ads webhook was push-only: the parsed event was pushed to
+// the owner and thrown away, so a tap on the notification landed in a chat with
+// nothing behind it and the agent had no record to work from. Every parsed event
+// now lands here first — the push is a pointer to a row, not the only copy.
+
+model AgentAdsEvent {
+  id                 String    @id @default(uuid())
+  /// Stable per logical Meta event — the same key Meta re-sends maps to ONE row.
+  dedupeKey          String    @unique @map("dedupe_key")
+  /// Webhook field: ad_recommendations | creative_fatigue | field_changed |
+  /// with_issues_ad_objects | subscriptions
+  field              String
+  recommendationType String?   @map("recommendation_type")
+  recommendationHash String?   @map("recommendation_hash")
+  adAccountId        String?   @map("ad_account_id")
+  /// JSON array of Meta ad object ids the event points at.
+  adObjectIds        Json?     @map("ad_object_ids")
+  /// Meta's own (usually stub) message, kept verbatim.
+  metaMessage        String?   @map("meta_message")
+  title              String
+  message            String
+  tier               Int       @default(1)
+  /// new | seen | actioned | dismissed
+  status             String    @default("new")
+  /// Graph-fetched recommendation payloads — the real content behind the stub.
+  detail             Json?
+  detailFetchedAt    DateTime? @map("detail_fetched_at")
+  detailError        String?   @map("detail_error")
+  /// Full webhook change value, so nothing Meta sent is ever lost.
+  raw                Json
+  notifyCount        Int       @default(0) @map("notify_count")
+  lastNotifiedAt     DateTime? @map("last_notified_at")
+  /// Last time Meta re-sent this same event.
+  lastSeenAt         DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt         DateTime? @map("resolved_at")
+  resolvedNote       String?   @map("resolved_note")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, lastSeenAt], map: "agent_ads_events_status_last_seen_idx")
+  @@index([field, lastSeenAt], map: "agent_ads_events_field_last_seen_idx")
+  @@map("agent_ads_events")
+}
