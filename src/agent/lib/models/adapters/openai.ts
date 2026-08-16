@@ -106,6 +106,25 @@ export function openAiResponsesEnabled(): boolean {
   return process.env.OPENAI_RESPONSES_API !== 'false'
 }
 
+/**
+ * 429 handling (owner-visible 2026-08-16: "Rate limit reached … try again in
+ * 4.5s" surfaced as a dead turn). The org's TPM tier is finite and one head
+ * turn is ~150k tokens, so back-to-back turns trip it routinely — a bounded
+ * wait-and-retry makes that invisible instead of an error card. Returns the
+ * seconds to wait, capped, or null when the error is not a rate limit.
+ */
+export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 12): number | null {
+  const status = (err as { status?: number })?.status
+  const message = err instanceof Error ? err.message : String(err)
+  if (status !== 429 && !/rate limit/i.test(message)) return null
+  const m = message.match(/try again in ([0-9.]+)s/i)
+  const suggested = m ? Number.parseFloat(m[1]) : NaN
+  const headerRaw = (err as { headers?: { get?: (k: string) => string | null } })?.headers?.get?.('retry-after')
+  const header = headerRaw ? Number.parseFloat(headerRaw) : NaN
+  const wait = Number.isFinite(suggested) ? suggested : Number.isFinite(header) ? header : 5
+  return Math.min(Math.max(wait + 0.5, 1), capSeconds)
+}
+
 /** Reasoning effort for Luna head turns. 'medium' by default: live probes
  *  2026-08-16 showed 'low' almost never yields a visible reasoning summary
  *  (thinks=0 across multi-round tool turns) while 'medium' streams a real one
@@ -513,18 +532,32 @@ export class OpenAiAdapter implements ProviderAdapter {
         responsesParams.parallel_tool_calls = args.parallelToolCalls
       }
       let responsesStream: AsyncIterable<unknown> | null = null
-      try {
-        responsesStream = await this.client.responses.create(
-           
-          responsesParams as any,
-          args.signal ? { signal: args.signal } : undefined,
-        ) as unknown as AsyncIterable<unknown>
-      } catch (err) {
-        if (args.signal?.aborted) throw err
-        console.warn(
-          `[openai-adapter] ${args.apiModel} Responses API rejected the request — falling back to chat/completions:`,
-          err instanceof Error ? err.message : String(err),
-        )
+      // Up to two bounded rate-limit waits before giving up on this API: the
+      // org TPM tier trips on back-to-back head turns and asks for ~5s — an
+      // error card for that is unacceptable when waiting fixes it.
+      for (let attempt = 0; attempt < 3 && !responsesStream; attempt++) {
+        try {
+          responsesStream = await this.client.responses.create(
+             
+            responsesParams as any,
+            args.signal ? { signal: args.signal } : undefined,
+          ) as unknown as AsyncIterable<unknown>
+        } catch (err) {
+          if (args.signal?.aborted) throw err
+          const retryDelay = attempt < 2 ? rateLimitRetryDelaySeconds(err) : null
+          if (retryDelay != null) {
+            console.warn(
+              `[openai-adapter] ${args.apiModel} rate-limited — retrying in ${retryDelay}s (attempt ${attempt + 1})`,
+            )
+            await new Promise((resolve) => setTimeout(resolve, retryDelay * 1000))
+            continue
+          }
+          console.warn(
+            `[openai-adapter] ${args.apiModel} Responses API rejected the request — falling back to chat/completions:`,
+            err instanceof Error ? err.message : String(err),
+          )
+          break
+        }
       }
       if (responsesStream) {
         yield* mapResponsesStream(responsesStream, {
