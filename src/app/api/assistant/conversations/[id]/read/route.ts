@@ -23,8 +23,13 @@ export async function POST(req: NextRequest, ctx: unknown) {
   const { id } = await routeParams<{ id: string }>(ctx)
   if (!id) return Response.json({ error: 'id দরকার' }, { status: 400 })
 
+  // The newest message the caller actually rendered. Optional — without it the
+  // server's clock is used, which can swallow a reply that landed mid-open.
+  const body = (await req.json().catch(() => ({}))) as { upTo?: string }
+  const upTo = typeof body.upTo === 'string' && body.upTo ? new Date(body.upTo) : null
+
   try {
-    const ok = await markConversationRead(id)
+    const ok = await markConversationRead(id, upTo)
     if (!ok) return Response.json({ error: 'not_found' }, { status: 404 })
     // Hand back the fresh badge number so the caller never has to poll twice.
     return Response.json({ ok: true, count: await countUnreadConversations() })

@@ -4727,6 +4727,10 @@ final class AssistantVM {
                 if committed {
                     sessionSurface = .readyConversation(conversationId: cid)
                     await loadArtifacts()
+                    // Cold launch restores the active chat through THIS path, not
+                    // openConversation — without this, a reply that arrived while
+                    // the app was closed stays counted even as he reads it.
+                    await markConversationRead(cid)
                     await recoverTurnState(trigger: "bootstrap")
                 } else {
                     // The pointer resolved but the history request failed —
@@ -5932,14 +5936,21 @@ final class AssistantVM {
 
     /// Opening a chat reads it. Optimistic locally so the badge drops instantly,
     /// then reconciled with the server's own count.
+    ///
+    /// Marks read only UP TO the newest message actually on screen: a reply a
+    /// background job writes between the history fetch and this call must stay
+    /// unread, because Boss never saw it.
     func markConversationRead(_ id: String) async {
         if let idx = conversations.firstIndex(where: { $0.id == id }), conversations[idx].unread == true {
             conversations[idx].unread = false
             unreadConversationCount = max(0, unreadConversationCount - 1)
         }
+        struct MarkReadRequest: Encodable { let upTo: String? }
         struct MarkReadResponse: Decodable { let ok: Bool?; let count: Int? }
+        let upTo = messages.compactMap(\.createdAt).max()
         guard let resp: MarkReadResponse = try? await AlmaAPI.shared.send(
-            "POST", "/api/assistant/conversations/\(id)/read") else { return }
+            "POST", "/api/assistant/conversations/\(id)/read",
+            body: MarkReadRequest(upTo: upTo)) else { return }
         if let count = resp.count { unreadConversationCount = count }
     }
 

@@ -60,11 +60,26 @@ export async function countUnreadConversations(): Promise<number> {
   return Number(rows[0]?.count ?? 0)
 }
 
-/** Boss opened this chat — everything in it is now read. */
-export async function markConversationRead(id: string): Promise<boolean> {
+/**
+ * Boss opened this chat — everything he was SHOWN is now read.
+ *
+ * `upTo` is the timestamp of the newest message the client actually rendered.
+ * Stamping the server's clock instead would swallow a reply that a background
+ * job wrote between the history fetch and this call: it would be marked read
+ * without ever having been on screen. Clamped to now (a client clock cannot
+ * mark the future read) and never moved backwards.
+ */
+export async function markConversationRead(id: string, upTo?: Date | null): Promise<boolean> {
+  const now = new Date()
+  const readAt = upTo && !Number.isNaN(upTo.getTime()) && upTo < now ? upTo : now
+
   const res = await prisma.agentConversation.updateMany({
-    where: { id },
-    data: { lastReadAt: new Date() },
+    where: { id, OR: [{ lastReadAt: null }, { lastReadAt: { lt: readAt } }] },
+    data: { lastReadAt: readAt },
   })
-  return res.count > 0
+  if (res.count > 0) return true
+  // Nothing updated: either the row is gone, or it was already read past this
+  // point — which is success, not failure.
+  const exists = await prisma.agentConversation.count({ where: { id } })
+  return exists > 0
 }
