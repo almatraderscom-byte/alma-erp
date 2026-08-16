@@ -91,6 +91,217 @@ export function toRawOpenAiCompatParams(
   return out
 }
 
+// ── Responses API (raw OpenAI / Luna head) ───────────────────────────────────
+// Owner ask 2026-08-16: Luna's thought pane is empty. Two hard reasons on
+// chat/completions: (1) gpt-5.6 rejects function tools + reasoning there, so
+// every tool-bearing head turn was forced to reasoning_effort 'none' — Luna
+// literally did not reason; (2) even when reasoning, OpenAI never returns the
+// chain-of-thought on that API. The Responses API fixes both: tools + reasoning
+// coexist, and `reasoning.summary` streams a model-written summary of the
+// thinking (`response.reasoning_summary_text.delta`) — which we surface as the
+// same thinking_delta the Gemini/DeepSeek heads use. Kill switch:
+// OPENAI_RESPONSES_API=false restores the legacy chat/completions path.
+
+export function openAiResponsesEnabled(): boolean {
+  return process.env.OPENAI_RESPONSES_API !== 'false'
+}
+
+/** Reasoning effort for Luna head turns — 'low' keeps the head snappy and the
+ *  summaries brief; owner-tunable without redeploy semantics via env. */
+export function lunaReasoningEffort(): 'minimal' | 'low' | 'medium' | 'high' {
+  const v = process.env.LUNA_REASONING_EFFORT?.trim()
+  return v === 'minimal' || v === 'medium' || v === 'high' ? v : 'low'
+}
+
+/** OpenAI reasoning items ride the neutral thoughtSignature lane as JSON. */
+const REASONING_SIG_PREFIX = 'openai-responses:'
+export function encodeReasoningSignature(id: string, encryptedContent: string): string {
+  return REASONING_SIG_PREFIX + JSON.stringify({ id, encrypted_content: encryptedContent })
+}
+function parseReasoningSignature(
+  sig: string | undefined,
+): { id: string; encrypted_content: string } | null {
+  // A Gemini thoughtSignature can legitimately appear in history after a
+  // mid-conversation head switch — only OUR prefix is ours to replay.
+  if (!sig || !sig.startsWith(REASONING_SIG_PREFIX)) return null
+  try {
+    const parsed = JSON.parse(sig.slice(REASONING_SIG_PREFIX.length)) as {
+      id?: unknown
+      encrypted_content?: unknown
+    }
+    return typeof parsed.id === 'string' && typeof parsed.encrypted_content === 'string'
+      ? { id: parsed.id, encrypted_content: parsed.encrypted_content }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Neutral history → Responses input items (function calls round-trip as
+ *  function_call / function_call_output items instead of role messages). */
+export function toResponsesInput(messages: NeutralMsg[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const msg of messages) {
+    if ('content' in msg && typeof msg.content === 'string') {
+      out.push({ role: msg.role, content: msg.content })
+      continue
+    }
+    if ('toolCalls' in msg) {
+      for (const tc of msg.toolCalls) {
+        // Stateless reasoning continuation (Codex P1): with store:false the
+        // reasoning item that PRECEDED this function call must be replayed
+        // (encrypted) or multi-round tool use loses/rejects the model's
+        // reasoning state. It rides the same thoughtSignature lane Gemini
+        // already round-trips through the turn loop.
+        const sig = parseReasoningSignature(tc.thoughtSignature)
+        if (sig) {
+          out.push({
+            type: 'reasoning',
+            id: sig.id,
+            encrypted_content: sig.encrypted_content,
+            summary: [],
+          })
+        }
+        out.push({
+          type: 'function_call',
+          call_id: tc.id,
+          name: tc.name,
+          arguments: JSON.stringify(tc.input),
+        })
+      }
+      continue
+    }
+    if (msg.role === 'tool') {
+      // Same image-stripping rule as the chat path: a vision result's base64
+      // payload is undecodable garbage to a text tool output.
+      let payload: unknown = msg.result
+      if (payload && typeof payload === 'object' && 'image' in (payload as Record<string, unknown>)) {
+        const { image: _omit, ...rest } = payload as Record<string, unknown>
+        payload = rest
+      }
+      out.push({
+        type: 'function_call_output',
+        call_id: msg.toolCallId,
+        output: JSON.stringify(payload),
+      })
+    }
+  }
+  return out
+}
+
+/** Responses tools are FLAT (no nested `function` object). */
+export function toResponsesTools(tools: NeutralTool[]): Array<Record<string, unknown>> {
+  return tools.map((t) => ({
+    type: 'function',
+    name: t.name,
+    description: t.description,
+    strict: false,
+    parameters: openAiSchemaSanitizeEnabled()
+      ? sanitizeSchemaPortable(t.schema)
+      : (t.schema as Record<string, unknown>),
+  }))
+}
+
+export function toResponsesToolChoice(choice?: NeutralToolChoice): unknown {
+  if (choice === undefined || choice === 'auto') return undefined
+  return typeof choice === 'object' ? { type: 'function', name: choice.name } : choice
+}
+
+/**
+ * Map the Responses event stream to neutral TurnEvents. Exported for unit
+ * tests (fed a fake async iterable). Tool arguments are taken WHOLE from the
+ * output_item.done event — no delta re-assembly to get wrong.
+ */
+ 
+ 
+function mapResponsesUsage(usage: any): TurnEvent {
+  const cached = usage.input_tokens_details?.cached_tokens ?? 0
+  const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? 0
+  return {
+    type: 'usage',
+    inputTokens: Math.max(0, (usage.input_tokens ?? 0) - cached),
+    outputTokens: usage.output_tokens ?? 0,
+    cacheRead: cached,
+    reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
+  }
+}
+
+export async function* mapResponsesStream(
+   
+  stream: AsyncIterable<any>,
+  opts: { signal?: AbortSignal; truncationNote?: boolean } = {},
+): AsyncGenerator<TurnEvent> {
+  let pendingReasoningSig: string | null = null
+  for await (const event of stream) {
+    if (opts.signal?.aborted) break
+    switch (event.type) {
+      case 'response.reasoning_summary_text.delta':
+        if (event.delta) yield { type: 'thinking_delta', text: String(event.delta) }
+        break
+      case 'response.output_text.delta':
+        if (event.delta) yield { type: 'text_delta', text: String(event.delta) }
+        break
+      case 'response.output_item.added':
+        if (event.item?.type === 'function_call' && event.item.name) {
+          yield {
+            type: 'tool_start',
+            id: String(event.item.call_id ?? event.item.id ?? `resp_${Date.now()}`),
+            name: String(event.item.name),
+          }
+        }
+        break
+      case 'response.output_item.done':
+        // Reasoning item finishing BEFORE a function call: keep its encrypted
+        // content so the next stateless round can replay it (Codex P1).
+        if (event.item?.type === 'reasoning' && event.item.id
+          && typeof event.item.encrypted_content === 'string' && event.item.encrypted_content) {
+          pendingReasoningSig = encodeReasoningSignature(
+            String(event.item.id), event.item.encrypted_content)
+        }
+        if (event.item?.type === 'function_call' && event.item.name) {
+          const repair = repairToolArgs(String(event.item.arguments ?? ''))
+          const parsed: Record<string, unknown> = repair.ok ? repair.value : { _raw: repair.raw }
+          yield {
+            type: 'tool_input',
+            id: String(event.item.call_id ?? event.item.id ?? `resp_${Date.now()}`),
+            input: parsed,
+            // First call after a reasoning burst carries the replay signature —
+            // toResponsesInput re-emits the reasoning item ahead of it.
+            ...(pendingReasoningSig ? { thoughtSignature: pendingReasoningSig } : {}),
+          }
+          pendingReasoningSig = null
+        }
+        break
+      case 'response.incomplete': {
+        if (opts.truncationNote
+          && event.response?.incomplete_details?.reason === 'max_output_tokens') {
+          yield { type: 'text_delta', text: TRUNCATION_NOTE }
+        }
+        // A truncated round is still BILLED (Codex P2) — usage lives on this
+        // terminal event exactly like response.completed.
+        const usage = event.response?.usage
+        if (usage) yield mapResponsesUsage(usage)
+        break
+      }
+      case 'response.failed': {
+        const message = event.response?.error?.message ?? 'response.failed'
+        throw new Error(`[openai-responses] ${String(message)}`)
+      }
+      case 'error': {
+        throw new Error(`[openai-responses] ${String(event.message ?? 'stream error')}`)
+      }
+      case 'response.completed': {
+        const usage = event.response?.usage
+        if (usage) yield mapResponsesUsage(usage)
+        break
+      }
+      default:
+        break
+    }
+  }
+  yield { type: 'done' }
+}
+
 function toOpenAiMessages(
   system: string,
   messages: NeutralMsg[],
@@ -264,6 +475,63 @@ export class OpenAiAdapter implements ProviderAdapter {
     parallelToolCalls?: boolean
     cacheKey?: string
   }): AsyncGenerator<TurnEvent> {
+    // Raw OpenAI (Luna head): prefer the Responses API — tools + reasoning
+    // coexist there and the model's reasoning SUMMARY streams live, so the
+    // owner finally sees Luna think (chat/completions forced tool-bearing
+    // turns to reasoning_effort 'none' AND hides the chain-of-thought).
+    // A create() failure falls through to the proven chat/completions ladder
+    // below — the head never goes down over this path.
+    if (this.rawOpenAi && openAiResponsesEnabled()) {
+      const wantsReasoning = args.thinking !== 'none'
+      const rawGen = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
+      const responsesParams: Record<string, unknown> = {
+        model: args.apiModel,
+        instructions: args.system,
+        input: toResponsesInput(args.messages),
+        stream: true,
+        store: false,
+        ...(args.tools.length ? { tools: toResponsesTools(args.tools) } : {}),
+        ...(rawGen.max_tokens !== undefined ? { max_output_tokens: rawGen.max_tokens } : {}),
+        ...(wantsReasoning
+          // include reasoning.encrypted_content: with store:false the item
+          // must come back encrypted or the next tool round cannot replay it.
+          ? {
+            reasoning: { effort: lunaReasoningEffort(), summary: 'auto' },
+            include: ['reasoning.encrypted_content'],
+          }
+          // Non-reasoning request: the sampler is accepted, mirror the shared contract.
+          : {
+            ...(rawGen.temperature !== undefined ? { temperature: rawGen.temperature } : {}),
+            ...(rawGen.top_p !== undefined ? { top_p: rawGen.top_p } : {}),
+          }),
+      }
+      const responsesChoice = args.tools.length ? toResponsesToolChoice(args.toolChoice) : undefined
+      if (responsesChoice !== undefined) responsesParams.tool_choice = responsesChoice
+      if (args.tools.length && args.parallelToolCalls !== undefined) {
+        responsesParams.parallel_tool_calls = args.parallelToolCalls
+      }
+      let responsesStream: AsyncIterable<unknown> | null = null
+      try {
+        responsesStream = await this.client.responses.create(
+           
+          responsesParams as any,
+          args.signal ? { signal: args.signal } : undefined,
+        ) as unknown as AsyncIterable<unknown>
+      } catch (err) {
+        if (args.signal?.aborted) throw err
+        console.warn(
+          `[openai-adapter] ${args.apiModel} Responses API rejected the request — falling back to chat/completions:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+      if (responsesStream) {
+        yield* mapResponsesStream(responsesStream, {
+          signal: args.signal,
+          truncationNote: AGENT_UNIFORM_SAMPLING,
+        })
+        return
+      }
+    }
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
     // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
     // thinking tokens in `delta.reasoning`. `{ enabled: true }` alone was too weak
@@ -358,7 +626,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
     const errDetail = (err: unknown): string => {
       const base = err instanceof Error ? err.message : String(err)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const body = (err as any)?.error
       const raw = body?.metadata?.raw ?? body?.error?.metadata?.raw
       return raw ? `${base} | provider: ${String(raw).slice(0, 300)}` : base
