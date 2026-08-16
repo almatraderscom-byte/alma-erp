@@ -80,7 +80,7 @@ export default function AdsEventInbox() {
    * row it just removed is fetched back and re-inserted — the decision looks like
    * it did nothing.
    */
-  const focusHandled = useRef(false)
+  const focusHandled = useRef<string | null>(null)
 
   const load = useCallback(async (resolved: boolean) => {
     setLoading(true)
@@ -141,13 +141,16 @@ export default function AdsEventInbox() {
    * on screen rather than showing the owner an empty card for a live push.
    */
   useEffect(() => {
-    if (!focusId || !events || focusHandled.current) return
+    // Tracks WHICH id was handled, not merely that one was: a second push tapped
+    // while this page is open changes ?rec= without remounting, and a boolean
+    // latch would swallow the new target.
+    if (!focusId || !events || focusHandled.current === focusId) return
     if (events.some((e) => e.id === focusId)) {
-      focusHandled.current = true
+      focusHandled.current = focusId
       void openEvent(focusId, { keepOpen: true })
       return
     }
-    focusHandled.current = true
+    focusHandled.current = focusId
     void (async () => {
       try {
         const res = await fetch(`${LIST_URL}/${focusId}`, { cache: 'no-store' })
