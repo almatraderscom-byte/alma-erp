@@ -25,6 +25,10 @@ const db = prisma as any
 export const RENOTIFY_WINDOW_MS = 24 * 60 * 60 * 1000
 /** Cached Graph detail older than this is refetched on the next open. */
 export const DETAIL_TTL_MS = 30 * 60 * 1000
+/** Most ad objects read for one event; beyond this the card says how many were left out. */
+export const DETAIL_MAX_OBJECTS = 25
+/** Concurrent Graph reads per batch — bounded so a wide event can't stampede. */
+export const DETAIL_BATCH = 5
 
 export type AdsEventStatus = 'new' | 'seen' | 'actioned' | 'dismissed'
 export const OPEN_STATUSES: AdsEventStatus[] = ['new', 'seen']
@@ -358,11 +362,26 @@ export async function resolveAdsEventDetail(
     return shape(row)
   }
 
-  // Cap the fan-out — one webhook can name many objects and this runs on a
-  // request path.
-  const ids = event.adObjectIds.slice(0, 10)
-  const detail = await Promise.all(ids.map((objectId) => fetchOneObject(objectId, token)))
-  const allFailed = detail.length > 0 && detail.every((d) => d.error)
+  // Bounded fan-out — one webhook can name many objects and this runs on a
+  // request path. Read in batches up to a hard cap, and when the cap still cuts
+  // the list short, SAY SO: a silently partial set reads as the complete one.
+  const ids = event.adObjectIds.slice(0, DETAIL_MAX_OBJECTS)
+  const detail: AdObjectDetail[] = []
+  for (let i = 0; i < ids.length; i += DETAIL_BATCH) {
+    const batch = ids.slice(i, i + DETAIL_BATCH)
+    detail.push(...(await Promise.all(batch.map((objectId) => fetchOneObject(objectId, token)))))
+  }
+  const omitted = event.adObjectIds.length - ids.length
+  if (omitted > 0) {
+    detail.push({
+      objectId: 'more',
+      name: `আরও ${omitted}টি অ্যাড অবজেক্ট`,
+      recommendations: [],
+      error: `এই ইভেন্টে মোট ${event.adObjectIds.length}টি অবজেক্ট — প্রথম ${ids.length}টি দেখানো হয়েছে।`,
+    })
+  }
+  const readAttempts = detail.filter((d) => d.objectId !== 'more')
+  const allFailed = readAttempts.length > 0 && readAttempts.every((d) => d.error)
 
   const row = await db.agentAdsEvent.update({
     where: { id },

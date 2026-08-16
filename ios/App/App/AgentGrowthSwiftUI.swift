@@ -459,8 +459,10 @@ final class AgentGrowthVM {
 
     /// Pull Meta's real recommendation text for one event. The webhook never does
     /// this (it must answer Meta fast), so the first open is where it happens.
+    /// Always asks the server: it owns the freshness rule (DETAIL_TTL_MS) and
+    /// hands back the cached read when it is still fresh. Skipping the call when
+    /// any detail was cached left a card showing a stale status indefinitely.
     func loadAdsDetail(_ id: String, refresh: Bool = false) async {
-        if !refresh, adsEvents.first(where: { $0.id == id })?.detail != nil { return }
         adsDetailLoading = id
         defer { adsDetailLoading = nil }
         let path = "/api/assistant/growth/ads-events/\(id)"

@@ -113,9 +113,10 @@ export default function AdsEventInbox() {
       setOpenId(next)
       if (!next) return
 
-      const current = events?.find((e) => e.id === id)
-      if (current?.detail && !opts?.refresh) return
-
+      // Always ask the server: it owns the freshness rule (DETAIL_TTL_MS) and
+      // returns the cached read when it is still fresh. Short-circuiting on the
+      // presence of any cached detail meant a card could show a 30-minute-old
+      // status forever unless the owner hit refresh by hand.
       setDetailLoading(id)
       try {
         const res = await fetch(`${LIST_URL}/${id}${opts?.refresh ? '?refresh=1' : ''}`, { cache: 'no-store' })
