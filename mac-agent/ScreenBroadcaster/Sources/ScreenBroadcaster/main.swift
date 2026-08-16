@@ -296,6 +296,20 @@ Task {
         // frame renders as garbage).
         cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         cfg.queueDepth = 5
+        // Encoder aspect MUST equal capture aspect. With no explicit encoder
+        // config Agora falls back to its 960×540 (16:9) default and CROPS any
+        // frame whose aspect differs — on the owner's 21:9 ultrawide that cut
+        // both sides and the phone showed a zoomed-in middle strip (owner bug
+        // 2026-08-16, "screen shob zoom hoye jay"). Match the encoder to the
+        // exact capture dimensions so the full display always survives; the
+        // phone letterboxes with renderMode .fit.
+        let enc = AgoraVideoEncoderConfiguration(
+            size: CGSize(width: cfg.width, height: cfg.height),
+            frameRate: fps,
+            bitrate: AgoraVideoBitrateStandard,
+            orientationMode: .adaptative,
+            mirrorMode: .disabled)
+        engine.setVideoEncoderConfiguration(enc)
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
         let output = Output(engine: engine, displaySize: bounds.size)
