@@ -15,7 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 import { notifyOwner } from '@/agent/lib/notify-owner'
-import { recordAdsEvent } from '@/agent/lib/marketing/ads-events'
+import { markAdsEventNotified, recordAdsEvent } from '@/agent/lib/marketing/ads-events'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -206,6 +206,20 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
 
 type DedupeMap = Record<string, number>
 
+/**
+ * Short, stable tag for THIS delivery's payload. Meta re-sends an identical body
+ * on a retry, so identical payload = same occurrence (suppress), different payload
+ * = something new happened to that object (let it through).
+ */
+function occurrenceTag(value: unknown): string {
+  const json = JSON.stringify(value ?? {})
+  let hash = 0
+  for (let i = 0; i < json.length; i += 1) {
+    hash = (hash * 31 + json.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
 async function loadDedupe(): Promise<DedupeMap> {
   try {
     const row = await db.agentKvSetting.findUnique({ where: { key: DEDUPE_KV_KEY }, select: { value: true } })
@@ -256,10 +270,14 @@ export async function handleAdsWebhook(
     if (!event) continue
 
     // Layer 1 — KV short-window guard against Meta retry storms. Kept because it
-    // still works when the DB is unreachable.
-    const last = dedupe[event.key]
+    // still works when the DB is unreachable. It must key on the OCCURRENCE, not
+    // the object: `status:<type>:<id>` repeats for every later change to the same
+    // ad, so keying on identity alone would swallow a real rejection that lands
+    // an hour after a pause.
+    const kvKey = event.reopenOnRepeat ? `${event.key}#${occurrenceTag(change.value)}` : event.key
+    const last = dedupe[kvKey]
     if (last && now - last < DEDUPE_WINDOW_MS) continue
-    dedupe[event.key] = now
+    dedupe[kvKey] = now
 
     // Layer 2 — the durable row. This is what the app and the agent read later,
     // and what decides whether the owner hears about it AGAIN: an event he has
@@ -269,7 +287,7 @@ export async function handleAdsWebhook(
     if (!recorded.shouldPush) continue
 
     try {
-      await notifyOwner({
+      const delivery = await notifyOwner({
         tier: event.tier,
         title: event.title,
         message: event.message,
@@ -277,7 +295,18 @@ export async function handleAdsWebhook(
         // A tap must land ON the event, not in an empty chat.
         actionUrl: recorded.id ? `/agent/growth?rec=${recorded.id}` : '/agent/growth',
       })
-      notified += 1
+      // Only a real handoff counts. notifyOwner swallows transport errors and
+      // reports them in `statuses`, so stamping on return would let one push
+      // outage hide an urgent alert for the whole re-notify window.
+      const delivered = Object.values(delivery?.statuses ?? {}).some(
+        (s) => s === 'sent' || s === 'held',
+      )
+      if (delivered) {
+        notified += 1
+        if (recorded.id) await markAdsEventNotified(recorded.id)
+      } else {
+        console.error('[ads-webhook] no channel accepted the alert:', JSON.stringify(delivery?.statuses ?? {}))
+      }
     } catch (err) {
       console.error('[ads-webhook] notifyOwner failed:', err instanceof Error ? err.message : err)
     }

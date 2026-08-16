@@ -126,10 +126,30 @@ export default function AdsEventInbox() {
     [events, openId],
   )
 
-  // A push tap deep-links straight to one event — open it without a click.
+  /**
+   * A push tap deep-links straight to one event — open it without a click. The
+   * list is filtered to OPEN items, so a recommendation the agent (or another
+   * device) already resolved would be missing entirely; fetch it by id and put it
+   * on screen rather than showing the owner an empty card for a live push.
+   */
   useEffect(() => {
-    if (!focusId || !events?.length) return
-    if (events.some((e) => e.id === focusId)) void openEvent(focusId, { keepOpen: true })
+    if (!focusId || !events) return
+    if (events.some((e) => e.id === focusId)) {
+      void openEvent(focusId, { keepOpen: true })
+      return
+    }
+    void (async () => {
+      try {
+        const res = await fetch(`${LIST_URL}/${focusId}`, { cache: 'no-store' })
+        const data = (await res.json()) as { event?: AdsEvent }
+        if (data.event) {
+          setEvents((prev) => [data.event!, ...(prev ?? []).filter((e) => e.id !== data.event!.id)])
+          setOpenId(focusId)
+        }
+      } catch {
+        // Nothing to show; the list still renders whatever else is open.
+      }
+    })()
     // Only on first arrival with a focus id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, events?.length])

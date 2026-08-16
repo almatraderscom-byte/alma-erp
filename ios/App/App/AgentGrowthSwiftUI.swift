@@ -467,6 +467,17 @@ final class AgentGrowthVM {
         }
     }
 
+    /// The list is filtered to OPEN items, so an event the agent (or another
+    /// device) already resolved is missing from it — a live push pointing at that
+    /// id would open to nothing. Pull it by id and put it at the top instead.
+    func ensureFocusedAdsEvent(_ id: String) async {
+        if adsEvents.contains(where: { $0.id == id }) { return }
+        adsDetailLoading = id
+        defer { adsDetailLoading = nil }
+        let resp: AdsEventResponse? = try? await AlmaAPI.shared.get("/api/assistant/growth/ads-events/\(id)")
+        if let event = resp?.event { adsEvents.insert(event, at: 0) }
+    }
+
     private func replaceAdsEvent(_ event: AgentAdsEvent) {
         guard let idx = adsEvents.firstIndex(where: { $0.id == event.id }) else { return }
         adsEvents[idx] = event
@@ -528,7 +539,11 @@ struct AgentGrowthScreen: View {
         .task { await vm.load() }
         // A push tap deep-links to one event — open it as soon as the list lands.
         .task(id: vm.adsEvents.count) {
-            guard let focus = focusRecId, vm.adsEvents.contains(where: { $0.id == focus }) else { return }
+            guard let focus = focusRecId else { return }
+            // Resolved events are filtered out of the list — fetch the focused one
+            // directly so a live push never opens to an empty card.
+            await vm.ensureFocusedAdsEvent(focus)
+            guard vm.adsEvents.contains(where: { $0.id == focus }) else { return }
             openAdsEventId = focus
             await vm.loadAdsDetail(focus)
         }

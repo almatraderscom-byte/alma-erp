@@ -16,6 +16,8 @@ type EventRow = {
 let eventStore: Record<string, EventRow> = {}
 /** Set to make every agent_ads_events call throw (DB-down / degraded path). */
 let eventsDown = false
+/** Set to make every push channel fail (transport outage). */
+let deliveryFails = false
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -65,6 +67,15 @@ vi.mock('@/lib/prisma', () => ({
           return eventStore[where.dedupeKey]
         },
       ),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      update: vi.fn(async ({ where, data }: { where: { id: string }; data: any }) => {
+        if (eventsDown) throw new Error('db down')
+        const row = Object.values(eventStore).find((r) => r.id === where.id)
+        if (!row) throw new Error('not found')
+        const inc = data.notifyCount?.increment
+        Object.assign(row, data, inc ? { notifyCount: row.notifyCount + inc } : {})
+        return row
+      }),
     },
   },
 }))
@@ -72,7 +83,9 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/agent/lib/notify-owner', () => ({
   notifyOwner: vi.fn(async (opts: { tier: number; title: string; actionUrl?: string | null }) => {
     notifyCalls.push({ tier: opts.tier, title: opts.title, actionUrl: opts.actionUrl })
-    return { channels: ['ntfy_general'], statuses: {} }
+    return deliveryFails
+      ? { channels: ['ntfy_general'], statuses: { ntfy_general: 'error: unreachable' } }
+      : { channels: ['ntfy_general'], statuses: { ntfy_general: 'sent' } }
   }),
 }))
 
@@ -132,6 +145,7 @@ describe('handleAdsWebhook', () => {
     kvStore = {}
     eventStore = {}
     eventsDown = false
+    deliveryFails = false
     notifyCalls.length = 0
   })
 
@@ -236,6 +250,39 @@ describe('handleAdsWebhook', () => {
 
     expect(notifyCalls).toHaveLength(1)
     expect(eventStore['rec:h9:4'].status).toBe('actioned')
+  })
+
+  it('a push that reached no channel is not counted as delivered', async () => {
+    // Otherwise one transport outage silences an urgent alert for a whole day:
+    // the failure would be indistinguishable from a successful delivery.
+    deliveryFails = true
+    const payload = envelope([
+      { field: 'ad_recommendations', value: { recommendation_hash: 'h4', ad_object_ids: ['1'] } },
+    ])
+    const first = await handleAdsWebhook(payload)
+    expect(first.notified).toBe(0)
+    expect(eventStore['rec:h4:1'].lastNotifiedAt).toBeNull()
+
+    deliveryFails = false
+    kvStore = {}
+    const second = await handleAdsWebhook(payload)
+    expect(second.notified).toBe(1)
+  })
+
+  it('a second real change to the same ad within the KV window still lands', async () => {
+    // Object-keyed events repeat per change; keying the short window on identity
+    // alone swallowed a rejection that followed a pause an hour later.
+    await handleAdsWebhook(
+      envelope([
+        { field: 'field_changed', value: { object_id: '12', object_type: 'ad', changed_fields: ['effective_status'], status: 'PAUSED' } },
+      ]),
+    )
+    await handleAdsWebhook(
+      envelope([
+        { field: 'field_changed', value: { object_id: '12', object_type: 'ad', changed_fields: ['effective_status'], status: 'DISAPPROVED' } },
+      ]),
+    )
+    expect(notifyCalls).toHaveLength(2)
   })
 
   it('DB down → the owner still gets the push (fail-open)', async () => {

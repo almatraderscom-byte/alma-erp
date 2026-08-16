@@ -138,9 +138,12 @@ export async function recordAdsEvent(
     const stillResolved = wasResolved && !reopen
     const recentlyPushed =
       existing?.lastNotifiedAt && now.getTime() - new Date(existing.lastNotifiedAt).getTime() < RENOTIFY_WINDOW_MS
-    // A reopen is fresh news, so it pierces the once-a-day cap; the KV window
-    // upstream still absorbs Meta's retry storms.
-    const shouldPush = event.push && !stillResolved && (reopen || !recentlyPushed)
+    // The once-a-day cap exists to stop a STANDING item (a recommendation, a
+    // fatigue level) from nagging on Meta's schedule. Object-keyed events are not
+    // standing items: reaching here means the caller's occurrence check already
+    // decided this is a change that has not been seen, so it pierces the cap.
+    const freshOccurrence = event.reopenOnRepeat === true
+    const shouldPush = event.push && !stillResolved && (freshOccurrence || !recentlyPushed)
 
     const common = {
       field: event.field,
@@ -162,8 +165,10 @@ export async function recordAdsEvent(
         dedupeKey: event.key,
         ...common,
         status: 'new',
-        notifyCount: shouldPush ? 1 : 0,
-        lastNotifiedAt: shouldPush ? now : null,
+        // Notification state is stamped by markAdsEventNotified AFTER a channel
+        // accepts the alert — never on the attempt.
+        notifyCount: 0,
+        lastNotifiedAt: null,
       },
       update: {
         ...common,
@@ -173,7 +178,6 @@ export async function recordAdsEvent(
         ...(reopen
           ? { status: 'new', resolvedAt: null, resolvedNote: null, detail: null, detailFetchedAt: null }
           : {}),
-        ...(shouldPush ? { notifyCount: { increment: 1 }, lastNotifiedAt: now } : {}),
       },
       select: { id: true },
     })
@@ -183,6 +187,23 @@ export async function recordAdsEvent(
     console.error('[ads-events] record failed:', err instanceof Error ? err.message : err)
     // Fail-open: the owner still hears about it, the KV dedupe still guards.
     return { id: null, shouldPush: event.push, degraded: true }
+  }
+}
+
+/**
+ * Stamp the notification ONLY once a channel actually took it. The 24h re-notify
+ * window is computed from `lastNotifiedAt`, so stamping on attempt would let a
+ * push outage silence an urgent rejection alert for a whole day — the failure
+ * would look exactly like a delivery.
+ */
+export async function markAdsEventNotified(id: string): Promise<void> {
+  try {
+    await db.agentAdsEvent.update({
+      where: { id },
+      data: { notifyCount: { increment: 1 }, lastNotifiedAt: new Date() },
+    })
+  } catch (err) {
+    console.error('[ads-events] notify stamp failed:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -227,6 +248,14 @@ export async function setAdsEventStatus(
   status: AdsEventStatus,
   note?: string | null,
 ): Promise<AdsEventRecord | null> {
+  const current = await db.agentAdsEvent.findUnique({ where: { id }, select: { status: true } })
+  if (!current) return null
+
+  // `seen` is a read-receipt, not a re-opening: applying it to an already
+  // actioned/dismissed row would clear the resolution and let that
+  // recommendation start notifying again once the day window lapsed.
+  if (status === 'seen' && current.status !== 'new') return await getAdsEvent(id)
+
   const resolved = status === 'actioned' || status === 'dismissed'
   const row = await db.agentAdsEvent.update({
     where: { id },
