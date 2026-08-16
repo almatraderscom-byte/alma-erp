@@ -10,14 +10,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate, OSNotificationClickListen
 
     var window: UIWindow?
 
-    /// RC: the Mac remote-control view runs LANDSCAPE and full-screen — the
-    /// owner drives a 3440-wide desktop, and a portrait letterbox is not a
-    /// surface you can aim at. Everything else keeps the app's normal freedom.
-    static var orientationLock: UIInterfaceOrientationMask = .allButUpsideDown
+    /// PORTRAIT, always.
+    ///
+    /// Every screen in this app was designed and tested upright; none survives a
+    /// rotation. Proven in the simulator 2026-08-17: turning the phone sideways
+    /// mangles the Assistant screen (text overlapping, images blown up, chrome
+    /// misplaced) and turning it BACK does not repair it — only relaunching does.
+    ///
+    /// The owner hit this every time he watched his Mac: to see a 3440-wide
+    /// desktop he turns the phone, and the moment he left that view the app was
+    /// free to rotate into the broken state and stay there. The Mac viewer keeps
+    /// working exactly as before — it rotates its own CONTENT, which is what the
+    /// owner asked for from the start: the Mac goes wide, his chat does not.
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
 
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        AppDelegate.orientationLock
+        // Phones only. The target still ships iPad (TARGETED_DEVICE_FAMILY 1,2)
+        // and its Info.plist list allows every orientation; the breakage this lock
+        // exists for is the phone's, so an iPad keeps its freedom.
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return .all }
+        return AppDelegate.orientationLock
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {

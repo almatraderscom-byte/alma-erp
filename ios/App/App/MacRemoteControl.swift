@@ -1838,7 +1838,11 @@ struct MacScreenFullScreen: View {
         }
         .onDisappear {
             control.fullScreen = false
-            AppDelegate.orientationLock = .allButUpsideDown
+            // Back to the app-wide rule, which is the SAME portrait — releasing it
+            // to `.allButUpsideDown` here is what let the app rotate the instant he
+            // closed this view with the phone still sideways, and no screen
+            // survives that.
+            AppDelegate.orientationLock = .portrait
         }
     }
 
