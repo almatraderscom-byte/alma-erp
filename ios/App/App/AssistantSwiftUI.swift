@@ -5488,8 +5488,6 @@ final class AssistantVM {
         settleLiveMode()
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
         guard let cid = conversationId else { return false }
-        // He is looking at this reply as it settles — it is read.
-        Task { await self.markActiveConversationRead() }
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
             guard streamTaskGeneration == expectedGeneration,
                   selectedSessionIdentity == expectedSessionIdentity,
@@ -5497,6 +5495,10 @@ final class AssistantVM {
             mergeServerMessages(wire)
             scheduleGeneratedImageQCRefresh()
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
+            // AFTER the merge: the live `stream-*` row carries no createdAt, so
+            // marking read before this would send the PREVIOUS message's stamp and
+            // the returned count would still include the reply he just watched.
+            await markActiveConversationRead()
         }
         guard streamTaskGeneration == expectedGeneration,
               selectedSessionIdentity == expectedSessionIdentity,

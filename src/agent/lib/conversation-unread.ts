@@ -71,7 +71,14 @@ export async function countUnreadConversations(): Promise<number> {
  */
 export async function markConversationRead(id: string, upTo?: Date | null): Promise<boolean> {
   const now = new Date()
-  const readAt = upTo && !Number.isNaN(upTo.getTime()) && upTo < now ? upTo : now
+  // No rendered timestamp means the caller displayed nothing it can vouch for
+  // (empty history). Advancing to the server clock there would silently swallow a
+  // background reply written between that fetch and this call, so leave the
+  // watermark alone — there is nothing to mark read.
+  if (!upTo || Number.isNaN(upTo.getTime())) {
+    return (await prisma.agentConversation.count({ where: { id } })) > 0
+  }
+  const readAt = upTo < now ? upTo : now
 
   const res = await prisma.agentConversation.updateMany({
     where: { id, OR: [{ lastReadAt: null }, { lastReadAt: { lt: readAt } }] },
