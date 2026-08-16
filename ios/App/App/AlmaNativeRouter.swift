@@ -101,7 +101,12 @@ enum AlmaNativeRouter {
         case "/agent/browser-live": return host(BrowserLiveScreen(), "Live Browser")
         case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
-        case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
+        // A Meta Ads push lands as /agent/growth?rec=<id> — the query normally dies
+        // at `clean`, so the tapped recommendation would open to nothing. Carry the
+        // id through and the native inbox opens ON that event.
+        case "/agent/growth":
+            return host(AgentGrowthScreen(focusRecId: queryValue(path, name: "rec"),
+                                          openWeb: openWebForced), "Growth")
         case "/agent/staff-monitor":
             #if DEBUG
             // Headless sim self-test hook: SIMCTL_CHILD_ALMA_SM_TAB=agents|system|…
@@ -156,6 +161,14 @@ enum AlmaNativeRouter {
             }
             return nil
         }
+    }
+
+    /// One query value off a route path ("/agent/growth?rec=abc" + "rec" → "abc").
+    /// Returns nil when the path carries no query or the name isn't present.
+    private static func queryValue(_ path: String, name: String) -> String? {
+        guard let query = path.split(separator: "?").dropFirst().first else { return nil }
+        return URLComponents(string: "https://x/?\(query)")?
+            .queryItems?.first { $0.name == name }?.value
     }
 
     /// "/employees/EMP-51" after "/employees/" → "EMP-51"; nil when the prefix

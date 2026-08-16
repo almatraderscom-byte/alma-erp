@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 import { notifyOwner } from '@/agent/lib/notify-owner'
+import { markAdsEventNotified, recordAdsEvent } from '@/agent/lib/marketing/ads-events'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -59,6 +60,7 @@ export type AdsWebhookChange = {
     recommendation_type?: string
     recommendation_message?: string
     recommendation_hash?: string
+    recommendation_signature?: string
     recommendation_stage?: string
   }
 }
@@ -81,6 +83,24 @@ export type ParsedAdsEvent = {
   message: string
   /** false → log only, no owner push (e.g. in-process noise) */
   push: boolean
+  /** Webhook field this came from — kept so the stored row stays queryable. */
+  field: string
+  /** Meta ad object ids this event points at — what the Graph detail read uses. */
+  adObjectIds: string[]
+  recommendationType?: string | null
+  recommendationHash?: string | null
+  adAccountId?: string | null
+  /** Meta's own message, verbatim (usually a stub sentence). */
+  metaMessage?: string | null
+  /**
+   * True when the dedupe key identifies an OBJECT rather than a specific piece of
+   * news — `status:<type>:<id>` and `issues:<id>` repeat for every later change to
+   * the same ad. Resolving one of those must not silence the object forever: a
+   * fresh delivery is a NEW state change (paused today, rejected tomorrow), so the
+   * row reopens. Content-keyed events (recommendation hash, fatigue level) stay
+   * closed once handled — the same key really is the same news.
+   */
+  reopenOnRepeat?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +122,9 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, ${objType} (ID: ${v.object_id ?? '?'})-এর ডেলিভারি স্ট্যাটাস বদলে গেছে — ` +
         `রিজেক্ট, পজ বা আবার চালু হতে পারে। আমাকে "ads status check koro" বললে এখনই বিস্তারিত এনে দেব।`,
       push: true,
+      field,
+      adObjectIds: v.object_id ? [String(v.object_id)] : [],
+      reopenOnRepeat: true,
     }
   }
 
@@ -116,19 +139,29 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `একই ছবি বারবার দেখে মানুষ আর ক্লিক করছে না। নতুন ছবি/ভিডিও দিয়ে রিফ্রেশ করলে খরচ কমবে। ` +
         `চাইলে আমি নতুন ক্রিয়েটিভ বানিয়ে কার্ড পাঠাতে পারি।`,
       push: level === 'HIGH' || level === 'MEDIUM',
+      field,
+      adObjectIds: v.adgroup_id ? [String(v.adgroup_id)] : [],
+      metaMessage: v.creative_fatigue_message ?? null,
     }
   }
 
   if (field === 'ad_recommendations') {
     return {
-      key: `rec:${v.recommendation_hash || v.recommendation_type}:${(v.ad_object_ids ?? []).join(',')}`,
+      key: `rec:${v.recommendation_hash || v.recommendation_signature || v.recommendation_type}:${(v.ad_object_ids ?? []).join(',')}`,
       tier: 1,
       title: 'Meta Ads: নতুন সুপারিশ এসেছে',
       message:
         `Boss, Meta নতুন পারফরম্যান্স সুপারিশ দিয়েছে (${v.recommendation_type ?? 'unknown'})। ` +
         `${v.recommendation_message ? `"${v.recommendation_message}" ` : ''}` +
-        `"ad recommendation dekho" বললে বিস্তারিত এনে ভালো-মন্দ জানাব।`,
+        `অ্যাপে ট্যাপ করলে পুরো সুপারিশটা দেখতে পাবেন, বা "ad recommendation dekho" বললে ` +
+        `আমি বিস্তারিত এনে ভালো-মন্দ জানাব।`,
       push: true,
+      field,
+      adObjectIds: (v.ad_object_ids ?? []).map((x) => String(x)),
+      recommendationType: v.recommendation_type ?? null,
+      recommendationHash: v.recommendation_hash ?? v.recommendation_signature ?? null,
+      adAccountId: v.ad_account_id ?? null,
+      metaMessage: v.recommendation_message ?? null,
     }
   }
 
@@ -141,6 +174,9 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, একটা অ্যাড অবজেক্টে সমস্যা (issue state) ধরা পড়েছে — ডেলিভারি আটকে থাকতে পারে। ` +
         `"ads status check koro" বললে কোনটায় কী সমস্যা বের করে দেব।`,
       push: true,
+      field,
+      adObjectIds: v.object_id ? [String(v.object_id)] : (v.ad_object_ids ?? []).map((x) => String(x)),
+      reopenOnRepeat: true,
     }
   }
 
@@ -153,6 +189,10 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
         `Boss, আপনার সেট করা অ্যাড থ্রেশহোল্ড/মাইলস্টোনে একটা ঘটনা ঘটেছে। ` +
         `"ads status check koro" বললে বিস্তারিত দেখে জানাব।`,
       push: true,
+      field,
+      adObjectIds: (v.ad_object_ids ?? []).map((x) => String(x)),
+      adAccountId: v.ad_account_id ?? null,
+      reopenOnRepeat: true,
     }
   }
 
@@ -165,6 +205,22 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
 // ---------------------------------------------------------------------------
 
 type DedupeMap = Record<string, number>
+
+/**
+ * Short, stable tag for THIS occurrence — the entry timestamp plus the payload.
+ * A Meta retry repeats the entry verbatim (same `time`), so it collapses onto the
+ * same tag; a second real change to the object arrives in a new entry with a new
+ * `time` and gets its own tag. Payload alone is not enough: two genuine
+ * effective_status transitions carry byte-identical `changed_fields`.
+ */
+function occurrenceTag(value: unknown): string {
+  const json = JSON.stringify(value ?? {})
+  let hash = 0
+  for (let i = 0; i < json.length; i += 1) {
+    hash = (hash * 31 + json.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
 
 async function loadDedupe(): Promise<DedupeMap> {
   try {
@@ -197,40 +253,84 @@ async function saveDedupe(map: DedupeMap): Promise<void> {
 // Main handler — called from the webhook route POST
 // ---------------------------------------------------------------------------
 
-export async function handleAdsWebhook(envelope: AdsWebhookEnvelope): Promise<{ received: number; notified: number }> {
-  if (envelope.object !== 'ad_account') return { received: 0, notified: 0 }
+export async function handleAdsWebhook(
+  envelope: AdsWebhookEnvelope,
+): Promise<{ received: number; notified: number; stored: number }> {
+  if (envelope.object !== 'ad_account') return { received: 0, notified: 0, stored: 0 }
 
-  const changes = (envelope.entry ?? []).flatMap((e) => e.changes ?? [])
-  if (!changes.length) return { received: 0, notified: 0 }
+  // The entry timestamp is what separates a REDELIVERY (Meta resends the same
+  // entry, same `time`) from a second real change to the same object (new entry,
+  // new `time`) — the payload alone cannot tell them apart, since two genuine
+  // effective_status transitions carry identical `changed_fields`.
+  const changes = (envelope.entry ?? []).flatMap((e) =>
+    (e.changes ?? []).map((change) => ({ change, entryTime: e.time })),
+  )
+  if (!changes.length) return { received: 0, notified: 0, stored: 0 }
 
   const dedupe = await loadDedupe()
   const now = Date.now()
   let notified = 0
 
-  for (const change of changes) {
-    const event = parseAdsWebhookChange(change)
-    if (!event || !event.push) continue
+  let stored = 0
+  /** Guards duplicates INSIDE this one request; the KV map guards across requests. */
+  const seenThisRequest = new Set<string>()
 
-    const last = dedupe[event.key]
+  for (const { change, entryTime } of changes) {
+    const event = parseAdsWebhookChange(change)
+    if (!event) continue
+
+    // Layer 1 — KV short-window guard against Meta retry storms. Kept because it
+    // still works when the DB is unreachable. It must key on the OCCURRENCE, not
+    // the object: `status:<type>:<id>` repeats for every later change to the same
+    // ad, so keying on identity alone would swallow a real rejection that lands
+    // an hour after a pause.
+    const tag = event.reopenOnRepeat ? occurrenceTag({ t: entryTime ?? null, v: change.value }) : null
+    const kvKey = tag ? `${event.key}#${tag}` : event.key
+    const last = dedupe[kvKey]
     if (last && now - last < DEDUPE_WINDOW_MS) continue
-    dedupe[event.key] = now
+    if (seenThisRequest.has(kvKey)) continue
+    seenThisRequest.add(kvKey)
+
+    // Layer 2 — the durable row. This is what the app and the agent read later,
+    // and what decides whether the owner hears about it AGAIN: an event he has
+    // actioned or dismissed never re-pushes, an open one nags once a day.
+    const recorded = await recordAdsEvent(event, (change.value ?? {}) as Record<string, unknown>, {
+      occurrenceTag: tag,
+    })
+    if (!recorded.degraded) stored += 1
+    if (!recorded.shouldPush) continue
 
     try {
-      await notifyOwner({
+      const delivery = await notifyOwner({
         tier: event.tier,
         title: event.title,
         message: event.message,
         category: event.tier === 2 ? 'urgent' : 'task',
-        actionUrl: '/agent',
+        // A tap must land ON the event, not in an empty chat.
+        actionUrl: recorded.id ? `/agent/growth?rec=${recorded.id}` : '/agent/growth',
       })
-      notified += 1
+      // Only a real handoff counts. notifyOwner swallows transport errors and
+      // reports them in `statuses`, so stamping on return would let one push
+      // outage hide an urgent alert for the whole re-notify window.
+      const delivered = Object.values(delivery?.statuses ?? {}).some(
+        (s) => s === 'sent' || s === 'held',
+      )
+      if (delivered) {
+        notified += 1
+        // Suppress Meta's retries of THIS delivery only now — stamping on attempt
+        // would let a failed push swallow the retry that would have succeeded.
+        dedupe[kvKey] = now
+        if (recorded.id) await markAdsEventNotified(recorded.id, tag)
+      } else {
+        console.error('[ads-webhook] no channel accepted the alert:', JSON.stringify(delivery?.statuses ?? {}))
+      }
     } catch (err) {
       console.error('[ads-webhook] notifyOwner failed:', err instanceof Error ? err.message : err)
     }
   }
 
   await saveDedupe(dedupe)
-  return { received: changes.length, notified }
+  return { received: changes.length, notified, stored }
 }
 
 // ---------------------------------------------------------------------------

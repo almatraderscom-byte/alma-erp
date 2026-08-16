@@ -1,7 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import AdsEventInbox from '@/agent/components/growth/AdsEventInbox'
 
 type GscStatus = {
   configured: boolean
@@ -208,6 +209,12 @@ export default function GrowthConnections() {
           ‹ চ্যাটে ফিরুন
         </Link>
       </div>
+
+      {/* Meta Ads pushes land here. A notification tap arrives as ?rec=<id>, so
+          this section reads searchParams — hence the Suspense boundary. */}
+      <Suspense fallback={null}>
+        <AdsEventInbox />
+      </Suspense>
 
       <p className="text-[12px] leading-relaxed text-muted">
         এখান থেকে Google-এর ফ্রি ডেটা সোর্সগুলো একবার যুক্ত করুন। যুক্ত হলে এজেন্ট আসল search ডেটা দিয়ে SEO সিদ্ধান্ত নিতে পারবে

@@ -13,6 +13,7 @@ keywords: marketing, মার্কেটিং, প্রচার, marketing 
 ## ধাপ
 
 1. **Performance (required):** lookback window-এর marketing report (paid spend/ROAS, funnel, organic) + campaign সুপারিশ। tools: `marketing_report`, `recommend_ad_actions`।
+   - **Meta-র নিজের সুপারিশ আলাদা জিনিস** — Boss ফোনে যে ads নোটিফিকেশন পান সেগুলো `get_ad_recommendations` দিয়ে পড়ো (`recommend_ad_actions` আমাদের নিজের বিশ্লেষণ, ওটা নয়)। বাকি (open) সুপারিশ থাকলে brief-এ আলাদা করে বলো, আর Boss সিদ্ধান্ত দিলে `resolve_ad_recommendation` দিয়ে বন্ধ করো।
 2. **Competitor scan (required):** competitor ad creative (ad library/research); যে angle বারবার আসে — সেগুলোই কাজ করছে। tools: `research_competitor_creatives`, `get_marketing_intel`।
 3. **Calendar (required):** content calendar + retail date; আগামী ২ সপ্তাহের planned content + ফাঁক। tools: `list_content_calendar`, `list_important_dates`।
 4. **Plan (optional):** `plan_marketing` দিয়ে খসড়া (owner approval card খোলে)। এই skill থেকে **কখনো সরাসরি campaign launch/scale/pause বা spend নয়** — শুধু সুপারিশ; execution existing owner-gated tool দিয়ে।

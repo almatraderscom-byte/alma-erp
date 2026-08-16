@@ -26,6 +26,13 @@ import {
   adsWebhookCallbackUrl,
   ADS_WEBHOOK_FIELDS,
 } from '@/agent/lib/marketing/ads-webhooks'
+import {
+  countOpenAdsEvents,
+  listAdsEvents,
+  resolveAdsEventDetail,
+  setAdsEventStatus,
+  type AdsEventRecord,
+} from '@/agent/lib/marketing/ads-events'
 import { capiHealth } from '@/agent/lib/marketing/meta-capi'
 import type { AgentTool } from './registry'
 
@@ -695,6 +702,170 @@ const manage_ads_webhooks: AgentTool = {
   },
 }
 
+/** Owner-facing summary of one stored ads event (no ids the owner can't use). */
+function summariseAdsEvent(event: AdsEventRecord, opts?: { detailResolved?: boolean }) {
+  // Identity and live status belong to the OBJECT, not to its recommendation
+  // rows: a delivery-status or issue alert legitimately has an empty
+  // recommendations array, and nesting the name/status inside it left the agent
+  // with nothing but the generic webhook sentence for exactly those alerts.
+  const objects = (event.detail ?? []).map((obj) => ({
+    object: obj.name || obj.objectId,
+    objectId: obj.objectId,
+    effectiveStatus: obj.effectiveStatus ?? null,
+    error: obj.error ?? null,
+    recommendations: obj.recommendations.map((r) => ({
+      title: r.title ?? null,
+      message: r.message ?? null,
+      importance: r.importance ?? null,
+      blameField: r.blameField ?? null,
+    })),
+  }))
+  const recs = objects.flatMap((obj) =>
+    obj.recommendations.map((r) => ({ object: obj.object, effectiveStatus: obj.effectiveStatus, ...r })),
+  )
+  return {
+    adObjects: objects,
+    id: event.id,
+    type: event.recommendationType || event.field,
+    status: event.status,
+    title: event.title,
+    ownerMessage: event.message,
+    metaMessage: event.metaMessage,
+    adObjectIds: event.adObjectIds,
+    lastSeenAt: event.lastSeenAt,
+    notifyCount: event.notifyCount,
+    metaRecommendations: recs,
+    detailError: event.detailError,
+    // Without this the model cannot tell "Meta has nothing to say about this ad"
+    // from "we did not look" — and would report or dismiss the alert on the
+    // strength of an empty list it was never given.
+    detailResolved: opts?.detailResolved !== false,
+    ...(opts?.detailResolved === false
+      ? { detailNote: 'বিস্তারিত এখনো আনা হয়নি — এই ইভেন্টের জন্য আলাদা করে get_ad_recommendations চালান।' }
+      : {}),
+  }
+}
+
+const get_ad_recommendations: AgentTool = {
+  name: 'get_ad_recommendations',
+  description:
+    'READ Meta-র নিজের পাঠানো ads সুপারিশ/অ্যালার্ট (ad_recommendations, creative fatigue, delivery status, issues) — ' +
+    'যেগুলোর নোটিফিকেশন Boss ফোনে পান। Boss যখন বলেন "ad recommendation dekho", "Meta কী সুপারিশ দিয়েছে", ' +
+    'বা নোটিফিকেশনের কথা তোলেন — এই টুলই সঠিক টুল (recommend_ad_actions নয়, ওটা আমাদের নিজের spend/ROAS বিশ্লেষণ)। ' +
+    'প্রতিটার জন্য Meta Graph থেকে আসল সুপারিশের লেখা এনে দেয়। ' +
+    "status: 'open' (default, বাকিগুলো) | 'all' | 'actioned' | 'dismissed'.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      status: { type: 'string', description: "'open' (default) | 'all' | 'new' | 'seen' | 'actioned' | 'dismissed'" },
+      limit: { type: 'number', description: 'কয়টা (default 10, max 30)' },
+      withDetail: {
+        type: 'boolean',
+        description: 'Meta Graph থেকে বিস্তারিত টানবে কিনা (default true, উপরের ৫টার জন্য)',
+      },
+    },
+  },
+  handler: async (input) => {
+    const status = String(input.status ?? 'open').trim().toLowerCase()
+    const limit = Math.min(Math.max(Number(input.limit ?? 10) || 10, 1), 30)
+    const withDetail = input.withDetail !== false
+
+    try {
+      const events = await listAdsEvents({
+        status: (['open', 'all', 'new', 'seen', 'actioned', 'dismissed', 'logged'].includes(status)
+          ? status
+          : 'open') as 'open',
+        limit,
+      })
+      if (!events.length) {
+        return {
+          success: true,
+          data: {
+            events: [],
+            message:
+              status === 'open'
+                ? 'বাকি কোনো Meta সুপারিশ নেই — সব দেখা/মীমাংসা হয়ে গেছে।'
+                : 'কোনো ads ইভেন্ট নেই।',
+          },
+        }
+      }
+
+      // Detail is a Graph call per ad object — resolve only the top few.
+      const DETAILED = 5
+      const resolved = withDetail
+        ? await Promise.all(
+            events.map(async (e, i) =>
+              i < DETAILED ? ((await resolveAdsEventDetail(e.id).catch(() => e)) ?? e) : e,
+            ),
+          )
+        : events
+
+      return {
+        success: true,
+        data: {
+          events: resolved.map((e, i) =>
+            summariseAdsEvent(e, { detailResolved: withDetail && i < DETAILED }),
+          ),
+          // Whole-table count, not the page: with status='all' a page of resolved
+          // rows would otherwise report 0 and the agent would tell Boss nothing is
+          // pending while open events sit in the table.
+          openCount: await countOpenAdsEvents(),
+          openOnThisPage: resolved.filter((e) => e.status === 'new' || e.status === 'seen').length,
+          hint: 'Boss সিদ্ধান্ত দিলে resolve_ad_recommendation দিয়ে actioned/dismissed করে দিন — তাহলে ওটা আর নোটিফাই করবে না।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const resolve_ad_recommendation: AgentTool = {
+  name: 'resolve_ad_recommendation',
+  description:
+    'একটা Meta ads সুপারিশ/অ্যালার্ট মীমাংসা করে দেয় — actioned (কাজটা করা হয়েছে) বা dismissed (দরকার নেই)। ' +
+    'মীমাংসা হলে ওই সুপারিশ Boss-কে আর নোটিফিকেশন পাঠাবে না। ' +
+    'id আসে get_ad_recommendations থেকে। Meta-তে কিছু বদলায় না, টাকা খরচ হয় না — শুধু আমাদের ইনবক্স স্ট্যাটাস। ' +
+    'Boss স্পষ্ট করে বললে তবেই ডাকুন।',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      id: { type: 'string', description: 'get_ad_recommendations থেকে পাওয়া ইভেন্ট id' },
+      status: { type: 'string', description: "'actioned' | 'dismissed' | 'seen'" },
+      note: { type: 'string', description: 'কেন — এক লাইনে (ঐচ্ছিক)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+    required: ['id', 'status'],
+  },
+  handler: async (input) => {
+    const id = String(input.id ?? '').trim()
+    const status = String(input.status ?? '').trim().toLowerCase()
+    if (!id) return { success: false, error: 'id দরকার' }
+    if (!['actioned', 'dismissed', 'seen'].includes(status)) {
+      return { success: false, error: "status হতে হবে 'actioned', 'dismissed' বা 'seen'" }
+    }
+
+    try {
+      const event = await setAdsEventStatus(id, status as 'actioned', input.note ? String(input.note) : null)
+      if (!event) return { success: false, error: 'ওই id-র কোনো ইভেন্ট নেই' }
+      return {
+        success: true,
+        data: {
+          event: summariseAdsEvent(event),
+          message:
+            status === 'actioned'
+              ? 'করা হয়েছে হিসেবে বন্ধ করলাম — এটা নিয়ে আর নোটিফিকেশন যাবে না।'
+              : status === 'dismissed'
+                ? 'বাদ দিলাম — এটা নিয়ে আর নোটিফিকেশন যাবে না।'
+                : 'দেখা হয়েছে হিসেবে রাখলাম।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const ADS_TOOLS: AgentTool[] = [
   pause_campaign,
   update_campaign_budget,
@@ -706,6 +877,8 @@ export const ADS_TOOLS: AgentTool[] = [
   create_lookalike_audience,
   ads_campaign_plan,
   manage_ads_webhooks,
+  get_ad_recommendations,
+  resolve_ad_recommendation,
 ]
 
 export const ADS_ROLE_PROMPT = `
@@ -716,6 +889,7 @@ Creative fatigue → refresh_creative → make_ad_creatives (File 10) with angle
 Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → ads_campaign_plan (validate vs brief cap + UTM + tracking QA, get diff + idempotency) THEN launch_campaign.
 Low spend/impressions → hold. ROAS is directional for COD/Messenger — cross-check orders over time.
 Real-time alerts: manage_ads_webhooks — 'status' (read) any time; 'enable' ONLY on Boss's explicit ask ("ads webhook chalu koro"). Once on, Meta pushes ad reject/pause, creative fatigue + new recommendations straight to Boss — no polling.
+META'S OWN RECOMMENDATIONS (the phone notifications) → get_ad_recommendations. Boss says "ad recommendation dekho", "Meta ki suparish diyeche", "notification e ki eshechhe", or refers to an ads notification he tapped → CALL get_ad_recommendations, never recommend_ad_actions (that is OUR spend/ROAS analysis, a different thing). It returns Meta's real recommendation text per ad object. After Boss decides, close the loop with resolve_ad_recommendation (actioned = the work is done, dismissed = not needed) — a resolved item stops notifying him. If the recommendation is one we can execute (budget, creative refresh, pause), do that work with the normal ads write tools FIRST, then mark it actioned.
 
 ## RETARGETING + LOOKALIKE (audiences)
 Read: list_audiences — existing custom/lookalike audiences with sizes (run first to avoid duplicates + to get a source id).
