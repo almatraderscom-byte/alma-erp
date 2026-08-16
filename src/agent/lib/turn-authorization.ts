@@ -35,6 +35,28 @@ const BARE_CONTINUATION_RE =
 const BANGLISH_IMPERATIVE_RE =
   /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|ban(?:ao|aw|au)|bana|chal(?:ao|aw)|cal(?:ao|aw)|chala|chol(?:ao|aw)|cholo|path(?:ao|aw)|pat(?:ao|aw)|kholo|khulo|khol|dekh(?:ao|aw|o)|lag(?:ao|aw)|tham(?:ao|aw)|bondho|chalu|generate)\b/i
 
+// The SAME words, in the owner's other script. `BANGLISH_IMPERATIVE_RE` above
+// already grants `dekhao` / `dekhaw` / `dekho` — added after live incidents where
+// reading them as information-only stripped the very tools the sentence named.
+// The Bangla spellings were never added, so script alone decided the answer:
+//
+//   "Mac live dekhaw"                      → explicit_action  → write tools shipped
+//   "ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।"       → information_only → write tools stripped
+//
+// That is the whole Mac saga of 2026-08-15. `mac_desk_control` is write-class on
+// purpose (a full-desk screenshot is sensitive), so on the Bangla phrasing it was
+// never callable — the head then invented reasons, and the owner, reasonably,
+// read that as the agent being unreliable. Same request, same intent, opposite
+// permission, decided by keyboard layout. Also silently hit "ক্যামেরা দেখাও" and
+// "স্ক্রিনশট নাও".
+//
+// Scoped deliberately to the Bangla spellings of verbs the Banglish list ALREADY
+// grants — this removes an inconsistency, it does not open a new class of action.
+// Bare stems (কর, দেখা) are excluded: `\b` is ASCII-only in JS, so they would
+// also match inside করছি / দেখাচ্ছে and turn a plain statement into an order.
+const BANGLA_IMPERATIVE_RE =
+  /(?:দাও|দিও|দিন|দেন|করো|কোরো|করুন|বানাও|বানান|চালাও|চালান|পাঠাও|পাঠান|খোলো|খুলুন|খোল|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)/
+
 const EXPLICIT_ACTION_RE =
   /(\b(?:fix|create|make|add|update|change|edit|delete|remove|cancel|approve|reject|send|dispatch|assign|post|publish|upload|download|open|click|run|execute|start|continue|resume|retry|call|notify|schedule|set|save|remember|mark|log|generate|prepare|merge|apply|enable|disable)\b|(?:task|টাস্ক|কাজ)\s*(?:দাও|দেন|পাঠাও|assign|বানাও|তৈরি\s*করো)|(?:sms|message|মেসেজ|announcement|নোটিশ)\s*(?:দাও|পাঠাও|send)|(?:ছবি|image|photo|ভিডিও|video|reel|রিল|creative|ক্রিয়েটিভ)\s*(?:বানাও|তৈরি\s*করো|generate|make)|(?:audit|অডিট|research|রিসার্চ|বিশ্লেষণ|analysis|report|রিপোর্ট)\s*(?:করো|চালাও|run|বানাও|তৈরি\s*করো|prepare)|(?:website|ওয়েবসাইট|সাইট|browser|ব্রাউজার)\s*(?:খোলো|খুলে\s*দাও|open|fix|update|change|publish)|(?:যোগ|আপডেট|বদল|পরিবর্তন|ডিলিট|মুছ|বাতিল|ক্যানসেল|সেভ|পোস্ট|পাবলিশ|আপলোড|ডাউনলোড|শুরু|বন্ধ|চালু|লক|রিমাইন্ডার)\s*(?:করো|করুন|করে\s*দাও|দাও)?|মনে\s*(?:রাখো|রেখো|রাখবেন)|(?:kaj|task).*(?:koro|dao|daw|pathao|banao)|(?:kore|korey)\s*(?:dao|daw)|(?:কল|ফোন|call|fon|kol)\s*(?:করে|কোরে|kore|korey)[^\n।?]{0,24}?(?:জানা|জানি|jana|jani)|(?:কল|ফোন)\s*(?:দাও|দিও|দিবে|দিস|করো|কোরো|করবে))/i
 
@@ -86,6 +108,7 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
     BARE_CONTINUATION_RE.test(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
+    || BANGLA_IMPERATIVE_RE.test(t)
     || ENGLISH_IMPERATIVE_RE.test(t)
   ) {
     return { allowMutations: true, reason: 'explicit_action' }
