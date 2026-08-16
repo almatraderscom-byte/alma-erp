@@ -63,9 +63,14 @@ const BANGLISH_IMPERATIVE_RE =
 // Ambiguous forms are excluded rather than tokenised, because a boundary cannot
 // tell a noun from an imperative: বানান (spelling), চালান (invoice), দিন (day),
 // দেন (he gives), খোল (husk). The owner writes the informal imperative anyway.
+//
+// The তুই/তুমি forms (দে, দিবি, দিবে, দিস, করবি, চলো) are here because the
+// Banglish list already carries de/dibi/dibe/dis/korbi/cholo — leaving them out
+// meant "pair code de" was an order and "পেয়ার কোড দে" was not, which is the
+// very split this regex exists to close (Codex P2).
 const BN = '\\u0980-\\u09FF'
 const BANGLA_IMPERATIVE_RE = new RegExp(
-  `(?<![${BN}])(?:দাও|দিও|করো|কোরো|করুন|বানাও|চালাও|পাঠাও|খোলো|খুলুন|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)(?![${BN}])`,
+  `(?<![${BN}])(?:দাও|দিও|দে|দিবি|দিবে|দিস|করো|কোরো|করুন|করবি|বানাও|চালাও|চলো|পাঠাও|খোলো|খুলুন|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)(?![${BN}])`,
 )
 
 const EXPLICIT_ACTION_RE =
@@ -108,7 +113,14 @@ const DEEP_TASK_NOUN_RE = new RegExp(
 const RECORDABLE_FACT_RE =
   /(poreci|porechi|porlam|পড়েছি|পড়েছি|পড়লাম|পড়লাম|qaza|কাযা|(?:namaz|নামাজ).*(?:missed|মিস)|(?:খরচ|expense|paid|payment|পেমেন্ট).*(?:\d|০|১|২|৩|৪|৫|৬|৭|৮|৯|টাকা|taka|৳|bdt|aed|usd)|(?:\d|০|১|২|৩|৪|৫|৬|৭|৮|৯).*(?:টাকা|taka|৳|bdt|aed|usd)?.*(?:খরচ|expense|paid|payment|পেমেন্ট)|(?:task|টাস্ক|কাজ).*(?:done|শেষ\s*করেছি|শেষ\s*করলাম|complete)|(?:ওষুধ|medicine|medication).*(?:খেয়েছি|খেয়েছি|took|নিয়েছি|নিয়েছি)|\+?\d{10,14}|\b(?:আমি|আমার|i)\b.*\b(?:prefer|পছন্দ|always|এখন\s*থেকে|from\s*now)\b)/i
 
-const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কোথায়|কারা|কোন)\s/i
+// The Bengali interrogatives took a literal `\s`, so a SENTENCE-FINAL question
+// word never matched: "তুমি করো কী" and "তুমি করো কী।" both read as statements
+// (Codex P1). Bengali questions routinely end on the interrogative, and Boss
+// often omits the question mark, so this was the common shape rather than an
+// edge case. Punctuation and end-of-input are boundaries too. Widening this
+// makes every branch that consults it STRICTER — more input is treated as a
+// question, never less.
+const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
 
 export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorization {
   const t = text.trim()

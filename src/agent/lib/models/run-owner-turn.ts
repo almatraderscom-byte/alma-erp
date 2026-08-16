@@ -2844,7 +2844,11 @@ async function* runAlternateProviderTurn(
           if (violations.length === 0) {
             violations.push(...detectUngroundedObservation(iterationText.trim(), {
               actionRequested: ownerRequirements.actionAttemptExpected,
-              realToolAttempted: hasSubstantiveToolAttempt(toolRecords),
+              // A SUCCESSFUL look, not merely an attempt (Codex P1): a screenshot
+              // denied Screen Recording permission is substantive and still
+              // returns no image, so an attempt would excuse a description of a
+              // screen nobody saw.
+              lookSucceeded: isGroundingSatisfied(toolRecords),
               toolsAvailable: iterationTools.length > 0,
             }))
           }

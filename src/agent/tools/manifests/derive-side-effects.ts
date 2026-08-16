@@ -26,6 +26,12 @@ const FILE_DOMAINS = new Set(['documents', 'artifacts'])
 const SCHEDULE_DOMAINS = new Set(['reminders', 'appointments', 'dates'])
 /** Domains that push device notifications. */
 const PUSH_DOMAINS = new Set(['push'])
+/**
+ * Domains that act on the owner's remote Mac (enqueued work, unknown/timeout
+ * outcomes). Mapped to external_api_write so the SPEC-075 policy applies the
+ * external + gateway + reconciliation safeguards.
+ */
+const REMOTE_DEVICE_DOMAINS = new Set(['mac'])
 
 export function deriveSideEffects(
   mode: ManifestMode,
@@ -39,6 +45,7 @@ export function deriveSideEffects(
   if (EXTERNAL_API_DOMAINS.has(domain)) out.add('external_api_write')
   if (MODEL_DOMAINS.has(domain)) out.add('model_invocation')
   if (BROWSER_DOMAINS.has(domain)) out.add('browser_action')
+  if (REMOTE_DEVICE_DOMAINS.has(domain)) out.add('external_api_write')
   if (FILE_DOMAINS.has(domain)) out.add('file_write')
   if (SCHEDULE_DOMAINS.has(domain)) out.add('schedule')
   if (PUSH_DOMAINS.has(domain)) out.add('push_notification')

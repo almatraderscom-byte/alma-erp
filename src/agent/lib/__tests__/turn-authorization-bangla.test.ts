@@ -85,6 +85,29 @@ describe('what must still NOT be an order', () => {
     expect(allows('ক্যামেরা দেখাও')).toBe(true)
   })
 
+  // Codex P1 (third round): QUESTION_RE required whitespace after a Bengali
+  // interrogative, so a sentence-FINAL question word never matched — and Bengali
+  // questions routinely end on it, often with no question mark at all.
+  it('reads a question whose interrogative is sentence-final', () => {
+    for (const msg of ['তুমি করো কী', 'তুমি করো কী।', 'ম্যাক লাইভ দেখাও কেন', 'অর্ডার কত']) {
+      expect(allows(msg), msg).toBe(false)
+    }
+  })
+
+  // Codex P2: the Banglish list already carried de / dibi / dibe / dis / korbi /
+  // cholo, so leaving their Bangla spellings out kept the very split this regex
+  // exists to close.
+  it('covers the তুই/তুমি forms its Banglish twin already granted', () => {
+    for (const [banglish, bangla] of [
+      ['pair code de', 'পেয়ার কোড দে'],
+      ['ekhon korbi', 'এখন করবি'],
+      ['cholo start kori', 'চলো শুরু করি'],
+    ] as Array<[string, string]>) {
+      expect(allows(banglish), banglish).toBe(true)
+      expect(allows(bangla), bangla).toBe(true)
+    }
+  })
+
   it('leaves out forms a boundary cannot disambiguate from nouns', () => {
     // বানান = spelling, চালান = invoice, খোল = husk. Excluded rather than
     // tokenised: no boundary can tell these from the imperative.

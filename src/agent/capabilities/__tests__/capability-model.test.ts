@@ -82,7 +82,7 @@ describe('SPEC-081 store fails closed on corruption', () => {
 })
 
 describe('SPEC-081 identity-enforced boundary', () => {
-  it('count returns 63', () => {
+  it('count returns 64', () => {
     const r = queryCapabilities({ identity, contractVersion: CAPABILITY_CONTRACT_VERSION, payload: { kind: 'count' } })
     expect(r.status).toBe('COMPLETED')
     if (isSuccess(r) && r.value.kind === 'count') expect(r.value.count).toBe(64)

@@ -857,8 +857,14 @@ const LIVE_OBSERVATION_CLAIM = new RegExp(
     'স্ক্রিনে[^।!?\\n]{0,60}(?:লেখা|খোলা|দেখা)',
     // "… খোলা আছে", "… অনলাইনে আছে", "… চালু আছে" about a live surface
     '(?:খোলা|অনলাইনে|চালু|চলছে)\\s*আছে',
-    // English equivalents
-    "\\bi can see\\b", '\\bis (?:currently )?(?:open|showing|running)\\b',
+    // English. The generic state phrases need a live surface NEAR them (Codex
+    // P2): bare "is open" also fires on a perfectly honest tool-free draft —
+    // "Create a short notice: registration is open" — and would force it into a
+    // verification retry. The Bangla alternatives above are already anchored on
+    // স্ক্রিনে / দেখা, so only the English side needed the anchor spelled out.
+    "\\bi can see\\b",
+    '(?:screen|camera|window|tab|page|desk)[^.!?\\n]{0,40}\\bis (?:currently )?(?:open|showing|running)\\b',
+    '\\bis (?:currently )?(?:open|showing|running)\\b[^.!?\\n]{0,40}(?:screen|camera|window|tab|page|desk)',
     '\\bon (?:the |your )?screen\\b',
   ].join('|'),
   'i',
@@ -866,9 +872,15 @@ const LIVE_OBSERVATION_CLAIM = new RegExp(
 
 export function detectUngroundedObservation(
   replyText: string,
-  opts: { actionRequested: boolean; realToolAttempted: boolean; toolsAvailable: boolean },
+  /**
+   * `lookSucceeded` — NOT "a tool was attempted" (Codex P1). A screenshot that
+   * was DENIED Screen Recording permission is a substantive attempt and still
+   * returns no image, so accepting an attempt would let "Maxstream-এর পেজ খোলা
+   * আছে" ride on a failed look. Only a successful observation earns the claim.
+   */
+  opts: { actionRequested: boolean; lookSucceeded: boolean; toolsAvailable: boolean },
 ): ClaimViolation[] {
-  if (!opts.actionRequested || opts.realToolAttempted || !opts.toolsAvailable) return []
+  if (!opts.actionRequested || opts.lookSucceeded || !opts.toolsAvailable) return []
   const text = replyText.trim()
   if (!text) return []
   const hit = text.match(LIVE_OBSERVATION_CLAIM)
