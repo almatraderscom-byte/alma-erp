@@ -113,6 +113,30 @@ export function lunaReasoningEffort(): 'minimal' | 'low' | 'medium' | 'high' {
   return v === 'minimal' || v === 'medium' || v === 'high' ? v : 'low'
 }
 
+/** OpenAI reasoning items ride the neutral thoughtSignature lane as JSON. */
+const REASONING_SIG_PREFIX = 'openai-responses:'
+export function encodeReasoningSignature(id: string, encryptedContent: string): string {
+  return REASONING_SIG_PREFIX + JSON.stringify({ id, encrypted_content: encryptedContent })
+}
+function parseReasoningSignature(
+  sig: string | undefined,
+): { id: string; encrypted_content: string } | null {
+  // A Gemini thoughtSignature can legitimately appear in history after a
+  // mid-conversation head switch — only OUR prefix is ours to replay.
+  if (!sig || !sig.startsWith(REASONING_SIG_PREFIX)) return null
+  try {
+    const parsed = JSON.parse(sig.slice(REASONING_SIG_PREFIX.length)) as {
+      id?: unknown
+      encrypted_content?: unknown
+    }
+    return typeof parsed.id === 'string' && typeof parsed.encrypted_content === 'string'
+      ? { id: parsed.id, encrypted_content: parsed.encrypted_content }
+      : null
+  } catch {
+    return null
+  }
+}
+
 /** Neutral history → Responses input items (function calls round-trip as
  *  function_call / function_call_output items instead of role messages). */
 export function toResponsesInput(messages: NeutralMsg[]): Array<Record<string, unknown>> {
@@ -124,6 +148,20 @@ export function toResponsesInput(messages: NeutralMsg[]): Array<Record<string, u
     }
     if ('toolCalls' in msg) {
       for (const tc of msg.toolCalls) {
+        // Stateless reasoning continuation (Codex P1): with store:false the
+        // reasoning item that PRECEDED this function call must be replayed
+        // (encrypted) or multi-round tool use loses/rejects the model's
+        // reasoning state. It rides the same thoughtSignature lane Gemini
+        // already round-trips through the turn loop.
+        const sig = parseReasoningSignature(tc.thoughtSignature)
+        if (sig) {
+          out.push({
+            type: 'reasoning',
+            id: sig.id,
+            encrypted_content: sig.encrypted_content,
+            summary: [],
+          })
+        }
         out.push({
           type: 'function_call',
           call_id: tc.id,
@@ -175,11 +213,25 @@ export function toResponsesToolChoice(choice?: NeutralToolChoice): unknown {
  * output_item.done event — no delta re-assembly to get wrong.
  */
  
+ 
+function mapResponsesUsage(usage: any): TurnEvent {
+  const cached = usage.input_tokens_details?.cached_tokens ?? 0
+  const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? 0
+  return {
+    type: 'usage',
+    inputTokens: Math.max(0, (usage.input_tokens ?? 0) - cached),
+    outputTokens: usage.output_tokens ?? 0,
+    cacheRead: cached,
+    reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
+  }
+}
+
 export async function* mapResponsesStream(
    
   stream: AsyncIterable<any>,
   opts: { signal?: AbortSignal; truncationNote?: boolean } = {},
 ): AsyncGenerator<TurnEvent> {
+  let pendingReasoningSig: string | null = null
   for await (const event of stream) {
     if (opts.signal?.aborted) break
     switch (event.type) {
@@ -199,6 +251,13 @@ export async function* mapResponsesStream(
         }
         break
       case 'response.output_item.done':
+        // Reasoning item finishing BEFORE a function call: keep its encrypted
+        // content so the next stateless round can replay it (Codex P1).
+        if (event.item?.type === 'reasoning' && event.item.id
+          && typeof event.item.encrypted_content === 'string' && event.item.encrypted_content) {
+          pendingReasoningSig = encodeReasoningSignature(
+            String(event.item.id), event.item.encrypted_content)
+        }
         if (event.item?.type === 'function_call' && event.item.name) {
           const repair = repairToolArgs(String(event.item.arguments ?? ''))
           const parsed: Record<string, unknown> = repair.ok ? repair.value : { _raw: repair.raw }
@@ -206,15 +265,24 @@ export async function* mapResponsesStream(
             type: 'tool_input',
             id: String(event.item.call_id ?? event.item.id ?? `resp_${Date.now()}`),
             input: parsed,
+            // First call after a reasoning burst carries the replay signature —
+            // toResponsesInput re-emits the reasoning item ahead of it.
+            ...(pendingReasoningSig ? { thoughtSignature: pendingReasoningSig } : {}),
           }
+          pendingReasoningSig = null
         }
         break
-      case 'response.incomplete':
+      case 'response.incomplete': {
         if (opts.truncationNote
           && event.response?.incomplete_details?.reason === 'max_output_tokens') {
           yield { type: 'text_delta', text: TRUNCATION_NOTE }
         }
+        // A truncated round is still BILLED (Codex P2) — usage lives on this
+        // terminal event exactly like response.completed.
+        const usage = event.response?.usage
+        if (usage) yield mapResponsesUsage(usage)
         break
+      }
       case 'response.failed': {
         const message = event.response?.error?.message ?? 'response.failed'
         throw new Error(`[openai-responses] ${String(message)}`)
@@ -224,17 +292,7 @@ export async function* mapResponsesStream(
       }
       case 'response.completed': {
         const usage = event.response?.usage
-        if (usage) {
-          const cached = usage.input_tokens_details?.cached_tokens ?? 0
-          const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? 0
-          yield {
-            type: 'usage',
-            inputTokens: Math.max(0, (usage.input_tokens ?? 0) - cached),
-            outputTokens: usage.output_tokens ?? 0,
-            cacheRead: cached,
-            reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
-          }
-        }
+        if (usage) yield mapResponsesUsage(usage)
         break
       }
       default:
@@ -435,7 +493,12 @@ export class OpenAiAdapter implements ProviderAdapter {
         ...(args.tools.length ? { tools: toResponsesTools(args.tools) } : {}),
         ...(rawGen.max_tokens !== undefined ? { max_output_tokens: rawGen.max_tokens } : {}),
         ...(wantsReasoning
-          ? { reasoning: { effort: lunaReasoningEffort(), summary: 'auto' } }
+          // include reasoning.encrypted_content: with store:false the item
+          // must come back encrypted or the next tool round cannot replay it.
+          ? {
+            reasoning: { effort: lunaReasoningEffort(), summary: 'auto' },
+            include: ['reasoning.encrypted_content'],
+          }
           // Non-reasoning request: the sampler is accepted, mirror the shared contract.
           : {
             ...(rawGen.temperature !== undefined ? { temperature: rawGen.temperature } : {}),

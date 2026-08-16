@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  encodeReasoningSignature,
   lunaReasoningEffort,
   mapResponsesStream,
   toResponsesInput,
@@ -71,6 +72,43 @@ describe('openai Responses API mapping (Luna visible thought)', () => {
       { type: 'tool_input', id: 'call_9', input: { limit: 5 } },
       { type: 'done' },
     ])
+  })
+
+  // Codex P1: stateless (store:false) tool rounds must replay the encrypted
+  // reasoning item that preceded the function call.
+  it('carries encrypted reasoning through thoughtSignature and replays it before the call', async () => {
+    const out = await collect([
+      { type: 'response.output_item.done', item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'ENC' } },
+      { type: 'response.output_item.added', item: { type: 'function_call', call_id: 'call_2', name: 'get_orders' } },
+      { type: 'response.output_item.done', item: { type: 'function_call', call_id: 'call_2', name: 'get_orders', arguments: '{}' } },
+      { type: 'response.completed', response: {} },
+    ])
+    const toolInput = out.find((e) => e.type === 'tool_input') as { thoughtSignature?: string }
+    expect(toolInput.thoughtSignature).toBe(encodeReasoningSignature('rs_1', 'ENC'))
+
+    const input = toResponsesInput([
+      { role: 'assistant', toolCalls: [{ id: 'call_2', name: 'get_orders', input: {}, thoughtSignature: toolInput.thoughtSignature }] },
+      { role: 'tool', toolCallId: 'call_2', name: 'get_orders', result: { ok: true } },
+    ])
+    expect(input).toEqual([
+      { type: 'reasoning', id: 'rs_1', encrypted_content: 'ENC', summary: [] },
+      { type: 'function_call', call_id: 'call_2', name: 'get_orders', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_2', output: '{"ok":true}' },
+    ])
+    // A Gemini signature in mixed history is NOT ours — never replayed as an item.
+    const foreign = toResponsesInput([
+      { role: 'assistant', toolCalls: [{ id: 'c', name: 't', input: {}, thoughtSignature: 'gemini-opaque-bytes' }] },
+    ])
+    expect(foreign).toEqual([{ type: 'function_call', call_id: 'c', name: 't', arguments: '{}' }])
+  })
+
+  // Codex P2: a max_output_tokens round is still billed.
+  it('records usage from response.incomplete', async () => {
+    const out = await collect([
+      { type: 'response.output_text.delta', delta: 'অর্ধেক' },
+      { type: 'response.incomplete', response: { incomplete_details: { reason: 'max_output_tokens' }, usage: { input_tokens: 50, output_tokens: 10, output_tokens_details: { reasoning_tokens: 4 } } } },
+    ])
+    expect(out).toContainEqual({ type: 'usage', inputTokens: 50, outputTokens: 10, cacheRead: 0, reasoningTokens: 4 })
   })
 
   it('throws on response.failed so the turn loop can fall back', async () => {
