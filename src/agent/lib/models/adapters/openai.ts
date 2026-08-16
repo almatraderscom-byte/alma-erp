@@ -91,6 +91,159 @@ export function toRawOpenAiCompatParams(
   return out
 }
 
+// ── Responses API (raw OpenAI / Luna head) ───────────────────────────────────
+// Owner ask 2026-08-16: Luna's thought pane is empty. Two hard reasons on
+// chat/completions: (1) gpt-5.6 rejects function tools + reasoning there, so
+// every tool-bearing head turn was forced to reasoning_effort 'none' — Luna
+// literally did not reason; (2) even when reasoning, OpenAI never returns the
+// chain-of-thought on that API. The Responses API fixes both: tools + reasoning
+// coexist, and `reasoning.summary` streams a model-written summary of the
+// thinking (`response.reasoning_summary_text.delta`) — which we surface as the
+// same thinking_delta the Gemini/DeepSeek heads use. Kill switch:
+// OPENAI_RESPONSES_API=false restores the legacy chat/completions path.
+
+export function openAiResponsesEnabled(): boolean {
+  return process.env.OPENAI_RESPONSES_API !== 'false'
+}
+
+/** Reasoning effort for Luna head turns — 'low' keeps the head snappy and the
+ *  summaries brief; owner-tunable without redeploy semantics via env. */
+export function lunaReasoningEffort(): 'minimal' | 'low' | 'medium' | 'high' {
+  const v = process.env.LUNA_REASONING_EFFORT?.trim()
+  return v === 'minimal' || v === 'medium' || v === 'high' ? v : 'low'
+}
+
+/** Neutral history → Responses input items (function calls round-trip as
+ *  function_call / function_call_output items instead of role messages). */
+export function toResponsesInput(messages: NeutralMsg[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const msg of messages) {
+    if ('content' in msg && typeof msg.content === 'string') {
+      out.push({ role: msg.role, content: msg.content })
+      continue
+    }
+    if ('toolCalls' in msg) {
+      for (const tc of msg.toolCalls) {
+        out.push({
+          type: 'function_call',
+          call_id: tc.id,
+          name: tc.name,
+          arguments: JSON.stringify(tc.input),
+        })
+      }
+      continue
+    }
+    if (msg.role === 'tool') {
+      // Same image-stripping rule as the chat path: a vision result's base64
+      // payload is undecodable garbage to a text tool output.
+      let payload: unknown = msg.result
+      if (payload && typeof payload === 'object' && 'image' in (payload as Record<string, unknown>)) {
+        const { image: _omit, ...rest } = payload as Record<string, unknown>
+        payload = rest
+      }
+      out.push({
+        type: 'function_call_output',
+        call_id: msg.toolCallId,
+        output: JSON.stringify(payload),
+      })
+    }
+  }
+  return out
+}
+
+/** Responses tools are FLAT (no nested `function` object). */
+export function toResponsesTools(tools: NeutralTool[]): Array<Record<string, unknown>> {
+  return tools.map((t) => ({
+    type: 'function',
+    name: t.name,
+    description: t.description,
+    strict: false,
+    parameters: openAiSchemaSanitizeEnabled()
+      ? sanitizeSchemaPortable(t.schema)
+      : (t.schema as Record<string, unknown>),
+  }))
+}
+
+export function toResponsesToolChoice(choice?: NeutralToolChoice): unknown {
+  if (choice === undefined || choice === 'auto') return undefined
+  return typeof choice === 'object' ? { type: 'function', name: choice.name } : choice
+}
+
+/**
+ * Map the Responses event stream to neutral TurnEvents. Exported for unit
+ * tests (fed a fake async iterable). Tool arguments are taken WHOLE from the
+ * output_item.done event — no delta re-assembly to get wrong.
+ */
+ 
+export async function* mapResponsesStream(
+   
+  stream: AsyncIterable<any>,
+  opts: { signal?: AbortSignal; truncationNote?: boolean } = {},
+): AsyncGenerator<TurnEvent> {
+  for await (const event of stream) {
+    if (opts.signal?.aborted) break
+    switch (event.type) {
+      case 'response.reasoning_summary_text.delta':
+        if (event.delta) yield { type: 'thinking_delta', text: String(event.delta) }
+        break
+      case 'response.output_text.delta':
+        if (event.delta) yield { type: 'text_delta', text: String(event.delta) }
+        break
+      case 'response.output_item.added':
+        if (event.item?.type === 'function_call' && event.item.name) {
+          yield {
+            type: 'tool_start',
+            id: String(event.item.call_id ?? event.item.id ?? `resp_${Date.now()}`),
+            name: String(event.item.name),
+          }
+        }
+        break
+      case 'response.output_item.done':
+        if (event.item?.type === 'function_call' && event.item.name) {
+          const repair = repairToolArgs(String(event.item.arguments ?? ''))
+          const parsed: Record<string, unknown> = repair.ok ? repair.value : { _raw: repair.raw }
+          yield {
+            type: 'tool_input',
+            id: String(event.item.call_id ?? event.item.id ?? `resp_${Date.now()}`),
+            input: parsed,
+          }
+        }
+        break
+      case 'response.incomplete':
+        if (opts.truncationNote
+          && event.response?.incomplete_details?.reason === 'max_output_tokens') {
+          yield { type: 'text_delta', text: TRUNCATION_NOTE }
+        }
+        break
+      case 'response.failed': {
+        const message = event.response?.error?.message ?? 'response.failed'
+        throw new Error(`[openai-responses] ${String(message)}`)
+      }
+      case 'error': {
+        throw new Error(`[openai-responses] ${String(event.message ?? 'stream error')}`)
+      }
+      case 'response.completed': {
+        const usage = event.response?.usage
+        if (usage) {
+          const cached = usage.input_tokens_details?.cached_tokens ?? 0
+          const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? 0
+          yield {
+            type: 'usage',
+            inputTokens: Math.max(0, (usage.input_tokens ?? 0) - cached),
+            outputTokens: usage.output_tokens ?? 0,
+            cacheRead: cached,
+            reasoningTokens: reasoningTokens > 0 ? reasoningTokens : undefined,
+          }
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+  yield { type: 'done' }
+}
+
 function toOpenAiMessages(
   system: string,
   messages: NeutralMsg[],
@@ -264,6 +417,58 @@ export class OpenAiAdapter implements ProviderAdapter {
     parallelToolCalls?: boolean
     cacheKey?: string
   }): AsyncGenerator<TurnEvent> {
+    // Raw OpenAI (Luna head): prefer the Responses API — tools + reasoning
+    // coexist there and the model's reasoning SUMMARY streams live, so the
+    // owner finally sees Luna think (chat/completions forced tool-bearing
+    // turns to reasoning_effort 'none' AND hides the chain-of-thought).
+    // A create() failure falls through to the proven chat/completions ladder
+    // below — the head never goes down over this path.
+    if (this.rawOpenAi && openAiResponsesEnabled()) {
+      const wantsReasoning = args.thinking !== 'none'
+      const rawGen = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
+      const responsesParams: Record<string, unknown> = {
+        model: args.apiModel,
+        instructions: args.system,
+        input: toResponsesInput(args.messages),
+        stream: true,
+        store: false,
+        ...(args.tools.length ? { tools: toResponsesTools(args.tools) } : {}),
+        ...(rawGen.max_tokens !== undefined ? { max_output_tokens: rawGen.max_tokens } : {}),
+        ...(wantsReasoning
+          ? { reasoning: { effort: lunaReasoningEffort(), summary: 'auto' } }
+          // Non-reasoning request: the sampler is accepted, mirror the shared contract.
+          : {
+            ...(rawGen.temperature !== undefined ? { temperature: rawGen.temperature } : {}),
+            ...(rawGen.top_p !== undefined ? { top_p: rawGen.top_p } : {}),
+          }),
+      }
+      const responsesChoice = args.tools.length ? toResponsesToolChoice(args.toolChoice) : undefined
+      if (responsesChoice !== undefined) responsesParams.tool_choice = responsesChoice
+      if (args.tools.length && args.parallelToolCalls !== undefined) {
+        responsesParams.parallel_tool_calls = args.parallelToolCalls
+      }
+      let responsesStream: AsyncIterable<unknown> | null = null
+      try {
+        responsesStream = await this.client.responses.create(
+           
+          responsesParams as any,
+          args.signal ? { signal: args.signal } : undefined,
+        ) as unknown as AsyncIterable<unknown>
+      } catch (err) {
+        if (args.signal?.aborted) throw err
+        console.warn(
+          `[openai-adapter] ${args.apiModel} Responses API rejected the request — falling back to chat/completions:`,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+      if (responsesStream) {
+        yield* mapResponsesStream(responsesStream, {
+          signal: args.signal,
+          truncationNote: AGENT_UNIFORM_SAMPLING,
+        })
+        return
+      }
+    }
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
     // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
     // thinking tokens in `delta.reasoning`. `{ enabled: true }` alone was too weak
@@ -358,7 +563,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
     const errDetail = (err: unknown): string => {
       const base = err instanceof Error ? err.message : String(err)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const body = (err as any)?.error
       const raw = body?.metadata?.raw ?? body?.error?.metadata?.raw
       return raw ? `${base} | provider: ${String(raw).slice(0, 300)}` : base
