@@ -712,10 +712,17 @@ export class OpenAiAdapter implements ProviderAdapter {
           return await this.client.chat.completions.create(params, reqOptions) as AsyncIterable<ChatCompletionChunk>
         } catch (err) {
           if (args.signal?.aborted) throw err
-          const rlDelay = rateLimitRetryDelaySeconds(err)
+          // Transient network/5xx failures also deserve an IDENTICAL-request
+          // retry (Codex P2: maxRetries 0 removed the SDK's, and a one-off
+          // outage must not read as parameter incompatibility and descend).
+          const status = (err as { status?: number })?.status
+          const message = err instanceof Error ? err.message : String(err)
+          const transient = (typeof status === 'number' && status >= 500)
+            || /ECONNRESET|ETIMEDOUT|fetch failed|Connection error|network/i.test(message)
+          const rlDelay = rateLimitRetryDelaySeconds(err) ?? (transient ? 1.5 : null)
           if (rlDelay == null) throw err
-          if (attempt >= 2) throw err // exhausted 429 — surface, never descend
-          console.warn(`[openai-adapter] ${modelSlug} rate-limited — waiting ${rlDelay}s (attempt ${attempt + 1})`)
+          if (attempt >= 2) throw err // exhausted — surface, never descend
+          console.warn(`[openai-adapter] ${modelSlug} retryable failure — waiting ${rlDelay}s (attempt ${attempt + 1})`)
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, rlDelay * 1000)
             args.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
