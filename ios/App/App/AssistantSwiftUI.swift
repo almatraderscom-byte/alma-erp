@@ -15005,7 +15005,7 @@ struct AgentThoughtProcessSheet: View {
                             if request.kind == .summary {
                                 summaryTimelineBody(pal)
                             } else {
-                                thoughtProcessBody(pal)
+                                thoughtProcessBody(pal, proxy: proxy)
                             }
                             Color.clear.frame(height: 1).id("activity-sheet-live-bottom")
                         }
@@ -15052,25 +15052,41 @@ struct AgentThoughtProcessSheet: View {
     private struct AlmaTypewriterText: View {
         let text: String
         let live: Bool
+        /// Throttled reveal-progress signal (~5/s) so the sheet can keep the
+        /// live tail scrolled into view (Codex P2) without a 45fps scroll storm.
+        var onReveal: (() -> Void)? = nil
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         @State private var revealed = 0
+        @State private var lastNotify = Date.distantPast
 
         var body: some View {
             Text(String(text.prefix(revealed)))
-                .task(id: "\(live)|\(text.count)") {
-                    guard live else { revealed = text.count; return }
+                .task(id: "\(live)|\(reduceMotion)|\(text.count)") {
+                    // Reduce Motion: no progressive reveal, same as the file's
+                    // other shimmer/motion effects (Codex P2).
+                    guard live, !reduceMotion else { revealed = text.count; return }
                     if revealed > text.count { revealed = text.count } // trace replaced
-                    while revealed < text.count, !Task.isCancelled {
+                    while revealed < text.count {
                         // ~45fps × 3 chars ≈ 135 chars/s — faster than any
                         // provider sustains, so the pane never falls behind;
                         // Character-based prefix keeps Bangla clusters whole.
                         try? await Task.sleep(nanoseconds: 22_000_000)
+                        // A canceled (replaced) task must not write its stale
+                        // count over the successor's progress (Codex P1).
+                        if Task.isCancelled { return }
                         revealed = min(text.count, revealed + 3)
+                        if Date().timeIntervalSince(lastNotify) > 0.2 || revealed == text.count {
+                            lastNotify = Date()
+                            onReveal?()
+                        }
                     }
                 }
         }
     }
 
-    @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
+    @ViewBuilder private func thoughtProcessBody(
+        _ pal: AgentPalette, proxy: ScrollViewProxy? = nil,
+    ) -> some View {
         // Row-scoped slice first (this step's OWN thought / the tapped text);
         // whole-trace fallback for the settled-summary header path.
         let liveSlice = liveScopedThoughtText
@@ -15086,7 +15102,14 @@ struct AgentThoughtProcessSheet: View {
         } else {
             // Claude iOS: the thought is plain prose on the sheet — no box around it.
             // Live turns type out (owner ask 2026-08-16); settled turns render whole.
-            AlmaTypewriterText(text: prose, live: message.isStreaming)
+            AlmaTypewriterText(text: prose, live: message.isStreaming, onReveal: {
+                // The reveal grows content AFTER sheetGrowthIdentity fired —
+                // follow the typed tail too (Codex P2).
+                guard request.kind == .thoughtProcess, message.isStreaming else { return }
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy?.scrollTo("activity-sheet-live-bottom", anchor: .bottom)
+                }
+            })
                 .font(.system(size: 16))
                 .foregroundStyle(pal.ink.opacity(0.92))
                 .lineSpacing(6)
