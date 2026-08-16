@@ -125,6 +125,7 @@ import {
   detectRedundantQuestionAfterAnswer,
   detectUncorrectedOpeningPromise,
   detectUnattemptedIncapacity,
+  detectUngroundedObservation,
   detectFalseToolUnavailability,
   detectPhantomApprovalWait,
   detectFabricatedStatViolations,
@@ -2836,6 +2837,16 @@ async function* runAlternateProviderTurn(
               iterationText.trim(),
               iterationTools.map((t) => t.name),
             ))
+          }
+          // The mirror of the rule below: a CONFIDENT answer about a live screen,
+          // camera or page with nothing looked at. Checked first because it is
+          // the harder one to spot by reading — nothing in the reply looks wrong.
+          if (violations.length === 0) {
+            violations.push(...detectUngroundedObservation(iterationText.trim(), {
+              actionRequested: ownerRequirements.actionAttemptExpected,
+              realToolAttempted: hasSubstantiveToolAttempt(toolRecords),
+              toolsAvailable: iterationTools.length > 0,
+            }))
           }
           // "পারব না" with nothing attempted. The grounding + live-execution
           // retries above already cover this shape, but both key on ERP business

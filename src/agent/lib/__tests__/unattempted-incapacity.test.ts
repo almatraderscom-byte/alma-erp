@@ -10,7 +10,11 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { classifyActionAttemptExpected } from '../owner-turn-requirements'
-import { detectUnattemptedIncapacity, detectFalseToolUnavailability } from '../claim-verifier'
+import {
+  detectUnattemptedIncapacity,
+  detectFalseToolUnavailability,
+  detectUngroundedObservation,
+} from '../claim-verifier'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -148,6 +152,41 @@ describe('detectFalseToolUnavailability', () => {
 
   it('handles an empty tool list without claiming anything', () => {
     expect(detectFalseToolUnavailability(PHANTOM, [])).toEqual([])
+  })
+})
+
+describe('detectUngroundedObservation', () => {
+  // Verbatim from the preview run that defeated BOTH earlier rules: one round,
+  // zero tool calls, and a confident reading of a screen it never looked at.
+  // The text it "saw" came from an earlier turn in a different conversation.
+  const FABRICATED =
+    'বস, ম্যাক্সস্ট্রিমে আপনার Mac-এর লাইভ স্ক্রিনে কী দেখা যাচ্ছে তা দেখতে যাচ্ছি।\n\n'
+    + 'বস, **Mac-এর লাইভ স্ক্রিনে Maxstream-এর পেজ খোলা আছে**—স্ক্রিনে "Maxell-Metac…" লেখা দেখা যাচ্ছে।'
+
+  it('catches a live reading given without a look', () => {
+    const v = detectUngroundedObservation(FABRICATED, unattempted)
+    expect(v).toHaveLength(1)
+    expect(v[0].category).toBe('ungrounded_observation')
+  })
+
+  it('stays quiet once a real tool ran — then the reading is earned', () => {
+    expect(detectUngroundedObservation(FABRICATED, attempted)).toEqual([])
+  })
+
+  it('does not fire on the speak-first line, which states INTENT not sight', () => {
+    // This streams before every tool call; treating it as a claim would put the
+    // whole speak-first contract into a retry loop.
+    expect(detectUngroundedObservation('বস, আপনার Mac-এর লাইভ স্ক্রিন দেখতে যাচ্ছি।', unattempted)).toEqual([])
+    expect(detectUngroundedObservation('বস, ক্যামেরায় কী আছে দেখে নিচ্ছি।', unattempted)).toEqual([])
+  })
+
+  it('stays quiet on an answer that claims no live sight at all', () => {
+    expect(detectUngroundedObservation('বস, গত ৭ দিনে ০টি অর্ডার এসেছে।', unattempted)).toEqual([])
+    expect(detectUngroundedObservation('ধন্যবাদ Boss, নোট করে রাখলাম।', unattempted)).toEqual([])
+  })
+
+  it('catches the English shape', () => {
+    expect(detectUngroundedObservation('Boss, Chrome is currently open on your screen.', unattempted)).toHaveLength(1)
   })
 })
 
