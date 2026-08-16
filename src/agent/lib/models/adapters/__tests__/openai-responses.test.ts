@@ -120,11 +120,13 @@ describe('openai Responses API mapping (Luna visible thought)', () => {
   it('effort env defaults to low and rejects junk', () => {
     const old = process.env.LUNA_REASONING_EFFORT
     delete process.env.LUNA_REASONING_EFFORT
-    expect(lunaReasoningEffort()).toBe('low')
+    expect(lunaReasoningEffort()).toBe('medium')
     process.env.LUNA_REASONING_EFFORT = 'high'
     expect(lunaReasoningEffort()).toBe('high')
-    process.env.LUNA_REASONING_EFFORT = 'garbage'
+    process.env.LUNA_REASONING_EFFORT = 'low'
     expect(lunaReasoningEffort()).toBe('low')
+    process.env.LUNA_REASONING_EFFORT = 'garbage'
+    expect(lunaReasoningEffort()).toBe('medium')
     if (old === undefined) delete process.env.LUNA_REASONING_EFFORT
     else process.env.LUNA_REASONING_EFFORT = old
   })
