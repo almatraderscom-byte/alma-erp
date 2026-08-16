@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import type {
+  ChatCompletionChunk,
   ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
@@ -699,39 +700,49 @@ export class OpenAiAdapter implements ProviderAdapter {
     // throttled minute — every rung 429s in turn and the turn dies. Wait the
     // provider's suggested delay (abortable) and retry the SAME request; only
     // non-429 failures descend the ladder.
+    // Same-request 429 handling for EVERY rung (Codex P1 ×2 on PR #783): the
+    // wait-loop retries the identical request; an exhausted 429 SURFACES
+    // (descending would re-send the same tokens into the same throttled
+    // minute); only non-429 errors return to the caller for a ladder step.
+    const createWith429Wait = async (
+      params: ChatCompletionCreateParamsStreaming,
+    ): Promise<AsyncIterable<ChatCompletionChunk>> => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await this.client.chat.completions.create(params, reqOptions) as AsyncIterable<ChatCompletionChunk>
+        } catch (err) {
+          if (args.signal?.aborted) throw err
+          const rlDelay = rateLimitRetryDelaySeconds(err)
+          if (rlDelay == null) throw err
+          if (attempt >= 2) throw err // exhausted 429 — surface, never descend
+          console.warn(`[openai-adapter] ${modelSlug} rate-limited — waiting ${rlDelay}s (attempt ${attempt + 1})`)
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, rlDelay * 1000)
+            args.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+          })
+          if (args.signal?.aborted) throw err
+        }
+      }
+    }
+    const isRateLimit = (err: unknown): boolean => rateLimitRetryDelaySeconds(err) != null
     let stream
-    for (let rlAttempt = 0; !stream; rlAttempt++) {
     try {
-      stream = await this.client.chat.completions.create({
+      stream = await createWith429Wait({
         ...baseParams,
         ...providerPrefs,
         ...reasoningParam,
         ...samplerParam,
-      } as ChatCompletionCreateParamsStreaming, reqOptions)
-      break
+      } as ChatCompletionCreateParamsStreaming)
     } catch (err) {
-      if (args.signal?.aborted) throw err
-      const rlDelay = rlAttempt < 2 ? rateLimitRetryDelaySeconds(err) : null
-      if (rlDelay != null) {
-        console.warn(`[openai-adapter] ${modelSlug} rate-limited — waiting ${rlDelay}s (attempt ${rlAttempt + 1})`)
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, rlDelay * 1000)
-          args.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
-        })
-        if (args.signal?.aborted) throw err
-        continue
-      }
+      if (args.signal?.aborted || isRateLimit(err)) throw err
       console.warn(
         `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters/sampler:`,
         errDetail(err),
       )
       try {
-        stream = await this.client.chat.completions.create(
-          baseParams as ChatCompletionCreateParamsStreaming,
-          reqOptions,
-        )
+        stream = await createWith429Wait(baseParams as ChatCompletionCreateParamsStreaming)
       } catch (err2) {
-        if (args.signal?.aborted) throw err2
+        if (args.signal?.aborted || isRateLimit(err2)) throw err2
         console.warn(
           `[openai-adapter] ${modelSlug} rejected the standard request too — final bare retry (no exacto/cache_control/stream_options):`,
           errDetail(err2),
@@ -746,14 +757,9 @@ export class OpenAiAdapter implements ProviderAdapter {
           // doesn't fix it, so the bare retry must still say 'none'.
           ...(this.rawOpenAi && args.tools.length > 0 ? { reasoning_effort: 'none' } : {}),
         }
-        stream = await this.client.chat.completions.create(
-          bareParams as ChatCompletionCreateParamsStreaming,
-          reqOptions,
-        )
+        stream = await createWith429Wait(bareParams as ChatCompletionCreateParamsStreaming)
       }
     }
-    }
-    if (!stream) throw new Error(`[openai-adapter] ${modelSlug}: no stream after retries`)
 
     const toolBuffers = new Map<number, { id: string; name: string; args: string; started: boolean }>()
 
