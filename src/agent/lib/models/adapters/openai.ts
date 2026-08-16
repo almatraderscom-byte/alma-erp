@@ -669,9 +669,14 @@ export class OpenAiAdapter implements ProviderAdapter {
     const stickyHeaders = this.stickyCacheHeader && args.cacheKey
       ? { 'x-grok-conv-id': args.cacheKey }
       : undefined
-    const reqOptions = args.signal || stickyHeaders
-      ? { ...(args.signal ? { signal: args.signal } : {}), ...(stickyHeaders ? { headers: stickyHeaders } : {}) }
-      : undefined
+    // maxRetries 0 on every rung (Codex P1 on PR #783, same class as #780):
+    // the SDK's built-in 429/5xx retries would multiply with the manual
+    // rate-limit loop — the loop is the single retry mechanism.
+    const reqOptions = {
+      maxRetries: 0,
+      ...(args.signal ? { signal: args.signal } : {}),
+      ...(stickyHeaders ? { headers: stickyHeaders } : {}),
+    }
     // Pull OpenRouter's upstream detail out of an APIError — `error.metadata.raw`
     // carries the provider's real reason ("Provider returned error" alone is
     // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
