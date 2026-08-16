@@ -703,17 +703,27 @@ const manage_ads_webhooks: AgentTool = {
 
 /** Owner-facing summary of one stored ads event (no ids the owner can't use). */
 function summariseAdsEvent(event: AdsEventRecord) {
-  const recs = (event.detail ?? []).flatMap((obj) =>
-    obj.recommendations.map((r) => ({
-      object: obj.name || obj.objectId,
-      effectiveStatus: obj.effectiveStatus ?? null,
+  // Identity and live status belong to the OBJECT, not to its recommendation
+  // rows: a delivery-status or issue alert legitimately has an empty
+  // recommendations array, and nesting the name/status inside it left the agent
+  // with nothing but the generic webhook sentence for exactly those alerts.
+  const objects = (event.detail ?? []).map((obj) => ({
+    object: obj.name || obj.objectId,
+    objectId: obj.objectId,
+    effectiveStatus: obj.effectiveStatus ?? null,
+    error: obj.error ?? null,
+    recommendations: obj.recommendations.map((r) => ({
       title: r.title ?? null,
       message: r.message ?? null,
       importance: r.importance ?? null,
       blameField: r.blameField ?? null,
     })),
+  }))
+  const recs = objects.flatMap((obj) =>
+    obj.recommendations.map((r) => ({ object: obj.object, effectiveStatus: obj.effectiveStatus, ...r })),
   )
   return {
+    adObjects: objects,
     id: event.id,
     type: event.recommendationType || event.field,
     status: event.status,

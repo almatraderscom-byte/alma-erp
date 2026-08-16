@@ -207,9 +207,11 @@ export function parseAdsWebhookChange(change: AdsWebhookChange): ParsedAdsEvent 
 type DedupeMap = Record<string, number>
 
 /**
- * Short, stable tag for THIS delivery's payload. Meta re-sends an identical body
- * on a retry, so identical payload = same occurrence (suppress), different payload
- * = something new happened to that object (let it through).
+ * Short, stable tag for THIS occurrence — the entry timestamp plus the payload.
+ * A Meta retry repeats the entry verbatim (same `time`), so it collapses onto the
+ * same tag; a second real change to the object arrives in a new entry with a new
+ * `time` and gets its own tag. Payload alone is not enough: two genuine
+ * effective_status transitions carry byte-identical `changed_fields`.
  */
 function occurrenceTag(value: unknown): string {
   const json = JSON.stringify(value ?? {})
@@ -256,7 +258,13 @@ export async function handleAdsWebhook(
 ): Promise<{ received: number; notified: number; stored: number }> {
   if (envelope.object !== 'ad_account') return { received: 0, notified: 0, stored: 0 }
 
-  const changes = (envelope.entry ?? []).flatMap((e) => e.changes ?? [])
+  // The entry timestamp is what separates a REDELIVERY (Meta resends the same
+  // entry, same `time`) from a second real change to the same object (new entry,
+  // new `time`) — the payload alone cannot tell them apart, since two genuine
+  // effective_status transitions carry identical `changed_fields`.
+  const changes = (envelope.entry ?? []).flatMap((e) =>
+    (e.changes ?? []).map((change) => ({ change, entryTime: e.time })),
+  )
   if (!changes.length) return { received: 0, notified: 0, stored: 0 }
 
   const dedupe = await loadDedupe()
@@ -264,8 +272,10 @@ export async function handleAdsWebhook(
   let notified = 0
 
   let stored = 0
+  /** Guards duplicates INSIDE this one request; the KV map guards across requests. */
+  const seenThisRequest = new Set<string>()
 
-  for (const change of changes) {
+  for (const { change, entryTime } of changes) {
     const event = parseAdsWebhookChange(change)
     if (!event) continue
 
@@ -274,10 +284,13 @@ export async function handleAdsWebhook(
     // the object: `status:<type>:<id>` repeats for every later change to the same
     // ad, so keying on identity alone would swallow a real rejection that lands
     // an hour after a pause.
-    const kvKey = event.reopenOnRepeat ? `${event.key}#${occurrenceTag(change.value)}` : event.key
+    const kvKey = event.reopenOnRepeat
+      ? `${event.key}#${occurrenceTag({ t: entryTime ?? null, v: change.value })}`
+      : event.key
     const last = dedupe[kvKey]
     if (last && now - last < DEDUPE_WINDOW_MS) continue
-    dedupe[kvKey] = now
+    if (seenThisRequest.has(kvKey)) continue
+    seenThisRequest.add(kvKey)
 
     // Layer 2 — the durable row. This is what the app and the agent read later,
     // and what decides whether the owner hears about it AGAIN: an event he has
@@ -303,6 +316,9 @@ export async function handleAdsWebhook(
       )
       if (delivered) {
         notified += 1
+        // Suppress Meta's retries of THIS delivery only now — stamping on attempt
+        // would let a failed push swallow the retry that would have succeeded.
+        dedupe[kvKey] = now
         if (recorded.id) await markAdsEventNotified(recorded.id)
       } else {
         console.error('[ads-webhook] no channel accepted the alert:', JSON.stringify(delivery?.statuses ?? {}))

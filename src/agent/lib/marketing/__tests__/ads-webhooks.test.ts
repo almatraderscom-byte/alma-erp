@@ -270,19 +270,55 @@ describe('handleAdsWebhook', () => {
   })
 
   it('a second real change to the same ad within the KV window still lands', async () => {
-    // Object-keyed events repeat per change; keying the short window on identity
-    // alone swallowed a rejection that followed a pause an hour later.
-    await handleAdsWebhook(
-      envelope([
-        { field: 'field_changed', value: { object_id: '12', object_type: 'ad', changed_fields: ['effective_status'], status: 'PAUSED' } },
-      ]),
-    )
-    await handleAdsWebhook(
-      envelope([
-        { field: 'field_changed', value: { object_id: '12', object_type: 'ad', changed_fields: ['effective_status'], status: 'DISAPPROVED' } },
-      ]),
-    )
+    // Two genuine effective_status transitions carry a BYTE-IDENTICAL payload
+    // (object_id + object_type + changed_fields) — only the entry timestamp tells
+    // them apart. Keying the short window on the payload swallowed the rejection
+    // that followed a pause an hour later.
+    const change = {
+      field: 'field_changed',
+      value: { object_id: '12', object_type: 'ad', changed_fields: ['effective_status'] },
+    }
+    await handleAdsWebhook({ object: 'ad_account', entry: [{ id: 'act_1', time: 1782862117, changes: [change] }] })
+    await handleAdsWebhook({ object: 'ad_account', entry: [{ id: 'act_1', time: 1782865717, changes: [change] }] })
     expect(notifyCalls).toHaveLength(2)
+  })
+
+  it("Meta's retry of the SAME entry is still suppressed", async () => {
+    const payload = {
+      object: 'ad_account',
+      entry: [
+        {
+          id: 'act_1',
+          time: 1782862117,
+          changes: [{ field: 'field_changed', value: { object_id: '13', object_type: 'ad', changed_fields: ['effective_status'] } }],
+        },
+      ],
+    }
+    await handleAdsWebhook(payload)
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+  })
+
+  it('a failed push does not burn the retry window', async () => {
+    // Meta retries the same entry; if the KV marker were stamped on attempt, that
+    // retry would be discarded and the alert lost for six hours.
+    deliveryFails = true
+    const payload = {
+      object: 'ad_account',
+      entry: [
+        {
+          id: 'act_1',
+          time: 1782870000,
+          changes: [{ field: 'ad_recommendations', value: { recommendation_hash: 'h7', ad_object_ids: ['3'] } }],
+        },
+      ],
+    }
+    await handleAdsWebhook(payload)
+    expect(notifyCalls).toHaveLength(1)
+
+    deliveryFails = false
+    const retry = await handleAdsWebhook(payload) // no manual kvStore reset
+    expect(retry.notified).toBe(1)
   })
 
   it('DB down → the owner still gets the push (fail-open)', async () => {
