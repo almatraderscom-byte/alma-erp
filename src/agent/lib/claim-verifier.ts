@@ -849,10 +849,17 @@ export function detectFalseToolUnavailability(
 // claim and must not match; the speak-first line says exactly that before every
 // tool call.
 
+const LIVE_SURFACE =
+  '(?:স্ক্রিন|screen|ক্যামেরা|camera|ব্রাউজার|browser|উইন্ডো|window|ট্যাব|tab|পেজ|page|ডেস্ক|desk|\\bmac\\b|ম্যাক|লাইভ|live)'
+
 const LIVE_OBSERVATION_CLAIM = new RegExp(
   [
-    // "…দেখা যাচ্ছে", "দেখা গেল", "দেখতে পাচ্ছি" — asserting sight, not intent.
-    'দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)', 'দেখতে\\s*পাচ্ছি',
+    // Sight, anchored to a LIVE surface (Codex P2). Bare "দেখা যাচ্ছে" also
+    // matched generated prose that observes nothing live — a caption
+    // "ছবিতে সূর্যাস্ত দেখা যাচ্ছে", a drafted "রিপোর্টে দেখা যাচ্ছে বিক্রি
+    // বেড়েছে" — and forced honest drafts into a retry.
+    `${LIVE_SURFACE}[^।!?\\n]{0,60}(?:দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)|দেখতে\\s*পাচ্ছি)`,
+    `(?:দেখা\\s*(?:যাচ্ছে|যায়|গেল|গেছে)|দেখতে\\s*পাচ্ছি)[^।!?\\n]{0,60}${LIVE_SURFACE}`,
     // "স্ক্রিনে … লেখা", "স্ক্রিনে … খোলা"
     'স্ক্রিনে[^।!?\\n]{0,60}(?:লেখা|খোলা|দেখা)',
     // "… খোলা আছে" / "… চালু আছে" ONLY next to a live surface (Codex P2): bare,
@@ -883,9 +890,13 @@ export function detectUngroundedObservation(
    * returns no image, so accepting an attempt would let "Maxstream-এর পেজ খোলা
    * আছে" ride on a failed look. Only a successful observation earns the claim.
    */
-  opts: { actionRequested: boolean; lookSucceeded: boolean; toolsAvailable: boolean },
+  opts: { lookSucceeded: boolean; toolsAvailable: boolean },
 ): ClaimViolation[] {
-  if (!opts.actionRequested || opts.lookSucceeded || !opts.toolsAvailable) return []
+  // NO `actionRequested` precondition (Codex P1). "স্ক্রিনে কী আছে?" is a
+  // question, not an order, and a tool-free "Chrome is open on your screen" is
+  // exactly as fabricated there. A sight claim needs a look whatever the mood of
+  // the sentence that prompted it.
+  if (opts.lookSucceeded || !opts.toolsAvailable) return []
   const text = replyText.trim()
   if (!text) return []
   const hit = text.match(LIVE_OBSERVATION_CLAIM)

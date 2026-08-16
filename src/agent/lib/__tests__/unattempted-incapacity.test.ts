@@ -163,8 +163,8 @@ describe('detectUngroundedObservation', () => {
     'বস, ম্যাক্সস্ট্রিমে আপনার Mac-এর লাইভ স্ক্রিনে কী দেখা যাচ্ছে তা দেখতে যাচ্ছি।\n\n'
     + 'বস, **Mac-এর লাইভ স্ক্রিনে Maxstream-এর পেজ খোলা আছে**—স্ক্রিনে "Maxell-Metac…" লেখা দেখা যাচ্ছে।'
 
-  const noLook = { actionRequested: true, lookSucceeded: false, toolsAvailable: true }
-  const looked = { actionRequested: true, lookSucceeded: true, toolsAvailable: true }
+  const noLook = { lookSucceeded: false, toolsAvailable: true }
+  const looked = { lookSucceeded: true, toolsAvailable: true }
 
   it('catches a live reading given without a look', () => {
     const v = detectUngroundedObservation(FABRICATED, noLook)
@@ -207,6 +207,17 @@ describe('detectUngroundedObservation', () => {
   it('stays quiet on an answer that claims no live sight at all', () => {
     expect(detectUngroundedObservation('বস, গত ৭ দিনে ০টি অর্ডার এসেছে।', noLook)).toEqual([])
     expect(detectUngroundedObservation('ধন্যবাদ Boss, নোট করে রাখলাম।', noLook)).toEqual([])
+  })
+
+  it('covers a look-only QUESTION too, not just an order (Codex P1)', () => {
+    // "স্ক্রিনে কী আছে?" is not an order, so actionRequested is false — and a
+    // tool-free "Chrome is open on your screen" is exactly as fabricated there.
+    expect(detectUngroundedObservation('বস, স্ক্রিনে Chrome খোলা আছে।', noLook)).toHaveLength(1)
+  })
+
+  it('does not fire on generated prose that observes nothing live (Codex P2)', () => {
+    expect(detectUngroundedObservation('ক্যাপশন: ছবিতে সূর্যাস্ত দেখা যাচ্ছে।', noLook)).toEqual([])
+    expect(detectUngroundedObservation('রিপোর্টে দেখা যাচ্ছে বিক্রি বেড়েছে।', noLook)).toEqual([])
   })
 
   it('catches the English shape', () => {

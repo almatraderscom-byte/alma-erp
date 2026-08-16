@@ -71,6 +71,8 @@ export const MAX_GROUNDING_FORCE_ROUNDS = 2
 export interface GroundingToolRecord {
   toolName: string
   status: string
+  /** Present for the operation check in hasSuccessfulLook. */
+  input?: unknown
 }
 
 /** True once a tool that could actually answer the question has succeeded. */
@@ -89,10 +91,31 @@ export function isGroundingSatisfied(records: readonly GroundingToolRecord[]): b
  * Matched by pattern as well as by name so a newly added camera/screenshot tool
  * is covered on the day it ships rather than the day someone remembers this list.
  */
-const OBSERVATION_TOOL_RE = /screenshot|snapshot|camera|desk_control|look_|_look|read_screen|browser_look|qc_inspect/i
+/**
+ * The OPERATION decides, not the name (Codex P1). `camera_speak` contains
+ * "camera" and only queues audio; `mac_desk_control` also does keep_awake,
+ * allow_sleep and power_status, none of which return an image. Matching on the
+ * name alone let a fabricated screen reading ride on any of them.
+ */
+const LOOK_ACTIONS: Record<string, ReadonlySet<string> | true> = {
+  mac_desk_control: new Set(['screenshot']),
+  look_mac_app: new Set(['tree', 'screenshot', 'scroll', 'session']),
+  get_office_camera_snapshot: true,
+  live_browser_look: true,
+  read_screenshot: true,
+  qc_inspect_photo: true,
+  get_staff_location: true,
+}
 
 export function hasSuccessfulLook(records: readonly GroundingToolRecord[]): boolean {
-  return records.some((r) => r.status === 'success' && OBSERVATION_TOOL_RE.test(r.toolName))
+  return records.some((r) => {
+    if (r.status !== 'success') return false
+    const allowed = LOOK_ACTIONS[r.toolName]
+    if (allowed === undefined) return false
+    if (allowed === true) return true
+    const action = (r.input as { action?: unknown } | undefined)?.action
+    return typeof action === 'string' && allowed.has(action)
+  })
 }
 
 /** The successful reads that did the grounding — persisted for measurement. */

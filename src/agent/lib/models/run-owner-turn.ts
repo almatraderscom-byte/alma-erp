@@ -2844,7 +2844,6 @@ async function* runAlternateProviderTurn(
           // the harder one to spot by reading — nothing in the reply looks wrong.
           if (violations.length === 0) {
             violations.push(...detectUngroundedObservation(iterationText.trim(), {
-              actionRequested: ownerRequirements.actionAttemptExpected,
               // A successful OBSERVATION, not merely a successful tool (Codex
               // P1, twice). A screenshot denied Screen Recording permission is a
               // substantive attempt that returns no image; a successful

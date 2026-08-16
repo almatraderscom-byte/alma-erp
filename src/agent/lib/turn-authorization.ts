@@ -120,9 +120,9 @@ const RECORDABLE_FACT_RE =
 // edge case. Punctuation and end-of-input are boundaries too. Widening this
 // makes every branch that consults it STRICTER — more input is treated as a
 // question, never less.
-const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
+const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কখন|কীভাবে|কিভাবে|কাকে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
 
-const BANGLA_QUESTION_WORD_RE = /(?:কি|কী|কেন|কেমন|কত|কবে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/gi
+const BANGLA_QUESTION_WORD_RE = /(?:কি|কী|কেন|কেমন|কত|কবে|কখন|কীভাবে|কিভাবে|কাকে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/gi
 
 /**
  * Is this Bangla text an ORDER, or a question that happens to use the same verb?

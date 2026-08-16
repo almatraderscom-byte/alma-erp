@@ -118,12 +118,23 @@ describe('hasSuccessfulLook (Codex P1, round 4)', () => {
   })
 
   it('is satisfied by the tools that actually look', () => {
-    for (const name of ['mac_desk_control', 'look_mac_app', 'get_office_camera_snapshot', 'live_browser_look']) {
+    expect(hasSuccessfulLook([{ toolName: 'mac_desk_control', status: 'success', input: { action: 'screenshot' } }])).toBe(true)
+    expect(hasSuccessfulLook([{ toolName: 'look_mac_app', status: 'success', input: { action: 'screenshot' } }])).toBe(true)
+    for (const name of ['get_office_camera_snapshot', 'live_browser_look']) {
       expect(hasSuccessfulLook([ok(name)]), name).toBe(true)
     }
   })
 
+  it('checks the OPERATION, not the name (Codex P1)', () => {
+    // camera_speak only queues audio; mac_desk_control also does keep_awake /
+    // allow_sleep / power_status. None of those return an image.
+    expect(hasSuccessfulLook([ok('camera_speak')])).toBe(false)
+    for (const action of ['keep_awake', 'allow_sleep', 'power_status']) {
+      expect(hasSuccessfulLook([{ toolName: 'mac_desk_control', status: 'success', input: { action } }]), action).toBe(false)
+    }
+  })
+
   it('does not count a look that FAILED — no image came back', () => {
-    expect(hasSuccessfulLook([failed('mac_desk_control')])).toBe(false)
+    expect(hasSuccessfulLook([{ toolName: 'mac_desk_control', status: 'error', input: { action: 'screenshot' } }])).toBe(false)
   })
 })
