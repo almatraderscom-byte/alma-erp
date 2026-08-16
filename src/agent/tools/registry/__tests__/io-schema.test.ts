@@ -23,8 +23,8 @@ const identity: ExecutionIdentity = { tenantId: 'alma', actorId: 'owner', workfl
 beforeEach(() => clearIoValidatorCache())
 
 describe('SPEC-074 coverage: every manifest inputSchemaId resolves', () => {
-  it('one schema per manifest (330)', () => {
-    expect(schemaCount()).toBe(330)
+  it('one schema per manifest (358)', () => {
+    expect(schemaCount()).toBe(358)
     for (const m of ALL_MANIFESTS) expect(hasSchema(m.io.inputSchemaId)).toBe(true)
   })
   it('schemaIds are sorted + unique', () => {

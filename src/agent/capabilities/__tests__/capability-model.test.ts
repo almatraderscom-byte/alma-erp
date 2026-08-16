@@ -28,8 +28,8 @@ function base(): Capability {
 }
 
 describe('SPEC-081 catalog integrity', () => {
-  it('63 capabilities, all valid, keys unique + sorted', () => {
-    expect(CAPABILITIES.length).toBe(63)
+  it('64 capabilities, all valid, keys unique + sorted', () => {
+    expect(CAPABILITIES.length).toBe(64)
     for (const c of CAPABILITIES) expect(() => capabilitySchema.parse(c)).not.toThrow()
     const keys = CAPABILITIES.map((c) => c.key)
     expect(new Set(keys).size).toBe(keys.length)
@@ -82,10 +82,10 @@ describe('SPEC-081 store fails closed on corruption', () => {
 })
 
 describe('SPEC-081 identity-enforced boundary', () => {
-  it('count returns 63', () => {
+  it('count returns 64', () => {
     const r = queryCapabilities({ identity, contractVersion: CAPABILITY_CONTRACT_VERSION, payload: { kind: 'count' } })
     expect(r.status).toBe('COMPLETED')
-    if (isSuccess(r) && r.value.kind === 'count') expect(r.value.count).toBe(63)
+    if (isSuccess(r) && r.value.kind === 'count') expect(r.value.count).toBe(64)
   })
   it('getByKey resolves a capability', () => {
     const r = queryCapabilities({ identity, contractVersion: CAPABILITY_CONTRACT_VERSION, payload: { kind: 'getByKey', key: 'finance' } })
