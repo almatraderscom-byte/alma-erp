@@ -155,12 +155,13 @@ export default function AdsEventInbox() {
       try {
         const res = await fetch(`${LIST_URL}/${focusId}`, { cache: 'no-store' })
         const data = (await res.json()) as { event?: AdsEvent }
-        if (data.event) {
-          setEvents((prev) => [data.event!, ...(prev ?? []).filter((e) => e.id !== data.event!.id)])
-          setOpenId(focusId)
-        }
+        if (!data.event) throw new Error('not_found')
+        setEvents((prev) => [data.event!, ...(prev ?? []).filter((e) => e.id !== data.event!.id)])
+        setOpenId(focusId)
       } catch {
-        // Nothing to show; the list still renders whatever else is open.
+        // Release the latch so a later list refresh can retry: a transient failure
+        // must not cost the owner the target of the notification he tapped.
+        if (focusHandled.current === focusId) focusHandled.current = null
       }
     })()
     // Only on first arrival with a focus id.

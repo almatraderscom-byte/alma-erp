@@ -318,7 +318,9 @@ struct AgentAdsEvent: Decodable, Equatable, Identifiable {
         }
     }
 
-    var isResolved: Bool { status == "actioned" || status == "dismissed" }
+    /// `logged` (a LOW fatigue reading) is history, not an item awaiting a
+    /// decision — it must not be counted as open or offered action buttons.
+    var isOpenItem: Bool { status == "new" || status == "seen" }
 
     /// One display block per ad object. Identity and live status are kept OUTSIDE
     /// the recommendation rows: a delivery-status or issue alert legitimately has
@@ -598,7 +600,7 @@ struct AgentGrowthScreen: View {
 
     // ── Meta সুপারিশ inbox — where the ads notifications land ──
 
-    private var adsOpenCount: Int { vm.adsEvents.filter { !$0.isResolved }.count }
+    private var adsOpenCount: Int { vm.adsEvents.filter(\.isOpenItem).count }
 
     @ViewBuilder private var adsInboxCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -652,7 +654,7 @@ struct AgentGrowthScreen: View {
             } label: {
                 HStack(alignment: .top, spacing: 9) {
                     Circle()
-                        .fill(event.isResolved ? AgentGrowthPalette.emerald400
+                        .fill(!event.isOpenItem ? AgentGrowthPalette.emerald400
                               : (event.tier >= 2 ? AgentGrowthPalette.amber400 : AgentGrowthPalette.sky400))
                         .frame(width: 8, height: 8).padding(.top, 5)
                     VStack(alignment: .leading, spacing: 3) {
@@ -663,8 +665,9 @@ struct AgentGrowthScreen: View {
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
-                            if event.isResolved {
-                                Text(event.status == "actioned" ? "করা হয়েছে" : "দরকার নেই")
+                            if !event.isOpenItem {
+                                Text(event.status == "actioned" ? "করা হয়েছে"
+                                     : event.status == "dismissed" ? "দরকার নেই" : "শুধু রেকর্ড")
                                     .font(.system(size: 9, weight: .semibold))
                                     .foregroundStyle(AgentGrowthPalette.emerald600)
                             }
@@ -730,7 +733,7 @@ struct AgentGrowthScreen: View {
                 }
 
                 HStack(spacing: 8) {
-                    if !event.isResolved {
+                    if event.isOpenItem {
                         Button {
                             Task { await vm.decideAdsEvent(event.id, status: "actioned") }
                         } label: {
