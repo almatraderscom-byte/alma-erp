@@ -549,7 +549,16 @@ export class OpenAiAdapter implements ProviderAdapter {
             console.warn(
               `[openai-adapter] ${args.apiModel} rate-limited — retrying in ${retryDelay}s (attempt ${attempt + 1})`,
             )
-            await new Promise((resolve) => setTimeout(resolve, retryDelay * 1000))
+            // Abortable sleep (Codex P2): the owner cancelling the turn must
+            // not sit behind a rate-limit wait.
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, retryDelay * 1000)
+              args.signal?.addEventListener('abort', () => {
+                clearTimeout(timer)
+                resolve()
+              }, { once: true })
+            })
+            if (args.signal?.aborted) throw err
             continue
           }
           console.warn(
