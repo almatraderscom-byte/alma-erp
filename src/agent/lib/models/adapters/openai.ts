@@ -717,8 +717,8 @@ export class OpenAiAdapter implements ProviderAdapter {
           // outage must not read as parameter incompatibility and descend).
           const status = (err as { status?: number })?.status
           const message = err instanceof Error ? err.message : String(err)
-          const transient = (typeof status === 'number' && status >= 500)
-            || /ECONNRESET|ETIMEDOUT|fetch failed|Connection error|network/i.test(message)
+          const transient = (typeof status === 'number' && (status >= 500 || status === 408 || status === 409))
+            || /ECONNRESET|ETIMEDOUT|fetch failed|Connection error|network|timed? ?out/i.test(message)
           const rlDelay = rateLimitRetryDelaySeconds(err) ?? (transient ? 1.5 : null)
           if (rlDelay == null) throw err
           if (attempt >= 2) throw err // exhausted — surface, never descend
