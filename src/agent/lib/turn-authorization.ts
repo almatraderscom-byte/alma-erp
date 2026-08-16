@@ -119,7 +119,13 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
     BARE_CONTINUATION_RE.test(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
-    || BANGLA_IMPERATIVE_RE.test(t)
+    // Guarded by QUESTION_RE, unlike its Banglish twin (Codex P1). In Bengali the
+    // familiar 2nd-person present and the imperative are the SAME form, so
+    // "তুমি প্রতিদিন কী করো?" ("what do you do every day?") and "তুমি কেন ওকে
+    // থামাও?" carry করো / থামাও without ordering anything. Token boundaries fix
+    // compound words; they cannot fix grammar. The guard follows the pattern the
+    // two branches below already use.
+    || (!QUESTION_RE.test(t) && BANGLA_IMPERATIVE_RE.test(t))
     || ENGLISH_IMPERATIVE_RE.test(t)
   ) {
     return { allowMutations: true, reason: 'explicit_action' }

@@ -65,6 +65,26 @@ describe('what must still NOT be an order', () => {
     }
   })
 
+  // Codex P1 (second round): in Bengali the familiar 2nd-person present and the
+  // imperative are the SAME form, so a token boundary cannot separate them —
+  // only the question shape can.
+  it('does not read a question as an order when the verb form is shared with the present tense', () => {
+    for (const msg of [
+      'তুমি প্রতিদিন কী করো?',      // করো = "do you do", not "do it"
+      'তুমি কেন ওকে থামাও?',        // থামাও = "do you stop"
+      'তুমি আমাকে কী দেখাও?',       // দেখাও = "do you show"
+      'ওরা কেমন কাজ করো বলে মনে হয়?',
+    ]) {
+      expect(allows(msg), msg).toBe(false)
+    }
+  })
+
+  it('still lets a plain order through — the guard is the question, not the verb', () => {
+    // The two messages verified live on the preview carry no question marker.
+    expect(allows('ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।')).toBe(true)
+    expect(allows('ক্যামেরা দেখাও')).toBe(true)
+  })
+
   it('leaves out forms a boundary cannot disambiguate from nouns', () => {
     // বানান = spelling, চালান = invoice, খোল = husk. Excluded rather than
     // tokenised: no boundary can tell these from the imperative.
