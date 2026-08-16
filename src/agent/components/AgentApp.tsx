@@ -812,6 +812,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     if (msgRes.ok) {
       const rows: MessageRow[] = await msgRes.json()
       applyServerMessages(rows)
+      // Reading here must clear the phone's unread badge too — otherwise a reply
+      // he read on the web keeps counting on iOS until he opens it there again.
+      // `upTo` is the newest row actually rendered, so a reply landing mid-load
+      // stays unread.
+      const upTo = rows.reduce<string | null>(
+        (max, r) => (r.createdAt && (!max || r.createdAt > max) ? r.createdAt : max),
+        null,
+      )
+      void fetch(`/api/assistant/conversations/${conv.id}/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upTo }),
+      }).catch(() => { /* the badge is not worth a visible error here */ })
     }
 
     if (artRes.ok) setArtifacts(await artRes.json())

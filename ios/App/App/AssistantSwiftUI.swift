@@ -333,6 +333,9 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     var permissionMode: String?
     var pinnedSkill: String?
     var updatedAt: String?
+    /// The agent wrote in this chat after Boss last opened it. Server-computed —
+    /// his own messages never set it.
+    var unread: Bool?
 }
 
 /// Existing `/api/assistant/skills` owner-session contract. Only rows that the
@@ -3770,6 +3773,9 @@ final class AssistantVM {
     let voiceEngine = AlmaVoiceEngine()
     var showVoice = false
     var conversations: [AgentConversation] = []
+    /// Chats with something Boss has not seen — the number on the history button.
+    /// Whole-table count from the server, not just the page the sidebar holds.
+    var unreadConversationCount = 0
     var archivedConversations: [AgentConversation] = []
     private var pinnedOverrides: [String: Bool] = [:]
     var conversationsCursor: String?
@@ -4635,6 +4641,9 @@ final class AssistantVM {
                 AlmaTurnLog.event("turn.foreground")
                 self.resumePendingAttachmentUploads()
                 await self.recoverTurnState(trigger: "foreground")
+                // Coming back is exactly when chats may have gone unread while
+                // he was away — that is what the badge is for.
+                await self.refreshUnreadCount()
             }
         })
         lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification,
@@ -4718,6 +4727,10 @@ final class AssistantVM {
                 if committed {
                     sessionSurface = .readyConversation(conversationId: cid)
                     await loadArtifacts()
+                    // Cold launch restores the active chat through THIS path, not
+                    // openConversation — without this, a reply that arrived while
+                    // the app was closed stays counted even as he reads it.
+                    await markConversationRead(cid)
                     await recoverTurnState(trigger: "bootstrap")
                 } else {
                     // The pointer resolved but the history request failed —
@@ -4978,6 +4991,10 @@ final class AssistantVM {
         if !fresh.isEmpty {
             AlmaTurnLog.event("sync.deltaNew", "\(fresh.count)")
             await loadMessages()   // one windowed refresh folds them in with full pairing
+            // A reply written elsewhere (approval execution, Telegram, a long job)
+            // just landed in the chat he is LOOKING at — it is read, and must not
+            // come back as a badge when he switches away.
+            await markActiveConversationRead()
         }
     }
 
@@ -5482,6 +5499,10 @@ final class AssistantVM {
             mergeServerMessages(wire)
             scheduleGeneratedImageQCRefresh()
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
+            // AFTER the merge: the live `stream-*` row carries no createdAt, so
+            // marking read before this would send the PREVIOUS message's stamp and
+            // the returned count would still include the reply he just watched.
+            await markActiveConversationRead()
         }
         guard streamTaskGeneration == expectedGeneration,
               selectedSessionIdentity == expectedSessionIdentity,
@@ -5530,6 +5551,11 @@ final class AssistantVM {
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
                 if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
+                // Chats OTHER than the open one go unread while he sits here —
+                // background jobs and Telegram turns land somewhere. Without this
+                // the badge only moved on a lifecycle transition. Every 5th tick
+                // (~60s) keeps it honest without a per-12s query.
+                if tick % 5 == 0 { await self.refreshUnreadCount() }
                 // Stall watchdog — a silently-dead mid-turn socket (no error, no
                 // events) previously hung "কাজ করছি…" forever: every recovery
                 // trigger bailed because isStreaming looked healthy. Marking it
@@ -5857,6 +5883,7 @@ final class AssistantVM {
         }
         reconnecting = false
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        await markActiveConversationRead()
         if terminalStatus != "error" {
             AlmaAgentTickHaptic.turnCompleted()
         }
@@ -5910,6 +5937,47 @@ final class AssistantVM {
 
     // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
 
+    // ── Unread badge ──────────────────────────────────────────────────────────
+
+    private struct UnreadCountResponse: Decodable { let count: Int }
+
+    /// Cheap poll for the badge: one integer, no conversation list attached.
+    /// The chat he is CURRENTLY looking at is read first — a reply that arrived
+    /// while he watched it must never come back as a badge.
+    func refreshUnreadCount() async {
+        await markActiveConversationRead()
+        guard let resp: UnreadCountResponse = try? await AlmaAPI.shared.getQuietAuth(
+            "/api/assistant/conversations/unread") else { return }
+        unreadConversationCount = resp.count
+    }
+
+    /// Advance the watermark of the open chat to what is on screen right now.
+    /// Called when a turn settles, so a reply he WATCHED arrive is already read.
+    func markActiveConversationRead() async {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        await markConversationRead(cid)
+    }
+
+    /// Opening a chat reads it. Optimistic locally so the badge drops instantly,
+    /// then reconciled with the server's own count.
+    ///
+    /// Marks read only UP TO the newest message actually on screen: a reply a
+    /// background job writes between the history fetch and this call must stay
+    /// unread, because Boss never saw it.
+    func markConversationRead(_ id: String) async {
+        if let idx = conversations.firstIndex(where: { $0.id == id }), conversations[idx].unread == true {
+            conversations[idx].unread = false
+            unreadConversationCount = max(0, unreadConversationCount - 1)
+        }
+        struct MarkReadRequest: Encodable { let upTo: String? }
+        struct MarkReadResponse: Decodable { let ok: Bool?; let count: Int? }
+        let upTo = messages.compactMap(\.createdAt).max()
+        guard let resp: MarkReadResponse = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/conversations/\(id)/read",
+            body: MarkReadRequest(upTo: upTo)) else { return }
+        if let count = resp.count { unreadConversationCount = count }
+    }
+
     func loadConversations() async {
         loadingConversations = conversations.isEmpty
         defer { loadingConversations = false }
@@ -5917,6 +5985,10 @@ final class AssistantVM {
             let page: AgentConversationsPage = try await AlmaAPI.shared.get(
                 "/api/assistant/conversations", query: ["paginated": "true", "limit": "30"])
             conversations = page.conversations.filter { $0.archived != true }
+            // The chat he is looking at right now is never unread.
+            if let cid = conversationId, let idx = conversations.firstIndex(where: { $0.id == cid }) {
+                conversations[idx].unread = false
+            }
             if let cid = conversationId,
                let active = conversations.first(where: { $0.id == cid }) {
                 conversationTitle = active.title?.isEmpty == false ? active.title! : "ALMA AI"
@@ -6243,6 +6315,7 @@ final class AssistantVM {
             await loadArtifacts()
             let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                                 body: ["conversationId": id])
+            await markConversationRead(id)
             await recoverTurnState(trigger: "openConversation")
             scheduleQueuedOwnerMessage()
         } else {
@@ -20348,19 +20421,23 @@ struct AgentSideDrawer: View {
             Task { await vm.openConversation(c.id) }
             close()
         } label: {
+            // Unread = the agent answered in this chat while he was elsewhere.
+            let unread = c.unread == true && !active
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(c.title?.isEmpty == false ? c.title! : "(শিরোনাম নেই)")
-                        .font(.system(size: 14, weight: active ? .semibold : .regular))
+                        .font(.system(size: 14, weight: active || unread ? .semibold : .regular))
                         .foregroundStyle(active ? AgentPalette.coral : pal.ink)
                         .lineLimit(1)
-                    Text(shortDate(c.updatedAt))
+                    Text(unread ? "\(shortDate(c.updatedAt)) · নতুন উত্তর" : shortDate(c.updatedAt))
                         .font(.system(size: 11))
-                        .foregroundStyle(pal.muted)
+                        .foregroundStyle(unread ? AgentPalette.coral : pal.muted)
                 }
                 Spacer(minLength: 0)
                 if active {
                     Circle().fill(AgentPalette.coral).frame(width: 6, height: 6)
+                } else if unread {
+                    Circle().fill(Color.red).frame(width: 8, height: 8)
                 }
             }
             .contentShape(Rectangle())
@@ -24277,6 +24354,8 @@ struct AssistantScreen: View {
                 models: vm.models, selectedId: vm.modelId,
                 onSelect: { vm.selectModel($0) })
             barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
+            barHooks.updateUnreadBadge(vm.unreadConversationCount)
+            Task { await vm.refreshUnreadCount() }
             barHooks.isPinned = { vm.currentConversationPinned }
             barHooks.hasProject = { vm.currentProjectId != nil }
             barHooks.canMutateConversation = { !vm.conversationMutationBlocked }
@@ -24717,6 +24796,9 @@ struct AssistantScreen: View {
         .onChange(of: vm.modelPillLabel) { _, label in
             barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
         }
+        .onChange(of: vm.unreadConversationCount) { _, count in
+            barHooks.updateUnreadBadge(count)
+        }
         .onChange(of: vm.models) { _, models in
             barHooks.installModelMenu(
                 models: models, selectedId: vm.modelId,
@@ -24935,11 +25017,52 @@ final class AssistantModelPillButton: UIButton {
     }
 }
 
+/// Red count pill for unread chats, styled like the tab-bar badges the owner
+/// already reads (Approvals) so the meaning is obvious without a legend.
+@MainActor
+final class AssistantUnreadBadge: UIView {
+    static let viewTag = 8801
+    private let label = UILabel()
+
+    init() {
+        super.init(frame: .zero)
+        tag = Self.viewTag
+        translatesAutoresizingMaskIntoConstraints = false
+        isUserInteractionEnabled = false          // the whole disc stays tappable
+        backgroundColor = UIColor.systemRed
+        layer.cornerRadius = 8
+        layer.borderWidth = 1.5
+        layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 10, weight: .bold)
+        label.textColor = .white
+        label.textAlignment = .center
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 16),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setCount(_ count: Int) {
+        label.text = count > 99 ? "99+" : "\(count)"
+        accessibilityLabel = "\(count)টি চ্যাটে নতুন বার্তা"
+    }
+}
+
 @MainActor
 final class AssistantBarHooks: NSObject {
     var onMenu: (() -> Void)?
     var onNewChat: (() -> Void)?
     weak var modelButton: AssistantModelPillButton?
+    /// The chat-history disc, so the unread badge can ride on it.
+    weak var historyButton: UIView?
     var isPinned: (() -> Bool)?
     var hasProject: (() -> Bool)?
     var canMutateConversation: (() -> Bool)?
@@ -24963,6 +25086,27 @@ final class AssistantBarHooks: NSObject {
     }
     func updateModelLabel(_ label: String, enabled: Bool) {
         modelButton?.update(label: label, enabled: enabled)
+    }
+
+    /// Unread-chat count on the history (hamburger) disc. 0 hides it entirely —
+    /// a permanent empty dot would train him to ignore the badge.
+    func updateUnreadBadge(_ count: Int) {
+        guard let host = historyButton else { return }
+        let existing = host.viewWithTag(AssistantUnreadBadge.viewTag) as? AssistantUnreadBadge
+        guard count > 0 else { existing?.removeFromSuperview(); return }
+        if let existing {
+            existing.setCount(count)
+            return
+        }
+        let badge = AssistantUnreadBadge()
+        badge.setCount(count)
+        host.addSubview(badge)
+        NSLayoutConstraint.activate([
+            // INSIDE the disc's 36×36 bounds: a nav-bar custom view clips whatever
+            // overhangs, which sliced the badge into a square wedge.
+            badge.centerXAnchor.constraint(equalTo: host.trailingAnchor, constant: -8),
+            badge.centerYAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+        ])
     }
 
     func installModelMenu(
@@ -25113,6 +25257,7 @@ extension AlmaTabBarController {
             let history = AlmaWebTabViewController.glassBarButton(
                 icon: "line.3.horizontal", label: "চ্যাট হিস্টরি", target: hooks, action: #selector(AssistantBarHooks.menuTapped),
                 light: !AlmaTheme.isDark)
+            hooks.historyButton = history.customView   // carries the unread badge
             let modelButton = AssistantModelPillButton()
             hooks.modelButton = modelButton
             host.navigationItem.leftBarButtonItems = [history, UIBarButtonItem(customView: modelButton)]

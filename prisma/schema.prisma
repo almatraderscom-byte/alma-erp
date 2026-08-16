@@ -2068,6 +2068,9 @@ model AgentConversation {
   pinned             Boolean         @default(false)
   summarizedAt       DateTime?       @map("summarized_at")
   lastMessageAt      DateTime?       @map("last_message_at")
+  /// When Boss last OPENED this chat. Unread = the agent wrote after this
+  /// moment; his own messages never make a chat unread. NULL = never opened.
+  lastReadAt         DateTime?       @map("last_read_at")
   totalCostUsd       Float           @default(0) @map("total_cost_usd")
   contextSummary     String?         @map("context_summary")
   compactedToId      String?         @map("compacted_to_id")

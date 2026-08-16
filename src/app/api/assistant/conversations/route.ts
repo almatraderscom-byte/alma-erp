@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { AUTO_MODEL_ID } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
+import { unreadConversationIds } from '@/agent/lib/conversation-unread'
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -99,11 +100,21 @@ export async function GET(req: NextRequest) {
       pinned: true,
       createdAt: true,
       updatedAt: true,
+      lastReadAt: true,
     },
   })
 
   const hasMore = conversations.length > take
-  const page = hasMore ? conversations.slice(0, take) : conversations
+  const rawPage = hasMore ? conversations.slice(0, take) : conversations
+
+  // Unread = the agent wrote after Boss last opened this chat. Resolved for the
+  // whole page in one grouped query.
+  const unread = await unreadConversationIds(
+    rawPage.map((c) => c.id),
+    new Map(rawPage.map((c) => [c.id, c.lastReadAt])),
+  ).catch(() => new Set<string>())
+  const page = rawPage.map(({ lastReadAt: _lastReadAt, ...c }) => ({ ...c, unread: unread.has(c.id) }))
+
   const last = page[page.length - 1]
   const nextCursor = hasMore && last
     ? `${last.pinned ? '1' : '0'}_${last.updatedAt.toISOString()}_${last.id}`
