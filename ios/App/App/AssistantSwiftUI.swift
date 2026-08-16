@@ -15043,6 +15043,33 @@ struct AgentThoughtProcessSheet: View {
         }
     }
 
+    /// Owner ask 2026-08-16: the REPLY types out live, but the thought pane
+    /// filled in whole blocks — providers emit reasoning line-wise (the
+    /// plumbing filter holds until newline) or in one lump, so the text
+    /// "appears" instead of streaming. This reveals only the APPENDED suffix
+    /// progressively; finished turns render instantly.
+    @available(iOS 17.0, *)
+    private struct AlmaTypewriterText: View {
+        let text: String
+        let live: Bool
+        @State private var revealed = 0
+
+        var body: some View {
+            Text(String(text.prefix(revealed)))
+                .task(id: "\(live)|\(text.count)") {
+                    guard live else { revealed = text.count; return }
+                    if revealed > text.count { revealed = text.count } // trace replaced
+                    while revealed < text.count, !Task.isCancelled {
+                        // ~45fps × 3 chars ≈ 135 chars/s — faster than any
+                        // provider sustains, so the pane never falls behind;
+                        // Character-based prefix keeps Bangla clusters whole.
+                        try? await Task.sleep(nanoseconds: 22_000_000)
+                        revealed = min(text.count, revealed + 3)
+                    }
+                }
+        }
+    }
+
     @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
         // Row-scoped slice first (this step's OWN thought / the tapped text);
         // whole-trace fallback for the settled-summary header path.
@@ -15058,7 +15085,8 @@ struct AgentThoughtProcessSheet: View {
                 .padding(.vertical, 24)
         } else {
             // Claude iOS: the thought is plain prose on the sheet — no box around it.
-            Text(prose)
+            // Live turns type out (owner ask 2026-08-16); settled turns render whole.
+            AlmaTypewriterText(text: prose, live: message.isStreaming)
                 .font(.system(size: 16))
                 .foregroundStyle(pal.ink.opacity(0.92))
                 .lineSpacing(6)
