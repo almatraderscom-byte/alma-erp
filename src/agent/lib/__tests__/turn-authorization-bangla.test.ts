@@ -1,136 +1,79 @@
 /**
- * Script parity for the authorization gate (owner incident 2026-08-15).
+ * The Mac screenshot on a Bangla turn (owner incident 2026-08-15).
  *
- * `BANGLISH_IMPERATIVE_RE` already granted dekhao/dekhaw/dekho; the Bangla
- * spellings were missing, so the same request got opposite permission depending
- * on which keyboard the owner used. Every pair below is the same sentence twice.
+ * `mac_desk_control` is write-class, so on a turn the gate read as
+ * `information_only` it was stripped before the head ever saw it — and every
+ * Bangla phrasing of "দেখাও" landed there while the Banglish "dekhaw" did not.
+ *
+ * The first fix tried to teach this file Bengali. Six review rounds found eleven
+ * P1s in it (দিবে is also the future tense, নাও is also a boat, and the familiar
+ * 2nd-person present is spelled exactly like the imperative), so the classifier
+ * was deleted and the ONE tool it existed for was put on OWNER_SERVICE_TOOLS.
+ * These tests pin that outcome: the language stays undecided, the tool arrives
+ * anyway, and nothing else about the gate moved.
  */
 import { describe, it, expect } from 'vitest'
-import { deriveOwnerTurnAuthorization } from '../turn-authorization'
+import { deriveOwnerTurnAuthorization, isToolAllowedForOwnerTurn } from '../turn-authorization'
 
-const allows = (t: string) => deriveOwnerTurnAuthorization(t).allowMutations
+const auth = (t: string) => deriveOwnerTurnAuthorization(t)
+const allowsTool = (t: string, tool: string) => isToolAllowedForOwnerTurn(tool, auth(t))
 
-describe('Bangla and Banglish imperatives agree', () => {
-  const pairs: Array<[string, string]> = [
-    ['Mac live dekhaw', 'ম্যাক লাইভ দেখাও'],
-    ['camera dekhao', 'ক্যামেরা দেখাও'],
-    ['message pathaw', 'মেসেজ পাঠাও'],
-    ['browser kholo', 'ব্রাউজার খোলো'],
-    ['report banao', 'রিপোর্ট বানাও'],
-  ]
-  for (const [banglish, bangla] of pairs) {
-    it(`"${bangla}" is an order, exactly like "${banglish}"`, () => {
-      expect(allows(banglish), banglish).toBe(true)
-      expect(allows(bangla), bangla).toBe(true)
-    })
-  }
+describe('the screenshot survives a Bangla turn without any grammar guessing', () => {
+  it('reaches the head on the exact message that failed for a whole session', () => {
+    const msg = 'ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।'
+    // The gate still calls it information_only — deliberately. We stopped trying
+    // to argue with that and exempted the tool instead.
+    expect(auth(msg).allowMutations).toBe(false)
+    expect(allowsTool(msg, 'mac_desk_control')).toBe(true)
+  })
 
-  it('unblocks the exact message that failed for a whole session', () => {
-    expect(allows('ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।')).toBe(true)
-    expect(allows('স্ক্রিনশট নাও')).toBe(true)
+  it('reaches the head on a plain question too', () => {
+    for (const msg of ['স্ক্রিনে কী আছে?', 'ম্যাকে কী চলছে', 'তুমি প্রতিদিন কী করো?']) {
+      expect(allowsTool(msg, 'mac_desk_control'), msg).toBe(true)
+    }
+  })
+
+  it('is not needed for the look tools that were already read-class', () => {
+    const msg = 'ক্যামেরা দেখাও'
+    for (const tool of ['get_office_camera_snapshot', 'look_mac_app', 'live_browser_look']) {
+      expect(allowsTool(msg, tool), tool).toBe(true)
+    }
   })
 })
 
-describe('what must still NOT be an order', () => {
-  it('an explicit no-action instruction still wins', () => {
-    // EXPLICIT_NO_ACTION_RE is checked first, so it survives the new branch.
-    expect(allows('শুধু বলো, কিছু কোরো না')).toBe(false)
-  })
+describe('what the exemption must NOT have opened', () => {
+  const question = 'গত মাসের বিক্রি কেমন ছিল'
 
-  it('a bare statement with no imperative stays information-only', () => {
-    expect(allows('আজকে অফিসের অবস্থা ভালো ছিল')).toBe(false)
-    expect(allows('গত মাসের বিক্রি কেমন ছিল')).toBe(false)
-  })
-
-  it('does not fire on inflected non-imperatives that merely contain the stem', () => {
-    // The reason bare করে / দেখা are excluded: no \b for Bengali in JS regex, so
-    // a bare stem would turn "it is not showing me" into an order.
-    expect(allows('এটা আমাকে দেখাচ্ছে না')).toBe(false)
-    expect(allows('আমি কাজটা করছি')).toBe(false)
-  })
-
-  // Codex P1: an unbounded alternation substring-matches inside ordinary words,
-  // and this branch runs BEFORE the question guard — so these plain questions
-  // would have shipped every write-class tool.
-  it('does not read an imperative out of the middle of an ordinary word', () => {
-    for (const msg of [
-      'প্রতিদিন বিক্রি কেমন?',   // দিন
-      'সেদিন কী হয়েছিল?',        // দিন
-      'শেষ লেনদেন কত ছিল?',      // দেন
-      'গত ৭ দিনের অর্ডার কত?',   // দিন
-      'করোনার সময় কী হয়েছিল?',  // করো
-      'আমাকে জানাও নি কেন?',     // নাও — inside জানাও
-    ]) {
-      expect(allows(msg), msg).toBe(false)
+  it('leaves every other write-class tool stripped on the same turn', () => {
+    expect(auth(question).allowMutations).toBe(false)
+    // Write-class only. `post_to_facebook` and `run_mac_command` are STAGE —
+    // they merely draw an approval card, and the gate deliberately keeps those
+    // on an information_only turn.
+    for (const tool of ['send_whatsapp', 'camera_speak']) {
+      expect(allowsTool(question, tool), tool).toBe(false)
     }
   })
 
-  // Codex P1 (second round): in Bengali the familiar 2nd-person present and the
-  // imperative are the SAME form, so a token boundary cannot separate them —
-  // only the question shape can.
-  it('does not read a question as an order when the verb form is shared with the present tense', () => {
-    for (const msg of [
-      'তুমি প্রতিদিন কী করো?',      // করো = "do you do", not "do it"
-      'তুমি কেন ওকে থামাও?',        // থামাও = "do you stop"
-      'তুমি আমাকে কী দেখাও?',       // দেখাও = "do you show"
-      'ওরা কেমন কাজ করো বলে মনে হয়?',
-    ]) {
-      expect(allows(msg), msg).toBe(false)
+  it('still honours an explicit stop — "কিছু কোরো না" is the one thing that wins', () => {
+    // explicit_no_action is checked first and strips stage tools too. The
+    // exemption list is consulted before mode, so the screenshot survives even
+    // here; that is the same standing as ask_user and the pairing tools.
+    const stop = 'শুধু বলো, কিছু কোরো না'
+    expect(auth(stop).reason).toBe('explicit_no_action')
+    for (const tool of ['post_to_facebook', 'send_whatsapp', 'run_mac_command']) {
+      expect(allowsTool(stop, tool), tool).toBe(false)
     }
   })
 
-  it('still lets a plain order through — the guard is the question, not the verb', () => {
-    // The two messages verified live on the preview carry no question marker.
-    expect(allows('ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।')).toBe(true)
-    expect(allows('ক্যামেরা দেখাও')).toBe(true)
+  it('leaves the Banglish path exactly as it was', () => {
+    expect(auth('Mac live dekhaw').allowMutations).toBe(true)
+    expect(auth('message pathaw').allowMutations).toBe(true)
   })
 
-  // Codex P1 (third round): QUESTION_RE required whitespace after a Bengali
-  // interrogative, so a sentence-FINAL question word never matched — and Bengali
-  // questions routinely end on it, often with no question mark at all.
-  it('reads a question whose interrogative is sentence-final', () => {
-    for (const msg of ['তুমি করো কী', 'তুমি করো কী।', 'ম্যাক লাইভ দেখাও কেন', 'অর্ডার কত']) {
-      expect(allows(msg), msg).toBe(false)
+  it('does not turn ordinary Bangla statements into orders', () => {
+    // The eleven-P1 class, now unreachable because nothing reads these words.
+    for (const msg of ['সে আমাকে টাকা দিবে', 'নাও ডুবে গেছে', 'প্রতিদিন বিক্রি কেমন?', 'শেষ লেনদেন কত ছিল?']) {
+      expect(auth(msg).allowMutations, msg).toBe(false)
     }
-  })
-
-  // Codex P2: the Banglish list already carried de / dibi / dibe / dis / korbi /
-  // cholo, so leaving their Bangla spellings out kept the very split this regex
-  // exists to close.
-  it('covers the তুই/তুমি forms its Banglish twin already granted', () => {
-    for (const [banglish, bangla] of [
-      ['pair code de', 'পেয়ার কোড দে'],
-      ['ekhon korbi', 'এখন করবি'],
-      ['cholo start kori', 'চলো শুরু করি'],
-    ] as Array<[string, string]>) {
-      expect(allows(banglish), banglish).toBe(true)
-      expect(allows(bangla), bangla).toBe(true)
-    }
-  })
-
-  // Codex P1 (round 4): a blanket question guard also rejected commands whose
-  // OBJECT is an embedded question — the phrasing the system prompt itself uses.
-  // Bengali is verb-final, so position separates the two cases.
-  it('keeps an order whose object is an embedded question', () => {
-    for (const msg of ['স্ক্রিনে কী আছে দেখো', 'ক্যামেরায় কী আছে দেখাও', 'অফিসে কারা আছে দেখাও']) {
-      expect(allows(msg), msg).toBe(true)
-    }
-  })
-
-  it('still rejects the question, where the interrogative comes last', () => {
-    for (const msg of ['তুমি করো কী', 'তুমি দেখাও কী।', 'ম্যাক লাইভ দেখাও কেন']) {
-      expect(allows(msg), msg).toBe(false)
-    }
-  })
-
-  it('an explicit question mark ends it either way', () => {
-    expect(allows('স্ক্রিনে কী আছে দেখো?')).toBe(false)
-  })
-
-  it('leaves out forms a boundary cannot disambiguate from nouns', () => {
-    // বানান = spelling, চালান = invoice, খোল = husk. Excluded rather than
-    // tokenised: no boundary can tell these from the imperative.
-    expect(allows('এই শব্দের বানান কী?')).toBe(false)
-    expect(allows('চালান নম্বর কত?')).toBe(false)
   })
 })

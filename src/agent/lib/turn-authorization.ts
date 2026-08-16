@@ -35,43 +35,14 @@ const BARE_CONTINUATION_RE =
 const BANGLISH_IMPERATIVE_RE =
   /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|ban(?:ao|aw|au)|bana|chal(?:ao|aw)|cal(?:ao|aw)|chala|chol(?:ao|aw)|cholo|path(?:ao|aw)|pat(?:ao|aw)|kholo|khulo|khol|dekh(?:ao|aw|o)|lag(?:ao|aw)|tham(?:ao|aw)|bondho|chalu|generate)\b/i
 
-// The SAME words, in the owner's other script. `BANGLISH_IMPERATIVE_RE` above
-// already grants `dekhao` / `dekhaw` / `dekho` — added after live incidents where
-// reading them as information-only stripped the very tools the sentence named.
-// The Bangla spellings were never added, so script alone decided the answer:
-//
-//   "Mac live dekhaw"                      → explicit_action  → write tools shipped
-//   "ম্যাক্সস্ট্রিমে ওখানে লাইভ দেখাও আমাকে।"       → information_only → write tools stripped
-//
-// That is the whole Mac saga of 2026-08-15. `mac_desk_control` is write-class on
-// purpose (a full-desk screenshot is sensitive), so on the Bangla phrasing it was
-// never callable — the head then invented reasons, and the owner, reasonably,
-// read that as the agent being unreliable. Same request, same intent, opposite
-// permission, decided by keyboard layout. Also silently hit "ক্যামেরা দেখাও" and
-// "স্ক্রিনশট নাও".
-//
-// Scoped deliberately to the Bangla spellings of verbs the Banglish list ALREADY
-// grants — this removes an inconsistency, it does not open a new class of action.
-//
-// TOKEN BOUNDARIES ARE LOAD-BEARING (Codex P1). `\b` is ASCII-only in JS, so a
-// bare alternation substring-matches inside ordinary words and would authorize
-// writes on a plain question: দিন inside প্রতিদিন / সেদিন, দেন inside লেনদেন,
-// নাও inside জানাও, করো inside করোনা. The Bengali-block lookaround below is what
-// makes each alternative a whole token. Bare stems (কর, দেখা) stay out entirely —
-// even tokenised they would fire on করছি / দেখাচ্ছে.
-//
-// Ambiguous forms are excluded rather than tokenised, because a boundary cannot
-// tell a noun from an imperative: বানান (spelling), চালান (invoice), দিন (day),
-// দেন (he gives), খোল (husk). The owner writes the informal imperative anyway.
-//
-// The তুই/তুমি forms (দে, দিবি, দিবে, দিস, করবি, চলো) are here because the
-// Banglish list already carries de/dibi/dibe/dis/korbi/cholo — leaving them out
-// meant "pair code de" was an order and "পেয়ার কোড দে" was not, which is the
-// very split this regex exists to close (Codex P2).
-const BN = '\\u0980-\\u09FF'
-const BANGLA_IMPERATIVE_RE = new RegExp(
-  `(?<![${BN}])(?:দাও|দিও|দে|দিবি|দিবে|দিস|করো|কোরো|করুন|করবি|বানাও|চালাও|চলো|পাঠাও|খোলো|খুলুন|দেখাও|দেখান|দেখো|দেখুন|নাও|নিন|লাগাও|থামাও)(?![${BN}])`,
-)
+// NOTE on Bangla imperatives: there is deliberately no Bangla counterpart to
+// BANGLISH_IMPERATIVE_RE above. One was written (2026-08-16) and removed the same
+// day: six review rounds found eleven P1s in it, because "order or question" in
+// Bengali is a semantic call, not a lexical one — দিবে is also the future tense,
+// নাও is also a boat, and the familiar 2nd-person present is spelled exactly like
+// the imperative. The single tool it was needed for now sits in
+// OWNER_SERVICE_TOOLS instead. If a future case needs this again, put the tool on
+// that list rather than teaching this file grammar.
 
 const EXPLICIT_ACTION_RE =
   /(\b(?:fix|create|make|add|update|change|edit|delete|remove|cancel|approve|reject|send|dispatch|assign|post|publish|upload|download|open|click|run|execute|start|continue|resume|retry|call|notify|schedule|set|save|remember|mark|log|generate|prepare|merge|apply|enable|disable)\b|(?:task|টাস্ক|কাজ)\s*(?:দাও|দেন|পাঠাও|assign|বানাও|তৈরি\s*করো)|(?:sms|message|মেসেজ|announcement|নোটিশ)\s*(?:দাও|পাঠাও|send)|(?:ছবি|image|photo|ভিডিও|video|reel|রিল|creative|ক্রিয়েটিভ)\s*(?:বানাও|তৈরি\s*করো|generate|make)|(?:audit|অডিট|research|রিসার্চ|বিশ্লেষণ|analysis|report|রিপোর্ট)\s*(?:করো|চালাও|run|বানাও|তৈরি\s*করো|prepare)|(?:website|ওয়েবসাইট|সাইট|browser|ব্রাউজার)\s*(?:খোলো|খুলে\s*দাও|open|fix|update|change|publish)|(?:যোগ|আপডেট|বদল|পরিবর্তন|ডিলিট|মুছ|বাতিল|ক্যানসেল|সেভ|পোস্ট|পাবলিশ|আপলোড|ডাউনলোড|শুরু|বন্ধ|চালু|লক|রিমাইন্ডার)\s*(?:করো|করুন|করে\s*দাও|দাও)?|মনে\s*(?:রাখো|রেখো|রাখবেন)|(?:kaj|task).*(?:koro|dao|daw|pathao|banao)|(?:kore|korey)\s*(?:dao|daw)|(?:কল|ফোন|call|fon|kol)\s*(?:করে|কোরে|kore|korey)[^\n।?]{0,24}?(?:জানা|জানি|jana|jani)|(?:কল|ফোন)\s*(?:দাও|দিও|দিবে|দিস|করো|কোরো|করবে))/i
@@ -122,36 +93,6 @@ const RECORDABLE_FACT_RE =
 // question, never less.
 const QUESTION_RE = /[?？]|\b(?:what|why|how|when|where|who|which|status)\b|(?:কি|কী|কেন|কেমন|কত|কবে|কখন|কীভাবে|কিভাবে|কাকে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/i
 
-const BANGLA_QUESTION_WORD_RE = /(?:কি|কী|কেন|কেমন|কত|কবে|কখন|কীভাবে|কিভাবে|কাকে|কোথায়|কারা|কোন)(?=[\s।.,!]|$)/gi
-
-/**
- * Is this Bangla text an ORDER, or a question that happens to use the same verb?
- *
- * A blanket `!QUESTION_RE` guard was too blunt (Codex P1): it also rejected
- * commands whose OBJECT is an embedded question — "স্ক্রিনে কী আছে দেখো",
- * "ক্যামেরায় কী আছে দেখাও", which is the phrasing the system prompt itself uses
- * — while the unguarded Banglish branch still authorized "screen e ki ache
- * dekho". Same split, other direction.
- *
- * Bengali is verb-final, and that is what separates the two cases:
- *
- *   order:    "স্ক্রিনে কী আছে দেখো"   → question word, THEN the imperative
- *   question: "তুমি করো কী"           → imperative form, THEN the question word
- *
- * So position decides. An explicit question mark still ends it either way.
- */
-export function isBanglaOrder(t: string): boolean {
-  if (!BANGLA_IMPERATIVE_RE.test(t)) return false
-  if (/[?？]/.test(t)) return false
-  let lastQuestion = -1
-  for (const m of t.matchAll(BANGLA_QUESTION_WORD_RE)) lastQuestion = m.index ?? -1
-  if (lastQuestion === -1) return true
-  const verb = new RegExp(BANGLA_IMPERATIVE_RE.source, 'g')
-  let lastVerb = -1
-  for (const m of t.matchAll(verb)) lastVerb = m.index ?? -1
-  return lastVerb > lastQuestion
-}
-
 export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorization {
   const t = text.trim()
   if (EXPLICIT_NO_ACTION_RE.test(t)) {
@@ -161,7 +102,6 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
     BARE_CONTINUATION_RE.test(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
-    || isBanglaOrder(t)
     || ENGLISH_IMPERATIVE_RE.test(t)
   ) {
     return { allowMutations: true, reason: 'explicit_action' }
@@ -214,6 +154,23 @@ function toolMode(name: string): 'read' | 'stage' | 'write' {
  *    was read as information-only and the head lost the pair tool entirely).
  */
 const OWNER_SERVICE_TOOLS = new Set([
+  // Showing Boss his own screen. `mac_desk_control` is classified write because a
+  // whole-desk capture is sensitive, and that classification is right — it is what
+  // keeps autonomous and scheduled runs from photographing his desk unasked (the
+  // permission-mode gate in registry.ts reads cap.mode, and is untouched by this
+  // list). But on a turn HE typed, the sensitivity argument is answered by the
+  // asking: it changes nothing, it only looks.
+  //
+  // This replaces a Bangla imperative classifier that tried to decide "order or
+  // question" from grammar. Six review rounds found eleven P1s in it — দিবে is
+  // also the future tense, নাও is also a boat — because the question is semantic,
+  // not lexical. The tool was only ever unreachable on ONE gate, so the exemption
+  // belongs on the gate, not in a language model made of regex.
+  //
+  // Scoped by name, so the tool's other actions (keep_awake / allow_sleep /
+  // power_status) ride along. They control sleep on his own Mac and touch no
+  // business state; the worst case is a battery left awake.
+  'mac_desk_control',
   'ask_user',
   'save_memory',
   'update_memory',
