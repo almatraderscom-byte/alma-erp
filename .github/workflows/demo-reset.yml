@@ -46,13 +46,24 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         run: npm ci --no-audit --no-fund
 
-      # Schema first: a migration merged since the last reset must land before
-      # the seed writes rows shaped for it.
-      - name: Apply migrations
+      # Schema first: a model merged since the last reset must exist before the
+      # seed writes rows shaped for it.
+      #
+      # `db push`, not `migrate deploy`: the migration chain is not self-sufficient
+      # — its first migration references a "User" table that no migration creates,
+      # because production's schema predates the migration system. Against a fresh
+      # demo database the chain dies on migration 1. See scripts/demo-bootstrap.mjs.
+      - name: Ensure Postgres extensions
         if: steps.check.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
-        run: npx prisma migrate deploy
+        run: node scripts/demo-bootstrap.mjs
+
+      - name: Sync schema
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+        run: npx prisma db push --skip-generate --accept-data-loss
 
       - name: Reseed demo data
         if: steps.check.outputs.configured == 'true'
