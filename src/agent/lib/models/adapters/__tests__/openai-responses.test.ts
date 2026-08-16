@@ -117,7 +117,19 @@ describe('openai Responses API mapping (Luna visible thought)', () => {
     ])).rejects.toThrow(/boom/)
   })
 
-  it('effort env defaults to low and rejects junk', () => {
+  it('parses rate-limit retry delays and rejects other errors', async () => {
+    const { rateLimitRetryDelaySeconds } = await import('@/agent/lib/models/adapters/openai')
+    const rl = Object.assign(new Error(
+      'Rate limit reached for gpt-5.6-luna in organization org-x on tokens per min (TPM): Limit 200000, Used 154191, Requested 60900. Please try again in 4.527s.',
+    ), { status: 429 })
+    expect(rateLimitRetryDelaySeconds(rl)).toBeCloseTo(5.027, 2)
+    expect(rateLimitRetryDelaySeconds(Object.assign(new Error('Rate limit reached'), { status: 429 }))).toBe(5.5)
+    // Cap: a "try again in 1200s" answer must not stall the turn.
+    expect(rateLimitRetryDelaySeconds(Object.assign(new Error('rate limit — try again in 1200s'), { status: 429 }))).toBe(12)
+    expect(rateLimitRetryDelaySeconds(Object.assign(new Error('Bad request'), { status: 400 }))).toBeNull()
+  })
+
+  it('effort env defaults to medium and rejects junk', () => {
     const old = process.env.LUNA_REASONING_EFFORT
     delete process.env.LUNA_REASONING_EFFORT
     expect(lunaReasoningEffort()).toBe('medium')
