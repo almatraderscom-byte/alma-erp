@@ -464,8 +464,15 @@ final class AgentGrowthVM {
         }
         // Recovery lives INSIDE the load, not in a second task: a separate task
         // keyed on the list would be cancelled by this very assignment, and the
-        // assignment would overwrite anything that task had inserted.
-        if let focus = focusRecId { await ensureFocusedAdsEvent(focus) }
+        // assignment would overwrite anything that task had inserted. It is an
+        // ARRIVAL behaviour, so it runs once — otherwise a push aimed at an
+        // already-resolved event (which has no decision buttons to clear the
+        // focus) would keep re-inserting that row into the pending-only inbox on
+        // every refresh and every filter switch.
+        if let focus = focusRecId {
+            await ensureFocusedAdsEvent(focus)
+            clearAdsFocus()
+        }
     }
 
     /// Pull Meta's real recommendation text for one event. The webhook never does
