@@ -42,7 +42,7 @@ describe('SPEC-091 guards', () => {
   })
   it('knownDomains lists the G08 domains', () => {
     expect(knownDomains()).toContain('finance')
-    expect(knownDomains().length).toBe(63)
+    expect(knownDomains().length).toBe(64)
   })
 })
 

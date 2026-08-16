@@ -649,7 +649,10 @@ const live_browser_act: AgentTool = {
   name: 'live_browser_act',
   description:
     "Perform ONE action in the owner's live Chrome tab: click, type, press (a keyboard key), " +
-    'select_option, hover, scroll, scroll_to, navigate, go_back, switch_tab, close_tab, or wait. After ' +
+    'select_option, hover, scroll, scroll_to, navigate, go_back, switch_tab, close_tab, or wait. ' +
+    'PERMISSION: write-class, so it is only supplied on a turn where he asked for something to be DONE. ' +
+    'On a look-only turn it is absent by design — use live_browser_look, which is read-only and always ' +
+    'available; never report acting as broken or unavailable. After ' +
     'acting it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your own eyes ' +
     'before the next step.\n' +
     'MULTIPLE CHROMES: if the owner has more than one Chrome paired (e.g. Mac + Windows) and both are ' +

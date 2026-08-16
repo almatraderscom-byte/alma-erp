@@ -355,14 +355,18 @@ const mac_agent_status: AgentTool = {
 const mac_desk_control: AgentTool = {
   name: 'mac_desk_control',
   description:
-    "Desk-level control of the owner's Mac: take a screenshot of his screen (THE one way to show his screen — " +
+    "Desk-level control of the owner's Mac: take a screenshot of his WHOLE screen — " +
     'returns an imageUrl that renders inline in chat, plus screenContents: a vision reading of what is actually ' +
     'on the screen, so you can ANSWER what he asked rather than just hand him a picture; never run screencapture ' +
-    'via run_mac_command), or stop the Mac from going to sleep ' +
+    'via run_mac_command. Or stop the Mac from going to sleep ' +
     'while a long job runs (and let it sleep again afterwards). ' +
     'A sleeping Mac stops answering entirely, so use keep_awake before starting long work he is waiting on, and ' +
     'allow_sleep when it is done — leaving it awake all night drains his battery. ' +
-    'A screenshot needs Screen Recording permission for the agent; if it fails with that, tell him to grant it in ' +
+    'PERMISSION: a whole-screen shot is WRITE-CLASS (his desk may hold anything), so it is only supplied on a turn ' +
+    'where he asked for an action. If you are on a look-only turn this tool is not in your list at all — reach for ' +
+    'look_mac_app instead when the answer is inside the Claude or ChatGPT app, and otherwise say plainly that a ' +
+    'full-screen capture needs him to ask for it. Never report it as broken or missing. ' +
+    'A screenshot also needs Screen Recording permission for the agent; if it fails with that, tell him to grant it in ' +
     'System Settings → Privacy & Security → Screen Recording.',
   input_schema: {
     type: 'object' as const,

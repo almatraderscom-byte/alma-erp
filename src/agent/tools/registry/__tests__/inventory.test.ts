@@ -32,20 +32,20 @@ function req(payload: unknown, overrides: Partial<Record<string, unknown>> = {})
 }
 
 describe('SPEC-071 inventory snapshot integrity', () => {
-  it('captured the full monolith surface (330 tools, all classified + pooled)', () => {
-    expect(TOOL_INVENTORY.length).toBe(330)
+  it('captured the full monolith surface (358 tools, all classified + pooled)', () => {
+    expect(TOOL_INVENTORY.length).toBe(358)
     const s = summarize()
-    expect(s.total).toBe(330)
+    expect(s.total).toBe(358)
     expect(s.unclassified).toEqual([])
     expect(s.unpooled).toEqual([])
     // Mode/risk partitions sum to the whole.
     const modeSum = Object.values(s.byMode).reduce((a, b) => a + b, 0)
     const riskSum = Object.values(s.byRisk).reduce((a, b) => a + b, 0)
-    expect(modeSum).toBe(330)
-    expect(riskSum).toBe(330)
+    expect(modeSum).toBe(358)
+    expect(riskSum).toBe(358)
     // Known-good shape from the baseline measurement.
-    expect(s.byMode).toEqual({ read: 180, stage: 62, write: 88 })
-    expect(s.byRisk).toEqual({ low: 242, medium: 58, high: 30 })
+    expect(s.byMode).toEqual({ read: 187, stage: 71, write: 100 })
+    expect(s.byRisk).toEqual({ low: 252, medium: 72, high: 34 })
   })
 
   it('every row validates against the row schema', () => {
@@ -58,7 +58,7 @@ describe('SPEC-071 inventory snapshot integrity', () => {
     expect(names).toEqual([...names].sort())
   })
 
-  it('exposes the 63 distinct domains', () => {
+  it('exposes the 64 distinct domains', () => {
     expect(distinctDomains()).toContain('finance')
     expect(distinctDomains().length).toBeGreaterThanOrEqual(60)
   })
@@ -72,8 +72,8 @@ describe('SPEC-071 plain query helpers', () => {
   })
 
   it('partition helpers are consistent with the snapshot', () => {
-    expect(toolsByMode('read').length).toBe(180)
-    expect(toolsByRisk('high').length).toBe(30)
+    expect(toolsByMode('read').length).toBe(187)
+    expect(toolsByRisk('high').length).toBe(34)
     expect(toolsByDomain('finance').every((r) => r.domain === 'finance')).toBe(true)
     expect(toolsByGroup('base').every((r) => r.groups.includes('base'))).toBe(true)
     expect(toolsByPool('customer').every((r) => r.pools.includes('customer'))).toBe(true)
@@ -94,7 +94,7 @@ describe('SPEC-071 identity-enforced boundary', () => {
     const r = queryInventory(req({ kind: 'summary' }))
     expect(r.status).toBe('COMPLETED')
     if (r.status === 'COMPLETED' && r.value.kind === 'summary') {
-      expect(r.value.summary.total).toBe(330)
+      expect(r.value.summary.total).toBe(358)
     }
   })
 

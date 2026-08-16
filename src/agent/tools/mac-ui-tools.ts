@@ -350,6 +350,10 @@ const look_mac_app: AgentTool = {
     '"screenshot" captures the app window, "scroll" scrolls to see more. ' +
     'Use this whenever he asks WHAT an app shows ("ChatGPT app-e ki ache dekho") — and ALWAYS before drive_mac_app, ' +
     'because clicking/typing needs the exact element labels this returns. ' +
+    'PERMISSION: being read-only, this is supplied on ANY turn, including a look-only one where the write-class ' +
+    'mac_desk_control is withheld — so when he just wants to see something and the answer lives in one of these two ' +
+    'apps, this is the path that actually runs. It cannot show the whole desk or any other app; if that is what he ' +
+    'needs, say so rather than claiming nothing is available. ' +
     'Owner-facing: report in Bangla what you saw.',
   input_schema: {
     type: 'object' as const,
