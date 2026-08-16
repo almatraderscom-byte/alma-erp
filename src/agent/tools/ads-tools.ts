@@ -27,6 +27,7 @@ import {
   ADS_WEBHOOK_FIELDS,
 } from '@/agent/lib/marketing/ads-webhooks'
 import {
+  countOpenAdsEvents,
   listAdsEvents,
   resolveAdsEventDetail,
   setAdsEventStatus,
@@ -805,7 +806,11 @@ const get_ad_recommendations: AgentTool = {
           events: resolved.map((e, i) =>
             summariseAdsEvent(e, { detailResolved: withDetail && i < DETAILED }),
           ),
-          openCount: resolved.filter((e) => e.status === 'new' || e.status === 'seen').length,
+          // Whole-table count, not the page: with status='all' a page of resolved
+          // rows would otherwise report 0 and the agent would tell Boss nothing is
+          // pending while open events sit in the table.
+          openCount: await countOpenAdsEvents(),
+          openOnThisPage: resolved.filter((e) => e.status === 'new' || e.status === 'seen').length,
           hint: 'Boss সিদ্ধান্ত দিলে resolve_ad_recommendation দিয়ে actioned/dismissed করে দিন — তাহলে ওটা আর নোটিফাই করবে না।',
         },
       }
