@@ -355,18 +355,21 @@ export async function resolveAdsEventDetail(
     event.detailFetchedAt && Date.now() - new Date(event.detailFetchedAt).getTime() < DETAIL_TTL_MS
   if (!opts?.force && fresh && event.detail) return event
 
+  // A failed read must not masquerade as a fresh one: leaving `detailFetchedAt`
+  // alone means the very next open retries, instead of serving a stale payload
+  // for another TTL once the missing piece comes back.
   const token = process.env.META_ADS_TOKEN
   if (!token) {
     const row = await db.agentAdsEvent.update({
       where: { id },
-      data: { detailError: 'META_ADS_TOKEN সেট করা নেই', detailFetchedAt: new Date() },
+      data: { detailError: 'META_ADS_TOKEN সেট করা নেই', detail: null, detailFetchedAt: null },
     })
     return shape(row)
   }
   if (!event.adObjectIds.length) {
     const row = await db.agentAdsEvent.update({
       where: { id },
-      data: { detailError: 'Meta কোনো অ্যাড অবজেক্ট আইডি পাঠায়নি', detailFetchedAt: new Date() },
+      data: { detailError: 'Meta কোনো অ্যাড অবজেক্ট আইডি পাঠায়নি', detailFetchedAt: null },
     })
     return shape(row)
   }
@@ -396,7 +399,9 @@ export async function resolveAdsEventDetail(
     where: { id },
     data: {
       detail,
-      detailFetchedAt: new Date(),
+      // Same rule as above: a read where every object failed is not a fresh read,
+      // so it must not start a TTL that blocks the next attempt.
+      detailFetchedAt: allFailed ? null : new Date(),
       detailError: allFailed ? (detail[0]?.error ?? 'Graph পড়া যায়নি') : null,
     },
   })
