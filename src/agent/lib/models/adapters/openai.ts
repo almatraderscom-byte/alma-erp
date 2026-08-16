@@ -117,7 +117,7 @@ export function openAiResponsesEnabled(): boolean {
  * the suggested wait must actually be honoured, and a ~150k-token turn is far
  * too expensive to burn on premature retries).
  */
-export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 30): number | null {
+export function rateLimitRetryDelaySeconds(err: unknown, capSeconds = 61): number | null {
   const status = (err as { status?: number })?.status
   const message = err instanceof Error ? err.message : String(err)
   if (status !== 429 && !/rate limit/i.test(message)) return null
@@ -542,7 +542,7 @@ export class OpenAiAdapter implements ProviderAdapter {
       for (let attempt = 0; attempt < 3 && !responsesStream; attempt++) {
         try {
           responsesStream = await this.client.responses.create(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             
             responsesParams as any,
             // maxRetries 0 (Codex P2): the SDK's built-in 429 retries would
             // multiply with this loop (3×3 requests) — this loop is the single
@@ -689,7 +689,13 @@ export class OpenAiAdapter implements ProviderAdapter {
     // (no exacto, no cache_control, no stream_options). A provider that 400s on
     // ANY optional extension must degrade, never knock the head over to the
     // fallback model (Grok-4.20 was silently DeepSeek all day, 2026-07-13).
+    // A RATE LIMIT is not a rung on this ladder (full-chain diagnosis
+    // 2026-08-16): stepping down re-sends the same tokens into the same
+    // throttled minute — every rung 429s in turn and the turn dies. Wait the
+    // provider's suggested delay (abortable) and retry the SAME request; only
+    // non-429 failures descend the ladder.
     let stream
+    for (let rlAttempt = 0; !stream; rlAttempt++) {
     try {
       stream = await this.client.chat.completions.create({
         ...baseParams,
@@ -697,8 +703,19 @@ export class OpenAiAdapter implements ProviderAdapter {
         ...reasoningParam,
         ...samplerParam,
       } as ChatCompletionCreateParamsStreaming, reqOptions)
+      break
     } catch (err) {
       if (args.signal?.aborted) throw err
+      const rlDelay = rlAttempt < 2 ? rateLimitRetryDelaySeconds(err) : null
+      if (rlDelay != null) {
+        console.warn(`[openai-adapter] ${modelSlug} rate-limited — waiting ${rlDelay}s (attempt ${rlAttempt + 1})`)
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, rlDelay * 1000)
+          args.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+        })
+        if (args.signal?.aborted) throw err
+        continue
+      }
       console.warn(
         `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters/sampler:`,
         errDetail(err),
@@ -730,6 +747,8 @@ export class OpenAiAdapter implements ProviderAdapter {
         )
       }
     }
+    }
+    if (!stream) throw new Error(`[openai-adapter] ${modelSlug}: no stream after retries`)
 
     const toolBuffers = new Map<number, { id: string; name: string; args: string; started: boolean }>()
 
