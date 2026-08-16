@@ -222,8 +222,10 @@ export default function AdsEventInbox() {
       <div className="space-y-2">
         {(events ?? []).map((event) => {
           const isOpen = openId === event.id
-          const resolved = event.status === 'actioned' || event.status === 'dismissed'
-          const dot = resolved ? 'bg-emerald-400' : event.tier >= 2 ? 'bg-amber-400' : 'bg-sky-400'
+          // `logged` is history that deliberately needs no decision — it must not
+          // get the action buttons, or the owner could "action" a LOW fatigue note.
+          const isOpenItem = event.status === 'new' || event.status === 'seen'
+          const dot = !isOpenItem ? 'bg-emerald-400' : event.tier >= 2 ? 'bg-amber-400' : 'bg-sky-400'
           return (
             <div
               key={event.id}
@@ -243,9 +245,13 @@ export default function AdsEventInbox() {
                     <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-muted">
                       {event.recommendationType || FIELD_LABEL[event.field] || event.field}
                     </span>
-                    {resolved && (
+                    {!isOpenItem && (
                       <span className="rounded-md bg-emerald-400/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400">
-                        {event.status === 'actioned' ? 'করা হয়েছে' : 'দরকার নেই'}
+                        {event.status === 'actioned'
+                          ? 'করা হয়েছে'
+                          : event.status === 'dismissed'
+                            ? 'দরকার নেই'
+                            : 'শুধু রেকর্ড'}
                       </span>
                     )}
                   </div>
@@ -313,7 +319,7 @@ export default function AdsEventInbox() {
                   )}
 
                   <div className="flex flex-wrap gap-2 pt-0.5">
-                    {!resolved && (
+                    {isOpenItem && (
                       <>
                         <button
                           type="button"

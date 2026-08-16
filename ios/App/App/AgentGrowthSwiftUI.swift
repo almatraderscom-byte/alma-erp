@@ -473,7 +473,10 @@ final class AgentGrowthVM {
         // every refresh and every filter switch.
         if let focus = focusRecId {
             await ensureFocusedAdsEvent(focus)
-            clearAdsFocus()
+            // Clear only once the target is actually on screen: `try?` inside the
+            // recovery turns a transient failure into a silent no-op, and clearing
+            // regardless would make that failure permanent for this visit.
+            if adsEvents.contains(where: { $0.id == focus }) { clearAdsFocus() }
         }
     }
 
