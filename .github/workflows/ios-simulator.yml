@@ -56,8 +56,36 @@ jobs:
         # --ignore-scripts skips "prisma generate" etc. — not needed for the iOS shell
         run: npm ci --ignore-scripts
 
+      # CocoaPods fetches every podspec from a CDN that lives on
+      # raw.githubusercontent.com, and GitHub rate-limits its own runners: on
+      # 2026-08-17 four consecutive builds died on `429 Too Many Requests` for
+      # AgoraRtcEngine / OneSignalXCFramework, before a line was ever compiled.
+      # The cache makes a warm run skip the CDN entirely; the retry rides out a
+      # cold one. Keyed on Podfile.lock so a dependency change re-resolves.
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cocoapods/repos
+            ios/App/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('ios/App/Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
       - name: Sync Capacitor iOS project
-        run: npx cap sync ios
+        env:
+          COCOAPODS_DISABLE_STATS: 'true'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npx cap sync ios; then exit 0; fi
+            echo "cap sync failed (attempt $attempt) — CocoaPods CDN is rate-limiting" >&2
+            # No backoff after the last attempt: three idle minutes of macOS
+            # runtime that only delays the diagnostic.
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 60))
+          done
+          echo "cap sync failed three times; the CocoaPods CDN is refusing this runner" >&2
+          exit 1
 
       - name: Install CocoaPods
         working-directory: ios/App
