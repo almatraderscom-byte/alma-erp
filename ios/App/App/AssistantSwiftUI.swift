@@ -13548,9 +13548,10 @@ private struct AgentAdjacentRemoteImageGallery: View {
                         remoteTile(url, index: index).aspectRatio(1, contentMode: .fit)
                     }
                 }
-                // 640 is wider than the phone, so as a MAX it bounded nothing
-                // here — the width has to come from the container.
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Cap kept for iPad, where the chat column is wider than 640 and
+                // an uncapped grid would blow the tiles up. On the phone it was
+                // never the binding constraint — the tile's own stage is.
+                .frame(maxWidth: 640, alignment: .leading)
             }
         }
         .fullScreenCover(item: $preview) { AgentGeneratedImageViewer(preview: $0, vm: nil) }
