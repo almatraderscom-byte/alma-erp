@@ -157,23 +157,29 @@ async function assertSafeTarget() {
     )
   }
 
-  const realOrders = await prisma.lifestyleOrder.count({ where: { NOT: { id: { startsWith: ID } } } })
-  if (realOrders > 0) {
-    throw new Error(
-      `Refusing to seed: found ${realOrders} non-demo order(s). This looks like a REAL database — check DATABASE_URL.`,
-    )
-  }
+  // Deliberately NOT checking for non-demo order ids. An order a visitor creates
+  // through the demo UI gets a normal `AL-...` id, so treating those as evidence of a
+  // real database would abort every reset after the first demo order — permanently
+  // disabling the nightly refresh. The user check above is the reliable signal: a real
+  // ALMA database always holds staff accounts that are not `@alma-erp.demo`.
 }
 
-/** Delete only DEMO- rows, so a reset can never reach a real record. */
+/**
+ * Clears the demo tables completely, not just the `DEMO-` prefixed rows. Whatever a
+ * visitor creates carries ordinary ids, and leaving it behind would let the demo
+ * silt up with junk orders and customers that the reset was supposed to remove.
+ *
+ * Only ever reached after assertSafeTarget has confirmed the target holds no
+ * non-demo user, i.e. that the whole database belongs to the demo.
+ */
 async function resetDemoRows() {
-  await prisma.attendanceRecord.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleExpense.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleOrderItem.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleOrder.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleCustomer.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleStockItem.deleteMany({ where: { id: { startsWith: ID } } })
-  await prisma.lifestyleProduct.deleteMany({ where: { sku: { startsWith: ID } } })
+  await prisma.attendanceRecord.deleteMany({})
+  await prisma.lifestyleExpense.deleteMany({})
+  await prisma.lifestyleOrderItem.deleteMany({})
+  await prisma.lifestyleOrder.deleteMany({})
+  await prisma.lifestyleCustomer.deleteMany({})
+  await prisma.lifestyleStockItem.deleteMany({})
+  await prisma.lifestyleProduct.deleteMany({})
   await prisma.user.deleteMany({ where: { email: { endsWith: DEMO_EMAIL_SUFFIX } } })
 }
 

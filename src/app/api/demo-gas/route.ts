@@ -127,8 +127,10 @@ async function demoFinancialReport(businessId: string, params: URLSearchParams) 
       where: { businessId, deletedAt: null, ...(dateFilter ? { expenseDate: dateFilter } : {}) },
       _sum: { amount: true },
     }),
+    // Same window as the headline figures — otherwise a short period shows
+    // period totals next to an all-time chart.
     prisma.lifestyleOrder.findMany({
-      where: { businessId, status: 'Delivered' },
+      where: { businessId, status: 'Delivered', ...(dateFilter ? { date: dateFilter } : {}) },
       select: { date: true, sellPrice: true, profit: true },
     }),
   ])
@@ -259,11 +261,15 @@ async function handleRoute(route: string, params: URLSearchParams) {
   }
 }
 
-function guard(req: NextRequest) {
+/**
+ * `serverGet` puts the secret in the query string; `serverPost` puts it in the JSON
+ * body and posts to the bare URL with no query at all. Reading only the query would
+ * 401 every demo write — saving an employee, a payroll entry, a branding change.
+ */
+function guard(req: NextRequest, secret: string | null) {
   if (!isDemoDeployment()) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
-  const secret = new URL(req.url).searchParams.get('secret')
   const expected = process.env.API_SECRET
   if (!expected || secret !== expected) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -272,10 +278,10 @@ function guard(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const denied = guard(req)
+  const params = new URL(req.url).searchParams
+  const denied = guard(req, params.get('secret'))
   if (denied) return denied
 
-  const params = new URL(req.url).searchParams
   const route = params.get('route') || ''
   const data = await handleRoute(route, params)
   return NextResponse.json(data, { headers: { 'Cache-Control': 'private, no-store' } })
@@ -286,9 +292,17 @@ export async function GET(req: NextRequest) {
  * not an error — and nothing they type should survive the nightly reset anyway.
  */
 export async function POST(req: NextRequest) {
-  const denied = guard(req)
+  let body: Record<string, unknown> = {}
+  try {
+    body = (await req.json()) as Record<string, unknown>
+  } catch {
+    // Fall through to the guard, which rejects a request carrying no secret.
+  }
+
+  const secret = typeof body.secret === 'string' ? body.secret : null
+  const denied = guard(req, secret)
   if (denied) return denied
 
-  const route = new URL(req.url).searchParams.get('route') || ''
+  const route = typeof body.route === 'string' ? body.route : ''
   return NextResponse.json({ ok: true, success: true, demo_stub: true, route })
 }
