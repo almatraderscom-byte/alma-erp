@@ -103,7 +103,14 @@ export default function AgentSidebar({
       if (!append && pRes?.ok) setProjects(await pRes.json())
 
       const cData = await cRes.json() as { conversations: Conversation[]; nextCursor: string | null }
-      setConversations((prev) => append ? [...prev, ...cData.conversations] : cData.conversations)
+      setConversations((prev) => {
+        if (!append) return cData.conversations
+        // An unread chat promoted to the top of page 1 also appears in its own
+        // place in the paged scan, so appending blindly duplicates the row — and
+        // the duplicate React key with it. The native list already dedupes.
+        const known = new Set(prev.map((c) => c.id))
+        return [...prev, ...cData.conversations.filter((c) => !known.has(c.id))]
+      })
       setNextCursor(cData.nextCursor)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'লোড ব্যর্থ')

@@ -1,19 +1,32 @@
 /**
  * Unread chats — "the agent wrote while Boss was away".
  *
- * Definition (deliberately narrow, so the badge never cries wolf):
- *   a conversation is UNREAD when its newest ASSISTANT message is later than the
- *   moment Boss last opened that conversation.
+ * Definition (deliberately narrow, so the badge never cries wolf) — BOTH must hold:
+ *   1. Boss is in the chat at all: it contains at least one message of his.
+ *   2. Its newest ASSISTANT message is later than the moment he last opened it.
  * His own messages never make a chat unread, and a chat he has open right now is
  * marked read as he opens it.
+ *
+ * Condition 1 is not decoration. The agent runs scheduled conversations by itself
+ * — day_shift, heartbeat, plan_drive — which are assistant-only transcripts, and
+ * without it the badge read "4" while not one of his own chats had anything new
+ * (owner-reported on build 107). A badge that points at nothing he can find is
+ * worse than no badge.
  *
  * Read state lives on the conversation (`lastReadAt`) because this surface has
  * exactly one reader — the owner.
  */
 import { prisma } from '@/lib/prisma'
 
-/** Roles that count as "the agent said something". */
-const AGENT_ROLES = ['assistant'] as const
+/**
+ * Conversations the agent runs on a schedule, with no one reading along.
+ *
+ * The participation rule alone does not exclude these: `heartbeat` and
+ * `plan_drive` persist their own engine directive with `role: 'user'`
+ * (heartbeat/brain.ts, plan-driver/executor.ts), so from the message table they
+ * look exactly like Boss speaking. The source is what actually tells them apart.
+ */
+export const MACHINE_CONVERSATION_SOURCES = ['day_shift', 'heartbeat', 'plan_drive'] as const
 
 /**
  * Which of these conversation ids are unread. One grouped query, no per-row
@@ -27,16 +40,26 @@ export async function unreadConversationIds(
   if (!ids.length) return unread
 
   const rows = await prisma.agentMessage.groupBy({
-    by: ['conversationId'],
-    where: { conversationId: { in: ids }, role: { in: [...AGENT_ROLES] } },
+    by: ['conversationId', 'role'],
+    where: { conversationId: { in: ids }, role: { in: ['assistant', 'user'] } },
     _max: { createdAt: true },
   })
 
+  const lastAgentBy = new Map<string, Date>()
+  const hasOwnerMessage = new Set<string>()
   for (const row of rows) {
-    const lastAgentAt = row._max.createdAt
-    if (!lastAgentAt) continue
-    const lastReadAt = lastReadById.get(row.conversationId) ?? null
-    if (!lastReadAt || lastAgentAt > lastReadAt) unread.add(row.conversationId)
+    if (row.role === 'user') hasOwnerMessage.add(row.conversationId)
+    else if (row._max.createdAt) lastAgentBy.set(row.conversationId, row._max.createdAt)
+  }
+
+  for (const [conversationId, lastAgentAt] of lastAgentBy) {
+    // A chat only counts if BOSS IS IN IT. The scheduled ones the agent runs by
+    // itself — day_shift, heartbeat, plan_drive — are all agent messages and no
+    // owner message, and counting them made the badge read 4 while none of his
+    // own chats had anything new (owner-reported 2026-08-17).
+    if (!hasOwnerMessage.has(conversationId)) continue
+    const lastReadAt = lastReadById.get(conversationId) ?? null
+    if (!lastReadAt || lastAgentAt > lastReadAt) unread.add(conversationId)
   }
   return unread
 }
@@ -50,6 +73,14 @@ export async function countUnreadConversations(): Promise<number> {
     SELECT COUNT(*)::bigint AS count
     FROM "agent_conversations" c
     WHERE c."archived" = false
+      -- Boss must actually be IN the chat, and it must not be one of the agent's
+      -- own scheduled runs — those write their engine directive as role 'user',
+      -- so participation alone cannot tell them apart.
+      AND c."source" <> ALL(${MACHINE_CONVERSATION_SOURCES as unknown as string[]}::text[])
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id" AND m."role" = 'user'
+      )
       AND EXISTS (
         SELECT 1 FROM "agent_messages" m
         WHERE m."conversationId" = c."id"
@@ -58,6 +89,36 @@ export async function countUnreadConversations(): Promise<number> {
       )
   `
   return Number(rows[0]?.count ?? 0)
+}
+
+/**
+ * The unread chats themselves, newest activity first — not just how many.
+ *
+ * The sidebar pages by `updatedAt`, so an unread chat can sit below the fold and
+ * be unfindable while the badge insists it exists (owner-reported: "4 dekhay,
+ * khuje pai na"). The list route puts these on top of the first page, the way a
+ * chat app is expected to behave.
+ */
+export async function topUnreadConversationIds(limit = 20): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT c."id"
+    FROM "agent_conversations" c
+    WHERE c."archived" = false
+      AND c."source" <> ALL(${MACHINE_CONVERSATION_SOURCES as unknown as string[]}::text[])
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id" AND m."role" = 'user'
+      )
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id"
+          AND m."role" = 'assistant'
+          AND (c."last_read_at" IS NULL OR m."createdAt" > c."last_read_at")
+      )
+    ORDER BY c."updatedAt" DESC
+    LIMIT ${limit}
+  `
+  return rows.map((r) => r.id)
 }
 
 /**
