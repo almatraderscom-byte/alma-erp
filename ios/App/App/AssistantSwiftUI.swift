@@ -13548,20 +13548,34 @@ private struct AgentAdjacentRemoteImageGallery: View {
                         remoteTile(url, index: index).aspectRatio(1, contentMode: .fit)
                     }
                 }
-                .frame(maxWidth: 640, alignment: .leading)
+                // 640 is wider than the phone, so as a MAX it bounded nothing
+                // here — the width has to come from the container.
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .fullScreenCover(item: $preview) { AgentGeneratedImageViewer(preview: $0, vm: nil) }
         .accessibilityIdentifier("agent.adjacent-image-gallery")
     }
     private func remoteTile(_ url: URL, index: Int) -> some View {
-        AsyncImage(url: url) { phase in
-            if let image = phase.image { image.resizable().scaledToFill() }
-            else if phase.error != nil {
-                ContentUnavailableView("ছবি লোড হয়নি", systemImage: "arrow.clockwise")
-            } else { AgentImageSkeleton() }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        // The image must NEVER size this view. A markdown screenshot from the Mac
+        // is 3440px wide; letting AsyncImage propose its intrinsic size made the
+        // whole message row wider than the phone, which shoved the agent's text
+        // off the left edge and looked like the entire UI had zoomed (owner
+        // report after every Mac live view, build 107). Same fix the message-image
+        // path got on 2026-07-15: a flexible stage decides the size, the bitmap
+        // only fills it.
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .overlay {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image { image.resizable().scaledToFill() }
+                    else if phase.error != nil {
+                        ContentUnavailableView("ছবি লোড হয়নি", systemImage: "arrow.clockwise")
+                    } else { AgentImageSkeleton() }
+                }
+            }
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
             preview = .init(urls: urls, refs: Array(repeating: nil, count: urls.count), initialIndex: index)
