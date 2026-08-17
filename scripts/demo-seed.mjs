@@ -165,22 +165,27 @@ async function assertSafeTarget() {
 }
 
 /**
- * Clears the demo tables completely, not just the `DEMO-` prefixed rows. Whatever a
- * visitor creates carries ordinary ids, and leaving it behind would let the demo
- * silt up with junk orders and customers that the reset was supposed to remove.
+ * Empties every table rather than the handful the seed writes.
  *
- * Only ever reached after assertSafeTarget has confirmed the target holds no
- * non-demo user, i.e. that the whole database belongs to the demo.
+ * A visitor can touch far more than the seeded tables — leave requests, approvals,
+ * notifications, agent conversations, stock adjustments. Clearing only the seeded
+ * ones left that behind, and because the demo users are recreated with the same
+ * deterministic `DEMO-USER-*` ids, yesterday's leave requests and notifications
+ * would reattach themselves to the new accounts and pile up forever.
+ *
+ * Enumerating tables by hand would rot the moment a model is added, so the list
+ * comes from the database itself. Only ever reached after assertSafeTarget has
+ * confirmed the target holds no non-demo user — i.e. the whole database is the demo.
  */
 async function resetDemoRows() {
-  await prisma.attendanceRecord.deleteMany({})
-  await prisma.lifestyleExpense.deleteMany({})
-  await prisma.lifestyleOrderItem.deleteMany({})
-  await prisma.lifestyleOrder.deleteMany({})
-  await prisma.lifestyleCustomer.deleteMany({})
-  await prisma.lifestyleStockItem.deleteMany({})
-  await prisma.lifestyleProduct.deleteMany({})
-  await prisma.user.deleteMany({ where: { email: { endsWith: DEMO_EMAIL_SUFFIX } } })
+  const tables = await prisma.$queryRaw`
+    SELECT tablename FROM pg_tables
+    WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'
+  `
+  if (!tables.length) return
+  const list = tables.map(t => `"public"."${t.tablename}"`).join(', ')
+  await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`)
+  console.log(`· cleared ${tables.length} tables`)
 }
 
 // ── builders ─────────────────────────────────────────────────────────────────

@@ -7,8 +7,15 @@
  * it is in-memory (so it resets with every lambda) and it only smooths bursts, not
  * a full day of someone playing with the chat.
  *
- * The count comes from AgentTurn rows since Dhaka midnight, so it holds across
- * lambdas and across every visitor sharing the demo.
+ * The quota is **reserved atomically**, not counted. Counting rows and then deciding
+ * lets a burst of concurrent requests all read the same under-limit number and all
+ * proceed — serverless gives no shared process to serialize them. A single
+ * conditional UPSERT does the increment and the limit test in one statement, so the
+ * ceiling holds no matter how many instances are running.
+ *
+ * A reservation is spent even if the model call later fails. That is deliberate: the
+ * alternative is refunding on error, which is exactly the path an abusive loop would
+ * take.
  *
  * Production never sets DEMO_MODE, so this is inert there.
  */
@@ -18,30 +25,39 @@ import { isDemoDeployment } from '@/lib/demo-mode'
 const DEFAULT_DAILY_LIMIT = 50
 const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000
 
-export type DemoAssistantCap = { blocked: boolean; used: number; limit: number }
+export type DemoAssistantCap = { blocked: boolean; limit: number }
 
-/** Start of the current Asia/Dhaka day, as a UTC instant. */
-function dhakaDayStart(): Date {
-  const nowDhaka = new Date(Date.now() + DHAKA_OFFSET_MS)
-  const midnight = Date.UTC(nowDhaka.getUTCFullYear(), nowDhaka.getUTCMonth(), nowDhaka.getUTCDate())
-  return new Date(midnight - DHAKA_OFFSET_MS)
+/** Current Asia/Dhaka calendar date, e.g. `2026-08-17`. */
+function dhakaDateKey(): string {
+  return new Date(Date.now() + DHAKA_OFFSET_MS).toISOString().slice(0, 10)
 }
 
-export async function checkDemoAssistantCap(): Promise<DemoAssistantCap> {
-  if (!isDemoDeployment()) return { blocked: false, used: 0, limit: 0 }
+export async function reserveDemoAssistantTurn(): Promise<DemoAssistantCap> {
+  if (!isDemoDeployment()) return { blocked: false, limit: 0 }
 
   const raw = Number(process.env.DEMO_ASSISTANT_DAILY_LIMIT ?? DEFAULT_DAILY_LIMIT)
-  const limit = Number.isFinite(raw) ? raw : DEFAULT_DAILY_LIMIT
+  const limit = Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_DAILY_LIMIT
   // A limit of 0 or below is a deliberate "off" switch, not a misconfiguration to
   // fall back from — treat it as blocking rather than silently spending money.
-  if (limit <= 0) return { blocked: true, used: 0, limit: 0 }
+  if (limit <= 0) return { blocked: true, limit: 0 }
+
+  const key = `demo:assistant:turns:${dhakaDateKey()}`
 
   try {
-    const used = await prisma.agentTurn.count({ where: { startedAt: { gte: dhakaDayStart() } } })
-    return { blocked: used >= limit, used, limit }
+    // One statement: insert the day's first reservation, or increment only while the
+    // stored count is still below the limit. No rows back means the day is spent.
+    const rows = await prisma.$queryRaw<Array<{ value: string }>>`
+      INSERT INTO agent_kv_settings (key, value, updated_at)
+      VALUES (${key}, '1', now())
+      ON CONFLICT (key) DO UPDATE
+        SET value = (agent_kv_settings.value::int + 1)::text, updated_at = now()
+        WHERE agent_kv_settings.value::int < ${limit}
+      RETURNING value
+    `
+    return { blocked: rows.length === 0, limit }
   } catch {
-    // If the count cannot be read, fail closed: an unmetered demo assistant is the
-    // one outcome this module exists to prevent.
-    return { blocked: true, used: 0, limit }
+    // If the reservation cannot be made, fail closed: an unmetered demo assistant is
+    // the one outcome this module exists to prevent.
+    return { blocked: true, limit }
   }
 }

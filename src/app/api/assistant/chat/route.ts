@@ -14,7 +14,7 @@ import { setOwnerSessionConversation } from '@/agent/lib/owner-session'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
-import { checkDemoAssistantCap } from '@/lib/demo-assistant-cap'
+import { reserveDemoAssistantTurn } from '@/lib/demo-assistant-cap'
 import { captureAgentError } from '@/agent/lib/sentry'
 import {
   claimContinuationTurn,
@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
   // Demo instance: a visitor can send as many messages as they like and each one
   // spends the owner's model budget, so the day has a hard ceiling. Inert unless
   // DEMO_MODE is set.
-  const demoCap = await checkDemoAssistantCap()
+  const demoCap = await reserveDemoAssistantTurn()
   if (demoCap.blocked) {
     return Response.json(
       {

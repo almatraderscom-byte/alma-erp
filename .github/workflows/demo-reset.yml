@@ -53,6 +53,15 @@ jobs:
       # — its first migration references a "User" table that no migration creates,
       # because production's schema predates the migration system. Against a fresh
       # demo database the chain dies on migration 1. See scripts/demo-bootstrap.mjs.
+      # BEFORE anything that can alter the target. `db push --accept-data-loss`
+      # drops columns and tables without asking, so a mis-set secret has to be
+      # caught here rather than by the seed's own guard, which runs too late.
+      - name: Verify the target is the demo database
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DEMO_DATABASE_URL }}
+        run: node scripts/demo-assert-target.mjs
+
       - name: Ensure Postgres extensions
         if: steps.check.outputs.configured == 'true'
         env:
