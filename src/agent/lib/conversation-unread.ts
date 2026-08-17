@@ -1,19 +1,22 @@
 /**
  * Unread chats — "the agent wrote while Boss was away".
  *
- * Definition (deliberately narrow, so the badge never cries wolf):
- *   a conversation is UNREAD when its newest ASSISTANT message is later than the
- *   moment Boss last opened that conversation.
+ * Definition (deliberately narrow, so the badge never cries wolf) — BOTH must hold:
+ *   1. Boss is in the chat at all: it contains at least one message of his.
+ *   2. Its newest ASSISTANT message is later than the moment he last opened it.
  * His own messages never make a chat unread, and a chat he has open right now is
  * marked read as he opens it.
+ *
+ * Condition 1 is not decoration. The agent runs scheduled conversations by itself
+ * — day_shift, heartbeat, plan_drive — which are assistant-only transcripts, and
+ * without it the badge read "4" while not one of his own chats had anything new
+ * (owner-reported on build 107). A badge that points at nothing he can find is
+ * worse than no badge.
  *
  * Read state lives on the conversation (`lastReadAt`) because this surface has
  * exactly one reader — the owner.
  */
 import { prisma } from '@/lib/prisma'
-
-/** Roles that count as "the agent said something". */
-const AGENT_ROLES = ['assistant'] as const
 
 /**
  * Which of these conversation ids are unread. One grouped query, no per-row
@@ -27,16 +30,26 @@ export async function unreadConversationIds(
   if (!ids.length) return unread
 
   const rows = await prisma.agentMessage.groupBy({
-    by: ['conversationId'],
-    where: { conversationId: { in: ids }, role: { in: [...AGENT_ROLES] } },
+    by: ['conversationId', 'role'],
+    where: { conversationId: { in: ids }, role: { in: ['assistant', 'user'] } },
     _max: { createdAt: true },
   })
 
+  const lastAgentBy = new Map<string, Date>()
+  const hasOwnerMessage = new Set<string>()
   for (const row of rows) {
-    const lastAgentAt = row._max.createdAt
-    if (!lastAgentAt) continue
-    const lastReadAt = lastReadById.get(row.conversationId) ?? null
-    if (!lastReadAt || lastAgentAt > lastReadAt) unread.add(row.conversationId)
+    if (row.role === 'user') hasOwnerMessage.add(row.conversationId)
+    else if (row._max.createdAt) lastAgentBy.set(row.conversationId, row._max.createdAt)
+  }
+
+  for (const [conversationId, lastAgentAt] of lastAgentBy) {
+    // A chat only counts if BOSS IS IN IT. The scheduled ones the agent runs by
+    // itself — day_shift, heartbeat, plan_drive — are all agent messages and no
+    // owner message, and counting them made the badge read 4 while none of his
+    // own chats had anything new (owner-reported 2026-08-17).
+    if (!hasOwnerMessage.has(conversationId)) continue
+    const lastReadAt = lastReadById.get(conversationId) ?? null
+    if (!lastReadAt || lastAgentAt > lastReadAt) unread.add(conversationId)
   }
   return unread
 }
@@ -50,6 +63,13 @@ export async function countUnreadConversations(): Promise<number> {
     SELECT COUNT(*)::bigint AS count
     FROM "agent_conversations" c
     WHERE c."archived" = false
+      -- Boss must actually be IN the chat. The agent's own scheduled runs
+      -- (day_shift, heartbeat, plan_drive) are assistant-only transcripts; they
+      -- made the badge count chats he was never part of.
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id" AND m."role" = 'user'
+      )
       AND EXISTS (
         SELECT 1 FROM "agent_messages" m
         WHERE m."conversationId" = c."id"
