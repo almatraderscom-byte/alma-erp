@@ -19,6 +19,16 @@
 import { prisma } from '@/lib/prisma'
 
 /**
+ * Conversations the agent runs on a schedule, with no one reading along.
+ *
+ * The participation rule alone does not exclude these: `heartbeat` and
+ * `plan_drive` persist their own engine directive with `role: 'user'`
+ * (heartbeat/brain.ts, plan-driver/executor.ts), so from the message table they
+ * look exactly like Boss speaking. The source is what actually tells them apart.
+ */
+export const MACHINE_CONVERSATION_SOURCES = ['day_shift', 'heartbeat', 'plan_drive'] as const
+
+/**
  * Which of these conversation ids are unread. One grouped query, no per-row
  * fan-out — the sidebar asks about up to 50 ids at a time.
  */
@@ -63,9 +73,10 @@ export async function countUnreadConversations(): Promise<number> {
     SELECT COUNT(*)::bigint AS count
     FROM "agent_conversations" c
     WHERE c."archived" = false
-      -- Boss must actually be IN the chat. The agent's own scheduled runs
-      -- (day_shift, heartbeat, plan_drive) are assistant-only transcripts; they
-      -- made the badge count chats he was never part of.
+      -- Boss must actually be IN the chat, and it must not be one of the agent's
+      -- own scheduled runs — those write their engine directive as role 'user',
+      -- so participation alone cannot tell them apart.
+      AND c."source" <> ALL(${MACHINE_CONVERSATION_SOURCES as unknown as string[]}::text[])
       AND EXISTS (
         SELECT 1 FROM "agent_messages" m
         WHERE m."conversationId" = c."id" AND m."role" = 'user'
@@ -93,6 +104,7 @@ export async function topUnreadConversationIds(limit = 20): Promise<string[]> {
     SELECT c."id"
     FROM "agent_conversations" c
     WHERE c."archived" = false
+      AND c."source" <> ALL(${MACHINE_CONVERSATION_SOURCES as unknown as string[]}::text[])
       AND EXISTS (
         SELECT 1 FROM "agent_messages" m
         WHERE m."conversationId" = c."id" AND m."role" = 'user'

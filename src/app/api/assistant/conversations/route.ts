@@ -5,7 +5,11 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { AUTO_MODEL_ID } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
-import { topUnreadConversationIds, unreadConversationIds } from '@/agent/lib/conversation-unread'
+import {
+  MACHINE_CONVERSATION_SOURCES,
+  topUnreadConversationIds,
+  unreadConversationIds,
+} from '@/agent/lib/conversation-unread'
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -109,9 +113,14 @@ export async function GET(req: NextRequest) {
 
   // Unread = the agent wrote after Boss last opened this chat. Resolved for the
   // whole page in one grouped query.
+  // The agent's own scheduled runs never count — heartbeat and plan_drive write
+  // their engine directive as role 'user', so only the source separates them.
+  const ownerChats = rawPage.filter(
+    (c) => !(MACHINE_CONVERSATION_SOURCES as readonly string[]).includes(c.source),
+  )
   const unread = await unreadConversationIds(
-    rawPage.map((c) => c.id),
-    new Map(rawPage.map((c) => [c.id, c.lastReadAt])),
+    ownerChats.map((c) => c.id),
+    new Map(ownerChats.map((c) => [c.id, c.lastReadAt])),
   ).catch(() => new Set<string>())
   const page = rawPage.map(({ lastReadAt: _lastReadAt, ...c }) => ({ ...c, unread: unread.has(c.id) }))
 
