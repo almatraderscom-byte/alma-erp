@@ -5,7 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { AUTO_MODEL_ID } from '@/agent/lib/models/registry'
 import { prisma } from '@/lib/prisma'
-import { unreadConversationIds } from '@/agent/lib/conversation-unread'
+import { topUnreadConversationIds, unreadConversationIds } from '@/agent/lib/conversation-unread'
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -115,10 +115,39 @@ export async function GET(req: NextRequest) {
   ).catch(() => new Set<string>())
   const page = rawPage.map(({ lastReadAt: _lastReadAt, ...c }) => ({ ...c, unread: unread.has(c.id) }))
 
+  // The cursor must keep describing the ORDERED-BY-updatedAt scan, so it is taken
+  // before anything is reordered or prepended below.
   const last = page[page.length - 1]
   const nextCursor = hasMore && last
     ? `${last.pinned ? '1' : '0'}_${last.updatedAt.toISOString()}_${last.id}`
     : null
+
+  // First page only: unread chats come to the TOP, and any that paging left below
+  // the fold are pulled up. A badge saying "4" while the four cannot be found in
+  // the list is worse than no badge (owner-reported 2026-08-17).
+  if (!cursor && !archivedOnly) {
+    try {
+      const unreadIds = await topUnreadConversationIds(20)
+      const missing = unreadIds.filter((id) => !page.some((c) => c.id === id))
+      const extra = missing.length
+        ? await prisma.agentConversation.findMany({
+            where: { id: { in: missing } },
+            select: {
+              id: true, title: true, projectId: true, businessId: true, modelId: true,
+              chatMode: true, permissionMode: true, source: true, archived: true,
+              pinned: true, createdAt: true, updatedAt: true,
+            },
+          })
+        : []
+      const byId = new Map([...page, ...extra.map((c) => ({ ...c, unread: true }))].map((c) => [c.id, c]))
+      const unreadRows = unreadIds.map((id) => byId.get(id)).filter((c) => c !== undefined)
+      const rest = page.filter((c) => !unreadIds.includes(c.id))
+      page.length = 0
+      page.push(...(unreadRows as typeof page), ...rest)
+    } catch {
+      // Ordering is a nicety; never let it cost him the list itself.
+    }
+  }
 
   const paginated = req.nextUrl.searchParams.get('paginated') === 'true'
   if (paginated) {

@@ -81,6 +81,35 @@ export async function countUnreadConversations(): Promise<number> {
 }
 
 /**
+ * The unread chats themselves, newest activity first — not just how many.
+ *
+ * The sidebar pages by `updatedAt`, so an unread chat can sit below the fold and
+ * be unfindable while the badge insists it exists (owner-reported: "4 dekhay,
+ * khuje pai na"). The list route puts these on top of the first page, the way a
+ * chat app is expected to behave.
+ */
+export async function topUnreadConversationIds(limit = 20): Promise<string[]> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT c."id"
+    FROM "agent_conversations" c
+    WHERE c."archived" = false
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id" AND m."role" = 'user'
+      )
+      AND EXISTS (
+        SELECT 1 FROM "agent_messages" m
+        WHERE m."conversationId" = c."id"
+          AND m."role" = 'assistant'
+          AND (c."last_read_at" IS NULL OR m."createdAt" > c."last_read_at")
+      )
+    ORDER BY c."updatedAt" DESC
+    LIMIT ${limit}
+  `
+  return rows.map((r) => r.id)
+}
+
+/**
  * Boss opened this chat — everything he was SHOWN is now read.
  *
  * `upTo` is the timestamp of the newest message the client actually rendered.
