@@ -14,6 +14,7 @@
  * attach to a new request merely because it is the newest conversation plan.
  */
 import { prisma } from '@/lib/prisma'
+import { toolDisplay } from '@/agent/lib/tool-labels'
 
 export const WORK_STEPS_SNAPSHOT_VERSION = 1 as const
 
@@ -404,6 +405,13 @@ export function projectRuntimeWorkSteps(input: {
   verificationHappened: boolean
   blockedBy: WorkStepsBlocker | null
   originAssistantMessageId?: string | null
+  /**
+   * The tool calls this turn actually made, in order. Each becomes its own named
+   * step: the owner asked to see *what* the agent is doing, and "৩ ধাপ টুল-কাজ"
+   * answers only *how much*. Names come from the same label table the live
+   * "checking" strip uses, so the tracker and the strip never disagree.
+   */
+  toolCalls?: Array<{ id: string; toolName: string; status: 'success' | 'error' }>
   now?: Date
 }): WorkStepsSnapshot {
   const now = input.now ?? new Date()
@@ -422,12 +430,38 @@ export function projectRuntimeWorkSteps(input: {
   }
   // Evidence: the persisted owner request was accepted (this turn exists).
   push('accept', 'অনুরোধ বুঝে নেওয়া', 'completed')
-  // Evidence: tool rounds actually executed (the projector is only invoked
-  // once the first round completed).
-  const roundLabel = input.completedToolRounds > 1
-    ? `তথ্য সংগ্রহ ও কাজ (${bn(input.completedToolRounds)} ধাপ টুল-কাজ)`
-    : 'তথ্য সংগ্রহ ও কাজ'
-  push('work', roundLabel, phase === 'working' ? 'running' : 'completed')
+  // Evidence: the tool calls that actually ran, named one by one. Consecutive
+  // repeats of the same tool collapse into a single step — five reads of the same
+  // list is one thing being done, not five things.
+  const calls = input.toolCalls ?? []
+  if (calls.length) {
+    // Group first, THEN judge: a retry is the same tool twice, and if the second
+    // attempt failed the group failed. Dropping every outcome after the first
+    // would report a success the turn did not get.
+    const groups: Array<{ toolName: string; failed: boolean }> = []
+    for (const call of calls) {
+      const open = groups[groups.length - 1]
+      if (open && open.toolName === call.toolName) {
+        open.failed = call.status === 'error'
+        continue
+      }
+      groups.push({ toolName: call.toolName, failed: call.status === 'error' })
+    }
+    groups.forEach((group, index) => {
+      const last = index === groups.length - 1
+      push(
+        `tool-${index + 1}`,
+        toolDisplay(group.toolName).label,
+        group.failed ? 'failed' : (last && phase === 'working' ? 'running' : 'completed'),
+      )
+    })
+  } else {
+    // No per-call detail available (older callers): fall back to the honest count.
+    const roundLabel = input.completedToolRounds > 1
+      ? `তথ্য সংগ্রহ ও কাজ (${bn(input.completedToolRounds)} ধাপ টুল-কাজ)`
+      : 'তথ্য সংগ্রহ ও কাজ'
+    push('work', roundLabel, phase === 'working' ? 'running' : 'completed')
+  }
   // Appears only when the honesty guard ACTUALLY retried this turn.
   if (input.verificationHappened) {
     push('verify', 'উত্তর যাচাই', phase === 'verifying' ? 'running' : 'completed')
@@ -437,6 +471,7 @@ export function projectRuntimeWorkSteps(input: {
   }
 
   const doneCount = steps.filter((s) => s.status === 'completed').length
+  const failedCount = steps.filter((s) => s.status === 'failed').length
   let status: WorkStepsOverallStatus
   if (input.blockedBy?.kind === 'approval' || input.blockedBy?.kind === 'question') {
     status = 'waiting_owner'
@@ -449,8 +484,14 @@ export function projectRuntimeWorkSteps(input: {
   }
   const running = steps.find((s) => s.status === 'running')
   const waiting = steps.find((s) => s.status === 'waiting_owner')
+  // A settled turn still delivered an answer, so the overall status stays
+  // `completed` — but the headline must not claim every step finished when one
+  // of them failed. Saying "৪/৪ ধাপ শেষ" over a failed read is the exact kind of
+  // cheerful lie this tracker exists to prevent.
   const headline =
-    status === 'completed' ? `${bn(steps.length)}/${bn(steps.length)} ধাপ শেষ`
+    status === 'completed' && failedCount > 0
+      ? `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ · ${bn(failedCount)}টি ধাপ ব্যর্থ`
+    : status === 'completed' ? `${bn(steps.length)}/${bn(steps.length)} ধাপ শেষ`
     : status === 'waiting_owner' ? `আপনার সিদ্ধান্তের অপেক্ষায়${waiting ? `: ${waiting.title}` : ''}`
     : running ? `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ · এখন: ${running.title}`
     : `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ`
