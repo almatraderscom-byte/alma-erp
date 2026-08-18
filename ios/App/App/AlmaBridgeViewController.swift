@@ -42,5 +42,18 @@ class AlmaBridgeViewController: CAPBridgeViewController {
             ))
             AlmaEmbed.install(into: content, hideWebHeader: true)
         }
+
+        // Signing in with a demo account switches the backend after this web view
+        // has already loaded production — the injected host is captured at document
+        // start and Capacitor never navigates itself, so without this the shell
+        // keeps showing the deployment the owner just left.
+        NotificationCenter.default.addObserver(
+            forName: AlmaBackend.didChangeNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] _ in
+            guard let webView = self?.bridge?.webView else { return }
+            webView.load(URLRequest(url: AlmaAPI.baseURL))
+        }
     }
 }

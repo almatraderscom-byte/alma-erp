@@ -1158,7 +1158,10 @@ actor AgentEventBuffer {
 /// Streaming + multipart companion to AlmaAPI (which is JSON-only). Shares the
 /// same cookie bridge: HTTPCookieStorage.shared, refreshed via AlmaAPI.syncCookies().
 enum AssistantNet {
-    static let base = AlmaAPI.baseURL
+    /// Computed, not captured: signing in with a demo account switches the backend
+    /// mid-session, and a `static let` would pin chat, uploads and TTS to whichever
+    /// deployment happened to be current when the assistant was first opened.
+    static var base: URL { AlmaAPI.baseURL }
 
     /// Long-lived session for SSE turns (a turn may legitimately run ~5 minutes).
     static let streamSession: URLSession = {

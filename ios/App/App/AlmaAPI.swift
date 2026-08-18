@@ -855,12 +855,27 @@ enum AlmaBackend: String {
 
     /// Switches backend if needed, dropping cookies so a session for one host is
     /// never presented to the other. Returns true when the backend actually changed.
+    /// Posted after the backend actually changed, so the shell can drop the page it
+    /// is showing and reload against the new host.
+    static let didChangeNotification = Notification.Name("almaBackendDidChange")
+
     @discardableResult
     static func select(_ backend: AlmaBackend) -> Bool {
         guard backend != storedChoice else { return false }
         current = backend
+
         let store = HTTPCookieStorage.shared
         store.cookies?.forEach { store.deleteCookie($0) }
+        // WebKit keeps its own jar. Clearing only the shared storage left the other
+        // host's session behind, and `AlmaAPI.syncCookies()` copies WebKit's cookies
+        // back into the shared store — so the old session would return by itself.
+        let webStore = WKWebsiteDataStore.default().httpCookieStore
+        webStore.getAllCookies { cookies in
+            for cookie in cookies { webStore.delete(cookie, completionHandler: nil) }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: AlmaBackend.didChangeNotification, object: nil)
+            }
+        }
         return true
     }
 }
