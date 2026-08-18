@@ -111,7 +111,11 @@
     </div>
 
     <script>
-      var PROD = 'https://alma-erp-six.vercel.app';
+      // The native shell injects window.__ALMA_HOST at documentStart when the
+      // owner is signed in to the demo deployment; otherwise this boots production.
+      var PROD = (window.__ALMA_HOST && /^https:\/\/[a-z0-9.-]+$/i.test(window.__ALMA_HOST))
+        ? window.__ALMA_HOST
+        : 'https://alma-erp-six.vercel.app';
       var BN = '০১২৩৪৫৬৭৮৯';
       function bn(n) { return String(n).replace(/\d/g, function (d) { return BN[+d]; }); }
 

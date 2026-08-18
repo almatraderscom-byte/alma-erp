@@ -38,6 +38,11 @@ private enum NativeLoginFlow {
         config.timeoutIntervalForRequest = 20
         config.httpShouldSetCookies = true
         let session = URLSession(configuration: config)
+
+        // The account decides the deployment: a `@alma-erp.demo` address only exists
+        // on the demo instance, so point everything there before authenticating.
+        // Switching drops cookies, so a session for one host is never sent to the other.
+        AlmaBackend.select(AlmaBackend.forLogin(identifier: identifier))
         let base = AlmaAPI.baseURL
 
         // 1. CSRF token (sets the next-auth.csrf-token cookie in the shared store).
@@ -150,6 +155,18 @@ struct NativeLoginScreen: View {
                         .font(.caption2).foregroundStyle(.secondary).padding(.top, 2)
 
                     card.padding(.top, 26)
+
+                    // A demo address signs in to the demo deployment, not the live
+                    // business. Say so before the tap, so nobody wonders later why
+                    // the numbers are not theirs.
+                    if AlmaBackend.forLogin(identifier: identifier) == .demo {
+                        Text("ডেমো অ্যাকাউন্ট — নমুনা ডেটার ডেমো সার্ভারে সাইন ইন হবে")
+                            .font(.caption2)
+                            .foregroundStyle(goldLt)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 28)
+                            .padding(.top, 14)
+                    }
 
                     Button {
                         // NP-4 (AU-01): native forgot-password via the single nav path.

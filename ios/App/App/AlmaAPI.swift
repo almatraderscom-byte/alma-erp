@@ -805,24 +805,105 @@ struct AnyEncodable: Encodable {
 
 // MARK: - AlmaAPI
 
+
+/// Which deployment the app talks to.
+///
+/// The demo is a separate deployment with its own database of invented data, handed
+/// out so someone can try the app without seeing a real order or a real salary. The
+/// app follows the account: sign in with a `@alma-erp.demo` address and everything —
+/// native screens, web tabs, the WebView shell — points at the demo instead.
+///
+/// Stored rather than derived at each launch, so a demo tester's next cold start
+/// comes back to the demo rather than to a production login they cannot pass.
+enum AlmaBackend: String {
+    case production
+    case demo
+
+    private static let defaultsKey = "alma.backend"
+    static let demoEmailSuffix = "@alma-erp.demo"
+
+    var host: String {
+        switch self {
+        case .production: return "alma-erp-six.vercel.app"
+        case .demo: return "alma-erp-demo.vercel.app"
+        }
+    }
+
+    var url: URL { URL(string: "https://\(host)")! }
+
+    /// The backend the owner actually signed in to, or nil when nobody has yet.
+    /// Nil matters: a fresh install must still honour a build-time pin, while an
+    /// explicit demo sign-in has to override it — the shipped Info.plist carries
+    /// `ALMABaseURL` pointing at production, so a build override that always won
+    /// would make the demo switch unreachable.
+    static var storedChoice: AlmaBackend? {
+        AlmaBackend(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "")
+    }
+
+    static var current: AlmaBackend {
+        get { storedChoice ?? .production }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    /// The backend a login identifier belongs to. Demo accounts are the only ones
+    /// that exist on the demo instance, so the address is the whole signal.
+    static func forLogin(identifier: String) -> AlmaBackend {
+        identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .hasSuffix(demoEmailSuffix) ? .demo : .production
+    }
+
+    /// Switches backend if needed, dropping cookies so a session for one host is
+    /// never presented to the other. Returns true when the backend actually changed.
+    /// Posted after the backend actually changed, so the shell can drop the page it
+    /// is showing and reload against the new host.
+    static let didChangeNotification = Notification.Name("almaBackendDidChange")
+
+    @discardableResult
+    static func select(_ backend: AlmaBackend) -> Bool {
+        guard backend != storedChoice else { return false }
+        current = backend
+
+        let store = HTTPCookieStorage.shared
+        store.cookies?.forEach { store.deleteCookie($0) }
+        // WebKit keeps its own jar. Clearing only the shared storage left the other
+        // host's session behind, and `AlmaAPI.syncCookies()` copies WebKit's cookies
+        // back into the shared store — so the old session would return by itself.
+        let webStore = WKWebsiteDataStore.default().httpCookieStore
+        webStore.getAllCookies { cookies in
+            for cookie in cookies { webStore.delete(cookie, completionHandler: nil) }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: AlmaBackend.didChangeNotification, object: nil)
+            }
+        }
+        return true
+    }
+}
+
 final class AlmaAPI: NSObject {
 
     static let shared = AlmaAPI()
 
-    /// Production by default; physical-device preview verification can override this
-    /// at build time without committing credentials or changing release behavior.
-    static let baseURL: URL = {
-        let production = URL(string: "https://alma-erp-six.vercel.app")!
+    /// Build-time override for physical-device preview verification. Wins over the
+    /// backend selection below, so a preview build stays pinned where it was aimed.
+    private static let buildOverride: URL? = {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "ALMABaseURL") as? String else {
-            return production
+            return nil
         }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard trimmed.hasPrefix("https://"), let configured = URL(string: trimmed) else {
-            return production
-        }
-        return configured
+        guard trimmed.hasPrefix("https://") else { return nil }
+        return URL(string: trimmed)
     }()
+
+    /// Production unless the owner signed in with a demo account — see `AlmaBackend`.
+    /// Computed rather than stored: signing in switches it mid-session, and every
+    /// screen reads through here.
+    static var baseURL: URL {
+        // An explicit sign-in wins; otherwise a build-time pin; otherwise production.
+        if let chosen = AlmaBackend.storedChoice { return chosen.url }
+        return buildOverride ?? AlmaBackend.production.url
+    }
 
     /// Posted (on main) when a request came back unauthenticated even after a cookie
     /// re-sync — the UI should prompt the owner to log in via the web tab.

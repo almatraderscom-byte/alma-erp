@@ -18,6 +18,10 @@ import { KeyboardResize } from '@capacitor/keyboard'
  */
 const remoteServerUrl = process.env.CAPACITOR_SERVER_URL || ''
 const productionHost = 'alma-erp-six.vercel.app'
+// The demo deployment. Signing in with a `@alma-erp.demo` account points the shell
+// here; without the allowlist entry Capacitor treats that as off-origin and hands
+// the demo to Safari instead of keeping it in the app.
+const demoHost = 'alma-erp-demo.vercel.app'
 const remoteServerHost = remoteServerUrl ? new URL(remoteServerUrl).hostname : ''
 
 const config: CapacitorConfig = {
@@ -34,7 +38,7 @@ const config: CapacitorConfig = {
     // of loading it INSIDE the webview — the app then stays stuck on the aura and
     // "refresh" opens Safari. Allowlisting the production host keeps the whole app
     // in-shell. Same-host login redirects stay in-app too.
-    allowNavigation: Array.from(new Set([productionHost, remoteServerHost].filter(Boolean))),
+    allowNavigation: Array.from(new Set([productionHost, demoHost, remoteServerHost].filter(Boolean))),
   },
   ios: {
     handleApplicationNotifications: false,
