@@ -14,6 +14,7 @@
 
 import Capacitor
 import UIKit
+import WebKit
 
 class AlmaBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
@@ -30,6 +31,15 @@ class AlmaBridgeViewController: CAPBridgeViewController {
         // window.__almaNativeHeader). Scripts run on the next document load; the ERP
         // loads after the bootstrap redirect, so this applies by the time it renders.
         if let content = bridge?.webView?.configuration.userContentController {
+            // The local bootstrap (mobile/www/index.html) hands off to whichever
+            // deployment this install is signed in to. It cannot read UserDefaults,
+            // so the choice is injected at documentStart, before its script runs.
+            let host = AlmaAPI.baseURL.absoluteString
+            content.addUserScript(WKUserScript(
+                source: "window.__ALMA_HOST = '\(host)';",
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+            ))
             AlmaEmbed.install(into: content, hideWebHeader: true)
         }
     }
