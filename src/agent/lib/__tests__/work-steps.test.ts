@@ -243,4 +243,41 @@ describe('work_steps_snapshot projector', () => {
     })
     expect(snap.steps.some((s) => s.title.includes('ধাপ টুল-কাজ'))).toBe(true)
   })
+
+  it('keeps the later failure when the same tool is retried', () => {
+    const snap = projectRuntimeWorkSteps({
+      turnId: 't-retry',
+      conversationId: 'c-1',
+      goal: 'স্টক',
+      revision: 1,
+      phase: 'settled',
+      completedToolRounds: 2,
+      verificationHappened: false,
+      blockedBy: null,
+      toolCalls: [
+        { id: 'a', toolName: 'get_inventory_status', status: 'success' },
+        { id: 'b', toolName: 'get_inventory_status', status: 'error' },
+      ],
+    })
+    // One step (a retry is one thing being done) — and it reports the outcome the
+    // turn actually ended with, not the first attempt.
+    expect(snap.steps.filter((s) => s.title === 'স্টক/ইনভেন্টরি দেখছি')).toHaveLength(1)
+    expect(snap.steps.find((s) => s.title === 'স্টক/ইনভেন্টরি দেখছি')?.status).toBe('failed')
+  })
+
+  it('does not claim every step finished when one failed', () => {
+    const snap = projectRuntimeWorkSteps({
+      turnId: 't-headline',
+      conversationId: 'c-1',
+      goal: 'স্টক',
+      revision: 1,
+      phase: 'settled',
+      completedToolRounds: 1,
+      verificationHappened: false,
+      blockedBy: null,
+      toolCalls: [{ id: 'a', toolName: 'get_inventory_status', status: 'error' }],
+    })
+    expect(snap.headline).toContain('ব্যর্থ')
+    expect(snap.headline).not.toBe(`${'৩'}/${'৩'} ধাপ শেষ`)
+  })
 })

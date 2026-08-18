@@ -435,15 +435,24 @@ export function projectRuntimeWorkSteps(input: {
   // list is one thing being done, not five things.
   const calls = input.toolCalls ?? []
   if (calls.length) {
-    let previousTool: string | null = null
-    calls.forEach((call, index) => {
-      if (call.toolName === previousTool) return
-      previousTool = call.toolName
-      const last = index === calls.length - 1
+    // Group first, THEN judge: a retry is the same tool twice, and if the second
+    // attempt failed the group failed. Dropping every outcome after the first
+    // would report a success the turn did not get.
+    const groups: Array<{ toolName: string; failed: boolean }> = []
+    for (const call of calls) {
+      const open = groups[groups.length - 1]
+      if (open && open.toolName === call.toolName) {
+        open.failed = call.status === 'error'
+        continue
+      }
+      groups.push({ toolName: call.toolName, failed: call.status === 'error' })
+    }
+    groups.forEach((group, index) => {
+      const last = index === groups.length - 1
       push(
         `tool-${index + 1}`,
-        toolDisplay(call.toolName).label,
-        call.status === 'error' ? 'failed' : (last && phase === 'working' ? 'running' : 'completed'),
+        toolDisplay(group.toolName).label,
+        group.failed ? 'failed' : (last && phase === 'working' ? 'running' : 'completed'),
       )
     })
   } else {
@@ -462,6 +471,7 @@ export function projectRuntimeWorkSteps(input: {
   }
 
   const doneCount = steps.filter((s) => s.status === 'completed').length
+  const failedCount = steps.filter((s) => s.status === 'failed').length
   let status: WorkStepsOverallStatus
   if (input.blockedBy?.kind === 'approval' || input.blockedBy?.kind === 'question') {
     status = 'waiting_owner'
@@ -474,8 +484,14 @@ export function projectRuntimeWorkSteps(input: {
   }
   const running = steps.find((s) => s.status === 'running')
   const waiting = steps.find((s) => s.status === 'waiting_owner')
+  // A settled turn still delivered an answer, so the overall status stays
+  // `completed` — but the headline must not claim every step finished when one
+  // of them failed. Saying "৪/৪ ধাপ শেষ" over a failed read is the exact kind of
+  // cheerful lie this tracker exists to prevent.
   const headline =
-    status === 'completed' ? `${bn(steps.length)}/${bn(steps.length)} ধাপ শেষ`
+    status === 'completed' && failedCount > 0
+      ? `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ · ${bn(failedCount)}টি ধাপ ব্যর্থ`
+    : status === 'completed' ? `${bn(steps.length)}/${bn(steps.length)} ধাপ শেষ`
     : status === 'waiting_owner' ? `আপনার সিদ্ধান্তের অপেক্ষায়${waiting ? `: ${waiting.title}` : ''}`
     : running ? `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ · এখন: ${running.title}`
     : `${bn(doneCount)}/${bn(steps.length)} ধাপ শেষ`
