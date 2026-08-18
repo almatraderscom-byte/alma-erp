@@ -96,7 +96,7 @@ import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeV
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
-import { advancePlanForToolCall } from '@/agent/lib/plan-step-advance'
+import { beginPlanStepForTool, finishPlanStep } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -684,13 +684,37 @@ async function* runAlternateProviderTurn(
   let runtimeWorkEmitted = false
   let runtimeVerificationSeen = false
   const runtimeWorkGoal = (lastUserText || 'চলমান কাজ').slice(0, 200)
-  /** Tick the plan step this tool belongs to, and keep the local copy in step. */
-  const advanceTrackerPlan = async (toolName: string, ok: boolean, error?: string | null) => {
-    if (!trackerPlanSteps.length) return
-    const moved = await advancePlanForToolCall({ steps: trackerPlanSteps, toolName, ok, error })
-    if (!moved) return
-    const local = trackerPlanSteps.find((step) => step.id === moved.stepId)
-    if (local) local.status = moved.outcome
+  /**
+   * The plan step the in-flight tool claimed, so the same call can close it.
+   * Loaded on demand: a plan made by make_plan in THIS round must be visible to
+   * the tools that follow it, and the end-of-round tracker read comes too late.
+   */
+  let claimedPlanStepId: string | null = null
+  const ensureTrackerPlanSteps = async () => {
+    if (trackerPlanSteps.length) return
+    const plan = await loadPlanForWorkTracker(conversationId, turnId, options.continuation === true)
+    trackerPlanSteps = (plan?.steps ?? []).map((step) => ({
+      id: step.id,
+      action: step.action,
+      toolName: step.toolName ?? null,
+      status: step.status,
+    }))
+  }
+  const beginTrackerPlanStep = async (toolName: string) => {
+    try {
+      await ensureTrackerPlanSteps()
+      claimedPlanStepId = trackerPlanSteps.length
+        ? await beginPlanStepForTool(trackerPlanSteps, toolName)
+        : null
+    } catch { claimedPlanStepId = null }
+  }
+  const finishTrackerPlanStep = async (ok: boolean, error?: string | null) => {
+    const stepId = claimedPlanStepId
+    claimedPlanStepId = null
+    if (!stepId) return
+    const outcome = await finishPlanStep({ stepId, ok, error })
+    const local = trackerPlanSteps.find((step) => step.id === stepId)
+    if (local && outcome) local.status = outcome
   }
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
@@ -2045,7 +2069,6 @@ async function* runAlternateProviderTurn(
     const record = g.toolRecord!
     const preview = toolResultPreview(record.output ?? {})
     toolRecords.push(record)
-    await advanceTrackerPlan(record.toolName, record.status === 'success', record.error)
     timeline.push({ t: 'tool', name: record.toolName, ok: true, input: record.input, result: preview })
     yield { type: 'tool_start', id: record.id, name: record.toolName, input: record.input }
     yield { type: 'tool_end', id: record.id, name: record.toolName, success: true, resultPreview: preview }
@@ -3111,6 +3134,9 @@ async function* runAlternateProviderTurn(
         }
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
+        // Put this tool's plan step into `running` BEFORE it executes, so the chip
+        // shows the part being worked on while it is being worked on.
+        await beginTrackerPlanStep(call.name)
         const started = Date.now()
         // Careful mode: an R1/R2 write that would normally just run gets staged
         // as a card instead. Stage-mode tools already make their own card, and
@@ -3292,6 +3318,7 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
+        await finishTrackerPlanStep(result.success, result.error ?? null)
         // A durable plan just started running: from here this chat IS a work
         // session, and it gets the long-run budget the retired প্ল্যান-ড্রাইভ chip
         // used to grant — earned by the plan actually being enrolled rather than

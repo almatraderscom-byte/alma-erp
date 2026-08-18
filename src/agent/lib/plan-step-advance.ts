@@ -48,27 +48,46 @@ export function pickStepForTool(
   return first.toolName ? null : first
 }
 
-/** Mark the step a finished tool call belongs to. No-ops when nothing matches. */
-export async function advancePlanForToolCall(input: {
-  steps: AdvanceableStep[]
-  toolName: string
-  ok: boolean
-  error?: string | null
-  resultSummary?: unknown
-}): Promise<{ stepId: string; outcome: 'done' | 'failed' } | null> {
-  const step = pickStepForTool(input.steps, input.toolName)
+/**
+ * Claim the step this tool is about to run and put it in `running`, so the chip
+ * shows the part being worked on while it is being worked on. Called BEFORE the
+ * tool executes; marking running and done in the same breath would mean the owner
+ * never sees a step spinning, which is the thing he asked for.
+ */
+export async function beginPlanStepForTool(
+  steps: AdvanceableStep[],
+  toolName: string,
+): Promise<string | null> {
+  const step = pickStepForTool(steps, toolName)
   if (!step) return null
   try {
-    if (step.status === 'pending') await markStepRunning(step.id)
-    if (input.ok) {
-      await markStepDone(step.id, input.resultSummary ?? null)
-      return { stepId: step.id, outcome: 'done' }
+    if (step.status === 'pending') {
+      await markStepRunning(step.id)
+      step.status = 'running'
     }
-    await markStepFailed(step.id, input.error ?? 'tool call failed')
-    return { stepId: step.id, outcome: 'failed' }
+    return step.id
   } catch {
     // The checklist is a view of the work, never a gate on it — a failure to
     // record progress must not take the turn down with it.
+    return null
+  }
+}
+
+/** Close the step claimed by `beginPlanStepForTool` with the tool's outcome. */
+export async function finishPlanStep(input: {
+  stepId: string
+  ok: boolean
+  error?: string | null
+  resultSummary?: unknown
+}): Promise<'done' | 'failed' | null> {
+  try {
+    if (input.ok) {
+      await markStepDone(input.stepId, input.resultSummary ?? null)
+      return 'done'
+    }
+    await markStepFailed(input.stepId, input.error ?? 'tool call failed')
+    return 'failed'
+  } catch {
     return null
   }
 }

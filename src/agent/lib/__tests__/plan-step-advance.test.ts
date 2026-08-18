@@ -28,4 +28,11 @@ describe('pickStepForTool', () => {
     const steps = [step('s1', 'running', 'get_orders')]
     expect(pickStepForTool(steps, 'get_orders')?.id).toBe('s1')
   })
+
+  it('leaves a running step running so the chip can show it working', () => {
+    // begin → running happens before the tool executes; the picker must still be
+    // able to find that step when the same call closes it.
+    const steps = [step('s1', 'running', 'get_orders'), step('s2', 'pending')]
+    expect(pickStepForTool(steps, 'get_orders')?.status).toBe('running')
+  })
 })
