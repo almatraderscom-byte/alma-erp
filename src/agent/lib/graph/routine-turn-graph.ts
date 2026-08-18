@@ -142,6 +142,9 @@ export function isIntentLevelMiss(intent: RoutineIntent, toolOutput: Record<stri
 // model loop. Same word-boundary discipline as the 2026-07-14 ROUTINE_RE fix.
 // ORDER MATTERS: first hit wins, so the more specific intents (order_status
 // with a number, expense with a today-word) sit ABOVE their fuzzier cousins.
+/** List joiners: "stock আর হাজিরা" is two asks even though it is short. */
+const ROUTINE_LIST_JOINER_RE = /,|(^|\s)(আর|ও|and|ar)(\s|$)/i
+
 /** Clause joiners that mean "and then do this too" — never one fixed read. */
 const ROUTINE_SEQUENCE_RE = /\bthen\b|\bafter\s+that\b|তারপর|এরপর|এর\s*পর|erpor/i
 
@@ -225,6 +228,10 @@ export function detectRoutineIntent(userText: string): RoutineIntent | null {
     .sort((a, b) => a - b)
   const separateAsks = hitEnds.filter((end, i) => i === 0 || end - hitEnds[i - 1] > 15)
   if (separateAsks.length > 1) return null
+  // A compact list — "stock আর হাজিরা", "stock, attendance" — puts two asks a
+  // dozen characters apart, under the spacing rule above. The joiner is the
+  // signal there: two intents plus an "and" is two questions, however short.
+  if (hitEnds.length > 1 && ROUTINE_LIST_JOINER_RE.test(text)) return null
   for (const { intent, re } of INTENT_RES) {
     if (!re.test(text)) continue
     // order_status is only confident WITH an extractable number — "order status
