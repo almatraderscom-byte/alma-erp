@@ -25,3 +25,38 @@ export const DEMO_ASSISTANT_NOTICE = [
   '',
   '_This is a demo of ALMA ERP with sample data. The AI assistant is disabled here — it activates with your own account or subscription. Every other module is fully usable._',
 ].join('\n')
+
+/**
+ * The web client reads this endpoint as an SSE stream and only acts on `data:`
+ * frames — a plain JSON body leaves the visitor staring at an empty bubble. Telegram
+ * and other internal callers take the JSON shape instead, so both are produced here.
+ */
+export function demoAssistantNoticeResponse(opts: { conversationId: string | null; json: boolean }): Response {
+  if (opts.json) {
+    return Response.json({
+      conversationId: opts.conversationId,
+      text: DEMO_ASSISTANT_NOTICE,
+      pendingCards: [],
+      askCards: [],
+      personalMode: false,
+      newConversationId: null,
+      compactedFromCost: null,
+      compactSuggested: false,
+    })
+  }
+
+  const frames: string[] = []
+  if (opts.conversationId) {
+    frames.push(JSON.stringify({ type: 'conversation_id', id: opts.conversationId }))
+  }
+  frames.push(JSON.stringify({ type: 'text_delta', delta: DEMO_ASSISTANT_NOTICE }))
+  frames.push(JSON.stringify({ type: 'done' }))
+
+  return new Response(frames.map(f => `data: ${f}\n\n`).join(''), {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  })
+}
