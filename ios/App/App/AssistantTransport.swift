@@ -1047,6 +1047,18 @@ actor AgentEventBuffer {
     /// cadence (Codex P2 #770).
     private var flushGeneration = 0
     private var flushCount = 0
+    /// Reveal cadence (owner ask 2026-08-18: still too fast — "slower, smoother,
+    /// like Claude"). The previous 40ms/6-character pair revealed ~150 characters a
+    /// second, which reads as a paragraph appearing rather than being written.
+    /// 50ms with a 2-character floor is ~40/s at rest: a legible typewriter.
+    ///
+    /// The divisor is the catch-up: a slice is a fraction of whatever is waiting,
+    /// so a provider that dumps a whole paragraph at once still drains quickly and
+    /// the reveal can never fall far behind the wire — only the calm case is slow.
+    private static let flushIntervalNanos: UInt64 = 50_000_000
+    private static let minProseSlice = 2
+    private static let proseCatchUpDivisor = 14
+
     private let apply: @MainActor ([AgentTurnEvent]) -> Void
 
     init(apply: @escaping @MainActor ([AgentTurnEvent]) -> Void) {
@@ -1094,7 +1106,7 @@ actor AgentEventBuffer {
     /// can never fall minutes behind the wire.
     private func nextProseSlice() -> String? {
         guard !proseBacklog.isEmpty else { return nil }
-        let target = max(6, proseBacklog.count / 8)
+        let target = max(Self.minProseSlice, proseBacklog.count / Self.proseCatchUpDivisor)
         let idx = proseBacklog.index(proseBacklog.startIndex,
                                      offsetBy: min(target, proseBacklog.count))
         let slice = String(proseBacklog[..<idx])
@@ -1107,7 +1119,7 @@ actor AgentEventBuffer {
         flushScheduled = true
         let generation = flushGeneration
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
+            try? await Task.sleep(nanoseconds: Self.flushIntervalNanos)
             await self?.pacedTick(ifGeneration: generation)
         }
     }
