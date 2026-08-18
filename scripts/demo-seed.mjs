@@ -82,7 +82,9 @@ const CATEGORY_MAP = {
   men_panjabi: { label: "Men's Panjabi", sizes: ['S', 'M', 'L', 'XL', 'XXL'] },
   women_three_piece: { label: 'Women Three Piece', sizes: ['M', 'L', 'XL'] },
   girl_two_piece: { label: 'Girls Two Piece', sizes: ['1-2Y', '2-3Y', '3-4Y', '5-6Y'] },
-  simple: { label: 'Family Set', sizes: ['Free'] },
+  // The storefront's catch-all: watches, earbuds, wallets, books, tools. Anything
+  // more specific than 'General' would mislabel most of it.
+  simple: { label: 'General', sizes: ['Free'] },
 }
 const DEFAULT_CATEGORY = { label: 'Other', sizes: ['Free'] }
 const categoryOf = productType => CATEGORY_MAP[productType] || DEFAULT_CATEGORY
@@ -518,7 +520,19 @@ async function main() {
   const { products, stock } = buildCatalogue()
   await prisma.lifestyleProduct.createMany({ data: products })
   await prisma.lifestyleStockItem.createMany({ data: stock })
-  console.log(`· ${products.length} products, ${stock.length} stock rows`)
+  // The Product Images page reads `product_images`, not the product row's own
+  // imageUrl — without these the photos exist in the data and nowhere on screen.
+  await prisma.productImage.createMany({
+    data: products.map((p, i) => ({
+      id: `${ID}IMG-${String(i + 1).padStart(4, '0')}`,
+      productCode: p.sku,
+      business: BUSINESS_ID,
+      storagePath: new URL(p.imageUrl).pathname,
+      url: p.imageUrl,
+      isPrimary: true,
+    })),
+  })
+  console.log(`· ${products.length} products, ${stock.length} stock rows, ${products.length} photos`)
 
   // Volume is chosen so the demo reads as a healthy business, not a failing one.
   // 320 orders against 200 expenses put the Finance page at −622% margin: the
