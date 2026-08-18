@@ -57,9 +57,20 @@ async function demoEmployees(businessId: string): Promise<HREmployee[]> {
   }))
 }
 
-async function demoFinance(businessId: string): Promise<ERPFinanceResponse> {
+/** `{ gte, lte }` for the caller's window, or undefined when it asked for everything. */
+function dateRangeFilter(params?: URLSearchParams) {
+  const start = params?.get('startDate')
+  const end = params?.get('endDate')
+  if (!start && !end) return undefined
+  return { ...(start ? { gte: new Date(start) } : {}), ...(end ? { lte: new Date(end) } : {}) }
+}
+
+/** Honors the caller's startDate/endDate — the Analytics page sends a range and would
+ *  otherwise show range-scoped order KPIs beside all-time expense totals. */
+async function demoFinance(businessId: string, params?: URLSearchParams): Promise<ERPFinanceResponse> {
+  const range = dateRangeFilter(params)
   const rows = await prisma.lifestyleExpense.findMany({
-    where: { businessId, deletedAt: null },
+    where: { businessId, deletedAt: null, ...(range ? { expenseDate: range } : {}) },
     orderBy: { expenseDate: 'desc' },
   })
 
@@ -89,7 +100,7 @@ async function demoFinance(businessId: string): Promise<ERPFinanceResponse> {
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
 
   const delivered = await prisma.lifestyleOrder.aggregate({
-    where: { businessId, status: 'Delivered' },
+    where: { businessId, status: 'Delivered', ...(range ? { date: range } : {}) },
     _sum: { sellPrice: true },
   })
   const revenue = delivered._sum.sellPrice || 0
@@ -112,11 +123,7 @@ async function demoFinance(businessId: string): Promise<ERPFinanceResponse> {
 async function demoFinancialReport(businessId: string, params: URLSearchParams) {
   const startDate = params.get('startDate')
   const endDate = params.get('endDate')
-  const start = startDate ? new Date(startDate) : null
-  const end = endDate ? new Date(endDate) : null
-  const dateFilter = start || end
-    ? { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) }
-    : undefined
+  const dateFilter = dateRangeFilter(params)
 
   const [orders, expenseTotal, monthlyOrders] = await Promise.all([
     prisma.lifestyleOrder.aggregate({
@@ -189,7 +196,7 @@ async function handleRoute(route: string, params: URLSearchParams) {
     }
 
     case 'finance':
-      return demoFinance(businessId)
+      return demoFinance(businessId, params)
 
     case 'financial_report':
       return demoFinancialReport(businessId, params)
@@ -197,7 +204,7 @@ async function handleRoute(route: string, params: URLSearchParams) {
     case 'hr_dashboard': {
       const [employees, finance] = await Promise.all([
         demoEmployees(businessId),
-        demoFinance(businessId),
+        demoFinance(businessId, params),
       ])
       const totalSalary = employees.reduce((s, e) => s + e.monthly_salary, 0)
       const orders = await prisma.lifestyleOrder.aggregate({
