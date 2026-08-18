@@ -88,6 +88,8 @@ export type TrackerPlanRow = {
     seq: number
     action: string
     status: string
+    /** Set when the plan step named the tool that carries it out. */
+    toolName?: string | null
     startedAt: Date | null
     doneAt: Date | null
     turnId: string | null
@@ -107,6 +109,8 @@ const PLAN_SELECT = {
     select: {
       id: true, seq: true, action: true, status: true,
       startedAt: true, doneAt: true, turnId: true,
+      // The turn ticks off the step whose tool it just ran — see plan-step-advance.ts.
+      toolName: true,
     },
     orderBy: { seq: 'asc' as const },
   },

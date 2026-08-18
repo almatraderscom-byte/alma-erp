@@ -96,6 +96,7 @@ import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeV
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
+import { advancePlanForToolCall } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -674,11 +675,23 @@ async function* runAlternateProviderTurn(
   let lastWorkStepsSignature = ''
   let workStepsBlocker: import('@/agent/lib/work-steps').WorkStepsBlocker | null = null
   let workStepsTrackerId: string | null = null
+  // The plan's steps as of the last checklist read, so a tool call can tick off
+  // the step it belongs to while the turn is still running — see
+  // plan-step-advance.ts for why the autonomous driver could not do this.
+  let trackerPlanSteps: import('@/agent/lib/plan-step-advance').AdvanceableStep[] = []
   // Runtime (unplanned-turn) tracker state — see projectRuntimeWorkSteps.
   let runtimeWorkRevision = 0
   let runtimeWorkEmitted = false
   let runtimeVerificationSeen = false
   const runtimeWorkGoal = (lastUserText || 'চলমান কাজ').slice(0, 200)
+  /** Tick the plan step this tool belongs to, and keep the local copy in step. */
+  const advanceTrackerPlan = async (toolName: string, ok: boolean, error?: string | null) => {
+    if (!trackerPlanSteps.length) return
+    const moved = await advancePlanForToolCall({ steps: trackerPlanSteps, toolName, ok, error })
+    if (!moved) return
+    const local = trackerPlanSteps.find((step) => step.id === moved.stepId)
+    if (local) local.status = moved.outcome
+  }
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
   if (ownerCorrectionNudge) {
@@ -2032,6 +2045,7 @@ async function* runAlternateProviderTurn(
     const record = g.toolRecord!
     const preview = toolResultPreview(record.output ?? {})
     toolRecords.push(record)
+    await advanceTrackerPlan(record.toolName, record.status === 'success', record.error)
     timeline.push({ t: 'tool', name: record.toolName, ok: true, input: record.input, result: preview })
     yield { type: 'tool_start', id: record.id, name: record.toolName, input: record.input }
     yield { type: 'tool_end', id: record.id, name: record.toolName, success: true, resultPreview: preview }
@@ -3568,6 +3582,12 @@ async function* runAlternateProviderTurn(
         const trackerPlan = await loadPlanForWorkTracker(
           conversationId, turnId, options.continuation === true)
         if (trackerPlan) workStepsTrackerId = trackerPlan.id
+        trackerPlanSteps = (trackerPlan?.steps ?? []).map((step) => ({
+          id: step.id,
+          action: step.action,
+          toolName: step.toolName ?? null,
+          status: step.status,
+        }))
         const planProgress = trackerPlan
           ? buildPlanProgress(trackerPlan.id, trackerPlan.goal, trackerPlan.steps)
           : null
