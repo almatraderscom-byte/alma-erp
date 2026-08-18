@@ -2,6 +2,7 @@ import { Resend } from 'resend'
 import type { NotificationPriority } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
+import { isDemoDeployment } from '@/lib/demo-mode'
 
 function getFrom() {
   return process.env.EMAIL_FROM || 'Alma ERP <onboarding@resend.dev>'
@@ -138,6 +139,8 @@ async function recordEmailAudit(input: EmailInput, result: { ok: boolean; id?: s
 }
 
 export async function sendEmail(input: EmailInput) {
+  // Demo deployment: never mail out from the company's address on fake data.
+  if (isDemoDeployment()) return { ok: true, skipped: true }
   const to = Array.isArray(input.to) ? input.to.filter(Boolean) : [input.to].filter(Boolean)
   if (!to.length) return { ok: false, skipped: true, error: 'No recipients' }
   if (input.dedupeKey && await alreadySent(input.dedupeKey)) {

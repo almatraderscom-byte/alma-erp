@@ -30,6 +30,17 @@ if (!process.env.VERCEL) {
   process.exit(0)
 }
 
+// 1b) The demo instance is not on this migration chain. The chain cannot build a
+//     database from empty — its first migration adds a foreign key to "User" and no
+//     migration in the repo creates that table — so the demo's schema comes from
+//     `prisma db push` (once by hand, then nightly in demo-reset.yml). Running
+//     `migrate deploy` there fails on migration 1 and would block every demo deploy.
+//     See docs/DEMO_INSTANCE.md.
+if (process.env.DEMO_MODE === 'true') {
+  console.log('[migrate-on-deploy] DEMO_MODE — schema managed by db push; skipping migrations')
+  process.exit(0)
+}
+
 // 2) Need a direct (non-pooler) connection for DDL. Production must never ship
 //    past this point without it; previews remain DB-free when the secret is not
 //    intentionally exposed to that environment.

@@ -14,6 +14,8 @@ import { setOwnerSessionConversation } from '@/agent/lib/owner-session'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
+import { reserveDemoAssistantTurn } from '@/lib/demo-assistant-cap'
+import { demoAssistantNoticeActive, demoAssistantNoticeResponse } from '@/lib/demo-assistant-notice'
 import { captureAgentError } from '@/agent/lib/sentry'
 import {
   claimContinuationTurn,
@@ -170,11 +172,23 @@ function verifyInternalToken(provided: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const disabled = requireAgentEnabled()
-  if (disabled) return disabled
-
   let body: ChatBody
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
+
+  // Demo instance: answer with a fixed notice instead of calling a model. Placed
+  // ABOVE the agent-enabled gate on purpose — the demo may run with
+  // AGENT_ENABLED=false, and a 503 there would bury the notice the visitor is
+  // meant to read. No turn is created, so nothing is spent and nothing counts
+  // against the daily cap. `DEMO_ASSISTANT_LIVE=true` switches to the real assistant.
+  if (demoAssistantNoticeActive()) {
+    return demoAssistantNoticeResponse({
+      conversationId: typeof body.conversationId === 'string' ? body.conversationId : null,
+      json: body.source === 'telegram' || req.headers.get('x-agent-source') === 'telegram',
+    })
+  }
+
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
 
   const authHeader = req.headers.get('authorization') ?? ''
   const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
@@ -273,6 +287,20 @@ export async function POST(req: NextRequest) {
     return Response.json(
       { error: 'rate_limited', message: 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।', retryAfterSec: rate.retryAfterSec },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
+    )
+  }
+
+  // Demo instance: a visitor can send as many messages as they like and each one
+  // spends the owner's model budget, so the day has a hard ceiling. Inert unless
+  // DEMO_MODE is set.
+  const demoCap = await reserveDemoAssistantTurn()
+  if (demoCap.blocked) {
+    return Response.json(
+      {
+        error: 'demo_daily_limit',
+        message: `এই ডেমোতে দিনে ${demoCap.limit}টি প্রশ্ন করা যায়, আজকের সীমা শেষ। আগামীকাল আবার চেষ্টা করুন।`,
+      },
+      { status: 429 },
     )
   }
 

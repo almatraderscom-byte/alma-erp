@@ -22,6 +22,11 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname.startsWith('/api/invoice/public')) return true
   if (pathname === '/api/telegram/webhook') return true
   if (pathname === '/api/wa/webhook') return true
+  // Demo instance's stand-in for the Google Apps Script backend. `server-api.ts`
+  // calls it server-to-server with no session cookie, so it has to bypass the
+  // session gate the way the other self-protecting endpoints here do: the route
+  // 404s unless DEMO_MODE is true and 401s without the deployment's API_SECRET.
+  if (pathname === '/api/demo-gas') return true
   // ElevenLabs ConvAI post-call webhook — self-protects via HMAC-SHA256 signature
   // (ElevenLabs-Signature header) + replay window in the route handler; no session cookie.
   if (pathname === '/api/assistant/voice-call/webhook') return true

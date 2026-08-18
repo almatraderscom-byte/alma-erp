@@ -7,6 +7,7 @@
  */
 
 import { sendTwilioWaText, twilioWaConfigured } from './wa/twilio-wa'
+import { isDemoDeployment } from '@/lib/demo-mode'
 
 function telegramApiBase(): string {
   const override = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '')
@@ -24,6 +25,10 @@ function telegramApiBase(): string {
 export async function mirrorOwnerNotifyToWhatsApp(
   text: string,
 ): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
+  // Guarded here rather than only in the callers: the WhatsApp self-test route calls
+  // this directly, so a caller-side guard would still let demo traffic reach the
+  // owner's real number.
+  if (isDemoDeployment()) return { sent: false, reason: 'demo deployment' }
   const to = process.env.OWNER_WHATSAPP_NUMBER
   // Gated ONLY on the owner explicitly setting their number (that IS the opt-in) +
   // Twilio creds. No extra kill switch here — it's the owner's own number.
@@ -47,6 +52,8 @@ export async function sendOwnerApprovalCard(input: {
   rejectLabel?: string
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
 }): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram/WhatsApp must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   const token = process.env.ASSISTANT_BOT_TOKEN
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!token || !chatId) {
@@ -96,6 +103,8 @@ export async function sendOwnerPhoto(
   caption?: string,
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram/WhatsApp must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   // Mirror the decision buttons to the owner's WhatsApp (best-effort, dormant).
   if (reply_markup?.inline_keyboard?.length) {
     try {
@@ -121,6 +130,8 @@ export async function sendTelegramPhoto(
   caption?: string,
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   const token = process.env.ASSISTANT_BOT_TOKEN
   if (!token || !chatId) {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or chatId not set' }
@@ -145,6 +156,8 @@ export async function sendTelegramText(
   chatId: string,
   text: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   const token = process.env.ASSISTANT_BOT_TOKEN
   if (!token || !chatId) {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or chatId not set' }
@@ -166,6 +179,8 @@ export async function sendTelegramText(
 
 /** Plain status text to owner Telegram (no buttons) + WhatsApp mirror. */
 export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram/WhatsApp must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   // Second channel: mirror to the owner's WhatsApp (best-effort, dormant until configured).
   // Telegram below ALWAYS fires regardless, so a closed 24h WhatsApp window never drops a
   // notification — it just isn't duplicated to WhatsApp until the owner messages again.
@@ -223,6 +238,8 @@ export async function sendOwnerActionable(
   text: string,
   inlineKeyboard: Array<Array<{ text: string; callback_data: string }>>,
 ): Promise<{ ok: boolean; error?: string }> {
+  // Demo deployment: the owner's real Telegram/WhatsApp must not receive demo traffic.
+  if (isDemoDeployment()) return { ok: true }
   // WhatsApp mirror with the same buttons (best-effort, dormant until configured).
   if (inlineKeyboard?.length) {
     try {
