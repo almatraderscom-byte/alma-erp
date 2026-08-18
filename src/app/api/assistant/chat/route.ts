@@ -15,6 +15,7 @@ import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { reserveDemoAssistantTurn } from '@/lib/demo-assistant-cap'
+import { DEMO_ASSISTANT_NOTICE, demoAssistantNoticeActive } from '@/lib/demo-assistant-notice'
 import { captureAgentError } from '@/agent/lib/sentry'
 import {
   claimContinuationTurn,
@@ -275,6 +276,24 @@ export async function POST(req: NextRequest) {
       { error: 'rate_limited', message: 'অনেক দ্রুত মেসেজ পাঠানো হচ্ছে। এক মিনিট পরে আবার চেষ্টা করুন।', retryAfterSec: rate.retryAfterSec },
       { status: 429, headers: { 'Retry-After': String(rate.retryAfterSec) } },
     )
+  }
+
+  // Demo instance: answer with a fixed notice instead of calling a model. The demo
+  // carries no model key on purpose — a visitor must not be able to spend the owner's
+  // budget on questions about invented data — and an assistant tab that errors reads
+  // as a broken product. No turn is created, so nothing is spent and nothing counts
+  // against the cap below. `DEMO_ASSISTANT_LIVE=true` switches to the real assistant.
+  if (demoAssistantNoticeActive()) {
+    return Response.json({
+      conversationId: typeof body.conversationId === 'string' ? body.conversationId : null,
+      text: DEMO_ASSISTANT_NOTICE,
+      pendingCards: [],
+      askCards: [],
+      personalMode: false,
+      newConversationId: null,
+      compactedFromCost: null,
+      compactSuggested: false,
+    })
   }
 
   // Demo instance: a visitor can send as many messages as they like and each one
