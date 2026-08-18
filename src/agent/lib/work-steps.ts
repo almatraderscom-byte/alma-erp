@@ -14,6 +14,7 @@
  * attach to a new request merely because it is the newest conversation plan.
  */
 import { prisma } from '@/lib/prisma'
+import { toolDisplay } from '@/agent/lib/tool-labels'
 
 export const WORK_STEPS_SNAPSHOT_VERSION = 1 as const
 
@@ -404,6 +405,13 @@ export function projectRuntimeWorkSteps(input: {
   verificationHappened: boolean
   blockedBy: WorkStepsBlocker | null
   originAssistantMessageId?: string | null
+  /**
+   * The tool calls this turn actually made, in order. Each becomes its own named
+   * step: the owner asked to see *what* the agent is doing, and "৩ ধাপ টুল-কাজ"
+   * answers only *how much*. Names come from the same label table the live
+   * "checking" strip uses, so the tracker and the strip never disagree.
+   */
+  toolCalls?: Array<{ id: string; toolName: string; status: 'success' | 'error' }>
   now?: Date
 }): WorkStepsSnapshot {
   const now = input.now ?? new Date()
@@ -422,12 +430,29 @@ export function projectRuntimeWorkSteps(input: {
   }
   // Evidence: the persisted owner request was accepted (this turn exists).
   push('accept', 'অনুরোধ বুঝে নেওয়া', 'completed')
-  // Evidence: tool rounds actually executed (the projector is only invoked
-  // once the first round completed).
-  const roundLabel = input.completedToolRounds > 1
-    ? `তথ্য সংগ্রহ ও কাজ (${bn(input.completedToolRounds)} ধাপ টুল-কাজ)`
-    : 'তথ্য সংগ্রহ ও কাজ'
-  push('work', roundLabel, phase === 'working' ? 'running' : 'completed')
+  // Evidence: the tool calls that actually ran, named one by one. Consecutive
+  // repeats of the same tool collapse into a single step — five reads of the same
+  // list is one thing being done, not five things.
+  const calls = input.toolCalls ?? []
+  if (calls.length) {
+    let previousTool: string | null = null
+    calls.forEach((call, index) => {
+      if (call.toolName === previousTool) return
+      previousTool = call.toolName
+      const last = index === calls.length - 1
+      push(
+        `tool-${index + 1}`,
+        toolDisplay(call.toolName).label,
+        call.status === 'error' ? 'failed' : (last && phase === 'working' ? 'running' : 'completed'),
+      )
+    })
+  } else {
+    // No per-call detail available (older callers): fall back to the honest count.
+    const roundLabel = input.completedToolRounds > 1
+      ? `তথ্য সংগ্রহ ও কাজ (${bn(input.completedToolRounds)} ধাপ টুল-কাজ)`
+      : 'তথ্য সংগ্রহ ও কাজ'
+    push('work', roundLabel, phase === 'working' ? 'running' : 'completed')
+  }
   // Appears only when the honesty guard ACTUALLY retried this turn.
   if (input.verificationHappened) {
     push('verify', 'উত্তর যাচাই', phase === 'verifying' ? 'running' : 'completed')

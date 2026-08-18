@@ -50,10 +50,42 @@ const SEQUENCE_MARKER_RE = /তারপর|এরপর|এর\s*পর|তা�
 const DATA_NOUN_RE = /(order|অর্ডার|stock|স্টক|inventory|ইনভেন্টরি|balance|ব্যালান্স|ব্যালেন্স|বিক্রি|sales?|revenue|আয়|due|বাকি|payment|পেমেন্ট|staff|স্টাফ|customer|কাস্টমার|attendance|হাজিরা|cash|ক্যাশ|expense|খরচ)/i
 const DATA_QUESTION_RE = /[?？]|\bকত\b|\bকয়\b|\bkoto\b|how\s+many|how\s+much|what\s+is|কেমন|অবস্থা|কি\s*আছে|আছে\s*কি|\bstatus\b|\blatest\b|সর্বশেষ|আজকের|\btoday\b/i
 
+/**
+ * Owner ask 2026-08-18: plan the way Claude Code does — lay the work out as steps
+ * first, then execute them, so he can see what the plan is and which part is done.
+ *
+ * The old rule fired only on the word "plan" or on ≥2 "then"-markers, which is
+ * almost never how he phrases a job, so nearly every request went unplanned and
+ * the tracker had nothing real to show.
+ *
+ * The line now sits between *asking* and *working*. A question is never planned —
+ * planning a lookup would buy a model round and a plan row for nothing. Work is
+ * planned once it is more than a single move: a sequence marker, a second verb, a
+ * second subject, or simply a long instruction. A bare one-liner ("মার্ক করে দাও")
+ * still goes straight to the tool.
+ */
 function classifyPlanFirst(t: string): boolean {
   if (PLAN_REQUEST_RE.test(t)) return true
+
   const markers = t.match(SEQUENCE_MARKER_RE)
-  return markers ? markers.length >= 2 : false // ≥2 "then"-markers ⇒ ≥3 sequential steps
+  if (markers && markers.length >= 2) return true // ≥2 "then"-markers ⇒ ≥3 sequential steps
+
+  // Only work gets planned. A question — even one carrying an action verb, e.g.
+  // "কেন খুলতে পারছি না?" — is a lookup, and the same disqualifiers the
+  // action-attempt classifier uses apply here.
+  if (!classifyActionAttemptExpected(t)) return false
+
+  // One move, stated once, is not a plan.
+  if (markers && markers.length >= 1) return true
+  // Two verbs only count as two moves when they are apart in the sentence.
+  // "মার্ক করে দাও" is one instruction whose verb form matches twice in a row;
+  // "স্টক দেখে অর্ডার আপডেট করো" is genuinely two.
+  const verbSpans = [...t.matchAll(new RegExp(ACTION_VERB_RE.source, 'gi'))].map((m) => m.index ?? 0)
+  const distinctMoves = verbSpans.filter((idx, i) => i === 0 || idx - verbSpans[i - 1] > 12)
+  if (distinctMoves.length >= 2) return true
+  const nounHits = t.match(new RegExp(DATA_NOUN_RE.source, 'gi'))
+  if (nounHits && new Set(nounHits.map((n) => n.toLowerCase())).size >= 2) return true
+  return t.trim().length >= 120
 }
 
 // Domain-neutral action request: an imperative aimed at the agent. Bangla,

@@ -3610,6 +3610,7 @@ async function* runAlternateProviderTurn(
             revision: runtimeWorkRevision,
             phase: 'working',
             completedToolRounds: iteration + 1,
+            toolCalls: toolRecords.map((r) => ({ id: r.id, toolName: r.toolName, status: r.status })),
             verificationHappened: runtimeVerificationSeen,
             blockedBy: workStepsBlocker,
           })
@@ -4020,6 +4021,7 @@ async function* runAlternateProviderTurn(
         completedToolRounds: apiRounds > 0 ? apiRounds : 1,
         verificationHappened: runtimeVerificationSeen,
         blockedBy: workStepsBlocker,
+        toolCalls: toolRecords.map((r) => ({ id: r.id, toolName: r.toolName, status: r.status })),
       })
     }
 

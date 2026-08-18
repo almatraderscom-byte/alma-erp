@@ -192,4 +192,55 @@ describe('work_steps_snapshot projector', () => {
       expect(snapshot.status).toBe(expected)
     }
   })
+
+  it('names each tool call instead of collapsing them into a round count', () => {
+    const snap = projectRuntimeWorkSteps({
+      turnId: 't-tools',
+      conversationId: 'c-1',
+      goal: 'আজকের অবস্থা',
+      revision: 1,
+      phase: 'working',
+      completedToolRounds: 3,
+      verificationHappened: false,
+      blockedBy: null,
+      toolCalls: [
+        { id: 'a', toolName: 'get_orders', status: 'success' },
+        { id: 'b', toolName: 'get_orders', status: 'success' },
+        { id: 'c', toolName: 'get_inventory_status', status: 'success' },
+      ],
+    })
+    const titles = snap.steps.map((s) => s.title)
+    // The repeat collapses: two reads of the same list is one thing being done.
+    expect(titles).toEqual(['অনুরোধ বুঝে নেওয়া', 'ERP অর্ডার চেক করছি', 'স্টক/ইনভেন্টরি দেখছি'])
+    expect(titles.some((t) => t.includes('ধাপ টুল-কাজ'))).toBe(false)
+  })
+
+  it('marks a failed tool call as failed, not silently completed', () => {
+    const snap = projectRuntimeWorkSteps({
+      turnId: 't-fail',
+      conversationId: 'c-1',
+      goal: 'স্টক',
+      revision: 1,
+      phase: 'settled',
+      completedToolRounds: 1,
+      verificationHappened: false,
+      blockedBy: null,
+      toolCalls: [{ id: 'a', toolName: 'get_inventory_status', status: 'error' }],
+    })
+    expect(snap.steps.find((s) => s.title === 'স্টক/ইনভেন্টরি দেখছি')?.status).toBe('failed')
+  })
+
+  it('falls back to the round count when no per-call detail is given', () => {
+    const snap = projectRuntimeWorkSteps({
+      turnId: 't-old',
+      conversationId: 'c-1',
+      goal: 'x',
+      revision: 1,
+      phase: 'working',
+      completedToolRounds: 3,
+      verificationHappened: false,
+      blockedBy: null,
+    })
+    expect(snap.steps.some((s) => s.title.includes('ধাপ টুল-কাজ'))).toBe(true)
+  })
 })
