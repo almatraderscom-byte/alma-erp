@@ -171,6 +171,9 @@ export function prismaProductToGas(row: LifestyleProduct) {
     default_cogs: row.defaultCogs,
     active: row.active,
     notes: row.notes,
+    // Additive: the demo seeds product photographs here, and a consumer that does
+    // not read it is unaffected.
+    image_url: row.imageUrl ?? '',
     updated_at: row.updatedAt.toISOString(),
   }
 }

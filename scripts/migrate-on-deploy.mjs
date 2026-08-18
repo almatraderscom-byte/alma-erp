@@ -37,8 +37,36 @@ if (!process.env.VERCEL) {
 //     `migrate deploy` there fails on migration 1 and would block every demo deploy.
 //     See docs/DEMO_INSTANCE.md.
 if (process.env.DEMO_MODE === 'true') {
-  console.log('[migrate-on-deploy] DEMO_MODE — schema managed by db push; skipping migrations')
-  process.exit(0)
+  // A deployment that starts reading a new model would otherwise serve it against
+  // last night's schema until the 02:00 reset caught up, so push here too — but only
+  // over a session-mode connection. The demo's own DATABASE_URL is the transaction
+  // pooler (pgbouncer), which cannot carry DDL; set DEMO_DIRECT_URL (port 5432) to
+  // enable this. Without it the build continues and the nightly reset stays the only
+  // sync — said loudly rather than silently.
+  const demoDirect = process.env.DEMO_DIRECT_URL?.trim()
+  if (!demoDirect) {
+    console.warn(
+      '[migrate-on-deploy] DEMO_MODE without DEMO_DIRECT_URL — schema sync deferred to the '
+      + 'nightly reset. Set DEMO_DIRECT_URL (session pooler, port 5432) to sync on deploy.',
+    )
+    process.exit(0)
+  }
+
+  const guard = spawnSync('node', ['scripts/demo-assert-target.mjs'], {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: demoDirect },
+  })
+  if (guard.status !== 0) {
+    console.error('[migrate-on-deploy] demo target check FAILED — refusing to touch that database')
+    process.exit(guard.status ?? 1)
+  }
+
+  console.log('[migrate-on-deploy] DEMO_MODE — syncing schema with prisma db push…')
+  const push = spawnSync('npx', ['prisma', 'db', 'push', '--skip-generate', '--accept-data-loss'], {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: demoDirect },
+  })
+  process.exit(push.status ?? 1)
 }
 
 // 2) Need a direct (non-pooler) connection for DDL. Production must never ship

@@ -22,6 +22,7 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { pathToFileURL } from 'node:url'
+import { readFileSync } from 'node:fs'
 
 const prisma = new PrismaClient()
 
@@ -62,21 +63,36 @@ const dhakaTime = (day, minutesFromMidnight) =>
   new Date(day.getTime() + minutesFromMidnight * 60 * 1000 - DHAKA_OFFSET_MS)
 
 // ── catalogue ────────────────────────────────────────────────────────────────
-const CATEGORIES = [
-  { name: 'Kids Frock', sizes: ['1-2Y', '2-3Y', '3-4Y', '5-6Y', '7-8Y'], cogs: [420, 900], margin: [1.7, 2.4] },
-  { name: 'Panjabi', sizes: ['S', 'M', 'L', 'XL'], cogs: [650, 1450], margin: [1.6, 2.2] },
-  { name: 'Kurti', sizes: ['S', 'M', 'L', 'XL'], cogs: [520, 1150], margin: [1.7, 2.3] },
-  { name: 'Three Piece', sizes: ['M', 'L', 'XL'], cogs: [1100, 2400], margin: [1.5, 2.0] },
-  { name: 'Baby Set', sizes: ['0-6M', '6-12M', '1-2Y'], cogs: [380, 780], margin: [1.8, 2.5] },
-  { name: 'Accessories', sizes: ['Free'], cogs: [90, 320], margin: [2.0, 3.0] },
-]
+/**
+ * Real products, not invented ones: names, prices and photographs come from the
+ * live storefront catalogue (`scripts/demo-catalogue.json`, pulled from the
+ * almatraders.com Supabase project). A visitor recognises the shop instead of
+ * reading "Mayur Kids Frock", and the images are already public URLs, so the demo
+ * serves them without a key or a copy.
+ *
+ * Regenerate with `node scripts/demo-catalogue-refresh.mjs` when the shop changes.
+ */
+const CATALOGUE = JSON.parse(
+  readFileSync(new URL('./demo-catalogue.json', import.meta.url), 'utf8'),
+)
 
-const PRODUCT_WORDS = [
-  'Aurora', 'Meherun', 'Nokshi', 'Rongdhonu', 'Shapla', 'Tasneem', 'Neelabh', 'Rupkotha',
-  'Chandni', 'Bakul', 'Doyel', 'Kashful', 'Jharna', 'Mayur', 'Palki', 'Shiuli',
-  'Alpona', 'Bonolota', 'Tarash', 'Nabanno', 'Megher', 'Shonali', 'Rodela', 'Bristi',
-]
-const COLORS = ['Maroon', 'Navy', 'Off-White', 'Sage', 'Mustard', 'Black', 'Powder Blue', 'Rust']
+/** Storefront `product_type` → the label the ERP shows, and the sizes it stocks. */
+const CATEGORY_MAP = {
+  boy_panjabi: { label: 'Boys Panjabi', sizes: ['1-2Y', '2-3Y', '3-4Y', '5-6Y', '7-8Y'] },
+  men_panjabi: { label: "Men's Panjabi", sizes: ['S', 'M', 'L', 'XL', 'XXL'] },
+  women_three_piece: { label: 'Women Three Piece', sizes: ['M', 'L', 'XL'] },
+  girl_two_piece: { label: 'Girls Two Piece', sizes: ['1-2Y', '2-3Y', '3-4Y', '5-6Y'] },
+  // The storefront's catch-all: watches, earbuds, wallets, books, tools. Anything
+  // more specific than 'General' would mislabel most of it.
+  simple: { label: 'General', sizes: ['Free'] },
+}
+const DEFAULT_CATEGORY = { label: 'Other', sizes: ['Free'] }
+const categoryOf = productType => CATEGORY_MAP[productType] || DEFAULT_CATEGORY
+
+/** Sizes for a display label — orders need this after the product is chosen. */
+const SIZES_BY_LABEL = Object.fromEntries(
+  [...Object.values(CATEGORY_MAP), DEFAULT_CATEGORY].map(c => [c.label, c.sizes]),
+)
 
 const FIRST_NAMES = [
   'রিয়া', 'তানিয়া', 'সাদিয়া', 'নুসরাত', 'ফারহানা', 'মেহজাবীন', 'সুমাইয়া', 'আফসানা',
@@ -215,60 +231,63 @@ async function seedUsers() {
 function buildCatalogue() {
   const products = []
   const stock = []
-  let n = 0
-  for (const cat of CATEGORIES) {
-    const count = cat.name === 'Accessories' ? 5 : 8
-    for (let i = 0; i < count; i++) {
-      n += 1
-      const sku = `${ID}SKU-${String(n).padStart(3, '0')}`
-      const color = pick(COLORS)
-      const name = `${pick(PRODUCT_WORDS)} ${cat.name} — ${color}`
-      const cogs = taka(between(cat.cogs[0], cat.cogs[1]))
-      const price = taka(cogs * (cat.margin[0] + rng() * (cat.margin[1] - cat.margin[0])))
-      products.push({
+
+  CATALOGUE.forEach((item, i) => {
+    const cat = categoryOf(item.category)
+    const sku = `${ID}${item.sku}`
+    const price = taka(item.price)
+    // The storefront publishes the selling price only; cost is derived at a
+    // believable garment margin so Finance and Inventory have something to work with.
+    const cogs = taka(price * (0.5 + rng() * 0.12))
+
+    products.push({
+      sku,
+      name: item.name,
+      category: cat.label,
+      defaultCogs: cogs,
+      defaultPrice: price,
+      active: true,
+      notes: '',
+      supplier: 'demo',
+      imageUrl: item.imageUrl,
+    })
+
+    for (const size of cat.sizes) {
+      const opening = between(6, 40)
+      const purchased = between(0, 25)
+      const sold = between(0, Math.max(1, opening))
+      const returned = between(0, 3)
+      const damaged = between(0, 2)
+      const current = Math.max(0, opening + purchased - sold + returned - damaged)
+      stock.push({
+        id: `${ID}STK-${String(stock.length + 1).padStart(4, '0')}`,
         sku,
-        name,
-        category: cat.name,
-        defaultCogs: cogs,
-        defaultPrice: price,
+        product: item.name,
+        category: cat.label,
+        color: '',
+        size,
+        opening,
+        purchased,
+        sold,
+        returned,
+        damaged,
+        reserved: 0,
+        currentStock: current,
+        available: current,
+        reorderLevel: 5,
+        status: current === 0 ? 'OUT_OF_STOCK' : current <= 5 ? 'LOW' : 'OK',
+        stockValue: taka(current * cogs),
+        sellValue: taka(current * price),
+        potentialProfit: taka(current * (price - cogs)),
+        buyingPrice: cogs,
+        archived: false,
         active: true,
-        notes: '',
-        supplier: 'demo',
+        imageUrl: item.imageUrl,
       })
-      for (const size of cat.sizes) {
-        const opening = between(6, 40)
-        const purchased = between(0, 25)
-        const sold = between(0, Math.max(1, opening))
-        const returned = between(0, 3)
-        const damaged = between(0, 2)
-        const current = Math.max(0, opening + purchased - sold + returned - damaged)
-        stock.push({
-          id: `${ID}STK-${String(stock.length + 1).padStart(4, '0')}`,
-          sku,
-          product: name,
-          category: cat.name,
-          color,
-          size,
-          opening,
-          purchased,
-          sold,
-          returned,
-          damaged,
-          reserved: 0,
-          currentStock: current,
-          available: current,
-          reorderLevel: 5,
-          status: current === 0 ? 'OUT_OF_STOCK' : current <= 5 ? 'LOW' : 'OK',
-          stockValue: taka(current * cogs),
-          sellValue: taka(current * price),
-          potentialProfit: taka(current * (price - cogs)),
-          buyingPrice: cogs,
-          archived: false,
-          active: true,
-        })
-      }
     }
-  }
+    void i
+  })
+
   return { products, stock }
 }
 
@@ -316,7 +335,7 @@ function buildOrders(customers, products, count) {
     const delivered = status === 'Delivered'
     const returned = status === 'Returned'
     const orderId = `${ID}ORD-${String(i + 1).padStart(4, '0')}`
-    const size = pick(CATEGORIES.find(c => c.name === product.category).sizes)
+    const size = pick(SIZES_BY_LABEL[product.category] || ['Free'])
 
     orders.push({
       id: orderId,
@@ -501,7 +520,19 @@ async function main() {
   const { products, stock } = buildCatalogue()
   await prisma.lifestyleProduct.createMany({ data: products })
   await prisma.lifestyleStockItem.createMany({ data: stock })
-  console.log(`· ${products.length} products, ${stock.length} stock rows`)
+  // The Product Images page reads `product_images`, not the product row's own
+  // imageUrl — without these the photos exist in the data and nowhere on screen.
+  await prisma.productImage.createMany({
+    data: products.map((p, i) => ({
+      id: `${ID}IMG-${String(i + 1).padStart(4, '0')}`,
+      productCode: p.sku,
+      business: BUSINESS_ID,
+      storagePath: new URL(p.imageUrl).pathname,
+      url: p.imageUrl,
+      isPrimary: true,
+    })),
+  })
+  console.log(`· ${products.length} products, ${stock.length} stock rows, ${products.length} photos`)
 
   // Volume is chosen so the demo reads as a healthy business, not a failing one.
   // 320 orders against 200 expenses put the Finance page at −622% margin: the
