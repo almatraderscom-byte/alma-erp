@@ -142,6 +142,9 @@ export function isIntentLevelMiss(intent: RoutineIntent, toolOutput: Record<stri
 // model loop. Same word-boundary discipline as the 2026-07-14 ROUTINE_RE fix.
 // ORDER MATTERS: first hit wins, so the more specific intents (order_status
 // with a number, expense with a today-word) sit ABOVE their fuzzier cousins.
+/** Clause joiners that mean "and then do this too" — never one fixed read. */
+const ROUTINE_SEQUENCE_RE = /\bthen\b|\bafter\s+that\b|তারপর|এরপর|এর\s*পর|erpor/i
+
 const INTENT_RES: Array<{ intent: RoutineIntent; re: RegExp }> = [
   {
     intent: 'sales_today',
@@ -201,6 +204,27 @@ export function detectRoutineIntent(userText: string): RoutineIntent | null {
   // almost always carries EXTRA intent (a task, a follow-up instruction) that a
   // fixed read tool can't serve — that stays with the model loop.
   if (!text || text.length > 80) return null
+  // Same reason as the length cap, caught properly: this graph serves ONE fixed
+  // read. A request that names two of them ("check today orders then stock status
+  // then expense summary") was still claimed here and answered with whichever
+  // pattern matched first — the owner asked for three things and got one. More
+  // than one intent, or a "then"-marker joining clauses, means work the model loop
+  // must plan and carry out.
+  if (ROUTINE_SEQUENCE_RE.test(text)) return null
+  // Two intents only mean two asks when they sit in different parts of the
+  // sentence. Several patterns overlap on ordinary words — "koto approval
+  // pending ase" trips both the approvals and the attendance rule inside one
+  // short phrase, and that is still one question.
+  // Compared by where each match ENDS, not where it starts: two rules often begin
+  // on the same shared word ("aj …") and only diverge at the noun that identifies
+  // the ask, so start positions collapse to zero for both.
+  const hitEnds = INTENT_RES
+    .map(({ re }) => text.match(re))
+    .filter((m): m is RegExpMatchArray => Boolean(m) && typeof m!.index === 'number')
+    .map((m) => (m.index ?? 0) + m[0].length)
+    .sort((a, b) => a - b)
+  const separateAsks = hitEnds.filter((end, i) => i === 0 || end - hitEnds[i - 1] > 15)
+  if (separateAsks.length > 1) return null
   for (const { intent, re } of INTENT_RES) {
     if (!re.test(text)) continue
     // order_status is only confident WITH an extractable number — "order status
