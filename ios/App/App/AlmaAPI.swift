@@ -831,8 +831,17 @@ enum AlmaBackend: String {
 
     var url: URL { URL(string: "https://\(host)")! }
 
+    /// The backend the owner actually signed in to, or nil when nobody has yet.
+    /// Nil matters: a fresh install must still honour a build-time pin, while an
+    /// explicit demo sign-in has to override it — the shipped Info.plist carries
+    /// `ALMABaseURL` pointing at production, so a build override that always won
+    /// would make the demo switch unreachable.
+    static var storedChoice: AlmaBackend? {
+        AlmaBackend(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "")
+    }
+
     static var current: AlmaBackend {
-        get { AlmaBackend(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .production }
+        get { storedChoice ?? .production }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
 
@@ -848,7 +857,7 @@ enum AlmaBackend: String {
     /// never presented to the other. Returns true when the backend actually changed.
     @discardableResult
     static func select(_ backend: AlmaBackend) -> Bool {
-        guard backend != current else { return false }
+        guard backend != storedChoice else { return false }
         current = backend
         let store = HTTPCookieStorage.shared
         store.cookies?.forEach { store.deleteCookie($0) }
@@ -876,7 +885,9 @@ final class AlmaAPI: NSObject {
     /// Computed rather than stored: signing in switches it mid-session, and every
     /// screen reads through here.
     static var baseURL: URL {
-        buildOverride ?? AlmaBackend.current.url
+        // An explicit sign-in wins; otherwise a build-time pin; otherwise production.
+        if let chosen = AlmaBackend.storedChoice { return chosen.url }
+        return buildOverride ?? AlmaBackend.production.url
     }
 
     /// Posted (on main) when a request came back unauthenticated even after a cookie
