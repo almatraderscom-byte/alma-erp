@@ -19,6 +19,10 @@ import {
   type ImageActionSize,
   type ImageModelAvailability,
 } from '@/agent/lib/image-action-contract'
+import {
+  GPT_IMAGE_2_PRICING_VERIFIED_AT,
+  gptImage2OutputCostUsd,
+} from '@/lib/creative-studio/gpt-image-2-pricing'
 
 /**
  * Build 103 Issue 2 — canonical, revisioned image render configuration.
@@ -194,7 +198,7 @@ function roundUsd(value: number): number {
 const QUOTE_V2_VERIFIED_AT: Readonly<Record<GenericImageModel, string>> = {
   'gemini-3.1-flash-image': '2026-06-15',
   'gemini-3-pro-image': '2026-06-15',
-  'gpt-image-2': '2026-07-12',
+  'gpt-image-2': GPT_IMAGE_2_PRICING_VERIFIED_AT,
   'seedream-5.0-pro': '2026-07-12',
 }
 
@@ -266,7 +270,13 @@ export function buildImageRenderQuote(
   model: GenericImageModel,
   config: ImageRenderConfig,
 ): ImageRenderQuote {
-  const unitPriceUsd = imageUnitPriceUsd(model, config.quality, config.imageSize)
+  const unitPriceUsd = model === 'gpt-image-2'
+    ? gptImage2OutputCostUsd(
+        config.width,
+        config.height,
+        config.quality === 'pro' ? 'high' : 'medium',
+      )
+    : imageUnitPriceUsd(model, config.quality, config.imageSize)
   const maxPaidGenerationsPerImage = config.pipelineMode === 'production' ? 3 : 1
   const excludes: string[] = ['qc_vision', 'taxes', 'provider_credits']
   if (model === 'gpt-image-2') {

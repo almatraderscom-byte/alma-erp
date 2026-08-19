@@ -906,6 +906,11 @@ export type StudioRunEstimateClient = {
   }
   confirmationRequired: true
   providerCallMade: false
+  pricing?: {
+    basis: 'provider_output_render' | 'internal_list_estimate'
+    excludes: string[]
+    settlement: 'provider_reported_token_usage' | 'provider_cost_log'
+  }
 }
 
 export async function fetchStudioConfig(): Promise<StudioConfig> {
