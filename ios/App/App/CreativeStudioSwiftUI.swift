@@ -56,6 +56,7 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     let thumbUrl: String?
     let brandedUrl: String?
     let storagePath: String?
+    let archivedToDrive: Bool?
     let modelCreator: String?
     let coverOptions: [CSCoverOption]?
     let error: String?
@@ -4058,7 +4059,7 @@ private struct CSDetailSheet: View {
 
                 // Production V4 precision finishing. Only canonical project assets
                 // can open the mask editor; estimate and paid confirmation happen there.
-                if !item.isVideo, !item.isAudio, item.storagePath != nil,
+                if !item.isVideo, !item.isAudio, item.storagePath != nil, item.archivedToDrive != true,
                    item.projectAssetId != nil, vm.activeProject?.brandProfileId != nil {
                     Button { showMaskRepair = true; CSHaptic.tap() } label: {
                         Label("Precision repair (mask)", systemImage: "paintbrush.pointed.fill")

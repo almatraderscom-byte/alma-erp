@@ -117,9 +117,16 @@ describe('iOS current-production Creative Studio parity', () => {
   })
 
   it('keeps campaign options and draft selection aligned with the server manifest', () => {
-    expect(nativeWorkspace).toContain('model.campaignPreview = nil')
+    expect(nativeWorkspace).toContain('model.invalidateCampaignPreview()')
+    expect(nativeWorkspace).toContain('guard revision == campaignPreviewRevision')
     expect(nativeWorkspace).toContain('let action = "select_draft"')
     expect(nativeWorkspace).toContain('func selectCampaignDraft(')
     expect(nativeWorkspace).toContain('এই draft নিন')
+  })
+
+  it('protects mask repair from unavailable sources and preserves brush taps', () => {
+    expect(nativeStudio).toContain('item.archivedToDrive != true')
+    expect(nativeMaskRepair).toContain('if stroke.count == 1')
+    expect(nativeMaskRepair).toContain('cg.fillEllipse')
   })
 })

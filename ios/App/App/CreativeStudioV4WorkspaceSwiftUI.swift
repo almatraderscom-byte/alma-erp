@@ -267,6 +267,7 @@ final class CSV4WorkspaceVM {
     var lifecycle: CSV4LifecycleWorkspace?
     var performance: CSV4Performance?
     var campaignPreview: CSV4CampaignManifest?
+    @ObservationIgnored private var campaignPreviewRevision = 0
     var selectedBrandID: String?
     var selectedProjectID: String?
     var loading = false
@@ -348,7 +349,7 @@ final class CSV4WorkspaceVM {
         retention = loaded.5
         lifecycle = loaded.6
         performance = loaded.7
-        campaignPreview = nil
+        invalidateCampaignPreview()
         await hydrateWaitingCampaignDrafts()
     }
 
@@ -399,6 +400,9 @@ final class CSV4WorkspaceVM {
 
     func previewCampaign(includeFamily: Bool, includeReel: Bool) async {
         guard let projectID = selectedProjectID else { return }
+        campaignPreviewRevision += 1
+        let revision = campaignPreviewRevision
+        campaignPreview = nil
         struct Options: Encodable { let includeFamily: Bool; let includeReel: Bool }
         struct Body: Encodable { let intent = "preview"; let projectId: String; let options: Options }
         actionBusy = true; defer { actionBusy = false }
@@ -406,6 +410,7 @@ final class CSV4WorkspaceVM {
             let response: CSV4CampaignPreviewResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/creative-studio/campaign-packs",
                 body: Body(projectId: projectID, options: Options(includeFamily: includeFamily, includeReel: includeReel)))
+            guard revision == campaignPreviewRevision, selectedProjectID == projectID else { return }
             campaignPreview = response.manifest
             notice = "Manifest তৈরি — এখনো কোনো খরচ হয়নি"
         } catch { notice = message(error, fallback: "Campaign manifest তৈরি হয়নি") }
@@ -425,9 +430,14 @@ final class CSV4WorkspaceVM {
                 body: Body(projectId: projectID, options: Options(includeFamily: includeFamily, includeReel: includeReel),
                            idempotencyKey: "ios-campaign-\(UUID().uuidString)", confirmedCostUsd: preview.estimatedCostUsd))
             campaignPacks.insert(response.pack, at: 0)
-            campaignPreview = nil
+            invalidateCampaignPreview()
             notice = "Campaign Pack queue হয়েছে"
         } catch { notice = message(error, fallback: "Campaign Pack queue হয়নি") }
+    }
+
+    func invalidateCampaignPreview() {
+        campaignPreviewRevision += 1
+        campaignPreview = nil
     }
 
     func selectCampaignDraft(pack: CSV4CampaignPack, stageID: String) async {
@@ -859,8 +869,8 @@ struct CSV4WorkspaceScreen: View {
                 }.padding(13).v4Glass(scheme)
             }
         }
-        .onChange(of: includeFamily) { _, _ in model.campaignPreview = nil }
-        .onChange(of: includeReel) { _, _ in model.campaignPreview = nil }
+        .onChange(of: includeFamily) { _, _ in model.invalidateCampaignPreview() }
+        .onChange(of: includeReel) { _, _ in model.invalidateCampaignPreview() }
     }
 
     private func campaignDraft(pack: CSV4CampaignPack, stage: CSV4CampaignStage) -> some View {

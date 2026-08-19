@@ -221,13 +221,22 @@ struct CSMaskRepairSheet: View {
             context.fill(CGRect(origin: .zero, size: size))
             let cg = context.cgContext
             cg.setStrokeColor(UIColor.white.cgColor)
-            cg.setLineWidth(CGFloat(brush) * min(size.width, size.height))
+            cg.setFillColor(UIColor.white.cgColor)
+            let brushWidth = CGFloat(brush) * min(size.width, size.height)
+            cg.setLineWidth(brushWidth)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
             for stroke in strokes {
                 guard let first = stroke.first else { continue }
+                let start = CGPoint(x: first.x * size.width, y: first.y * size.height)
+                if stroke.count == 1 {
+                    let radius = brushWidth / 2
+                    cg.fillEllipse(in: CGRect(x: start.x - radius, y: start.y - radius,
+                                              width: brushWidth, height: brushWidth))
+                    continue
+                }
                 cg.beginPath()
-                cg.move(to: CGPoint(x: first.x * size.width, y: first.y * size.height))
+                cg.move(to: start)
                 for point in stroke.dropFirst() {
                     cg.addLine(to: CGPoint(x: point.x * size.width, y: point.y * size.height))
                 }
