@@ -109,6 +109,9 @@ function mapRunError(msg: string): string {
     const lines = codes.map((c) => READINESS_ERRORS_BN[c] ?? c)
     return lines.join(' ')
   }
+  if (msg === 'run_confirmation_in_progress') {
+    return 'এই একই confirmation আগের request-এ এখনও queue হচ্ছে। কয়েক সেকেন্ড পরে আবার চেষ্টা করুন—duplicate job বা charge তৈরি হবে না।'
+  }
   return AUTO_ERRORS[msg] ?? msg
 }
 
@@ -247,6 +250,23 @@ export async function POST(req: NextRequest) {
         currency: 'BDT',
         confirmationRequired: true,
         providerCallMade: false,
+        pricing: plan.selection.model === 'gpt-image-2'
+          ? {
+              basis: 'provider_output_render',
+              excludes: [
+                'prompt_text_input_tokens',
+                'reference_image_input_tokens',
+                'qc_vision',
+                'taxes',
+                'provider_credits',
+              ],
+              settlement: 'provider_reported_token_usage',
+            }
+          : {
+              basis: 'internal_list_estimate',
+              excludes: ['qc_vision', 'taxes', 'provider_credits'],
+              settlement: 'provider_cost_log',
+            },
       })
     }
 

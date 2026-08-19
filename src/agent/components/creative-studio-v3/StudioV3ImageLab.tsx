@@ -25,6 +25,7 @@ import {
   type StudioProvider,
 } from '@/lib/creative-studio/constants'
 import {
+  genericImageProvider,
   getAdvancedModeCapability,
   type StudioFidelityClass,
 } from '@/lib/creative-studio/advanced-image-capabilities'
@@ -89,6 +90,14 @@ function engineAvailability(config: StudioConfig | null, id: StudioEngineId) {
 function engineIsSelectable(config: StudioConfig | null, id: StudioEngineId): boolean {
   const availability = engineAvailability(config, id)
   return Boolean(availability?.configured && availability.enabled && availability.runnable && !availability.killed)
+}
+
+function genericModelLabel(model: string | undefined): string {
+  if (model === 'gpt-image-2') return 'GPT Image 2'
+  if (model === 'seedream-5.0-pro') return 'Seedream 5 Pro'
+  if (model === 'gemini-3.1-flash-image') return 'Nano Banana 2'
+  if (model === 'gemini-3-pro-image') return 'Nano Banana Pro'
+  return model ?? 'Guided image'
 }
 
 function sourceImage(item: GalleryItem | null): string | null {
@@ -325,6 +334,9 @@ export function StudioV3ImageLab({
   const genericModel = data.config?.genericImageModels[
     generationMode === 'fast' ? 'standard' : 'pro'
   ]
+  const guidedEngineLabel = genericModel
+    ? `${genericModelLabel(genericModel)} (${genericImageProvider(genericModel)})`
+    : 'Guided image'
   const genericEngine = resolutionEngineForGenericModel(
     genericModel,
     data.settings?.imageEngine ?? 'gemini',
@@ -1108,7 +1120,7 @@ export function StudioV3ImageLab({
                             const selectable = engineIsSelectable(data.config, item.id)
                             return (
                               <option disabled={!selectable} key={item.id} value={item.id}>
-                                {item.label} · {selectable ? 'Live' : availability?.killed ? 'Killed' : 'Unavailable'}
+                                {item.id === 'gemini' ? guidedEngineLabel : item.label} · {selectable ? 'Live' : availability?.killed ? 'Killed' : 'Unavailable'}
                               </option>
                             )
                           })}
@@ -1229,7 +1241,7 @@ export function StudioV3ImageLab({
                       <strong>{ready ? 'Configuration ready for owner cost review' : 'Required production context is incomplete'}</strong>
                       <small>
                         {ready
-                          ? `${selectedEngineDefinition?.label ?? engine} · ${resolutionState.labelBn} · ${generationMode}`
+                          ? `${engine === 'gemini' ? guidedEngineLabel : selectedEngineDefinition?.label ?? engine} · ${resolutionState.labelBn} · ${generationMode}`
                           : 'Check required product, model, source, prompt, engine and resolution.'}
                       </small>
                     </span>
@@ -1282,11 +1294,13 @@ export function StudioV3ImageLab({
       <StudioConfirmationDialog
         ariaLabel="Review image generation queue request"
         confirmDisabled={!creationAvailable || !reviewEstimate || queueing || (architecture === 'auto' ? !autoReady : !ready)}
-        confirmLabel={queueing ? 'Revalidating…' : `Confirm up to ৳${reviewEstimate?.maxCostBdt.toLocaleString('en-BD') ?? '—'}`}
+        confirmLabel={queueing ? 'Revalidating…' : `Confirm render estimate ৳${reviewEstimate?.estimateBdt.toLocaleString('en-BD') ?? '—'}`}
         onCancel={() => { setReviewOpen(false); setReviewEstimate(null); setReviewRequest(null) }}
         onConfirm={() => void queue()}
         open={reviewOpen}
-        summary="This is the exact signed whole-taka server estimate for the current brand, project, product, sources and resolved provider/model. Confirmation is separate; the server and worker revalidate the same whole-taka hard cap before any provider call."
+        summary={reviewEstimate?.selection.model === 'gpt-image-2'
+          ? 'Signed GPT Image 2 output-render estimate for these exact dimensions and quality. OpenAI bills prompt text and the two high-fidelity reference images separately; the worker records the provider-reported token usage after delivery.'
+          : 'Signed provider-render estimate for the current brand, project, product, sources and resolved model. Confirmation is separate; the server and worker revalidate the same selection before any provider call.'}
         title="Confirm signed production estimate?"
       >
         <dl className={styles.confirmationFacts}>
@@ -1296,7 +1310,10 @@ export function StudioV3ImageLab({
           <div><dt>Exact model</dt><dd>{reviewEstimate?.selection.model ?? 'Waiting for server'}</dd></div>
           <div><dt>QC policy</dt><dd>{reviewEstimate ? `Production · up to ${reviewEstimate.selection.paidAttemptLimit} paid attempt${reviewEstimate.selection.paidAttemptLimit === 1 ? '' : 's'}` : 'Waiting for server'}</dd></div>
           <div><dt>Resolution</dt><dd>{architecture === 'auto' ? 'server-selected' : resolutionState.kind === 'tiered' ? `${resolutionState.resolution?.toUpperCase()} requested; delivered pixels verified later` : resolutionState.labelBn}</dd></div>
-          <div><dt>Exact authorized ceiling</dt><dd>{reviewEstimate ? `৳${reviewEstimate.estimateBdt.toLocaleString('en-BD')} of hard cap ৳${reviewEstimate.maxCostBdt.toLocaleString('en-BD')}` : 'No receipt issued'}</dd></div>
+          <div><dt>Output-render estimate</dt><dd>{reviewEstimate ? `৳${reviewEstimate.estimateBdt.toLocaleString('en-BD')} (signed selection)` : 'No receipt issued'}</dd></div>
+          {reviewEstimate?.selection.model === 'gpt-image-2' && (
+            <div><dt>Additional OpenAI usage</dt><dd>Prompt text + 2 high-fidelity reference images; settled from API token usage</dd></div>
+          )}
           <div><dt>Receipt expires</dt><dd>{reviewEstimate ? new Date(reviewEstimate.confirmBy).toLocaleTimeString('en-BD') : '—'}</dd></div>
           <div><dt>Success truth</dt><dd>Queued is not complete; Gallery shows verified result state.</dd></div>
         </dl>

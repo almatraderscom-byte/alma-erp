@@ -3,7 +3,8 @@ import { NextRequest } from 'next/server'
 
 const mocks = vi.hoisted(() => ({
   sourceImage: 'https://storage.example.supabase.co/storage/v1/object/sign/agent-files/product-images/alma-lifestyle/133-KIDS/1.jpg?token=expired',
-  download: vi.fn(async () => Buffer.from('healthy-image-bytes')),
+  catalogImages: [] as Array<{ id: string; url: string | null; storagePath: string; isPrimary: boolean }>,
+  download: vi.fn(async (_path: string) => Buffer.alloc(2048, 1)),
 }))
 
 vi.mock('@/agent/lib/storage', () => ({
@@ -48,7 +49,9 @@ vi.mock('@/lib/creative-studio/project-service', () => ({
   })),
 }))
 
-vi.mock('@/agent/lib/catalog/product-images', () => ({ listProductImages: vi.fn(async () => []) }))
+vi.mock('@/agent/lib/catalog/product-images', () => ({
+  listProductImages: vi.fn(async () => mocks.catalogImages),
+}))
 vi.mock('@/agent/lib/catalog/inventory-lookup', () => ({ DEFAULT_CATALOG_BUSINESS: 'ALMA_LIFESTYLE' }))
 
 import { GET } from '@/app/api/assistant/creative-studio/projects/[id]/product-preview/route'
@@ -59,7 +62,11 @@ function request() {
   )
 }
 
-beforeEach(() => mocks.download.mockClear())
+beforeEach(() => {
+  mocks.catalogImages = []
+  mocks.download.mockReset()
+  mocks.download.mockResolvedValue(Buffer.alloc(2048, 1))
+})
 
 describe('scoped project product preview', () => {
   it('streams the canonical original with private no-store headers', async () => {
@@ -67,9 +74,29 @@ describe('scoped project product preview', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/jpeg')
     expect(response.headers.get('cache-control')).toContain('no-store')
-    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('healthy-image-bytes')
+    expect((await response.arrayBuffer()).byteLength).toBe(2048)
     expect(mocks.download).toHaveBeenCalledWith(
       'product-images/alma-lifestyle/133-KIDS/1.jpg',
+    )
+  })
+
+  it('skips a corrupt canonical object and streams the next healthy catalog image', async () => {
+    mocks.catalogImages = [{
+      id: 'image-2',
+      url: null,
+      storagePath: 'product-images/alma-lifestyle/133-KIDS/2.jpg',
+      isPrimary: false,
+    }]
+    mocks.download.mockImplementation(async (path: string) =>
+      path.endsWith('/1.jpg') ? Buffer.from('test') : Buffer.alloc(2048, 2))
+
+    const response = await GET(request() as never, { params: Promise.resolve({ id: 'project-1' }) })
+
+    expect(response.status).toBe(200)
+    expect((await response.arrayBuffer()).byteLength).toBe(2048)
+    expect(mocks.download).toHaveBeenNthCalledWith(
+      2,
+      'product-images/alma-lifestyle/133-KIDS/2.jpg',
     )
   })
 

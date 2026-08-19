@@ -102,63 +102,63 @@ export async function reserveStudioRunConfirmation(
     ...input,
     reservedAt: now.toISOString(),
   }
-  try {
-    await db.agentKvSetting.create({
-      data: { key, value: JSON.stringify(record) },
-    })
+  const inserted = await db.agentKvSetting.createMany({
+    data: [{ key, value: JSON.stringify(record) }],
+    skipDuplicates: true,
+  })
+  if (inserted.count === 1) {
     return
-  } catch {
-    const existing = await db.agentKvSetting.findUnique({
-      where: { key },
-      select: { value: true, updatedAt: true },
-    })
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(String(existing?.value ?? '')) as Record<string, unknown>
-    } catch {
-      throw new StudioRunAuthorizationError(
-        'run_confirmation_record_invalid',
-        409,
-      )
-    }
-    if (
-      parsed.receiptId !== input.receiptId
-      || parsed.actorUserId !== input.actorUserId
-      || parsed.idempotencyKey !== input.idempotencyKey
-      || parsed.requestFingerprint !== input.requestFingerprint
-      || parsed.selectionFingerprint !== input.selectionFingerprint
-      || Number(parsed.estimateBdt) !== input.estimateBdt
-      || Number(parsed.maxCostBdt) !== input.maxCostBdt
-    ) {
-      throw new StudioRunAuthorizationError(
-        'run_confirmation_replay_mismatch',
-        409,
-      )
-    }
-    const updatedAt = existing?.updatedAt instanceof Date
-      ? existing.updatedAt.getTime()
-      : Date.parse(String(existing?.updatedAt ?? ''))
-    if (
-      parsed.status === 'creating'
-      && now.getTime() - updatedAt
-        < (options.leaseMs ?? STUDIO_RUN_CONFIRMATION_LEASE_MS)
-    ) {
-      throw new StudioRunAuthorizationError(
-        'run_confirmation_in_progress',
-        425,
-      )
-    }
-    if (parsed.status === 'queued') {
-      throw new StudioRunAuthorizationError(
-        'run_confirmation_jobs_unavailable',
-        409,
-      )
-    }
-    await db.agentKvSetting.update({
-      where: { key },
-      data: { value: JSON.stringify(record) },
-    })
   }
+  const existing = await db.agentKvSetting.findUnique({
+    where: { key },
+    select: { value: true, updatedAt: true },
+  })
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(String(existing?.value ?? '')) as Record<string, unknown>
+  } catch {
+    throw new StudioRunAuthorizationError(
+      'run_confirmation_record_invalid',
+      409,
+    )
+  }
+  if (
+    parsed.receiptId !== input.receiptId
+    || parsed.actorUserId !== input.actorUserId
+    || parsed.idempotencyKey !== input.idempotencyKey
+    || parsed.requestFingerprint !== input.requestFingerprint
+    || parsed.selectionFingerprint !== input.selectionFingerprint
+    || Number(parsed.estimateBdt) !== input.estimateBdt
+    || Number(parsed.maxCostBdt) !== input.maxCostBdt
+  ) {
+    throw new StudioRunAuthorizationError(
+      'run_confirmation_replay_mismatch',
+      409,
+    )
+  }
+  const updatedAt = existing?.updatedAt instanceof Date
+    ? existing.updatedAt.getTime()
+    : Date.parse(String(existing?.updatedAt ?? ''))
+  if (
+    parsed.status === 'creating'
+    && now.getTime() - updatedAt
+      < (options.leaseMs ?? STUDIO_RUN_CONFIRMATION_LEASE_MS)
+  ) {
+    throw new StudioRunAuthorizationError(
+      'run_confirmation_in_progress',
+      425,
+    )
+  }
+  if (parsed.status === 'queued') {
+    throw new StudioRunAuthorizationError(
+      'run_confirmation_jobs_unavailable',
+      409,
+    )
+  }
+  await db.agentKvSetting.update({
+    where: { key },
+    data: { value: JSON.stringify(record) },
+  })
 }
 
 export async function completeStudioRunConfirmation(

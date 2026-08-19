@@ -581,7 +581,7 @@ async function generateImageToStorage({
     throw new Error(`generic image model snapshot mismatch: expected ${referenceContract.actualModel}, queued ${modelName}`)
   }
 
-  async function storeOriginal(buffer) {
+  async function storeOriginal(buffer, providerUsage = null) {
     const storageBasePath = suffix
       ? `generated/${pendingActionId}-${suffix}`
       : `generated/${pendingActionId}`
@@ -604,6 +604,8 @@ async function generateImageToStorage({
       resolvedAspectRatio,
       resolvedImageSize,
       sentReferenceCount: imageParts.length,
+      providerUsage,
+      dimensions: imageRequest.dimensions,
     }
   }
 
@@ -697,7 +699,7 @@ async function generateImageToStorage({
     const json = await res.json()
     const b64 = json?.data?.[0]?.b64_json
     if (!b64) throw new Error('No image in OpenAI response')
-    return storeOriginal(Buffer.from(b64, 'base64'))
+    return storeOriginal(Buffer.from(b64, 'base64'), json?.usage ?? null)
   }
 
   const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
@@ -1167,14 +1169,28 @@ async function processImageGen(job) {
   const requestedVariationCount = normalizeVariationCount(variationCount)
   let totalCostUsd = 0
 
-  async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
+  async function logImageCost(
+    storagePath,
+    modelName,
+    resolvedAspectRatio,
+    resolvedImageSize,
+    qcAttempt,
+    providerUsage = null,
+    dimensions = null,
+  ) {
     // Attribute spend to the ACTUAL engine (2026-07-12: everything was logged as
     // 'gemini', so GPT/Seedream renders polluted the owner's Gemini spend report).
     const engine = modelName.startsWith('gpt-image') ? 'openai'
       : modelName.startsWith('seedream') ? 'fal'
       : 'gemini'
+    const { gptImage2OutputCostUsd, gptImage2UsageCostUsd } = await import('./image/openai-cost.mjs')
     const engineCostUsd = engine === 'openai'
-      ? (quality === 'standard' ? 0.05 : 0.19)     // gpt-image-2 medium / high (approx list)
+      ? (gptImage2UsageCostUsd(providerUsage)
+        ?? gptImage2OutputCostUsd(
+          dimensions?.width,
+          dimensions?.height,
+          quality === 'standard' ? 'medium' : 'high',
+        ))
       : engine === 'fal'
         ? (resolvedImageSize === '1K' ? 0.0675 : 0.135) // Seedream 5.0 Pro 1K / 2K (fal list)
         : calcGeminiImageCostUsd(
@@ -1192,6 +1208,7 @@ async function processImageGen(job) {
         imageSize: resolvedImageSize,
         pendingActionId,
         qcAttempt,
+        ...(engine === 'openai' && providerUsage ? { providerUsage } : {}),
       },
       costUsd: engineCostUsd,
       conversationId: conversationId ?? undefined,
@@ -1224,6 +1241,8 @@ async function processImageGen(job) {
       initial.resolvedAspectRatio,
       initial.resolvedImageSize,
       paidAttempt,
+      initial.providerUsage,
+      initial.dimensions,
     )
     console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex}/${requestedVariationCount} attempt 1 → ${initial.storagePath}`)
 
@@ -1260,6 +1279,8 @@ async function processImageGen(job) {
           regen.resolvedAspectRatio,
           regen.resolvedImageSize,
           paidAttempt,
+          regen.providerUsage,
+          regen.dimensions,
         )
         console.log(`[worker] image-gen ${pendingActionId} — variation ${variationIndex} QC regen ${attemptNum} → ${regen.storagePath}`)
         return regen.storagePath
