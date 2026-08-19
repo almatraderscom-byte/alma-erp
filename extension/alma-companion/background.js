@@ -27,10 +27,31 @@
  *     gating is enforced server-side before a command is ever handed out.
  */
 
+import {
+  createKeyedSerialOperationQueue,
+  createSerialOperationQueue,
+  fetchPreviewWithDeadline,
+  previewAttemptMayMutate,
+  PreviewDeadlineError,
+  recoverTimedOutOperation,
+  resetPreviewCaptureState,
+  runPreviewCaptureExclusive,
+  withPreviewDeadline,
+} from './preview-liveness.js'
+
 const POLL_PATH = '/api/assistant/live-browser/poll'
 const RESULT_PATH = '/api/assistant/live-browser/result'
 const FRAME_PATH = '/api/assistant/live-browser/frames'
 const DEFAULT_BASE = 'https://alma-erp-six.vercel.app'
+const PREVIEW_CAPTURE_CALL_TIMEOUT_MS = 3_000
+const PREVIEW_UPLOAD_TIMEOUT_MS = 5_000
+const PREVIEW_TAB_LOOKUP_TIMEOUT_MS = 3_000
+const PREVIEW_ACK_TIMEOUT_MS = 2_000
+const COMMAND_CAPTURE_CALL_TIMEOUT_MS = 8_000
+const CDP_RECOVERY_TIMEOUT_MS = 3_000
+const CDP_DRAIN_TIMEOUT_MS = 3_000
+const DEBUGGER_ATTACH_TIMEOUT_MS = 5_000
+const VISIBLE_TAB_LOOKUP_TIMEOUT_MS = 3_000
 // Execute-once outbox: a mutating command may already have changed the page
 // when its result POST loses the network response. Keep that exact result
 // across MV3 worker sleeps/reloads and do not ask for another command until the
@@ -61,7 +82,10 @@ const ALLOWED_ACTIONS = new Set([
 let looping = false
 let previewGrant = null
 let previewTimer = null
-let previewCaptureBusy = false
+const previewCaptureState = { busy: false, generation: 0, activeGeneration: null }
+const cdpOperationQueue = createSerialOperationQueue()
+const debuggerRecoveryQueue = createKeyedSerialOperationQueue(performDebuggerRecovery)
+let debuggerPoisoned = false
 let lastPreviewCaptureMs = 0
 // An unpacked-extension updater may replace manifest.json at any time. Never
 // reload between a page effect and the durable result receipt that proves it;
@@ -1343,56 +1367,209 @@ const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option', 'pick_op
 // the same mechanism Claude-in-Chrome uses (Chrome shows its standard
 // "…is debugging this browser" bar while attached; it clears on detach).
 
-async function ensureDebugger(tabId) {
-  const { cdpTabId } = await chrome.storage.local.get('cdpTabId')
-  if (cdpTabId != null && cdpTabId !== tabId) {
-    try {
-      await chrome.debugger.detach({ tabId: cdpTabId })
-    } catch { /* old tab gone */ }
-    await chrome.storage.local.remove('cdpTabId')
+async function performDebuggerRecovery(tabId) {
+  if (debuggerPoisoned) return false
+  try {
+    await withPreviewDeadline(
+      chrome.debugger.detach({ tabId }),
+      CDP_RECOVERY_TIMEOUT_MS,
+      'Chrome debugger recovery',
+    )
+  } catch (err) {
+    // "Not attached" is already recovered. A detach call that itself hangs is
+    // not safe to overlap with more CDP work: fail closed and reload only after
+    // any in-flight command result is durably delivered.
+    if (err instanceof PreviewDeadlineError) {
+      poisonDebuggerAndReload()
+      return false
+    }
   }
   try {
-    await chrome.debugger.attach({ tabId }, '1.3')
-    await chrome.storage.local.set({ cdpTabId: tabId })
+    await withPreviewDeadline(
+      chrome.storage.local.remove('cdpTabId'),
+      CDP_RECOVERY_TIMEOUT_MS,
+      'Chrome debugger state cleanup',
+    )
+    return true
+  } catch {
+    poisonDebuggerAndReload()
+    return false
+  }
+}
+
+async function recoverDebuggerConnection(tabId, isCurrent = () => true) {
+  const recovered = await debuggerRecoveryQueue.run(tabId)
+  if (!recovered) {
+    stopPreviewCapture()
+    await applyPendingReloadIfQuiescent()
+  }
+  return recovered && isCurrent()
+}
+
+async function waitForDebuggerRecovery(isCurrent = () => true) {
+  await debuggerRecoveryQueue.waitForIdle()
+  return !debuggerPoisoned && isCurrent()
+}
+
+async function ensureDebugger(tabId, isCurrent = () => true, timeoutMs = DEBUGGER_ATTACH_TIMEOUT_MS) {
+  if (debuggerPoisoned) return false
+  if (!(await waitForDebuggerRecovery(isCurrent))) return false
+  if (!isCurrent()) return false
+  let cdpTabId
+  try {
+    ;({ cdpTabId } = await withPreviewDeadline(
+      chrome.storage.local.get('cdpTabId'),
+      timeoutMs,
+      'Chrome debugger state read',
+    ))
+  } catch {
+    poisonDebuggerAndReload()
+    return false
+  }
+  if (!isCurrent()) return false
+  if (cdpTabId != null && cdpTabId !== tabId) {
+    if (!(await recoverDebuggerConnection(cdpTabId, isCurrent))) return false
+  }
+  if (!isCurrent()) return false
+  try {
+    await withPreviewDeadline(
+      chrome.debugger.attach({ tabId }, '1.3'),
+      timeoutMs,
+      'Chrome debugger attach',
+    )
+    if (!isCurrent()) {
+      // This call created the attachment but cancellation landed before its
+      // identity was persisted. Detach that exact tab now; otherwise it becomes
+      // an untracked Chrome debugging session and a later tab can attach beside it.
+      await recoverDebuggerConnection(tabId)
+      return false
+    }
+    await withPreviewDeadline(
+      chrome.storage.local.set({ cdpTabId: tabId }),
+      timeoutMs,
+      'Chrome debugger state write',
+    )
     return true
   } catch (err) {
     if (/already attached/i.test(String(err && err.message))) {
-      await chrome.storage.local.set({ cdpTabId: tabId })
-      return true
+      if (!isCurrent()) return false
+      try {
+        await withPreviewDeadline(
+          chrome.storage.local.set({ cdpTabId: tabId }),
+          timeoutMs,
+          'Chrome debugger state write',
+        )
+        return isCurrent()
+      } catch {
+        poisonDebuggerAndReload()
+        return false
+      }
+    }
+    if (err instanceof PreviewDeadlineError) {
+      poisonDebuggerAndReload()
     }
     return false
   }
 }
 
-async function captureAgentTab(tab, quality = 80) {
+async function captureAgentTabExclusive(
+  tab,
+  quality = 80,
+  callTimeoutMs = COMMAND_CAPTURE_CALL_TIMEOUT_MS,
+  isCurrent = () => true,
+  allowVisibleFallback = true,
+) {
+  if (debuggerPoisoned || !isCurrent()) return null
   // 1) CDP — works even when the agent tab is in the background.
-  if (await ensureDebugger(tab.id)) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const shot = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', {
-          format: 'jpeg',
-          quality,
-        })
-        if (shot && shot.data) return 'data:image/jpeg;base64,' + shot.data
-        break
-      } catch {
-        // Stale attachment (worker restarted, Chrome dropped it) → re-attach once.
-        await chrome.storage.local.remove('cdpTabId')
-        if (!(await ensureDebugger(tab.id))) break
+  if (await ensureDebugger(tab.id, isCurrent, Math.min(callTimeoutMs, DEBUGGER_ATTACH_TIMEOUT_MS))) {
+    if (!isCurrent()) {
+      await recoverDebuggerConnection(tab.id)
+      return null
+    }
+    let rawCapture = null
+    try {
+      rawCapture = chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', {
+        format: 'jpeg',
+        quality,
+      })
+      const shot = await withPreviewDeadline(
+        rawCapture,
+        callTimeoutMs,
+        'Chrome screenshot capture',
+      )
+      if (!isCurrent()) return null
+      if (shot && shot.data) return 'data:image/jpeg;base64,' + shot.data
+    } catch (err) {
+      // One timed-out CDP request is actively detached and fully serialized.
+      // Do not retry it in the same tick; the next tick starts only after this
+      // recovery settles, preventing abandoned Page.captureScreenshot buildup.
+      if (err instanceof PreviewDeadlineError && rawCapture) {
+        const drained = await recoverTimedOutOperation(
+          rawCapture,
+          () => recoverDebuggerConnection(tab.id),
+          CDP_DRAIN_TIMEOUT_MS,
+          'timed-out Chrome screenshot cleanup',
+        )
+        if (!drained) {
+          poisonDebuggerAndReload()
+          return null
+        }
+      } else if (!(await recoverDebuggerConnection(tab.id))) {
+        return null
       }
+      if (debuggerPoisoned || !isCurrent()) return null
     }
   }
+  if (debuggerPoisoned || !allowVisibleFallback) return null
   // 2) Fallback — visible-tab capture; only right when the agent tab is active
   //    (e.g. the owner revoked the debugger permission or DevTools is attached).
   try {
+    if (!isCurrent()) return null
     // captureVisibleTab photographs the WINDOW'S foreground tab, not the tab
     // argument. Never upload an unrelated owner tab under the agent context.
-    const activeTabs = await chrome.tabs.query({ active: true, windowId: tab.windowId })
+    const activeTabs = await withPreviewDeadline(
+      chrome.tabs.query({ active: true, windowId: tab.windowId }),
+      VISIBLE_TAB_LOOKUP_TIMEOUT_MS,
+      'visible tab lookup',
+    )
+    if (!isCurrent()) return null
     if (!activeTabs.some((activeTab) => activeTab.id === tab.id)) return null
-    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality })
+    const shot = await withPreviewDeadline(
+      chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality }),
+      callTimeoutMs,
+      'visible tab screenshot capture',
+    )
+    return isCurrent() ? shot : null
   } catch {
     return null
   }
+}
+
+async function captureAgentTab(
+  tab,
+  quality = 80,
+  callTimeoutMs = COMMAND_CAPTURE_CALL_TIMEOUT_MS,
+  isCurrent = () => true,
+  allowVisibleFallback = true,
+) {
+  return cdpOperationQueue.run(() => captureAgentTabExclusive(
+    tab,
+    quality,
+    callTimeoutMs,
+    isCurrent,
+    allowVisibleFallback,
+  ))
+}
+
+function poisonDebuggerAndReload() {
+  if (debuggerPoisoned) return
+  debuggerPoisoned = true
+  reloadPending = true
+  stopPreviewCapture()
+  // A preview can reload immediately. A page command defers reload until its
+  // durable result receipt is acknowledged; either way no further CDP work is
+  // admitted in this worker after poison.
+  void applyPendingReloadIfQuiescent()
 }
 
 chrome.debugger?.onDetach?.addListener(async (source) => {
@@ -1400,7 +1577,7 @@ chrome.debugger?.onDetach?.addListener(async (source) => {
   if (source && source.tabId === cdpTabId) await chrome.storage.local.remove('cdpTabId')
 })
 
-async function executeCommand(cmd) {
+async function executeCommand(cmd, isCurrent = () => true) {
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
   if (action === 'ping') return { ok: true, data: { pong: true } }
@@ -1476,7 +1653,13 @@ async function executeCommand(cmd) {
     return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
-    const dataUrl = await captureAgentTab(tab)
+    const dataUrl = await captureAgentTab(
+      tab,
+      80,
+      COMMAND_CAPTURE_CALL_TIMEOUT_MS,
+      isCurrent,
+      true,
+    )
     if (!dataUrl) return { ok: false, error: 'could not capture screenshot' }
     return { ok: true, screenshot: dataUrl }
   }
@@ -1720,33 +1903,51 @@ function stopPreviewCapture() {
   previewGrant = null
   if (previewTimer) clearInterval(previewTimer)
   previewTimer = null
+  // Invalidate old side effects immediately, but keep its single-flight gate
+  // until the bounded tick unwinds. A replacement must never overlap old CDP
+  // detach/re-attach cleanup on the same tab.
+  resetPreviewCaptureState(previewCaptureState)
 }
 
-function samePreviewActivity(a, b) {
-  return Boolean(a && b
-    && a.turnId === b.turnId
-    && a.conversationId === b.conversationId)
+function previewAttemptCurrent(generation, grant) {
+  return previewAttemptMayMutate(previewCaptureState, generation, previewGrant, grant)
 }
 
-async function capturePreviewFrame() {
-  const grant = previewGrant
-  if (!grant || previewCaptureBusy || Date.parse(grant.expiresAt) <= Date.now()) {
-    if (grant && Date.parse(grant.expiresAt) <= Date.now()) stopPreviewCapture()
-    return
-  }
-  // Explicit ~1fps bound even if a timer/poll wake happens at the same instant.
-  if (Date.now() - lastPreviewCaptureMs < 850) return
-  previewCaptureBusy = true
-  try {
-    const tab = await getAgentTab(false)
-    if (!tab?.id) return
-    const dataUri = await captureAgentTab(tab, 52)
-    if (!dataUri) return
-    const currentGrant = previewGrant
-    if (!samePreviewActivity(currentGrant, grant)
-      || Date.parse(currentGrant.expiresAt) <= Date.now()) return
-    const capturedMs = Math.max(Date.now(), lastPreviewCaptureMs + 1)
-    const response = await fetch(`${grant.base}${FRAME_PATH}`, {
+async function getPreviewAgentTab(generation, grant) {
+  const isCurrent = () => previewAttemptCurrent(generation, grant)
+  const stored = await withPreviewDeadline(
+    chrome.storage.local.get('agentTabId'),
+    PREVIEW_TAB_LOOKUP_TIMEOUT_MS,
+    'preview tab state lookup',
+  )
+  if (!isCurrent() || !stored.agentTabId) return null
+  const tab = await withPreviewDeadline(
+    chrome.tabs.get(stored.agentTabId),
+    PREVIEW_TAB_LOOKUP_TIMEOUT_MS,
+    'preview tab lookup',
+  ).catch(() => null)
+  return isCurrent() ? tab : null
+}
+
+async function performPreviewCapture(grant, generation) {
+  const tab = await getPreviewAgentTab(generation, grant)
+  if (!tab?.id || !previewAttemptCurrent(generation, grant)) return
+  // Do not race the whole CDP operation with a shorter outer timer. Each stage
+  // is bounded, and cdpOperationQueue retains the real capture+cleanup promise
+  // until it settles, so a replacement can never overlap an abandoned call.
+  const dataUri = await captureAgentTab(
+    tab,
+    52,
+    PREVIEW_CAPTURE_CALL_TIMEOUT_MS,
+    () => previewAttemptCurrent(generation, grant),
+    false,
+  )
+  if (!dataUri || !previewAttemptCurrent(generation, grant)) return
+  const capturedMs = Math.max(Date.now(), lastPreviewCaptureMs + 1)
+  const response = await fetchPreviewWithDeadline(
+    fetch,
+    `${grant.base}${FRAME_PATH}`,
+    {
       method: 'POST',
       credentials: 'omit',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grant.token}` },
@@ -1757,31 +1958,52 @@ async function capturePreviewFrame() {
         capturedAt: new Date(capturedMs).toISOString(),
         dataUri,
       }),
-    })
-    if (response.ok) {
-      lastPreviewCaptureMs = capturedMs
-      // iOS renews the server lease while this extension may be inside a long
-      // command (and unable to poll). The frame ACK bridges that renewal so the
-      // local capture timer does not stop at its original expiry.
-      const ack = await response.json().catch(() => ({}))
-      const current = previewGrant
-      const renewedExpiry = typeof ack?.leaseExpiresAt === 'string'
-        ? Date.parse(ack.leaseExpiresAt) : NaN
-      if (samePreviewActivity(current, grant)
-        && Number.isFinite(renewedExpiry)
-        && renewedExpiry > Date.parse(current.expiresAt)) {
-        previewGrant = { ...current, expiresAt: ack.leaseExpiresAt }
-      }
-    } else if (response.status === 401 || response.status === 409) {
-      if (samePreviewActivity(previewGrant, grant)) stopPreviewCapture()
-      if (response.status === 401) {
-        await chrome.storage.local.set({ token: '', lastError: 'preview rejected (401)' })
-      }
+    },
+    PREVIEW_UPLOAD_TIMEOUT_MS,
+  )
+  // A stopped/timed-out A must never apply a late ACK/409 to replacement B,
+  // even if both activities happen to use the same device and tab.
+  if (!previewAttemptCurrent(generation, grant)) return
+  if (response.ok) {
+    lastPreviewCaptureMs = capturedMs
+    // iOS renews the server lease while this extension may be inside a long
+    // command (and unable to poll). The frame ACK bridges that renewal so the
+    // local capture timer does not stop at its original expiry.
+    const ack = await withPreviewDeadline(
+      response.json(),
+      PREVIEW_ACK_TIMEOUT_MS,
+      'Browser preview acknowledgement',
+    ).catch(() => ({}))
+    if (!previewAttemptCurrent(generation, grant)) return
+    const current = previewGrant
+    const renewedExpiry = typeof ack?.leaseExpiresAt === 'string'
+      ? Date.parse(ack.leaseExpiresAt) : NaN
+    if (Number.isFinite(renewedExpiry) && renewedExpiry > Date.parse(current.expiresAt)) {
+      previewGrant = { ...current, expiresAt: ack.leaseExpiresAt }
     }
+  } else if (response.status === 401 || response.status === 409) {
+    stopPreviewCapture()
+    if (response.status === 401) {
+      await chrome.storage.local.set({ token: '', lastError: 'preview rejected (401)' })
+    }
+  }
+}
+
+async function capturePreviewFrame() {
+  const grant = previewGrant
+  if (!grant || Date.parse(grant.expiresAt) <= Date.now()) {
+    if (grant && Date.parse(grant.expiresAt) <= Date.now()) stopPreviewCapture()
+    return
+  }
+  // Explicit ~1fps bound even if a timer/poll wake happens at the same instant.
+  if (Date.now() - lastPreviewCaptureMs < 850) return
+  try {
+    await runPreviewCaptureExclusive(
+      previewCaptureState,
+      (generation) => performPreviewCapture(grant, generation),
+    )
   } catch (err) {
     console.warn('[alma-companion] preview frame failed:', err && err.message)
-  } finally {
-    previewCaptureBusy = false
   }
 }
 
@@ -1848,13 +2070,22 @@ async function pollOnce() {
   try {
     await setBadge('run')
     let result
+    const execution = { active: true }
     try {
       // Whole-command ceiling: even if some await inside executeCommand wedges
       // (destroyed page context, stuck dialog), the loop must move on and report —
       // one bad step must never take the companion "offline" for everything after.
-      result = await withTimeout(executeCommand(cmd), 35000, cmd.action || 'command')
+      result = await withTimeout(
+        executeCommand(cmd, () => execution.active),
+        35000,
+        cmd.action || 'command',
+      )
     } catch (err) {
       result = { ok: false, error: err && err.message ? err.message : String(err) }
+    } finally {
+      // If the whole command deadline won, a queued/late screenshot may still
+      // finish cleanup but must not start capture fallback or return pixels.
+      execution.active = false
     }
     const delivered = await postResult(baseUrl, token, cmd.id, result)
     if (!delivered) return 'retry'
