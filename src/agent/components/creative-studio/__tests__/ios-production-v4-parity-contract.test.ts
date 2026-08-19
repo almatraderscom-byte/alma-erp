@@ -1,0 +1,89 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+const nativeStudio = readFileSync(
+  join(process.cwd(), 'ios/App/App/CreativeStudioSwiftUI.swift'),
+  'utf8',
+)
+const nativeWorkspace = readFileSync(
+  join(process.cwd(), 'ios/App/App/CreativeStudioV4WorkspaceSwiftUI.swift'),
+  'utf8',
+)
+const nativeMaskRepair = readFileSync(
+  join(process.cwd(), 'ios/App/App/CSMaskRepairSwiftUI.swift'),
+  'utf8',
+)
+
+describe('iOS current-production Creative Studio parity', () => {
+  it('keeps the existing native six-tab design and adds the workspace as a sheet', () => {
+    expect(nativeStudio).toContain('case home, create, gallery, video, audio, library')
+    expect(nativeStudio).toContain('CSV4WorkspaceScreen(seedProject: vm.activeProject)')
+    expect(nativeStudio).toContain('V4 Production Workspace')
+  })
+
+  it('covers the production project, review, campaign, voice and operations APIs', () => {
+    for (const route of [
+      '/api/assistant/creative-studio/brands',
+      '/api/assistant/creative-studio/projects',
+      '/api/assistant/creative-studio/recipes',
+      '/api/assistant/creative-studio/compositions',
+      '/api/assistant/creative-studio/reviews',
+      '/api/assistant/creative-studio/campaign-packs',
+      '/api/assistant/creative-studio/voices',
+      '/api/assistant/creative-studio/health',
+      '/api/assistant/creative-studio/retention',
+      '/api/assistant/creative-studio/lifecycle',
+      '/api/assistant/creative-studio/performance',
+      '/api/assistant/creative-studio/roles',
+    ]) {
+      expect(nativeWorkspace).toContain(route)
+    }
+  })
+
+  it('previews campaign cost before an explicitly confirmed queue', () => {
+    expect(nativeWorkspace).toContain('let intent = "preview"')
+    expect(nativeWorkspace).toContain('let intent = "queue"')
+    expect(nativeWorkspace).toContain('confirmedCostUsd: preview.estimatedCostUsd')
+    expect(nativeWorkspace).toContain('.alert("Campaign Pack queue করবেন?"')
+  })
+
+  it('uses production estimate-confirm gates for audio and consented voice versions', () => {
+    expect(nativeStudio).toContain('pendingAudioEstimate')
+    expect(nativeStudio).toContain('estimateVoiceClone(samplePaths:')
+    expect(nativeStudio).toContain('/api/assistant/creative-studio/voices')
+    expect(nativeStudio).toContain('estimateBody["intent"] = AnyEncodable("estimate")')
+    expect(nativeStudio).toContain('body["intent"] = AnyEncodable("queue")')
+    expect(nativeStudio).toContain('Confirm & Queue')
+  })
+
+  it('exposes canonical lifecycle filters in the native Gallery', () => {
+    expect(nativeStudio).toContain('("Approved", "approved")')
+    expect(nativeStudio).toContain('("Review", "review")')
+    expect(nativeStudio).toContain('("Archived", "archived")')
+    expect(nativeStudio).toContain('projectAssetId')
+    expect(nativeStudio).toContain('assetVersionId')
+    expect(nativeStudio).toContain('gallerySearch')
+    expect(nativeStudio).toContain('galleryProvider')
+    expect(nativeStudio).toContain('galleryAspect')
+    expect(nativeStudio).toContain('galleryDensity')
+  })
+
+  it('keeps precision mask repair behind a signed estimate and explicit confirmation', () => {
+    expect(nativeStudio).toContain('/api/assistant/creative-studio/mask-upload')
+    expect(nativeStudio).toContain('payload.vtonEngine = "fal_flux_fill"')
+    expect(nativeStudio).not.toContain('payload.provider = "fashn"\n        payload.vtonEngine = "fal_flux_fill"')
+    expect(nativeStudio).toContain('payload.intent = "estimate"')
+    expect(nativeStudio).toContain('payload.intent = "confirm"')
+    expect(nativeMaskRepair).toContain('Upload mask & get exact estimate')
+    expect(nativeMaskRepair).toContain('.alert("Signed estimate নিশ্চিত করবেন?"')
+    expect(nativeMaskRepair).toContain('Confirm & Queue')
+  })
+
+  it('supports owner retention controls, lifecycle job controls and performance attribution', () => {
+    expect(nativeWorkspace).toContain('"PATCH", "/api/assistant/creative-studio/retention"')
+    expect(nativeWorkspace).toContain('controlLifecycle(')
+    expect(nativeWorkspace).toContain('Performance & attribution')
+    expect(nativeWorkspace).toContain('external publish')
+  })
+})

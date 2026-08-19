@@ -59,6 +59,16 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     let modelCreator: String?
     let coverOptions: [CSCoverOption]?
     let error: String?
+    // Current-production V4 lineage/lifecycle metadata. Optional keeps legacy jobs
+    // decodable while canonical project assets expose truthful review state.
+    let projectAssetId: String?
+    let assetVersionId: String?
+    let projectId: String?
+    let brandProfileId: String?
+    let assetState: String?
+    let publishable: Bool?
+    let aspectRatio: String?
+    let costBdt: Double?
     /// Last finishing inputs (hook/code/theme/layout…) — editor reopens pre-filled.
     let finishParams: CSFinishParams?
 
@@ -91,13 +101,30 @@ struct CSUploadResponse: Decodable { let path: String?; let storagePath: String?
 struct CSReferenceUploadResponse: Decodable { let id: String; let path: String }
 struct CSUploadResult { let path: String; let referenceId: String? }
 
-struct CSProjectProduct: Decodable { let code: String }
+struct CSProjectProduct: Decodable {
+    let code: String
+    let name: String?
+    let priceBdt: Double?
+    let sourceImage: String?
+}
+struct CSProjectRecipe: Decodable {
+    let id: String
+    let name: String
+    let version: Int?
+    let locked: Bool?
+}
 struct CSProjectSummary: Decodable, Identifiable {
     let id: String
     let name: String
     let readonly: Bool
     let brandProfileId: String?
     let product: CSProjectProduct?
+    let description: String?
+    let assetCount: Int?
+    let currentRecipeId: String?
+    let currentRecipe: CSProjectRecipe?
+    let defaultFolder: String?
+    let updatedAt: String?
 }
 struct CSProjectsResponse: Decodable { let projects: [CSProjectSummary] }
 
@@ -114,11 +141,20 @@ struct CSRunResponse: Decodable, Identifiable {
     var id: String { receiptId ?? "run-response" }
 }
 
+struct CSMaskUploadResponse: Decodable, Equatable {
+    let maskPath: String
+    let width: Int
+    let height: Int
+    let coveragePct: Double
+    let estimatedCostUsd: Double?
+}
+
 /// Manual run payload — nil keys are omitted (matches the web's undefined-omit).
 /// AlmaAPI's JSONEncoder skips nil optionals by default, so plain Encodable works.
 struct CSRunPayload: Encodable {
     var mode: String
     var provider: String?
+    var vtonEngine: String?
     var productImagePath: String?
     var modelImagePath: String?
     var sourceImagePath: String?
@@ -135,6 +171,12 @@ struct CSRunPayload: Encodable {
     var durationSec: Int?
     var productReferenceId: String?
     var modelReferenceId: String?
+    var sourceAssetIds: [String]?
+    var sourcePendingActionId: String?
+    var maskPath: String?
+    var maskPreset: String?
+    var baseWidth: Int?
+    var baseHeight: Int?
     var brandProfileId: String?
     var projectId: String?
     var productId: String?
@@ -239,6 +281,15 @@ struct CSAudioLabStatus: Decodable {
     let occasions: [CSAudioPreset]?
 }
 struct CSAudioQueueResponse: Decodable { let pendingActionId: String?; let costBdt: Int?; let error: String? }
+struct CSAudioEstimate: Decodable, Identifiable {
+    let requiresConfirmation: Bool?
+    let summary: String?
+    let provider: String?
+    let costBdt: Int
+    let maxCostBdt: Int
+    let ceilingUsd: Double?
+    var id: String { "\(provider ?? "audio"):\(costBdt):\(maxCostBdt)" }
+}
 
 // ── Studio settings (CS4) ────────────────────────────────────────────────────
 struct CSChildGarment: Decodable, Identifiable, Equatable {
@@ -450,12 +501,17 @@ final class CreativeStudioVM {
         case manual(CSRunPayload)
         case auto(CSAutoRunPayload)
     }
+    private enum PendingAudio {
+        case audio(label: String, body: [String: AnyEncodable])
+        case voiceClone(name: String, samplePaths: [String])
+    }
 
     var config: CSStudioConfig?
     var gallery: [CSGalleryItem] = []
     var models: [CSModel] = []
     var activeProject: CSProjectSummary?
     var pendingEstimate: CSRunResponse?
+    var pendingAudioEstimate: CSAudioEstimate?
     var loading = false
     var authExpired = false
     var generating = false
@@ -475,8 +531,14 @@ final class CreativeStudioVM {
     }
     @ObservationIgnored private var toastClearTask: Task<Void, Never>?
     @ObservationIgnored private var pendingRun: PendingRun?
+    @ObservationIgnored private var pendingAudio: PendingAudio?
 
-    var galleryFilter = "all"   // all | image | video | executed | pending
+    var galleryFilter = "all"   // all | image | video | approved | review | archived | executed | pending
+    var gallerySearch = ""
+    var galleryProvider = "all"
+    var galleryAspect = "all"
+    var gallerySort = "newest"
+    var galleryDensity = "compact" // compact | comfortable | list
 
     // ── Video studio state ────────────────────────────────────────────────
     var videoUploads: [CSVideoUpload] = []
@@ -490,13 +552,37 @@ final class CreativeStudioVM {
     var audioStatus: CSAudioLabStatus?
 
     var filteredGallery: [CSGalleryItem] {
+        let lifecycleFiltered: [CSGalleryItem]
         switch galleryFilter {
-        case "image": return gallery.filter { !$0.isVideo }
-        case "video": return gallery.filter { $0.isVideo }
-        case "executed": return gallery.filter { $0.isExecuted }
-        case "pending": return gallery.filter { !$0.isExecuted }
-        default: return gallery
+        case "image": lifecycleFiltered = gallery.filter { !$0.isVideo }
+        case "video": lifecycleFiltered = gallery.filter { $0.isVideo }
+        case "executed": lifecycleFiltered = gallery.filter { $0.isExecuted }
+        case "pending": lifecycleFiltered = gallery.filter { !$0.isExecuted }
+        case "approved": lifecycleFiltered = gallery.filter { $0.assetState == "approved" }
+        case "review": lifecycleFiltered = gallery.filter { $0.assetState == "changes_requested" || $0.assetState == "revised" || $0.assetState == "draft" }
+        case "archived": lifecycleFiltered = gallery.filter { $0.assetState == "archived" }
+        default: lifecycleFiltered = gallery
         }
+        let needle = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let refined = lifecycleFiltered.filter { item in
+            if galleryProvider != "all", item.provider != galleryProvider { return false }
+            if galleryAspect != "all", item.aspectRatio != galleryAspect { return false }
+            if !needle.isEmpty {
+                let haystack = [item.title, item.mode ?? "", item.provider ?? "", item.summary ?? ""]
+                    .joined(separator: " ").lowercased()
+                if !haystack.contains(needle) { return false }
+            }
+            return true
+        }
+        return gallerySort == "oldest" ? Array(refined.reversed()) : refined
+    }
+
+    var galleryProviders: [String] {
+        Array(Set(gallery.compactMap(\.provider).filter { !$0.isEmpty })).sorted()
+    }
+
+    var galleryAspects: [String] {
+        Array(Set(gallery.compactMap(\.aspectRatio).filter { !$0.isEmpty })).sorted()
     }
 
     func loadAll() async {
@@ -511,8 +597,9 @@ final class CreativeStudioVM {
             query["brandProfileId"] = brandProfileId
             query["projectId"] = project.id
         }
+        let galleryQuery = query
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
-            "/api/assistant/creative-studio/gallery", query: query)
+            "/api/assistant/creative-studio/gallery", query: galleryQuery)
         async let m: CSModelsResponse? = try? AlmaAPI.shared.get(
             "/api/assistant/brand-models",
             query: activeProject.map { project in
@@ -567,6 +654,18 @@ final class CreativeStudioVM {
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
             gallery = g.items.isEmpty ? CS.sampleGallery : g.items
+        }
+    }
+
+    /// A V4 project choice is the same production scope used by Create, Gallery,
+    /// saved identities, and every paid confirmation—not a workspace-only filter.
+    func activateProject(_ project: CSProjectSummary) async {
+        activeProject = project
+        await refreshGallery()
+        if let brandID = project.brandProfileId,
+           let response: CSModelsResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/brand-models", query: ["brandProfileId": brandID, "projectId": project.id]) {
+            models = response.models.isEmpty ? CS.sampleModels : response.models
         }
     }
 
@@ -701,6 +800,83 @@ final class CreativeStudioVM {
         } catch {
             showRunError(error)
         }
+    }
+
+    /// Production V4 precision finishing: the mask upload is a free preparation
+    /// step, followed by the same signed estimate → explicit confirmation gate.
+    func uploadRepairMask(_ data: Data, for item: CSGalleryItem) async throws -> CSMaskUploadResponse {
+        guard let project = activeProject,
+              let brandProfileId = project.brandProfileId,
+              let projectAssetId = item.projectAssetId,
+              let basePath = item.storagePath else {
+            throw AlmaAPIError.http(status: 422, body: "mask_source_scope_required")
+        }
+        return try await AlmaAPI.shared.uploadMultipart(
+            "/api/assistant/creative-studio/mask-upload", fileField: "mask",
+            filename: "repair-mask.png", mime: "image/png", data: data,
+            fields: [
+                "basePath": basePath,
+                "brandProfileId": brandProfileId,
+                "projectId": project.id,
+                "projectAssetId": projectAssetId,
+                "pendingActionId": item.id,
+            ])
+    }
+
+    func repairPayload(for item: CSGalleryItem, mask: CSMaskUploadResponse,
+                       preset: String, detail: String) -> CSRunPayload? {
+        guard let sourcePath = item.storagePath, let assetID = item.projectAssetId else { return nil }
+        var payload = CSRunPayload(mode: "edit")
+        // FLUX Fill is a Fal precision-edit engine, not the FASHN try-on API.
+        // Keep provider unset so the server pins the explicit engine below.
+        payload.provider = nil
+        payload.vtonEngine = "fal_flux_fill"
+        payload.sourceImagePath = sourcePath
+        payload.sourceAssetIds = [assetID]
+        payload.sourcePendingActionId = item.id
+        payload.maskPath = mask.maskPath
+        payload.maskPreset = preset
+        payload.prompt = detail
+        payload.baseWidth = mask.width
+        payload.baseHeight = mask.height
+        payload.studioSurface = "v3"
+        do { try scope(&payload); return payload } catch { showRunError(error); return nil }
+    }
+
+    func estimateRepair(_ original: CSRunPayload) async -> CSRunResponse? {
+        guard !generating else { return nil }
+        generating = true; defer { generating = false }
+        do {
+            var payload = original
+            try scope(&payload)
+            payload.intent = "estimate"
+            payload.maxCostBdt = 500
+            let estimate: CSRunResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/run", body: payload)
+            guard estimate.receipt != nil, estimate.receiptId != nil else {
+                throw AlmaAPIError.http(status: 422, body: "run_estimate_failed")
+            }
+            return estimate
+        } catch { showRunError(error); return nil }
+    }
+
+    func confirmRepair(_ original: CSRunPayload, estimate: CSRunResponse) async -> Bool {
+        guard !generating, let receipt = estimate.receipt, let receiptID = estimate.receiptId else { return false }
+        generating = true; defer { generating = false }
+        do {
+            var payload = original
+            try scope(&payload)
+            payload.intent = "confirm"
+            payload.receipt = receipt
+            payload.confirmed = true
+            payload.idempotencyKey = "studio:\(receiptID)"
+            payload.maxCostBdt = estimate.maxCostBdt
+            let response: CSRunResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/run", body: payload)
+            toast = response.message ?? "Precision repair queue হয়েছে — Gallery-তে progress দেখুন"
+            await refreshGallery()
+            return true
+        } catch { showRunError(error); return false }
     }
 
     func flash(_ msg: String) { toast = msg }
@@ -982,14 +1158,77 @@ final class CreativeStudioVM {
         }
     }
 
+    /// All Audio Lab jobs follow production's estimate → explicit confirmation
+    /// contract. The method name is retained so existing native cards stay small.
     func queueAudio(_ label: String, body: [String: AnyEncodable]) async {
         do {
-            let res: CSAudioQueueResponse = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/creative-studio/audio", body: body)
-            if let err = res.error { toast = err }
-            else { toast = "\(label) তৈরি হচ্ছে\(res.costBdt.map { " (~৳\(almaBn($0)))" } ?? "") — Gallery-তে আসবে, Boss" }
+            var estimateBody = body
+            estimateBody["intent"] = AnyEncodable("estimate")
+            let estimate: CSAudioEstimate = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/audio", body: estimateBody)
+            pendingAudio = .audio(label: label, body: body)
+            pendingAudioEstimate = estimate
         } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "হয়নি" }
         catch { toast = "হয়নি" }
+    }
+
+    func estimateVoiceClone(samplePaths: [String]) async {
+        guard let project = activeProject, let brandID = project.brandProfileId else {
+            toast = "আগে production project বেছে নিন"; return
+        }
+        struct Consent: Encodable { let accepted = true; let statement: String }
+        struct Body: Encodable {
+            let name: String; let samplePaths: [String]; let consent: Consent
+            let intent = "estimate"; let brandProfileId: String; let projectId: String
+        }
+        let name = "Owner Voice"
+        do {
+            let estimate: CSAudioEstimate = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/voices",
+                body: Body(name: name, samplePaths: samplePaths,
+                           consent: Consent(statement: "আমি নিশ্চিত করছি যে এটি আমার নিজের কণ্ঠ এবং কেবল owner-only Creative Studio ব্যবহারের অনুমতি দিচ্ছি।"),
+                           brandProfileId: brandID, projectId: project.id))
+            pendingAudio = .voiceClone(name: name, samplePaths: samplePaths)
+            pendingAudioEstimate = estimate
+        } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "Voice estimate হয়নি" }
+        catch { toast = "Voice estimate হয়নি" }
+    }
+
+    func cancelPendingAudio() { pendingAudio = nil; pendingAudioEstimate = nil }
+
+    func confirmPendingAudio(_ estimate: CSAudioEstimate) async {
+        guard let pendingAudio else { return }
+        do {
+            let response: CSAudioQueueResponse
+            switch pendingAudio {
+            case let .audio(label, original):
+                var body = original
+                body["intent"] = AnyEncodable("queue")
+                body["confirmedCostBdt"] = AnyEncodable(estimate.costBdt)
+                body["costCapBdt"] = AnyEncodable(estimate.maxCostBdt)
+                response = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/creative-studio/audio", body: body)
+                toast = "\(label) তৈরি হচ্ছে (~৳\(almaBn(response.costBdt ?? estimate.costBdt))) — Gallery-তে আসবে, Boss"
+            case let .voiceClone(name, samplePaths):
+                guard let project = activeProject, let brandID = project.brandProfileId else { return }
+                struct Consent: Encodable { let accepted = true; let statement: String }
+                struct Body: Encodable {
+                    let name: String; let samplePaths: [String]; let consent: Consent
+                    let intent = "queue"; let confirmedCostBdt: Int; let costCapBdt: Int
+                    let brandProfileId: String; let projectId: String
+                }
+                response = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/creative-studio/voices",
+                    body: Body(name: name, samplePaths: samplePaths,
+                               consent: Consent(statement: "আমি নিশ্চিত করছি যে এটি আমার নিজের কণ্ঠ এবং কেবল owner-only Creative Studio ব্যবহারের অনুমতি দিচ্ছি।"),
+                               confirmedCostBdt: estimate.costBdt, costCapBdt: estimate.maxCostBdt,
+                               brandProfileId: brandID, projectId: project.id))
+                toast = "Consented voice version queue হয়েছে (~৳\(almaBn(response.costBdt ?? estimate.costBdt)))"
+            }
+            cancelPendingAudio()
+            await loadAudioLab()
+        } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "Queue হয়নি" }
+        catch { toast = "Queue হয়নি" }
     }
 
     /// Signed direct upload for audio samples; returns the storage path.
@@ -2233,8 +2472,15 @@ private struct CSGalleryTab: View {
     @State private var detail: CSGalleryItem?
     @State private var deleteTarget: CSGalleryItem?
 
+    private var columns: [GridItem] {
+        vm.galleryDensity == "comfortable"
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    }
+
     private let filterMap: [(bn: String, key: String)] =
-        [("সব", "all"), ("ছবি", "image"), ("ভিডিও", "video"), ("পোস্ট হয়েছে", "executed"), ("পেন্ডিং", "pending")]
+        [("সব", "all"), ("ছবি", "image"), ("ভিডিও", "video"), ("Approved", "approved"),
+         ("Review", "review"), ("Archived", "archived"), ("পোস্ট হয়েছে", "executed"), ("পেন্ডিং", "pending")]
 
     var body: some View {
         ScrollView {
@@ -2253,6 +2499,45 @@ private struct CSGalleryTab: View {
                     }.padding(.horizontal, 18)
                 }.padding(.top, 14)
 
+                VStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(AgentPalette(scheme).muted)
+                        TextField("Title, product code, mode বা provider", text: Binding(
+                            get: { vm.gallerySearch }, set: { vm.gallerySearch = $0 }))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(size: 12.5))
+                        if !vm.gallerySearch.isEmpty {
+                            Button { vm.gallerySearch = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                    }
+                    .padding(.horizontal, 12).frame(height: 42).csGlass(scheme, corner: 13)
+
+                    HStack(spacing: 8) {
+                        galleryMenu("Provider", value: vm.galleryProvider,
+                                    values: vm.galleryProviders) { vm.galleryProvider = $0 }
+                        galleryMenu("Aspect", value: vm.galleryAspect,
+                                    values: vm.galleryAspects) { vm.galleryAspect = $0 }
+                        Menu {
+                            Button("Newest") { vm.gallerySort = "newest" }
+                            Button("Oldest") { vm.gallerySort = "oldest" }
+                        } label: {
+                            Label(vm.gallerySort == "oldest" ? "Oldest" : "Newest", systemImage: "arrow.up.arrow.down")
+                        }
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
+                        Spacer(minLength: 0)
+                        Menu {
+                            Button("Compact grid") { vm.galleryDensity = "compact" }
+                            Button("Comfortable") { vm.galleryDensity = "comfortable" }
+                            Button("List") { vm.galleryDensity = "list" }
+                        } label: {
+                            Image(systemName: vm.galleryDensity == "list" ? "list.bullet" : "square.grid.2x2")
+                                .font(.system(size: 14, weight: .bold))
+                        }.foregroundStyle(AgentPalette.coralLt)
+                    }
+                }.padding(.horizontal, 18).padding(.top, 10)
+
                 // Live "still cooking" banner — the owner KNOWS work is happening after Run.
                 if vm.pendingCount > 0 {
                     HStack(spacing: 10) {
@@ -2267,20 +2552,15 @@ private struct CSGalleryTab: View {
                 if vm.gallery.isEmpty {
                     CSEmpty(loading: vm.loading).padding(.top, 40)
                 } else {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                        ForEach(vm.filteredGallery) { item in
-                            CSGalleryTile(item: item, onRetry: { Task { await vm.retry(item) } })
-                                .onTapGesture {
-                                    if item.previewUrl != nil { detail = item; CSHaptic.tap() }
-                                }
-                                // Build-67: long-press → delete, right from the grid
-                                .contextMenu {
-                                    if !item.id.hasPrefix("sample-") {
-                                        Button(role: .destructive) { deleteTarget = item } label: {
-                                            Label("মুছে ফেলুন", systemImage: "trash")
-                                        }
-                                    }
-                                }
+                    Group {
+                        if vm.galleryDensity == "list" {
+                            LazyVStack(spacing: 10) {
+                                ForEach(vm.filteredGallery) { item in galleryItem(item, list: true) }
+                            }
+                        } else {
+                            LazyVGrid(columns: columns, spacing: 12) {
+                                ForEach(vm.filteredGallery) { item in galleryItem(item, list: false) }
+                            }
                         }
                     }.padding(18)
                 }
@@ -2308,6 +2588,44 @@ private struct CSGalleryTab: View {
                 if let t = deleteTarget { Task { _ = await vm.deleteItem(t) } }
             }
         } message: { Text("ফাইলটাও স্টোরেজ থেকে মুছে যাবে, ফেরত আনা যাবে না।") }
+    }
+
+    private func galleryMenu(_ label: String, value: String, values: [String], set: @escaping (String) -> Void) -> some View {
+        Menu {
+            Button("All \(label.lowercased())s") { set("all") }
+            ForEach(values, id: \.self) { option in Button(option) { set(option) } }
+        } label: {
+            Text(value == "all" ? label : value).lineLimit(1)
+        }
+        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
+    }
+
+    @ViewBuilder private func galleryItem(_ item: CSGalleryItem, list: Bool) -> some View {
+        Group {
+            if list {
+                HStack(spacing: 11) {
+                    CSGalleryTile(item: item, onRetry: { Task { await vm.retry(item) } })
+                        .frame(width: 112)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.title).font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(2)
+                        Text([item.provider, item.aspectRatio, item.assetState].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(AgentPalette(scheme).muted).lineLimit(2)
+                        Text(item.publishable == true ? "Publish-ready" : item.modeLabel)
+                            .font(.caption2.weight(.semibold)).foregroundStyle(item.publishable == true ? .green : AgentPalette.coralLt)
+                    }
+                    Spacer()
+                }.padding(10).csGlass(scheme, corner: 15)
+            } else {
+                CSGalleryTile(item: item, onRetry: { Task { await vm.retry(item) } })
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if item.previewUrl != nil { detail = item; CSHaptic.tap() } }
+        .contextMenu {
+            if !item.id.hasPrefix("sample-") {
+                Button(role: .destructive) { deleteTarget = item } label: { Label("মুছে ফেলুন", systemImage: "trash") }
+            }
+        }
     }
 }
 
@@ -2787,6 +3105,14 @@ private struct CSAudioTab: View {
         .scrollDismissesKeyboard(.interactively)
         .task { await vm.loadAudioLab() }
         .refreshable { await vm.loadAudioLab() }
+        .alert(item: Binding(get: { vm.pendingAudioEstimate }, set: { if $0 == nil { vm.cancelPendingAudio() } })) { estimate in
+            Alert(
+                title: Text("খরচ নিশ্চিত করুন"),
+                message: Text("\(estimate.summary ?? "Audio job")\nProvider: \(estimate.provider ?? "production provider")\nEstimate: ৳\(almaBn(estimate.costBdt))\nসর্বোচ্চ cap: ৳\(almaBn(estimate.maxCostBdt))"),
+                primaryButton: .cancel(Text("বাতিল")) { vm.cancelPendingAudio() },
+                secondaryButton: .default(Text("Confirm & Queue")) { Task { await vm.confirmPendingAudio(estimate) } }
+            )
+        }
         .fileImporter(isPresented: Binding(get: { importKind != nil }, set: { if !$0 { importKind = nil } }),
                       allowedContentTypes: [.audio], allowsMultipleSelection: importKind == .clone) { result in
             guard case .success(let urls) = result, let kind = importKind else { return }
@@ -2816,7 +3142,7 @@ private struct CSAudioTab: View {
         guard !paths.isEmpty else { return }
         switch kind {
         case .clone:
-            await vm.queueAudio("ভয়েস ক্লোন", body: ["kind": AnyEncodable("voice_clone"), "samplePaths": AnyEncodable(paths)])
+            await vm.estimateVoiceClone(samplePaths: paths)
             await vm.loadAudioLab()
         case .cleanNote:
             await vm.queueAudio("ভয়েস ক্লিনআপ", body: ["kind": AnyEncodable("clean_voice"), "sourcePath": AnyEncodable(paths[0])])
@@ -2943,6 +3269,7 @@ private struct CSLibraryTab: View {
     @State private var finishedUrl: String?
     @State private var logoPicked: PhotosPickerItem?
     @State private var logoSaving = false
+    @State private var v4Workspace = false
     // NP-4 (AG-12.drive): native Drive connect state
     @State private var driveConnected = false
     @State private var driveEmail: String? = nil
@@ -2957,6 +3284,8 @@ private struct CSLibraryTab: View {
                     Text("মডেল + ফিনিশিং + সেটিংস").font(.system(size: 10, weight: .bold)).tracking(1.1).foregroundStyle(AgentPalette.coralLt)
                     Text("লাইব্রেরি").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
                 }.padding(.top, 58).padding(.horizontal, 18)
+
+                v4WorkspaceCard.padding(.horizontal, 18).padding(.top, 14)
 
                 CSSectionHeader(title: "সেভ করা মডেল", trailing: "\(almaBn(realModels.count))টি", action: nil).padding(.horizontal, 18)
                 modelGrid
@@ -2987,11 +3316,33 @@ private struct CSLibraryTab: View {
         .task { await vm.loadLibraryExtras() }
         .scrollDismissesKeyboard(.interactively)
         .sheet(isPresented: $addSheet) { CSAddModelSheet(vm: vm) }
+        .sheet(isPresented: $v4Workspace) {
+            CSV4WorkspaceScreen(seedProject: vm.activeProject) { project in
+                Task { await vm.activateProject(project) }
+            }
+                .presentationDetents([.large]).presentationDragIndicator(.visible)
+        }
         .onChange(of: logoPicked) { _, new in Task { await saveLogo(new) } }
         .alert("মডেল মুছবেন?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
             Button("বাতিল", role: .cancel) {}
             Button("মুছুন", role: .destructive) { if let m = confirmDelete { Task { await vm.removeModel(m.id) } } }
         } message: { Text(confirmDelete?.name ?? "") }
+    }
+
+    private var v4WorkspaceCard: some View {
+        Button { v4Workspace = true; CSHaptic.tap() } label: {
+            HStack(spacing: 13) {
+                Image(systemName: "square.grid.3x3.square").font(.system(size: 17))
+                    .foregroundStyle(AgentPalette.coralLt).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("V4 Production Workspace").font(.system(size: 14.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                    Text("Projects · Review · Campaign · Voice · Operations")
+                        .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+            }.padding(14).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
+        }.buttonStyle(.plain)
     }
 
     // ── Saved models ──────────────────────────────────────────────────────
@@ -3590,6 +3941,7 @@ private struct CSDetailSheet: View {
     @State private var player: AVPlayer?
     // Build-67: native editor + real download/share + delete + in-sheet feedback
     @State private var showEditor = false
+    @State private var showMaskRepair = false
     @State private var framedOverride: URL?      // freshest render, straight from the finish response
     @State private var downloading = false
     @State private var sharing = false
@@ -3685,6 +4037,18 @@ private struct CSDetailSheet: View {
                     }.padding(.horizontal, 18).padding(.top, 14)
                 }
 
+                // Production V4 precision finishing. Only canonical project assets
+                // can open the mask editor; estimate and paid confirmation happen there.
+                if !item.isVideo, !item.isAudio, item.storagePath != nil,
+                   item.projectAssetId != nil, vm.activeProject?.brandProfileId != nil {
+                    Button { showMaskRepair = true; CSHaptic.tap() } label: {
+                        Label("Precision repair (mask)", systemImage: "paintbrush.pointed.fill")
+                            .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                            .frame(maxWidth: .infinity).padding(14)
+                            .background(Color.blue.opacity(0.82), in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 10)
+                }
+
                 // Feedback → deterministic scene weighting (CS4)
                 if item.isExecuted {
                     HStack(spacing: 10) {
@@ -3776,6 +4140,9 @@ private struct CSDetailSheet: View {
                 framedOverride = CS.url(framedUrl)
                 if let fresh = vm.gallery.first(where: { $0.id == item.id }) { item = fresh }
             }
+        }
+        .fullScreenCover(isPresented: $showMaskRepair) {
+            CSMaskRepairSheet(item: item, vm: vm)
         }
     }
 
