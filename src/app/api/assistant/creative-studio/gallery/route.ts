@@ -138,6 +138,7 @@ export async function GET(req: NextRequest) {
     brandProfileId: string
     assetVersionId: string | null
     reviewSequence: number
+    reviewState: string
     archived: boolean
   }
   const canonicalByActionId = new Map<string, Canonical>()
@@ -164,6 +165,7 @@ export async function GET(req: NextRequest) {
           projectId: true,
           pendingActionId: true,
           reviewSequence: true,
+          reviewState: true,
           project: { select: { brandProfileId: true, archivedAt: true } },
           versions: {
             orderBy: { version: 'desc' },
@@ -181,6 +183,7 @@ export async function GET(req: NextRequest) {
         projectId: string
         pendingActionId: string | null
         reviewSequence: number
+        reviewState: string
         project: { brandProfileId: string | null; archivedAt: Date | null }
         versions: Array<{
           id: string
@@ -206,6 +209,7 @@ export async function GET(req: NextRequest) {
           brandProfileId,
           assetVersionId: asset.versions[0]?.id ?? null,
           reviewSequence: asset.reviewSequence,
+          reviewState: String(asset.reviewState).toLowerCase(),
           archived,
         })
       }
@@ -417,6 +421,8 @@ export async function GET(req: NextRequest) {
       projectAssetId: canonical?.projectAssetId ?? null,
       assetVersionId: canonical?.assetVersionId ?? null,
       reviewSequence: canonical?.reviewSequence ?? null,
+      reviewState: canonical?.reviewState ?? null,
+      archived: canonical?.archived ?? false,
       projectId: canonical?.projectId ?? null,
       brandProfileId: canonical?.brandProfileId ?? null,
       type: row.type,
@@ -430,6 +436,12 @@ export async function GET(req: NextRequest) {
       // requested — never claim the selected engine ran if something else did.
       provider: (result.provider as string | undefined) ?? payload.provider ?? 'gemini',
       familyPreset: payload.familyPreset ?? null,
+      aspectRatio:
+        originalVariant?.requestedAspectRatio
+        ?? brandedVariant?.requestedAspectRatio
+        ?? (typeof result.requestedAspectRatio === 'string' ? result.requestedAspectRatio : null)
+        ?? (typeof result.aspectRatio === 'string' ? result.aspectRatio : null)
+        ?? (typeof payload.aspectRatio === 'string' ? payload.aspectRatio : null),
       // CS6 — engine lineage metadata (fal VTON): engine id, request id, seed,
       // latency and actual cost, straight from the worker's result.
       engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined)

@@ -66,6 +66,8 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     let projectId: String?
     let brandProfileId: String?
     let assetState: String?
+    let reviewState: String?
+    let archived: Bool?
     let publishable: Bool?
     let aspectRatio: String?
     let costBdt: Double?
@@ -558,9 +560,9 @@ final class CreativeStudioVM {
         case "video": lifecycleFiltered = gallery.filter { $0.isVideo }
         case "executed": lifecycleFiltered = gallery.filter { $0.isExecuted }
         case "pending": lifecycleFiltered = gallery.filter { !$0.isExecuted }
-        case "approved": lifecycleFiltered = gallery.filter { $0.assetState == "approved" }
-        case "review": lifecycleFiltered = gallery.filter { $0.assetState == "changes_requested" || $0.assetState == "revised" || $0.assetState == "draft" }
-        case "archived": lifecycleFiltered = gallery.filter { $0.assetState == "archived" }
+        case "approved": lifecycleFiltered = gallery.filter { $0.reviewState == "approved" }
+        case "review": lifecycleFiltered = gallery.filter { $0.reviewState == "changes_requested" || $0.reviewState == "revised" || $0.reviewState == "draft" }
+        case "archived": lifecycleFiltered = gallery.filter { $0.archived == true }
         default: lifecycleFiltered = gallery
         }
         let needle = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -591,12 +593,18 @@ final class CreativeStudioVM {
         async let c: CSStudioConfig? = try? AlmaAPI.shared.get("/api/assistant/creative-studio/config")
         async let p: CSProjectsResponse? = try? AlmaAPI.shared.get("/api/assistant/creative-studio/projects")
         let (cfg, projects) = await (c, p)
-        activeProject = projects?.projects.first { !$0.readonly && $0.brandProfileId != nil }
-        var query = ["page": "1", "limit": "24"]
+        if let projects {
+            let priorProjectID = activeProject?.id
+            let writable = projects.projects.filter { !$0.readonly && $0.brandProfileId != nil }
+            activeProject = writable.first { $0.id == priorProjectID } ?? writable.first
+        }
+        var query = ["page": "1", "limit": "48"]
         if let project = activeProject, let brandProfileId = project.brandProfileId {
             query["brandProfileId"] = brandProfileId
             query["projectId"] = project.id
         }
+        let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !search.isEmpty { query["q"] = search }
         let galleryQuery = query
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: galleryQuery)
@@ -646,11 +654,13 @@ final class CreativeStudioVM {
     }
 
     func refreshGallery() async {
-        var query = ["page": "1", "limit": "24"]
+        var query = ["page": "1", "limit": "48"]
         if let project = activeProject, let brandProfileId = project.brandProfileId {
             query["brandProfileId"] = brandProfileId
             query["projectId"] = project.id
         }
+        let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !search.isEmpty { query["q"] = search }
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
             gallery = g.items.isEmpty ? CS.sampleGallery : g.items
@@ -2506,9 +2516,14 @@ private struct CSGalleryTab: View {
                             get: { vm.gallerySearch }, set: { vm.gallerySearch = $0 }))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .submitLabel(.search)
+                            .onSubmit { Task { await vm.refreshGallery() } }
                             .font(.system(size: 12.5))
                         if !vm.gallerySearch.isEmpty {
-                            Button { vm.gallerySearch = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            Button {
+                                vm.gallerySearch = ""
+                                Task { await vm.refreshGallery() }
+                            } label: { Image(systemName: "xmark.circle.fill") }
                                 .foregroundStyle(AgentPalette(scheme).muted)
                         }
                     }

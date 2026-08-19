@@ -14,6 +14,10 @@ const nativeMaskRepair = readFileSync(
   join(process.cwd(), 'ios/App/App/CSMaskRepairSwiftUI.swift'),
   'utf8',
 )
+const galleryRoute = readFileSync(
+  join(process.cwd(), 'src/app/api/assistant/creative-studio/gallery/route.ts'),
+  'utf8',
+)
 
 describe('iOS current-production Creative Studio parity', () => {
   it('keeps the existing native six-tab design and adds the workspace as a sheet', () => {
@@ -68,6 +72,23 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('galleryProvider')
     expect(nativeStudio).toContain('galleryAspect')
     expect(nativeStudio).toContain('galleryDensity')
+    expect(nativeStudio).toContain('$0.reviewState == "approved"')
+    expect(nativeStudio).toContain('$0.reviewState == "changes_requested"')
+    expect(nativeStudio).toContain('$0.archived == true')
+  })
+
+  it('preserves project scope and sends Gallery search to the server', () => {
+    expect(nativeStudio).toContain('let priorProjectID = activeProject?.id')
+    expect(nativeStudio).toContain('writable.first { $0.id == priorProjectID }')
+    expect(nativeStudio).toContain('query["q"] = search')
+    expect(nativeStudio).toContain('.onSubmit { Task { await vm.refreshGallery() } }')
+  })
+
+  it('returns canonical lifecycle and aspect metadata for native filters', () => {
+    expect(galleryRoute).toContain('reviewState: String(asset.reviewState).toLowerCase()')
+    expect(galleryRoute).toContain('archived: canonical?.archived ?? false')
+    expect(galleryRoute).toContain('originalVariant?.requestedAspectRatio')
+    expect(galleryRoute).toContain("typeof payload.aspectRatio === 'string'")
   })
 
   it('keeps precision mask repair behind a signed estimate and explicit confirmation', () => {
