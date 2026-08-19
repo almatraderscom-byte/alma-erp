@@ -42,6 +42,10 @@ import {
   type GenericImageModel,
 } from '@/lib/creative-studio/advanced-image-capabilities'
 import { readKv } from '@/lib/creative-studio/taste'
+import {
+  approvalConversationId,
+  progressTurnIdFromApprovalPayload,
+} from '@/agent/lib/approval-progress-context'
 
 export const runtime = 'nodejs'
 
@@ -73,6 +77,19 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   const action = await (prisma as any).agentPendingAction.findUnique({ where: { id: params.id } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
 
+  // Action-bound progress identity for native approval docks. Never trust the
+  // payload reference alone: only expose it when that exact turn belongs to
+  // this action's conversation. Cross-card/cross-conversation references fail
+  // closed to null rather than leaking an unrelated live activity.
+  const conversationId = approvalConversationId(action)
+  const referencedProgressTurnId = progressTurnIdFromApprovalPayload(action.payload)
+  const progressTurn = conversationId && referencedProgressTurnId
+    ? await (prisma as any).agentTurn.findFirst({
+        where: { id: referencedProgressTurnId, conversationId },
+        select: { id: true, conversationId: true, status: true },
+      })
+    : null
+
   const [workerCapabilities, genericLaneKill, xaiEnabled, workerCapabilitiesV2] = action.type === 'image_gen'
     ? await Promise.all([
         readKv(IMAGE_WORKER_CAPABILITY_KV_KEY),
@@ -94,6 +111,10 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     type: action.type,
     summary: action.summary,
     status: action.status,
+    conversationId,
+    progressTurnId: progressTurn?.id ?? null,
+    progressConversationId: progressTurn?.conversationId ?? null,
+    progressTurnStatus: progressTurn?.status ?? null,
     isFinance: isFinanceConfirmType(action.type),
     entryCount: getEntryCount(action),
     editFields: financeEditFieldsForType(action.type),

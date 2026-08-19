@@ -23,6 +23,7 @@
  *      trail of what ran on his Mac and what authorised it.
  */
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { classifyCommand, MAC_EXEC_LIMITS, type PolicyLevel } from '@/agent/lib/mac-agent/policy'
 import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
@@ -61,6 +62,22 @@ export const MAC_AGENT_ACTIONS = [
   'app_mirror',
 ] as const
 export type MacAgentAction = (typeof MAC_AGENT_ACTIONS)[number]
+
+const AUTO_STREAM_ACTIONS = new Set<MacAgentAction>([
+  'run_command',
+  'screenshot',
+  'ui_tree',
+  'ui_screenshot',
+  'ui_scroll',
+  'ui_click',
+  'ui_type',
+  'ui_key',
+  'ui_session',
+  'ui_new_chat',
+  'app_mirror',
+])
+const AUTO_STREAM_FRESH_MS = 10_000
+const AUTO_STREAM_MAX_SECONDS = 120
 
 const PAIRING_CODE_TTL_MS = 10 * 60 * 1000
 const DEVICE_OFFLINE_MS = 90_000
@@ -327,6 +344,8 @@ export interface EnqueueInput {
   policyLevel?: PolicyLevel
   approvedBy?: string | null
   sessionKey?: string | null
+  turnId?: string | null
+  conversationId?: string | null
 }
 
 /**
@@ -370,17 +389,97 @@ export async function enqueueCommand(input: EnqueueInput): Promise<{ id: string 
     }
   }
 
-  const row = await prisma.macAgentCommand.create({
-    data: {
+  const commandData = {
       deviceId: input.deviceId,
       action: input.action,
       params: (input.params ?? {}) as object,
       policyLevel: input.policyLevel ?? 'green',
       approvedBy: input.approvedBy ?? null,
       sessionKey: input.sessionKey ?? null,
-    },
-    select: { id: true },
-  })
+      turnId: input.turnId?.trim() || null,
+      conversationId: input.conversationId?.trim() || null,
+  }
+  const hasActivityContext = Boolean(commandData.turnId && commandData.conversationId)
+  const shouldAutoStream = hasActivityContext && AUTO_STREAM_ACTIONS.has(input.action)
+  const row = shouldAutoStream
+      ? await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`mac-stream:${input.deviceId}`}))`)
+        const runningTurn = await tx.agentTurn.findFirst({
+          where: {
+            id: commandData.turnId!,
+            conversationId: commandData.conversationId!,
+            status: 'running',
+          },
+          select: { id: true },
+        })
+        // An approval or retry can arrive after its original turn has ended.
+        // Keep the requested command/audit row, but never begin background
+        // capture when no live dock can still own and stop that stream.
+        if (!runningTurn) {
+          return tx.macAgentCommand.create({ data: commandData, select: { id: true } })
+        }
+        const [frame, existing] = await Promise.all([
+          tx.macAgentFrame.findUnique({
+            where: { deviceId: input.deviceId },
+            select: { at: true, turnId: true, conversationId: true },
+          }),
+          tx.macAgentCommand.findFirst({
+            where: {
+              deviceId: input.deviceId,
+              turnId: commandData.turnId,
+              conversationId: commandData.conversationId,
+              action: 'screen_stream',
+              status: { in: ['queued', 'delivered', 'done'] },
+              createdAt: { gt: new Date(Date.now() - AUTO_STREAM_MAX_SECONDS * 1000) },
+            },
+            orderBy: { createdAt: 'desc' },
+            select: { params: true, status: true },
+          }),
+        ])
+        const existingParams = (existing?.params as Record<string, unknown> | null) ?? null
+        const streamFresh = Boolean(
+          frame
+          && frame.turnId === commandData.turnId
+          && frame.conversationId === commandData.conversationId
+          && Date.now() - frame.at.getTime() < AUTO_STREAM_FRESH_MS,
+        )
+        const autoAlreadyQueued = existingParams?.mode === 'start'
+          && existingParams?.reason === 'computer_use'
+          && (existing?.status === 'queued'
+            || existing?.status === 'delivered'
+            || (existing?.status === 'done' && streamFresh))
+        let prependedAt: Date | null = null
+        if (!streamFresh && !autoAlreadyQueued) {
+          prependedAt = new Date()
+          await tx.macAgentCommand.create({
+            data: {
+              deviceId: input.deviceId,
+              action: 'screen_stream',
+              params: {
+                mode: 'start',
+                reason: 'computer_use',
+                maxSeconds: AUTO_STREAM_MAX_SECONDS,
+              },
+              policyLevel: 'green',
+              turnId: commandData.turnId,
+              conversationId: commandData.conversationId,
+              createdAt: prependedAt,
+            },
+          })
+        }
+        return tx.macAgentCommand.create({
+          data: prependedAt
+            ? { ...commandData, createdAt: new Date(prependedAt.getTime() + 1) }
+            : commandData,
+          select: { id: true },
+        })
+      })
+    : input.action === 'screen_stream'
+      ? await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`mac-stream:${input.deviceId}`}))`)
+          return tx.macAgentCommand.create({ data: commandData, select: { id: true } })
+        })
+      : await prisma.macAgentCommand.create({ data: commandData, select: { id: true } })
   return { id: row.id }
 }
 
@@ -389,6 +488,8 @@ export interface ClaimedCommand {
   action: string
   params: Record<string, unknown>
   sessionKey: string | null
+  turnId: string | null
+  conversationId: string | null
 }
 
 /**
@@ -397,6 +498,12 @@ export interface ClaimedCommand {
  * never yanked out from under a daemon that IS running it.
  */
 const DELIVERY_LEASE_MS = MAC_EXEC_LIMITS_MAX_TIMEOUT + 120_000
+/**
+ * Stream control is idempotent and completes immediately on the daemon. A
+ * short lease prevents a lost poll response from leaving the prepended start
+ * phantom-delivered while the visual command behind it runs with no pixels.
+ */
+export const SCREEN_STREAM_DELIVERY_LEASE_MS = 8_000
 /** Give up (and tell the owner) rather than redeliver forever. */
 const MAX_DELIVERY_ATTEMPTS = 3
 
@@ -411,17 +518,25 @@ const MAX_DELIVERY_ATTEMPTS = 3
  * information the owner needs, not something to retry in silence.
  */
 export async function reclaimStaleDeliveries(deviceId: string): Promise<number> {
-  const cutoff = new Date(Date.now() - DELIVERY_LEASE_MS)
+  const ordinaryCutoff = new Date(Date.now() - DELIVERY_LEASE_MS)
+  const streamCutoff = new Date(Date.now() - SCREEN_STREAM_DELIVERY_LEASE_MS)
   const stale = await prisma.macAgentCommand.findMany({
-    where: { deviceId, status: 'delivered', deliveredAt: { lt: cutoff } },
-    select: { id: true, deliveryAttempts: true },
+    where: {
+      deviceId,
+      status: 'delivered',
+      OR: [
+        { action: 'screen_stream', deliveredAt: { lt: streamCutoff } },
+        { action: { not: 'screen_stream' }, deliveredAt: { lt: ordinaryCutoff } },
+      ],
+    },
+    select: { id: true, deliveredAt: true, deliveryAttempts: true },
   })
   if (stale.length === 0) return 0
 
   for (const row of stale) {
     if (row.deliveryAttempts >= MAX_DELIVERY_ATTEMPTS) {
-      await prisma.macAgentCommand.update({
-        where: { id: row.id },
+      await prisma.macAgentCommand.updateMany({
+        where: { id: row.id, deviceId, status: 'delivered', deliveredAt: row.deliveredAt },
         data: {
           status: 'failed',
           error: 'delivery_lost: Mac থেকে কোনো উত্তর আসেনি (কয়েকবার চেষ্টার পরেও)।',
@@ -430,8 +545,8 @@ export async function reclaimStaleDeliveries(deviceId: string): Promise<number> 
       })
       continue
     }
-    await prisma.macAgentCommand.update({
-      where: { id: row.id },
+    await prisma.macAgentCommand.updateMany({
+      where: { id: row.id, deviceId, status: 'delivered', deliveredAt: row.deliveredAt },
       data: { status: 'queued', deliveredAt: null, deliveryAttempts: { increment: 1 } },
     })
   }
@@ -447,11 +562,23 @@ export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand
   await reclaimStaleDeliveries(deviceId).catch(() => {})
 
   const next = await prisma.macAgentCommand.findFirst({
-    where: { deviceId, status: 'queued' },
+    // One serial daemon must observe queue order across a lost poll response.
+    // If the oldest unresolved row is still delivered, return no later work;
+    // once its action-specific lease expires the reclaim above requeues it.
+    where: { deviceId, status: { in: ['queued', 'delivered'] } },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, action: true, params: true, sessionKey: true },
+    select: {
+      id: true,
+      action: true,
+      status: true,
+      params: true,
+      sessionKey: true,
+      turnId: true,
+      conversationId: true,
+    },
   })
   if (!next) return null
+  if (next.status === 'delivered') return null
 
   // The UI kill switch must stop QUEUED work too, not just intake: a ui_*
   // command enqueued while driving was ON must not execute after the owner
@@ -489,6 +616,8 @@ export async function claimNextCommand(deviceId: string): Promise<ClaimedCommand
     action: next.action,
     params: (next.params as Record<string, unknown>) ?? {},
     sessionKey: next.sessionKey,
+    turnId: next.turnId,
+    conversationId: next.conversationId,
   }
 }
 

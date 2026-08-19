@@ -101,6 +101,8 @@ export async function runUiActionWithVisualProof(input: {
   uiAction: string
   params: Record<string, unknown>
   approvedBy: string
+  turnId?: string | null
+  conversationId?: string | null
   /** Whole approval-route budget. Default leaves 15s under its 120s cap. */
   budgetMs?: number
 }): Promise<UiActionVisualProofResult> {
@@ -124,6 +126,8 @@ export async function runUiActionWithVisualProof(input: {
     action: 'ui_screenshot',
     params: { bundleId, proofPhase: 'before', proofActionLabel: label },
     policyLevel: 'green',
+    turnId: input.turnId,
+    conversationId: input.conversationId,
   })
   const before = await collectCapture(
     beforeId,
@@ -150,6 +154,8 @@ export async function runUiActionWithVisualProof(input: {
     params: input.params,
     policyLevel: 'amber',
     approvedBy: input.approvedBy,
+    turnId: input.turnId,
+    conversationId: input.conversationId,
   })
   // Queue AFTER immediately, before waiting. The daemon bus is serial, so this
   // capture cannot run until the approved act resolves. If this HTTP request
@@ -171,6 +177,8 @@ export async function runUiActionWithVisualProof(input: {
       proofDeferred: false,
     },
     policyLevel: 'green',
+    turnId: input.turnId,
+    conversationId: input.conversationId,
   })
   const actionWait = Math.min(12_000, Math.max(1, left() - 6_000))
   const actionOutcome = await awaitResult(actionCommandId, actionWait)

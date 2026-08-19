@@ -8,6 +8,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import {
   authenticateDevice,
   claimNextCommand,
+  getActiveBrowserPreviewLease,
   isLiveBrowserEnabled,
 } from '@/agent/lib/live-browser/companion'
 
@@ -32,14 +33,28 @@ export async function GET(req: NextRequest) {
 
   // Kill-switch OFF ⇒ stay connected but never dispatch work.
   if (!(await isLiveBrowserEnabled())) {
-    return Response.json({ command: null, paused: true }, { headers: NO_STORE_HEADERS })
+    return Response.json({ command: null, paused: true, preview: null }, { headers: NO_STORE_HEADERS })
   }
 
-  const cmd = await claimNextCommand(device.id)
+  const [cmd, lease] = await Promise.all([
+    claimNextCommand(device.id),
+    getActiveBrowserPreviewLease(device.id),
+  ])
   // The deployed companion reads command fields FLAT (cmd.url, cmd.selector,
   // cmd.text, cmd.value, cmd.by, cmd.ms). Our bus stores them nested under
   // `params`, so flatten here — keeping the fix server-side means the owner
   // never has to reload the extension.
   const command = cmd ? { id: cmd.id, action: cmd.action, ...cmd.params } : null
-  return Response.json({ command }, { headers: NO_STORE_HEADERS })
+  return Response.json({
+    command,
+    preview: lease ? {
+      active: true,
+      contextId: `browser:${device.id}`,
+      turnId: lease.turnId,
+      conversationId: lease.conversationId,
+      expiresAt: lease.expiresAt.toISOString(),
+      fps: 1,
+      framePath: '/api/assistant/live-browser/frames',
+    } : null,
+  }, { headers: NO_STORE_HEADERS })
 }

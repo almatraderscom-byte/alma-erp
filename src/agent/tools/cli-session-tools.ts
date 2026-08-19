@@ -35,8 +35,9 @@ async function callDaemon(
   action: 'session_open' | 'session_send' | 'session_read' | 'session_stop' | 'session_list',
   params: SessionPayload,
   waitMs = 60_000,
+  activity?: { turnId?: string | null; conversationId?: string | null },
 ): Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }> {
-  const { id } = await enqueueCommand({ deviceId, action, params })
+  const { id } = await enqueueCommand({ deviceId, action, params, ...activity })
   const outcome = await awaitResult(id, waitMs)
   if (outcome.timedOut) return { ok: false, error: 'Mac থেকে সময়মতো উত্তর আসেনি।' }
   if (outcome.status !== 'done') return { ok: false, error: outcome.error ?? 'daemon_error' }
@@ -97,7 +98,14 @@ const start_cli_session: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'cli_session_bypass',
-          payload: { task: task ?? null, cwd: cwd ?? null, tool, model: input.model ?? null, deviceId: gate.deviceId },
+          payload: {
+            task: task ?? null,
+            cwd: cwd ?? null,
+            tool,
+            model: input.model ?? null,
+            deviceId: gate.deviceId,
+            turnId: typeof input.turnId === 'string' ? input.turnId : null,
+          },
           summary,
           costEstimate: 0,
           status: 'pending',
@@ -118,6 +126,9 @@ const start_cli_session: AgentTool = {
       tool,
       permissionMode,
       model: input.model ? String(input.model) : undefined,
+    }, 60_000, {
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
     })
     if (!res.ok) return { success: false, error: res.error }
 
@@ -154,6 +165,9 @@ const send_to_cli_session: AgentTool = {
     const res = await callDaemon(gate.deviceId, 'session_send', {
       sessionId: String(input.sessionId),
       text: String(input.text ?? ''),
+    }, 60_000, {
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
     })
     return res.ok ? { success: true, data: res.data } : { success: false, error: res.error }
   },
@@ -182,6 +196,9 @@ const read_cli_session: AgentTool = {
     const res = await callDaemon(gate.deviceId, 'session_read', {
       sessionId: String(input.sessionId),
       sinceSeq: Number(input.sinceSeq ?? 0),
+    }, 60_000, {
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
     })
     return res.ok ? { success: true, data: res.data } : { success: false, error: res.error }
   },
@@ -198,7 +215,10 @@ const stop_cli_session: AgentTool = {
   handler: async (input) => {
     const gate = await requireMac()
     if (!gate.ok) return { success: false, error: gate.error }
-    const res = await callDaemon(gate.deviceId, 'session_stop', { sessionId: String(input.sessionId) })
+    const res = await callDaemon(gate.deviceId, 'session_stop', { sessionId: String(input.sessionId) }, 60_000, {
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
+    })
     return res.ok ? { success: true, data: res.data } : { success: false, error: res.error }
   },
 }
@@ -209,10 +229,13 @@ const list_cli_sessions: AgentTool = {
     "List the Claude/Codex sessions currently running on the owner's Mac — what folder each is in, whether it is " +
     'working, idle, stalled or ended, and what it has cost. Use when he asks "ki ki cholche?" or you lost a sessionId.',
   input_schema: { type: 'object' as const, properties: {}, required: [] },
-  handler: async () => {
+  handler: async (input) => {
     const gate = await requireMac()
     if (!gate.ok) return { success: false, error: gate.error }
-    const res = await callDaemon(gate.deviceId, 'session_list', {}, 30_000)
+    const res = await callDaemon(gate.deviceId, 'session_list', {}, 30_000, {
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
+    })
     return res.ok ? { success: true, data: res.data } : { success: false, error: res.error }
   },
 }

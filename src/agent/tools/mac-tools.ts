@@ -29,6 +29,13 @@ import { classifyScreencaptureIntent, shareScreenshot } from '@/agent/lib/mac-ag
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
+function activityContext(input: Record<string, unknown>) {
+  return {
+    turnId: typeof input.turnId === 'string' ? input.turnId : null,
+    conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
+  }
+}
+
 /** Shared preamble: capability on, a Mac paired, that Mac awake. Exported for
  * the L8 UI-driving tools (mac-ui-tools.ts) — same gate, same Bangla answers. */
 export async function requireOnlineMac(): Promise<
@@ -122,6 +129,7 @@ const run_mac_command: AgentTool = {
         deviceId: gateShot.deviceId,
         action: 'screenshot',
         params: {},
+        ...activityContext(input),
       })
       const shot = await awaitResult(shotId, 60_000)
       if (shot.timedOut || shot.status !== 'done') {
@@ -191,7 +199,13 @@ const run_mac_command: AgentTool = {
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'mac_command',
-          payload: { command, cwd: cwd ?? null, timeoutMs: input.timeoutMs ?? null, deviceId: gate.deviceId },
+          payload: {
+            command,
+            cwd: cwd ?? null,
+            timeoutMs: input.timeoutMs ?? null,
+            deviceId: gate.deviceId,
+            turnId: typeof input.turnId === 'string' ? input.turnId : null,
+          },
           summary,
           costEstimate: 0,
           status: 'pending',
@@ -215,6 +229,7 @@ const run_mac_command: AgentTool = {
       action: 'run_command',
       params: { command, cwd: cwd ?? null, timeoutMs: input.timeoutMs ?? null, approved: false },
       policyLevel: 'green',
+      ...activityContext(input),
     })
 
     const outcome = await awaitResult(id)
@@ -391,6 +406,7 @@ const mac_desk_control: AgentTool = {
       params: isShot
         ? {}
         : { mode: action === 'power_status' ? 'status' : action },
+      ...activityContext(input),
     })
 
     const outcome = await awaitResult(id, 60_000)

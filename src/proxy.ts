@@ -8,6 +8,7 @@ import { businessAllowed } from '@/lib/business-access'
 import { isAuthPath, isPublicAppPath } from '@/lib/auth-paths'
 import { isAssistantWorkerRequest } from '@/lib/agent-internal-auth'
 import { resolveActiveSessionToken } from '@/lib/session-authorization'
+import { apiRateLimitPolicy } from '@/lib/api-rate-limit-policy'
 
 const AUTH_PAGES = ['/login', '/forgot-password', '/reset-password']
 
@@ -51,7 +52,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/sip-confirm') return true
   if (pathname === '/api/assistant/voice-call/sip-cdr') return true
   if (pathname === '/api/assistant/voice-call/sip-voicemail') return true
-  // ALMA Companion extension (the owner's own Chrome). These three carry a DEVICE
+  // ALMA Companion extension (the owner's own Chrome). These endpoints carry a DEVICE
   // token, not a session cookie: `pair` redeems a single-use, 10-minute, owner-issued
   // code, and `poll`/`result` present a bearer token stored only as a hash. Each
   // re-checks in its own handler, all behind requireAgentEnabled + the
@@ -67,6 +68,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/live-browser/pair') return true
   if (pathname === '/api/assistant/live-browser/poll') return true
   if (pathname === '/api/assistant/live-browser/result') return true
+  if (pathname === '/api/assistant/live-browser/frames') return true
   // Same three-endpoint shape for the Mac daemon, and the same reason: it holds a
   // bearer token, not a browser cookie, and each handler authenticates that token
   // itself (constant-time hash compare). Missing this made every pairing attempt
@@ -209,11 +211,8 @@ export async function proxy(req: NextRequest) {
   }
 
   if (pathname.startsWith('/api/')) {
-    const isAuthApi = pathname.startsWith('/api/auth')
-    const isSessionProbe = pathname === '/api/auth/session'
-    const limit = isSessionProbe ? 120 : isAuthApi ? 40 : 180
-    const bucket = isSessionProbe ? 'auth-session' : isAuthApi ? 'auth' : 'api'
-    const limited = rateLimit(req, bucket, limit)
+    const policy = apiRateLimitPolicy(pathname)
+    const limited = rateLimit(req, policy.bucket, policy.limit)
     if (limited) return limited
   }
 

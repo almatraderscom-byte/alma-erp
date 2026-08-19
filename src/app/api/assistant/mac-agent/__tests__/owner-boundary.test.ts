@@ -22,7 +22,10 @@ const mocks = vi.hoisted(() => ({
   commandFindFirst: vi.fn(),
   commandFindMany: vi.fn(),
   commandUpdateMany: vi.fn(),
+  commandCreate: vi.fn(),
   sessionEventFindFirst: vi.fn(),
+  frameFindUnique: vi.fn(),
+  turnFindFirst: vi.fn(),
 }))
 
 vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: () => null }))
@@ -49,6 +52,14 @@ vi.mock('@/agent/lib/mac-agent/remote-control', () => ({
 }))
 vi.mock('@/lib/prisma', () => ({
   prisma: {
+    $transaction: async (callback: (tx: unknown) => unknown) => callback({
+      $executeRaw: vi.fn(async () => 1),
+      macAgentCommand: {
+        findFirst: mocks.commandFindFirst,
+        updateMany: mocks.commandUpdateMany,
+        create: mocks.commandCreate,
+      },
+    }),
     macAgentDevice: {
       findFirst: mocks.deviceFindFirst,
       findMany: mocks.deviceFindMany,
@@ -61,6 +72,8 @@ vi.mock('@/lib/prisma', () => ({
       updateMany: mocks.commandUpdateMany,
     },
     macAgentSessionEvent: { findFirst: mocks.sessionEventFindFirst },
+    macAgentFrame: { findUnique: mocks.frameFindUnique },
+    agentTurn: { findFirst: mocks.turnFindFirst },
   },
 }))
 vi.mock('agora-token', () => ({
@@ -106,7 +119,9 @@ describe('Mac owner endpoint boundary', () => {
     mocks.deviceCreate.mockResolvedValue({ id: 'mac-created' })
     mocks.deviceUpdateMany.mockResolvedValue({ count: 1 })
     mocks.commandFindMany.mockResolvedValue([])
+    mocks.commandFindFirst.mockResolvedValue(null)
     mocks.commandUpdateMany.mockResolvedValue({ count: 0 })
+    mocks.commandCreate.mockResolvedValue({ id: 'stream-stop-1' })
     mocks.sessionEventFindFirst.mockResolvedValue(null)
     mocks.enqueueCommand.mockResolvedValue({ id: 'command-1' })
     mocks.awaitResult.mockResolvedValue({
@@ -196,6 +211,68 @@ describe('Mac owner endpoint boundary', () => {
     expect(mocks.enqueueCommand).toHaveBeenCalledWith(expect.objectContaining({
       deviceId: 'owned-mac',
     }))
+  })
+
+  it('cancels a matching queued auto stream even after the Mac goes offline', async () => {
+    mocks.deviceFindMany.mockResolvedValue([{
+      id: 'owned-mac',
+      pairedAt: new Date(),
+      lastSeenAt: new Date(Date.now() - 120_000),
+    }])
+    mocks.commandFindFirst.mockResolvedValue({
+      params: { mode: 'start', reason: 'computer_use' },
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+    })
+
+    const response = await stream(post('/api/assistant/mac-agent/stream', {
+      on: false,
+      deviceId: 'owned-mac',
+      reason: 'computer_use',
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+    }))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ on: false, cancelledQueued: true })
+    expect(mocks.commandUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        deviceId: 'owned-mac', turnId: 'turn-1', conversationId: 'conv-1',
+      }),
+    }))
+    expect(mocks.enqueueCommand).not.toHaveBeenCalled()
+  })
+
+  it('acknowledges an exact repeated scoped stop as idempotently owned and off', async () => {
+    mocks.deviceFindMany.mockResolvedValue([{
+      id: 'owned-mac',
+      pairedAt: new Date(),
+      lastSeenAt: new Date(),
+    }])
+    mocks.commandFindFirst.mockResolvedValue({
+      id: 'stop-1',
+      params: { mode: 'stop', reason: 'computer_use' },
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+    })
+
+    const response = await stream(post('/api/assistant/mac-agent/stream', {
+      on: false,
+      deviceId: 'owned-mac',
+      reason: 'computer_use',
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+    }))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      on: false,
+      autoOwned: true,
+      deviceId: 'owned-mac',
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+    })
+    expect(mocks.commandCreate).not.toHaveBeenCalled()
   })
 
   it('scopes status devices, history, pairing, stop, and unpair to owner.sub', async () => {

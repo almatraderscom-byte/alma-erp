@@ -23,6 +23,7 @@ interface ResultBody {
   data?: unknown
   screenshot?: string | null
   error?: string
+  contextId?: string | null
 }
 
 export async function POST(req: NextRequest) {
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
     data: body.data,
     screenshot,
     error: typeof body.error === 'string' ? body.error : undefined,
+    contextId:
+      typeof body.contextId === 'string' && /^tab:[1-9]\d{0,9}$/.test(body.contextId)
+        ? body.contextId : null,
   })
   if (!res.ok) return Response.json({ error: 'command_not_found' }, { status: 404 })
 

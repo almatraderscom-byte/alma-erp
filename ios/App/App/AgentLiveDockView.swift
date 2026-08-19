@@ -29,6 +29,63 @@ import SwiftUI
 
 // MARK: - Wire types (mirror src/app/api/assistant/live-activity/route.ts)
 
+/// Only tools that can produce a screen belong in the floating player. Pairing,
+/// status and diagnostic tools deliberately stay out: showing a black "live"
+/// card for those would be less truthful than showing no card at all.
+enum AgentComputerUseSurface: String, CaseIterable, Equatable, Hashable {
+    case browser
+    case mac
+
+    static func classify(toolName: String, inputPretty: String? = nil) -> Self? {
+        let normalized = toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["live_browser_look", "live_browser_act"].contains(normalized) { return .browser }
+        if normalized == "mac_desk_control" {
+            guard let inputPretty, let data = inputPretty.data(using: .utf8),
+                  let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (input["action"] as? String)?.lowercased() == "screenshot" else { return nil }
+            return .mac
+        }
+        if ["look_mac_app", "drive_mac_app", "run_mac_command"]
+            .contains(normalized) { return .mac }
+        return nil
+    }
+
+    /// Some tools are only the policy/staging half of computer use. In
+    /// particular `drive_mac_app` and `run_mac_command` can stop at an approval
+    /// card; revealing a synthetic Mac player at that point is a black promise
+    /// of pixels that do not exist. Those tools still wake the scoped poller,
+    /// but the player waits for the backend's exact turn-bound preview.
+    static func allowsOptimisticReveal(toolName: String, inputPretty: String? = nil) -> Bool {
+        let normalized = toolName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["live_browser_look", "live_browser_act", "look_mac_app"].contains(normalized) {
+            return true
+        }
+        if normalized == "mac_desk_control" {
+            guard let inputPretty, let data = inputPretty.data(using: .utf8),
+                  let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return false }
+            return (input["action"] as? String)?.lowercased() == "screenshot"
+        }
+        return false
+    }
+}
+
+enum AgentLivePresentationState: String, Equatable {
+    case connecting
+    case live
+    case reconnecting
+    case finished
+
+    var labelBn: String {
+        switch self {
+        case .connecting: return "সংযোগ হচ্ছে"
+        case .live: return "লাইভ"
+        case .reconnecting: return "সংযোগ ফিরছে"
+        case .finished: return "শেষ"
+        }
+    }
+}
+
 struct AgentLiveActivityStep: Decodable, Identifiable, Equatable {
     let id: String
     /// mac | session | browser
@@ -82,6 +139,16 @@ struct AgentLiveActivityPreview: Decodable, Identifiable, Equatable {
     let labelBn: String
     let active: Bool
     let videoDeviceId: String?
+    /// Additive lifecycle fields. They are optional so the app can roll out
+    /// before the scoped backend without breaking old-server decoding.
+    var turnId: String? = nil
+    var conversationId: String? = nil
+    var activityId: String? = nil
+    var sourceState: String? = nil
+    var activityAt: String? = nil
+    var frameAt: String? = nil
+    var frameSeq: Int? = nil
+    var autoStreamOwned: Bool? = nil
     var id: String { contextId ?? surface }
 }
 
@@ -143,6 +210,43 @@ final class AgentLiveDockStore {
     /// user will never see the dock, so stop asking instead of polling forever.
     private var authFailures = 0
 
+    // MARK: Turn-owned computer-use lifecycle
+
+    private(set) var trackedConversationId: String?
+    private(set) var trackedTurnId: String?
+    private(set) var trackedSurfaces = Set<AgentComputerUseSurface>()
+    private(set) var preferredComputerSurface: AgentComputerUseSurface?
+    /// Whether the most recent surface-producing tool is guaranteed to start
+    /// pixels without first pausing at an approval card.
+    private var preferredSurfaceAllowsOptimisticReveal = false
+    private var trackedActivityKey: String?
+    private var trackedActive = false
+    private var trackedFinishedAt: Date?
+    private var lastSeenToolStartGeneration = 0
+    private var lifecycleRevision = 0
+    private var lifecycleClock = Date()
+    private var inputConversationId: String?
+    private var inputTurnId: String?
+    private var inputTurnIsStreaming = false
+    private var inputTurnReconnecting = false
+    /// DEBUG proof feeds must be hermetic: lifecycle synchronization otherwise
+    /// adopts the restored real conversation and correctly hides an unscoped
+    /// feed before XCTest can inspect the player.
+    private var fixtureModeActive = false
+
+    private struct FrameMotion {
+        var sequence: Int?
+        var at: String?
+        var advances = 0
+        var lastAdvanceAt: Date?
+    }
+    private var frameMotionByPreview: [String: FrameMotion] = [:]
+
+    /// A completed card remains long enough to understand the last pixels, but
+    /// cannot turn into the old indefinite/stale 20-second pseudo-live player.
+    static let finishedLingerSeconds: TimeInterval = 12
+    static let liveFrameQuietSeconds: TimeInterval = 5
+
     static let lingerSeconds: TimeInterval = 20
     static let pollActiveSeconds: TimeInterval = 1.5
     static let pollIdleSeconds: TimeInterval = 15
@@ -162,11 +266,181 @@ final class AgentLiveDockStore {
 
     var recentlyActive: Bool { Date().timeIntervalSince(lastActiveAt) < Self.lingerSeconds }
 
+    private var trackedLifecycleVisible: Bool {
+        guard trackedActivityKey != nil else { return false }
+        if trackedActive { return true }
+        guard let trackedFinishedAt else { return false }
+        return lifecycleClock.timeIntervalSince(trackedFinishedAt) < Self.finishedLingerSeconds
+    }
+
+    private var currentVisibilityKey: String? {
+        trackedActivityKey ?? feed?.visibilityKey
+    }
+
+    private var hasDelayedScopedActivity: Bool {
+        guard !trackedActive, let trackedFinishedAt, let previews = feed?.previews else { return false }
+        return previews.contains { preview in
+            guard preview.active, previewCanRepresentTrackedActivity(preview) else { return false }
+            guard let stamp = preview.activityAt ?? preview.frameAt ?? preview.screenshotAt,
+                  let activityDate = Self.wireDate(stamp) else { return false }
+            return activityDate > trackedFinishedAt
+        }
+    }
+
+    private var hasExactPreferredPreview: Bool {
+        guard let preferredComputerSurface else { return false }
+        return (feed?.previews ?? []).contains { preview in
+            preview.surface == preferredComputerSurface.rawValue
+                && previewCanRepresentTrackedActivity(preview)
+        }
+    }
+
+    private static func wireDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+
     var show: Bool {
+        if fixtureModeActive {
+            guard let feed else { return false }
+            return dismissedActivityKey != feed.visibilityKey
+        }
+        if let trackedActivityKey {
+            if dismissedActivityKey == trackedActivityKey { return false }
+            // Approval-staging tools may be tracked so the poller stays hot,
+            // but they must not render a black placeholder before an exact
+            // backend preview proves that computer use really started.
+            if !preferredSurfaceAllowsOptimisticReveal, !hasExactPreferredPreview {
+                return false
+            }
+            return trackedLifecycleVisible || hasDelayedScopedActivity
+        }
+        // Once mounted for a real conversation this is a task-bound surface,
+        // not an owner-global monitor. Fixtures have no conversation input and
+        // intentionally retain the legacy proof path.
+        if inputConversationId != nil { return false }
         guard let feed else { return false }
         if dismissedActivityKey == feed.visibilityKey { return false }
         return feed.active || recentlyActive
     }
+
+    private func previewCanRepresentTrackedActivity(_ preview: AgentLiveActivityPreview) -> Bool {
+        guard trackedActivityKey != nil else { return true }
+        guard let trackedTurnId, preview.turnId == trackedTurnId else { return false }
+        if let trackedConversationId {
+            return preview.conversationId == trackedConversationId
+        }
+        return true
+    }
+
+    /// The optimistic feed is what makes the mini-player appear on tool_start,
+    /// before the command row / first server frame exists. It is presentation
+    /// state only; network truth still replaces it as soon as a scoped feed lands.
+    var presentedFeed: AgentLiveActivityFeed? {
+        guard trackedLifecycleVisible, let surface = preferredComputerSurface else { return feed }
+        let existingPreviews = (feed?.previews ?? []).filter(previewCanRepresentTrackedActivity)
+        let hasCurrentSurface = existingPreviews.contains { preview in
+            guard preview.surface == surface.rawValue else { return false }
+            if let previewConversationId = preview.conversationId,
+               let trackedConversationId,
+               previewConversationId != trackedConversationId { return false }
+            if let previewTurnId = preview.turnId, let trackedTurnId,
+               previewTurnId != trackedTurnId { return false }
+            return true
+        }
+        if let feed, hasCurrentSurface {
+            return AgentLiveActivityFeed(
+                active: feed.active, current: feed.current, steps: feed.steps,
+                streaming: feed.streaming, sessions: feed.sessions,
+                screenshot: feed.screenshot, screenshotAt: feed.screenshotAt,
+                screenshotSurface: feed.screenshotSurface,
+                videoDeviceId: feed.videoDeviceId, macDisplays: feed.macDisplays,
+                previews: existingPreviews)
+        }
+
+        guard preferredSurfaceAllowsOptimisticReveal else { return nil }
+
+        let now = ISO8601DateFormatter().string(from: lifecycleClock)
+        let preview = AgentLiveActivityPreview(
+            surface: surface.rawValue,
+            contextId: "pending:\(surface.rawValue)",
+            screenshot: nil,
+            screenshotAt: nil,
+            labelBn: surface == .browser ? "🌐 ব্রাউজার খুলছে" : "💻 Mac সংযোগ হচ্ছে",
+            active: trackedActive,
+            videoDeviceId: nil,
+            turnId: trackedTurnId,
+            conversationId: trackedConversationId,
+            activityId: trackedActivityKey,
+            sourceState: trackedActive ? "connecting" : "finished",
+            activityAt: now,
+            frameAt: nil,
+            frameSeq: nil)
+        if let feed {
+            return AgentLiveActivityFeed(
+                active: trackedActive, current: feed.current, steps: feed.steps,
+                streaming: feed.streaming, sessions: feed.sessions,
+                screenshot: feed.screenshot, screenshotAt: feed.screenshotAt,
+                screenshotSurface: feed.screenshotSurface,
+                videoDeviceId: feed.videoDeviceId, macDisplays: feed.macDisplays,
+                previews: existingPreviews + [preview])
+        }
+        return AgentLiveActivityFeed(
+            active: trackedActive, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: surface.rawValue,
+            videoDeviceId: nil, macDisplays: nil, previews: [preview])
+    }
+
+    static func presentationState(
+        turnActive: Bool,
+        turnReconnecting: Bool,
+        sourceState: String?,
+        frameAdvances: Int,
+        lastFrameAdvanceAt: Date?,
+        now: Date = Date()
+    ) -> AgentLivePresentationState {
+        guard turnActive else { return .finished }
+        if turnReconnecting { return .reconnecting }
+        switch sourceState?.lowercased() {
+        case "reconnecting", "stalled": return .reconnecting
+        case "finished", "done", "failed": return .finished
+        default: break
+        }
+        // A lease/daemon can call itself live before a single pixel moves.
+        // Require one monotonic advance after the baseline even when the
+        // backend source state says live/streaming.
+        guard frameAdvances > 0, let lastFrameAdvanceAt else { return .connecting }
+        return now.timeIntervalSince(lastFrameAdvanceAt) <= liveFrameQuietSeconds
+            ? .live : .reconnecting
+    }
+
+    var presentationState: AgentLivePresentationState {
+        let preview = selectedPreview
+        let motion = preview.flatMap { frameMotionByPreview[$0.id] }
+        if trackedActivityKey != nil, !hasDelayedScopedActivity {
+            return Self.presentationState(
+                turnActive: trackedActive,
+                turnReconnecting: inputTurnReconnecting,
+                sourceState: preview?.sourceState,
+                frameAdvances: motion?.advances ?? 0,
+                lastFrameAdvanceAt: motion?.lastAdvanceAt,
+                now: lifecycleClock)
+        }
+        return Self.presentationState(
+            turnActive: feed?.active == true,
+            turnReconnecting: false,
+            sourceState: preview?.sourceState,
+            frameAdvances: motion?.advances ?? 0,
+            lastFrameAdvanceAt: motion?.lastAdvanceAt,
+            now: lifecycleClock)
+    }
+
+
+    /// Agora is a device-scoped transport. A Finished task may retain its exact
+    /// cached JPEG for the bounded linger, but it must leave/hide RTC immediately
+    /// so a newer task on the same Mac can never paint pixels into the old card.
+    var shouldRenderRealtimeVideo: Bool { presentationState != .finished }
 
     /// The screenshot we HOLD. The poll sends `screenshotAfter` so the server
     /// answers an unchanged frame with metadata only — without this, an active
@@ -193,7 +467,7 @@ final class AgentLiveDockStore {
     }
 
     var selectedPreview: AgentLiveActivityPreview? {
-        let previews = feed?.previews ?? []
+        let previews = presentedFeed?.previews ?? []
         return previews.first(where: { $0.id == selectedPreviewId }) ?? previews.first
     }
 
@@ -207,18 +481,25 @@ final class AgentLiveDockStore {
     }
 
     func selectPreview(_ id: String) {
-        guard feed?.previews?.contains(where: { $0.id == id }) == true else { return }
+        guard presentedFeed?.previews?.contains(where: { $0.id == id }) == true else { return }
         selectedPreviewId = id
     }
 
     func reconcilePreviewSelection(_ previews: [AgentLiveActivityPreview]) {
-        let nextKeys = Set(previews.map(\.id))
-        if let newlyVisible = previews.first(where: { !visiblePreviewKeys.contains($0.id) }) {
+        let selectablePreviews = previews.filter(previewCanRepresentTrackedActivity)
+        let nextKeys = Set(selectablePreviews.map(\.id))
+        if let preferredComputerSurface,
+           let preferred = selectablePreviews.first(where: {
+               $0.surface == preferredComputerSurface.rawValue
+                   && !visiblePreviewKeys.contains($0.id)
+           }) {
+            selectedPreviewId = preferred.id
+        } else if let newlyVisible = selectablePreviews.first(where: { !visiblePreviewKeys.contains($0.id) }) {
             selectedPreviewId = newlyVisible.id
         } else if let selectedPreviewId, !nextKeys.contains(selectedPreviewId) {
-            self.selectedPreviewId = previews.first?.id
+            self.selectedPreviewId = selectablePreviews.first?.id
         } else if selectedPreviewId == nil {
-            selectedPreviewId = previews.first?.id
+            selectedPreviewId = selectablePreviews.first?.id
         }
         previewURIs = previewURIs.filter { nextKeys.contains($0.key) }
         previewAts = previewAts.filter { nextKeys.contains($0.key) }
@@ -227,6 +508,10 @@ final class AgentLiveDockStore {
     }
 
     func reconcileDismissal(with fresh: AgentLiveActivityFeed) {
+        // During a turn-owned computer-use lifecycle, feed steps/frames are
+        // children of the same activity. Only a new tool-start generation may
+        // reopen a card the owner closed.
+        guard trackedActivityKey == nil else { return }
         if let dismissed = dismissedActivityKey, fresh.visibilityKey != dismissed {
             dismissedActivityKey = nil
         }
@@ -240,25 +525,182 @@ final class AgentLiveDockStore {
         return UIImage(data: data)
     }
 
+    /// Bridges the assistant reducer to the independently-polled live feed.
+    /// The generation is authoritative evidence that computer use began; the
+    /// feed may legitimately be empty for the first request because tool_start
+    /// arrives before the backend command row is written.
+    func synchronize(
+        conversationId: String?,
+        turnId: String?,
+        turnIsStreaming: Bool,
+        turnReconnecting: Bool,
+        computerUseToolStartGeneration: Int,
+        computerUseSurface: AgentComputerUseSurface?,
+        computerUseAllowsOptimisticReveal: Bool = true,
+        computerUseConversationId: String?,
+        computerUseTurnId: String?,
+        performNetwork: Bool = true
+    ) async {
+        if applyFixtureIfRequested() { return }
+        lifecycleClock = Date()
+        let shouldProbeCurrentTurn = turnIsStreaming
+            && (!inputTurnIsStreaming || inputConversationId != conversationId || inputTurnId != turnId)
+        let inputChanged = inputConversationId != conversationId || inputTurnId != turnId
+            || inputTurnIsStreaming != turnIsStreaming || inputTurnReconnecting != turnReconnecting
+        inputConversationId = conversationId
+        inputTurnId = turnId
+        inputTurnIsStreaming = turnIsStreaming
+        inputTurnReconnecting = turnReconnecting
+        if inputChanged { lifecycleRevision &+= 1 }
+        var beganComputerUse = false
+
+        // A dock belongs to the chat/turn that created it. Navigating while an
+        // old turn is active (or during its Finished linger) must not carry its
+        // last pixels over the newly selected conversation.
+        let movedConversation = trackedConversationId != nil && conversationId != nil
+            && trackedConversationId != conversationId
+        let movedTurn = trackedTurnId != nil && turnId != nil && trackedTurnId != turnId
+        if trackedActivityKey != nil, movedConversation || movedTurn {
+            await releaseOwnedComputerUseResources()
+            clearFeedAndFrameCaches()
+            trackedConversationId = nil
+            trackedTurnId = nil
+            trackedSurfaces.removeAll()
+            preferredComputerSurface = nil
+            preferredSurfaceAllowsOptimisticReveal = false
+            trackedActivityKey = nil
+            trackedActive = false
+            trackedFinishedAt = nil
+            frameMotionByPreview.removeAll()
+            dismissedActivityKey = nil
+            manualStreamOverride = false
+            setStreamOptimistic(nil)
+            lifecycleRevision &+= 1
+        }
+
+        let isNewToolStart = computerUseToolStartGeneration > lastSeenToolStartGeneration
+        if isNewToolStart {
+            // Consume the epoch even when it is stale. A newly-mounted store
+            // must not resurrect a completed tool as a 12-second Finished PiP.
+            lastSeenToolStartGeneration = computerUseToolStartGeneration
+        }
+
+        let eventConversationId = computerUseConversationId ?? conversationId
+        let eventTurnId = computerUseTurnId ?? turnId
+        let eventMatchesCurrentScope = (eventConversationId == nil || conversationId == nil
+                                        || eventConversationId == conversationId)
+            && (eventTurnId == nil || turnId == nil || eventTurnId == turnId)
+        if isNewToolStart, turnIsStreaming, eventMatchesCurrentScope,
+           let computerUseSurface {
+            let belongsToTrackedTurn = trackedActive
+                && scopesMatch(conversationId: eventConversationId, turnId: eventTurnId)
+
+            if !belongsToTrackedTurn {
+                await releaseOwnedComputerUseResources()
+                clearFeedAndFrameCaches()
+                trackedConversationId = eventConversationId
+                trackedTurnId = eventTurnId
+                trackedSurfaces.removeAll()
+                frameMotionByPreview.removeAll()
+                manualStreamOverride = false
+                trackedActivityKey = "computer:\(eventConversationId ?? "pending"):\(eventTurnId ?? "pending"):\(computerUseToolStartGeneration)"
+                dismissedActivityKey = nil
+            }
+            trackedSurfaces.insert(computerUseSurface)
+            preferredComputerSurface = computerUseSurface
+            preferredSurfaceAllowsOptimisticReveal = computerUseAllowsOptimisticReveal
+            selectedPreviewId = "pending:\(computerUseSurface.rawValue)"
+            trackedActive = true
+            trackedFinishedAt = nil
+            lifecycleRevision &+= 1
+            beganComputerUse = true
+        }
+
+        // A turn id can be delivered just after tool_start. Adopt it only while
+        // this lifecycle is still active; an old generation must never attach
+        // itself to the next owner turn.
+        if trackedActive, trackedTurnId == nil,
+           trackedConversationId == nil || conversationId == nil
+                || trackedConversationId == conversationId {
+            trackedConversationId = trackedConversationId ?? conversationId
+            trackedTurnId = turnId
+        }
+
+        if !performNetwork {
+            reconcileTrackedLifecycle(backendActive: feed?.active)
+        }
+
+        let shouldConfirmTerminal = trackedActive && !turnIsStreaming && !turnReconnecting
+        if (beganComputerUse || shouldProbeCurrentTurn || shouldConfirmTerminal), performNetwork {
+            // This request is intentionally immediate. The run loop also wakes
+            // within 500ms and continues at 1s while the current turn is active.
+            await refresh()
+        }
+        if performNetwork {
+            await maintainOwnedComputerUseResources(force: beganComputerUse)
+        }
+    }
+
+    #if DEBUG
+    func debugAdvanceLifecycleClock(by seconds: TimeInterval) {
+        lifecycleClock = lifecycleClock.addingTimeInterval(seconds)
+    }
+    func debugRecoverMissedComputerUse(from previews: [AgentLiveActivityPreview]) {
+        recoverMissedComputerUseIfNeeded(from: previews)
+    }
+    #endif
+
+    private func scopesMatch(conversationId: String?, turnId: String?) -> Bool {
+        if let trackedConversationId, let conversationId,
+           trackedConversationId != conversationId { return false }
+        if let trackedTurnId, let turnId, trackedTurnId != turnId { return false }
+        return true
+    }
+
     func run() async {
         if applyFixtureIfRequested() { return }
         while !Task.isCancelled {
+            lifecycleClock = Date()
             await refresh()
             if authFailures >= 2 { return }
+            await maintainOwnedComputerUseResources()
             let streamingNow = feed?.streaming == true
-            let delay = streamingNow
+            let delay = trackedActive
+                ? Self.pollStreamingSeconds
+                : inputTurnIsStreaming
+                ? Self.pollActiveSeconds
+                : streamingNow
                 ? Self.pollStreamingSeconds
                 : (feed?.active == true || recentlyActive)
                     ? Self.pollActiveSeconds : Self.pollIdleSeconds
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            let waitingForRevision = lifecycleRevision
+            let deadline = Date().addingTimeInterval(delay)
+            while !Task.isCancelled, Date() < deadline {
+                let remaining = deadline.timeIntervalSinceNow
+                try? await Task.sleep(nanoseconds: UInt64(max(0, min(0.5, remaining)) * 1_000_000_000))
+                lifecycleClock = Date()
+                if waitingForRevision != lifecycleRevision { break }
+            }
         }
     }
 
     func refresh() async {
+        if applyFixtureIfRequested() { return }
         refreshGeneration += 1
         let generation = refreshGeneration
         do {
-            var query: [String: String?] = ["screenshotAfter": screenshotAt, "previewDeck": "1"]
+            var query: [String: String?] = [
+                "screenshotAfter": screenshotAt,
+                "previewDeck": "1",
+            ]
+            let scopedConversationId = inputConversationId ?? trackedConversationId
+            let scopedTurnId = inputTurnId ?? trackedTurnId
+            if let scopedConversationId, let scopedTurnId {
+                // Backend requires the pair atomically; conversation-only is a
+                // 400 and would delay the first useful poll.
+                query["conversationId"] = scopedConversationId
+                query["turnId"] = scopedTurnId
+            }
             if let data = try? JSONSerialization.data(withJSONObject: previewAts),
                let json = String(data: data, encoding: .utf8), !previewAts.isEmpty {
                 query["previewAfter"] = json
@@ -284,8 +726,10 @@ final class AgentLiveDockStore {
             }
             // else: unchanged frame, payload omitted by the server — keep ours.
             let previews = fresh.previews ?? []
+            recoverMissedComputerUseIfNeeded(from: previews)
             for preview in previews {
                 let key = preview.id
+                recordFrameMotion(for: preview, observedAt: Date())
                 if let uri = preview.screenshot, let at = preview.screenshotAt {
                     if previewAts[key] != at { decodedPreviews[key] = nil }
                     previewURIs[key] = uri
@@ -301,7 +745,9 @@ final class AgentLiveDockStore {
             // Only a DIFFERENT step brings the dock back after a dismiss.
             reconcileDismissal(with: fresh)
             feed = fresh
+            reconcileTrackedLifecycle(backendActive: fresh.active)
             reconcileStreamState()
+            await maintainOwnedComputerUseResources()
             // Never trap his screen: the sheet closes itself when work is gone.
             if !show { expanded = false }
         } catch AlmaAPIError.notAuthenticated {
@@ -323,13 +769,79 @@ final class AgentLiveDockStore {
         }
     }
 
+    private func recordFrameMotion(for preview: AgentLiveActivityPreview, observedAt: Date) {
+        let nextSequence = preview.frameSeq
+        let nextAt = preview.frameAt ?? preview.screenshotAt
+        guard nextSequence != nil || nextAt != nil else { return }
+        var motion = frameMotionByPreview[preview.id] ?? FrameMotion()
+        let sequenceAdvanced = nextSequence.map { next in
+            motion.sequence.map { next > $0 } ?? false
+        } ?? false
+        let timestampAdvanced = nextAt.map { next in
+            motion.at.map { next > $0 } ?? false
+        } ?? false
+        if sequenceAdvanced || timestampAdvanced {
+            motion.advances += 1
+            motion.lastAdvanceAt = observedAt
+        }
+        if let nextSequence, motion.sequence == nil || nextSequence >= motion.sequence! {
+            motion.sequence = nextSequence
+        }
+        if let nextAt, motion.at == nil || nextAt >= motion.at! {
+            motion.at = nextAt
+        }
+        frameMotionByPreview[preview.id] = motion
+    }
+
+    /// Local SSE state can briefly fall false while the turn reconnects. Only a
+    /// successful scoped feed that also says inactive is terminal confirmation.
+    private func reconcileTrackedLifecycle(backendActive: Bool?) {
+        guard trackedActive, !inputTurnIsStreaming, !inputTurnReconnecting,
+              backendActive == false else { return }
+        trackedActive = false
+        trackedFinishedAt = lifecycleClock
+        inputTurnReconnecting = false
+        lifecycleRevision &+= 1
+    }
+
+    /// Redis/SSE delivery is best-effort. A scoped DB-backed preview for the
+    /// current live turn recovers a missed tool_start without ever trusting an
+    /// owner-global/legacy card (turnId must match exactly).
+    private func recoverMissedComputerUseIfNeeded(from previews: [AgentLiveActivityPreview]) {
+        guard trackedActivityKey == nil, inputTurnIsStreaming,
+              let inputTurnId, let inputConversationId else { return }
+        let recovered = previews.filter { preview in
+            guard preview.active, preview.turnId == inputTurnId,
+                  let surface = AgentComputerUseSurface(rawValue: preview.surface) else { return false }
+            _ = surface
+            return preview.conversationId == inputConversationId
+        }
+        guard let first = recovered.first,
+              let firstSurface = AgentComputerUseSurface(rawValue: first.surface) else { return }
+        trackedConversationId = inputConversationId
+        trackedTurnId = inputTurnId
+        trackedSurfaces = Set(recovered.compactMap { AgentComputerUseSurface(rawValue: $0.surface) })
+        preferredComputerSurface = firstSurface
+        preferredSurfaceAllowsOptimisticReveal = false
+        trackedActivityKey = first.activityId ?? "recovered:\(inputConversationId):\(inputTurnId)"
+        trackedActive = true
+        trackedFinishedAt = nil
+        selectedPreviewId = first.id
+        dismissedActivityKey = nil
+        lifecycleRevision &+= 1
+    }
+
     private func expireStaleFeed(force: Bool = false) {
         guard Self.shouldExpireFeed(lastSuccessfulAt: lastSuccessfulRefreshAt, force: force) else { return }
-        feed = nil
+        clearFeedAndFrameCaches()
         lastActiveAt = .distantPast
-        selectedPreviewId = nil
         expanded = false
-        streamOptimistic = nil
+        setStreamOptimistic(nil)
+    }
+
+    private func clearFeedAndFrameCaches() {
+        feed = nil
+        selectedPreviewId = nil
         screenshotURI = nil
         screenshotAt = nil
         previewURIs.removeAll()
@@ -341,7 +853,7 @@ final class AgentLiveDockStore {
     }
 
     func dismiss() {
-        dismissedActivityKey = feed?.visibilityKey
+        dismissedActivityKey = currentVisibilityKey
         expanded = false
     }
 
@@ -377,17 +889,283 @@ final class AgentLiveDockStore {
 
     // MARK: L7 live screen streaming (explicit owner start; daemon self-stops)
 
+    private struct OwnedBrowserLease {
+        let conversationId: String
+        let turnId: String
+        let activityKey: String
+    }
+    private struct BrowserPreviewLeaseBody: Encodable {
+        let conversationId: String
+        let turnId: String
+        let on: Bool
+    }
+    private struct BrowserPreviewLeaseResponse: Decodable {
+        let ok: Bool?
+        let contextId: String?
+        let deviceId: String?
+        let leaseExpiresAt: String?
+    }
+    enum BrowserLeaseCompletionAction: Equatable {
+        case own
+        case stopStale
+        case stopStaleAndRenewCurrent
+    }
+    struct ComputerUseStreamBody: Encodable {
+        let on: Bool
+        let deviceId: String
+        let maxSeconds: Int?
+        let displayIndex: Int?
+        let reason: String
+        let conversationId: String
+        let turnId: String
+    }
+    private struct OwnedMacStream {
+        let deviceId: String
+        let conversationId: String
+        let turnId: String
+    }
+
+    private var ownedBrowserLease: OwnedBrowserLease?
+    private var browserLeaseLastAttemptAt = Date.distantPast
+    private var browserLeaseBusy = false
+    private var ownedMacStream: OwnedMacStream?
+    private var autoMacLastAttemptAt = Date.distantPast
+    private var autoMacBusy = false
+    /// An explicit task-scoped Stop wins for the remainder of this task. Starts
+    /// and display switches keep renewal enabled so long-running video survives.
+    private var manualStreamOverride = false
+
+    static let browserLeaseRenewSeconds: TimeInterval = 10
+    static let macStreamRenewSeconds: TimeInterval = 60
+    static let macStreamClaimRetrySeconds: TimeInterval = 4
+    static let streamOptimisticTimeoutSeconds: TimeInterval = 5
+
+    static func browserLeaseCompletionAction(
+        requestActivityKey: String,
+        currentActivityKey: String?,
+        currentTrackedActive: Bool
+    ) -> BrowserLeaseCompletionAction {
+        if currentTrackedActive, currentActivityKey == requestActivityKey { return .own }
+        if currentTrackedActive, currentActivityKey != nil {
+            return .stopStaleAndRenewCurrent
+        }
+        return .stopStale
+    }
+
+    /// A same-owner start/display change is still part of the task lifecycle and
+    /// must renew before the daemon's 120s cap. Only an explicit Stop should
+    /// prevent the lifecycle loop from turning capture back on.
+    static func scopedManualControlBlocksRenewal(streamOn: Bool) -> Bool {
+        !streamOn
+    }
+
+    private func maintainOwnedComputerUseResources(force: Bool = false) async {
+        // Finished linger is presentation-only. Stop capturing as soon as the
+        // owning turn ends, while the already-cached final frame remains shown.
+        guard trackedActive else {
+            await releaseOwnedComputerUseResources()
+            return
+        }
+        if trackedSurfaces.contains(.browser) {
+            await renewBrowserPreviewLease(force: force)
+        }
+        if trackedSurfaces.contains(.mac) {
+            await ensureMacComputerUseStream(force: force)
+        }
+    }
+
+    private func renewBrowserPreviewLease(force: Bool) async {
+        guard !browserLeaseBusy,
+              let conversationId = trackedConversationId ?? inputConversationId,
+              let turnId = trackedTurnId ?? inputTurnId,
+              let activityKey = trackedActivityKey else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(browserLeaseLastAttemptAt) >= Self.browserLeaseRenewSeconds
+        else { return }
+        browserLeaseLastAttemptAt = now
+        browserLeaseBusy = true
+        var renewLatestAfterCompletion = false
+        defer {
+            browserLeaseBusy = false
+            if renewLatestAfterCompletion {
+                browserLeaseLastAttemptAt = .distantPast
+                Task { [weak self] in
+                    await self?.renewBrowserPreviewLease(force: true)
+                }
+            }
+        }
+        do {
+            let _: BrowserPreviewLeaseResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/live-browser/preview-lease",
+                body: BrowserPreviewLeaseBody(
+                    conversationId: conversationId, turnId: turnId, on: true))
+            switch Self.browserLeaseCompletionAction(
+                requestActivityKey: activityKey,
+                currentActivityKey: trackedActivityKey,
+                currentTrackedActive: trackedActive) {
+            case .own:
+                ownedBrowserLease = OwnedBrowserLease(
+                    conversationId: conversationId, turnId: turnId, activityKey: activityKey)
+            case .stopStale:
+                let _: BrowserPreviewLeaseResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/live-browser/preview-lease",
+                    body: BrowserPreviewLeaseBody(
+                        conversationId: conversationId, turnId: turnId, on: false))
+            case .stopStaleAndRenewCurrent:
+                let _: BrowserPreviewLeaseResponse? = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/live-browser/preview-lease",
+                    body: BrowserPreviewLeaseBody(
+                        conversationId: conversationId, turnId: turnId, on: false))
+                renewLatestAfterCompletion = true
+            }
+        } catch {
+            // Rolling deployment: the mini-player still works from feed frames;
+            // the bounded retry cadence avoids hammering an older backend.
+            // If request A finished after task B became current, B must not
+            // inherit A's ten-second attempt timestamp.
+            renewLatestAfterCompletion = trackedActive && trackedActivityKey != activityKey
+        }
+    }
+
+    private func macDeviceCandidate() -> String? {
+        let previews = feed?.previews ?? []
+        let expectedConversationId = trackedConversationId
+        let expectedTurnId = trackedTurnId
+        let scoped = previews.lazy
+            .filter { preview in
+                guard preview.surface == AgentComputerUseSurface.mac.rawValue,
+                      let expectedTurnId, preview.turnId == expectedTurnId else { return false }
+                if let expectedConversationId {
+                    return preview.conversationId == expectedConversationId
+                }
+                return true
+            }
+            .compactMap { preview -> String? in
+                Self.macDeviceId(from: preview.contextId)
+            }
+            .first
+        return scoped
+    }
+
+    private static func macDeviceId(from contextId: String?) -> String? {
+        guard let contextId, contextId.hasPrefix("mac:") else { return nil }
+        let deviceId = String(contextId.dropFirst("mac:".count))
+        return deviceId.isEmpty ? nil : deviceId
+    }
+
+    private func ensureMacComputerUseStream(force: Bool) async {
+        guard !autoMacBusy, !manualStreamOverride,
+              let activityKey = trackedActivityKey,
+              let conversationId = trackedConversationId,
+              let turnId = trackedTurnId else { return }
+
+        let deviceId: String
+        if let ownedMacStream {
+            deviceId = ownedMacStream.deviceId
+        } else {
+            guard let candidate = macDeviceCandidate() else { return }
+            deviceId = candidate
+        }
+
+        let now = Date()
+        let isRenewal = ownedMacStream != nil
+        let retryInterval = isRenewal
+            ? Self.macStreamRenewSeconds : Self.macStreamClaimRetrySeconds
+        let due = now.timeIntervalSince(autoMacLastAttemptAt) >= retryInterval
+        guard force && !isRenewal || due else { return }
+        autoMacLastAttemptAt = now
+        autoMacBusy = true
+        defer { autoMacBusy = false }
+        do {
+            let response: StreamResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/stream",
+                body: ComputerUseStreamBody(
+                    on: true, deviceId: deviceId, maxSeconds: 120,
+                    displayIndex: nil,
+                    reason: "computer_use", conversationId: conversationId, turnId: turnId))
+            guard response.ok != false else { return }
+            let ownsAutoStream = response.autoOwned == true
+                && response.deviceId == deviceId
+                && response.conversationId == conversationId
+                && response.turnId == turnId
+            guard trackedActive,
+                  trackedActivityKey == activityKey, !manualStreamOverride else {
+                if ownsAutoStream {
+                    let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/mac-agent/stream",
+                        body: ComputerUseStreamBody(
+                            on: false, deviceId: deviceId, maxSeconds: nil,
+                            displayIndex: nil,
+                            reason: "computer_use", conversationId: conversationId, turnId: turnId))
+                }
+                return
+            }
+            if ownsAutoStream {
+                ownedMacStream = OwnedMacStream(
+                    deviceId: deviceId, conversationId: conversationId, turnId: turnId)
+                setStreamOptimistic(true)
+            } else {
+                // A foreign/manual stream remains server truth. Retry the scoped
+                // claim shortly if it ends; never paint an unowned start as on.
+                setStreamOptimistic(nil)
+            }
+        } catch {
+            // No preview device or an older endpoint leaves the card Connecting.
+        }
+    }
+
+    private func releaseOwnedComputerUseResources() async {
+        if let lease = ownedBrowserLease, !browserLeaseBusy {
+            ownedBrowserLease = nil
+            let _: BrowserPreviewLeaseResponse? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/live-browser/preview-lease",
+                body: BrowserPreviewLeaseBody(
+                    conversationId: lease.conversationId, turnId: lease.turnId, on: false))
+        }
+        if let owned = ownedMacStream, !autoMacBusy {
+            ownedMacStream = nil
+            setStreamOptimistic(nil)
+            let _: StreamResponse? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/mac-agent/stream",
+                body: ComputerUseStreamBody(
+                    on: false, deviceId: owned.deviceId, maxSeconds: nil,
+                    displayIndex: nil,
+                    reason: "computer_use", conversationId: owned.conversationId,
+                    turnId: owned.turnId))
+        }
+    }
+
     /// The SERVER is the truth (fresh frames = streaming) — a remounted app
     /// mid-stream must show STOP, not a second start. The optimistic value
     /// bridges the seconds until frames appear, then releases.
     private var streamOptimistic: Bool?
+    private var streamOptimisticSetAt: Date?
     var streamBusy = false
     var streamOn: Bool { streamOptimistic ?? (feed?.streaming ?? false) }
 
-    func reconcileStreamState() {
-        if let opt = streamOptimistic, (feed?.streaming ?? false) == opt {
-            streamOptimistic = nil
-        }
+    private func setStreamOptimistic(_ value: Bool?, at: Date = Date()) {
+        streamOptimistic = value
+        streamOptimisticSetAt = value == nil ? nil : at
+    }
+
+    static func reconciledStreamOptimistic(
+        _ optimistic: Bool?,
+        setAt: Date?,
+        serverStreaming: Bool,
+        now: Date = Date()
+    ) -> Bool? {
+        guard let optimistic else { return nil }
+        if serverStreaming == optimistic { return nil }
+        guard let setAt,
+              now.timeIntervalSince(setAt) < streamOptimisticTimeoutSeconds else { return nil }
+        return optimistic
+    }
+
+    func reconcileStreamState(now: Date = Date()) {
+        streamOptimistic = Self.reconciledStreamOptimistic(
+            streamOptimistic, setAt: streamOptimisticSetAt,
+            serverStreaming: feed?.streaming ?? false, now: now)
+        if streamOptimistic == nil { streamOptimisticSetAt = nil }
     }
 
     private struct StreamBody: Encodable { let on: Bool }
@@ -395,27 +1173,91 @@ final class AgentLiveDockStore {
     /// stream normally just extends it; the daemon treats a CHANGED display as
     /// a deliberate restart of the capturer.
     private struct DisplayBody: Encodable { let on: Bool; let displayIndex: Int }
-    private struct StreamResponse: Decodable { let ok: Bool? }
+    private struct StreamResponse: Decodable {
+        let ok: Bool?
+        let autoOwned: Bool?
+        let deviceId: String?
+        let conversationId: String?
+        let turnId: String?
+    }
+
+    private func currentMacStreamScope() -> OwnedMacStream? {
+        guard let conversationId = trackedConversationId,
+              let turnId = trackedTurnId else { return nil }
+        if let ownedMacStream,
+           ownedMacStream.conversationId == conversationId,
+           ownedMacStream.turnId == turnId {
+            return ownedMacStream
+        }
+        guard let deviceId = macDeviceCandidate() else { return nil }
+        return OwnedMacStream(
+            deviceId: deviceId, conversationId: conversationId, turnId: turnId)
+    }
+
+    private static func responseOwnsScopedStream(
+        _ response: StreamResponse,
+        scope: OwnedMacStream,
+        requireDeviceEcho: Bool
+    ) -> Bool {
+        response.ok != false
+            && response.autoOwned == true
+            && response.conversationId == scope.conversationId
+            && response.turnId == scope.turnId
+            && (!requireDeviceEcho || response.deviceId == scope.deviceId)
+    }
 
     /// Switch which of the Mac's screens is being streamed.
     func switchDisplay(to index: Int) async {
-        guard !streamBusy else { return }
+        guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
-        _ = try? await AlmaAPI.shared.send(
+        if trackedActivityKey != nil {
+            guard let scope = currentMacStreamScope(),
+                  let response: StreamResponse = try? await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream",
+                    body: ComputerUseStreamBody(
+                        on: true, deviceId: scope.deviceId, maxSeconds: 120,
+                        displayIndex: index, reason: "computer_use",
+                        conversationId: scope.conversationId, turnId: scope.turnId)),
+                  Self.responseOwnsScopedStream(
+                    response, scope: scope, requireDeviceEcho: true) else { return }
+            ownedMacStream = scope
+            manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: true)
+            setStreamOptimistic(true)
+        } else if let _: StreamResponse = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/mac-agent/stream",
-            body: DisplayBody(on: true, displayIndex: index)) as StreamResponse
+            body: DisplayBody(on: true, displayIndex: index)) {
+            // The owner-global monitor remains backward compatible; only an
+            // in-task player is required to retain exact activity scope.
+            manualStreamOverride = true
+        }
     }
 
     func toggleStream() async {
-        guard !streamBusy else { return }
+        guard !streamBusy, !autoMacBusy else { return }
         streamBusy = true
         defer { streamBusy = false }
         do {
             let next = !streamOn
-            let _: StreamResponse = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
-            streamOptimistic = next
+            if trackedActivityKey != nil {
+                guard let scope = currentMacStreamScope() else { return }
+                let response: StreamResponse = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream",
+                    body: ComputerUseStreamBody(
+                        on: next, deviceId: scope.deviceId,
+                        maxSeconds: next ? 120 : nil, displayIndex: nil,
+                        reason: "computer_use", conversationId: scope.conversationId,
+                        turnId: scope.turnId))
+                guard Self.responseOwnsScopedStream(
+                    response, scope: scope, requireDeviceEcho: next) else { return }
+                ownedMacStream = next ? scope : nil
+                manualStreamOverride = Self.scopedManualControlBlocksRenewal(streamOn: next)
+            } else {
+                let _: StreamResponse = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/stream", body: StreamBody(on: next))
+                manualStreamOverride = true
+            }
+            setStreamOptimistic(next)
         } catch {
             // The button simply stays where it was.
         }
@@ -451,6 +1293,7 @@ final class AgentLiveDockStore {
 
     private func applyFixtureIfRequested() -> Bool {
         #if DEBUG
+        if fixtureModeActive { return true }
         let p = ProcessInfo.processInfo
         func flag(_ k: String) -> String? {
             if let v = p.environment[k], !v.isEmpty { return v }
@@ -458,6 +1301,7 @@ final class AgentLiveDockStore {
                 .replacingOccurrences(of: "\(k)=", with: "")
         }
         guard let mode = flag("ALMA_LIVE_DOCK_FIXTURE") else { return false }
+        fixtureModeActive = true
         let now = ISO8601DateFormatter().string(from: Date())
         let steps = [
             AgentLiveActivityStep(id: "fx-1", surface: "mac",
@@ -597,6 +1441,15 @@ struct AgentLiveDockGeometry {
 @available(iOS 17.0, *)
 struct AgentLiveDockView: View {
     var bottomObstacleMinY: CGFloat? = nil
+    var conversationId: String? = nil
+    var turnId: String? = nil
+    var turnIsStreaming = false
+    var turnReconnecting = false
+    var computerUseToolStartGeneration = 0
+    var computerUseSurface: AgentComputerUseSurface? = nil
+    var computerUseAllowsOptimisticReveal = true
+    var computerUseConversationId: String? = nil
+    var computerUseTurnId: String? = nil
     @State private var store = AgentLiveDockStore()
     /// One Agora join follows the video between mini-player, sheet and full
     /// screen. Keeping separate joins would double viewing cost and blink.
@@ -617,7 +1470,7 @@ struct AgentLiveDockView: View {
         // participates in composer layout, so it can move exactly like a PiP.
         GeometryReader { proxy in
             ZStack {
-                if store.show, let feed = store.feed {
+                if store.show, let feed = store.presentedFeed {
                     let settled = dockPosition(in: proxy)
                     let moving = clampedPosition(
                         CGPoint(x: settled.x + dragTranslation.width,
@@ -636,7 +1489,7 @@ struct AgentLiveDockView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: dockOnRight)
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: bottomObstacleMinY)
         .sheet(isPresented: $store.expanded) {
-            if let feed = store.feed {
+            if let feed = store.presentedFeed {
                 AgentLiveDockSheet(store: store, feed: feed,
                                    macSession: macSession, control: macControl)
                     .presentationDetents([.medium, .large])
@@ -645,11 +1498,33 @@ struct AgentLiveDockView: View {
             }
         }
         .task { await store.run() }
+        .task(id: lifecycleInputKey) {
+            await store.synchronize(
+                conversationId: conversationId,
+                turnId: turnId,
+                turnIsStreaming: turnIsStreaming,
+                turnReconnecting: turnReconnecting,
+                computerUseToolStartGeneration: computerUseToolStartGeneration,
+                computerUseSurface: computerUseSurface,
+                computerUseAllowsOptimisticReveal: computerUseAllowsOptimisticReveal,
+                computerUseConversationId: computerUseConversationId,
+                computerUseTurnId: computerUseTurnId)
+        }
         .onChange(of: store.show) { _, visible in
             if !visible { macSession.leave() }
         }
-        .onChange(of: store.feed?.videoDeviceId) { _, deviceId in
+        .onChange(of: store.selectedPreview?.videoDeviceId ?? store.feed?.videoDeviceId) { _, deviceId in
             if deviceId == nil { macSession.leave() }
+        }
+        .onChange(of: store.presentationState) { _, state in
+            guard state == .finished else { return }
+            // Finished linger is a still image only. Leave the device-scoped
+            // channel before another task can reuse that broadcaster.
+            macSession.leave()
+            macControl.fullScreen = false
+            if macControl.armed {
+                Task { await macControl.disarm(reason: MacRemoteControlStore.autoDisarmStreamBn) }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -662,6 +1537,20 @@ struct AgentLiveDockView: View {
                 break
             }
         }
+    }
+
+    private var lifecycleInputKey: String {
+        [
+            conversationId ?? "-",
+            turnId ?? "-",
+            turnIsStreaming ? "1" : "0",
+            turnReconnecting ? "1" : "0",
+            String(computerUseToolStartGeneration),
+            computerUseSurface?.rawValue ?? "-",
+            computerUseAllowsOptimisticReveal ? "optimistic" : "exact-only",
+            computerUseConversationId ?? "-",
+            computerUseTurnId ?? "-",
+        ].joined(separator: "|")
     }
 
     private func dockBounds(in proxy: GeometryProxy) -> AgentLiveDockGeometry.Bounds {
@@ -700,24 +1589,24 @@ struct AgentLiveDockView: View {
             }
     }
 
-    private func statusDot(_ status: String, active: Bool) -> some View {
-        let color: Color = switch status {
-        case "running": .green
-        case "queued": .orange
-        case "failed": .red
-        default: Color.black.opacity(0.25)
+    private func statusDot(_ state: AgentLivePresentationState) -> some View {
+        let color: Color = switch state {
+        case .live: .green
+        case .connecting, .reconnecting: .orange
+        case .finished: Color.white.opacity(0.35)
         }
         return Circle()
             .fill(color)
             .frame(width: 8, height: 8)
-            .modifier(AgentLiveDockPulse(animate: active))
+            .modifier(AgentLiveDockPulse(animate: state == .live || state == .reconnecting))
     }
 
     private func miniPlayer(feed: AgentLiveActivityFeed, pal: AgentPalette) -> some View {
         let preview = store.selectedPreview
         let surface = preview?.surface ?? feed.screenshotSurface ?? feed.current?.surface ?? "mac"
-        let selectedVideoDevice = surface == "mac" ? (preview?.videoDeviceId ?? feed.videoDeviceId) : nil
-        let previewActive = preview?.active ?? feed.active
+        let presentationState = store.presentationState
+        let selectedVideoDevice = surface == "mac" && store.shouldRenderRealtimeVideo
+            ? (preview?.videoDeviceId ?? feed.videoDeviceId) : nil
         let previews = feed.previews ?? []
         return ZStack {
             Color.black
@@ -765,8 +1654,8 @@ struct AgentLiveDockView: View {
                 .allowsHitTesting(false)
 
             HStack(spacing: 6) {
-                statusDot(feed.current?.status ?? "done", active: previewActive)
-                Text("\(previewActive ? "লাইভ" : "শেষ ফ্রেম") · \(pictureSurfaceBn(surface))")
+                statusDot(presentationState)
+                Text("\(presentationState.labelBn) · \(pictureSurfaceBn(surface))")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92))
                     .padding(.horizontal, 8)
@@ -846,7 +1735,7 @@ struct AgentLiveDockView: View {
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent.live-dock.player")
-        .accessibilityLabel("এজেন্ট লাইভ কাজ")
+        .accessibilityAction(.escape) { store.dismiss() }
     }
 
     private func pictureSurfaceBn(_ surface: String) -> String {
@@ -868,6 +1757,7 @@ struct AgentLiveDockView: View {
         .accessibilityIdentifier(label == "বন্ধ করুন"
                                  ? "agent.live-dock.close" : "agent.live-dock.expand")
         .accessibilityLabel(label)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -906,12 +1796,13 @@ struct AgentLiveDockSheet: View {
     var body: some View {
         let pal = AgentPalette(scheme)
         let selectedSurface = store.selectedPreview?.surface ?? feed.screenshotSurface ?? "mac"
-        let selectedVideoDevice = selectedSurface == "mac"
-            ? (store.selectedPreview?.videoDeviceId ?? store.feed?.videoDeviceId) : nil
+        let selectedVideoDevice = selectedSurface == "mac" && store.shouldRenderRealtimeVideo
+            ? (store.selectedPreview?.videoDeviceId ?? feed.videoDeviceId) : nil
+        let presentationState = store.presentationState
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let previews = store.feed?.previews, previews.count > 1 {
+                    if let previews = feed.previews, previews.count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(previews) { preview in
@@ -1090,9 +1981,12 @@ struct AgentLiveDockSheet: View {
                         Text(feed.current?.surfaceBn ?? "")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(pal.muted)
-                        Text(feed.active ? "এখন চলছে" : "শেষ")
+                        Text(presentationState.labelBn)
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(feed.active ? .green : pal.muted)
+                            .foregroundStyle(presentationState == .live
+                                             ? Color.green
+                                             : presentationState == .finished
+                                             ? pal.muted : Color.orange)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

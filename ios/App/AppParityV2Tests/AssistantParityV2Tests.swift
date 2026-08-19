@@ -4915,4 +4915,499 @@ final class AssistantParityV2Tests: XCTestCase {
             force: true),
             "two owner-auth failures must remove a sensitive cached frame immediately")
     }
+
+    func testComputerUseSurfaceClassifierIncludesOnlyPixelProducingTools() {
+        XCTAssertEqual(AgentComputerUseSurface.classify(toolName: "live_browser_look"), .browser)
+        XCTAssertEqual(AgentComputerUseSurface.classify(toolName: "live_browser_act"), .browser)
+        XCTAssertEqual(AgentComputerUseSurface.classify(toolName: "look_mac_app"), .mac)
+        XCTAssertEqual(AgentComputerUseSurface.classify(toolName: "drive_mac_app"), .mac)
+        XCTAssertEqual(AgentComputerUseSurface.classify(
+            toolName: "mac_desk_control", inputPretty: #"{"action":"screenshot"}"#), .mac)
+        XCTAssertEqual(AgentComputerUseSurface.classify(toolName: "run_mac_command"), .mac)
+        XCTAssertTrue(AgentComputerUseSurface.allowsOptimisticReveal(
+            toolName: "live_browser_look"))
+        XCTAssertTrue(AgentComputerUseSurface.allowsOptimisticReveal(
+            toolName: "look_mac_app"))
+        XCTAssertTrue(AgentComputerUseSurface.allowsOptimisticReveal(
+            toolName: "mac_desk_control", inputPretty: #"{"action":"screenshot"}"#))
+        XCTAssertFalse(AgentComputerUseSurface.allowsOptimisticReveal(
+            toolName: "drive_mac_app"), "approval staging is not a pixel source")
+        XCTAssertFalse(AgentComputerUseSurface.allowsOptimisticReveal(
+            toolName: "run_mac_command"), "an amber command may only stage approval")
+        XCTAssertNil(AgentComputerUseSurface.classify(toolName: "mac_desk_control"))
+        for nonVisualAction in ["keep_awake", "allow_sleep", "power_status"] {
+            XCTAssertNil(AgentComputerUseSurface.classify(
+                toolName: "mac_desk_control",
+                inputPretty: #"{"action":"\#(nonVisualAction)"}"#))
+        }
+
+        for excluded in [
+            "live_browser_pair", "live_browser_status", "live_browser_trust",
+            "browser_diagnose", "set_live_browser", "check_mac_command",
+            "mac_agent_status", "list_mac_apps",
+        ] {
+            XCTAssertNil(AgentComputerUseSurface.classify(toolName: excluded), excluded)
+        }
+    }
+
+    func testLivePresentationRequiresMotionAndReportsReconnectAndFinishTruthfully() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        XCTAssertEqual(AgentLiveDockStore.presentationState(
+            turnActive: true, turnReconnecting: false, sourceState: "live",
+            frameAdvances: 0, lastFrameAdvanceAt: nil, now: now), .connecting,
+            "a live lease without moving pixels is still Connecting")
+        XCTAssertEqual(AgentLiveDockStore.presentationState(
+            turnActive: true, turnReconnecting: false, sourceState: "live",
+            frameAdvances: 1, lastFrameAdvanceAt: now.addingTimeInterval(-1), now: now), .live)
+        XCTAssertEqual(AgentLiveDockStore.presentationState(
+            turnActive: true, turnReconnecting: false, sourceState: nil,
+            frameAdvances: 1, lastFrameAdvanceAt: now.addingTimeInterval(-6), now: now), .reconnecting)
+        XCTAssertEqual(AgentLiveDockStore.presentationState(
+            turnActive: true, turnReconnecting: true, sourceState: nil,
+            frameAdvances: 2, lastFrameAdvanceAt: now, now: now), .reconnecting)
+        XCTAssertEqual(AgentLiveDockStore.presentationState(
+            turnActive: false, turnReconnecting: false, sourceState: "live",
+            frameAdvances: 2, lastFrameAdvanceAt: now, now: now), .finished)
+    }
+
+    func testAssistantReducerPublishesOnlyComputerUseToolStartsToDock() {
+        let vm = AssistantVM()
+        vm.conversationId = "conversation-1"
+        vm.currentTurnId = "turn-1"
+        vm.isStreaming = true
+
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "pair", name: "live_browser_pair", inputPretty: "{}")])
+        XCTAssertEqual(vm.computerUseToolStartGeneration, 0)
+
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "power", name: "mac_desk_control",
+            inputPretty: #"{"action":"power_status"}"#)])
+        XCTAssertEqual(vm.computerUseToolStartGeneration, 0)
+
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "look", name: "live_browser_look", inputPretty: "{}")])
+        XCTAssertEqual(vm.computerUseToolStartGeneration, 1)
+        XCTAssertEqual(vm.computerUseSurface, .browser)
+        XCTAssertEqual(vm.computerUseConversationId, "conversation-1")
+        XCTAssertEqual(vm.computerUseTurnId, "turn-1")
+    }
+
+    func testApprovalStagingWaitsForExactPreviewAndProgressTurnBindsBeforePOSTReturns() async {
+        let vm = AssistantVM()
+        vm.conversationId = "conversation-approval"
+        vm.currentTurnId = "turn-that-staged-card"
+        vm.isStreaming = true
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "stage-drive", name: "drive_mac_app",
+            inputPretty: #"{"bundleId":"com.google.Chrome","action":"click"}"#)])
+        XCTAssertFalse(vm.computerUseAllowsOptimisticReveal)
+
+        let dock = AgentLiveDockStore()
+        await dock.synchronize(
+            conversationId: vm.conversationId, turnId: vm.currentTurnId,
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: vm.computerUseToolStartGeneration,
+            computerUseSurface: vm.computerUseSurface,
+            computerUseAllowsOptimisticReveal: vm.computerUseAllowsOptimisticReveal,
+            computerUseConversationId: vm.computerUseConversationId,
+            computerUseTurnId: vm.computerUseTurnId,
+            performNetwork: false)
+        XCTAssertFalse(dock.show)
+        XCTAssertNil(dock.presentedFeed,
+                     "staging an approval must not paint a black synthetic player")
+
+        var approvalPOSTReturned = false
+        let pendingApprovalPOST = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            approvalPOSTReturned = true
+        }
+        defer { pendingApprovalPOST.cancel() }
+        var statusPoll = 0
+        let progressTurnId = await AssistantVM.awaitApprovalProgressTurn(
+            actionId: "drive-action",
+            expectedConversationId: "conversation-approval",
+            excludingTurnId: "turn-that-staged-card",
+            delays: [0, 0],
+            sleep: { _ in },
+            currentConversationId: { vm.conversationId }
+        ) {
+            statusPoll += 1
+            return statusPoll == 1
+                ? .init(
+                    id: "another-action", conversationId: "conversation-approval",
+                    progressTurnId: "turn-that-staged-card",
+                    progressConversationId: "conversation-approval",
+                    progressTurnStatus: "running")
+                : .init(
+                    id: "drive-action", conversationId: "conversation-approval",
+                    progressTurnId: "turn-approved-progress",
+                    progressConversationId: "conversation-approval",
+                    progressTurnStatus: "running")
+        }
+        XCTAssertEqual(progressTurnId, "turn-approved-progress")
+        XCTAssertFalse(approvalPOSTReturned,
+                       "progress identity must bind while the synchronous approval request is pending")
+
+        vm.currentTurnId = progressTurnId
+        await dock.synchronize(
+            conversationId: vm.conversationId, turnId: vm.currentTurnId,
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: vm.computerUseToolStartGeneration,
+            computerUseSurface: vm.computerUseSurface,
+            computerUseAllowsOptimisticReveal: vm.computerUseAllowsOptimisticReveal,
+            computerUseConversationId: vm.computerUseConversationId,
+            computerUseTurnId: vm.computerUseTurnId,
+            performNetwork: false)
+        let exactProgressPreview = AgentLiveActivityPreview(
+            surface: "mac", contextId: "mac:paired-device", screenshot: nil,
+            screenshotAt: nil, labelBn: "Approved Mac work", active: true,
+            videoDeviceId: "paired-device", turnId: "turn-approved-progress",
+            conversationId: "conversation-approval", activityId: "approved-work",
+            sourceState: "connecting")
+        dock.feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: true, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: "mac",
+            videoDeviceId: "paired-device", macDisplays: nil,
+            previews: [exactProgressPreview])
+        dock.debugRecoverMissedComputerUse(from: [exactProgressPreview])
+        XCTAssertTrue(dock.show,
+                      "the exact approved progress turn must recover its player before POST completion")
+        XCTAssertEqual(dock.selectedPreview?.turnId, "turn-approved-progress")
+        XCTAssertFalse(approvalPOSTReturned)
+    }
+
+    func testConversationSerializesApprovalsUntilExactProgressTerminal() {
+        let vm = AssistantVM()
+        XCTAssertTrue(vm.claimApprovalExecution(
+            cardId: "action-a", conversationId: "conversation-overlap"))
+        XCTAssertFalse(vm.claimApprovalExecution(
+            cardId: "action-b", conversationId: "conversation-overlap"),
+            "B must not send a mutation while A owns the conversation's one PiP/turn")
+        XCTAssertEqual(vm.approvalExecutionOwner(
+            conversationId: "conversation-overlap"), "action-a")
+
+        vm.releaseApprovalExecutionAfterTerminal(
+            cardId: "action-b", conversationId: "conversation-overlap")
+        XCTAssertEqual(vm.approvalExecutionOwner(
+            conversationId: "conversation-overlap"), "action-a",
+            "a foreign completion cannot release A")
+
+        vm.releaseApprovalExecutionAfterTerminal(
+            cardId: "action-a", conversationId: "conversation-overlap")
+        XCTAssertTrue(vm.claimApprovalExecution(
+            cardId: "action-b", conversationId: "conversation-overlap"),
+            "B may begin only after A's exact progress terminal releases the lock")
+    }
+
+    func testApprovalProgressPollStopsOnNavigationAndTimeoutDoesNotCancelClaimedWork() async {
+        var currentConversation: String? = "conversation-a"
+        var fetchCount = 0
+        let discovered = await AssistantVM.awaitApprovalProgressTurn(
+            actionId: "action-a",
+            expectedConversationId: "conversation-a",
+            excludingTurnId: nil,
+            delays: [1],
+            sleep: { _ in currentConversation = "conversation-b" },
+            currentConversationId: { currentConversation }
+        ) {
+            fetchCount += 1
+            return .init(
+                id: "action-a", conversationId: "conversation-a",
+                progressTurnId: "progress-a", progressConversationId: "conversation-a",
+                progressTurnStatus: "running")
+        }
+        XCTAssertNil(discovered)
+        XCTAssertEqual(fetchCount, 0,
+                       "a pending approval must not attach after the owner changes chat")
+
+        XCTAssertTrue(AssistantVM.approvalFailureMayHaveCommitted(
+            AlmaAPIError.transport(URLError(.timedOut))),
+            "the 20-second client timeout must leave the exact progress monitor alive")
+        XCTAssertTrue(AssistantVM.approvalFailureMayHaveCommitted(
+            AlmaAPIError.http(status: 503, body: "gateway timeout")))
+        XCTAssertFalse(AssistantVM.approvalFailureMayHaveCommitted(
+            AlmaAPIError.http(status: 409, body: #"{"error":"already_resolved"}"#)),
+            "a definitive conflict can settle/cancel its monitor")
+    }
+
+    func testLiveDockOptimisticLifecyclePersistsUntilTurnEndsAndDismissStaysClosed() async {
+        let store = AgentLiveDockStore()
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+
+        XCTAssertTrue(store.show)
+        XCTAssertEqual(store.presentedFeed?.previews?.first?.surface, "browser")
+        XCTAssertEqual(store.presentationState, .connecting)
+        store.debugAdvanceLifecycleClock(by: 30)
+        XCTAssertTrue(store.show, "active current-turn computer use must not vanish after 20 seconds")
+
+        store.dismiss()
+        XCTAssertFalse(store.show)
+        let emptyPoll = AgentLiveActivityFeed(
+            active: false, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: nil,
+            videoDeviceId: nil, macDisplays: nil, previews: [])
+        store.feed = emptyPoll
+        store.reconcileDismissal(with: emptyPoll)
+        XCTAssertFalse(store.show, "poll children must not reopen a dismissed lifecycle")
+
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 2, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+        XCTAssertFalse(store.show, "another action in the same task must respect Close")
+
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-2",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 3, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-2",
+            performNetwork: false)
+        XCTAssertTrue(store.show, "a genuinely new task may reopen the card")
+
+        store.feed = AgentLiveActivityFeed(
+            active: false, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: nil,
+            videoDeviceId: nil, macDisplays: nil, previews: [])
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-2",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 3, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-2",
+            performNetwork: false)
+        XCTAssertEqual(store.presentationState, .finished)
+        XCTAssertTrue(store.show)
+        store.debugAdvanceLifecycleClock(by: AgentLiveDockStore.finishedLingerSeconds + 0.1)
+        XCTAssertFalse(store.show, "finished linger is bounded")
+
+        let delayed = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:delayed", screenshot: nil,
+            screenshotAt: nil, labelBn: "Approved browser action", active: true,
+            videoDeviceId: nil, turnId: "turn-2", conversationId: "conversation-1",
+            activityId: "approval-1", sourceState: "connecting",
+            activityAt: "2100-01-01T00:00:00.000Z", frameAt: nil, frameSeq: nil)
+        store.feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: "browser",
+            videoDeviceId: nil, macDisplays: nil, previews: [delayed])
+        XCTAssertTrue(store.show,
+                      "a scoped approved action that starts after linger must not be shadowed")
+        XCTAssertEqual(store.presentationState, .connecting)
+    }
+
+    func testLiveDockRemountDoesNotResurrectCompletedGeneration() async {
+        let remounted = AgentLiveDockStore()
+        await remounted.synchronize(
+            conversationId: "conversation-1", turnId: "turn-finished",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 9, computerUseSurface: .mac,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-finished",
+            performNetwork: false)
+        XCTAssertFalse(remounted.show)
+        XCTAssertNil(remounted.presentedFeed)
+    }
+
+    func testLiveDockRecoversMissedToolStartOnlyFromCurrentScopedTurn() async {
+        let store = AgentLiveDockStore()
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-current",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 0, computerUseSurface: nil,
+            computerUseConversationId: nil, computerUseTurnId: nil,
+            performNetwork: false)
+        let stale = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:old", screenshot: nil,
+            screenshotAt: nil, labelBn: "Old", active: true, videoDeviceId: nil,
+            turnId: "turn-old", conversationId: "conversation-1")
+        store.debugRecoverMissedComputerUse(from: [stale])
+        XCTAssertFalse(store.show, "an owner-global stale card must not be adopted")
+
+        let partialScope = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:partial", screenshot: nil,
+            screenshotAt: nil, labelBn: "Partial", active: true, videoDeviceId: nil,
+            turnId: "turn-current", conversationId: nil)
+        store.debugRecoverMissedComputerUse(from: [partialScope])
+        XCTAssertFalse(store.show,
+                       "a turn-only rolling-server card must not cross conversation scope")
+
+        let current = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:current", screenshot: nil,
+            screenshotAt: nil, labelBn: "Current", active: true, videoDeviceId: nil,
+            turnId: "turn-current", conversationId: "conversation-1",
+            activityId: "activity-current")
+        store.feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: "browser",
+            videoDeviceId: nil, macDisplays: nil, previews: [current])
+        store.debugRecoverMissedComputerUse(from: [current])
+        XCTAssertTrue(store.show)
+        XCTAssertEqual(store.preferredComputerSurface, .browser)
+        XCTAssertEqual(store.selectedPreview?.id, "browser:current")
+    }
+
+
+    func testLiveDockNavigationDropsOldTurnWithoutFinishedLinger() async {
+        let store = AgentLiveDockStore()
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+        XCTAssertTrue(store.show)
+
+        await store.synchronize(
+            conversationId: "conversation-2", turnId: "turn-2",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+
+        XCTAssertFalse(store.show)
+        XCTAssertNil(store.presentedFeed)
+        XCTAssertNil(store.trackedConversationId)
+        XCTAssertNil(store.trackedTurnId)
+    }
+
+    func testLiveDockSurvivesReconnectAndWaitsForBackendTerminalConfirmation() async {
+        let store = AgentLiveDockStore()
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+
+        store.feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: "browser",
+            videoDeviceId: nil, macDisplays: nil, previews: [])
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: false, turnReconnecting: true,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+        XCTAssertTrue(store.show)
+        XCTAssertEqual(store.presentationState, .reconnecting)
+
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+        XCTAssertTrue(store.show,
+                      "fresh scoped backend activity must outlive a dropped local SSE flag")
+
+        store.feed = AgentLiveActivityFeed(
+            active: false, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: nil,
+            videoDeviceId: nil, macDisplays: nil, previews: [])
+        await store.synchronize(
+            conversationId: "conversation-1", turnId: "turn-1",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .browser,
+            computerUseConversationId: "conversation-1", computerUseTurnId: "turn-1",
+            performNetwork: false)
+        XCTAssertEqual(store.presentationState, .finished)
+        XCTAssertTrue(store.show, "confirmed terminal state keeps only the bounded last-frame linger")
+    }
+
+    func testFinishedMacLingerKeepsStillCardButNeverRendersDeviceScopedRTC() async {
+        let store = AgentLiveDockStore()
+        await store.synchronize(
+            conversationId: "conversation-a", turnId: "turn-a",
+            turnIsStreaming: true, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .mac,
+            computerUseConversationId: "conversation-a", computerUseTurnId: "turn-a",
+            performNetwork: false)
+        let exact = AgentLiveActivityPreview(
+            surface: "mac", contextId: "mac:shared-device", screenshot: nil,
+            screenshotAt: "2026-08-20T01:00:00.000Z", labelBn: "Task A Mac",
+            active: true, videoDeviceId: "shared-device", turnId: "turn-a",
+            conversationId: "conversation-a", activityId: "activity-a",
+            sourceState: "connecting")
+        store.feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: true, sessions: nil,
+            screenshot: nil, screenshotAt: exact.screenshotAt, screenshotSurface: "mac",
+            videoDeviceId: "shared-device", macDisplays: nil, previews: [exact])
+        store.reconcilePreviewSelection([exact])
+        XCTAssertTrue(store.shouldRenderRealtimeVideo)
+
+        store.feed = AgentLiveActivityFeed(
+            active: false, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: exact.screenshotAt, screenshotSurface: "mac",
+            videoDeviceId: "shared-device", macDisplays: nil, previews: [exact])
+        await store.synchronize(
+            conversationId: "conversation-a", turnId: "turn-a",
+            turnIsStreaming: false, turnReconnecting: false,
+            computerUseToolStartGeneration: 1, computerUseSurface: .mac,
+            computerUseConversationId: "conversation-a", computerUseTurnId: "turn-a",
+            performNetwork: false)
+
+        XCTAssertEqual(store.presentationState, .finished)
+        XCTAssertTrue(store.show, "Task A may retain its exact still during bounded linger")
+        XCTAssertEqual(store.selectedPreview?.videoDeviceId, "shared-device",
+                       "the regression is meaningful even while the feed still names the device")
+        XCTAssertFalse(store.shouldRenderRealtimeVideo,
+                       "Task A must leave/hide RTC before Task B can reuse the device channel")
+    }
+
+    func testLiveDockStreamOptimismIsBoundedAndClaimRetryIsShort() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        XCTAssertEqual(AgentLiveDockStore.macStreamClaimRetrySeconds, 4)
+        XCTAssertLessThan(AgentLiveDockStore.macStreamClaimRetrySeconds,
+                          AgentLiveDockStore.macStreamRenewSeconds)
+        XCTAssertEqual(AgentLiveDockStore.reconciledStreamOptimistic(
+            true, setAt: start, serverStreaming: false,
+            now: start.addingTimeInterval(4.9)), true)
+        XCTAssertNil(AgentLiveDockStore.reconciledStreamOptimistic(
+            true, setAt: start, serverStreaming: false,
+            now: start.addingTimeInterval(5)),
+            "no fresh server frame must clear an optimistic stream state")
+        XCTAssertNil(AgentLiveDockStore.reconciledStreamOptimistic(
+            true, setAt: start, serverStreaming: true,
+            now: start.addingTimeInterval(1)))
+
+        XCTAssertEqual(AgentLiveDockStore.browserLeaseCompletionAction(
+            requestActivityKey: "activity-a", currentActivityKey: "activity-b",
+            currentTrackedActive: true), .stopStaleAndRenewCurrent,
+            "late A completion must clean A and immediately renew current B")
+        XCTAssertEqual(AgentLiveDockStore.browserLeaseCompletionAction(
+            requestActivityKey: "activity-a", currentActivityKey: "activity-a",
+            currentTrackedActive: true), .own)
+        XCTAssertEqual(AgentLiveDockStore.browserLeaseCompletionAction(
+            requestActivityKey: "activity-a", currentActivityKey: nil,
+            currentTrackedActive: false), .stopStale)
+    }
+
+    func testTaskBoundMacManualControlPayloadKeepsExactScopeAndDisplay() throws {
+        let body = AgentLiveDockStore.ComputerUseStreamBody(
+            on: true, deviceId: "mac-device-1", maxSeconds: 120,
+            displayIndex: 2, reason: "computer_use",
+            conversationId: "conversation-1", turnId: "turn-1")
+        let data = try JSONEncoder().encode(body)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["on"] as? Bool, true)
+        XCTAssertEqual(object["deviceId"] as? String, "mac-device-1")
+        XCTAssertEqual(object["displayIndex"] as? Int, 2)
+        XCTAssertEqual(object["reason"] as? String, "computer_use")
+        XCTAssertEqual(object["conversationId"] as? String, "conversation-1")
+        XCTAssertEqual(object["turnId"] as? String, "turn-1")
+        XCTAssertFalse(AgentLiveDockStore.scopedManualControlBlocksRenewal(streamOn: true),
+                       "same-owner start/display must renew beyond the 120-second daemon cap")
+        XCTAssertTrue(AgentLiveDockStore.scopedManualControlBlocksRenewal(streamOn: false),
+                      "an explicit scoped Stop must not be undone by auto-renewal")
+        XCTAssertLessThan(AgentLiveDockStore.macStreamRenewSeconds, 120)
+    }
 }

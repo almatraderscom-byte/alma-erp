@@ -4086,6 +4086,8 @@ model LiveBrowserDevice {
   createdAt   DateTime  @default(now())
 
   commands LiveBrowserCommand[]
+  previewFrames LiveBrowserFrame[]
+  previewLease LiveBrowserPreviewLease?
 
   @@index([ownerUserId])
   @@map("live_browser_devices")
@@ -4103,6 +4105,13 @@ model LiveBrowserCommand {
   status      String            @default("queued")
   result      Json?
   error       String?           @db.Text
+  /// Agent activity identity injected by the executor. Nullable for legacy/manual callers.
+  conversationId String?
+  turnId         String?
+  /// Extension-reported browser tab context (for independent stacked cards).
+  contextId      String?
+  /// Bounded redelivery count when a poll response is lost after claim.
+  deliveryAttempts Int             @default(0)
   createdAt   DateTime          @default(now())
   deliveredAt DateTime?
   resolvedAt  DateTime?
@@ -4110,7 +4119,48 @@ model LiveBrowserCommand {
   @@index([deviceId, status])
   /// Same live-dock poll (see mac_agent_commands).
   @@index([createdAt])
+  @@index([turnId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([deviceId, contextId, createdAt])
   @@map("live_browser_commands")
+}
+
+// Latest browser preview only: ONE row per paired Chrome + tab context, replaced
+// at ~1fps while an owner-authorised lease is alive. This is live, not history.
+model LiveBrowserFrame {
+  deviceId       String
+  device         LiveBrowserDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// Stable within one companion/browser process, currently `tab:<chromeTabId>`.
+  contextId      String
+  conversationId String
+  turnId         String
+  dataUri        String            @db.Text
+  capturedAt     DateTime
+  /// Server-monotonic sequence for this device/context (producer counters are untrusted).
+  sequence       Int               @default(1)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@id([deviceId, contextId])
+  @@index([turnId, capturedAt])
+  @@index([conversationId, capturedAt])
+  @@map("live_browser_frames")
+}
+
+// Short renewable permission for a paired Chrome to publish preview frames.
+// The server also verifies the referenced AgentTurn is still running.
+model LiveBrowserPreviewLease {
+  deviceId       String            @id
+  device         LiveBrowserDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  conversationId String
+  turnId         String
+  expiresAt      DateTime
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([turnId, expiresAt])
+  @@index([conversationId, expiresAt])
+  @@map("live_browser_preview_leases")
 }
 
 // M1 (Mac control) — the owner's own Mac running the ALMA Mac Agent daemon.
@@ -4160,6 +4210,9 @@ model MacAgentCommand {
   error       String?     @db.Text
   /// Free-form session/task correlation (M2 groups many commands under one session).
   sessionKey  String?
+  /// Agent activity identity injected by the executor. Nullable for legacy/manual callers.
+  conversationId   String?
+  turnId           String?
   /// How many times delivery was attempted. A poll response can be lost after the
   /// row is already marked delivered; the bus requeues those, and gives up loudly
   /// rather than redelivering forever.
@@ -4173,6 +4226,8 @@ model MacAgentCommand {
   /// The live dock polls "what happened in the last 10 minutes" every 3s while
   /// work runs; without this it degrades into a scan as history grows.
   @@index([createdAt])
+  @@index([turnId, createdAt])
+  @@index([conversationId, createdAt])
   @@map("mac_agent_commands")
 }
 
@@ -4219,12 +4274,20 @@ model MacAgentSessionEvent {
 // live-activity feed serves it through the same screenshot channel the docks
 // already render, so streaming needed zero dock render changes.
 model MacAgentFrame {
-  deviceId  String   @id
+  deviceId      String   @id
   /// data:image/jpeg;base64,… downscaled daemon-side (Vercel body limit).
-  dataUri   String   @db.Text
+  dataUri       String   @db.Text
+  /// Active stream ownership validated against the daemon-executed start row.
+  conversationId String?
+  turnId         String?
   /// Capture time on the Mac.
-  at        DateTime
-  updatedAt DateTime @updatedAt
+  at             DateTime
+  /// Server-monotonic per-device frame revision.
+  sequence       Int      @default(1)
+  updatedAt      DateTime @updatedAt
+
+  @@index([turnId, at])
+  @@index([conversationId, at])
   @@map("mac_agent_frames")
 }
 

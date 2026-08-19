@@ -1821,9 +1821,9 @@ export async function* runAgentTurn(
               klass: 'unknown',
             })
           : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, turnId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant })
           : await executeTool(tb.name, tb.input, {
-              conversationId, businessId, modelId: chatModel.id, turnAuthorization,
+              conversationId, turnId, businessId, modelId: chatModel.id, turnAuthorization,
               ownerVoicePref, voiceCallInstruction, callbackRequested,
               // The registry runs the canonical guard itself; without these it
               // would refuse the very call the outer bypass just allowed.
