@@ -30,6 +30,8 @@
 		6C6A27C2A5F92B5F2617B361 /* TradingHrSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */; };
 		747EDB92288CE0950C119E72 /* cs_model_2.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 2B1E7BFF1464C45512B79DB6 /* cs_model_2.jpg */; };
 		75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */; };
+		75EE0277D14177856309933B /* CreativeStudioV4WorkspaceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */; };
+		75EE0277D14177856309933C /* CSMaskRepairSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */; };
 		82578EF670271FFDE3168C6E /* Pods_AppParityV2Tests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */; };
 		8AE5A46CDEF2B132197C6BDD /* cs_sample_4.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */; };
 		8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */; };
@@ -324,6 +326,8 @@
 		E1AA9900000000000000A005 /* RobotRejectSFX.mp3 */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = audio.mp3; path = RobotRejectSFX.mp3; sourceTree = "<group>"; };
 		E2AA7700000000000000A001 /* AlmaNavBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavBridge.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
+		E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioV4WorkspaceSwiftUI.swift; sourceTree = "<group>"; };
+		E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CSMaskRepairSwiftUI.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A001 /* AlmaEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaEntities.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A002 /* EntityCacheBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityCacheBridge.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A003 /* AlmaWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AlmaWidget.entitlements; sourceTree = "<group>"; };
@@ -593,6 +597,8 @@
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 				E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */,
+				E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */,
+				E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */,
 				B9A1DBCC4D68569F90B17594 /* CreativeStudioSamples */,
 				035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */,
 				3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */,
@@ -1124,6 +1130,8 @@
 				F2AA7700000000000000B9C1 /* MacRemoteControl.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,
 				75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */,
+				75EE0277D14177856309933B /* CreativeStudioV4WorkspaceSwiftUI.swift in Sources */,
+				75EE0277D14177856309933C /* CSMaskRepairSwiftUI.swift in Sources */,
 				56EBF52AB2CCBE8B449217D1 /* TradingHomeSwiftUI.swift in Sources */,
 				A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */,
 				AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */,
