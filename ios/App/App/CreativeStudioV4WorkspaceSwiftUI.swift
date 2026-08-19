@@ -102,6 +102,7 @@ private struct CSV4CampaignPreviewResponse: Decodable { let manifest: CSV4Campai
 struct CSV4CampaignPack: Decodable, Identifiable, Equatable {
     let id: String
     let status: String
+    let selectedDraftStageId: String?
     let progressPercent: Int?
     let estimatedCostUsd: Double?
     let actualCostUsd: Double?
@@ -348,6 +349,16 @@ final class CSV4WorkspaceVM {
         lifecycle = loaded.6
         performance = loaded.7
         campaignPreview = nil
+        await hydrateWaitingCampaignDrafts()
+    }
+
+    private func hydrateWaitingCampaignDrafts() async {
+        for pack in campaignPacks where pack.status == "waiting_selection" {
+            if let response: CSV4CampaignQueueResponse = try? await AlmaAPI.shared.get(
+                "/api/assistant/creative-studio/campaign-packs/\(pack.id)") {
+                replaceCampaignPack(response.pack)
+            }
+        }
     }
 
     func createProject(name: String, description: String) async -> Bool {
@@ -417,6 +428,27 @@ final class CSV4WorkspaceVM {
             campaignPreview = nil
             notice = "Campaign Pack queue হয়েছে"
         } catch { notice = message(error, fallback: "Campaign Pack queue হয়নি") }
+    }
+
+    func selectCampaignDraft(pack: CSV4CampaignPack, stageID: String) async {
+        guard pack.status == "waiting_selection", stageID == "draft-a" || stageID == "draft-b" else { return }
+        struct Body: Encodable { let action = "select_draft"; let selectedDraftStageId: String }
+        actionBusy = true; defer { actionBusy = false }
+        do {
+            let response: CSV4CampaignQueueResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/creative-studio/campaign-packs/\(pack.id)",
+                body: Body(selectedDraftStageId: stageID))
+            replaceCampaignPack(response.pack)
+            notice = "Draft নির্বাচিত — বাকি campaign stages চলছে"
+        } catch { notice = message(error, fallback: "Draft নির্বাচন হয়নি") }
+    }
+
+    private func replaceCampaignPack(_ pack: CSV4CampaignPack) {
+        if let index = campaignPacks.firstIndex(where: { $0.id == pack.id }) {
+            campaignPacks[index] = pack
+        } else {
+            campaignPacks.insert(pack, at: 0)
+        }
     }
 
     func transition(_ item: CSV4ReviewItem, to target: String) async {
@@ -813,10 +845,46 @@ struct CSV4WorkspaceScreen: View {
             title("Recent packs", "clock.arrow.circlepath")
             if model.campaignPacks.isEmpty { empty("এই project-এ pack নেই") }
             ForEach(model.campaignPacks) { pack in
-                HStack { VStack(alignment: .leading) { Text(pack.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.subheadline.weight(.bold)); Text("\(almaBn(pack.progressPercent ?? 0))% · $\(pack.actualCostUsd ?? 0, specifier: "%.3f") actual").font(.caption).foregroundStyle(AgentPalette(scheme).muted) }; Spacer(); status(pack.status) }
-                    .padding(13).v4Glass(scheme)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack { VStack(alignment: .leading) { Text(pack.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.subheadline.weight(.bold)); Text("\(almaBn(pack.progressPercent ?? 0))% · $\(pack.actualCostUsd ?? 0, specifier: "%.3f") actual").font(.caption).foregroundStyle(AgentPalette(scheme).muted) }; Spacer(); status(pack.status) }
+                    if pack.status == "waiting_selection" {
+                        Text("পরবর্তী paid stages চালাতে একটি completed draft বেছে নিন।")
+                            .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+                        HStack(alignment: .top, spacing: 9) {
+                            ForEach((pack.stages ?? []).filter { $0.stageId == "draft-a" || $0.stageId == "draft-b" }, id: \.stableID) { stage in
+                                campaignDraft(pack: pack, stage: stage)
+                            }
+                        }
+                    }
+                }.padding(13).v4Glass(scheme)
             }
         }
+        .onChange(of: includeFamily) { _, _ in model.campaignPreview = nil }
+        .onChange(of: includeReel) { _, _ in model.campaignPreview = nil }
+    }
+
+    private func campaignDraft(pack: CSV4CampaignPack, stage: CSV4CampaignStage) -> some View {
+        VStack(spacing: 7) {
+            Group {
+                if let raw = stage.previewUrl, let url = URL(string: raw) {
+                    AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }
+                } else {
+                    ZStack { Color.white.opacity(0.05); Image(systemName: stage.status == "ready" ? "checkmark" : "clock") }
+                }
+            }
+            .frame(maxWidth: .infinity).aspectRatio(4.0 / 5.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            Text(stage.labelBn).font(.caption2.weight(.bold)).lineLimit(1)
+            if pack.selectedDraftStageId == stage.stageId {
+                Label("Selected", systemImage: "checkmark.circle.fill").font(.caption2).foregroundStyle(.green)
+            } else if stage.status == "ready", let stageID = stage.stageId {
+                Button("এই draft নিন") { Task { await model.selectCampaignDraft(pack: pack, stageID: stageID) } }
+                    .font(.caption2.weight(.bold)).buttonStyle(.borderedProminent).tint(AgentPalette.coral)
+                    .disabled(model.actionBusy)
+            } else {
+                status(stage.status ?? "pending")
+            }
+        }.frame(maxWidth: .infinity)
     }
 
     private var voice: some View {

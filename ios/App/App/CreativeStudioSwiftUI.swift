@@ -3208,7 +3208,11 @@ private struct CSAudioTab: View {
                 .padding(11).background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             actionBtn(cloned ? "বলাও" : "আগে ভয়েস ক্লোন করুন",
                       disabled: busy || !cloned || voiceText.trimmingCharacters(in: .whitespaces).isEmpty) {
-                queue("ভয়েস লাইন", ["kind": AnyEncodable("owner_voice"), "text": AnyEncodable(voiceText)])
+                queue("ভয়েস লাইন", [
+                    "kind": AnyEncodable("owner_voice"),
+                    "text": AnyEncodable(voiceText),
+                    "usageContext": AnyEncodable("owner_studio"),
+                ])
             }
         }
     }

@@ -55,6 +55,7 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('estimateBody["intent"] = AnyEncodable("estimate")')
     expect(nativeStudio).toContain('body["intent"] = AnyEncodable("queue")')
     expect(nativeStudio).toContain('Confirm & Queue')
+    expect(nativeStudio).toContain('"usageContext": AnyEncodable("owner_studio")')
   })
 
   it('exposes canonical lifecycle filters in the native Gallery', () => {
@@ -92,5 +93,12 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('syncSelectedProject()')
     expect(nativeWorkspace).toContain('CSV4CreateProjectSheet(model: model) { syncSelectedProject() }')
     expect(nativeWorkspace).toContain('version.providerReady && version.status == "ready"')
+  })
+
+  it('keeps campaign options and draft selection aligned with the server manifest', () => {
+    expect(nativeWorkspace).toContain('model.campaignPreview = nil')
+    expect(nativeWorkspace).toContain('let action = "select_draft"')
+    expect(nativeWorkspace).toContain('func selectCampaignDraft(')
+    expect(nativeWorkspace).toContain('এই draft নিন')
   })
 })
