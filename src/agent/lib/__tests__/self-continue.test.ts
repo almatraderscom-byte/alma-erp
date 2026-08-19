@@ -10,7 +10,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const mockPrisma = vi.hoisted(() => ({
-  agentKvSetting: { findUnique: vi.fn(), upsert: vi.fn(), delete: vi.fn() },
+  agentKvSetting: { findUnique: vi.fn(), upsert: vi.fn(), deleteMany: vi.fn() },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
@@ -18,13 +18,13 @@ const continuation = vi.hoisted(() => ({ enqueueAgentContinuation: vi.fn().mockR
 vi.mock('@/agent/lib/approval-continuation', () => continuation)
 
 import { shouldAutoContinueTurn, mayContinueChain, MAX_SELF_CONTINUE_HOPS } from '@/agent/lib/continuation-policy'
-import { scheduleSelfContinue, buildResumeDirective } from '@/agent/lib/self-continue'
+import { scheduleSelfContinue, buildResumeDirective, clearHops } from '@/agent/lib/self-continue'
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
   mockPrisma.agentKvSetting.upsert.mockResolvedValue({})
-  mockPrisma.agentKvSetting.delete.mockResolvedValue({})
+  mockPrisma.agentKvSetting.deleteMany.mockResolvedValue({ count: 0 })
 })
 
 describe('when a deadline-hit turn should carry itself on', () => {
@@ -97,6 +97,16 @@ describe('the wake-up chain', () => {
     expect(res.scheduled).toBe(false)
     expect(res.reason).toContain('hop limit')
     expect(continuation.enqueueAgentContinuation).not.toHaveBeenCalled()
+  })
+
+  it('clears an already-absent hop counter without a record-not-found error', async () => {
+    await clearHops('c1')
+    await clearHops('c1')
+
+    expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenCalledTimes(2)
+    expect(mockPrisma.agentKvSetting.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { key: 'self_continue_hops:c1' },
+    })
   })
 
   it('tells the next hop to continue, not to re-plan from scratch', () => {
