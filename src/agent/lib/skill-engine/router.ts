@@ -274,6 +274,18 @@ const SOFTWARE_WORK_REF =
   /(\bbug\b|বাগ|\bfix\b|integration|\bfeature\b|\bcode\b|কোড|\berror\b|crash|deploy|\bapi\b|\bui\b)/i
 const AI_APP_ASK = (t: string): boolean =>
   AI_APP_NAME.test(t) && AI_APP_OPERATION.test(t) && !SOFTWARE_WORK_REF.test(t)
+
+/** Paired-Chrome operations beat SEO-shaped page words and domains. */
+const LIVE_BROWSER_TOOL_REF =
+  /\blive_browser_(?:act|look|status|pair|trust)\b|\bset_live_browser\b/i
+const OWNER_CHROME_SURFACE =
+  /(?:\b(?:my|amar)\s+chrome\b|আমার\s+Chrome|\bchrome\s+companion\b|\balma\s+companion\b|\blive\s+browser\b|লাইভ\s+ব্রাউজার)/i
+const BROWSER_OPERATION =
+  /(?:navigate|open|খোল|খুল|যাও|দেখ|look|read|title|url|heading|click|type|pair|status|verify|verification)/i
+const LIVE_BROWSER_OPERATOR_ASK = (text: string): boolean =>
+  !SOFTWARE_WORK_REF.test(text)
+  && (LIVE_BROWSER_TOOL_REF.test(text)
+    || (OWNER_CHROME_SURFACE.test(text) && BROWSER_OPERATION.test(text)))
 /**
  * "notun chat khulo" — a fresh conversation in one of those apps. The verb is
  * REQUIRED: with it optional, "new chat bug ta fix koro" (a bug report about
@@ -528,6 +540,14 @@ export interface RouterRule {
  * the wrong place; the `why` is what gets stored in the trace.
  */
 export const RULES: RouterRule[] = [
+  {
+    // BEFORE SEO: a title + domain is ordinary inspection when Boss names his
+    // paired Chrome. Software/API bug reports remain ordinary coding work.
+    id: 'live-browser-operator',
+    skill: 'alma-browser-operator',
+    test: (t) => LIVE_BROWSER_OPERATOR_ASK(t),
+    why: 'Boss-এর paired Chrome/Companion চালাতে বলা হয়েছে — URL-এর বিষয় নয়, browser operation-টাই কাজ',
+  },
   {
     // BEFORE image-generation: "ছবি দিয়ে ভিডিও বানাও" contains both an image
     // noun and a creation verb — the video pipeline must win deterministically.

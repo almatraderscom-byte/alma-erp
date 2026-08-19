@@ -12,7 +12,10 @@ keywords: chrome, ক্রোম, browser, ব্রাউজার, browser di
 
 ## পূর্বশর্ত
 
-- `live_browser_status` — enabled + paired কি না দেখো। না হলে এখানেই থামো, Boss-কে pair করতে বলো।
+- Boss live browser চালু করতে বললে `set_live_browser`; Chrome pair/re-pair বা pair code চাইলে
+  `live_browser_pair` সরাসরি ব্যবহার করো। Mac-agent pairing বা shell command এই flow-এর বিকল্প নয়।
+- `live_browser_status` — enabled + paired কি না দেখো। Pair করা না থাকলে `live_browser_pair`
+  দিয়ে one-time code দাও, তারপর Boss extension-এ code বসানো পর্যন্ত থামো।
 
 ## ধাপ
 

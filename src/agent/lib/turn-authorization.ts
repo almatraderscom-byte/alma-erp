@@ -35,6 +35,12 @@ const BARE_CONTINUATION_RE =
 const BANGLISH_IMPERATIVE_RE =
   /\b(?:dao|daw|de|den|dibi|dibe|dis|koro|kor|korun|korbi|ban(?:ao|aw|au)|bana|chal(?:ao|aw)|cal(?:ao|aw)|chala|chol(?:ao|aw)|cholo|path(?:ao|aw)|pat(?:ao|aw)|kholo|khulo|khol|dekh(?:ao|aw|o)|lag(?:ao|aw)|tham(?:ao|aw)|bondho|chalu|generate)\b/i
 
+// Naming the effect tool plus its browser action is an explicit instruction,
+// even when the surrounding imperative is Bengali and outside the deliberately
+// narrow generic Bangla grammar below.
+const EXPLICIT_LIVE_BROWSER_ACT_RE =
+  /\blive_browser_act\b[^\n]{0,120}(?:\b(?:navigate|click|type|press|select_option|scroll|action|execute|call|run)\b|চালাও|করো|করে\s*দাও)/i
+
 // NOTE on Bangla imperatives: there is deliberately no Bangla counterpart to
 // BANGLISH_IMPERATIVE_RE above. One was written (2026-08-16) and removed the same
 // day: six review rounds found eleven P1s in it, because "order or question" in
@@ -102,6 +108,7 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
     BARE_CONTINUATION_RE.test(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
+    || EXPLICIT_LIVE_BROWSER_ACT_RE.test(t)
     || ENGLISH_IMPERATIVE_RE.test(t)
   ) {
     return { allowMutations: true, reason: 'explicit_action' }

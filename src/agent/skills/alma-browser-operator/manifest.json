@@ -11,6 +11,8 @@
   ],
   "riskTier": "high",
   "requiredCapabilities": [
+    "set_live_browser",
+    "live_browser_pair",
     "live_browser_status",
     "live_browser_look",
     "live_browser_act",
@@ -23,7 +25,7 @@
   "maxSteps": 8,
   "status": "active",
   "extends": "alma-base",
-  "whenNotToUse": "বাইরের তথ্য/দাম জানা মূল কাজ হলে → alma-research (সস্তা, নিরাপদ)। আমাদের নিজের সাইটের কাজ → alma-website বা SEO skill। ব্রাউজার pair করা নেই মানে এই skill নয় — Boss-কে pair করতে বলো।",
+  "whenNotToUse": "বাইরের তথ্য/দাম জানা মূল কাজ হলে → alma-research (সস্তা, নিরাপদ)। আমাদের নিজের সাইটের কাজ → alma-website বা SEO skill।",
   "outputContract": {
     "kind": "report",
     "mustInclude": [
