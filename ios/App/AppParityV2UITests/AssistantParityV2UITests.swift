@@ -47,6 +47,7 @@ final class AssistantParityV2UITests: XCTestCase {
             "testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate",
             "testLiveDockAndExpandedTrackerNeverIntersectComposer",
             "testMacPiPShowsFallbackBeforeFirstRTCFrame",
+            "testLiveDockPlayerDoesNotHideItsIndividualControlsFromAccessibility",
             "testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras",
             "testColdSessionRestoreNeverShowsHeroBehindLoader",
         ].contains { name.contains($0) }
@@ -1193,6 +1194,21 @@ final class AssistantParityV2UITests: XCTestCase {
         proof.name = "mac-pip-rtc-warmup-fallback"
         proof.lifetime = .keepAlways
         add(proof)
+    }
+
+    func testLiveDockPlayerDoesNotHideItsIndividualControlsFromAccessibility() {
+        let fixture = launchFixture(["ALMA_LIVE_DOCK_FIXTURE": "pip"])
+        XCTAssertTrue(anyElement(fixture, "agent.live-dock.player")
+            .waitForExistence(timeout: 10))
+
+        let expand = fixture.buttons["agent.live-dock.expand"]
+        let close = fixture.buttons["agent.live-dock.close"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 4))
+        XCTAssertTrue(close.waitForExistence(timeout: 4))
+        XCTAssertTrue(expand.isHittable, "expand must be a separate hittable AX button")
+        XCTAssertTrue(close.isHittable, "close must be a separate hittable AX button")
+        XCTAssertTrue(fixture.buttons["agent.live-dock.source.mac"].waitForExistence(timeout: 4),
+                      "source switching must remain an individual AX button")
     }
 
     func testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras() {

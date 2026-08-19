@@ -22,6 +22,7 @@
  *   • Local kill switch in the popup (`paused`) means nothing runs even if queued.
  */
 import { createHash, timingSafeEqual, randomBytes } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 
 /** KV kill-switch (owner-tunable, no redeploy). Default OFF — capability is opt-in. */
@@ -64,10 +65,14 @@ const WRITE_ACTIONS = new Set<LiveBrowserAction>([
   'close_tab',
 ])
 
-const COMMAND_DEFAULT_TIMEOUT_MS = 45_000
+const COMMAND_DEFAULT_TIMEOUT_MS = 90_000
 const COMMAND_POLL_INTERVAL_MS = 700
+/** Longer than the extension's 35s whole-command ceiling, so live work is never reclaimed. */
+export const BROWSER_DELIVERY_LEASE_MS = 40_000
+const MAX_BROWSER_DELIVERY_ATTEMPTS = 3
 const PAIRING_CODE_TTL_MS = 10 * 60 * 1000 // a one-time code is valid for 10 minutes
 const DEVICE_OFFLINE_MS = 90_000 // no poll in 90s ⇒ treat the companion as offline
+export const BROWSER_PREVIEW_LEASE_TTL_MS = 25_000
 
 // ---------------------------------------------------------------------------
 // Kill-switch
@@ -301,6 +306,168 @@ export interface RunResult {
   commandId: string
 }
 
+export interface BrowserActivityContext {
+  turnId?: string | null
+  conversationId?: string | null
+}
+
+export interface BrowserPreviewLease {
+  deviceId: string
+  turnId: string
+  conversationId: string
+  expiresAt: Date
+}
+
+const MAX_BROWSER_PREVIEW_CONTEXTS_PER_DEVICE = 8
+
+async function trimBrowserPreviewContexts(deviceId: string): Promise<void> {
+  const stale = await prisma.liveBrowserFrame.findMany({
+    where: { deviceId },
+    orderBy: { capturedAt: 'desc' },
+    skip: MAX_BROWSER_PREVIEW_CONTEXTS_PER_DEVICE,
+    select: { contextId: true },
+  })
+  if (stale.length > 0) {
+    await prisma.liveBrowserFrame.deleteMany({
+      where: { deviceId, contextId: { in: stale.map((row) => row.contextId) } },
+    })
+  }
+}
+
+function completeActivityContext(
+  input?: BrowserActivityContext | null,
+): { turnId: string; conversationId: string } | null {
+  const turnId = input?.turnId?.trim()
+  const conversationId = input?.conversationId?.trim()
+  return turnId && conversationId ? { turnId, conversationId } : null
+}
+
+/**
+ * Start/renew a short capture grant. The referenced turn must still be running;
+ * callers cannot turn an old command into an unbounded screen recorder.
+ */
+export async function renewBrowserPreviewLease(input: {
+  deviceId: string
+  turnId: string
+  conversationId: string
+  ttlMs?: number
+}): Promise<BrowserPreviewLease | null> {
+  const context = completeActivityContext(input)
+  if (!context) return null
+  const turn = await prisma.agentTurn.findFirst({
+    where: { id: context.turnId, conversationId: context.conversationId, status: 'running' },
+    select: { id: true },
+  })
+  if (!turn) return null
+
+  const ttlMs = Math.max(5_000, Math.min(input.ttlMs ?? BROWSER_PREVIEW_LEASE_TTL_MS, 60_000))
+  const expiresAt = new Date(Date.now() + ttlMs)
+  const lease = await prisma.liveBrowserPreviewLease.upsert({
+    where: { deviceId: input.deviceId },
+    create: { deviceId: input.deviceId, ...context, expiresAt },
+    update: { ...context, expiresAt },
+    select: { deviceId: true, turnId: true, conversationId: true, expiresAt: true },
+  })
+  return lease
+}
+
+/** Return a truthful grant for poll/frame ingest, clearing expired/terminal grants. */
+export async function getActiveBrowserPreviewLease(
+  deviceId: string,
+): Promise<BrowserPreviewLease | null> {
+  const lease = await prisma.liveBrowserPreviewLease.findUnique({
+    where: { deviceId },
+    select: { deviceId: true, turnId: true, conversationId: true, expiresAt: true },
+  })
+  if (!lease) return null
+  if (lease.expiresAt.getTime() <= Date.now()) {
+    await prisma.liveBrowserPreviewLease.deleteMany({
+      where: {
+        deviceId,
+        turnId: lease.turnId,
+        conversationId: lease.conversationId,
+        expiresAt: lease.expiresAt,
+      },
+    }).catch(() => {})
+    return null
+  }
+  const turn = await prisma.agentTurn.findFirst({
+    where: { id: lease.turnId, conversationId: lease.conversationId, status: 'running' },
+    select: { id: true },
+  })
+  if (!turn) {
+    await prisma.liveBrowserPreviewLease.deleteMany({
+      where: {
+        deviceId,
+        turnId: lease.turnId,
+        conversationId: lease.conversationId,
+        expiresAt: lease.expiresAt,
+      },
+    }).catch(() => {})
+    return null
+  }
+  return lease
+}
+
+export async function stopBrowserPreviewLeases(input: {
+  deviceIds: string[]
+  turnId: string
+  conversationId: string
+}): Promise<number> {
+  if (input.deviceIds.length === 0) return 0
+  const result = await prisma.liveBrowserPreviewLease.deleteMany({
+    where: {
+      deviceId: { in: input.deviceIds },
+      turnId: input.turnId,
+      conversationId: input.conversationId,
+    },
+  })
+  return result.count
+}
+
+/**
+ * Replace the per-device/context latest frame only when the producer clock
+ * advances. The active lease supplies the trusted activity identity.
+ */
+export async function storeBrowserPreviewFrame(input: {
+  deviceId: string
+  contextId: string
+  dataUri: string
+  capturedAt: Date
+  lease: BrowserPreviewLease
+}): Promise<{ accepted: boolean; frameAt: Date; frameSeq: number }> {
+  // Atomic per-context upsert: the server owns the sequence so an MV3 worker
+  // restart cannot rewind it. Equal/older producer timestamps never replace pixels.
+  const advanced = await prisma.$queryRaw<Array<{ capturedAt: Date; sequence: number }>>(
+    Prisma.sql`
+      INSERT INTO "live_browser_frames"
+        ("deviceId", "contextId", "conversationId", "turnId", "dataUri",
+         "capturedAt", "sequence", "createdAt", "updatedAt")
+      VALUES
+        (${input.deviceId}, ${input.contextId}, ${input.lease.conversationId},
+         ${input.lease.turnId}, ${input.dataUri}, ${input.capturedAt}, 1, NOW(), NOW())
+      ON CONFLICT ("deviceId", "contextId") DO UPDATE SET
+        "conversationId" = EXCLUDED."conversationId",
+        "turnId" = EXCLUDED."turnId",
+        "dataUri" = EXCLUDED."dataUri",
+        "capturedAt" = EXCLUDED."capturedAt",
+        "sequence" = "live_browser_frames"."sequence" + 1,
+        "updatedAt" = NOW()
+      WHERE "live_browser_frames"."capturedAt" < EXCLUDED."capturedAt"
+      RETURNING "capturedAt", "sequence"
+    `,
+  )
+  if (advanced[0]) {
+    await trimBrowserPreviewContexts(input.deviceId)
+    return { accepted: true, frameAt: advanced[0].capturedAt, frameSeq: advanced[0].sequence }
+  }
+  const current = await prisma.liveBrowserFrame.findUniqueOrThrow({
+    where: { deviceId_contextId: { deviceId: input.deviceId, contextId: input.contextId } },
+    select: { capturedAt: true, sequence: true },
+  })
+  return { accepted: false, frameAt: current.capturedAt, frameSeq: current.sequence }
+}
+
 /**
  * Enqueue ONE command for a device and await its result (durable: the row survives
  * a server restart; this just polls the row). Returns timeout if the companion does
@@ -311,15 +478,41 @@ export async function runCommand(
   action: LiveBrowserAction,
   params?: Record<string, unknown>,
   timeoutMs = COMMAND_DEFAULT_TIMEOUT_MS,
+  activityContext?: BrowserActivityContext,
 ): Promise<RunResult> {
   if (!LIVE_BROWSER_ACTIONS.includes(action)) {
     return { ok: false, status: 'failed', error: `unsupported_action:${action}`, commandId: '' }
   }
 
-  const cmd = await prisma.liveBrowserCommand.create({
-    data: { deviceId, action, params: (params ?? {}) as object, status: 'queued' },
-    select: { id: true },
-  })
+  const context = completeActivityContext(activityContext)
+  const commandData = {
+      deviceId,
+      action,
+      params: (params ?? {}) as object,
+      status: 'queued',
+      turnId: context?.turnId ?? null,
+      conversationId: context?.conversationId ?? null,
+  }
+  // When this is a real agent turn, publish the preview lease and the queued
+  // command in ONE commit. Poll can never claim the command first and make the
+  // extension spend the whole action without a capture grant.
+  const cmd = context
+    ? await prisma.$transaction(async (tx) => {
+        const turn = await tx.agentTurn.findFirst({
+          where: { id: context.turnId, conversationId: context.conversationId, status: 'running' },
+          select: { id: true },
+        })
+        if (turn) {
+          const expiresAt = new Date(Date.now() + BROWSER_PREVIEW_LEASE_TTL_MS)
+          await tx.liveBrowserPreviewLease.upsert({
+            where: { deviceId },
+            create: { deviceId, ...context, expiresAt },
+            update: { ...context, expiresAt },
+          })
+        }
+        return tx.liveBrowserCommand.create({ data: commandData, select: { id: true } })
+      })
+    : await prisma.liveBrowserCommand.create({ data: commandData, select: { id: true } })
 
   const deadline = Date.now() + Math.max(2_000, Math.min(timeoutMs, 120_000))
   while (Date.now() < deadline) {
@@ -345,8 +538,8 @@ export async function runCommand(
 
   // Timed out — mark the row so a late companion result is ignored as stale.
   await prisma.liveBrowserCommand
-    .update({
-      where: { id: cmd.id },
+    .updateMany({
+      where: { id: cmd.id, status: { in: ['queued', 'delivered'] } },
       data: { status: 'failed', error: 'timeout (companion did not respond)', resolvedAt: new Date() },
     })
     .catch(() => {})
@@ -357,11 +550,44 @@ export async function runCommand(
  * Companion fetches its next queued command (claims it as delivered). Returns null
  * when idle. Oldest-first so commands run in order.
  */
+export async function reclaimStaleBrowserDeliveries(deviceId: string): Promise<number> {
+  const cutoff = new Date(Date.now() - BROWSER_DELIVERY_LEASE_MS)
+  const stale = await prisma.liveBrowserCommand.findMany({
+    where: { deviceId, status: 'delivered', deliveredAt: { lt: cutoff } },
+    select: { id: true, deliveredAt: true, deliveryAttempts: true },
+  })
+  for (const row of stale) {
+    const observed = {
+      id: row.id,
+      deviceId,
+      status: 'delivered',
+      deliveredAt: row.deliveredAt,
+    }
+    if (row.deliveryAttempts >= MAX_BROWSER_DELIVERY_ATTEMPTS) {
+      await prisma.liveBrowserCommand.updateMany({
+        where: observed,
+        data: {
+          status: 'failed',
+          error: 'delivery_lost: Chrome companion did not receive the command after bounded retries',
+          resolvedAt: new Date(),
+        },
+      })
+    } else {
+      await prisma.liveBrowserCommand.updateMany({
+        where: observed,
+        data: { status: 'queued', deliveredAt: null },
+      })
+    }
+  }
+  return stale.length
+}
+
 export async function claimNextCommand(deviceId: string): Promise<{
   id: string
   action: string
   params: Record<string, unknown>
 } | null> {
+  await reclaimStaleBrowserDeliveries(deviceId).catch(() => {})
   const next = await prisma.liveBrowserCommand.findFirst({
     where: { deviceId, status: 'queued' },
     orderBy: { createdAt: 'asc' },
@@ -369,10 +595,17 @@ export async function claimNextCommand(deviceId: string): Promise<{
   })
   if (!next) return null
 
-  // Mark delivered (best-effort; single companion per device so no contention).
-  await prisma.liveBrowserCommand
-    .update({ where: { id: next.id }, data: { status: 'delivered', deliveredAt: new Date() } })
-    .catch(() => {})
+  // Conditional claim: an overdue result may commit between findFirst and this
+  // write. In that race, `done` wins and the command is never executed twice.
+  const claimed = await prisma.liveBrowserCommand.updateMany({
+    where: { id: next.id, deviceId, status: 'queued' },
+    data: {
+      status: 'delivered',
+      deliveredAt: new Date(),
+      deliveryAttempts: { increment: 1 },
+    },
+  })
+  if (claimed.count === 0) return null
 
   return {
     id: next.id,
@@ -385,29 +618,40 @@ export async function claimNextCommand(deviceId: string): Promise<{
 export async function resolveCommand(
   deviceId: string,
   commandId: string,
-  payload: { ok: boolean; data?: unknown; screenshot?: string | null; error?: string },
+  payload: {
+    ok: boolean
+    data?: unknown
+    screenshot?: string | null
+    error?: string
+    contextId?: string | null
+  },
 ): Promise<{ ok: boolean; ignored?: boolean }> {
+  const result: Record<string, unknown> = {}
+  if (payload.data !== undefined) result.data = payload.data
+  if (payload.screenshot) result.screenshot = payload.screenshot
+
+  const committed = await prisma.liveBrowserCommand.updateMany({
+    where: {
+      id: commandId,
+      deviceId,
+      status: { in: ['queued', 'delivered'] },
+    },
+    data: {
+      status: payload.ok ? 'done' : 'failed',
+      result: result as object,
+      error: payload.ok ? null : payload.error ?? 'unknown_error',
+      contextId: payload.contextId?.trim() || null,
+      resolvedAt: new Date(),
+    },
+  })
+  if (committed.count > 0) return { ok: true }
+
   const row = await prisma.liveBrowserCommand.findUnique({
     where: { id: commandId },
     select: { deviceId: true, status: true },
   })
   if (!row || row.deviceId !== deviceId) return { ok: false }
-  if (row.status === 'done' || row.status === 'failed') return { ok: true, ignored: true }
-
-  const result: Record<string, unknown> = {}
-  if (payload.data !== undefined) result.data = payload.data
-  if (payload.screenshot) result.screenshot = payload.screenshot
-
-  await prisma.liveBrowserCommand.update({
-    where: { id: commandId },
-    data: {
-      status: payload.ok ? 'done' : 'failed',
-      result: result as object,
-      error: payload.ok ? null : payload.error ?? 'unknown_error',
-      resolvedAt: new Date(),
-    },
-  })
-  return { ok: true }
+  return { ok: true, ignored: true }
 }
 
 export function isWriteAction(action: LiveBrowserAction): boolean {

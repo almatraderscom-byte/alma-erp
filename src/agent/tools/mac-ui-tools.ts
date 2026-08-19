@@ -241,7 +241,13 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
         data: {
           conversationId: input.conversationId ? String(input.conversationId) : null,
           type: 'mac_ui_action',
-          payload: { uiAction: action, ...params, deviceId: targetDeviceId, visualProof: true },
+          payload: {
+            uiAction: action,
+            ...params,
+            deviceId: targetDeviceId,
+            visualProof: true,
+            turnId: typeof input.turnId === 'string' ? input.turnId : null,
+          },
           summary,
           costEstimate: 0,
           status: 'pending',
@@ -265,6 +271,8 @@ async function handleUiAction(input: Record<string, any>, allowed: ReadonlySet<s
       action: action as Parameters<typeof enqueueCommand>[0]['action'],
       params,
       policyLevel: 'green',
+      turnId: typeof input.turnId === 'string' ? input.turnId : null,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
     })
 
     const outcome = await awaitResult(id, 60_000)

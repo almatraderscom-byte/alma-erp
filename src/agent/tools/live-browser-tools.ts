@@ -45,6 +45,23 @@ const oscCounts = new Map<string, { n: number; at: number }>()
 function conversationIdOf(input: Record<string, unknown>): string {
   return typeof input.conversationId === 'string' ? input.conversationId : 'na'
 }
+function browserActivityContextOf(input: Record<string, unknown>) {
+  return {
+    conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
+    turnId: typeof input.turnId === 'string' ? input.turnId : null,
+  }
+}
+type BoundBrowserCommand = (
+  action: LiveBrowserAction,
+  params?: Record<string, unknown>,
+) => ReturnType<typeof runCommand>
+function browserCommandRunner(
+  input: Record<string, unknown>,
+  deviceId: string,
+): BoundBrowserCommand {
+  const context = browserActivityContextOf(input)
+  return (action, params) => runCommand(deviceId, action, params, undefined, context)
+}
 function bumpOscillation(key: string): string | null {
   const now = Date.now()
   if (oscCounts.size > 500) {
@@ -82,12 +99,12 @@ function splitDataUrl(
  *  of the owner's browser turn — the very next steps captured fine). The retry
  *  costs one extra command ONLY on failure. */
 async function captureScreenshotWithRetry(
-  deviceId: string,
+  run: BoundBrowserCommand,
 ): Promise<Awaited<ReturnType<typeof runCommand>>> {
-  const first = await runCommand(deviceId, 'screenshot')
+  const first = await run('screenshot')
   if (first.ok) return first
   await new Promise((r) => setTimeout(r, 1500))
-  return runCommand(deviceId, 'screenshot')
+  return run('screenshot')
 }
 
 /** Persist a companion screenshot dataURL → signed URL the OWNER can open in chat. */
@@ -361,15 +378,16 @@ const live_browser_look: AgentTool = {
   handler: async (input) => {
     const dev = await requireActiveDevice(input.device as string | undefined)
     if (!dev.ok) return { success: false, error: dev.error }
+    const run = browserCommandRunner(input, dev.deviceId)
     try {
       const steps: string[] = []
       if (typeof input.url === 'string' && /^https?:\/\//i.test(input.url)) {
-        const nav = await runCommand(dev.deviceId, 'navigate', { url: input.url })
+        const nav = await run('navigate', { url: input.url })
         if (!nav.ok) return { success: false, error: `নেভিগেট ব্যর্থ: ${nav.error ?? nav.status}` }
         steps.push(`navigated:${input.url}`)
       }
       if (typeof input.scrollBy === 'number' && input.scrollBy !== 0) {
-        await runCommand(dev.deviceId, 'scroll', { by: input.scrollBy })
+        await run('scroll', { by: input.scrollBy })
         steps.push(`scrolled:${input.scrollBy}`)
       }
 
@@ -394,7 +412,7 @@ const live_browser_look: AgentTool = {
       let textReadOk = false
       let domReadOk = false
       if (want === 'text' || want === 'both') {
-        let r = await runCommand(dev.deviceId, 'read_text')
+        let r = await run('read_text')
         // up to 2 settle retries (≈2s apart) while the page still reads as a placeholder
         for (let retry = 0; retry < 2; retry++) {
           // A transport/tab read failure is not a loading placeholder. Retrying
@@ -402,8 +420,8 @@ const live_browser_look: AgentTool = {
           if (!r.ok) break
           const t = r.ok ? String((r.data as { text?: string } | undefined)?.text ?? '') : ''
           if (r.ok && !looksUnsettled(t)) break
-          await runCommand(dev.deviceId, 'wait', { ms: 2000 })
-          const again = await runCommand(dev.deviceId, 'read_text')
+          await run('wait', { ms: 2000 })
+          const again = await run('read_text')
           if (again.ok) { r = again; steps.push(`settle-retry:${retry + 1}`) }
         }
         if (r.ok) {
@@ -432,10 +450,10 @@ const live_browser_look: AgentTool = {
               // rounds (at least lazy content becomes visible), and say why the
               // full sweep didn't run.
               for (let i = 0; i < 2; i++) {
-                await runCommand(dev.deviceId, 'scroll', { by: 900 })
-                await runCommand(dev.deviceId, 'wait', { ms: 800 })
+                await run('scroll', { by: 900 })
+                await run('wait', { ms: 800 })
               }
-              const again = await runCommand(dev.deviceId, 'read_text')
+              const again = await run('read_text')
               if (again.ok) {
                 pageData = again.data as ReadTextData
                 rawText = typeof pageData?.text === 'string' ? pageData.text : rawText
@@ -449,7 +467,7 @@ const live_browser_look: AgentTool = {
               let total = rawText.length
               // 1) Window through text that is ALREADY in the DOM.
               for (let w = 0; w < 3 && pageData?.truncated && total < CAP; w++) {
-                const win = await runCommand(dev.deviceId, 'read_text', { from: total })
+                const win = await run('read_text', { from: total })
                 if (!win.ok) break
                 const wd = win.data as ReadTextData
                 const t = typeof wd?.text === 'string' ? wd.text : ''
@@ -464,9 +482,9 @@ const live_browser_look: AgentTool = {
               for (let i = 0; i < 6 && total < CAP && stagnant < 2; i++) {
                 if (pageData?.scroll?.atBottom && !pageData?.truncated) break
                 const vp = Number(pageData?.scroll?.viewport) || 800
-                await runCommand(dev.deviceId, 'scroll', { by: Math.round(vp * 0.9) })
-                await runCommand(dev.deviceId, 'wait', { ms: 750 })
-                const win = await runCommand(dev.deviceId, 'read_text', { from: total })
+                await run('scroll', { by: Math.round(vp * 0.9) })
+                await run('wait', { ms: 750 })
+                const win = await run('read_text', { from: total })
                 if (!win.ok) break
                 const wd = win.data as ReadTextData
                 const t = typeof wd?.text === 'string' ? wd.text : ''
@@ -529,7 +547,7 @@ const live_browser_look: AgentTool = {
         } else out.textError = r.error ?? r.status
       }
       if (want === 'dom' || want === 'both') {
-        const r = await runCommand(dev.deviceId, 'read_dom')
+        const r = await run('read_dom')
         if (r.ok) {
           domReadOk = true
           const domData = r.data as { url?: string; elements?: unknown } | undefined
@@ -594,7 +612,7 @@ const live_browser_look: AgentTool = {
       }
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (input.screenshot !== false) {
-        const shot = await captureScreenshotWithRetry(dev.deviceId)
+        const shot = await captureScreenshotWithRetry(run)
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)
           visionImage = splitDataUrl(shot.screenshot)
@@ -825,6 +843,7 @@ const live_browser_act: AgentTool = {
 
     const dev = await requireActiveDevice(input.device as string | undefined)
     if (!dev.ok) return { success: false, error: dev.error }
+    const run = browserCommandRunner(input, dev.deviceId)
 
     try {
       const params: Record<string, unknown> = {}
@@ -864,10 +883,10 @@ const live_browser_act: AgentTool = {
       // Real failures (lockdown, final-submit block, bad params) don't match and
       // surface immediately.
       const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found|step_timeout|page script timed out/i
-      let res = await runCommand(dev.deviceId, action, params)
+      let res = await run(action, params)
       for (let attempt = 0; attempt < 2 && !res.ok && TRANSIENT_RE.test(String(res.error ?? '')); attempt++) {
-        await runCommand(dev.deviceId, 'wait', { ms: 1600 })
-        res = await runCommand(dev.deviceId, action, params)
+        await run('wait', { ms: 1600 })
+        res = await run(action, params)
       }
       const out: Record<string, unknown> = {
         device: dev.name,
@@ -891,7 +910,7 @@ const live_browser_act: AgentTool = {
       // image) see the effect of the action (skip for plain waits).
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (res.ok && action !== 'wait') {
-        const shot = await captureScreenshotWithRetry(dev.deviceId)
+        const shot = await captureScreenshotWithRetry(run)
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)
           visionImage = splitDataUrl(shot.screenshot)

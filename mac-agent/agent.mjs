@@ -36,12 +36,14 @@ const LOG_FILE = join(CONFIG_DIR, 'agent.log')
 /** Owner's local override: `touch ~/.alma-mac-agent/PAUSED` and nothing runs. */
 const PAUSE_FILE = join(CONFIG_DIR, 'PAUSED')
 
-const AGENT_VERSION = '1.0.0'
+const AGENT_VERSION = '1.0.2'
 // Overridable so the integration test can drive the real daemon at speed instead
 // of testing a stubbed copy of it.
 const POLL_INTERVAL_MS = Number(process.env.ALMA_POLL_MS) || 3_000
 const POLL_INTERVAL_IDLE_MS = Number(process.env.ALMA_POLL_IDLE_MS) || 5_000
 const BACKOFF_MAX_MS = 60_000
+const RESULT_DELIVERY_ATTEMPTS = Math.max(1, Number(process.env.ALMA_RESULT_ATTEMPTS) || 6)
+const RESULT_RETRY_BASE_MS = Math.max(10, Number(process.env.ALMA_RESULT_RETRY_MS) || 2_000)
 
 // ---------------------------------------------------------------------------
 // Config + logging
@@ -339,6 +341,10 @@ const STREAM_MAX_SECONDS = 300
 let streamTimer = null
 let streamDeadline = 0
 let streamBusy = false
+// Exact server command the currently executing stream start came from. Every
+// frame echoes this proof so the server never guesses ownership from a queued
+// or lost poll response.
+let streamScope = null // { commandId, turnId, conversationId }
 // L9-B: the VIDEO engine — a spawned ScreenBroadcaster (ScreenCaptureKit →
 // Agora). Optional by design: binary missing or token route absent ⇒ the JPEG
 // frame pipe above stays the only channel, nothing breaks.
@@ -529,6 +535,7 @@ function stopScreenVideo() {
 
 function stopScreenStream(reason) {
   stopScreenVideo()
+  streamScope = null
   if (streamTimer) {
     clearInterval(streamTimer)
     streamTimer = null
@@ -558,9 +565,10 @@ async function captureFrame() {
   })
 }
 
-function startScreenStream(token, maxSeconds) {
+function startScreenStream(token, maxSeconds, scope) {
   const seconds = Math.min(Math.max(Number(maxSeconds) || STREAM_DEFAULT_SECONDS, 10), STREAM_MAX_SECONDS)
   streamDeadline = Date.now() + seconds * 1_000
+  streamScope = scope
   if (streamTimer) return { ok: true, exitCode: 0, stdout: JSON.stringify({ streaming: true, extended: true, seconds }) }
 
   log(`screen stream started (${seconds}s cap)`)
@@ -572,6 +580,7 @@ function startScreenStream(token, maxSeconds) {
     if (streamBusy) return
     streamBusy = true
     try {
+      const frameScope = streamScope
       const frame = await captureFrame()
       if (frame) {
         const res = await api('/api/assistant/mac-agent/frames', {
@@ -582,6 +591,11 @@ function startScreenStream(token, maxSeconds) {
             video: videoActive,
             displays: videoDisplayCount,
             displayIndex: videoDisplayIndex,
+            ...(frameScope ? {
+              streamCommandId: frameScope.commandId,
+              turnId: frameScope.turnId,
+              conversationId: frameScope.conversationId,
+            } : {}),
             ...(controlCounts.sessionId && Date.now() - controlCountsSentAt > 5_000
               ? {
                   controlSessionId: controlCounts.sessionId,
@@ -601,7 +615,9 @@ function startScreenStream(token, maxSeconds) {
         // is serial and a long shell command must not keep the screen
         // streaming after the owner pressed stop. 409 = kill-switch off,
         // 401 = this device was unpaired mid-stream: same conclusion, stop.
-        if (res?.json?.stop || res?.status === 409 || res?.status === 401) {
+        const scopeStillCurrent = !frameScope || streamScope?.commandId === frameScope.commandId
+        if (res?.status === 401
+          || ((res?.json?.stop || res?.status === 409) && scopeStillCurrent)) {
           stopScreenStream('owner (frame channel)')
         }
       }
@@ -714,7 +730,11 @@ async function handleCommand(cmd) {
         log('screen video: switching to display', String(requestedDisplay))
       }
     }
-    return startScreenStream(activeToken, params.maxSeconds)
+    return startScreenStream(activeToken, params.maxSeconds, {
+      commandId: cmd.id,
+      turnId: typeof cmd.turnId === 'string' ? cmd.turnId : null,
+      conversationId: typeof cmd.conversationId === 'string' ? cmd.conversationId : null,
+    })
   }
 
   if (cmd.action === 'power') {
@@ -812,6 +832,7 @@ async function pollOnce(token) {
 }
 
 const PENDING_RESULT_FILE = join(CONFIG_DIR, 'pending-result.json')
+let pendingResultInMemory = null
 
 /**
  * Deliver a result, and do not lose it if the network blinks.
@@ -822,37 +843,75 @@ const PENDING_RESULT_FILE = join(CONFIG_DIR, 'pending-result.json')
  * the server accepts it, and survives a daemon restart.
  */
 function savePendingResult(payload) {
+  const existing = readPendingResult()
+  if (existing) {
+    // This should be unreachable once the poll gate below is active. Fail
+    // closed anyway: receipt A is proof of an effect already executed and must
+    // never be overwritten by a later B.
+    log('refusing to overwrite pending result', existing.commandId, 'with', payload.commandId)
+    return false
+  }
+  pendingResultInMemory = payload
   try {
     ensureConfigDir()
     writeFileSync(PENDING_RESULT_FILE, JSON.stringify(payload), { mode: 0o600 })
   } catch {
     /* disk full / read-only: the in-memory retry below still applies */
   }
+  return true
 }
 
-function clearPendingResult() {
+function readPendingResult() {
+  if (pendingResultInMemory) return pendingResultInMemory
+  if (!existsSync(PENDING_RESULT_FILE)) return null
+  try {
+    const payload = JSON.parse(readFileSync(PENDING_RESULT_FILE, 'utf8'))
+    if (!payload || typeof payload.commandId !== 'string' || !payload.commandId) {
+      throw new Error('invalid pending result')
+    }
+    pendingResultInMemory = payload
+    return payload
+  } catch {
+    clearPendingResult()
+    return null
+  }
+}
+
+function clearPendingResult(commandId = null) {
+  if (commandId && pendingResultInMemory?.commandId !== commandId) return false
+  pendingResultInMemory = null
   try {
     if (existsSync(PENDING_RESULT_FILE)) rmSync(PENDING_RESULT_FILE)
   } catch {
     /* nothing to clear */
   }
+  return true
 }
 
 async function deliverResult(token, payload) {
-  for (let attempt = 1; attempt <= 6; attempt += 1) {
+  for (let attempt = 1; attempt <= RESULT_DELIVERY_ATTEMPTS; attempt += 1) {
     try {
       const res = await api('/api/assistant/mac-agent/result', { method: 'POST', token, body: payload })
       // A 404 means the row is gone (cancelled, or the owner unpaired) — the
       // result has nowhere to land, so stop rather than retry forever.
       if (res.ok || res.status === 404) {
-        clearPendingResult()
+        clearPendingResult(payload.commandId)
         return true
+      }
+      // Pairing is no longer valid. Keep the receipt (it may contain the only
+      // proof that a click/type happened) and block all later work until the
+      // owner repairs auth; never leak it into another command slot.
+      if (res.status === 401) {
+        log('result POST unauthorized — receipt retained; pair again')
+        return false
       }
       log(`result POST rejected (${res.status}) — attempt ${attempt}`)
     } catch (err) {
       log(`result POST failed — attempt ${attempt}:`, String(err?.message ?? err))
     }
-    await sleep(Math.min(2_000 * 2 ** (attempt - 1), 30_000))
+    if (attempt < RESULT_DELIVERY_ATTEMPTS) {
+      await sleep(Math.min(RESULT_RETRY_BASE_MS * 2 ** (attempt - 1), 30_000))
+    }
   }
   log('result still undelivered after retries — kept on disk for next start')
   return false
@@ -867,20 +926,16 @@ async function postResult(token, commandId, result) {
     stderr: result.stderr ?? '',
     error: result.error ?? null,
   }
-  savePendingResult(payload)
-  await deliverResult(token, payload)
+  if (!savePendingResult(payload)) return false
+  return await deliverResult(token, payload)
 }
 
 /** On start, hand over anything a previous run finished but could not deliver. */
 async function flushPendingResult(token) {
-  if (!existsSync(PENDING_RESULT_FILE)) return
-  try {
-    const payload = JSON.parse(readFileSync(PENDING_RESULT_FILE, 'utf8'))
-    log('delivering a result left over from the previous run:', payload.commandId)
-    await deliverResult(token, payload)
-  } catch {
-    clearPendingResult()
-  }
+  const payload = readPendingResult()
+  if (!payload) return true
+  log('delivering pending result before polling:', payload.commandId)
+  return await deliverResult(token, payload)
 }
 
 // ---------------------------------------------------------------------------
@@ -959,7 +1014,6 @@ async function loop() {
 
   log(`ALMA Mac Agent v${AGENT_VERSION} starting · host=${hostname()} · server=${baseUrl()}`)
   activeToken = cfg.token
-  await flushPendingResult(cfg.token)
   let backoff = 0
 
   // Session events drain on their OWN timer, not the poll heartbeat: a shell
@@ -983,6 +1037,13 @@ async function loop() {
         continue
       }
 
+      // Execute-once barrier: a completed page/UI effect owns the single result
+      // slot until the server ACKs it. No poll means no later command can run or
+      // overwrite that proof, including after all inner delivery retries fail.
+      if (!(await flushPendingResult(cfg.token))) {
+        throw new Error('pending result is still unacknowledged')
+      }
+
       const { command, paused } = await pollOnce(cfg.token)
       backoff = 0
       pausedByServer = Boolean(paused)
@@ -998,7 +1059,9 @@ async function loop() {
       } catch (err) {
         result = { ok: false, exitCode: null, error: String(err?.message ?? err) }
       }
-      await postResult(cfg.token, command.id, result)
+      if (!(await postResult(cfg.token, command.id, result))) {
+        throw new Error(`result for ${command.id} is still unacknowledged`)
+      }
     } catch (err) {
       // Network blips and deploys are normal; back off instead of spinning.
       backoff = Math.min(backoff ? backoff * 2 : 2_000, BACKOFF_MAX_MS)

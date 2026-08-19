@@ -60,10 +60,35 @@ export interface ActivityPreview {
   active: boolean
   /** A true Agora stream replaces the Mac fallback frame in native clients. */
   videoDeviceId?: string | null
+  /** Additive activity/frame identity for turn-bound native docks. */
+  turnId?: string | null
+  conversationId?: string | null
+  activityId?: string | null
+  sourceState?: 'starting' | 'live' | 'between_steps' | 'done' | 'failed'
+  activityAt?: string | null
+  frameAt?: string | null
+  frameSeq?: number | null
+  autoStreamOwned?: boolean
 }
 
-export function browserPreviewId(deviceId: string): string {
-  return `browser:${deviceId}`
+export function browserPreviewId(deviceId: string, tabContextId?: string | null): string {
+  return tabContextId ? `browser:${deviceId}:${tabContextId}` : `browser:${deviceId}`
+}
+
+function boundedActivityId(value: string | null): string | null {
+  const id = value?.trim() ?? ''
+  return id.length > 0 && id.length <= 200 ? id : null
+}
+
+export function activityCommandBinding(
+  turnId: string | null,
+  conversationId: string | null,
+): Record<string, string | null> {
+  // An unscoped legacy client may see only rows produced by legacy/manual
+  // callers. Omitting this predicate used to expose every bound task to it.
+  return turnId && conversationId
+    ? { turnId, conversationId }
+    : { turnId: null, conversationId: null }
 }
 
 /** Parse the bounded per-card conditional-frame map sent by the new docks. */
@@ -106,6 +131,80 @@ export interface BrowserActivityRow {
   params: unknown
   status: string
   createdAt: Date
+  resolvedAt?: Date | null
+  turnId?: string | null
+  conversationId?: string | null
+  contextId?: string | null
+}
+
+interface BrowserFrameMetaRow {
+  deviceId: string
+  contextId: string
+  capturedAt: Date
+  sequence: number
+  turnId: string
+  conversationId: string
+}
+
+interface MacFrameMetaRow {
+  deviceId: string
+  at: Date
+  sequence: number
+  turnId: string | null
+  conversationId: string | null
+}
+
+export function sameMacFrameActivity(
+  frame: Pick<MacFrameMetaRow, 'turnId' | 'conversationId'>,
+  turnId: string | null,
+  conversationId: string | null,
+): boolean {
+  return !turnId || !conversationId
+    ? frame.turnId === null && frame.conversationId === null
+    : frame.turnId === turnId && frame.conversationId === conversationId
+}
+
+export function macVideoStampIsActive(
+  value: string | null,
+  turnId: string | null,
+  conversationId: string | null,
+  now = Date.now(),
+): boolean {
+  if (!value) return false
+  let at = value
+  let stampTurnId: string | null = null
+  let stampConversationId: string | null = null
+  try {
+    const parsed = JSON.parse(value) as {
+      at?: unknown
+      turnId?: unknown
+      conversationId?: unknown
+    }
+    if (typeof parsed.at !== 'string') return false
+    at = parsed.at
+    stampTurnId = typeof parsed.turnId === 'string' ? parsed.turnId : null
+    stampConversationId = typeof parsed.conversationId === 'string' ? parsed.conversationId : null
+  } catch {
+    // Legacy stamps were plain ISO strings and are safe only for unscoped feeds.
+  }
+  if (!Number.isFinite(Date.parse(at)) || now - Date.parse(at) >= 10_000) return false
+  return turnId && conversationId
+    ? stampTurnId === turnId && stampConversationId === conversationId
+    : stampTurnId === null && stampConversationId === null
+}
+
+export function activityAllowsVideoIdentity(
+  boundRequested: boolean,
+  turnStatus: string | null,
+): boolean {
+  return !boundRequested || turnStatus === 'running'
+}
+
+export function effectiveBrowserTabContext(
+  commandContextId: string | null | undefined,
+  newestFrameContextId: string | null | undefined,
+): string | null {
+  return commandContextId?.trim() || newestFrameContextId?.trim() || null
 }
 
 interface BrowserDeviceActivity {
@@ -130,6 +229,13 @@ export interface MacPreviewState {
   labelBn: string
   active: boolean
   videoActive: boolean
+  turnId?: string | null
+  conversationId?: string | null
+  activityId?: string | null
+  sourceState?: ActivityPreview['sourceState']
+  activityAt?: string | null
+  frameSeq?: number | null
+  autoStreamOwned?: boolean
 }
 
 /**
@@ -147,7 +253,27 @@ export function projectMacPreviews(states: MacPreviewState[]): ActivityPreview[]
       labelBn: state.labelBn,
       active: state.active || state.videoActive,
       videoDeviceId: state.videoActive ? state.deviceId : null,
+      turnId: state.turnId,
+      conversationId: state.conversationId,
+      activityId: state.activityId,
+      sourceState: state.sourceState,
+      activityAt: state.activityAt,
+      frameAt: state.screenshotAt,
+      frameSeq: state.frameSeq,
+      autoStreamOwned: state.autoStreamOwned,
     }))
+}
+
+export function boundPreviewSourceState(input: {
+  turnStatus: string | null
+  hasSource: boolean
+  hasFreshFrame: boolean
+}): ActivityPreview['sourceState'] {
+  if (input.turnStatus === 'error' || input.turnStatus === 'canceled') return 'failed'
+  if (input.turnStatus && input.turnStatus !== 'running') return 'done'
+  if (input.hasFreshFrame) return 'live'
+  if (input.hasSource) return 'between_steps'
+  return 'starting'
 }
 
 export function singleMacPreviewVideoDeviceId(previews: ActivityPreview[]): string | null {
@@ -175,6 +301,13 @@ interface MacActivityRow {
   status: string
   policyLevel: string | null
   createdAt: Date
+  resolvedAt?: Date | null
+  turnId?: string | null
+  conversationId?: string | null
+}
+
+function commandActivityAt(row: { createdAt: Date; resolvedAt?: Date | null }): Date {
+  return row.resolvedAt ?? row.createdAt
 }
 
 interface MacDeviceActivity {
@@ -321,6 +454,22 @@ export async function GET(req: NextRequest) {
 
   const since = new Date(Date.now() - ACTIVE_WINDOW_MS)
   const db = prisma as any
+  const requestedTurnId = boundedActivityId(req.nextUrl.searchParams.get('turnId'))
+  const requestedConversationId = boundedActivityId(req.nextUrl.searchParams.get('conversationId'))
+  if (Boolean(requestedTurnId) !== Boolean(requestedConversationId)) {
+    return Response.json({ error: 'turnId_and_conversationId_required_together' }, { status: 400 })
+  }
+  const boundRequested = Boolean(requestedTurnId && requestedConversationId)
+  const boundTurn: { id: string; conversationId: string; status: string; startedAt: Date; finishedAt: Date | null } | null =
+    boundRequested
+      ? await db.agentTurn.findFirst({
+          where: { id: requestedTurnId, conversationId: requestedConversationId },
+          select: { id: true, conversationId: true, status: true, startedAt: true, finishedAt: true },
+        }).catch(() => null)
+      : null
+  // Even a missing/terminal requested turn stays scoped to its exact ids; never
+  // fall back to owner-global history and show pixels from another task.
+  const commandBinding = activityCommandBinding(requestedTurnId, requestedConversationId)
 
   // Parse conditional-frame state before the queries so every surface uses the
   // same per-card cache semantics.
@@ -347,12 +496,13 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           commands: {
-            where: { createdAt: { gte: since } },
+            where: { createdAt: { gte: since }, ...commandBinding },
             orderBy: { createdAt: 'desc' },
             take: RECENT_STEPS,
             select: {
               id: true, action: true, params: true, status: true,
-              policyLevel: true, createdAt: true,
+              policyLevel: true, createdAt: true, resolvedAt: true,
+              turnId: true, conversationId: true,
             },
           },
         },
@@ -365,11 +515,12 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           commands: {
-            where: { createdAt: { gte: since } },
+            where: { createdAt: { gte: since }, ...commandBinding },
             orderBy: { createdAt: 'desc' },
             take: RECENT_STEPS,
             select: {
               id: true, action: true, params: true, status: true, createdAt: true,
+              resolvedAt: true, turnId: true, conversationId: true, contextId: true,
             },
           },
         },
@@ -378,6 +529,9 @@ export async function GET(req: NextRequest) {
   ])
   const typedMacDevices = macDevices as MacDeviceActivity[]
   const macDeviceIds = typedMacDevices.map((device) => device.id)
+  const boundMacDeviceIds = boundRequested
+    ? typedMacDevices.filter((device) => (device.commands?.length ?? 0) > 0).map((device) => device.id)
+    : macDeviceIds
   const macDeviceNameById = new Map(
     typedMacDevices.map((device) => [device.id, device.name ?? null]),
   )
@@ -386,6 +540,7 @@ export async function GET(req: NextRequest) {
   const browserDeviceNameById = new Map(
     typedBrowserDevices.map((device) => [device.id, device.name ?? null]),
   )
+  const sessionDeviceIds = boundRequested ? [] : macDeviceIds
 
   // Retry driver for owed session notifications: a session waiting on the
   // owner's answer (or already ended) may never emit another event, so the
@@ -394,7 +549,7 @@ export async function GET(req: NextRequest) {
   void import('@/agent/lib/mac-agent/session-push')
     .then((m) => m.sweepOwedSessionPushes(db))
     .catch(() => {})
-  const [macShotMetaRows, browserShotMetaRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows, frameMetas] =
+  const [macShotMetaRows, browserShotMetaRows, sessionEventRows, sessionNewestRows, sessionCostRows, sessionErrRows, sessionOkRows, frameMetas, browserFrameMetas] =
     await Promise.all([
     // Preserve one screenshot source per Mac even when a busy device produced
     // more than RECENT_STEPS newer non-screenshot commands.
@@ -404,12 +559,14 @@ export async function GET(req: NextRequest) {
           deviceId: { in: macDeviceIds },
           action: { in: ['screenshot', 'ui_screenshot'] },
           createdAt: { gte: since },
+          ...commandBinding,
         },
         orderBy: { createdAt: 'desc' },
         distinct: ['deviceId'],
         select: {
           id: true, deviceId: true, action: true, params: true, status: true,
-          policyLevel: true, createdAt: true,
+          policyLevel: true, createdAt: true, resolvedAt: true,
+          turnId: true, conversationId: true,
         },
       })
       .catch(() => []),
@@ -421,17 +578,19 @@ export async function GET(req: NextRequest) {
           deviceId: { in: browserDeviceIds },
           action: 'screenshot',
           createdAt: { gte: since },
+          ...commandBinding,
         },
         orderBy: { createdAt: 'desc' },
-        distinct: ['deviceId'],
+        distinct: ['deviceId', 'contextId'],
         select: {
           id: true, deviceId: true, action: true, params: true, status: true, createdAt: true,
+          resolvedAt: true, turnId: true, conversationId: true, contextId: true,
         },
       })
       .catch(() => []),
     db.macAgentSessionEvent
       .findMany({
-        where: { deviceId: { in: macDeviceIds }, createdAt: { gte: since } },
+        where: { deviceId: { in: sessionDeviceIds }, createdAt: { gte: since } },
         orderBy: { at: 'desc' },
         take: RECENT_STEPS,
         select: { id: true, sessionId: true, tool: true, kind: true, text: true, isError: true, costUsd: true, at: true },
@@ -442,7 +601,7 @@ export async function GET(req: NextRequest) {
     // events the window holds — no cap to fall off (Codex, L5 round 2).
     db.macAgentSessionEvent
       .findMany({
-        where: { deviceId: { in: macDeviceIds }, createdAt: { gte: since } },
+        where: { deviceId: { in: sessionDeviceIds }, createdAt: { gte: since } },
         orderBy: { at: 'desc' },
         distinct: ['sessionId'],
         select: { sessionId: true, tool: true, kind: true, text: true, isError: true, at: true },
@@ -452,7 +611,7 @@ export async function GET(req: NextRequest) {
     db.macAgentSessionEvent
       .groupBy({
         by: ['sessionId'],
-        where: { deviceId: { in: macDeviceIds }, createdAt: { gte: since } },
+        where: { deviceId: { in: sessionDeviceIds }, createdAt: { gte: since } },
         _sum: { costUsd: true },
       })
       .catch(() => []),
@@ -462,7 +621,7 @@ export async function GET(req: NextRequest) {
       .groupBy({
         by: ['sessionId'],
         where: {
-          deviceId: { in: macDeviceIds },
+          deviceId: { in: sessionDeviceIds },
           createdAt: { gte: since },
           OR: [{ kind: 'error' }, { kind: 'turn_done', isError: true }],
         },
@@ -474,7 +633,7 @@ export async function GET(req: NextRequest) {
       .groupBy({
         by: ['sessionId'],
         where: {
-          deviceId: { in: macDeviceIds },
+          deviceId: { in: sessionDeviceIds },
           createdAt: { gte: since },
           kind: 'turn_done',
           isError: false,
@@ -486,12 +645,37 @@ export async function GET(req: NextRequest) {
     // fetched below only when it beats what the client already holds.
     db.macAgentFrame
       .findMany({
-        where: { deviceId: { in: macDeviceIds }, at: { gte: since } },
+        where: {
+          deviceId: { in: boundMacDeviceIds },
+          at: { gte: since },
+          ...commandBinding,
+        },
         orderBy: { at: 'desc' },
         distinct: ['deviceId'],
-        select: { deviceId: true, at: true },
+        select: {
+          deviceId: true,
+          at: true,
+          sequence: true,
+          turnId: true,
+          conversationId: true,
+        },
       })
       .catch(() => []),
+    boundRequested
+      ? db.liveBrowserFrame.findMany({
+        where: {
+          deviceId: { in: browserDeviceIds },
+          capturedAt: { gte: since },
+          turnId: requestedTurnId,
+          conversationId: requestedConversationId,
+        },
+        orderBy: { capturedAt: 'desc' },
+        select: {
+          deviceId: true, contextId: true, capturedAt: true, sequence: true,
+          turnId: true, conversationId: true,
+        },
+        }).catch(() => [])
+      : Promise.resolve([]),
   ])
 
   const steps: ActivityStep[] = []
@@ -504,6 +688,13 @@ export async function GET(req: NextRequest) {
     browser: { screenshot: null, at: null },
   }
   const typedBrowserRows = flattenBrowserDeviceRows(typedBrowserDevices)
+  const typedBrowserFrameMetas = browserFrameMetas as BrowserFrameMetaRow[]
+  const newestFrameContextByDevice = new Map<string, string>()
+  for (const frame of typedBrowserFrameMetas) {
+    if (!newestFrameContextByDevice.has(frame.deviceId)) {
+      newestFrameContextByDevice.set(frame.deviceId, frame.contextId)
+    }
+  }
   for (const shot of browserShotMetaRows as Array<Omit<BrowserActivityRow, 'device'>>) {
     if (typedBrowserRows.some((row) => row.id === shot.id)) continue
     typedBrowserRows.push({
@@ -514,7 +705,11 @@ export async function GET(req: NextRequest) {
   typedBrowserRows.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
   const browserRowsByContext = new Map<string, BrowserActivityRow[]>()
   for (const row of typedBrowserRows) {
-    const id = browserPreviewId(row.deviceId)
+    row.contextId = effectiveBrowserTabContext(
+      row.contextId,
+      newestFrameContextByDevice.get(row.deviceId),
+    )
+    const id = browserPreviewId(row.deviceId, row.contextId)
     const list = browserRowsByContext.get(id) ?? []
     list.push(row)
     browserRowsByContext.set(id, list)
@@ -543,7 +738,7 @@ export async function GET(req: NextRequest) {
       detail: proofActionLabel ?? command,
       status: normalizeStatus(r.status),
       policy: r.policyLevel ?? null,
-      at: r.createdAt.toISOString(),
+      at: commandActivityAt(r).toISOString(),
       contextId: `mac:${r.deviceId}`,
     })
   }
@@ -559,8 +754,8 @@ export async function GET(req: NextRequest) {
       detail: target ?? null,
       status: normalizeStatus(String(r.status)),
       policy: null,
-      at: (r.createdAt as Date).toISOString(),
-      contextId: browserPreviewId(r.deviceId),
+      at: commandActivityAt(r).toISOString(),
+      contextId: browserPreviewId(r.deviceId, r.contextId),
     })
   }
 
@@ -575,24 +770,78 @@ export async function GET(req: NextRequest) {
   const browserShotIdsToFetch = newestBrowserShotRows
     .filter(({ contextId, row }) => {
       const held = heldPreviewAt(previewAfter, hasPreviewAfter, contextId, browserScreenshotAfter)
-      return !held || row.createdAt.toISOString() > held
+      return !held || commandActivityAt(row).toISOString() > held
     })
     .map(({ row }) => row.id)
-  const browserShotPayloadRows: Array<{ id: string; result: unknown; createdAt: Date }> =
+  const browserShotPayloadRows: Array<{ id: string; result: unknown; createdAt: Date; resolvedAt: Date | null }> =
     browserShotIdsToFetch.length
       ? await db.liveBrowserCommand.findMany({
           where: { id: { in: browserShotIdsToFetch } },
-          select: { id: true, result: true, createdAt: true },
+          select: { id: true, result: true, createdAt: true, resolvedAt: true },
         }).catch(() => [])
       : []
   const browserShotPayloadById = new Map(browserShotPayloadRows.map((row) => [row.id, row]))
-  const browserContextShots = new Map<string, { screenshot: string | null; at: string }>()
+  const browserContextShots = new Map<string, {
+    screenshot: string | null
+    at: string
+    frameSeq: number | null
+    turnId: string | null
+    conversationId: string | null
+  }>()
   for (const { contextId, row } of newestBrowserShotRows) {
     const full = browserShotPayloadById.get(row.id)
     const result = (full?.result as Record<string, unknown> | null) ?? null
     const frame = result && typeof result.screenshot === 'string' ? result.screenshot : null
-    const at = row.createdAt.toISOString()
-    browserContextShots.set(contextId, { screenshot: frame, at })
+    const at = commandActivityAt(row).toISOString()
+    browserContextShots.set(contextId, {
+      screenshot: frame,
+      at,
+      frameSeq: null,
+      turnId: row.turnId ?? null,
+      conversationId: row.conversationId ?? null,
+    })
+  }
+
+  const browserFramePairsToFetch = typedBrowserFrameMetas.filter((row) => {
+    const contextId = browserPreviewId(row.deviceId, row.contextId)
+    const held = heldPreviewAt(previewAfter, hasPreviewAfter, contextId, browserScreenshotAfter)
+    return !held || row.capturedAt.toISOString() > held
+  })
+  const browserFramePayloadRows: Array<BrowserFrameMetaRow & { dataUri: string }> =
+    browserFramePairsToFetch.length > 0
+      ? await db.liveBrowserFrame.findMany({
+          where: {
+            OR: browserFramePairsToFetch.map((row) => ({
+              deviceId: row.deviceId,
+              contextId: row.contextId,
+              turnId: row.turnId,
+              conversationId: row.conversationId,
+              capturedAt: row.capturedAt,
+              sequence: row.sequence,
+            })),
+          },
+          select: {
+            deviceId: true, contextId: true, dataUri: true, capturedAt: true,
+            sequence: true, turnId: true, conversationId: true,
+          },
+        }).catch(() => [])
+      : []
+  const browserFramePayloadByContext = new Map(
+    browserFramePayloadRows.map((row) => [browserPreviewId(row.deviceId, row.contextId), row]),
+  )
+  for (const row of typedBrowserFrameMetas) {
+    const contextId = browserPreviewId(row.deviceId, row.contextId)
+    const at = row.capturedAt.toISOString()
+    const current = browserContextShots.get(contextId)
+    if (current && current.at >= at) continue
+    const full = browserFramePayloadByContext.get(contextId)
+    browserContextShots.set(contextId, {
+      screenshot: full?.dataUri?.startsWith('data:image') ? full.dataUri : null,
+      at,
+      frameSeq: row.sequence,
+      turnId: row.turnId,
+      conversationId: row.conversationId,
+    })
   }
   const newestBrowserContextShot = [...browserContextShots.values()]
     .sort((a, b) => b.at.localeCompare(a.at))[0]
@@ -702,7 +951,7 @@ export async function GET(req: NextRequest) {
   const justFinishedCutoff = new Date(Date.now() - JUST_FINISHED_MS).toISOString()
   const justFinished = trimmed.filter((s) => s.at > justFinishedCutoff)
 
-  const frameMetaRows = frameMetas as Array<{ deviceId: string; at: Date }>
+  const frameMetaRows = frameMetas as MacFrameMetaRow[]
   const freshFrameMetaRows = frameMetaRows.filter((row) => Date.now() - row.at.getTime() < 10_000)
   const macRowsByDevice = new Map<string, MacActivityRow[]>()
   for (const row of typedMacRows) {
@@ -725,49 +974,86 @@ export async function GET(req: NextRequest) {
     .filter((row) => {
       const contextId = `mac:${row.deviceId}`
       const held = heldPreviewAt(previewAfter, hasPreviewAfter, contextId, macScreenshotAfter)
-      return !held || row.createdAt.toISOString() > held
+      return !held || commandActivityAt(row).toISOString() > held
     })
     .map((row) => row.id)
-  const macCommandPayloadRows: Array<{ id: string; stdout: string | null; createdAt: Date }> =
+  const macCommandPayloadRows: Array<{
+    id: string
+    stdout: string | null
+    createdAt: Date
+    resolvedAt: Date | null
+  }> =
     macCommandIdsToFetch.length
       ? await db.macAgentCommand.findMany({
           where: { id: { in: macCommandIdsToFetch } },
-          select: { id: true, stdout: true, createdAt: true },
+          select: { id: true, stdout: true, createdAt: true, resolvedAt: true },
         }).catch(() => [])
       : []
   const macCommandPayloadById = new Map(macCommandPayloadRows.map((row) => [row.id, row]))
-  const macShotsByDevice = new Map<string, { screenshot: string | null; at: string }>()
+  const macShotsByDevice = new Map<string, {
+    screenshot: string | null
+    at: string
+    frameSeq: number | null
+  }>()
   for (const row of newestMacCommandShots) {
     const full = macCommandPayloadById.get(row.id)
     const dataUri = typeof full?.stdout === 'string' && full.stdout.startsWith('data:image')
       ? full.stdout : null
-    macShotsByDevice.set(row.deviceId, { screenshot: dataUri, at: row.createdAt.toISOString() })
+    macShotsByDevice.set(row.deviceId, {
+      screenshot: dataUri,
+      at: commandActivityAt(row).toISOString(),
+      frameSeq: null,
+    })
   }
 
-  const frameDeviceIdsToFetch = frameMetaRows
+  const frameMetasToFetch = frameMetaRows
     .filter((row) => {
       const contextId = `mac:${row.deviceId}`
       const held = heldPreviewAt(previewAfter, hasPreviewAfter, contextId, macScreenshotAfter)
       return !held || row.at.toISOString() > held
     })
-    .map((row) => row.deviceId)
-  const macFramePayloadRows: Array<{ deviceId: string; dataUri: string; at: Date }> =
-    frameDeviceIdsToFetch.length
+  const macFramePayloadRows: Array<MacFrameMetaRow & { dataUri: string }> =
+    frameMetasToFetch.length
       ? await db.macAgentFrame.findMany({
-          where: { deviceId: { in: frameDeviceIdsToFetch } },
-          select: { deviceId: true, dataUri: true, at: true },
+          where: {
+            OR: frameMetasToFetch.map((row) => ({
+              deviceId: row.deviceId,
+              at: row.at,
+              sequence: row.sequence,
+              turnId: row.turnId,
+              conversationId: row.conversationId,
+            })),
+          },
+          select: {
+            deviceId: true,
+            dataUri: true,
+            at: true,
+            sequence: true,
+            turnId: true,
+            conversationId: true,
+          },
         }).catch(() => [])
       : []
   const macFramePayloadByDevice = new Map(
-    macFramePayloadRows.map((row) => [row.deviceId, row]),
+    macFramePayloadRows.map((row) => [
+      `${row.deviceId}:${row.sequence}:${row.at.toISOString()}`,
+      row,
+    ]),
   )
   for (const frame of frameMetaRows) {
     const iso = frame.at.toISOString()
     const current = macShotsByDevice.get(frame.deviceId)
     if (current && current.at >= iso) continue
-    const full = macFramePayloadByDevice.get(frame.deviceId)
-    const dataUri = full?.dataUri?.startsWith('data:image') ? full.dataUri : null
-    macShotsByDevice.set(frame.deviceId, { screenshot: dataUri, at: iso })
+    const full = macFramePayloadByDevice.get(`${frame.deviceId}:${frame.sequence}:${iso}`)
+    const exactActivity = full
+      ? sameMacFrameActivity(full, requestedTurnId, requestedConversationId)
+      : false
+    const dataUri = exactActivity && full?.dataUri?.startsWith('data:image') ? full.dataUri : null
+    macShotsByDevice.set(frame.deviceId, {
+      screenshot: dataUri,
+      at: iso,
+      frameSeq: frame.sequence,
+    })
   }
 
   const newestMacShot = [...macShotsByDevice.values()]
@@ -784,11 +1070,20 @@ export async function GET(req: NextRequest) {
     : []
   const activeVideoDeviceIds = new Set(
     videoStampRows
-      .filter((row) => row.value && Date.now() - Date.parse(row.value) < 10_000)
+      .filter((row) => macVideoStampIsActive(
+        row.value,
+        requestedTurnId,
+        requestedConversationId,
+      ))
       .map((row) => row.key.slice('mac_video_active:'.length)),
   )
-  const videoDeviceId = freshFrameMetaRows
-    .find((row) => activeVideoDeviceIds.has(row.deviceId))?.deviceId ?? null
+  const videoIdentityAllowed = activityAllowsVideoIdentity(
+    boundRequested,
+    boundTurn?.status ?? null,
+  )
+  const videoDeviceId = videoIdentityAllowed
+    ? freshFrameMetaRows.find((row) => activeVideoDeviceIds.has(row.deviceId))?.deviceId ?? null
+    : null
 
   // RC-3 — screens available on the streaming Mac, so the dock can offer a
   // picker. Absent (or 1) means there is nothing to choose.
@@ -822,30 +1117,63 @@ export async function GET(req: NextRequest) {
   const heldAt = screenshotAt as string | null
   if (screenshotAfter && heldAt && heldAt <= screenshotAfter) screenshot = null
 
-  const browserPreviews = [...browserRowsByContext.entries()].map<ActivityPreview | null>(([contextId, rows]) => {
+  const browserFrameMetaByContext = new Map(
+    typedBrowserFrameMetas.map((row) => [browserPreviewId(row.deviceId, row.contextId), row]),
+  )
+  const browserContextIds = new Set([
+    ...browserRowsByContext.keys(),
+    ...browserContextShots.keys(),
+  ])
+  const browserPreviews = [...browserContextIds].map<ActivityPreview | null>((contextId) => {
+    const rows = browserRowsByContext.get(contextId) ?? []
     const sourceCurrent = rows.find((row) => {
       const status = normalizeStatus(row.status)
       return status === 'running' || status === 'queued'
-    }) ?? rows.find((row) => row.createdAt.toISOString() > justFinishedCutoff) ?? rows[0]
-    const sourceActive = rows.some((row) => {
+    }) ?? rows.find((row) => commandActivityAt(row).toISOString() > justFinishedCutoff) ?? rows[0]
+    const legacySourceActive = rows.some((row) => {
       const status = normalizeStatus(row.status)
       return status === 'running' || status === 'queued'
-        || row.createdAt.toISOString() > justFinishedCutoff
+        || commandActivityAt(row).toISOString() > justFinishedCutoff
     })
     const shot = browserContextShots.get(contextId)
-    if (!shot && !sourceActive) return null
+    const frameMeta = browserFrameMetaByContext.get(contextId)
+    const frameFresh = Boolean(frameMeta && Date.now() - frameMeta.capturedAt.getTime() < 5_000)
+    const hasSource = rows.length > 0 || Boolean(shot)
+    const sourceActive = boundRequested
+      ? boundTurn?.status === 'running' && hasSource
+      : legacySourceActive || frameFresh
+    if (!shot && !sourceActive && rows.length === 0) return null
     const baseLabel = sourceCurrent
       ? (BROWSER_LABEL[sourceCurrent.action] ?? `🌐 ${sourceCurrent.action}`)
       : '🌐 ব্রাউজারে কাজ করছে'
+    const deviceId = sourceCurrent?.deviceId ?? frameMeta?.deviceId ?? ''
     const deviceName = sourceCurrent?.device?.name?.trim()
+      ?? browserDeviceNameById.get(deviceId)?.trim()
+    const activityAt = [
+      shot?.at ?? null,
+      sourceCurrent ? commandActivityAt(sourceCurrent).toISOString() : null,
+    ].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null
     return {
       surface: 'browser' as const,
       contextId,
       screenshot: shot?.screenshot ?? null,
       screenshotAt: shot?.at ?? null,
-      labelBn: browserRowsByContext.size > 1 && deviceName
+      labelBn: browserContextIds.size > 1 && deviceName
         ? `${baseLabel} · ${deviceName}` : baseLabel,
       active: sourceActive,
+      turnId: shot?.turnId ?? sourceCurrent?.turnId ?? requestedTurnId,
+      conversationId: shot?.conversationId ?? sourceCurrent?.conversationId ?? requestedConversationId,
+      activityId: requestedTurnId ? `turn:${requestedTurnId}:${contextId}` : null,
+      sourceState: boundRequested
+        ? boundPreviewSourceState({
+            turnStatus: boundTurn?.status ?? null,
+            hasSource,
+            hasFreshFrame: frameFresh,
+          })
+        : frameFresh ? 'live' : sourceActive ? 'between_steps' : 'done',
+      activityAt,
+      frameAt: shot?.at ?? null,
+      frameSeq: shot?.frameSeq ?? null,
     }
   }).filter((preview): preview is ActivityPreview => preview !== null)
 
@@ -857,13 +1185,13 @@ export async function GET(req: NextRequest) {
         const status = normalizeStatus(row.status)
         return status === 'running' || status === 'queued'
       }) ??
-      sourceRows.find((row) => row.createdAt.toISOString() > justFinishedCutoff) ??
+      sourceRows.find((row) => commandActivityAt(row).toISOString() > justFinishedCutoff) ??
       sourceRows[0]
     const frameActive = freshFrameMetaRows.some((row) => row.deviceId === deviceId)
-    const sourceActive = sourceRows.some((row) => {
+    const legacySourceActive = sourceRows.some((row) => {
       const status = normalizeStatus(row.status)
       return status === 'running' || status === 'queued'
-        || row.createdAt.toISOString() > justFinishedCutoff
+        || commandActivityAt(row).toISOString() > justFinishedCutoff
     }) || frameActive
     const params = (sourceCurrent?.params as Record<string, unknown> | null) ?? null
     const command = params && typeof params.command === 'string' ? params.command : null
@@ -872,6 +1200,22 @@ export async function GET(req: NextRequest) {
       : '💻 Mac-এ কাজ করছে'
     const deviceName = macDeviceNameById.get(deviceId)?.trim()
     const shot = macShotsByDevice.get(deviceId)
+    const hasSource = sourceRows.length > 0 || Boolean(shot)
+    const sourceActive = boundRequested
+      ? boundTurn?.status === 'running' && hasSource
+      : legacySourceActive
+    const videoActive = videoIdentityAllowed
+      && activeVideoDeviceIds.has(deviceId)
+      && (!boundRequested || hasSource)
+    const activityAt = [
+      shot?.at ?? null,
+      sourceCurrent ? commandActivityAt(sourceCurrent).toISOString() : null,
+    ].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null
+    const autoStreamOwned = sourceRows.some((row) => {
+      if (row.action !== 'screen_stream') return false
+      const stream = (row.params as Record<string, unknown> | null) ?? null
+      return stream?.mode === 'start' && stream?.reason === 'computer_use'
+    })
     return {
       deviceId,
       screenshot: shot?.screenshot ?? null,
@@ -879,7 +1223,20 @@ export async function GET(req: NextRequest) {
       labelBn: macDeviceIds.length > 1 && deviceName
         ? `${baseLabel} · ${deviceName}` : baseLabel,
       active: sourceActive,
-      videoActive: activeVideoDeviceIds.has(deviceId),
+      videoActive,
+      turnId: sourceCurrent?.turnId ?? requestedTurnId,
+      conversationId: sourceCurrent?.conversationId ?? requestedConversationId,
+      activityId: requestedTurnId ? `turn:${requestedTurnId}:mac:${deviceId}` : null,
+      sourceState: boundRequested
+        ? boundPreviewSourceState({
+            turnStatus: boundTurn?.status ?? null,
+            hasSource,
+            hasFreshFrame: frameActive,
+          })
+        : frameActive ? 'live' : sourceActive ? 'between_steps' : 'done',
+      activityAt,
+      frameSeq: shot?.frameSeq ?? null,
+      autoStreamOwned,
     }
   })
   const macPreviews = projectMacPreviews(macPreviewStates)
@@ -894,16 +1251,17 @@ export async function GET(req: NextRequest) {
       // owner should never have a player sitting on his chat doing nothing. A
       // live stream IS work in flight: a frame fresher than ~10s keeps the
       // dock up and the poll fast even when no command row moved.
-      active:
-        activityFeedIsActive({
+      active: boundRequested
+        ? boundTurn?.status === 'running' && (previews.length > 0 || trimmed.length > 0)
+        : activityFeedIsActive({
           runningCount: running.length,
           justFinishedCount: justFinished.length,
           previews,
           freshMacFrameCount: freshFrameMetaRows.length,
-        }),
+          }),
       /** L7 — server truth for the docks' stream toggle: a client that
        *  remounts mid-stream must show STOP, not a second start. */
-      streaming: freshFrameMetaRows.length > 0,
+      streaming: videoIdentityAllowed && freshFrameMetaRows.length > 0,
       current: running[0] ?? justFinished[0] ?? trimmed[0] ?? null,
       steps: trimmed,
       /** L5: per-session status + cost for the expanded view. */
@@ -922,6 +1280,14 @@ export async function GET(req: NextRequest) {
       videoDeviceId: singleMacPreviewVideoDeviceId(macPreviews),
       /** RC-3 — { count, index } for the Mac currently streaming. */
       macDisplays: macPreviews.length === 1 ? macDisplays : null,
+      /** Exact task identity/lifecycle requested by the current native chat. */
+      activity: boundRequested ? {
+        turnId: requestedTurnId,
+        conversationId: requestedConversationId,
+        status: boundTurn?.status ?? 'missing',
+        startedAt: boundTurn?.startedAt?.toISOString() ?? null,
+        finishedAt: boundTurn?.finishedAt?.toISOString() ?? null,
+      } : null,
     },
     { headers: { 'Cache-Control': 'private, no-store' } },
   )

@@ -3293,7 +3293,7 @@ async function* runAlternateProviderTurn(
               klass: 'unknown',
             })
           : personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant })
+          ? await executePersonalTool(call.name, call.input, { conversationId, turnId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,

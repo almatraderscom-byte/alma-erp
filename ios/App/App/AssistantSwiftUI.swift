@@ -3117,6 +3117,18 @@ final class AssistantVM {
     var justSettledId: String?
     var thinkingLive = false        // spinner row before the first text token
     var currentTurnId: String?
+    /// Native computer-use PiP bridge. This generation changes only for tools
+    /// that can produce visible Browser/Mac pixels; pairing/status tools do not
+    /// create a misleading black player.
+    private(set) var computerUseToolStartGeneration = 0
+    private(set) var computerUseSurface: AgentComputerUseSurface?
+    private(set) var computerUseAllowsOptimisticReveal = false
+    private(set) var computerUseConversationId: String?
+    private(set) var computerUseTurnId: String?
+    /// This VM has one task-scoped currentTurnId/PiP. Two approvals in the same
+    /// conversation therefore cannot truthfully execute in parallel; serialize
+    /// them until the first exact progress turn is terminal.
+    private var approvalExecutionOwnerByConversation: [String: String] = [:]
     /// Transport lost while the server turn (presumably) still runs — drives the
     /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
     var reconnecting = false
@@ -8071,6 +8083,11 @@ final class AssistantVM {
                 }
             case .turnId(let id):
                 currentTurnId = id
+                if computerUseToolStartGeneration > 0,
+                   computerUseTurnId == nil, isStreaming {
+                    computerUseConversationId = computerUseConversationId ?? conversationId
+                    computerUseTurnId = id
+                }
                 for index in turnOwnerAnchors.indices
                 where turnOwnerAnchors[index].turnId == nil
                     && (turnOwnerAnchors[index].conversationId == nil
@@ -8178,6 +8195,15 @@ final class AssistantVM {
                     touchedStream = true
                 }
             case .toolStart(let tid, let name, let inputPretty):
+                if let surface = AgentComputerUseSurface.classify(
+                    toolName: name, inputPretty: inputPretty) {
+                    computerUseToolStartGeneration &+= 1
+                    computerUseSurface = surface
+                    computerUseAllowsOptimisticReveal = AgentComputerUseSurface
+                        .allowsOptimisticReveal(toolName: name, inputPretty: inputPretty)
+                    computerUseConversationId = conversationId
+                    computerUseTurnId = currentTurnId
+                }
                 requestLiveMode("searching")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -10501,6 +10527,13 @@ final class AssistantVM {
         }
         guard beginSubmitting("action:\(cardId)") else { return false }
         defer { finishSubmitting("action:\(cardId)") }
+        let approvalConversationId = approve ? conversationId : nil
+        if let approvalConversationId,
+           !claimApprovalExecution(cardId: cardId, conversationId: approvalConversationId) {
+            errorToast = "আগের অনুমোদিত কাজটি এখনো চলছে — শেষ হলে আবার অনুমোদন দিন"
+            AlmaAgentHaptics.warning()
+            return false
+        }
         AlmaAgentHaptics.commit()
         let summary = messages
             .flatMap(\.confirmCards)
@@ -10511,6 +10544,7 @@ final class AssistantVM {
             .first(where: { $0.id == cardId })?
             .actionType
         let fileRefsBeforeApproval = Set(messages.flatMap(\.fileRefs))
+        let turnBeforeApproval = currentTurnId
         // OWNER, 2026-07-27: on the phone an approval looked like nothing had
         // happened — the loader only appeared after the POST came back, and the
         // continuation runs on the WORKER, so no thinking ever reached the phone
@@ -10529,6 +10563,20 @@ final class AssistantVM {
             beginUnderstanding()
             ensureStreamingTail()
         }
+        // The approval route opens a fresh progress turn before executing
+        // synchronous Mac work, but the HTTP response can remain blocked for
+        // 60–100 seconds awaiting that work. Discover and bind that turn while
+        // the POST is still pending so the dock's exact-scope poll can recover
+        // Browser/Mac pixels immediately. The old implementation launched this
+        // only after the response and therefore hid the entire live execution.
+        let approvalContinuationTask: Task<Void, Never>? = approve ? Task { [weak self] in
+            await self?.followApprovalContinuation(
+                cardId: cardId,
+                expectsFileResult: approvedActionType == "image_gen"
+                    || approvedActionType == "video_gen",
+                fileRefsBeforeApproval: fileRefsBeforeApproval,
+                excludingTurnId: turnBeforeApproval)
+        } : nil
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(cardId)/\(approve ? "approve" : "reject")")
@@ -10559,9 +10607,18 @@ final class AssistantVM {
                 return true
             }
         } catch {
-            // The work never started — take the indicator back down, or the phone
-            // would spin forever on a request that failed.
-            if approve { thinkingLive = false; isStreaming = false }
+            let mayHaveCommitted = approve && Self.approvalFailureMayHaveCommitted(error)
+            if !mayHaveCommitted {
+                approvalContinuationTask?.cancel()
+                if let approvalConversationId {
+                    releaseApprovalExecutionAfterTerminal(
+                        cardId: cardId, conversationId: approvalConversationId)
+                }
+                // A definitive rejection never started work; take the indicator
+                // down. Ambiguous timeout/5xx is different: the exact action-bound
+                // progress monitor keeps owning PiP/tail until its turn terminates.
+                if approve { thinkingLive = false; isStreaming = false }
+            }
             let recovered = await reconcileActionFailure(cardId: cardId, error: error)
             let status = currentConfirmStatus(cardId)?.lowercased()
             if status == nil || status == "pending" {
@@ -10569,66 +10626,151 @@ final class AssistantVM {
             }
             return recovered
         }
-        if approve {
-            // The continuation turn runs server-side. Attach to its durable
-            // stream so its REAL thinking and tool rows land on the phone, the
-            // same events the web subscribes to. Fire-and-forget: a failed
-            // attach must never block the approval that already succeeded.
-            Task { [weak self] in
-                await self?.followApprovalContinuation(
-                    cardId: cardId,
-                    expectsFileResult: approvedActionType == "image_gen"
-                        || approvedActionType == "video_gen",
-                    fileRefsBeforeApproval: fileRefsBeforeApproval)
-            }
-        }
         await loadMessages()
         return true
     }
 
     /// After an approval, find the continuation turn and tail it.
     ///
-    /// The turn is created server-side a moment after the approve route returns,
-    /// so this polls briefly for it rather than assuming it is already there. If
-    /// nothing shows up, the indicator is released — an honest "nothing is
-    /// running" beats a spinner that never ends (the exact complaint on web,
-    /// 2026-07-26).
+    /// The turn is created near the beginning of the approve route, while its
+    /// synchronous work may keep the response open much longer. This polls from
+    /// the owner's tap so both the durable tail and task-scoped PiP can attach
+    /// before that response returns. If nothing shows up, the indicator is
+    /// released — an honest "nothing is running" beats a spinner that never ends.
     static func approvalContinuationNeedsHistoryRefresh(status: String?) -> Bool {
         guard let status = status?.trimmingCharacters(in: .whitespacesAndNewlines),
               !status.isEmpty else { return false }
         return status.lowercased() != "running"
     }
 
+    static func approvalFailureMayHaveCommitted(_ error: Error) -> Bool {
+        guard let api = error as? AlmaAPIError else {
+            return error is URLError
+        }
+        switch api {
+        case .transport, .decoding:
+            return true
+        case .http(let status, _):
+            return status == 408 || status == 425 || status == 429 || status >= 500
+        case .notAuthenticated:
+            return false
+        }
+    }
+
+    @discardableResult
+    func claimApprovalExecution(cardId: String, conversationId: String) -> Bool {
+        if let owner = approvalExecutionOwnerByConversation[conversationId] {
+            return owner == cardId
+        }
+        approvalExecutionOwnerByConversation[conversationId] = cardId
+        return true
+    }
+
+    func releaseApprovalExecutionAfterTerminal(cardId: String, conversationId: String) {
+        guard approvalExecutionOwnerByConversation[conversationId] == cardId else { return }
+        approvalExecutionOwnerByConversation[conversationId] = nil
+    }
+
+    func approvalExecutionOwner(conversationId: String) -> String? {
+        approvalExecutionOwnerByConversation[conversationId]
+    }
+
+    struct ApprovalProgressTurnSnapshot: Decodable, Equatable {
+        var status: String? = nil
+        let id: String?
+        let conversationId: String?
+        let progressTurnId: String?
+        let progressConversationId: String?
+        let progressTurnStatus: String?
+    }
+
+    /// Polls the exact action while its approval mutation is still in flight.
+    /// Conversation-latest status is deliberately not used: two different cards
+    /// may be approved concurrently, and each must bind only its own persisted
+    /// progress turn even when their responses complete in reverse order.
+    /// The injected sleep/fetch closures make the pending-POST race testable
+    /// without changing the production network stack.
+    static func awaitApprovalProgressTurn(
+        actionId: String,
+        expectedConversationId: String,
+        excludingTurnId: String?,
+        delays: [UInt64] = [
+            200_000_000, 400_000_000, 800_000_000,
+            1_200_000_000, 1_200_000_000, 1_200_000_000,
+            1_200_000_000, 1_200_000_000, 1_200_000_000,
+            1_200_000_000, 1_200_000_000, 1_200_000_000,
+        ],
+        sleep: (UInt64) async -> Void = { try? await Task.sleep(nanoseconds: $0) },
+        currentConversationId: () -> String?,
+        fetch: () async -> ApprovalProgressTurnSnapshot?
+    ) async -> String? {
+        for delay in delays {
+            if Task.isCancelled { return nil }
+            if delay > 0 { await sleep(delay) }
+            if Task.isCancelled { return nil }
+            guard currentConversationId() == expectedConversationId else { return nil }
+            guard let snapshot = await fetch(),
+                  currentConversationId() == expectedConversationId,
+                  snapshot.id == actionId,
+                  snapshot.conversationId == expectedConversationId,
+                  snapshot.progressConversationId == expectedConversationId,
+                  snapshot.progressTurnStatus?.lowercased() == "running",
+                  let turnId = snapshot.progressTurnId,
+                  !turnId.isEmpty,
+                  turnId != excludingTurnId else { continue }
+            return turnId
+        }
+        return nil
+    }
+
     private func followApprovalContinuation(
         cardId: String,
         expectsFileResult: Bool,
-        fileRefsBeforeApproval: Set<AgentFileRef>
+        fileRefsBeforeApproval: Set<AgentFileRef>,
+        excludingTurnId: String?
     ) async {
         guard let convId = conversationId else { thinkingLive = false; isStreaming = false; return }
-        struct TurnStatus: Decodable { let status: String?; let turnId: String? }
-        for attempt in 0..<10 {
-            if Task.isCancelled { return }
-            try? await Task.sleep(nanoseconds: attempt == 0 ? 400_000_000 : 1_200_000_000)
-            let st: TurnStatus? = try? await AlmaAPI.shared.send(
-                "GET", "/api/assistant/conversations/\(convId)/turn-status")
-            guard let st else { continue }
-            if st.status == "running", let tid = st.turnId {
-                currentTurnId = tid
-                let buffer = AgentEventBuffer { [weak self] events in
-                    self?.apply(events)
-                }
-                try? await tailDurableTurn(tid, afterSeq: -1, buffer: buffer)
-                await buffer.finish()
-                thinkingLive = false
-                isStreaming = false
-                await refreshAfterApprovalContinuation(
-                    cardId: cardId,
-                    conversationId: convId,
-                    expectsFileResult: expectsFileResult,
-                    fileRefsBeforeApproval: fileRefsBeforeApproval)
-                return
+        defer {
+            releaseApprovalExecutionAfterTerminal(cardId: cardId, conversationId: convId)
+        }
+        let progressTurnId = await Self.awaitApprovalProgressTurn(
+            actionId: cardId,
+            expectedConversationId: convId,
+            excludingTurnId: excludingTurnId,
+            currentConversationId: { [weak self] in self?.conversationId }
+        ) {
+            try? await AlmaAPI.shared.send(
+                "GET", "/api/assistant/actions/\(cardId)")
+        }
+        guard conversationId == convId else {
+            await waitForApprovalProgressTerminal(
+                cardId: cardId, conversationId: convId, progressTurnId: progressTurnId)
+            return
+        }
+        if let progressTurnId {
+            currentTurnId = progressTurnId
+            let buffer = AgentEventBuffer { [weak self] events in
+                guard let self,
+                      self.conversationId == convId,
+                      self.currentTurnId == progressTurnId else { return }
+                self.apply(events)
             }
-            if Self.approvalContinuationNeedsHistoryRefresh(status: st.status) { break }
+            try? await tailDurableTurn(progressTurnId, afterSeq: -1, buffer: buffer)
+            await buffer.finish()
+            // A clean/early stream EOF is not terminal proof. Keep both the
+            // per-conversation approval lock and exact monitor until the action's
+            // own validated progress row says it is no longer running.
+            await waitForApprovalProgressTerminal(
+                cardId: cardId, conversationId: convId, progressTurnId: progressTurnId)
+            guard conversationId == convId, currentTurnId == progressTurnId else { return }
+            thinkingLive = false
+            isStreaming = false
+            await refreshAfterApprovalContinuation(
+                cardId: cardId,
+                conversationId: convId,
+                expectsFileResult: expectsFileResult,
+                fileRefsBeforeApproval: fileRefsBeforeApproval)
+            return
         }
         // The worker can finish between the approve response and our first
         // turn-status poll. In that race there is no live turn left to tail, but
@@ -10637,14 +10779,47 @@ final class AssistantVM {
         // left the real image invisible until the next 60-second refresh or a
         // cold reload. Reconcile immediately, while guarding against a chat
         // switch during the poll window.
+        await waitForApprovalProgressTerminal(
+            cardId: cardId, conversationId: convId, progressTurnId: nil)
+        guard conversationId == convId else { return }
         thinkingLive = false
         isStreaming = false
-        if conversationId == convId {
-            await refreshAfterApprovalContinuation(
-                cardId: cardId,
-                conversationId: convId,
-                expectsFileResult: expectsFileResult,
-                fileRefsBeforeApproval: fileRefsBeforeApproval)
+        await refreshAfterApprovalContinuation(
+            cardId: cardId,
+            conversationId: convId,
+            expectsFileResult: expectsFileResult,
+            fileRefsBeforeApproval: fileRefsBeforeApproval)
+    }
+
+    private func waitForApprovalProgressTerminal(
+        cardId: String,
+        conversationId expectedConversationId: String,
+        progressTurnId expectedTurnId: String?
+    ) async {
+        // Approved synchronous Mac work is bounded at 100 seconds today; leave
+        // headroom for queue/transport delay. All reads remain card-bound.
+        for attempt in 0..<150 {
+            if Task.isCancelled { return }
+            if attempt > 0 { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+            let snapshot: ApprovalProgressTurnSnapshot? = try? await AlmaAPI.shared.send(
+                "GET", "/api/assistant/actions/\(cardId)")
+            guard let snapshot,
+                  snapshot.id == cardId,
+                  snapshot.conversationId == expectedConversationId else { continue }
+            if let expectedTurnId,
+               snapshot.progressTurnId != expectedTurnId
+                    || snapshot.progressConversationId != expectedConversationId {
+                continue
+            }
+            if snapshot.progressTurnId == nil {
+                let actionStatus = snapshot.status?.lowercased()
+                if actionStatus != nil, actionStatus != "pending" { return }
+                continue
+            }
+            if snapshot.progressConversationId == expectedConversationId,
+               snapshot.progressTurnStatus?.lowercased() != "running" {
+                return
+            }
         }
     }
 
@@ -24366,7 +24541,19 @@ struct AssistantScreen: View {
         }
         // Codex-style computer-use PiP: independent of the composer/chat
         // layout, draggable across the whole Assistant surface, edge-snapped.
-        .overlay { AgentLiveDockView(bottomObstacleMinY: bottomChromeMinY) }
+        .overlay {
+            AgentLiveDockView(
+                bottomObstacleMinY: bottomChromeMinY,
+                conversationId: vm.conversationId,
+                turnId: vm.currentTurnId,
+                turnIsStreaming: vm.isStreaming,
+                turnReconnecting: vm.reconnecting,
+                computerUseToolStartGeneration: vm.computerUseToolStartGeneration,
+                computerUseSurface: vm.computerUseSurface,
+                computerUseAllowsOptimisticReveal: vm.computerUseAllowsOptimisticReveal,
+                computerUseConversationId: vm.computerUseConversationId,
+                computerUseTurnId: vm.computerUseTurnId)
+        }
         .coordinateSpace(name: "agent.assistant.surface")
         .onPreferenceChange(AgentAssistantBottomChromeMinYKey.self) { next in
             guard next.isFinite, next > 0 else { return }

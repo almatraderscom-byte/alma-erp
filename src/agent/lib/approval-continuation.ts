@@ -18,10 +18,9 @@
 // turn sat 'running' forever and the approve→next-step chain silently died. The
 // worker now writes a turn-consumer heartbeat (agent_kv_settings.worker_heartbeat_at,
 // every 60s, only while its BullMQ consumer is actually running); when that heartbeat
-// is missing/stale, the continuation runs INLINE in this serverless function instead
-// (the revise-route pattern: persist the directive as a user message → one
-// runOwnerTurn pass → finalize the turn row). Slower and capped at 90s, but the
-// chain never silently dies with the worker.
+// is missing/stale, the continuation runs INLINE only when the caller still has
+// the full safe 90s budget (the revise-route pattern). A late caller instead
+// terminalizes with durable continuationNeeded, which the app claims exactly once.
 import { prisma } from '@/lib/prisma'
 import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
@@ -30,6 +29,17 @@ import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 /** Hard cap for an INLINE (serverless) continuation turn — callers' maxDuration
  * must leave headroom above this (approve and job-result both run at 120s). */
 const INLINE_CONTINUATION_MAX_MS = 90_000
+/** Final turn write/silence note must complete before the caller's own deadline. */
+const INLINE_CONTINUATION_SETTLE_HEADROOM_MS = 5_000
+
+export function hasSafeInlineContinuationBudget(
+  inlineDeadlineAtMs: number | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  if (inlineDeadlineAtMs == null) return true
+  return inlineDeadlineAtMs - nowMs
+    >= INLINE_CONTINUATION_MAX_MS + INLINE_CONTINUATION_SETTLE_HEADROOM_MS
+}
 
 /** How fresh the worker's turn-consumer heartbeat must be to trust the Redis path. */
 const WORKER_HEARTBEAT_FRESH_MS = 3 * 60 * 1000
@@ -163,9 +173,10 @@ export async function runContinuationInline(opts: { conversationId: string; mess
  * turn queue (createTurn → buildTurnJobData → enqueueTurnJob; the worker runs it via
  * the chat route so the app poll AND Telegram both resume). Fallback path: when the
  * worker's turn consumer is down (stale heartbeat) or the enqueue itself fails, the
- * turn runs INLINE in this function. Never throws to the caller. No infinite loop: a
- * continuation only ever fires from a human approval or a one-shot job completion,
- * and the turn is told not to redo the work.
+ * turn runs INLINE in this function when the caller has enough budget. A route near
+ * its deadline persists continuation eligibility and terminalizes instead. Never
+ * throws to the caller. No infinite loop: a continuation only ever fires from a
+ * human approval or a one-shot job completion, and the turn is told not to redo work.
  */
 export async function enqueueAgentContinuation(opts: {
   conversationId: string
@@ -184,6 +195,12 @@ export async function enqueueAgentContinuation(opts: {
    * background work.
    */
   ignoreAwaitingOwner?: boolean
+  /**
+   * Absolute caller-safe deadline. When the full 90s inline fallback plus its
+   * terminal write no longer fits, persist exact-once continuation eligibility
+   * instead of letting the platform kill a still-running progress turn.
+   */
+  inlineDeadlineAtMs?: number
 }): Promise<void> {
   if (!opts.conversationId) return
   if (!opts.force && !(await autoContinueEnabled())) {
@@ -223,6 +240,17 @@ export async function enqueueAgentContinuation(opts: {
     console.warn('[approval-continuation] worker enqueue failed — falling back to inline turn')
   }
 
+  if (!hasSafeInlineContinuationBudget(opts.inlineDeadlineAtMs)) {
+    await traceTurnStage(turnId, 'continuation_enqueued', 'client_budget')
+    if (turnId) {
+      // Durable fallback already consumed by the native/web turn-status loop:
+      // claimContinuationTurn atomically creates at most one successor. The
+      // progress turn is terminal now, never left for the 30-minute ghost heal.
+      await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: true })
+    }
+    return
+  }
+
   await traceTurnStage(turnId, 'continuation_enqueued', 'inline')
   await runContinuationInline(opts, turnId)
 }
@@ -239,6 +267,7 @@ export async function enqueueAgentContinuation(opts: {
 export async function enqueueApprovedActionContinuation(
   actionId: string,
   reuseTurnId: string | null = null,
+  options: { inlineDeadlineAtMs?: number } = {},
 ): Promise<void> {
   // Whatever early-return path we take below, a progress turn opened at approve
   // time must not stay 'running' forever — except for renders/calls, whose
@@ -290,5 +319,6 @@ export async function enqueueApprovedActionContinuation(
     message,
     turnId: reuseTurnId,
     ignoreAwaitingOwner: true,
+    inlineDeadlineAtMs: options.inlineDeadlineAtMs,
   })
 }

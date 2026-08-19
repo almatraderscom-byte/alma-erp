@@ -29,7 +29,13 @@
 
 const POLL_PATH = '/api/assistant/live-browser/poll'
 const RESULT_PATH = '/api/assistant/live-browser/result'
+const FRAME_PATH = '/api/assistant/live-browser/frames'
 const DEFAULT_BASE = 'https://alma-erp-six.vercel.app'
+// Execute-once outbox: a mutating command may already have changed the page
+// when its result POST loses the network response. Keep that exact result
+// across MV3 worker sleeps/reloads and do not ask for another command until the
+// server has acknowledged (or no longer knows) this one.
+const PENDING_RESULT_KEY = 'pendingCommandResult'
 
 const ALLOWED_ACTIONS = new Set([
   'ping',
@@ -53,6 +59,15 @@ const ALLOWED_ACTIONS = new Set([
 ])
 
 let looping = false
+let previewGrant = null
+let previewTimer = null
+let previewCaptureBusy = false
+let lastPreviewCaptureMs = 0
+// An unpacked-extension updater may replace manifest.json at any time. Never
+// reload between a page effect and the durable result receipt that proves it;
+// otherwise a reclaimed click/type command could execute twice.
+let commandInFlight = false
+let reloadPending = false
 
 async function getConfig() {
   const c = await chrome.storage.local.get(['baseUrl', 'token', 'paused', 'deviceName'])
@@ -1349,14 +1364,14 @@ async function ensureDebugger(tabId) {
   }
 }
 
-async function captureAgentTab(tab) {
+async function captureAgentTab(tab, quality = 80) {
   // 1) CDP — works even when the agent tab is in the background.
   if (await ensureDebugger(tab.id)) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const shot = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', {
           format: 'jpeg',
-          quality: 80,
+          quality,
         })
         if (shot && shot.data) return 'data:image/jpeg;base64,' + shot.data
         break
@@ -1370,7 +1385,11 @@ async function captureAgentTab(tab) {
   // 2) Fallback — visible-tab capture; only right when the agent tab is active
   //    (e.g. the owner revoked the debugger permission or DevTools is attached).
   try {
-    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
+    // captureVisibleTab photographs the WINDOW'S foreground tab, not the tab
+    // argument. Never upload an unrelated owner tab under the agent context.
+    const activeTabs = await chrome.tabs.query({ active: true, windowId: tab.windowId })
+    if (!activeTabs.some((activeTab) => activeTab.id === tab.id)) return null
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality })
   } catch {
     return null
   }
@@ -1607,9 +1626,36 @@ async function executeCommand(cmd) {
 
 // ---- poll loop --------------------------------------------------------------
 
-async function postResult(base, token, commandId, result) {
+function validPendingResult(value) {
+  return Boolean(value
+    && typeof value === 'object'
+    && typeof value.baseUrl === 'string'
+    && value.payload
+    && typeof value.payload === 'object'
+    && typeof value.payload.commandId === 'string'
+    && value.payload.commandId)
+}
+
+async function clearPendingResult(commandId) {
+  const stored = await chrome.storage.local.get(PENDING_RESULT_KEY)
+  const current = stored[PENDING_RESULT_KEY]
+  // A late response from A must never erase a newer persisted B.
+  if (current?.payload?.commandId === commandId) {
+    await chrome.storage.local.remove(PENDING_RESULT_KEY)
+  }
+}
+
+async function flushPendingResult(base, token) {
   try {
-    await fetch(`${base}${RESULT_PATH}`, {
+    const stored = await chrome.storage.local.get(PENDING_RESULT_KEY)
+    const pending = stored[PENDING_RESULT_KEY]
+    if (pending == null) return true
+    if (!validPendingResult(pending)) {
+      await chrome.storage.local.remove(PENDING_RESULT_KEY)
+      return true
+    }
+    const targetBase = pending.baseUrl || base
+    const response = await fetch(`${targetBase}${RESULT_PATH}`, {
       method: 'POST',
       // Our own device token is the credential — say so, so no browser cookie is
       // ever quietly along for the ride. It used to be, and when Chrome stopped
@@ -1617,16 +1663,153 @@ async function postResult(base, token, commandId, result) {
       // do with whether the token was valid.
       credentials: 'omit',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ commandId, ...result }),
+      body: JSON.stringify(pending.payload),
     })
+    // 2xx includes the idempotent `{ ignored: true }` response. A 404 means
+    // the bounded server command expired/was removed, so retrying forever
+    // cannot improve truth and would permanently stop this companion.
+    if (response.ok || response.status === 404) {
+      await clearPendingResult(pending.payload.commandId)
+      return true
+    }
+    if (response.status === 401) {
+      await clearPendingResult(pending.payload.commandId)
+      stopPreviewCapture()
+      await chrome.storage.local.set({ token: '', lastError: 'result rejected (401)' })
+      return false
+    }
+    await chrome.storage.local.set({ lastError: `result delivery failed (${response.status})` })
+    return false
   } catch (err) {
     console.warn('[alma-companion] postResult failed:', err && err.message)
+    await chrome.storage.local.set({
+      lastError: `result delivery failed: ${err && err.message ? err.message : String(err)}`,
+    }).catch(() => {})
+    return false
   }
+}
+
+async function postResult(base, token, commandId, result) {
+  try {
+    const tab = await getAgentTab(false)
+    const contextId = tab?.id ? `tab:${tab.id}` : null
+    const pending = {
+      baseUrl: base,
+      savedAt: Date.now(),
+      payload: { commandId, ...result, contextId },
+    }
+    // Persist BEFORE the first delivery attempt. If Chrome suspends this MV3
+    // worker after the page effect, the next wake flushes this receipt first.
+    await chrome.storage.local.set({ [PENDING_RESULT_KEY]: pending })
+    return await flushPendingResult(base, token)
+  } catch (err) {
+    console.warn('[alma-companion] could not persist command result:', err && err.message)
+    return false
+  }
+}
+
+async function applyPendingReloadIfQuiescent() {
+  if (!reloadPending || commandInFlight) return false
+  const stored = await chrome.storage.local.get(PENDING_RESULT_KEY)
+  if (commandInFlight || stored[PENDING_RESULT_KEY] != null) return false
+  chrome.runtime.reload()
+  return true
+}
+
+function stopPreviewCapture() {
+  previewGrant = null
+  if (previewTimer) clearInterval(previewTimer)
+  previewTimer = null
+}
+
+function samePreviewActivity(a, b) {
+  return Boolean(a && b
+    && a.turnId === b.turnId
+    && a.conversationId === b.conversationId)
+}
+
+async function capturePreviewFrame() {
+  const grant = previewGrant
+  if (!grant || previewCaptureBusy || Date.parse(grant.expiresAt) <= Date.now()) {
+    if (grant && Date.parse(grant.expiresAt) <= Date.now()) stopPreviewCapture()
+    return
+  }
+  // Explicit ~1fps bound even if a timer/poll wake happens at the same instant.
+  if (Date.now() - lastPreviewCaptureMs < 850) return
+  previewCaptureBusy = true
+  try {
+    const tab = await getAgentTab(false)
+    if (!tab?.id) return
+    const dataUri = await captureAgentTab(tab, 52)
+    if (!dataUri) return
+    const currentGrant = previewGrant
+    if (!samePreviewActivity(currentGrant, grant)
+      || Date.parse(currentGrant.expiresAt) <= Date.now()) return
+    const capturedMs = Math.max(Date.now(), lastPreviewCaptureMs + 1)
+    const response = await fetch(`${grant.base}${FRAME_PATH}`, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grant.token}` },
+      body: JSON.stringify({
+        contextId: `tab:${tab.id}`,
+        turnId: grant.turnId,
+        conversationId: grant.conversationId,
+        capturedAt: new Date(capturedMs).toISOString(),
+        dataUri,
+      }),
+    })
+    if (response.ok) {
+      lastPreviewCaptureMs = capturedMs
+      // iOS renews the server lease while this extension may be inside a long
+      // command (and unable to poll). The frame ACK bridges that renewal so the
+      // local capture timer does not stop at its original expiry.
+      const ack = await response.json().catch(() => ({}))
+      const current = previewGrant
+      const renewedExpiry = typeof ack?.leaseExpiresAt === 'string'
+        ? Date.parse(ack.leaseExpiresAt) : NaN
+      if (samePreviewActivity(current, grant)
+        && Number.isFinite(renewedExpiry)
+        && renewedExpiry > Date.parse(current.expiresAt)) {
+        previewGrant = { ...current, expiresAt: ack.leaseExpiresAt }
+      }
+    } else if (response.status === 401 || response.status === 409) {
+      if (samePreviewActivity(previewGrant, grant)) stopPreviewCapture()
+      if (response.status === 401) {
+        await chrome.storage.local.set({ token: '', lastError: 'preview rejected (401)' })
+      }
+    }
+  } catch (err) {
+    console.warn('[alma-companion] preview frame failed:', err && err.message)
+  } finally {
+    previewCaptureBusy = false
+  }
+}
+
+function applyPreviewGrant(raw, base, token) {
+  if (!raw?.active || typeof raw.expiresAt !== 'string' || Date.parse(raw.expiresAt) <= Date.now()) {
+    stopPreviewCapture()
+    return
+  }
+  previewGrant = { ...raw, base, token }
+  if (!previewTimer) previewTimer = setInterval(() => { void capturePreviewFrame() }, 1000)
+  // First pixels should arrive with the first poll, not one timer beat later.
+  void capturePreviewFrame()
 }
 
 async function pollOnce() {
   const { baseUrl, token, paused } = await getConfig()
-  if (!token || paused) return 'stop'
+  if (!token || paused) {
+    stopPreviewCapture()
+    return 'stop'
+  }
+  // Never reclaim/execute another command while the previous page effect has
+  // an unacknowledged durable receipt. This closes click/type duplication when
+  // a result response is lost and the server later reclaims the delivery.
+  if (!(await flushPendingResult(baseUrl, token))) return 'retry'
+  if (reloadPending) {
+    await applyPendingReloadIfQuiescent()
+    return 'stop'
+  }
   let cmd = null
   try {
     const res = await fetch(`${baseUrl}${POLL_PATH}`, {
@@ -1636,6 +1819,7 @@ async function pollOnce() {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (res.status === 401) {
+      stopPreviewCapture()
       await chrome.storage.local.set({ token: '', lastError: 'pairing rejected (401)' })
       return 'stop'
     }
@@ -1645,6 +1829,7 @@ async function pollOnce() {
     }
     await chrome.storage.local.set({ lastSuccessfulPollAt: Date.now(), lastError: '' })
     const body = await res.json().catch(() => ({}))
+    applyPreviewGrant(body?.preview, baseUrl, token)
     cmd = body && body.command ? body.command : null
   } catch (err) {
     await chrome.storage.local.set({
@@ -1652,20 +1837,33 @@ async function pollOnce() {
     })
     return 'retry'
   }
-  if (!cmd) return 'connected' // connected, just idle
-  await setBadge('run')
-  let result
-  try {
-    // Whole-command ceiling: even if some await inside executeCommand wedges
-    // (destroyed page context, stuck dialog), the loop must move on and report —
-    // one bad step must never take the companion "offline" for everything after.
-    result = await withTimeout(executeCommand(cmd), 35000, cmd.action || 'command')
-  } catch (err) {
-    result = { ok: false, error: err && err.message ? err.message : String(err) }
+  if (!cmd) {
+    if (reloadPending) {
+      await applyPendingReloadIfQuiescent()
+      return 'stop'
+    }
+    return 'connected' // connected, just idle
   }
-  await postResult(baseUrl, token, cmd.id, result)
-  await setBadge('on')
-  return 'connected'
+  commandInFlight = true
+  try {
+    await setBadge('run')
+    let result
+    try {
+      // Whole-command ceiling: even if some await inside executeCommand wedges
+      // (destroyed page context, stuck dialog), the loop must move on and report —
+      // one bad step must never take the companion "offline" for everything after.
+      result = await withTimeout(executeCommand(cmd), 35000, cmd.action || 'command')
+    } catch (err) {
+      result = { ok: false, error: err && err.message ? err.message : String(err) }
+    }
+    const delivered = await postResult(baseUrl, token, cmd.id, result)
+    if (!delivered) return 'retry'
+    await setBadge('on')
+    return 'connected'
+  } finally {
+    commandInFlight = false
+    if (reloadPending) await applyPendingReloadIfQuiescent()
+  }
 }
 
 async function loop() {
@@ -1682,6 +1880,7 @@ async function loop() {
       await new Promise((r) => setTimeout(r, state === 'retry' ? 5000 : 800))
     }
   } finally {
+    stopPreviewCapture()
     looping = false
   }
 }
@@ -1721,7 +1920,8 @@ async function checkForUpdate() {
     // means the updater already delivered a new build. Apply it now.
     const disk = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' }).then((r) => r.json())
     if (disk?.version && disk.version !== running) {
-      chrome.runtime.reload()
+      reloadPending = true
+      await applyPendingReloadIfQuiescent()
       return
     }
   } catch { /* disk read failed — fall through to the remote check */ }
@@ -1798,6 +1998,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await setBadge(msg.paused ? 'off' : 'on')
       sendResponse({ ok: true })
     } else if (msg.type === 'unpair') {
+      await chrome.storage.local.remove(PENDING_RESULT_KEY)
       await chrome.storage.local.set({ token: '' })
       await setBadge('off')
       sendResponse({ ok: true })
@@ -1817,6 +2018,9 @@ async function pairWithCode(code, baseUrlIn, deviceName) {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok || !body.token) return { ok: false, error: body.error || `pairing failed (${res.status})` }
+    // A receipt belongs to the old device token. Never replay page data into a
+    // newly paired owner's command namespace.
+    await chrome.storage.local.remove(PENDING_RESULT_KEY)
     await chrome.storage.local.set({
       token: body.token,
       baseUrl: base,

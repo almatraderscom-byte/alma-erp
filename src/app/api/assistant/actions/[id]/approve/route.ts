@@ -43,6 +43,10 @@ import {
 } from '@/agent/lib/mac-agent/bus'
 import { classifyCommand } from '@/agent/lib/mac-agent/policy'
 import { classifyUiAction } from '@/agent/lib/mac-agent/ui-policy'
+import {
+  approvalExecutionTurnId,
+  withApprovalProgressTurn,
+} from '@/agent/lib/approval-progress-context'
 
 export const runtime = 'nodejs'
 // Delegation approval runs the worker sub-agent synchronously (an OpenRouter
@@ -109,7 +113,7 @@ async function authorizeApprovalRequest(req: NextRequest): Promise<Response | nu
 async function runApprove(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
-  options: { authChecked?: boolean; imageClaimedAt?: Date } = {},
+  options: { authChecked?: boolean; imageClaimedAt?: Date; progressTurnId?: string | null } = {},
 ) {
   if (!options.authChecked) {
     const denied = await authorizeApprovalRequest(req)
@@ -254,6 +258,7 @@ async function runApprove(
       const sourceTurnId = typeof payload.sourceTurnId === 'string' && payload.sourceTurnId
         ? payload.sourceTurnId
         : undefined
+      const executionTurnId = approvalExecutionTurnId(options.progressTurnId, sourceTurnId)
       // The owner just approved this immutable stored payload. Bind that exact
       // approval to the canonical tool guard so stricter point-of-risk modes can
       // execute it, while any payload drift still fails closed.
@@ -265,6 +270,9 @@ async function runApprove(
         input: toolInput,
         riskTier: 'R3',
         conversationId,
+        // Preserve the immutable card's source identity in the signed approval
+        // envelope. Runtime computer-use activity is rebound below to the fresh
+        // progress turn that the current chat is actually polling.
         turnId: sourceTurnId,
         businessId: action.businessId,
         approvalRef: actionId,
@@ -273,7 +281,7 @@ async function runApprove(
         conversationId,
         businessId: action.businessId,
         modelId: String(payload.model ?? 'aios-approved'),
-        turnId: sourceTurnId,
+        turnId: executionTurnId,
         turnAuthorization: { allowMutations: true, reason: 'workflow_continuation' },
         instructionOrigin: 'owner_direct',
         approvalEnvelope,
@@ -1275,7 +1283,13 @@ async function runApprove(
   // re-classify it here, so an edited or replayed card can't smuggle in something
   // else, and a rule that turned RED since the card was created still wins.
   if (action.type === 'mac_command') {
-    const p = payload as { command?: string; cwd?: string | null; timeoutMs?: number | null; deviceId?: string }
+    const p = payload as {
+      command?: string
+      cwd?: string | null
+      timeoutMs?: number | null
+      deviceId?: string
+      turnId?: string | null
+    }
     const command = String(p.command ?? '')
     const verdict = classifyCommand(command, { cwd: p.cwd ?? undefined })
     if (verdict.level === 'red') {
@@ -1313,6 +1327,8 @@ async function runApprove(
       params: { command, cwd: p.cwd ?? null, timeoutMs: p.timeoutMs ?? null, approved: true },
       policyLevel: 'amber',
       approvedBy: actionId,
+      turnId: approvalExecutionTurnId(options.progressTurnId, p.turnId),
+      conversationId: resolveConversationId(action),
     })
 
     const outcome = await awaitMacResult(commandId, 100_000)
@@ -1354,6 +1370,7 @@ async function runApprove(
       deviceId?: string
       /** P0-3 Session Guard: which chat this act belongs to (see mac-ui-tools). */
       expect?: Record<string, unknown> | null
+      turnId?: string | null
     }
     const uiAction = String(p.uiAction ?? '')
     const verdict = classifyUiAction({
@@ -1436,6 +1453,8 @@ async function runApprove(
         uiAction,
         params: uiParams,
         approvedBy: actionId,
+        turnId: approvalExecutionTurnId(options.progressTurnId, p.turnId),
+        conversationId: resolveConversationId(action),
       })
     } catch (err) {
       // A transient failure after the claim would otherwise strand the card as
@@ -1556,6 +1575,7 @@ async function runApprove(
       tool?: string
       model?: string | null
       deviceId?: string
+      turnId?: string | null
     }
     const device = p.deviceId ? { id: p.deviceId } : await activeMacDevice()
     if (!device) {
@@ -1588,6 +1608,8 @@ async function runApprove(
       },
       policyLevel: 'amber',
       approvedBy: actionId,
+      turnId: approvalExecutionTurnId(options.progressTurnId, p.turnId),
+      conversationId: resolveConversationId(action),
     })
 
     const outcome = await awaitMacResult(commandId, 60_000)
@@ -3548,7 +3570,11 @@ export async function POST(
   let res: Response
   try {
     progress = await beginApprovalProgress(actionId, approveReceivedAt)
-    res = await runApprove(req, ctx, { authChecked: true, imageClaimedAt: imageClaimedAt ?? undefined })
+    res = await runApprove(req, ctx, {
+      authChecked: true,
+      imageClaimedAt: imageClaimedAt ?? undefined,
+      progressTurnId: progress?.turnId ?? null,
+    })
   } catch (error) {
     if (imageClaimedAt) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3608,7 +3634,13 @@ export async function POST(
   }
   try {
     if (res.status >= 200 && res.status < 300 && !visualProofPending) {
-      await enqueueApprovedActionContinuation(actionId, progress?.turnId ?? null)
+      await enqueueApprovedActionContinuation(actionId, progress?.turnId ?? null, {
+        // A Mac action may already have spent ~100s awaiting its result. Give
+        // continuation transport the route's REAL remaining budget; it may use
+        // the worker, run a full safe inline fallback, or terminalize this turn
+        // with durable continuationNeeded — never start 90s blindly at the end.
+        inlineDeadlineAtMs: approveReceivedAt.getTime() + maxDuration * 1000 - 10_000,
+      })
     } else if (visualProofPending && progress?.turnId) {
       // The action/AFTER capture is still queued; starting the head now would
       // let it narrate completion before the result-route reconciler delivers
@@ -3656,7 +3688,6 @@ async function beginApprovalProgress(
 
     const isRender = action.type === 'image_gen' || action.type === 'video_gen'
     const isVoiceCall = action.type === 'agent_voice_call'
-    const isAsync = isRender || isVoiceCall
     // Contextual, not canned (owner ask 2026-07-13 round 2): acknowledge the
     // SPECIFIC job like a person would, then keep the thread visibly working.
     const summaryLine = String(action.summary ?? '').split('\n')[0].slice(0, 80).trim()
@@ -3685,13 +3716,14 @@ async function beginApprovalProgress(
     await traceTurnStage(turnId, 'approve_received', action.type ? String(action.type) : undefined, receivedAt)
     await traceTurnStage(turnId, 'ack_posted', undefined, ackAt)
 
-    if (isAsync) {
-      // The async completion callback owns this visible turn.
-      await db.agentPendingAction.update({
-        where: { id: actionId },
-        data: { payload: { ...(action.payload as Record<string, unknown>), progressTurnId: turnId } },
-      })
-    }
+    // Persist for EVERY approval, including synchronous Browser/Mac work. The
+    // owner can now discover this action's exact progress turn without guessing
+    // from the conversation's latest turn. Async callbacks still consume the
+    // same field; staged toolInput remains byte-for-byte untouched.
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { payload: withApprovalProgressTurn(action.payload, turnId) },
+    })
     return { turnId }
   } catch (err) {
     console.warn('[approve] progress presence failed (approval unaffected):', err instanceof Error ? err.message : err)

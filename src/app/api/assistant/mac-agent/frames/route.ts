@@ -21,6 +21,83 @@ export const dynamic = 'force-dynamic'
 
 /** Daemon downscales to fit; this is the server-side backstop. */
 const MAX_FRAME_CHARS = 1_500_000
+/** Drop the first capture after a scope rollover; it may have begun for the prior turn. */
+const STREAM_SCOPE_SETTLE_MS = 1_200
+
+interface StreamScopeRow {
+  status: string
+  turnId: string | null
+  conversationId: string | null
+  params: unknown
+  deliveredAt: Date | null
+  resolvedAt: Date | null
+  createdAt: Date
+}
+
+interface ProducerStreamScope {
+  streamCommandId: string
+  turnId: string | null
+  conversationId: string | null
+}
+
+export function inferMacFrameScope(row: StreamScopeRow | null): {
+  turnId: string | null
+  conversationId: string | null
+  startedAt: Date | null
+  active: boolean
+  pending: boolean
+} {
+  // `delivered` is only a server-side claim; the poll response can be lost
+  // before the daemon sees it. Never advance pixel ownership until the daemon
+  // confirms the start by posting its command result (`done`).
+  if (row?.status === 'delivered') {
+    return { turnId: null, conversationId: null, startedAt: null, active: false, pending: true }
+  }
+  const params = (row?.params as { mode?: string } | null) ?? null
+  if (!row || params?.mode !== 'start') {
+    return { turnId: null, conversationId: null, startedAt: null, active: false, pending: false }
+  }
+  return {
+    turnId: row.turnId?.trim() || null,
+    conversationId: row.conversationId?.trim() || null,
+    startedAt: row.resolvedAt ?? row.deliveredAt ?? row.createdAt,
+    active: true,
+    pending: false,
+  }
+}
+
+export function macFrameScopeCanPublish(
+  scope: Pick<ReturnType<typeof inferMacFrameScope>, 'active' | 'turnId' | 'conversationId'>,
+  boundTurnRunning: boolean,
+): boolean {
+  if (!scope.active) return false
+  const hasTurn = Boolean(scope.turnId)
+  const hasConversation = Boolean(scope.conversationId)
+  if (hasTurn !== hasConversation) return false
+  // Legacy/manual streams are intentionally owner-controlled. Auto streams
+  // remain alive only while their exact activity is still running.
+  return !hasTurn || boundTurnRunning
+}
+
+export function inferProducerMacFrameScope(
+  row: StreamScopeRow | null,
+  producer: ProducerStreamScope,
+  newerStopAt: Date | null = null,
+): ReturnType<typeof inferMacFrameScope> | null {
+  if (!row || (row.status !== 'delivered' && row.status !== 'done')) return null
+  const params = (row.params as { mode?: string } | null) ?? null
+  if (params?.mode !== 'start') return null
+  if ((row.turnId?.trim() || null) !== producer.turnId) return null
+  if ((row.conversationId?.trim() || null) !== producer.conversationId) return null
+  if (newerStopAt && newerStopAt.getTime() > row.createdAt.getTime()) return null
+  return {
+    turnId: producer.turnId,
+    conversationId: producer.conversationId,
+    startedAt: row.resolvedAt ?? row.deliveredAt ?? row.createdAt,
+    active: true,
+    pending: false,
+  }
+}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -42,6 +119,9 @@ export async function POST(req: NextRequest) {
     controlSessionId?: string
     controlEvents?: number
     controlDrops?: number
+    streamCommandId?: string
+    turnId?: string | null
+    conversationId?: string | null
   }
   try {
     body = await req.json()
@@ -57,15 +137,122 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const at = new Date()
+  const streamCommandId = typeof body.streamCommandId === 'string'
+    && body.streamCommandId.trim().length > 0
+    && body.streamCommandId.length <= 200
+    ? body.streamCommandId.trim()
+    : null
+  const producer = streamCommandId ? {
+    streamCommandId,
+    turnId: typeof body.turnId === 'string' && body.turnId.trim() ? body.turnId.trim() : null,
+    conversationId: typeof body.conversationId === 'string' && body.conversationId.trim()
+      ? body.conversationId.trim()
+      : null,
+  } : null
+  // Scope is server-derived, never trusted from the daemon body. Include both
+  // start and stop: a completed stop must not resurrect an older start's turn.
+  // Queued next-turn starts are deliberately excluded so they cannot relabel
+  // pixels from the stream that is still actually running.
+  const scopeSelect = {
+    turnId: true,
+    conversationId: true,
+    status: true,
+    params: true,
+    deliveredAt: true,
+    resolvedAt: true,
+    createdAt: true,
+  }
+  const scopeRow = await db.macAgentCommand.findFirst({
+    where: producer ? {
+      id: producer.streamCommandId,
+      deviceId: device.id,
+      action: 'screen_stream',
+      status: { in: ['delivered', 'done'] },
+    } : {
+      deviceId: device.id,
+      action: 'screen_stream',
+      status: { in: ['delivered', 'done'] },
+    },
+    ...(producer ? {} : { orderBy: { createdAt: 'desc' } }),
+    select: scopeSelect,
+  }).catch(() => null) as StreamScopeRow | null
+  const newerStop = producer && scopeRow
+    ? await db.macAgentCommand.findFirst({
+        where: {
+          deviceId: device.id,
+          action: 'screen_stream',
+          status: { in: ['delivered', 'done'] },
+          createdAt: { gt: scopeRow.createdAt },
+          params: { path: ['mode'], equals: 'stop' },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }).catch(() => null) as { createdAt: Date } | null
+    : null
+  const scope = producer
+    ? inferProducerMacFrameScope(scopeRow, producer, newerStop?.createdAt ?? null)
+    : inferMacFrameScope(scopeRow)
+  if (!scope) {
+    return Response.json({ error: 'stale_stream_scope' }, { status: 409 })
+  }
+  const boundTurnRunning = scope.turnId && scope.conversationId
+    ? Boolean(await db.agentTurn.findFirst({
+        where: {
+          id: scope.turnId,
+          conversationId: scope.conversationId,
+          status: 'running',
+        },
+        select: { id: true },
+      }).catch(() => null))
+    : false
+  const scopeCanPublish = macFrameScopeCanPublish(scope, boundTurnRunning)
+  const settling = !producer
+    && Boolean(scope.startedAt && at.getTime() - scope.startedAt.getTime() < STREAM_SCOPE_SETTLE_MS)
+
+  let storedFrame: { sequence: number } | null = null
+  if (scopeCanPublish && !settling) {
+    storedFrame = await db.macAgentFrame.upsert({
+      where: { deviceId: device.id },
+      create: {
+        deviceId: device.id,
+        dataUri,
+        at,
+        turnId: scope.turnId,
+        conversationId: scope.conversationId,
+        sequence: 1,
+      },
+      update: {
+        dataUri,
+        at,
+        turnId: scope.turnId,
+        conversationId: scope.conversationId,
+        sequence: { increment: 1 },
+      },
+      select: { sequence: true },
+    })
+  }
   // L9-B: the daemon says its VIDEO broadcaster is live (heartbeats seen).
   // Kept in KV (no migration): freshness is the truth — the feed treats a
   // stamp older than ~10s as video-off, so a crashed broadcaster self-heals.
-  if (body.video === true) {
+  if (body.video === true && storedFrame) {
     await db.agentKvSetting
       .upsert({
         where: { key: `mac_video_active:${device.id}` },
-        create: { key: `mac_video_active:${device.id}`, value: at.toISOString() },
-        update: { value: at.toISOString() },
+        create: {
+          key: `mac_video_active:${device.id}`,
+          value: JSON.stringify({
+            at: at.toISOString(),
+            turnId: scope.turnId,
+            conversationId: scope.conversationId,
+          }),
+        },
+        update: {
+          value: JSON.stringify({
+            at: at.toISOString(),
+            turnId: scope.turnId,
+            conversationId: scope.conversationId,
+          }),
+        },
       })
       .catch(() => {})
   }
@@ -86,12 +273,6 @@ export async function POST(req: NextRequest) {
       })
       .catch(() => {})
   }
-  await db.macAgentFrame.upsert({
-    where: { deviceId: device.id },
-    create: { deviceId: device.id, dataUri, at },
-    update: { dataUri, at },
-  })
-
   // The stop side-channel: the daemon's command queue is SERIAL, so a queued
   // stop would wait behind a long-running shell command while frames kept
   // flowing (Codex on the L7 PR). This POST arrives every ~1.5s from the very
@@ -100,7 +281,7 @@ export async function POST(req: NextRequest) {
   const pendingStop = await db.macAgentCommand
     .findFirst({
       where: { deviceId: device.id, action: 'screen_stream', status: 'queued' },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
       select: { id: true, params: true },
     })
     .catch(() => null)
@@ -117,6 +298,7 @@ export async function POST(req: NextRequest) {
       })
       .catch(() => {})
   }
+  if (!scopeCanPublish && !scope.pending) stop = true
 
   // RC-1: this same ~600ms POST is the control channel to the daemon. A
   // command-queue round trip would arm control seconds late (the queue is
@@ -146,5 +328,5 @@ export async function POST(req: NextRequest) {
     drops: Number(body.controlDrops) || undefined,
   })
 
-  return Response.json({ ok: true, stop, control: stop ? null : control })
+  return Response.json({ ok: true, stop, control: stop ? null : control, stored: Boolean(storedFrame) })
 }
