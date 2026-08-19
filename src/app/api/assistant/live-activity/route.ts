@@ -171,7 +171,6 @@ export async function GET(req: NextRequest) {
 
   const since = new Date(Date.now() - ACTIVE_WINDOW_MS)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
   // Retry driver for owed session notifications: a session waiting on the
@@ -267,12 +266,18 @@ export async function GET(req: NextRequest) {
   /** Newest wins across BOTH surfaces — not whichever list we happened to read first. */
   let screenshot: string | null = null
   let screenshotAt: string | null = null
-  const considerShot = (dataUri: string | null | undefined, at: Date) => {
+  let screenshotSurface: Extract<ActivitySurface, 'mac' | 'browser'> | null = null
+  const considerShot = (
+    dataUri: string | null | undefined,
+    at: Date,
+    surface: Extract<ActivitySurface, 'mac' | 'browser'>,
+  ) => {
     if (!dataUri?.startsWith('data:image')) return
     const iso = at.toISOString()
     if (!screenshotAt || iso > screenshotAt) {
       screenshot = dataUri
       screenshotAt = iso
+      screenshotSurface = surface
     }
   }
 
@@ -298,7 +303,7 @@ export async function GET(req: NextRequest) {
     })
     // The Mac screenshot verb stores its data URI in stdout.
     if ((action === 'screenshot' || action === 'ui_screenshot') && typeof r.stdout === 'string') {
-      considerShot(r.stdout, r.createdAt as Date)
+      considerShot(r.stdout, r.createdAt as Date, 'mac')
     }
   }
 
@@ -336,7 +341,7 @@ export async function GET(req: NextRequest) {
       .catch(() => null)
     const result = (full?.result as Record<string, unknown> | null) ?? null
     if (result && typeof result.screenshot === 'string') {
-      considerShot(result.screenshot, full!.createdAt as Date)
+      considerShot(result.screenshot, full!.createdAt as Date, 'browser')
     }
   }
 
@@ -447,10 +452,11 @@ export async function GET(req: NextRequest) {
       const full = await db.macAgentFrame
         .findUnique({ where: { deviceId: frameMetaRow.deviceId }, select: { dataUri: true, at: true } })
         .catch(() => null)
-      if (full?.dataUri) considerShot(full.dataUri, full.at as Date)
+      if (full?.dataUri) considerShot(full.dataUri, full.at as Date, 'mac')
     } else if (beatsCurrent) {
       // Client already holds this frame — advance the timestamp only.
       screenshotAt = iso
+      screenshotSurface = 'mac'
     }
   }
 
@@ -464,7 +470,10 @@ export async function GET(req: NextRequest) {
   )
   if (newestBrowserShot) {
     const iso = (newestBrowserShot.createdAt as Date).toISOString()
-    if (!screenshotAt || iso > (screenshotAt as string)) screenshotAt = iso
+    if (!screenshotAt || iso > (screenshotAt as string)) {
+      screenshotAt = iso
+      screenshotSurface = 'browser'
+    }
   }
 
   // L9-B — is true VIDEO flowing for the streaming device? The daemon stamps
@@ -526,6 +535,10 @@ export async function GET(req: NextRequest) {
       sessions,
       screenshot,
       screenshotAt,
+      /** The frame's source can differ from `current` when a session event
+       *  lands after a browser action. The mini-player labels the picture,
+       *  not whichever unrelated event happened to be newest. */
+      screenshotSurface,
       /** L9-B — non-null while the Agora VIDEO broadcaster is live for this
        *  device; the dock joins `mac-screen-<id>` via screen-video-token. */
       videoDeviceId,

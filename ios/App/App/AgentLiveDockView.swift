@@ -11,15 +11,15 @@
 //  copied from there deliberately, so both surfaces behave the same:
 //    idle       → renders NOTHING at all. A player parked on an idle chat is
 //                 clutter, and the owner has said so about other panels.
-//    strip      → one line above the composer: what it is doing right now,
-//                 plus a thumbnail when there is a screenshot to show.
+//    mini-player → the latest frame itself stays visible above the composer;
+//                  no expand tap is required just to see what is happening.
 //    sheet      → screenshot large, step list under it, each step with its
 //                 policy badge; collapsing returns to the strip.
 //
-//  Polling, not a socket: 3s while work is live, 15s idle, with a 20s linger
-//  after work ends so the last frame does not vanish mid-glance. A dismiss is
-//  remembered per step id — closing it during a running job must not re-open
-//  it three seconds later (the web dock hit exactly that in Codex review).
+//  Browser action frames poll at 1.5s while live; true Mac video is Agora and
+//  its fallback frames poll at 1s. Idle is 15s, with a 20s linger after work
+//  ends so the last frame does not vanish mid-glance. A dismiss is remembered
+//  per step id — closing it during a running job must not re-open immediately.
 //
 //  NOT the ActivityKit Dynamic Island feature — `live-activity-push.ts` and
 //  `/api/assistant/internal/live-activity/register` are a different thing that
@@ -82,6 +82,9 @@ struct AgentLiveActivityFeed: Decodable, Equatable {
     /// data:image/… URI, newest across every surface.
     let screenshot: String?
     let screenshotAt: String?
+    /// mac | browser. The newest event can be a session line unrelated to the
+    /// picture, so the mini-player labels the picture's real source.
+    let screenshotSurface: String?
     /// L9-B — non-nil while the Mac's Agora VIDEO broadcaster is live.
     let videoDeviceId: String?
     /// RC-3 — how many screens that Mac has, and which one is streaming.
@@ -111,7 +114,7 @@ final class AgentLiveDockStore {
     private var authFailures = 0
 
     static let lingerSeconds: TimeInterval = 20
-    static let pollActiveSeconds: TimeInterval = 3
+    static let pollActiveSeconds: TimeInterval = 1.5
     static let pollIdleSeconds: TimeInterval = 15
     /// L9-A: while the Mac screen is actually STREAMING, frames land every
     /// ~600ms — a 3s poll wasted most of them. 1s keeps motion feeling live
@@ -133,7 +136,7 @@ final class AgentLiveDockStore {
     private var screenshotURI: String?
     private var screenshotAt: String?
 
-    /// The strip's thumbnail / sheet image, decoded from the data URI once per change.
+    /// The mini-player / sheet image, decoded from the data URI once per change.
     private var decodedFor: String?
     private var decoded: UIImage?
     var screenshotImage: UIImage? {
@@ -347,9 +350,13 @@ final class AgentLiveDockStore {
         // control bar, keyboard, display picker) without a server, so the
         // layout can be checked in the simulator before anything ships.
         let control = mode == "control"
-        feed = AgentLiveActivityFeed(active: true, current: steps.first,
+        let fixtureShot = control ? nil : Self.fixtureScreenshotURI()
+        screenshotURI = fixtureShot
+        screenshotAt = fixtureShot == nil ? nil : now
+        feed = AgentLiveActivityFeed(active: true, current: mode == "pip" ? steps[3] : steps.first,
                                      steps: steps, streaming: control, sessions: fixtureSessions,
-                                     screenshot: nil, screenshotAt: nil,
+                                     screenshot: fixtureShot, screenshotAt: screenshotAt,
+                                     screenshotSurface: control ? "mac" : "browser",
                                      videoDeviceId: control ? "fixture-mac" : nil,
                                      macDisplays: control ? MacDisplayInfo(count: 2, index: 0) : nil)
         lastActiveAt = Date()
@@ -359,6 +366,32 @@ final class AgentLiveDockStore {
         return false
         #endif
     }
+
+    #if DEBUG
+    /// A deterministic browser-looking frame for simulator proof. It is made
+    /// in memory and exists only when the explicit debug fixture is requested.
+    private static func fixtureScreenshotURI() -> String? {
+        let size = CGSize(width: 720, height: 405)
+        let image = UIGraphicsImageRenderer(size: size).image { context in
+            UIColor(red: 0.055, green: 0.063, blue: 0.075, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: size))
+            UIColor(red: 0.105, green: 0.118, blue: 0.137, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 0, y: 0, width: size.width, height: 52))
+            UIColor(red: 0.165, green: 0.184, blue: 0.212, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 96, y: 12, width: 520, height: 28))
+            UIColor(red: 0.09, green: 0.105, blue: 0.125, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 18, y: 70, width: 150, height: 314))
+            UIColor(red: 0.16, green: 0.18, blue: 0.21, alpha: 1).setFill()
+            for row in 0..<5 {
+                context.cgContext.fill(CGRect(x: 196, y: 82 + CGFloat(row * 57), width: 488, height: 38))
+            }
+            UIColor(red: 0.32, green: 0.78, blue: 0.58, alpha: 1).setFill()
+            context.cgContext.fill(CGRect(x: 34, y: 92, width: 116, height: 28))
+        }
+        guard let png = image.pngData() else { return nil }
+        return "data:image/png;base64,\(png.base64EncodedString())"
+    }
+    #endif
 }
 
 // MARK: - View
@@ -366,6 +399,10 @@ final class AgentLiveDockStore {
 @available(iOS 17.0, *)
 struct AgentLiveDockView: View {
     @State private var store = AgentLiveDockStore()
+    /// One Agora join follows the video between mini-player, sheet and full
+    /// screen. Keeping separate joins would double viewing cost and blink.
+    @State private var macSession = MacScreenSession()
+    @State private var macControl = MacRemoteControlStore()
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -376,20 +413,27 @@ struct AgentLiveDockView: View {
         // An empty VStack is still a real, installed view; its task runs.
         VStack(spacing: 0) {
             if store.show, let feed = store.feed {
-                strip(feed: feed, pal: pal)
+                miniPlayer(feed: feed, pal: pal)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.show)
         .sheet(isPresented: $store.expanded) {
             if let feed = store.feed {
-                AgentLiveDockSheet(store: store, feed: feed)
+                AgentLiveDockSheet(store: store, feed: feed,
+                                   macSession: macSession, control: macControl)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
             }
         }
         .task { await store.run() }
+        .onChange(of: store.show) { _, visible in
+            if !visible { macSession.leave() }
+        }
+        .onChange(of: store.feed?.videoDeviceId) { _, deviceId in
+            if deviceId == nil { macSession.leave() }
+        }
     }
 
     private func statusDot(_ status: String, active: Bool) -> some View {
@@ -405,81 +449,108 @@ struct AgentLiveDockView: View {
             .modifier(AgentLiveDockPulse(animate: active))
     }
 
-    private func strip(feed: AgentLiveActivityFeed, pal: AgentPalette) -> some View {
-        HStack(spacing: 10) {
-            statusDot(feed.current?.status ?? "done", active: feed.active)
+    private func miniPlayer(feed: AgentLiveActivityFeed, pal: AgentPalette) -> some View {
+        ZStack {
+            Color.black
 
-            if let shot = store.screenshotImage {
+            if let videoDevice = feed.videoDeviceId, !store.expanded {
+                MacScreenStage(deviceId: videoDevice, session: macSession, store: macControl)
+                    .allowsHitTesting(false)
+            } else if let shot = store.screenshotImage {
                 Image(uiImage: shot)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 56, height: 36)
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(pal.borderSubtle, lineWidth: 1))
-                    .overlay(alignment: .topLeading) {
-                        if feed.current?.labelBn.contains("BEFORE") == true || feed.current?.labelBn.contains("AFTER") == true {
-                            Text(feed.current?.labelBn.contains("BEFORE") == true ? "BEFORE" : "AFTER")
-                                .font(.system(size: 7.5, weight: .black))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(feed.current?.labelBn.contains("BEFORE") == true ? Color.orange : Color.green,
-                                            in: RoundedRectangle(cornerRadius: 4))
-                                .padding(3)
-                        }
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                RadialGradient(colors: [Color(red: 0.15, green: 0.19, blue: 0.23), .black],
+                               center: .center, startRadius: 4, endRadius: 180)
+                    .overlay {
+                        Text("প্রথম ফ্রেম আসছে…")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.55))
                     }
             }
 
-            Button {
-                AlmaAgentHaptics.light()
-                store.expanded = true
-            } label: {
-                VStack(alignment: .leading, spacing: 1.5) {
-                    Text(feed.current?.labelBn ?? "কাজ চলছে")
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(pal.ink)
-                        .lineLimit(1)
-                    Text("\(feed.current?.surfaceBn ?? "") · দেখতে ট্যাপ করুন")
-                        .font(.system(size: 11))
-                        .foregroundStyle(pal.muted)
-                        .lineLimit(1)
+            LinearGradient(colors: [.black.opacity(0.78), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 52)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+            LinearGradient(colors: [.clear, .black.opacity(0.88)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 72)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .allowsHitTesting(false)
+
+            HStack(spacing: 6) {
+                statusDot(feed.current?.status ?? "done", active: feed.active)
+                Text("\(feed.active ? "লাইভ" : "শেষ ফ্রেম") · \(pictureSurfaceBn(feed))")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.42), in: Capsule())
+                Spacer(minLength: 0)
+                miniButton(systemName: "arrow.up.left.and.arrow.down.right", label: "বড় করে দেখুন") {
+                    AlmaAgentHaptics.light()
+                    store.expanded = true
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                miniButton(systemName: "xmark", label: "বন্ধ করুন") {
+                    AlmaAgentHaptics.selection()
+                    store.dismiss()
+                }
             }
+            .padding(9)
+            .frame(maxHeight: .infinity, alignment: .top)
 
-            Button {
-                AlmaAgentHaptics.light()
-                store.expanded = true
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(pal.mutedHi)
-                    .frame(width: 30, height: 30)
-                    .background(.ultraThinMaterial, in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(feed.current?.labelBn ?? "কাজ চলছে")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text("বড় করে দেখতে ট্যাপ করুন")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.62))
             }
-            .accessibilityLabel("বড় করে দেখুন")
-
-            Button {
-                AlmaAgentHaptics.selection()
-                store.dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(pal.muted.opacity(0.8))
-                    .frame(width: 26, height: 26)
-            }
-            .accessibilityLabel("বন্ধ করুন")
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .padding(.horizontal, 11)
+            .padding(.bottom, 9)
+            .allowsHitTesting(false)
         }
+        .frame(width: 286, height: 161)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+        .shadow(color: .black.opacity(0.28), radius: 16, y: 7)
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onTapGesture {
+            AlmaAgentHaptics.light()
+            store.expanded = true
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .modifier(AlmaAgentGlassBackground(shape: RoundedRectangle(cornerRadius: 18), pal: AgentPalette(scheme)))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(pal.borderSubtle, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .buttonStyle(AlmaAgentPressStyle())
+        .padding(.vertical, 7)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("এজেন্ট লাইভ কাজ")
+    }
+
+    private func pictureSurfaceBn(_ feed: AgentLiveActivityFeed) -> String {
+        switch feed.videoDeviceId == nil ? (feed.screenshotSurface ?? feed.current?.surface) : "mac" {
+        case "browser": return "ব্রাউজার"
+        case "session": return "Claude সেশন"
+        default: return "আপনার Mac"
+        }
+    }
+
+    private func miniButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.86))
+                .frame(width: 28, height: 28)
+                .background(.black.opacity(0.55), in: Circle())
+        }
+        .accessibilityLabel(label)
     }
 }
 
@@ -507,14 +578,13 @@ private struct AgentLiveDockPulse: ViewModifier {
 struct AgentLiveDockSheet: View {
     @Bindable var store: AgentLiveDockStore
     let feed: AgentLiveActivityFeed
+    let macSession: MacScreenSession
+    @Bindable var control: MacRemoteControlStore
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var replyText = ""
-    /// RC-1: the Agora connection and the control switch outlive individual
-    /// SwiftUI view identities, so the sheet owns both and tears them down on
-    /// disappear — a re-layout must never silently drop control or the join.
-    @State private var macSession = MacScreenSession()
-    @State private var control = MacRemoteControlStore()
+    /// RC-1: the parent owns the Agora connection and control store so the
+    /// mini-player, sheet and full-screen stage share one uninterrupted join.
 
     var body: some View {
         let pal = AgentPalette(scheme)
@@ -597,31 +667,33 @@ struct AgentLiveDockSheet: View {
                             }
                     }
 
-                    Button {
-                        AlmaAgentHaptics.commit()
-                        Task { await store.toggleStream() }
-                    } label: {
-                        HStack(spacing: 7) {
-                            if store.streamBusy {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: store.streamOn ? "stop.circle.fill" : "video.fill")
-                                    .font(.system(size: 13, weight: .semibold))
+                    if feed.streaming == true || feed.screenshotSurface == "mac" || feed.current?.surface == "mac" {
+                        Button {
+                            AlmaAgentHaptics.commit()
+                            Task { await store.toggleStream() }
+                        } label: {
+                            HStack(spacing: 7) {
+                                if store.streamBusy {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: store.streamOn ? "stop.circle.fill" : "video.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                Text(store.streamOn ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
+                                    .font(.system(size: 13.5, weight: .semibold))
                             }
-                            Text(store.streamOn ? "লাইভ ভিউ বন্ধ করুন" : "Mac-এর লাইভ ভিউ দেখুন")
-                                .font(.system(size: 13.5, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .foregroundStyle(store.streamOn ? Color.red : pal.mutedHi)
+                            .background(
+                                (store.streamOn ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
+                                in: RoundedRectangle(cornerRadius: 11))
+                            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
+                                store.streamOn ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .foregroundStyle(store.streamOn ? Color.red : pal.mutedHi)
-                        .background(
-                            (store.streamOn ? Color.red.opacity(0.10) : pal.ink.opacity(0.04)),
-                            in: RoundedRectangle(cornerRadius: 11))
-                        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(
-                            store.streamOn ? Color.red.opacity(0.35) : pal.borderSubtle, lineWidth: 1))
+                        .disabled(store.streamBusy)
+                        .accessibilityLabel("লাইভ স্ক্রিন ভিউ")
                     }
-                    .disabled(store.streamBusy)
-                    .accessibilityLabel("লাইভ স্ক্রিন ভিউ")
 
                     if let sessions = feed.sessions, !sessions.isEmpty {
                         VStack(spacing: 6) {
@@ -676,9 +748,9 @@ struct AgentLiveDockSheet: View {
                                 session: macSession, control: control)
         }
         .onDisappear {
-            // Closing the sheet ends both rights at once: hands off, eyes off.
+            // Collapsing keeps the shared view-only Agora join alive for the
+            // mini-player, but remote-control privilege never survives it.
             if control.armed { Task { await control.disarm(reason: nil) } }
-            macSession.leave()
         }
         .onChange(of: store.feed?.videoDeviceId) { _, now in
             // The Mac stopped broadcasting (stream ended, broadcaster died):

@@ -11,14 +11,14 @@
  * Shape:
  *   idle       → renders nothing at all. A player parked on an idle chat is
  *                clutter, and he has said so about other panels.
- *   collapsed  → one line above the composer: what it is doing right now, plus a
- *                thumbnail when there is a screenshot to show.
+ *   collapsed  → an always-visible mini-player above the composer: the latest
+ *                frame is readable without tapping, with status overlaid.
  *   expanded   → a sheet with the screenshot large and the step list under it;
  *                collapsing puts it straight back to the line.
  *
  * Polling, not a socket: the surfaces it reports on already write their state to
- * Postgres, and a 3s poll while work is live costs less than keeping a stream
- * open on a phone that may be on mobile data.
+ * Postgres. Browser work polls at 1.5s while active; true Mac streaming polls
+ * at 1s. Unchanged frames are metadata-only, so this stays light on mobile data.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -59,6 +59,8 @@ interface ActivityFeed {
   streaming?: boolean
   screenshot: string | null
   screenshotAt: string | null
+  /** The picture's source; `current` may be a newer, unrelated session event. */
+  screenshotSurface?: Extract<Surface, 'mac' | 'browser'> | null
 }
 
 const SURFACE_BN: Record<Surface, string> = {
@@ -76,8 +78,110 @@ const STATUS_DOT: Record<string, string> = {
 
 /** Keep polling a little after work stops, so the last frame does not vanish mid-glance. */
 const LINGER_MS = 20_000
-const POLL_ACTIVE_MS = 3_000
+const POLL_STREAMING_MS = 1_000
+const POLL_ACTIVE_MS = 1_500
 const POLL_IDLE_MS = 15_000
+
+interface AgentLiveMiniPlayerProps {
+  active: boolean
+  dotClass: string
+  label: string
+  screenshot: string | null
+  surfaceLabel: string
+  onExpand: () => void
+  onDismiss: () => void
+}
+
+/**
+ * The Codex-style collapsed state: the frame itself is the product, not a
+ * postage-stamp hint that only becomes useful after opening a sheet.
+ */
+export function AgentLiveMiniPlayer({
+  active,
+  dotClass,
+  label,
+  screenshot,
+  surfaceLabel,
+  onExpand,
+  onDismiss,
+}: AgentLiveMiniPlayerProps) {
+  return (
+    <div
+      data-testid="agent-live-mini-player"
+      className="pointer-events-auto relative w-[min(76vw,19rem)] overflow-hidden rounded-2xl border border-white/15 bg-[#101114] shadow-2xl ring-1 ring-black/20 sm:w-80"
+    >
+      <button type="button" onClick={onExpand} aria-label="লাইভ ভিউ বড় করে দেখুন" className="block w-full text-left">
+        <div className="relative aspect-video overflow-hidden bg-black">
+          {screenshot ? (
+            // Preserve the whole desktop/browser viewport — cropping it made
+            // the old thumbnail useless for understanding where the agent was.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={screenshot}
+              alt="এজেন্ট এখন যে স্ক্রিন দেখছে"
+              className="absolute inset-0 h-full w-full object-contain"
+            />
+          ) : (
+            <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_center,_#26303a,_#0b0c0e_72%)] text-xs text-white/55">
+              প্রথম ফ্রেম আসছে…
+            </div>
+          )}
+
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center bg-gradient-to-b from-black/75 to-transparent px-2.5 pb-5 pt-2">
+            <span className={`h-2 w-2 rounded-full ${dotClass} ${active ? 'animate-pulse' : ''}`} />
+            <span className="ml-1.5 rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-semibold text-white/90 backdrop-blur">
+              {active ? 'লাইভ' : 'শেষ ফ্রেম'} · {surfaceLabel}
+            </span>
+          </div>
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/55 to-transparent px-3 pb-2.5 pt-8">
+            <p className="truncate text-xs font-medium text-white">{label}</p>
+            <p className="mt-0.5 text-[10px] text-white/65">বড় করে দেখতে ট্যাপ করুন</p>
+          </div>
+        </div>
+      </button>
+
+      <div className="absolute right-2 top-2 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onExpand}
+          aria-label="বড় করে দেখুন"
+          className="grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white/85 backdrop-blur transition hover:bg-black/75"
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+          >
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="বন্ধ করুন"
+          className="grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white/70 backdrop-blur transition hover:bg-black/75"
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+          >
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function AgentLiveDock() {
   const [feed, setFeed] = useState<ActivityFeed | null>(null)
@@ -85,6 +189,7 @@ export default function AgentLiveDock() {
   /** He closed it by hand — respect that until genuinely NEW work starts. */
   const [dismissedStepId, setDismissedStepId] = useState<string | null>(null)
   const lastActiveRef = useRef<number>(0)
+  const streamingRef = useRef(false)
   /**
    * The frame we already hold, keyed by `screenshotAt`. The poll tells the
    * server, and an unchanged frame comes back as metadata only — without this
@@ -99,6 +204,7 @@ export default function AgentLiveDock() {
       const res = await fetch(`/api/assistant/live-activity${qs}`, { cache: 'no-store' })
       if (!res.ok) return
       const data = (await res.json()) as ActivityFeed
+      streamingRef.current = Boolean(data.streaming)
       if (data.active) lastActiveRef.current = Date.now()
       if (data.screenshot && data.screenshotAt) {
         screenshotRef.current = { uri: data.screenshot, at: data.screenshotAt }
@@ -126,7 +232,7 @@ export default function AgentLiveDock() {
       timer = setTimeout(async () => {
         await load()
         tick()
-      }, wasActive ? POLL_ACTIVE_MS : POLL_IDLE_MS)
+      }, streamingRef.current ? POLL_STREAMING_MS : wasActive ? POLL_ACTIVE_MS : POLL_IDLE_MS)
     }
     tick()
     return () => clearTimeout(timer)
@@ -240,6 +346,7 @@ export default function AgentLiveDock() {
 
   const current = feed.current
   const dot = STATUS_DOT[current?.status ?? 'done'] ?? 'bg-black/25'
+  const pictureSurface: Surface = feed.screenshotSurface ?? current?.surface ?? 'mac'
 
   if (expanded) {
     return (
@@ -283,18 +390,20 @@ export default function AgentLiveDock() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => void toggleStream()}
-              disabled={streamBusy}
-              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium ${
-                streamOn
-                  ? 'border-red-300 bg-red-50 text-red-700'
-                  : 'border-black/15 bg-black/[0.03] text-black/70'
-              } disabled:opacity-50`}
-            >
-              {streamOn ? '⏹️ লাইভ ভিউ বন্ধ করুন' : '🎥 Mac-এর লাইভ ভিউ দেখুন'}
-            </button>
+            {(feed.streaming || pictureSurface === 'mac') && (
+              <button
+                type="button"
+                onClick={() => void toggleStream()}
+                disabled={streamBusy}
+                className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium ${
+                  streamOn
+                    ? 'border-red-300 bg-red-50 text-red-700'
+                    : 'border-black/15 bg-black/[0.03] text-black/70'
+                } disabled:opacity-50`}
+              >
+                {streamOn ? '⏹️ লাইভ ভিউ বন্ধ করুন' : '🎥 Mac-এর লাইভ ভিউ দেখুন'}
+              </button>
+            )}
 
             {(feed.sessions?.length ?? 0) > 0 && (
               <div className="mt-4 space-y-1.5">
@@ -383,52 +492,16 @@ export default function AgentLiveDock() {
   }
 
   return (
-    <div className="pointer-events-none sticky bottom-0 z-30 flex justify-center px-3 pb-1">
-      <div className="pointer-events-auto flex w-full max-w-2xl items-center gap-2 rounded-2xl border border-black/10 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${feed.active ? 'animate-pulse' : ''}`} />
-
-        {feed.screenshot && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={feed.screenshot}
-            alt=""
-            className="h-9 w-14 shrink-0 rounded-md border border-black/10 object-cover"
-          />
-        )}
-
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="min-w-0 flex-1 text-left"
-        >
-          <p className="truncate text-sm font-medium">{current?.labelBn ?? 'কাজ চলছে'}</p>
-          <p className="truncate text-[11px] text-black/50">
-            {current ? SURFACE_BN[current.surface] : ''} · দেখতে ট্যাপ করুন
-          </p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          aria-label="বড় করে দেখুন"
-          className="shrink-0 rounded-full bg-black/5 p-2 text-black/60"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setDismissedStepId(current?.id ?? 'none')}
-          aria-label="বন্ধ করুন"
-          className="shrink-0 rounded-full p-1.5 text-black/35"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+    <div className="pointer-events-none sticky bottom-0 z-30 flex justify-end px-3 pb-2 pt-1">
+      <AgentLiveMiniPlayer
+        active={feed.active}
+        dotClass={dot}
+        label={current?.labelBn ?? 'কাজ চলছে'}
+        screenshot={feed.screenshot}
+        surfaceLabel={SURFACE_BN[pictureSurface]}
+        onExpand={() => setExpanded(true)}
+        onDismiss={() => setDismissedStepId(current?.id ?? 'none')}
+      />
     </div>
   )
 }
