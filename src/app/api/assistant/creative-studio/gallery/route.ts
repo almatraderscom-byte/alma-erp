@@ -105,6 +105,10 @@ export async function GET(req: NextRequest) {
   const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim() ?? ''
   const projectId = req.nextUrl.searchParams.get('projectId')?.trim() ?? ''
   const archivedOnly = req.nextUrl.searchParams.get('archived') === '1'
+  const reviewStates = (req.nextUrl.searchParams.get('reviewState') ?? '')
+    .split(',')
+    .map((value) => value.trim().toUpperCase())
+    .filter((value) => ['DRAFT', 'CHANGES_REQUESTED', 'REVISED', 'APPROVED'].includes(value))
   const projectAssetId = req.nextUrl.searchParams.get('projectAssetId')?.trim() ?? ''
   const assetVersionId = req.nextUrl.searchParams.get('assetVersionId')?.trim() ?? ''
   const rawReviewSequence = req.nextUrl.searchParams.get('reviewSequence')
@@ -138,6 +142,7 @@ export async function GET(req: NextRequest) {
     brandProfileId: string
     assetVersionId: string | null
     reviewSequence: number
+    reviewState: string
     archived: boolean
   }
   const canonicalByActionId = new Map<string, Canonical>()
@@ -153,6 +158,7 @@ export async function GET(req: NextRequest) {
         where: {
           ...(projectAssetId ? { id: projectAssetId } : {}),
           ...(reviewSequence != null ? { reviewSequence } : {}),
+          ...(reviewStates.length ? { reviewState: { in: reviewStates } } : {}),
           project: {
             ownerId: access.ownerId,
             brandProfileId,
@@ -164,6 +170,7 @@ export async function GET(req: NextRequest) {
           projectId: true,
           pendingActionId: true,
           reviewSequence: true,
+          reviewState: true,
           project: { select: { brandProfileId: true, archivedAt: true } },
           versions: {
             orderBy: { version: 'desc' },
@@ -181,6 +188,7 @@ export async function GET(req: NextRequest) {
         projectId: string
         pendingActionId: string | null
         reviewSequence: number
+        reviewState: string
         project: { brandProfileId: string | null; archivedAt: Date | null }
         versions: Array<{
           id: string
@@ -206,6 +214,7 @@ export async function GET(req: NextRequest) {
           brandProfileId,
           assetVersionId: asset.versions[0]?.id ?? null,
           reviewSequence: asset.reviewSequence,
+          reviewState: String(asset.reviewState).toLowerCase(),
           archived,
         })
       }
@@ -233,14 +242,39 @@ export async function GET(req: NextRequest) {
   const limit = normalizeGalleryLimit(req.nextUrl.searchParams.get('limit'))
   const rawCursor = req.nextUrl.searchParams.get('cursor')
   const cursor = decodeGalleryCursor(rawCursor)
+  const oldestFirst = req.nextUrl.searchParams.get('order') === 'oldest'
+  const orderDirection = oldestFirst ? 'asc' : 'desc'
+  const cursorWhere = (value: NonNullable<typeof cursor>) => oldestFirst
+    ? {
+        OR: [
+          { createdAt: { gt: new Date(value.createdAt) } },
+          { AND: [{ createdAt: { equals: new Date(value.createdAt) } }, { id: { gt: value.id } }] },
+        ],
+      }
+    : buildGalleryCursorWhere(value)
   if (rawCursor && !cursor) {
     return Response.json({ error: 'invalid_cursor', message: 'Gallery cursor ঠিক নয়। Refresh করুন।' }, { status: 400 })
   }
   const filters = normalizeGalleryFilters(req.nextUrl.searchParams)
+  const providerFilter = (req.nextUrl.searchParams.get('provider') ?? '').trim().slice(0, 64)
+  const aspectFilter = (req.nextUrl.searchParams.get('aspectRatio') ?? '').trim().slice(0, 16)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const rawWhere = buildGalleryWhere(filters)
+  const rawWhere = {
+    AND: [
+      buildGalleryWhere(filters),
+      ...(providerFilter ? [{ OR: [
+        { payload: { path: ['provider'], equals: providerFilter } },
+        { result: { path: ['provider'], equals: providerFilter } },
+      ] }] : []),
+      ...(aspectFilter ? [{ OR: [
+        { payload: { path: ['aspectRatio'], equals: aspectFilter } },
+        { result: { path: ['aspectRatio'], equals: aspectFilter } },
+        { result: { path: ['requestedAspectRatio'], equals: aspectFilter } },
+      ] }] : []),
+    ],
+  }
   const baseWhere = brandProfileId
     ? {
         AND: [
@@ -270,11 +304,11 @@ export async function GET(req: NextRequest) {
   let exactVisibleTotal: number | null = null
   if (exclusionPredicates.length === 0) {
     const where = cursor
-      ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
+      ? { AND: [baseWhere, cursorWhere(cursor)] }
       : baseWhere
     visibleRows = await db.agentPendingAction.findMany({
       where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ createdAt: orderDirection }, { id: orderDirection }],
       take: limit + 1,
       skip: legacySkip,
     }) as Row[]
@@ -290,11 +324,11 @@ export async function GET(req: NextRequest) {
 
     while (visibleRows.length < target) {
       const scanWhere = scanCursor
-        ? { AND: [baseWhere, buildGalleryCursorWhere(scanCursor)] }
+        ? { AND: [baseWhere, cursorWhere(scanCursor)] }
         : baseWhere
       const batch = await db.agentPendingAction.findMany({
         where: scanWhere,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ createdAt: orderDirection }, { id: orderDirection }],
         take: batchSize,
       }) as Row[]
       if (batch.length === 0) break
@@ -417,6 +451,8 @@ export async function GET(req: NextRequest) {
       projectAssetId: canonical?.projectAssetId ?? null,
       assetVersionId: canonical?.assetVersionId ?? null,
       reviewSequence: canonical?.reviewSequence ?? null,
+      reviewState: canonical?.reviewState ?? null,
+      archived: canonical?.archived ?? false,
       projectId: canonical?.projectId ?? null,
       brandProfileId: canonical?.brandProfileId ?? null,
       type: row.type,
@@ -430,6 +466,12 @@ export async function GET(req: NextRequest) {
       // requested — never claim the selected engine ran if something else did.
       provider: (result.provider as string | undefined) ?? payload.provider ?? 'gemini',
       familyPreset: payload.familyPreset ?? null,
+      aspectRatio:
+        originalVariant?.requestedAspectRatio
+        ?? brandedVariant?.requestedAspectRatio
+        ?? (typeof result.requestedAspectRatio === 'string' ? result.requestedAspectRatio : null)
+        ?? (typeof result.aspectRatio === 'string' ? result.aspectRatio : null)
+        ?? (typeof payload.aspectRatio === 'string' ? payload.aspectRatio : null),
       // CS6 — engine lineage metadata (fal VTON): engine id, request id, seed,
       // latency and actual cost, straight from the worker's result.
       engine: (result.falEngine as string | undefined) ?? (payload.falEngine as string | undefined)
