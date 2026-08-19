@@ -16,11 +16,12 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const isRetryableStatus = (status) => status === 408 || status === 425 || status === 429 || status >= 500
 
 class ReportDeliveryError extends Error {
-  constructor(message, { status = null, retryable = true } = {}) {
+  constructor(message, { status = null, retryable = true, permanent = false } = {}) {
     super(message)
     this.name = 'ReportDeliveryError'
     this.status = status
     this.retryable = retryable
+    this.permanent = permanent
   }
 }
 
@@ -60,6 +61,9 @@ export async function deliverPersistedCallReport(payload, options = {}) {
       const error = new ReportDeliveryError(`HTTP ${res.status}: ${detail.slice(0, 300)}`, {
         status: res.status,
         retryable: isRetryableStatus(res.status),
+        // Authentication mismatches are configuration failures: stop retrying this
+        // delivery now, but leave the report active so a later drain can recover it.
+        permanent: !isRetryableStatus(res.status) && res.status !== 401 && res.status !== 403,
       })
       if (!error.retryable) throw error
       lastError = error
@@ -84,7 +88,7 @@ export async function queueAndDeliverCallReport(payload, options = {}) {
     await unlink(path).catch(() => {})
     return delivered
   } catch (err) {
-    if (err instanceof ReportDeliveryError && !err.retryable) {
+    if (err instanceof ReportDeliveryError && err.permanent) {
       await quarantinePersistedReport(path, dir)
     }
     throw err
@@ -105,7 +109,7 @@ async function drainCallReportOutboxOnce(options = {}) {
       results.push({ name, ok: true, attempt: delivered.attempt })
     } catch (err) {
       let deadLettered = false
-      if (err instanceof ReportDeliveryError && !err.retryable) {
+      if (err instanceof ReportDeliveryError && err.permanent) {
         try {
           await quarantinePersistedReport(path, dir)
           deadLettered = true

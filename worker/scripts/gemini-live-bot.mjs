@@ -690,7 +690,7 @@ class Call {
       this.reported = true
       console.log(`[glive] ${this.id} report delivered HTTP ${delivered.status} attempt=${delivered.attempt} (turns=${this.turns.length} dur=${durationSecs}s sum=${summary ? 'y' : 'n'} cost=৳${costBdt})`)
     } catch (e) {
-      const disposition = e?.retryable === false ? 'quarantined after permanent rejection' : 'queued for recovery'
+      const disposition = e?.permanent ? 'quarantined after permanent rejection' : 'queued for recovery'
       console.log(`[glive] ${this.id} report ${disposition}: ${e?.message || e}`)
     }
   }
