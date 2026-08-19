@@ -237,6 +237,16 @@ export async function GET(req: NextRequest) {
   const limit = normalizeGalleryLimit(req.nextUrl.searchParams.get('limit'))
   const rawCursor = req.nextUrl.searchParams.get('cursor')
   const cursor = decodeGalleryCursor(rawCursor)
+  const oldestFirst = req.nextUrl.searchParams.get('order') === 'oldest'
+  const orderDirection = oldestFirst ? 'asc' : 'desc'
+  const cursorWhere = (value: NonNullable<typeof cursor>) => oldestFirst
+    ? {
+        OR: [
+          { createdAt: { gt: new Date(value.createdAt) } },
+          { AND: [{ createdAt: { equals: new Date(value.createdAt) } }, { id: { gt: value.id } }] },
+        ],
+      }
+    : buildGalleryCursorWhere(value)
   if (rawCursor && !cursor) {
     return Response.json({ error: 'invalid_cursor', message: 'Gallery cursor ঠিক নয়। Refresh করুন।' }, { status: 400 })
   }
@@ -274,11 +284,11 @@ export async function GET(req: NextRequest) {
   let exactVisibleTotal: number | null = null
   if (exclusionPredicates.length === 0) {
     const where = cursor
-      ? { AND: [baseWhere, buildGalleryCursorWhere(cursor)] }
+      ? { AND: [baseWhere, cursorWhere(cursor)] }
       : baseWhere
     visibleRows = await db.agentPendingAction.findMany({
       where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ createdAt: orderDirection }, { id: orderDirection }],
       take: limit + 1,
       skip: legacySkip,
     }) as Row[]
@@ -294,11 +304,11 @@ export async function GET(req: NextRequest) {
 
     while (visibleRows.length < target) {
       const scanWhere = scanCursor
-        ? { AND: [baseWhere, buildGalleryCursorWhere(scanCursor)] }
+        ? { AND: [baseWhere, cursorWhere(scanCursor)] }
         : baseWhere
       const batch = await db.agentPendingAction.findMany({
         where: scanWhere,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ createdAt: orderDirection }, { id: orderDirection }],
         take: batchSize,
       }) as Row[]
       if (batch.length === 0) break

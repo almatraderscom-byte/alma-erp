@@ -716,6 +716,7 @@ struct CSV4WorkspaceScreen: View {
             Label("Production scope", systemImage: "lock.shield.fill")
                 .font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette.coralLt)
             Picker("ব্র্যান্ড", selection: Binding(get: { model.selectedBrandID ?? "" }, set: { value in
+                model.invalidateCampaignPreview()
                 model.selectedBrandID = value
                 Task {
                     await model.reloadBrand()
@@ -725,6 +726,7 @@ struct CSV4WorkspaceScreen: View {
                 ForEach(model.brands) { Text("\($0.name) · \($0.role.capitalized)").tag($0.id) }
             }.pickerStyle(.menu)
             Picker("প্রজেক্ট", selection: Binding(get: { model.selectedProjectID ?? "" }, set: { value in
+                model.invalidateCampaignPreview()
                 model.selectedProjectID = value
                 if let project = model.projects.first(where: { $0.id == value }) { onProjectSelected(project) }
                 Task { await model.reloadProject() }

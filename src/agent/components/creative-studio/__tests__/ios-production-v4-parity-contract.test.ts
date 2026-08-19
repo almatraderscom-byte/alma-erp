@@ -82,6 +82,8 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('writable.first { $0.id == priorProjectID }')
     expect(nativeStudio).toContain('query["q"] = search')
     expect(nativeStudio).toContain('.onSubmit { Task { await vm.refreshGallery() } }')
+    expect(nativeStudio).toContain('query["order"] = gallerySort')
+    expect(nativeWorkspace).toContain('model.invalidateCampaignPreview()')
   })
 
   it('returns canonical lifecycle and aspect metadata for native filters', () => {
@@ -89,6 +91,7 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(galleryRoute).toContain('archived: canonical?.archived ?? false')
     expect(galleryRoute).toContain('originalVariant?.requestedAspectRatio')
     expect(galleryRoute).toContain("typeof payload.aspectRatio === 'string'")
+    expect(galleryRoute).toContain("const oldestFirst = req.nextUrl.searchParams.get('order') === 'oldest'")
   })
 
   it('keeps precision mask repair behind a signed estimate and explicit confirmation', () => {

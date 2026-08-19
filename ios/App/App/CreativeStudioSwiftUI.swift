@@ -566,18 +566,12 @@ final class CreativeStudioVM {
         case "archived": lifecycleFiltered = gallery.filter { $0.archived == true }
         default: lifecycleFiltered = gallery
         }
-        let needle = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let refined = lifecycleFiltered.filter { item in
             if galleryProvider != "all", item.provider != galleryProvider { return false }
             if galleryAspect != "all", item.aspectRatio != galleryAspect { return false }
-            if !needle.isEmpty {
-                let haystack = [item.title, item.mode ?? "", item.provider ?? "", item.summary ?? ""]
-                    .joined(separator: " ").lowercased()
-                if !haystack.contains(needle) { return false }
-            }
             return true
         }
-        return gallerySort == "oldest" ? Array(refined.reversed()) : refined
+        return refined
     }
 
     var galleryProviders: [String] {
@@ -606,6 +600,7 @@ final class CreativeStudioVM {
         }
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
+        query["order"] = gallerySort
         let galleryQuery = query
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: galleryQuery)
@@ -662,6 +657,7 @@ final class CreativeStudioVM {
         }
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
+        query["order"] = gallerySort
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
             gallery = g.items.isEmpty ? CS.sampleGallery : g.items
@@ -2536,8 +2532,8 @@ private struct CSGalleryTab: View {
                         galleryMenu("Aspect", value: vm.galleryAspect,
                                     values: vm.galleryAspects) { vm.galleryAspect = $0 }
                         Menu {
-                            Button("Newest") { vm.gallerySort = "newest" }
-                            Button("Oldest") { vm.gallerySort = "oldest" }
+                            Button("Newest") { vm.gallerySort = "newest"; Task { await vm.refreshGallery() } }
+                            Button("Oldest") { vm.gallerySort = "oldest"; Task { await vm.refreshGallery() } }
                         } label: {
                             Label(vm.gallerySort == "oldest" ? "Oldest" : "Newest", systemImage: "arrow.up.arrow.down")
                         }

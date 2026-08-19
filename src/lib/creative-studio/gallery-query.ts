@@ -161,6 +161,8 @@ export function buildGalleryWhere(filters: GalleryFilters): Record<string, unkno
         { payload: { path: ['productCode'], string_contains: filters.query } },
         { payload: { path: ['videoName'], string_contains: filters.query } },
         { payload: { path: ['studioMode'], string_contains: filters.query } },
+        { payload: { path: ['provider'], string_contains: filters.query } },
+        { result: { path: ['provider'], string_contains: filters.query } },
       ],
     })
   }
