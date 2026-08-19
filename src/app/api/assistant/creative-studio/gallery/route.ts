@@ -105,6 +105,10 @@ export async function GET(req: NextRequest) {
   const brandProfileId = req.nextUrl.searchParams.get('brandProfileId')?.trim() ?? ''
   const projectId = req.nextUrl.searchParams.get('projectId')?.trim() ?? ''
   const archivedOnly = req.nextUrl.searchParams.get('archived') === '1'
+  const reviewStates = (req.nextUrl.searchParams.get('reviewState') ?? '')
+    .split(',')
+    .map((value) => value.trim().toUpperCase())
+    .filter((value) => ['DRAFT', 'CHANGES_REQUESTED', 'REVISED', 'APPROVED'].includes(value))
   const projectAssetId = req.nextUrl.searchParams.get('projectAssetId')?.trim() ?? ''
   const assetVersionId = req.nextUrl.searchParams.get('assetVersionId')?.trim() ?? ''
   const rawReviewSequence = req.nextUrl.searchParams.get('reviewSequence')
@@ -154,6 +158,7 @@ export async function GET(req: NextRequest) {
         where: {
           ...(projectAssetId ? { id: projectAssetId } : {}),
           ...(reviewSequence != null ? { reviewSequence } : {}),
+          ...(reviewStates.length ? { reviewState: { in: reviewStates } } : {}),
           project: {
             ownerId: access.ownerId,
             brandProfileId,

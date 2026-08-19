@@ -816,6 +816,15 @@ struct CSV4WorkspaceScreen: View {
             if model.reviews.isEmpty { empty("এই project-এ review item নেই") }
             ForEach(model.reviews) { item in
                 VStack(alignment: .leading, spacing: 9) {
+                    if let rawPreview = item.previewUrl, let previewURL = URL(string: rawPreview) {
+                        AsyncImage(url: previewURL) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            ProgressView().frame(maxWidth: .infinity).frame(height: 220)
+                        }
+                        .frame(maxWidth: .infinity).frame(maxHeight: 360)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
                     HStack { Text(item.title ?? "Untitled asset").font(.subheadline.weight(.bold)); Spacer(); status(item.state) }
                     Text("Version \(item.currentVersionId.map { String($0.prefix(10)) } ?? "—") · sequence \(item.expectedSequence)")
                         .font(.caption2).foregroundStyle(AgentPalette(scheme).muted)

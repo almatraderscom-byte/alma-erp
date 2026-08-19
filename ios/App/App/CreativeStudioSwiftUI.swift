@@ -601,6 +601,7 @@ final class CreativeStudioVM {
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
         query["order"] = gallerySort
+        applyLifecycleQuery(to: &query)
         let galleryQuery = query
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: galleryQuery)
@@ -658,9 +659,19 @@ final class CreativeStudioVM {
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
         query["order"] = gallerySort
+        applyLifecycleQuery(to: &query)
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
             gallery = g.items.isEmpty ? CS.sampleGallery : g.items
+        }
+    }
+
+    private func applyLifecycleQuery(to query: inout [String: String]) {
+        switch galleryFilter {
+        case "approved": query["reviewState"] = "approved"
+        case "review": query["reviewState"] = "draft,changes_requested,revised"
+        case "archived": query["archived"] = "1"
+        default: break
         }
     }
 
@@ -2501,7 +2512,11 @@ private struct CSGalleryTab: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array(filterMap.enumerated()), id: \.offset) { _, f in
-                            CSChip(text: f.bn, on: vm.galleryFilter == f.key) { vm.galleryFilter = f.key; CSHaptic.tap() }
+                            CSChip(text: f.bn, on: vm.galleryFilter == f.key) {
+                                vm.galleryFilter = f.key
+                                CSHaptic.tap()
+                                Task { await vm.refreshGallery() }
+                            }
                         }
                     }.padding(.horizontal, 18)
                 }.padding(.top, 14)
@@ -3117,7 +3132,7 @@ private struct CSAudioTab: View {
         .scrollDismissesKeyboard(.interactively)
         .task { await vm.loadAudioLab() }
         .refreshable { await vm.loadAudioLab() }
-        .alert(item: Binding(get: { vm.pendingAudioEstimate }, set: { if $0 == nil { vm.cancelPendingAudio() } })) { estimate in
+        .alert(item: Binding(get: { vm.pendingAudioEstimate }, set: { vm.pendingAudioEstimate = $0 })) { estimate in
             Alert(
                 title: Text("খরচ নিশ্চিত করুন"),
                 message: Text("\(estimate.summary ?? "Audio job")\nProvider: \(estimate.provider ?? "production provider")\nEstimate: ৳\(almaBn(estimate.costBdt))\nসর্বোচ্চ cap: ৳\(almaBn(estimate.maxCostBdt))"),

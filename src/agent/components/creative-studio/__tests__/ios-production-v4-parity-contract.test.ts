@@ -60,6 +60,7 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('body["intent"] = AnyEncodable("queue")')
     expect(nativeStudio).toContain('Confirm & Queue')
     expect(nativeStudio).toContain('"usageContext": AnyEncodable("owner_studio")')
+    expect(nativeStudio).toContain('set: { vm.pendingAudioEstimate = $0 }')
   })
 
   it('exposes canonical lifecycle filters in the native Gallery', () => {
@@ -75,6 +76,9 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('$0.reviewState == "approved"')
     expect(nativeStudio).toContain('$0.reviewState == "changes_requested"')
     expect(nativeStudio).toContain('$0.archived == true')
+    expect(nativeStudio).toContain('query["reviewState"] = "approved"')
+    expect(nativeStudio).toContain('query["archived"] = "1"')
+    expect(nativeWorkspace).toContain('AsyncImage(url: previewURL)')
   })
 
   it('preserves project scope and sends Gallery search to the server', () => {
