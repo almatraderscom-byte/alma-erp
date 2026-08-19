@@ -14,6 +14,10 @@ const nativeMaskRepair = readFileSync(
   join(process.cwd(), 'ios/App/App/CSMaskRepairSwiftUI.swift'),
   'utf8',
 )
+const nativeRecipeManager = readFileSync(
+  join(process.cwd(), 'ios/App/App/CreativeStudioRecipeManagerSwiftUI.swift'),
+  'utf8',
+)
 const galleryRoute = readFileSync(
   join(process.cwd(), 'src/app/api/assistant/creative-studio/gallery/route.ts'),
   'utf8',
@@ -124,6 +128,16 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('"fal_flux_fill", "xai_imagine"].contains(engine.engine)')
   })
 
+  it('fails closed for production mutations outside the authenticated Studio role', () => {
+    expect(nativeWorkspace).toContain('var isOwner: Bool')
+    expect(nativeWorkspace).toContain('var canDraft: Bool')
+    expect(nativeWorkspace.match(/guard isOwner, !actionBusy/g)?.length).toBeGreaterThanOrEqual(8)
+    expect(nativeWorkspace).toContain('if model.isOwner { campaign } else { ownerOnly("Campaign Pack") }')
+    expect(nativeWorkspace).toContain('if model.isOwner { voice } else { ownerOnly("Owner Voice Library") }')
+    expect(nativeWorkspace).toContain('if model.isOwner { operations } else { ownerOnly("Provider & lifecycle operations") }')
+    expect(nativeWorkspace).toContain('model.actionBusy || !model.canDraft')
+  })
+
   it('keeps resolved project scope and voice readiness synchronized with the main studio', () => {
     expect(nativeWorkspace).toContain('syncSelectedProject()')
     expect(nativeWorkspace).toContain('CSV4CreateProjectSheet(model: model) { syncSelectedProject() }')
@@ -136,6 +150,29 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('let action = "select_draft"')
     expect(nativeWorkspace).toContain('func selectCampaignDraft(')
     expect(nativeWorkspace).toContain('এই draft নিন')
+  })
+
+  it('manages versioned brand recipes without changing the native workspace design', () => {
+    expect(nativeWorkspace).toContain('CSRecipeManagerScreen(')
+    expect(nativeRecipeManager).toContain('/api/assistant/creative-studio/recipes')
+    expect(nativeRecipeManager).toContain('model.act("new_version")')
+    expect(nativeRecipeManager).toContain('model.act("lock")')
+    expect(nativeRecipeManager).toContain('currentRecipeId: selected.id')
+    expect(nativeRecipeManager).toContain('var owner: Bool { role == "owner" }')
+    expect(nativeRecipeManager).toContain('.alert("এই recipe version lock করবেন?"')
+    expect(nativeRecipeManager).toContain('.alert("Project recipe পরিবর্তন করবেন?"')
+    expect(nativeRecipeManager.match(/guard !busy/g)?.length).toBeGreaterThanOrEqual(4)
+    expect(nativeRecipeManager).toContain(
+      '.buttonStyle(.bordered).tint(AgentPalette.coral).disabled(model.busy)',
+    )
+  })
+
+  it('opens exact lifecycle review controls and removes the unpinned asset-state mutation', () => {
+    expect(nativeWorkspace).toContain('CSV4LifecycleControlScreen(')
+    expect(nativeWorkspace).toContain('selectedReviewAssetID: lifecycleReviewSeed?.projectAssetId')
+    expect(nativeWorkspace).toContain('selectedReviewVersionID: lifecycleReviewSeed?.currentVersionId')
+    expect(nativeWorkspace).not.toContain('/assets/\\(item.projectAssetId)/state')
+    expect(nativeWorkspace).not.toContain('model.transition(item')
   })
 
   it('protects mask repair from unavailable sources and preserves brush taps', () => {

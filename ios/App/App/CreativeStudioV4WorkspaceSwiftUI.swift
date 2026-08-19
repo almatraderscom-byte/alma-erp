@@ -70,11 +70,6 @@ private struct CSV4ReviewQueueResponse: Decodable {
     let nextCursor: String?
 }
 
-private struct CSV4ReviewThreadResponse: Decodable {
-    struct Thread: Decodable { let assetId: String?; let currentState: String; let currentSequence: Int }
-    let review: Thread
-}
-
 struct CSV4CampaignStage: Decodable, Identifiable, Equatable {
     let stageId: String?
     let id: String?
@@ -276,6 +271,11 @@ final class CSV4WorkspaceVM {
 
     var selectedBrand: CSV4Brand? { brands.first { $0.id == selectedBrandID } }
     var selectedProject: CSProjectSummary? { projects.first { $0.id == selectedProjectID } }
+    var isOwner: Bool { selectedBrand?.role.lowercased() == "owner" }
+    var canDraft: Bool {
+        let role = selectedBrand?.role.lowercased()
+        return role == "owner" || role == "creator"
+    }
 
     func load(seedProject: CSProjectSummary?) async {
         loading = true
@@ -371,7 +371,10 @@ final class CSV4WorkspaceVM {
         struct Body: Encodable { let name: String; let description: String?; let brandName: String?; let defaultFolder = "Creative Studio" }
         struct Response: Decodable { let project: CSProjectSummary }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
+        guard isOwner, !actionBusy, !trimmed.isEmpty else {
+            if !isOwner { notice = "নতুন project শুধু Owner তৈরি করতে পারেন" }
+            return false
+        }
         actionBusy = true; defer { actionBusy = false }
         do {
             let response: Response = try await AlmaAPI.shared.send(
@@ -385,8 +388,12 @@ final class CSV4WorkspaceVM {
         } catch { notice = message(error, fallback: "Project তৈরি হয়নি"); return false }
     }
 
-    func createComposition() async {
-        guard let brandID = selectedBrandID, let projectID = selectedProjectID else { return }
+    func createComposition() async -> CSV4Composition? {
+        guard canDraft, !actionBusy,
+              let brandID = selectedBrandID, let projectID = selectedProjectID else {
+            if !canDraft { notice = "Canvas তৈরি করতে Owner অথবা Creator role দরকার" }
+            return nil
+        }
         struct Canvas: Encodable { let width = 1080; let height = 1350; let aspectWidth = 4; let aspectHeight = 5 }
         struct Body: Encodable { let projectId: String; let brandProfileId: String; let idempotencyKey: String; let title: String; let canvas = Canvas() }
         actionBusy = true; defer { actionBusy = false }
@@ -400,11 +407,18 @@ final class CSV4WorkspaceVM {
                 compositions.insert(response.composition, at: 0)
             }
             notice = response.idempotent == true ? "Existing canvas খোলা হয়েছে" : "Versioned canvas তৈরি হয়েছে"
-        } catch { notice = message(error, fallback: "Canvas তৈরি হয়নি") }
+            return response.composition
+        } catch {
+            notice = message(error, fallback: "Canvas তৈরি হয়নি")
+            return nil
+        }
     }
 
     func previewCampaign(includeFamily: Bool, includeReel: Bool) async {
-        guard let projectID = selectedProjectID else { return }
+        guard isOwner, !actionBusy, let projectID = selectedProjectID else {
+            if !isOwner { notice = "Campaign Pack শুধু Owner চালাতে পারেন" }
+            return
+        }
         campaignPreviewRevision += 1
         let revision = campaignPreviewRevision
         campaignPreview = nil
@@ -422,7 +436,11 @@ final class CSV4WorkspaceVM {
     }
 
     func queueCampaign(includeFamily: Bool, includeReel: Bool) async {
-        guard let projectID = selectedProjectID, let preview = campaignPreview else { return }
+        guard isOwner, !actionBusy,
+              let projectID = selectedProjectID, let preview = campaignPreview else {
+            if !isOwner { notice = "Campaign Pack শুধু Owner queue করতে পারেন" }
+            return
+        }
         struct Options: Encodable { let includeFamily: Bool; let includeReel: Bool }
         struct Body: Encodable {
             let intent = "queue"; let projectId: String; let options: Options
@@ -446,7 +464,11 @@ final class CSV4WorkspaceVM {
     }
 
     func selectCampaignDraft(pack: CSV4CampaignPack, stageID: String) async {
-        guard pack.status == "waiting_selection", stageID == "draft-a" || stageID == "draft-b" else { return }
+        guard isOwner, !actionBusy, pack.status == "waiting_selection",
+              stageID == "draft-a" || stageID == "draft-b" else {
+            if !isOwner { notice = "Campaign draft শুধু Owner select করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let action = "select_draft"; let selectedDraftStageId: String }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -466,31 +488,11 @@ final class CSV4WorkspaceVM {
         }
     }
 
-    func transition(_ item: CSV4ReviewItem, to target: String) async {
-        guard let brandID = selectedBrandID else { return }
-        struct Body: Encodable {
-            let brandProfileId: String; let targetState: String; let expectedSequence: Int
-            let note: String
-        }
-        actionBusy = true; defer { actionBusy = false }
-        do {
-            let response: CSV4ReviewThreadResponse = try await AlmaAPI.shared.send(
-                "PATCH", "/api/assistant/creative-studio/assets/\(item.projectAssetId)/state",
-                body: Body(brandProfileId: brandID, targetState: target,
-                           expectedSequence: item.expectedSequence, note: "Updated from native iOS Creative Studio"))
-            if let index = reviews.firstIndex(where: { $0.id == item.id }) {
-                let current = reviews[index]
-                reviews[index] = CSV4ReviewItem(projectAssetId: current.projectAssetId,
-                    projectId: current.projectId, brandProfileId: current.brandProfileId,
-                    currentVersionId: current.currentVersionId,
-                    expectedSequence: response.review.currentSequence,
-                    state: response.review.currentState, title: current.title, previewUrl: current.previewUrl)
-            }
-            notice = "Review state আপডেট হয়েছে"
-        } catch { notice = message(error, fallback: "Review আপডেট হয়নি") }
-    }
-
     func updateVoiceVersion(_ version: CSV4VoiceVersion, action: String) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Voice Library action শুধু Owner করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let action: String; let reason = "Native iOS owner action" }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -502,6 +504,10 @@ final class CSV4WorkspaceVM {
     }
 
     func deleteVoiceVersion(_ version: CSV4VoiceVersion) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Voice Library action শুধু Owner করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let reason = "Deleted from native iOS owner library" }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -513,6 +519,10 @@ final class CSV4WorkspaceVM {
     }
 
     func setEngine(_ engine: CSV4Health.Engine, killed: Bool) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Engine policy শুধু Owner বদলাতে পারেন" }
+            return
+        }
         struct Kill: Encodable { let id: String; let killed: Bool }
         struct Body: Encodable { let killEngine: Kill }
         actionBusy = true; defer { actionBusy = false }
@@ -527,6 +537,10 @@ final class CSV4WorkspaceVM {
 
     func saveRetention(archiveEnabled: Bool, deleteOriginalsEnabled: Bool,
                        retentionDays: Int, verificationGraceHours: Int) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Retention policy শুধু Owner বদলাতে পারেন" }
+            return
+        }
         struct Body: Encodable {
             let archiveEnabled: Bool; let deleteOriginalsEnabled: Bool
             let retentionDays: Int; let verificationGraceHours: Int
@@ -545,6 +559,10 @@ final class CSV4WorkspaceVM {
     }
 
     func controlLifecycle(_ job: CSV4LifecycleWorkspace.Job, intent: String) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Job control শুধু Owner করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let intent: String; let idempotencyKey: String }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -557,7 +575,10 @@ final class CSV4WorkspaceVM {
     }
 
     func assign(_ user: CSV4EligibleUser, role: String) async {
-        guard let brandID = selectedBrandID else { return }
+        guard isOwner, !actionBusy, let brandID = selectedBrandID else {
+            if !isOwner { notice = "Team role শুধু Owner manage করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let brandProfileId: String; let userId: String; let role: String }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -570,7 +591,10 @@ final class CSV4WorkspaceVM {
     }
 
     func remove(_ assignment: CSV4RoleAssignment) async {
-        guard let brandID = selectedBrandID else { return }
+        guard isOwner, !actionBusy, let brandID = selectedBrandID else {
+            if !isOwner { notice = "Team role শুধু Owner manage করতে পারেন" }
+            return
+        }
         struct Body: Encodable { let brandProfileId: String; let userId: String }
         actionBusy = true; defer { actionBusy = false }
         do {
@@ -611,6 +635,10 @@ struct CSV4WorkspaceScreen: View {
     @State private var model = CSV4WorkspaceVM()
     @State private var section: Section = .overview
     @State private var createProjectSheet = false
+    @State private var recipeManagerSheet = false
+    @State private var lifecycleControlSheet = false
+    @State private var lifecycleReviewSeed: CSV4ReviewItem?
+    @State private var selectedComposition: CSV4Composition?
     @State private var includeFamily = false
     @State private var includeReel = false
     @State private var confirmCampaign = false
@@ -665,6 +693,46 @@ struct CSV4WorkspaceScreen: View {
         }
         .sheet(isPresented: $createProjectSheet) {
             CSV4CreateProjectSheet(model: model) { syncSelectedProject() }
+        }
+        .sheet(isPresented: $recipeManagerSheet) {
+            if let brand = model.selectedBrand, let project = model.selectedProject {
+                CSRecipeManagerScreen(
+                    brandID: brand.id,
+                    projectID: project.id,
+                    brandName: brand.name,
+                    currentRecipeID: project.currentRecipeId,
+                    role: brand.role
+                ) {
+                    Task {
+                        await model.reloadBrand(preferredProjectID: project.id)
+                        syncSelectedProject()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $lifecycleControlSheet, onDismiss: {
+            lifecycleReviewSeed = nil
+            Task { await model.reloadProject() }
+        }) {
+            if let brand = model.selectedBrand, let project = model.selectedProject {
+                CSV4LifecycleControlScreen(
+                    brandID: brand.id,
+                    projectID: project.id,
+                    role: brand.role,
+                    selectedReviewAssetID: lifecycleReviewSeed?.projectAssetId,
+                    selectedReviewVersionID: lifecycleReviewSeed?.currentVersionId
+                )
+            }
+        }
+        .sheet(item: $selectedComposition, onDismiss: {
+            Task { await model.reloadProject() }
+        }) { composition in
+            CreativeStudioCompositionEditorScreen(
+                brandID: composition.brandProfileId,
+                projectID: composition.projectId,
+                compositionID: composition.id,
+                role: model.selectedBrand?.role ?? "reviewer"
+            )
         }
         .alert("Campaign Pack queue করবেন?", isPresented: $confirmCampaign) {
             Button("বাতিল", role: .cancel) {}
@@ -760,9 +828,12 @@ struct CSV4WorkspaceScreen: View {
         case .overview: overview
         case .projects: projects
         case .review: review
-        case .campaign: campaign
-        case .voice: voice
-        case .operations: operations
+        case .campaign:
+            if model.isOwner { campaign } else { ownerOnly("Campaign Pack") }
+        case .voice:
+            if model.isOwner { voice } else { ownerOnly("Owner Voice Library") }
+        case .operations:
+            if model.isOwner { operations } else { ownerOnly("Provider & lifecycle operations") }
         }
     }
 
@@ -778,7 +849,15 @@ struct CSV4WorkspaceScreen: View {
 
     private var projects: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack { title("Projects & lineage", "folder.fill"); Spacer(); Button("নতুন") { createProjectSheet = true }.buttonStyle(.borderedProminent).tint(AgentPalette.coral) }
+            HStack {
+                title("Projects & lineage", "folder.fill")
+                Spacer()
+                if model.isOwner {
+                    Button("নতুন") { createProjectSheet = true }
+                        .buttonStyle(.borderedProminent).tint(AgentPalette.coral)
+                        .disabled(model.actionBusy)
+                }
+            }
             ForEach(model.projects) { project in
                 Button { model.invalidateCampaignPreview(); model.selectedProjectID = project.id; onProjectSelected(project); Task { await model.reloadProject() } } label: {
                     VStack(alignment: .leading, spacing: 5) {
@@ -792,16 +871,42 @@ struct CSV4WorkspaceScreen: View {
             title("Versioned long-form", "rectangle.3.group")
             if model.compositions.isEmpty { empty("এই project-এ এখনো canvas নেই") }
             ForEach(model.compositions) { composition in
-                HStack {
-                    VStack(alignment: .leading) { Text(composition.title).font(.subheadline.weight(.bold)); Text("v\(composition.currentVersion) · \(composition.sourceKind ?? "native")").font(.caption).foregroundStyle(AgentPalette(scheme).muted) }
-                    Spacer(); if composition.readonly { Image(systemName: "lock.fill") }
-                }.padding(13).v4Glass(scheme)
+                Button { selectedComposition = composition } label: {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(composition.title).font(.subheadline.weight(.bold))
+                            Text("v\(composition.currentVersion) · \(composition.sourceKind ?? "native")")
+                                .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                        Spacer()
+                        if composition.readonly { Image(systemName: "lock.fill") }
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(13).v4Glass(scheme)
+                }
+                .buttonStyle(.plain)
             }
-            Button { Task { await model.createComposition() } } label: {
+            Button {
+                Task {
+                    if let composition = await model.createComposition() {
+                        selectedComposition = composition
+                    }
+                }
+            } label: {
                 Label("Versioned canvas তৈরি / খুলুন", systemImage: "plus.square.on.square")
                     .font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).padding(12)
-            }.buttonStyle(.borderedProminent).tint(AgentPalette.coral).disabled(model.selectedProjectID == nil || model.actionBusy)
+            }
+            .buttonStyle(.borderedProminent).tint(AgentPalette.coral)
+            .disabled(model.selectedProjectID == nil || model.actionBusy || !model.canDraft)
             title("Brand recipes", "slider.horizontal.3")
+            Button { recipeManagerSheet = true } label: {
+                Label(model.selectedBrand?.role == "owner" ? "Recipe manage & project selection" : "Recipe library দেখুন",
+                      systemImage: "slider.horizontal.2.square")
+                    .font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).padding(11)
+            }
+            .buttonStyle(.bordered).tint(AgentPalette.coral)
+            .disabled(model.selectedProjectID == nil)
             if model.recipes.isEmpty { empty("Active brand-এ recipe নেই") }
             ForEach(model.recipes) { recipe in
                 VStack(alignment: .leading, spacing: 4) {
@@ -815,8 +920,18 @@ struct CSV4WorkspaceScreen: View {
 
     private var review: some View {
         VStack(alignment: .leading, spacing: 12) {
-            title("Pinned review queue", "checkmark.seal.fill")
-            Text("Server sequence ও exact asset version বজায় রেখে transition হয়।")
+            HStack {
+                title("Pinned review queue", "checkmark.seal.fill")
+                Spacer()
+                Button("Lifecycle Control") {
+                    lifecycleReviewSeed = nil
+                    lifecycleControlSheet = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AgentPalette.coral)
+                .disabled(model.selectedProjectID == nil)
+            }
+            Text("Exact composition/version pin, server sequence এবং authenticated role দিয়ে review হবে।")
                 .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
             if model.reviews.isEmpty { empty("এই project-এ review item নেই") }
             ForEach(model.reviews) { item in
@@ -834,12 +949,18 @@ struct CSV4WorkspaceScreen: View {
                     Text("Version \(item.currentVersionId.map { String($0.prefix(10)) } ?? "—") · sequence \(item.expectedSequence)")
                         .font(.caption2).foregroundStyle(AgentPalette(scheme).muted)
                     HStack {
-                        if item.state == "draft" || item.state == "revised" {
-                            smallAction("Approve", color: .green) { Task { await model.transition(item, to: "approved") } }
-                            smallAction("Changes", color: .orange) { Task { await model.transition(item, to: "changes_requested") } }
-                        } else if item.state == "changes_requested" {
-                            smallAction("Mark revised", color: AgentPalette.coral) { Task { await model.transition(item, to: "revised") } }
-                        } else { Label("Publish-ready version pinned", systemImage: "checkmark.shield.fill").font(.caption).foregroundStyle(.green) }
+                        if item.state == "approved" {
+                            Label("Approval recorded — verify exact pin", systemImage: "checkmark.shield.fill")
+                                .font(.caption).foregroundStyle(.green)
+                        }
+                        Spacer()
+                        Button("Open exact review") {
+                            lifecycleReviewSeed = item
+                            lifecycleControlSheet = true
+                        }
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.bordered)
+                        .tint(AgentPalette.coral)
                     }
                 }.padding(13).v4Glass(scheme)
             }
@@ -1032,14 +1153,47 @@ struct CSV4WorkspaceScreen: View {
     private var teamCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             title("Team & permissions", "person.2.badge.gearshape")
+            if !model.isOwner {
+                Label("Collaborator access শুধু Owner manage করতে পারেন", systemImage: "lock.fill")
+                    .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+            }
             if model.roles.isEmpty { Text("কোনো collaborator নেই").font(.caption).foregroundStyle(AgentPalette(scheme).muted) }
             ForEach(model.roles) { assignment in
-                HStack { VStack(alignment: .leading) { Text(assignment.userName).font(.subheadline.weight(.semibold)); Text(assignment.role.capitalized).font(.caption).foregroundStyle(AgentPalette(scheme).muted) }; Spacer(); Button(role: .destructive) { pendingRoleRemoval = assignment } label: { Image(systemName: "person.badge.minus") } }
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(assignment.userName).font(.subheadline.weight(.semibold))
+                        Text(assignment.role.capitalized).font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+                    }
+                    Spacer()
+                    if model.isOwner {
+                        Button(role: .destructive) { pendingRoleRemoval = assignment } label: {
+                            Image(systemName: "person.badge.minus")
+                        }.disabled(model.actionBusy)
+                    }
+                }
             }
-            ForEach(model.eligibleUsers.prefix(5)) { user in
-                HStack { Text(user.name).font(.subheadline); Spacer(); smallAction("Creator", color: AgentPalette.coral) { Task { await model.assign(user, role: "creator") } }; smallAction("Reviewer", color: .blue) { Task { await model.assign(user, role: "reviewer") } } }
+            if model.isOwner {
+                ForEach(model.eligibleUsers.prefix(5)) { user in
+                    HStack {
+                        Text(user.name).font(.subheadline)
+                        Spacer()
+                        smallAction("Creator", color: AgentPalette.coral) { Task { await model.assign(user, role: "creator") } }
+                        smallAction("Reviewer", color: .blue) { Task { await model.assign(user, role: "reviewer") } }
+                    }
+                }
             }
         }.padding(14).v4Glass(scheme)
+    }
+
+    private func ownerOnly(_ feature: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Owner-only control", systemImage: "lock.shield.fill")
+                .font(.headline).foregroundStyle(AgentPalette.coralLt)
+            Text("\(feature) production-এ শুধু Owner role ব্যবহার করতে পারে। এই role থেকে কোনো mutation পাঠানো হবে না।")
+                .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14).v4Glass(scheme)
     }
 
     private func metricRow(_ label: String, value: String, icon: String) -> some View {
