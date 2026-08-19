@@ -13,10 +13,11 @@
  * re-judged by the daemon. So a reply is green by construction.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
+import { getJwt } from '@/lib/api-guards'
 import { isSystemOwner } from '@/lib/roles'
-import { activeDevice, awaitResult, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { awaitResult, enqueueCommand, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
@@ -25,14 +26,22 @@ export const dynamic = 'force-dynamic'
 const MAX_REPLY_CHARS = 4_000
 /** The daemon writes to the session's stdin — quick; don't hold the phone long. */
 const REPLY_WAIT_MS = 30_000
+const DEVICE_OFFLINE_MS = 90_000
+
+function isOnline(lastSeenAt: Date | null): boolean {
+  return Boolean(lastSeenAt && Date.now() - lastSeenAt.getTime() < DEVICE_OFFLINE_MS)
+}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const owner = await getJwt(req)
   if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!(await resolveOwnerUserIds()).includes(owner.sub)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   let body: { sessionId?: string; text?: string }
   try {
@@ -54,11 +63,17 @@ export async function POST(req: NextRequest) {
   // With two Macs online, "most recently seen" could pick the other machine and
   // the reply would deterministically die with session_not_found (Codex round
   // 3). The event stream already records which device spoke; trust it.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ownedDevices = await prisma.macAgentDevice.findMany({
+    where: { ownerUserId: owner.sub, revoked: false },
+    orderBy: { lastSeenAt: 'desc' },
+    select: { id: true, pairedAt: true, lastSeenAt: true },
+  })
+  const ownedDeviceIds = ownedDevices.map((device) => device.id)
+
   const db = prisma as any
   const originDeviceId: string | null = await db.macAgentSessionEvent
     .findFirst({
-      where: { sessionId },
+      where: { sessionId, deviceId: { in: ownedDeviceIds } },
       orderBy: { at: 'desc' },
       select: { deviceId: true },
     })
@@ -67,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   let device = null
   if (originDeviceId) {
-    device = (await listDevices()).find((d) => d.id === originDeviceId && d.online) ?? null
+    device = ownedDevices.find((d) => d.id === originDeviceId && isOnline(d.lastSeenAt)) ?? null
     if (!device) {
       return Response.json(
         { error: 'origin_mac_offline', messageBn: 'সেশনটা যে Mac-এ চলছে সেটা এখন অফলাইন।' },
@@ -76,7 +91,7 @@ export async function POST(req: NextRequest) {
     }
   } else {
     // No events recorded for this session (pre-L4 daemon) — best effort.
-    device = await activeDevice()
+    device = ownedDevices.find((d) => isOnline(d.lastSeenAt) && d.pairedAt) ?? null
   }
   if (!device) {
     return Response.json(

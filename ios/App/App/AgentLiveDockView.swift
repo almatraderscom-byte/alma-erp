@@ -73,12 +73,16 @@ struct AgentLiveSession: Decodable, Identifiable, Equatable {
 struct AgentLiveActivityPreview: Decodable, Identifiable, Equatable {
     /// mac | browser
     let surface: String
+    /// Stable card identity. Older servers omit this and fall back to surface;
+    /// newer servers use browser:<device-id> so two paired Chrome contexts do
+    /// not overwrite each other's frame/cache/selection.
+    var contextId: String? = nil
     let screenshot: String?
     let screenshotAt: String?
     let labelBn: String
     let active: Bool
     let videoDeviceId: String?
-    var id: String { surface }
+    var id: String { contextId ?? surface }
 }
 
 struct AgentLiveActivityFeed: Decodable, Equatable {
@@ -101,6 +105,18 @@ struct AgentLiveActivityFeed: Decodable, Equatable {
     let macDisplays: MacDisplayInfo?
     /// Independent Browser/Mac cards for the floating stack.
     let previews: [AgentLiveActivityPreview]?
+
+    /// Dismissal follows the activity, not merely `current`. A feed can have a
+    /// live browser frame before/after a command row; keying nil-current as an
+    /// empty string made a closed player immediately reappear on the next poll.
+    var visibilityKey: String {
+        if let current { return "step:\(current.id)" }
+        let cards = (previews ?? []).map {
+            "\($0.id)@\($0.screenshotAt ?? ($0.active ? "active" : "idle"))"
+        }.sorted().joined(separator: "|")
+        if !cards.isEmpty { return "cards:\(cards)" }
+        return "frame:\(screenshotSurface ?? "none")@\(screenshotAt ?? (active ? "active" : "idle"))"
+    }
 }
 
 /// RC-3 — screens on the streaming Mac. Optional so older servers still decode.
@@ -118,9 +134,11 @@ final class AgentLiveDockStore {
     var feed: AgentLiveActivityFeed?
     var expanded = false
     /// He closed it by hand — respect that until genuinely NEW work starts.
-    var dismissedStepId: String?
+    var dismissedActivityKey: String?
 
     private var lastActiveAt: Date = .distantPast
+    private var lastSuccessfulRefreshAt: Date = .distantPast
+    private var refreshGeneration = 0
     /// Staff phones get 403 from this owner-only feed; two in a row means this
     /// user will never see the dock, so stop asking instead of polling forever.
     private var authFailures = 0
@@ -132,12 +150,21 @@ final class AgentLiveDockStore {
     /// ~600ms — a 3s poll wasted most of them. 1s keeps motion feeling live
     /// without hammering the server outside streaming windows.
     static let pollStreamingSeconds: TimeInterval = 1
+    static let staleFeedSeconds: TimeInterval = 20
+
+    static func shouldExpireFeed(
+        lastSuccessfulAt: Date,
+        now: Date = Date(),
+        force: Bool = false
+    ) -> Bool {
+        force || now.timeIntervalSince(lastSuccessfulAt) >= staleFeedSeconds
+    }
 
     var recentlyActive: Bool { Date().timeIntervalSince(lastActiveAt) < Self.lingerSeconds }
 
     var show: Bool {
         guard let feed else { return false }
-        if let dismissedStepId, dismissedStepId == (feed.current?.id ?? "") { return false }
+        if dismissedActivityKey == feed.visibilityKey { return false }
         return feed.active || recentlyActive
     }
 
@@ -151,7 +178,7 @@ final class AgentLiveDockStore {
     private var previewAts: [String: String] = [:]
     private var decodedPreviews: [String: UIImage] = [:]
     private var visiblePreviewKeys = Set<String>()
-    var selectedSurface: String?
+    var selectedPreviewId: String?
 
     /// The mini-player / sheet image, decoded from the data URI once per change.
     private var decodedFor: String?
@@ -167,20 +194,42 @@ final class AgentLiveDockStore {
 
     var selectedPreview: AgentLiveActivityPreview? {
         let previews = feed?.previews ?? []
-        return previews.first(where: { $0.surface == selectedSurface }) ?? previews.first
+        return previews.first(where: { $0.id == selectedPreviewId }) ?? previews.first
     }
 
     var selectedScreenshotImage: UIImage? {
-        guard let surface = selectedPreview?.surface else { return screenshotImage }
-        if let cached = decodedPreviews[surface] { return cached }
-        guard let uri = previewURIs[surface], let image = Self.decodeDataURI(uri) else { return nil }
-        decodedPreviews[surface] = image
+        guard let preview = selectedPreview else { return screenshotImage }
+        let key = preview.id
+        if let cached = decodedPreviews[key] { return cached }
+        guard let uri = previewURIs[key], let image = Self.decodeDataURI(uri) else { return nil }
+        decodedPreviews[key] = image
         return image
     }
 
-    func selectSurface(_ surface: String) {
-        guard feed?.previews?.contains(where: { $0.surface == surface }) == true else { return }
-        selectedSurface = surface
+    func selectPreview(_ id: String) {
+        guard feed?.previews?.contains(where: { $0.id == id }) == true else { return }
+        selectedPreviewId = id
+    }
+
+    func reconcilePreviewSelection(_ previews: [AgentLiveActivityPreview]) {
+        let nextKeys = Set(previews.map(\.id))
+        if let newlyVisible = previews.first(where: { !visiblePreviewKeys.contains($0.id) }) {
+            selectedPreviewId = newlyVisible.id
+        } else if let selectedPreviewId, !nextKeys.contains(selectedPreviewId) {
+            self.selectedPreviewId = previews.first?.id
+        } else if selectedPreviewId == nil {
+            selectedPreviewId = previews.first?.id
+        }
+        previewURIs = previewURIs.filter { nextKeys.contains($0.key) }
+        previewAts = previewAts.filter { nextKeys.contains($0.key) }
+        decodedPreviews = decodedPreviews.filter { nextKeys.contains($0.key) }
+        visiblePreviewKeys = nextKeys
+    }
+
+    func reconcileDismissal(with fresh: AgentLiveActivityFeed) {
+        if let dismissed = dismissedActivityKey, fresh.visibilityKey != dismissed {
+            dismissedActivityKey = nil
+        }
     }
 
     static func decodeDataURI(_ uri: String) -> UIImage? {
@@ -194,7 +243,7 @@ final class AgentLiveDockStore {
     func run() async {
         if applyFixtureIfRequested() { return }
         while !Task.isCancelled {
-            await poll()
+            await refresh()
             if authFailures >= 2 { return }
             let streamingNow = feed?.streaming == true
             let delay = streamingNow
@@ -205,14 +254,26 @@ final class AgentLiveDockStore {
         }
     }
 
-    private func poll() async {
+    func refresh() async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         do {
             var query: [String: String?] = ["screenshotAfter": screenshotAt, "previewDeck": "1"]
-            query["browserScreenshotAfter"] = previewAts["browser"]
-            query["macScreenshotAfter"] = previewAts["mac"]
+            if let data = try? JSONSerialization.data(withJSONObject: previewAts),
+               let json = String(data: data, encoding: .utf8), !previewAts.isEmpty {
+                query["previewAfter"] = json
+            }
+            // Old servers understand these two keys; keep them during the
+            // rolling deploy while new servers consume the context map above.
+            query["browserScreenshotAfter"] = feed?.previews?
+                .filter { $0.surface == "browser" }.compactMap { previewAts[$0.id] }.max()
+            query["macScreenshotAfter"] = feed?.previews?
+                .filter { $0.surface == "mac" }.compactMap { previewAts[$0.id] }.max()
             let fresh: AgentLiveActivityFeed = try await AlmaAPI.shared.getQuietAuth(
                 "/api/assistant/live-activity", query: query)
+            guard generation == refreshGeneration else { return }
             authFailures = 0
+            lastSuccessfulRefreshAt = Date()
             if let uri = fresh.screenshot {
                 screenshotURI = uri
                 screenshotAt = fresh.screenshotAt
@@ -224,48 +285,63 @@ final class AgentLiveDockStore {
             // else: unchanged frame, payload omitted by the server — keep ours.
             let previews = fresh.previews ?? []
             for preview in previews {
+                let key = preview.id
                 if let uri = preview.screenshot, let at = preview.screenshotAt {
-                    if previewAts[preview.surface] != at { decodedPreviews[preview.surface] = nil }
-                    previewURIs[preview.surface] = uri
-                    previewAts[preview.surface] = at
+                    if previewAts[key] != at { decodedPreviews[key] = nil }
+                    previewURIs[key] = uri
+                    previewAts[key] = at
                 } else if preview.screenshotAt == nil {
-                    previewURIs[preview.surface] = nil
-                    previewAts[preview.surface] = nil
-                    decodedPreviews[preview.surface] = nil
+                    previewURIs[key] = nil
+                    previewAts[key] = nil
+                    decodedPreviews[key] = nil
                 }
             }
-            let nextKeys = Set(previews.map(\.surface))
-            if let newlyVisible = previews.first(where: { !visiblePreviewKeys.contains($0.surface) }) {
-                selectedSurface = newlyVisible.surface
-            } else if let selectedSurface, !nextKeys.contains(selectedSurface) {
-                self.selectedSurface = previews.first?.surface
-            } else if selectedSurface == nil {
-                selectedSurface = previews.first?.surface ?? fresh.screenshotSurface
-            }
-            visiblePreviewKeys = nextKeys
+            reconcilePreviewSelection(previews)
             if fresh.active { lastActiveAt = Date() }
             // Only a DIFFERENT step brings the dock back after a dismiss.
-            if let dismissed = dismissedStepId, let current = fresh.current, current.id != dismissed {
-                dismissedStepId = nil
-            }
+            reconcileDismissal(with: fresh)
             feed = fresh
             reconcileStreamState()
             // Never trap his screen: the sheet closes itself when work is gone.
             if !show { expanded = false }
         } catch AlmaAPIError.notAuthenticated {
+            guard generation == refreshGeneration else { return }
             // AlmaAPI normalizes 401/403 to .notAuthenticated (and posts the
             // login banner) — this is the case the two-failure shutdown exists
             // for, so staff phones stop hitting the owner-only feed (Codex P2).
             authFailures += 1
+            expireStaleFeed(force: authFailures >= 2)
         } catch let AlmaAPIError.http(status, _) where status == 401 || status == 403 {
+            guard generation == refreshGeneration else { return }
             authFailures += 1
+            expireStaleFeed(force: authFailures >= 2)
         } catch {
-            // A dropped poll is not worth telling him about.
+            guard generation == refreshGeneration else { return }
+            // Brief outages keep the last frame for a glance; a feed that has
+            // not refreshed for the full linger window is no longer truthful.
+            expireStaleFeed()
         }
     }
 
+    private func expireStaleFeed(force: Bool = false) {
+        guard Self.shouldExpireFeed(lastSuccessfulAt: lastSuccessfulRefreshAt, force: force) else { return }
+        feed = nil
+        lastActiveAt = .distantPast
+        selectedPreviewId = nil
+        expanded = false
+        streamOptimistic = nil
+        screenshotURI = nil
+        screenshotAt = nil
+        previewURIs.removeAll()
+        previewAts.removeAll()
+        decodedPreviews.removeAll()
+        visiblePreviewKeys.removeAll()
+        decodedFor = nil
+        decoded = nil
+    }
+
     func dismiss() {
-        dismissedStepId = feed?.current?.id ?? "none"
+        dismissedActivityKey = feed?.visibilityKey
         expanded = false
     }
 
@@ -408,12 +484,17 @@ final class AgentLiveDockStore {
         // control bar, keyboard, display picker) without a server, so the
         // layout can be checked in the simulator before anything ships.
         let control = mode == "control"
+        let rtcWarmup = mode == "rtc-warmup"
         let fixtureShot = control ? nil : Self.fixtureScreenshotURI()
         screenshotURI = fixtureShot
         screenshotAt = fixtureShot == nil ? nil : now
         let fixturePreviews = control
             ? [AgentLiveActivityPreview(surface: "mac", screenshot: nil, screenshotAt: now,
                                         labelBn: "💻 Mac লাইভ", active: true,
+                                        videoDeviceId: "fixture-mac")]
+            : rtcWarmup
+            ? [AgentLiveActivityPreview(surface: "mac", screenshot: fixtureShot, screenshotAt: now,
+                                        labelBn: "💻 Mac প্রথম frame", active: true,
                                         videoDeviceId: "fixture-mac")]
             : [
                 AgentLiveActivityPreview(surface: "browser", screenshot: fixtureShot, screenshotAt: now,
@@ -423,17 +504,17 @@ final class AgentLiveDockStore {
               ]
         for preview in fixturePreviews {
             if let uri = preview.screenshot, let at = preview.screenshotAt {
-                previewURIs[preview.surface] = uri
-                previewAts[preview.surface] = at
+                previewURIs[preview.id] = uri
+                previewAts[preview.id] = at
             }
         }
-        selectedSurface = control ? "mac" : "browser"
-        visiblePreviewKeys = Set(fixturePreviews.map(\.surface))
+        selectedPreviewId = control || rtcWarmup ? "mac" : "browser"
+        visiblePreviewKeys = Set(fixturePreviews.map(\.id))
         feed = AgentLiveActivityFeed(active: true, current: mode == "pip" ? steps[3] : steps.first,
-                                     steps: steps, streaming: control, sessions: fixtureSessions,
+                                     steps: steps, streaming: control || rtcWarmup, sessions: fixtureSessions,
                                      screenshot: fixtureShot, screenshotAt: screenshotAt,
-                                     screenshotSurface: control ? "mac" : "browser",
-                                     videoDeviceId: control ? "fixture-mac" : nil,
+                                     screenshotSurface: control || rtcWarmup ? "mac" : "browser",
+                                     videoDeviceId: control || rtcWarmup ? "fixture-mac" : nil,
                                      macDisplays: control ? MacDisplayInfo(count: 2, index: 0) : nil,
                                      previews: fixturePreviews)
         lastActiveAt = Date()
@@ -473,17 +554,60 @@ final class AgentLiveDockStore {
 
 // MARK: - View
 
+/// Pure geometry shared by the production drag surface and XCTest. The bottom
+/// obstacle is measured from the actual tracker+composer frame, so Dynamic
+/// Type, keyboard height and tracker expansion all use layout truth instead of
+/// a guessed constant.
+struct AgentLiveDockGeometry {
+    struct Bounds: Equatable {
+        let minX: CGFloat
+        let maxX: CGFloat
+        let minY: CGFloat
+        let maxY: CGFloat
+    }
+
+    static func bounds(
+        container: CGSize,
+        safeArea: EdgeInsets,
+        player: CGSize,
+        margin: CGFloat,
+        bottomObstacleMinY: CGFloat?
+    ) -> Bounds {
+        let minX = safeArea.leading + margin + player.width / 2
+        let maxX = max(minX, container.width - safeArea.trailing - margin - player.width / 2)
+        let minY = safeArea.top + margin + player.height / 2
+        let screenMaxY = container.height - safeArea.bottom - margin - player.height / 2
+        let obstacleMaxY = bottomObstacleMinY.map { $0 - margin - player.height / 2 }
+        let maxY = max(minY, min(screenMaxY, obstacleMaxY ?? screenMaxY))
+        return Bounds(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
+    }
+
+    static func clamp(_ point: CGPoint, to bounds: Bounds) -> CGPoint {
+        CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX),
+                y: min(max(point.y, bounds.minY), bounds.maxY))
+    }
+
+    static func position(onRight: Bool, verticalFraction: Double, in bounds: Bounds) -> CGPoint {
+        let fraction = min(max(verticalFraction, 0), 1)
+        return CGPoint(x: onRight ? bounds.maxX : bounds.minX,
+                       y: bounds.minY + (bounds.maxY - bounds.minY) * fraction)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentLiveDockView: View {
+    var bottomObstacleMinY: CGFloat? = nil
     @State private var store = AgentLiveDockStore()
     /// One Agora join follows the video between mini-player, sheet and full
     /// screen. Keeping separate joins would double viewing cost and blink.
     @State private var macSession = MacScreenSession()
     @State private var macControl = MacRemoteControlStore()
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("alma.agentLiveDock.onRight") private var dockOnRight = true
     @AppStorage("alma.agentLiveDock.verticalFraction") private var dockVerticalFraction = 0.76
     @GestureState private var dragTranslation: CGSize = .zero
+    @State private var foregroundGeneration = 0
     private let playerSize = CGSize(width: 286, height: 161)
     private let playerMargin: CGFloat = 12
 
@@ -500,6 +624,7 @@ struct AgentLiveDockView: View {
                                 y: settled.y + dragTranslation.height),
                         in: proxy)
                     miniPlayer(feed: feed, pal: pal)
+                        .id("\(store.selectedPreview?.id ?? "legacy")-\(foregroundGeneration)")
                         .position(moving)
                         .simultaneousGesture(dragGesture(in: proxy))
                         .transition(.scale(scale: 0.92).combined(with: .opacity))
@@ -509,6 +634,7 @@ struct AgentLiveDockView: View {
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.show)
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: dockOnRight)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: bottomObstacleMinY)
         .sheet(isPresented: $store.expanded) {
             if let feed = store.feed {
                 AgentLiveDockSheet(store: store, feed: feed,
@@ -525,28 +651,36 @@ struct AgentLiveDockView: View {
         .onChange(of: store.feed?.videoDeviceId) { _, deviceId in
             if deviceId == nil { macSession.leave() }
         }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                macSession.leave()
+            case .active:
+                foregroundGeneration += 1
+                Task { await store.refresh() }
+            default:
+                break
+            }
+        }
     }
 
-    private func dockBounds(in proxy: GeometryProxy) -> (minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat) {
-        let safe = proxy.safeAreaInsets
-        let minX = safe.leading + playerMargin + playerSize.width / 2
-        let maxX = max(minX, proxy.size.width - safe.trailing - playerMargin - playerSize.width / 2)
-        let minY = safe.top + playerMargin + playerSize.height / 2
-        let maxY = max(minY, proxy.size.height - safe.bottom - playerMargin - playerSize.height / 2)
-        return (minX, maxX, minY, maxY)
+    private func dockBounds(in proxy: GeometryProxy) -> AgentLiveDockGeometry.Bounds {
+        AgentLiveDockGeometry.bounds(
+            container: proxy.size,
+            safeArea: proxy.safeAreaInsets,
+            player: playerSize,
+            margin: playerMargin,
+            bottomObstacleMinY: bottomObstacleMinY)
     }
 
     private func dockPosition(in proxy: GeometryProxy) -> CGPoint {
         let bounds = dockBounds(in: proxy)
-        let fraction = min(max(dockVerticalFraction, 0), 1)
-        return CGPoint(x: dockOnRight ? bounds.maxX : bounds.minX,
-                       y: bounds.minY + (bounds.maxY - bounds.minY) * fraction)
+        return AgentLiveDockGeometry.position(
+            onRight: dockOnRight, verticalFraction: dockVerticalFraction, in: bounds)
     }
 
     private func clampedPosition(_ point: CGPoint, in proxy: GeometryProxy) -> CGPoint {
-        let bounds = dockBounds(in: proxy)
-        return CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX),
-                       y: min(max(point.y, bounds.minY), bounds.maxY))
+        AgentLiveDockGeometry.clamp(point, to: dockBounds(in: proxy))
     }
 
     private func dragGesture(in proxy: GeometryProxy) -> some Gesture {
@@ -589,8 +723,21 @@ struct AgentLiveDockView: View {
             Color.black
 
             if let videoDevice = selectedVideoDevice, !store.expanded {
-                MacScreenStage(deviceId: videoDevice, session: macSession, store: macControl)
-                    .allowsHitTesting(false)
+                ZStack {
+                    // Real polled frames are the warm-up/failure fallback.
+                    // Agora's renderer is transparent until it receives video,
+                    // then takes over this exact card without a black flash.
+                    if let shot = store.selectedScreenshotImage {
+                        Image(uiImage: shot)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .accessibilityIdentifier("agent.live-dock.rtc-fallback-frame")
+                            .accessibilityLabel("Mac live fallback frame")
+                    }
+                    MacScreenStage(deviceId: videoDevice, session: macSession, store: macControl)
+                }
+                .allowsHitTesting(false)
             } else if let shot = store.selectedScreenshotImage {
                 Image(uiImage: shot)
                     .resizable()
@@ -643,18 +790,23 @@ struct AgentLiveDockView: View {
                     ForEach(previews) { item in
                         Button {
                             AlmaAgentHaptics.selection()
-                            store.selectSurface(item.surface)
+                            store.selectPreview(item.id)
                         } label: {
                             Text(item.surface == "browser" ? "🌐" : "⌘")
                                 .font(.system(size: 10.5))
                                 .frame(minWidth: 24, minHeight: 24)
                                 .background(
-                                    item.surface == surface ? Color.white.opacity(0.20) : Color.black.opacity(0.45),
+                                    item.id == store.selectedPreview?.id
+                                        ? Color.white.opacity(0.20) : Color.black.opacity(0.45),
                                     in: Circle())
                                 .overlay(Circle().strokeBorder(
-                                    Color.white.opacity(item.surface == surface ? 0.45 : 0.15), lineWidth: 1))
+                                    Color.white.opacity(item.id == store.selectedPreview?.id ? 0.45 : 0.15),
+                                    lineWidth: 1))
                         }
-                        .accessibilityLabel("\(pictureSurfaceBn(item.surface)) লাইভ ভিউ দেখুন")
+                        .accessibilityIdentifier("agent.live-dock.source.\(item.id)")
+                        .accessibilityLabel("\(item.labelBn) লাইভ ভিউ দেখুন")
+                        .accessibilityValue(item.id == store.selectedPreview?.id
+                                            ? "selected" : "not selected")
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -693,6 +845,7 @@ struct AgentLiveDockView: View {
         .shadow(color: .black.opacity(0.28), radius: 16, y: 7)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("agent.live-dock.player")
         .accessibilityLabel("এজেন্ট লাইভ কাজ")
     }
 
@@ -712,6 +865,8 @@ struct AgentLiveDockView: View {
                 .frame(width: 28, height: 28)
                 .background(.black.opacity(0.55), in: Circle())
         }
+        .accessibilityIdentifier(label == "বন্ধ করুন"
+                                 ? "agent.live-dock.close" : "agent.live-dock.expand")
         .accessibilityLabel(label)
     }
 }
@@ -756,13 +911,61 @@ struct AgentLiveDockSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if let previews = store.feed?.previews, previews.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(previews) { preview in
+                                    Button {
+                                        AlmaAgentHaptics.selection()
+                                        store.selectPreview(preview.id)
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Text(preview.surface == "browser" ? "🌐" : "⌘")
+                                            Text(preview.labelBn)
+                                                .lineLimit(1)
+                                        }
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(preview.id == store.selectedPreview?.id
+                                                         ? pal.ink : pal.muted)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .background(
+                                            preview.id == store.selectedPreview?.id
+                                                ? AgentPalette.coral.opacity(0.14)
+                                                : pal.ink.opacity(0.04),
+                                            in: Capsule())
+                                        .overlay(Capsule().strokeBorder(
+                                            preview.id == store.selectedPreview?.id
+                                                ? AgentPalette.coral.opacity(0.35)
+                                                : pal.borderSubtle,
+                                            lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("agent.live-dock.sheet.source.\(preview.id)")
+                                    .accessibilityLabel("\(preview.labelBn) লাইভ ভিউ দেখুন")
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("agent.live-dock.sheet.sources")
+                    }
+
                     if let videoDevice = selectedVideoDevice {
                         // L9-B — TRUE live video (ScreenCaptureKit → Agora),
                         // cursor and clicks in real time. Frames stay the
                         // fallback the moment the broadcaster dies.
                         // RC-1 — and the same connection carries his touches
                         // back the other way once he arms control.
-                        MacScreenStage(deviceId: videoDevice, session: macSession, store: control)
+                        ZStack {
+                            if let shot = store.selectedScreenshotImage {
+                                Image(uiImage: shot)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .accessibilityIdentifier("agent.live-dock.sheet.rtc-fallback-frame")
+                                    .accessibilityLabel("Mac live fallback frame")
+                            }
+                            MacScreenStage(deviceId: videoDevice, session: macSession, store: control)
+                        }
                             .frame(height: 230)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                             // The border must never compete for the finger —

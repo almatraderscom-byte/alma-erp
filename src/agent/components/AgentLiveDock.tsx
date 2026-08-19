@@ -68,11 +68,34 @@ interface ActivityFeed {
 
 interface ActivityPreview {
   surface: Extract<Surface, 'mac' | 'browser'>
+  /** Stable card/cache identity; old servers fall back to the surface. */
+  contextId?: string | null
   screenshot: string | null
   screenshotAt: string | null
   labelBn: string
   active: boolean
   videoDeviceId?: string | null
+}
+
+function previewId(preview: ActivityPreview): string {
+  return preview.contextId || preview.surface
+}
+
+export function selectedPreviewPicture(
+  selected: Pick<ActivityPreview, 'screenshot'> | null,
+  aggregate: string | null,
+): string | null {
+  return selected ? selected.screenshot : aggregate
+}
+
+export function activityVisibilityKey(feed: ActivityFeed): string {
+  if (feed.current) return `step:${feed.current.id}`
+  const cards = (feed.previews ?? [])
+    .map((preview) => `${previewId(preview)}@${preview.screenshotAt ?? (preview.active ? 'active' : 'idle')}`)
+    .sort()
+    .join('|')
+  if (cards) return `cards:${cards}`
+  return `frame:${feed.screenshotSurface ?? 'none'}@${feed.screenshotAt ?? (feed.active ? 'active' : 'idle')}`
 }
 
 const SURFACE_BN: Record<Surface, string> = {
@@ -90,38 +113,102 @@ const STATUS_DOT: Record<string, string> = {
 
 /** Keep polling a little after work stops, so the last frame does not vanish mid-glance. */
 const LINGER_MS = 20_000
+const STALE_FEED_MS = 20_000
 const POLL_STREAMING_MS = 1_000
 const POLL_ACTIVE_MS = 1_500
 const POLL_IDLE_MS = 15_000
 const FLOAT_MARGIN = 12
 const FLOAT_STORAGE_KEY = 'alma-agent-live-pip-position-v1'
 
+export function shouldExpireLiveActivity(
+  lastSuccessfulAt: number,
+  now = Date.now(),
+  force = false,
+): boolean {
+  return force || lastSuccessfulAt <= 0 || now - lastSuccessfulAt >= STALE_FEED_MS
+}
+
 export interface FloatingPosition {
   x: number
   y: number
 }
 
+export interface FloatingPlacement {
+  edge: 'left' | 'right'
+  verticalFraction: number
+}
+
+interface FloatingViewport {
+  width: number
+  height: number
+  /** Measured top edge of the real composer/bottom chrome. */
+  bottomObstacleMinY?: number | null
+}
+
 export function clampFloatingPosition(
   position: FloatingPosition,
-  viewport: { width: number; height: number },
+  viewport: FloatingViewport,
   player: { width: number; height: number },
   margin = FLOAT_MARGIN,
 ): FloatingPosition {
+  const usableBottom = Math.min(
+    viewport.height,
+    Number.isFinite(viewport.bottomObstacleMinY) ? Number(viewport.bottomObstacleMinY) : viewport.height,
+  )
   return {
     x: Math.min(Math.max(position.x, margin), Math.max(margin, viewport.width - player.width - margin)),
-    y: Math.min(Math.max(position.y, margin), Math.max(margin, viewport.height - player.height - margin)),
+    y: Math.min(Math.max(position.y, margin), Math.max(margin, usableBottom - player.height - margin)),
   }
 }
 
 export function snapFloatingPosition(
   position: FloatingPosition,
-  viewport: { width: number; height: number },
+  viewport: FloatingViewport,
   player: { width: number; height: number },
   margin = FLOAT_MARGIN,
 ): FloatingPosition {
   const clamped = clampFloatingPosition(position, viewport, player, margin)
   const right = Math.max(margin, viewport.width - player.width - margin)
   return { x: clamped.x + player.width / 2 < viewport.width / 2 ? margin : right, y: clamped.y }
+}
+
+export function placementFromPosition(
+  position: FloatingPosition,
+  viewport: FloatingViewport,
+  player: { width: number; height: number },
+  margin = FLOAT_MARGIN,
+): FloatingPlacement {
+  const clamped = clampFloatingPosition(position, viewport, player, margin)
+  const usableBottom = Math.min(
+    viewport.height,
+    Number.isFinite(viewport.bottomObstacleMinY) ? Number(viewport.bottomObstacleMinY) : viewport.height,
+  )
+  const maxY = Math.max(margin, usableBottom - player.height - margin)
+  const span = Math.max(0, maxY - margin)
+  return {
+    edge: clamped.x + player.width / 2 < viewport.width / 2 ? 'left' : 'right',
+    verticalFraction: span > 0 ? Math.min(1, Math.max(0, (clamped.y - margin) / span)) : 0,
+  }
+}
+
+export function positionFromPlacement(
+  placement: FloatingPlacement,
+  viewport: FloatingViewport,
+  player: { width: number; height: number },
+  margin = FLOAT_MARGIN,
+): FloatingPosition {
+  const usableBottom = Math.min(
+    viewport.height,
+    Number.isFinite(viewport.bottomObstacleMinY) ? Number(viewport.bottomObstacleMinY) : viewport.height,
+  )
+  const maxY = Math.max(margin, usableBottom - player.height - margin)
+  const fraction = Math.min(1, Math.max(0, placement.verticalFraction))
+  return {
+    x: placement.edge === 'right'
+      ? Math.max(margin, viewport.width - player.width - margin)
+      : margin,
+    y: margin + (maxY - margin) * fraction,
+  }
 }
 
 interface AgentLiveMiniPlayerProps {
@@ -132,9 +219,9 @@ interface AgentLiveMiniPlayerProps {
   surfaceLabel: string
   onExpand: () => void
   onDismiss: () => void
-  availableSurfaces?: Array<Extract<Surface, 'mac' | 'browser'>>
-  selectedSurface?: Extract<Surface, 'mac' | 'browser'>
-  onSelectSurface?: (surface: Extract<Surface, 'mac' | 'browser'>) => void
+  availablePreviews?: Array<Pick<ActivityPreview, 'surface' | 'contextId' | 'labelBn'>>
+  selectedPreviewId?: string
+  onSelectPreview?: (id: string) => void
 }
 
 /**
@@ -149,15 +236,15 @@ export function AgentLiveMiniPlayer({
   surfaceLabel,
   onExpand,
   onDismiss,
-  availableSurfaces = [],
-  selectedSurface,
-  onSelectSurface,
+  availablePreviews = [],
+  selectedPreviewId,
+  onSelectPreview,
 }: AgentLiveMiniPlayerProps) {
-  const stacked = availableSurfaces.length > 1
+  const stacked = availablePreviews.length > 1
   return (
     <div
       data-testid="agent-live-mini-player"
-      data-stack-count={availableSurfaces.length || 1}
+      data-stack-count={availablePreviews.length || 1}
       className="pointer-events-auto relative w-full"
     >
       {stacked && (
@@ -167,7 +254,6 @@ export function AgentLiveMiniPlayer({
         />
       )}
       <div className="relative overflow-hidden rounded-2xl border border-white/15 bg-[#101114] shadow-2xl ring-1 ring-black/20">
-      <button type="button" onClick={onExpand} aria-label="লাইভ ভিউ বড় করে দেখুন" className="block w-full text-left">
         <div className="relative aspect-video overflow-hidden bg-black">
           {screenshot ? (
             // Preserve the whole desktop/browser viewport — cropping it made
@@ -184,7 +270,16 @@ export function AgentLiveMiniPlayer({
             </div>
           )}
 
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center bg-gradient-to-b from-black/75 to-transparent px-2.5 pb-5 pt-2">
+          <button
+            type="button"
+            onClick={onExpand}
+            aria-label="লাইভ ভিউ বড় করে দেখুন"
+            className="absolute inset-0 z-10 block h-full w-full"
+          >
+            <span className="sr-only">লাইভ ভিউ বড় করে দেখুন</span>
+          </button>
+
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center bg-gradient-to-b from-black/75 to-transparent px-2.5 pb-5 pt-2">
             <span className={`h-2 w-2 rounded-full ${dotClass} ${active ? 'animate-pulse' : ''}`} />
             <span className="ml-1.5 rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-semibold text-white/90 backdrop-blur">
               {active ? 'লাইভ' : 'শেষ ফ্রেম'} · {surfaceLabel}
@@ -192,37 +287,38 @@ export function AgentLiveMiniPlayer({
           </div>
 
           {stacked && (
-            <div className="absolute left-2.5 top-9 flex gap-1" data-pip-control>
-              {availableSurfaces.map((surface) => (
+            <div className="absolute left-2.5 top-9 z-30 flex gap-1" data-pip-control>
+              {availablePreviews.map((preview) => {
+                const id = preview.contextId || preview.surface
+                return (
                 <button
-                  key={surface}
+                  key={id}
                   type="button"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onSelectSurface?.(surface)
+                    onSelectPreview?.(id)
                   }}
-                  aria-label={`${SURFACE_BN[surface]} লাইভ ভিউ দেখুন`}
+                  aria-label={`${preview.labelBn || SURFACE_BN[preview.surface]} লাইভ ভিউ দেখুন`}
                   className={`grid h-6 min-w-6 place-items-center rounded-full border px-1.5 text-[10px] backdrop-blur ${
-                    surface === selectedSurface
+                    id === selectedPreviewId
                       ? 'border-white/45 bg-white/20 text-white'
                       : 'border-white/15 bg-black/45 text-white/65'
                   }`}
                 >
-                  {surface === 'browser' ? '🌐' : '⌘'}
+                  {preview.surface === 'browser' ? '🌐' : '⌘'}
                 </button>
-              ))}
+              )})}
             </div>
           )}
 
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/55 to-transparent px-3 pb-2.5 pt-8">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/90 via-black/55 to-transparent px-3 pb-2.5 pt-8">
             <p className="truncate text-xs font-medium text-white">{label}</p>
             <p className="mt-0.5 text-[10px] text-white/65">বড় করে দেখতে ট্যাপ করুন</p>
           </div>
         </div>
-      </button>
 
-      <div className="absolute right-2 top-2 flex items-center gap-1.5" data-pip-control>
+      <div className="absolute right-2 top-2 z-30 flex items-center gap-1.5" data-pip-control>
         <button
           type="button"
           onPointerDown={(event) => event.stopPropagation()}
@@ -271,21 +367,25 @@ export default function AgentLiveDock() {
   const [feed, setFeed] = useState<ActivityFeed | null>(null)
   const [expanded, setExpanded] = useState(false)
   /** He closed it by hand — respect that until genuinely NEW work starts. */
-  const [dismissedStepId, setDismissedStepId] = useState<string | null>(null)
+  const [dismissedActivityKey, setDismissedActivityKey] = useState<string | null>(null)
   const lastActiveRef = useRef<number>(0)
+  const lastSuccessfulRefreshRef = useRef<number>(0)
   const streamingRef = useRef(false)
+  const loadPromiseRef = useRef<Promise<void> | null>(null)
+  const mountedRef = useRef(true)
   /**
    * The frame we already hold, keyed by `screenshotAt`. The poll tells the
    * server, and an unchanged frame comes back as metadata only — without this
    * every 3s poll re-downloaded the same multi-MB base64 payload (Codex P1).
    */
   const screenshotRef = useRef<{ uri: string; at: string } | null>(null)
-  const previewRefs = useRef<Partial<Record<'mac' | 'browser', { uri: string; at: string }>>>({})
+  const previewRefs = useRef<Record<string, { uri: string; at: string }>>({})
   const previewKeysRef = useRef(new Set<string>())
-  const [selectedSurface, setSelectedSurface] = useState<'mac' | 'browser' | null>(null)
+  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>(null)
 
   const playerRef = useRef<HTMLDivElement>(null)
   const [floatingPosition, setFloatingPosition] = useState<FloatingPosition | null>(null)
+  const placementRef = useRef<FloatingPlacement>({ edge: 'right', verticalFraction: 0.76 })
   const dragRef = useRef<{
     pointerId: number
     origin: FloatingPosition
@@ -294,89 +394,159 @@ export default function AgentLiveDock() {
   } | null>(null)
   const suppressExpandRef = useRef(false)
 
-  const load = useCallback(async () => {
-    try {
-      const held = screenshotRef.current
-      const query = new URLSearchParams()
-      query.set('previewDeck', '1')
-      if (held) query.set('screenshotAfter', held.at)
-      const browserHeld = previewRefs.current.browser
-      const macHeld = previewRefs.current.mac
-      if (browserHeld) query.set('browserScreenshotAfter', browserHeld.at)
-      if (macHeld) query.set('macScreenshotAfter', macHeld.at)
-      const qs = query.size > 0 ? `?${query.toString()}` : ''
-      const res = await fetch(`/api/assistant/live-activity${qs}`, { cache: 'no-store' })
-      if (!res.ok) return
-      const data = (await res.json()) as ActivityFeed
-      streamingRef.current = Boolean(data.streaming)
-      if (data.active) lastActiveRef.current = Date.now()
-      if (data.screenshot && data.screenshotAt) {
-        screenshotRef.current = { uri: data.screenshot, at: data.screenshotAt }
-      } else if (!data.screenshotAt) {
-        screenshotRef.current = null
-      } else if (held && data.screenshotAt === held.at) {
-        // Unchanged — server omitted the payload; render the copy we hold.
-        data.screenshot = held.uri
-      }
+  const clearExpiredFeed = useCallback((force = false) => {
+    if (!shouldExpireLiveActivity(lastSuccessfulRefreshRef.current, Date.now(), force)) return
+    lastActiveRef.current = 0
+    lastSuccessfulRefreshRef.current = 0
+    screenshotRef.current = null
+    previewRefs.current = {}
+    previewKeysRef.current = new Set()
+    streamingRef.current = false
+    if (!mountedRef.current) return
+    setFeed(null)
+    setExpanded(false)
+    setSelectedPreviewId(null)
+  }, [])
 
-      const previews = data.previews ?? (
-        data.screenshotSurface
-          ? [{
-              surface: data.screenshotSurface,
-              screenshot: data.screenshot,
-              screenshotAt: data.screenshotAt,
-              labelBn: data.current?.labelBn ?? 'কাজ চলছে',
-              active: data.active,
-              videoDeviceId: data.screenshotSurface === 'mac' ? data.videoDeviceId : null,
-            }]
-          : []
-      )
-      for (const preview of previews) {
-        const cached = previewRefs.current[preview.surface]
-        if (preview.screenshot && preview.screenshotAt) {
-          previewRefs.current[preview.surface] = { uri: preview.screenshot, at: preview.screenshotAt }
-        } else if (cached && preview.screenshotAt === cached.at) {
-          preview.screenshot = cached.uri
-        } else if (!preview.screenshotAt) {
-          delete previewRefs.current[preview.surface]
+  const load = useCallback((): Promise<void> => {
+    // Foreground events and the poll timer can fire together. Coalesce them so
+    // an older response can never overwrite a newer source selection/frame.
+    if (loadPromiseRef.current) return loadPromiseRef.current
+    const task = (async () => {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), STALE_FEED_MS)
+      try {
+        const held = screenshotRef.current
+        const query = new URLSearchParams()
+        query.set('previewDeck', '1')
+        if (held) query.set('screenshotAfter', held.at)
+        const previewAfter = Object.fromEntries(
+          Object.entries(previewRefs.current).map(([id, frame]) => [id, frame.at]),
+        )
+        if (Object.keys(previewAfter).length) query.set('previewAfter', JSON.stringify(previewAfter))
+        const browserHeldAt = Object.entries(previewRefs.current)
+          .filter(([id]) => id === 'browser' || id.startsWith('browser:'))
+          .map(([, frame]) => frame.at).sort().at(-1)
+        const macHeldAt = Object.entries(previewRefs.current)
+          .filter(([id]) => id === 'mac' || id.startsWith('mac:'))
+          .map(([, frame]) => frame.at).sort().at(-1)
+        if (browserHeldAt) query.set('browserScreenshotAfter', browserHeldAt)
+        if (macHeldAt) query.set('macScreenshotAfter', macHeldAt)
+        const qs = query.size > 0 ? `?${query.toString()}` : ''
+        const res = await fetch(`/api/assistant/live-activity${qs}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          clearExpiredFeed(res.status === 401 || res.status === 403)
+          return
         }
-      }
-      data.previews = previews
+        const data = (await res.json()) as ActivityFeed
+        if (!mountedRef.current) return
+        streamingRef.current = Boolean(data.streaming)
+        if (data.active) lastActiveRef.current = Date.now()
+        if (data.screenshot && data.screenshotAt) {
+          screenshotRef.current = { uri: data.screenshot, at: data.screenshotAt }
+        } else if (!data.screenshotAt) {
+          screenshotRef.current = null
+        } else if (held && data.screenshotAt === held.at) {
+          // Unchanged — server omitted the payload; render the copy we hold.
+          data.screenshot = held.uri
+        }
 
-      const nextKeys = new Set(previews.map((preview) => preview.surface))
-      const newlyVisible = previews.find((preview) => !previewKeysRef.current.has(preview.surface))
-      previewKeysRef.current = nextKeys
-      setSelectedSurface((previous) => {
-        if (newlyVisible) return newlyVisible.surface
-        if (previous && nextKeys.has(previous)) return previous
-        return previews[0]?.surface ?? data.screenshotSurface ?? null
-      })
-      setFeed(data)
-      // Only a DIFFERENT step brings the dock back. Clearing the dismiss on
-      // every active poll meant closing it during a running job re-opened it
-      // three seconds later (Codex review).
-      setDismissedStepId((prev) => (prev && data.current && data.current.id !== prev ? null : prev))
-    } catch {
-      /* a dropped poll is not worth telling him about */
-    }
+        const previews = data.previews ?? (
+          data.screenshotSurface
+            ? [{
+                surface: data.screenshotSurface,
+                screenshot: data.screenshot,
+                screenshotAt: data.screenshotAt,
+                labelBn: data.current?.labelBn ?? 'কাজ চলছে',
+                active: data.active,
+                videoDeviceId: data.screenshotSurface === 'mac' ? data.videoDeviceId : null,
+              }]
+            : []
+        )
+        for (const preview of previews) {
+          const id = previewId(preview)
+          const cached = previewRefs.current[id]
+          if (preview.screenshot && preview.screenshotAt) {
+            previewRefs.current[id] = { uri: preview.screenshot, at: preview.screenshotAt }
+          } else if (cached && preview.screenshotAt === cached.at) {
+            preview.screenshot = cached.uri
+          } else if (!preview.screenshotAt) {
+            delete previewRefs.current[id]
+          }
+        }
+        data.previews = previews
+
+        const nextKeys = new Set(previews.map(previewId))
+        for (const id of Object.keys(previewRefs.current)) {
+          if (!nextKeys.has(id)) delete previewRefs.current[id]
+        }
+        const newlyVisible = previews.find((preview) => !previewKeysRef.current.has(previewId(preview)))
+        previewKeysRef.current = nextKeys
+        setSelectedPreviewId((previous) => {
+          if (newlyVisible) return previewId(newlyVisible)
+          if (previous && nextKeys.has(previous)) return previous
+          return previews[0] ? previewId(previews[0]) : null
+        })
+        setFeed(data)
+        // Only a DIFFERENT step brings the dock back. Clearing the dismiss on
+        // every active poll meant closing it during a running job re-opened it
+        // three seconds later (Codex review).
+        const nextVisibilityKey = activityVisibilityKey(data)
+        setDismissedActivityKey((previous) => (
+          previous && nextVisibilityKey !== previous ? null : previous
+        ))
+        // Only a completely reconciled response refreshes truthfulness. A
+        // malformed rolling-schema 200 must not keep stale active pixels alive.
+        lastSuccessfulRefreshRef.current = Date.now()
+      } catch {
+        clearExpiredFeed()
+      } finally {
+        clearTimeout(timeout)
+      }
+    })()
+    loadPromiseRef.current = task
+    void task.finally(() => {
+      if (loadPromiseRef.current === task) loadPromiseRef.current = null
+    })
+    return task
+  }, [clearExpiredFeed])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
   }, [])
 
   useEffect(() => {
     void load()
     let timer: ReturnType<typeof setTimeout>
+    let cancelled = false
     const tick = () => {
       const wasActive = Date.now() - lastActiveRef.current < LINGER_MS
       timer = setTimeout(async () => {
         await load()
-        tick()
+        if (!cancelled) tick()
       }, streamingRef.current ? POLL_STREAMING_MS : wasActive ? POLL_ACTIVE_MS : POLL_IDLE_MS)
     }
     tick()
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [load])
+
+  useEffect(() => {
+    const refreshOnForeground = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', refreshOnForeground)
+    return () => document.removeEventListener('visibilitychange', refreshOnForeground)
   }, [load])
 
   const recentlyActive = Date.now() - lastActiveRef.current < LINGER_MS
-  const dismissed = dismissedStepId !== null && dismissedStepId === (feed?.current?.id ?? null)
+  const dismissed = Boolean(feed && dismissedActivityKey === activityVisibilityKey(feed))
   const show = Boolean(feed && (feed.active || recentlyActive) && !dismissed)
 
   // L4 tap-to-reply: the composer belongs to the NEWEST session, and only when
@@ -484,59 +654,76 @@ export default function AgentLiveDock() {
     return { width: rect?.width ?? 304, height: rect?.height ?? 171 }
   }, [])
 
+  const floatingViewport = useCallback((): FloatingViewport => {
+    const obstacle = document.querySelector<HTMLElement>('[data-agent-bottom-obstacle]')
+    const obstacleTop = obstacle?.getBoundingClientRect().top
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      bottomObstacleMinY: Number.isFinite(obstacleTop) ? obstacleTop : null,
+    }
+  }, [])
+
   const settlePosition = useCallback((position: FloatingPosition, snap: boolean) => {
-    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    const viewport = floatingViewport()
+    const size = playerSize()
     const next = snap
-      ? snapFloatingPosition(position, viewport, playerSize())
-      : clampFloatingPosition(position, viewport, playerSize())
+      ? snapFloatingPosition(position, viewport, size)
+      : clampFloatingPosition(position, viewport, size)
+    const placement = placementFromPosition(next, viewport, size)
+    placementRef.current = placement
     setFloatingPosition(next)
     try {
-      window.localStorage.setItem(FLOAT_STORAGE_KEY, JSON.stringify(next))
+      window.localStorage.setItem(FLOAT_STORAGE_KEY, JSON.stringify(placement))
     } catch {
       /* private browsing can reject persistence; movement still works */
     }
     return next
-  }, [playerSize])
+  }, [floatingViewport, playerSize])
 
   useEffect(() => {
     if (!show) return
     const frame = window.requestAnimationFrame(() => {
-      let restored: FloatingPosition | null = null
+      let restoredPlacement: FloatingPlacement | null = null
+      let legacyPosition: FloatingPosition | null = null
       try {
         const raw = window.localStorage.getItem(FLOAT_STORAGE_KEY)
         if (raw) {
-          const parsed = JSON.parse(raw) as Partial<FloatingPosition>
-          if (Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
-            restored = { x: Number(parsed.x), y: Number(parsed.y) }
+          const parsed = JSON.parse(raw) as Partial<FloatingPosition & FloatingPlacement>
+          if ((parsed.edge === 'left' || parsed.edge === 'right') && Number.isFinite(parsed.verticalFraction)) {
+            restoredPlacement = {
+              edge: parsed.edge,
+              verticalFraction: Number(parsed.verticalFraction),
+            }
+          } else if (Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+            legacyPosition = { x: Number(parsed.x), y: Number(parsed.y) }
           }
         }
       } catch {
         /* use the lower-right default */
       }
       const size = playerSize()
-      settlePosition(
-        restored ?? {
-          x: window.innerWidth - size.width - FLOAT_MARGIN,
-          y: window.innerHeight - size.height - 112,
-        },
-        Boolean(restored),
-      )
+      const viewport = floatingViewport()
+      const placement = restoredPlacement
+        ?? (legacyPosition ? placementFromPosition(legacyPosition, viewport, size) : placementRef.current)
+      placementRef.current = placement
+      setFloatingPosition(positionFromPlacement(placement, viewport, size))
     })
     const onResize = () => {
       setFloatingPosition((position) => position
-        ? clampFloatingPosition(
-            position,
-            { width: window.innerWidth, height: window.innerHeight },
-            playerSize(),
-          )
+        ? positionFromPlacement(placementRef.current, floatingViewport(), playerSize())
         : position)
     }
+    const obstacle = document.querySelector<HTMLElement>('[data-agent-bottom-obstacle]')
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize)
+    if (obstacle) resizeObserver?.observe(obstacle)
     window.addEventListener('resize', onResize)
     return () => {
       window.cancelAnimationFrame(frame)
+      resizeObserver?.disconnect()
       window.removeEventListener('resize', onResize)
     }
-  }, [playerSize, settlePosition, show])
+  }, [floatingViewport, playerSize, show])
 
   const beginDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest('[data-pip-control]')) return
@@ -558,10 +745,10 @@ export default function AgentLiveDock() {
     if (Math.hypot(dx, dy) > 5) drag.moved = true
     setFloatingPosition(clampFloatingPosition(
       { x: drag.origin.x + dx, y: drag.origin.y + dy },
-      { width: window.innerWidth, height: window.innerHeight },
+      floatingViewport(),
       playerSize(),
     ))
-  }, [playerSize])
+  }, [floatingViewport, playerSize])
 
   const endDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current
@@ -587,9 +774,11 @@ export default function AgentLiveDock() {
   const dot = STATUS_DOT[current?.status ?? 'done'] ?? 'bg-black/25'
   const previews = feed.previews ?? []
   const selectedPreview =
-    previews.find((preview) => preview.surface === selectedSurface) ?? previews[0] ?? null
+    previews.find((preview) => previewId(preview) === selectedPreviewId) ?? previews[0] ?? null
   const pictureSurface: Surface = selectedPreview?.surface ?? feed.screenshotSurface ?? current?.surface ?? 'mac'
-  const picture = selectedPreview?.screenshot ?? feed.screenshot
+  // A selected card without its first frame owns the placeholder. Falling back
+  // to the aggregate image would label Chrome A/Mac pixels as Chrome B.
+  const picture = selectedPreviewPicture(selectedPreview, feed.screenshot)
   const pictureLabel = selectedPreview?.labelBn ?? current?.labelBn ?? 'কাজ চলছে'
 
   if (expanded) {
@@ -621,6 +810,28 @@ export default function AgentLiveDock() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {previews.length > 1 && (
+              <div className="mb-3 flex gap-2 overflow-x-auto" data-testid="agent-live-sheet-sources">
+                {previews.map((preview) => {
+                  const id = previewId(preview)
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setSelectedPreviewId(id)}
+                      aria-label={`${preview.labelBn} লাইভ ভিউ দেখুন`}
+                      className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium ${
+                        id === selectedPreviewId
+                          ? 'border-orange-300 bg-orange-50 text-orange-800'
+                          : 'border-black/10 bg-black/[0.03] text-black/60'
+                      }`}
+                    >
+                      {preview.surface === 'browser' ? '🌐' : '⌘'} {preview.labelBn}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             {picture ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -634,7 +845,7 @@ export default function AgentLiveDock() {
               </div>
             )}
 
-            {(feed.streaming || pictureSurface === 'mac') && (
+            {pictureSurface === 'mac' && (
               <button
                 type="button"
                 onClick={() => void toggleStream()}
@@ -755,10 +966,10 @@ export default function AgentLiveDock() {
         screenshot={picture}
         surfaceLabel={SURFACE_BN[pictureSurface]}
         onExpand={expandUnlessDragged}
-        onDismiss={() => setDismissedStepId(current?.id ?? 'none')}
-        availableSurfaces={previews.map((preview) => preview.surface)}
-        selectedSurface={selectedPreview?.surface}
-        onSelectSurface={setSelectedSurface}
+        onDismiss={() => setDismissedActivityKey(activityVisibilityKey(feed))}
+        availablePreviews={previews}
+        selectedPreviewId={selectedPreview ? previewId(selectedPreview) : undefined}
+        onSelectPreview={setSelectedPreviewId}
       />
     </div>
   )

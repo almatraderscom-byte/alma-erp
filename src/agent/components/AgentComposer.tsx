@@ -240,7 +240,10 @@ export default function AgentComposer({
 
   return (
     <>
-    <div className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5">
+    <div
+      data-agent-bottom-obstacle
+      className="agent-composer-wrap safe-x shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-2 md:px-5 md:pb-5"
+    >
       {/* Floating frosted composer — Claude anatomy: text on top, then
           [ + · model pill ··· mic · voice · coral-send ] (FOUND-1B). */}
       <div

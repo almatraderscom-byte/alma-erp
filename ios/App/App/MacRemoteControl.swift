@@ -128,33 +128,68 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
         joinedDeviceId = deviceId
         let gen = joinGeneration
         Task { @MainActor in
-            guard let resp: VideoTokenResponse = try? await AlmaAPI.shared.send(
-                "POST", "/api/assistant/mac-agent/screen-video-token",
-                body: VideoTokenRequest(deviceId: deviceId)) else {
+            let resp: VideoTokenResponse
+            do {
+                resp = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/mac-agent/screen-video-token",
+                    body: VideoTokenRequest(deviceId: deviceId))
+                #if DEBUG
+                print("[MacScreenSession] token ok device=\(deviceId) uid=\(resp.uid)")
+                #endif
+            } catch {
+                #if DEBUG
+                print("[MacScreenSession] token failed device=\(deviceId) error=\(error.localizedDescription)")
+                #endif
                 // A transient token failure must not wedge the view in a
                 // joined-but-black state (Codex P2 round 8 on L9).
                 if gen == self.joinGeneration {
                     self.joined = false
                     self.joinedDeviceId = nil
+                    self.scheduleJoinRetry(deviceId: deviceId,
+                                           expectedGeneration: gen)
                 }
                 return
             }
             if gen != self.joinGeneration { return }
-            let engine = AgoraRtcEngineKit.sharedEngine(withAppId: resp.appId, delegate: nil)
+            let config = AgoraRtcEngineConfig()
+            config.appId = resp.appId
+            config.channelProfile = .liveBroadcasting
+            let engine = AgoraRtcEngineKit.sharedEngine(with: config, delegate: nil)
             self.engine = engine
             self.uid = resp.uid
             engine.enableVideo()
             let conn = AgoraRtcConnection(channelId: resp.channel, localUid: resp.uid)
             self.connection = conn
             let options = AgoraRtcChannelMediaOptions()
+            // The Mac broadcaster publishes into a live-broadcasting channel.
+            // Keep this per-connection: the shared Agora engine may also own an
+            // office-call connection whose profile is `.communication`.
+            options.channelProfile = .liveBroadcasting
             options.clientRoleType = .audience
             options.autoSubscribeVideo = true
             options.autoSubscribeAudio = false
             options.enableAudioRecordingOrPlayout = false
             options.publishCameraTrack = false
             options.publishMicrophoneTrack = false
-            engine.joinChannelEx(byToken: resp.token, connection: conn,
-                                 delegate: self, mediaOptions: options)
+            let joinCode = engine.joinChannelEx(byToken: resp.token, connection: conn,
+                                                delegate: self, mediaOptions: options,
+                                                joinSuccess: nil)
+            #if DEBUG
+            print("[MacScreenSession] join submitted code=\(joinCode) channel=\(resp.channel) uid=\(resp.uid)")
+            #endif
+            guard joinCode == 0 else {
+                // Agora can reject synchronously (bad/expired token, invalid
+                // channel). No delegate is guaranteed in that path, so leaving
+                // `joined=true` would permanently wedge the stage black.
+                if gen == self.joinGeneration {
+                    if self.connection === conn { self.connection = nil }
+                    self.joined = false
+                    self.joinedDeviceId = nil
+                    self.scheduleJoinRetry(deviceId: deviceId,
+                                           expectedGeneration: gen)
+                }
+                return
+            }
             // The broadcaster uid is FIXED (1) — bind the canvas immediately
             // rather than waiting on a delegate whose connection-routing
             // varies by SDK minor (Codex P1 on L9).
@@ -197,11 +232,15 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
             connection = nil
         }
         joined = false
+        joinedDeviceId = nil
     }
 
     // MARK: Agora delegate
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+        #if DEBUG
+        print("[MacScreenSession] remote joined uid=\(uid) elapsed=\(elapsed)")
+        #endif
         guard uid == 1, let view = canvasView, let conn = connection else { return } // 1 = the Mac
         let canvas = AgoraRtcVideoCanvas()
         canvas.uid = uid
@@ -222,6 +261,9 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, connectionChangedTo state: AgoraConnectionState,
                    reason: AgoraConnectionChangedReason) {
+        #if DEBUG
+        print("[MacScreenSession] connection state=\(state.rawValue) reason=\(reason.rawValue)")
+        #endif
         // Losing the connection silently disarms control on this side too —
         // the Mac drops it on its own lease, but the UI must not keep claiming
         // the owner is driving something.
@@ -286,12 +328,30 @@ final class MacScreenSession: NSObject, AgoraRtcEngineDelegate {
     }
 
     private func scheduleHeal() {
-        guard healAttempts < 3, let deviceId = joinedDeviceId, let view = canvasView else { return }
+        guard healAttempts < 3, let deviceId = joinedDeviceId else { return }
+        healAttempts += 1
+        let generation = joinGeneration
+        let delay = Double(healAttempts) * 2.0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  self.joined,
+                  self.joinGeneration == generation,
+                  self.joinedDeviceId == deviceId,
+                  let view = self.canvasView else { return }
+            self.leave()
+            self.join(deviceId: deviceId, into: view)
+        }
+    }
+
+    private func scheduleJoinRetry(deviceId: String, expectedGeneration: Int) {
+        guard healAttempts < 3 else { return }
         healAttempts += 1
         let delay = Double(healAttempts) * 2.0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.joinedDeviceId == deviceId else { return }
-            self.leave()
+            guard let self,
+                  !self.joined,
+                  self.joinGeneration == expectedGeneration,
+                  let view = self.canvasView else { return }
             self.join(deviceId: deviceId, into: view)
         }
     }
@@ -1391,7 +1451,10 @@ struct MacScreenStage: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let container = UIView()
-        container.backgroundColor = .black
+        // The real screenshot feed sits underneath this stage. Keep the
+        // canvas transparent until Agora paints its first remote frame so a
+        // slow/unsupported RTC join never turns a valid live preview black.
+        container.backgroundColor = .clear
         container.clipsToBounds = true
 
         // Only the VIDEO is magnified, never the touch surface. Codex P1: a
@@ -1404,7 +1467,7 @@ struct MacScreenStage: UIViewRepresentable {
         container.addSubview(zoomLayer)
 
         let canvas = UIView()
-        canvas.backgroundColor = .black
+        canvas.backgroundColor = .clear
         canvas.translatesAutoresizingMaskIntoConstraints = false
         zoomLayer.addSubview(canvas)
 
