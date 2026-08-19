@@ -341,6 +341,7 @@ final class CSV4WorkspaceVM {
             query: ["brandProfileId": brandID, "projectId": projectID])
         let loaded = await (compositionResponse, reviewResponse, packResponse, voiceResponse,
                             healthResponse, retentionResponse, lifecycleResponse, performanceResponse)
+        guard selectedBrandID == brandID, selectedProjectID == projectID else { return }
         compositions = loaded.0?.compositions ?? []
         reviews = loaded.1?.items ?? []
         campaignPacks = loaded.2?.packs ?? []
@@ -354,9 +355,12 @@ final class CSV4WorkspaceVM {
     }
 
     private func hydrateWaitingCampaignDrafts() async {
+        let brandID = selectedBrandID
+        let projectID = selectedProjectID
         for pack in campaignPacks where pack.status == "waiting_selection" {
             if let response: CSV4CampaignQueueResponse = try? await AlmaAPI.shared.get(
                 "/api/assistant/creative-studio/campaign-packs/\(pack.id)") {
+                guard selectedBrandID == brandID, selectedProjectID == projectID else { return }
                 replaceCampaignPack(response.pack)
             }
         }
@@ -775,7 +779,7 @@ struct CSV4WorkspaceScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { title("Projects & lineage", "folder.fill"); Spacer(); Button("নতুন") { createProjectSheet = true }.buttonStyle(.borderedProminent).tint(AgentPalette.coral) }
             ForEach(model.projects) { project in
-                Button { model.selectedProjectID = project.id; onProjectSelected(project); Task { await model.reloadProject() } } label: {
+                Button { model.invalidateCampaignPreview(); model.selectedProjectID = project.id; onProjectSelected(project); Task { await model.reloadProject() } } label: {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack { Text(project.name).font(.headline); Spacer(); if project.id == model.selectedProjectID { Image(systemName: "checkmark.circle.fill").foregroundStyle(AgentPalette.coral) } }
                         Text("\(project.product?.code ?? "No ERP product") · \(project.defaultFolder ?? "Unsorted") · \(almaBn(project.assetCount ?? 0)) assets")
@@ -946,8 +950,10 @@ struct CSV4WorkspaceScreen: View {
                     HStack {
                         VStack(alignment: .leading) { Text(engine.labelBn).font(.subheadline.weight(.bold)); Text("\(engine.jobs) jobs · \(engine.errorRatePct, specifier: "%.1f")% errors · $\(engine.spendUsd, specifier: "%.3f")").font(.caption).foregroundStyle(AgentPalette(scheme).muted) }
                         Spacer()
-                        Button(engine.killed ? "Enable" : "Kill") { pendingEngine = engine }
-                            .font(.caption.weight(.bold)).foregroundStyle(engine.killed ? .green : .red)
+                        if ["fashn", "gemini", "fal_fashn_v16", "fal_idm_vton", "fal_flux_fill", "xai_imagine"].contains(engine.engine) {
+                            Button(engine.killed ? "Enable" : "Kill") { pendingEngine = engine }
+                                .font(.caption.weight(.bold)).foregroundStyle(engine.killed ? .green : .red)
+                        }
                     }.padding(12).v4Glass(scheme)
                 }
             } else { empty("Health snapshot unavailable") }

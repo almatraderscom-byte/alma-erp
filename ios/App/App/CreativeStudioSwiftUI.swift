@@ -582,6 +582,11 @@ final class CreativeStudioVM {
         Array(Set(gallery.compactMap(\.aspectRatio).filter { !$0.isEmpty })).sorted()
     }
 
+    private var shouldShowSampleGallery: Bool {
+        gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && galleryFilter == "all" && galleryProvider == "all" && galleryAspect == "all"
+    }
+
     func loadAll() async {
         loading = true
         defer { loading = false }
@@ -617,7 +622,7 @@ final class CreativeStudioVM {
         authExpired = (cfg == nil && projects == nil && gal == nil)
         // Never show empty grey slots: fall back to real ALMA sample photos until the
         // owner's own creatives/models load. Replaced automatically when live data arrives.
-        if gallery.isEmpty { gallery = CS.sampleGallery }
+        if gallery.isEmpty, shouldShowSampleGallery { gallery = CS.sampleGallery }
         if models.isEmpty { models = CS.sampleModels }
     }
 
@@ -662,7 +667,7 @@ final class CreativeStudioVM {
         applyLifecycleQuery(to: &query)
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
-            gallery = g.items.isEmpty ? CS.sampleGallery : g.items
+            gallery = g.items.isEmpty && shouldShowSampleGallery ? CS.sampleGallery : g.items
         }
     }
 

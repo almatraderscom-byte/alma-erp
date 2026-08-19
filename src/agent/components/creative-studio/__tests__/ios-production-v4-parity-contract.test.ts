@@ -88,6 +88,8 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('.onSubmit { Task { await vm.refreshGallery() } }')
     expect(nativeStudio).toContain('query["order"] = gallerySort')
     expect(nativeWorkspace).toContain('model.invalidateCampaignPreview()')
+    expect(nativeWorkspace).toContain('guard selectedBrandID == brandID, selectedProjectID == projectID')
+    expect(nativeStudio).toContain('shouldShowSampleGallery')
   })
 
   it('returns canonical lifecycle and aspect metadata for native filters', () => {
@@ -115,6 +117,7 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('controlLifecycle(')
     expect(nativeWorkspace).toContain('Performance & attribution')
     expect(nativeWorkspace).toContain('external publish')
+    expect(nativeWorkspace).toContain('"fal_flux_fill", "xai_imagine"].contains(engine.engine)')
   })
 
   it('keeps resolved project scope and voice readiness synchronized with the main studio', () => {
