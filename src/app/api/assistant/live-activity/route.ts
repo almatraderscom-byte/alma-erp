@@ -3,9 +3,8 @@
  *
  * The owner asked to watch the work from his phone the way Codex and the ChatGPT
  * app show it: small inside the chat, expandable when he wants a proper look.
- * That needs a single feed, because from his side there is no difference between
- * "it is running a command on the Mac" and "it is clicking in Chrome" — it is
- * all just the agent working.
+ * One feed carries independent Browser and Mac preview cards so the UI can keep
+ * both visible as a Codex-style stack instead of whichever frame won a race.
  *
  * Read-only, owner-session only, and deliberately cheap: two indexed queries and
  * whatever the newest screenshot happens to be. It is polled while work is live,
@@ -46,6 +45,16 @@ export interface ActivityStep {
   /** The raw event kind (text/tool/turn_done/ended/…) — lets the docks tell a
    *  finished-for-good session (ended/error) from an idle-but-replyable one. */
   sessionKind?: string | null
+}
+
+export interface ActivityPreview {
+  surface: 'mac' | 'browser'
+  screenshot: string | null
+  screenshotAt: string | null
+  labelBn: string
+  active: boolean
+  /** A true Agora stream replaces the Mac fallback frame in native clients. */
+  videoDeviceId?: string | null
 }
 
 function macLabel(action: string, command: string | null): string {
@@ -267,6 +276,10 @@ export async function GET(req: NextRequest) {
   let screenshot: string | null = null
   let screenshotAt: string | null = null
   let screenshotSurface: Extract<ActivitySurface, 'mac' | 'browser'> | null = null
+  const surfaceShots: Record<'mac' | 'browser', { screenshot: string | null; at: string | null }> = {
+    mac: { screenshot: null, at: null },
+    browser: { screenshot: null, at: null },
+  }
   const considerShot = (
     dataUri: string | null | undefined,
     at: Date,
@@ -274,6 +287,9 @@ export async function GET(req: NextRequest) {
   ) => {
     if (!dataUri?.startsWith('data:image')) return
     const iso = at.toISOString()
+    if (!surfaceShots[surface].at || iso > surfaceShots[surface].at!) {
+      surfaceShots[surface] = { screenshot: dataUri, at: iso }
+    }
     if (!screenshotAt || iso > screenshotAt) {
       screenshot = dataUri
       screenshotAt = iso
@@ -327,13 +343,20 @@ export async function GET(req: NextRequest) {
   // re-downloaded the same up-to-3MB base64 payload — ~60 MB a minute on a
   // phone showing one static screenshot (Codex P1).
   const screenshotAfter = req.nextUrl.searchParams.get('screenshotAfter')
+  const wantsPreviewDeck = req.nextUrl.searchParams.get('previewDeck') === '1'
+  const browserScreenshotAfter = wantsPreviewDeck
+    ? req.nextUrl.searchParams.get('browserScreenshotAfter')
+    : screenshotAfter
+  const macScreenshotAfter = wantsPreviewDeck
+    ? req.nextUrl.searchParams.get('macScreenshotAfter')
+    : screenshotAfter
 
   // Fetch the screenshot payload ONLY for the browser rows that carry one, and
   // only when it could be newer than what the client already has.
   const shotRow = (browserRows as Array<Record<string, unknown>>).find(
     (r) =>
       r.action === 'screenshot' &&
-      (!screenshotAfter || (r.createdAt as Date).toISOString() > screenshotAfter),
+      (!browserScreenshotAfter || (r.createdAt as Date).toISOString() > browserScreenshotAfter),
   )
   if (shotRow) {
     const full = await db.liveBrowserCommand
@@ -446,17 +469,21 @@ export async function GET(req: NextRequest) {
   const frameMetaRow = frameMeta as { deviceId: string; at: Date } | null
   if (frameMetaRow) {
     const iso = frameMetaRow.at.toISOString()
-    const clientHasIt = Boolean(screenshotAfter && iso <= screenshotAfter)
+    const clientHasIt = Boolean(macScreenshotAfter && iso <= macScreenshotAfter)
     const beatsCurrent = !screenshotAt || iso > (screenshotAt as string)
-    if (beatsCurrent && !clientHasIt) {
+    if (!clientHasIt) {
       const full = await db.macAgentFrame
         .findUnique({ where: { deviceId: frameMetaRow.deviceId }, select: { dataUri: true, at: true } })
         .catch(() => null)
       if (full?.dataUri) considerShot(full.dataUri, full.at as Date, 'mac')
-    } else if (beatsCurrent) {
-      // Client already holds this frame — advance the timestamp only.
-      screenshotAt = iso
-      screenshotSurface = 'mac'
+    } else {
+      // The client already holds the payload, but each surface keeps its own
+      // timestamp so Browser and Mac can remain as separate stacked cards.
+      surfaceShots.mac.at = iso
+      if (beatsCurrent) {
+        screenshotAt = iso
+        screenshotSurface = 'mac'
+      }
     }
   }
 
@@ -470,6 +497,7 @@ export async function GET(req: NextRequest) {
   )
   if (newestBrowserShot) {
     const iso = (newestBrowserShot.createdAt as Date).toISOString()
+    if (!surfaceShots.browser.at || iso > surfaceShots.browser.at!) surfaceShots.browser.at = iso
     if (!screenshotAt || iso > (screenshotAt as string)) {
       screenshotAt = iso
       screenshotSurface = 'browser'
@@ -508,13 +536,54 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Unchanged frame → metadata only; the client keeps the copy it has.
-  // (cast: TS narrows screenshotAt to its `null` initializer here because the
-  // assignments happen inside the considerShot closure)
-  const heldAt = screenshotAt as string | null
-  if (screenshotAfter && heldAt && heldAt <= screenshotAfter) {
-    screenshot = null
+  if (macScreenshotAfter && surfaceShots.mac.at && surfaceShots.mac.at <= macScreenshotAfter) {
+    surfaceShots.mac.screenshot = null
   }
+  if (browserScreenshotAfter && surfaceShots.browser.at && surfaceShots.browser.at <= browserScreenshotAfter) {
+    surfaceShots.browser.screenshot = null
+  }
+
+  // Keep the legacy single-frame fields truthful for older clients while the
+  // new docks consume the independent preview deck below.
+  const newestSurface = (['browser', 'mac'] as const)
+    .filter((surface) => surfaceShots[surface].at)
+    .sort((a, b) => surfaceShots[b].at!.localeCompare(surfaceShots[a].at!))[0]
+  if (newestSurface) {
+    screenshotAt = surfaceShots[newestSurface].at
+    screenshotSurface = newestSurface
+    screenshot = surfaceShots[newestSurface].screenshot
+  }
+  const heldAt = screenshotAt as string | null
+  if (screenshotAfter && heldAt && heldAt <= screenshotAfter) screenshot = null
+
+  const previewFor = (surface: 'mac' | 'browser'): ActivityPreview | null => {
+    const sourceSteps = trimmed.filter((step) => step.surface === surface)
+    const sourceCurrent =
+      sourceSteps.find((step) => step.status === 'running' || step.status === 'queued') ??
+      sourceSteps.find((step) => step.at > justFinishedCutoff) ??
+      sourceSteps[0]
+    const sourceActive = Boolean(
+      sourceSteps.some(
+        (step) =>
+          step.status === 'running' || step.status === 'queued' || step.at > justFinishedCutoff,
+      ) || (surface === 'mac' && frameMetaRow && Date.now() - frameMetaRow.at.getTime() < 10_000),
+    )
+    if (!surfaceShots[surface].at && !(surface === 'mac' && videoDeviceId)) return null
+    return {
+      surface,
+      screenshot: surfaceShots[surface].screenshot,
+      screenshotAt: surfaceShots[surface].at,
+      labelBn:
+        sourceCurrent?.labelBn ??
+        (surface === 'browser' ? '🌐 ব্রাউজারে কাজ করছে' : '💻 Mac-এ কাজ করছে'),
+      active: sourceActive,
+      ...(surface === 'mac' ? { videoDeviceId } : {}),
+    }
+  }
+
+  const previews = [previewFor('browser'), previewFor('mac')]
+    .filter((preview): preview is ActivityPreview => preview !== null)
+    .sort((a, b) => (b.screenshotAt ?? '').localeCompare(a.screenshotAt ?? ''))
 
   return Response.json(
     {
@@ -539,6 +608,9 @@ export async function GET(req: NextRequest) {
        *  lands after a browser action. The mini-player labels the picture,
        *  not whichever unrelated event happened to be newest. */
       screenshotSurface,
+      /** Independent surface cards: a fast Mac stream must not erase the
+       *  Browser frame underneath it (or vice versa). */
+      previews,
       /** L9-B — non-null while the Agora VIDEO broadcaster is live for this
        *  device; the dock joins `mac-screen-<id>` via screen-video-token. */
       videoDeviceId,

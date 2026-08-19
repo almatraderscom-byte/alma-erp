@@ -24341,19 +24341,18 @@ struct AssistantScreen: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            // The live dock sits ABOVE the composer inside the same inset, so it
-            // rides the keyboard with the composer instead of fighting it, and
-            // the chat scroll region shrinks to make room (never an overlay).
             VStack(spacing: 0) {
                 // Build 103 Issue 3 — the compact tracker strip (owner's video
                 // reference) projects the same store as the in-turn block.
                 AgentWorkStepsDockView(vm: vm, pal: AgentPalette(scheme)) { actionId in
                     vm.pendingActionScrollId = actionId
                 }
-                AgentLiveDockView()
                 AgentComposerView(vm: vm, openWeb: openWeb)
             }
         }
+        // Codex-style computer-use PiP: independent of the composer/chat
+        // layout, draggable across the whole Assistant surface, edge-snapped.
+        .overlay { AgentLiveDockView() }
         .task {
             AlmaTurnLog.event("assistant.open.begin")
             AlmaTurnLog.event(
