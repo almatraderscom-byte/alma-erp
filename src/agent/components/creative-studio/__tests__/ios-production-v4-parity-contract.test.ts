@@ -90,6 +90,10 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('model.invalidateCampaignPreview()')
     expect(nativeWorkspace).toContain('guard selectedBrandID == brandID, selectedProjectID == projectID')
     expect(nativeStudio).toContain('shouldShowSampleGallery')
+    expect(nativeWorkspace).toContain('guard selectedBrandID == brandID else { return }')
+    expect(nativeStudio).toContain('guard activeProject?.id == requestedProjectID else { return }')
+    expect(nativeStudio).toContain('query["provider"] = galleryProvider')
+    expect(nativeStudio).toContain('query["aspectRatio"] = galleryAspect')
   })
 
   it('returns canonical lifecycle and aspect metadata for native filters', () => {

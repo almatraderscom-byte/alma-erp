@@ -302,6 +302,7 @@ final class CSV4WorkspaceVM {
             async let roleResponse: CSV4RoleSettings? = try? AlmaAPI.shared.get(
                 "/api/assistant/creative-studio/roles", query: ["brandProfileId": brandID])
             let (loadedProjects, loadedRecipes, loadedRoles) = try await (projectResponse, recipeResponse, roleResponse)
+            guard selectedBrandID == brandID else { return }
             projects = loadedProjects.projects.filter { !$0.readonly }
             recipes = loadedRecipes.recipes
             roles = loadedRoles?.assignments ?? []

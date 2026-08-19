@@ -256,10 +256,25 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'invalid_cursor', message: 'Gallery cursor ঠিক নয়। Refresh করুন।' }, { status: 400 })
   }
   const filters = normalizeGalleryFilters(req.nextUrl.searchParams)
+  const providerFilter = (req.nextUrl.searchParams.get('provider') ?? '').trim().slice(0, 64)
+  const aspectFilter = (req.nextUrl.searchParams.get('aspectRatio') ?? '').trim().slice(0, 16)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const rawWhere = buildGalleryWhere(filters)
+  const rawWhere = {
+    AND: [
+      buildGalleryWhere(filters),
+      ...(providerFilter ? [{ OR: [
+        { payload: { path: ['provider'], equals: providerFilter } },
+        { result: { path: ['provider'], equals: providerFilter } },
+      ] }] : []),
+      ...(aspectFilter ? [{ OR: [
+        { payload: { path: ['aspectRatio'], equals: aspectFilter } },
+        { result: { path: ['aspectRatio'], equals: aspectFilter } },
+        { result: { path: ['requestedAspectRatio'], equals: aspectFilter } },
+      ] }] : []),
+    ],
+  }
   const baseWhere = brandProfileId
     ? {
         AND: [

@@ -575,11 +575,13 @@ final class CreativeStudioVM {
     }
 
     var galleryProviders: [String] {
-        Array(Set(gallery.compactMap(\.provider).filter { !$0.isEmpty })).sorted()
+        Array(Set(gallery.compactMap(\.provider).filter { !$0.isEmpty } +
+                  ["fashn", "gemini", "openai", "xai", "fal", "seedream"])).sorted()
     }
 
     var galleryAspects: [String] {
-        Array(Set(gallery.compactMap(\.aspectRatio).filter { !$0.isEmpty })).sorted()
+        Array(Set(gallery.compactMap(\.aspectRatio).filter { !$0.isEmpty } +
+                  ["1:1", "3:4", "4:5", "9:16", "16:9"])).sorted()
     }
 
     private var shouldShowSampleGallery: Bool {
@@ -656,6 +658,7 @@ final class CreativeStudioVM {
     }
 
     func refreshGallery() async {
+        let requestedProjectID = activeProject?.id
         var query = ["page": "1", "limit": "48"]
         if let project = activeProject, let brandProfileId = project.brandProfileId {
             query["brandProfileId"] = brandProfileId
@@ -664,9 +667,12 @@ final class CreativeStudioVM {
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
         query["order"] = gallerySort
+        if galleryProvider != "all" { query["provider"] = galleryProvider }
+        if galleryAspect != "all" { query["aspectRatio"] = galleryAspect }
         applyLifecycleQuery(to: &query)
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) {
+            guard activeProject?.id == requestedProjectID else { return }
             gallery = g.items.isEmpty && shouldShowSampleGallery ? CS.sampleGallery : g.items
         }
     }
@@ -685,9 +691,11 @@ final class CreativeStudioVM {
     func activateProject(_ project: CSProjectSummary) async {
         activeProject = project
         await refreshGallery()
+        guard activeProject?.id == project.id else { return }
         if let brandID = project.brandProfileId,
            let response: CSModelsResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/brand-models", query: ["brandProfileId": brandID, "projectId": project.id]) {
+            guard activeProject?.id == project.id else { return }
             models = response.models.isEmpty ? CS.sampleModels : response.models
         }
     }
@@ -2548,9 +2556,9 @@ private struct CSGalleryTab: View {
 
                     HStack(spacing: 8) {
                         galleryMenu("Provider", value: vm.galleryProvider,
-                                    values: vm.galleryProviders) { vm.galleryProvider = $0 }
+                                    values: vm.galleryProviders) { vm.galleryProvider = $0; Task { await vm.refreshGallery() } }
                         galleryMenu("Aspect", value: vm.galleryAspect,
-                                    values: vm.galleryAspects) { vm.galleryAspect = $0 }
+                                    values: vm.galleryAspects) { vm.galleryAspect = $0; Task { await vm.refreshGallery() } }
                         Menu {
                             Button("Newest") { vm.gallerySort = "newest"; Task { await vm.refreshGallery() } }
                             Button("Oldest") { vm.gallerySort = "oldest"; Task { await vm.refreshGallery() } }
