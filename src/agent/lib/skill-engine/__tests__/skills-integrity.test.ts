@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { parseFrontmatter } from '@/agent/lib/skill-engine/loader'
+import { filterToolsForSkill } from '@/agent/lib/skill-engine/enforcement'
 import type { SkillManifest } from '@/agent/lib/skill-engine/types'
 
 const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
@@ -52,4 +53,20 @@ describe('shipped skill packages integrity', () => {
     }
     expect(missing, `skills reference unregistered tools: ${missing.join(', ')}`).toEqual([])
   }, 30_000)
+
+  it('browser operator keeps Chrome pairing owner-services in its enforced tool allowlist', async () => {
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(SKILLS_ROOT, 'alma-browser-operator', 'manifest.json'), 'utf8'),
+    ) as SkillManifest
+    const names = ['live_browser_pair', 'set_live_browser', 'live_browser_status', 'mac_agent_status']
+      .map((name) => ({ name }))
+    const gated = filterToolsForSkill(names, manifest)
+
+    expect(gated.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'live_browser_pair',
+      'set_live_browser',
+      'live_browser_status',
+    ]))
+    expect(gated.tools.map((tool) => tool.name)).toContain('mac_agent_status')
+  })
 })

@@ -1,4 +1,5 @@
 import AVFoundation
+import SwiftUI
 import XCTest
 @testable import App
 
@@ -4591,6 +4592,7 @@ final class AssistantParityV2Tests: XCTestCase {
         revision: Int = 1,
         status: String = "running",
         boundMessageId: String? = nil,
+        stepOneStatus: String = "completed",
         stepTwoStatus: String = "running",
         updatedAt: String = "2026-08-11T00:00:03Z",
         source: String = "agent_plan",
@@ -4615,7 +4617,7 @@ final class AssistantParityV2Tests: XCTestCase {
           "blockedBy": null,
           "retryRef": null,
           "steps": [
-            {"id": "s1", "position": 1, "title": "Inspect the request", "status": "completed",
+            {"id": "s1", "position": 1, "title": "Inspect the request", "status": "\(stepOneStatus)",
              "toolCallIds": [], "startedAt": "2026-08-11T00:00:00Z", "finishedAt": "2026-08-11T00:00:03Z"},
             {"id": "s2", "position": 2, "title": "Draft the output", "status": "\(stepTwoStatus)",
              "toolCallIds": [], "startedAt": null, "finishedAt": null},
@@ -4643,6 +4645,24 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(snapshot.steps.map(\.status), ["completed", "running", "pending"])
         XCTAssertEqual(snapshot.completedCount, 1)
         XCTAssertFalse(snapshot.isTerminal)
+    }
+
+    func testWorkStepsUsesCodexStyleCurrentStepBeforeAndAfterTransition() throws {
+        let initialEvent = try decodeTurnEvent(workStepsJSON(
+            status: "preparing", stepOneStatus: "pending", stepTwoStatus: "pending"))
+        guard case .workSteps(let initial) = initialEvent else {
+            return XCTFail("initial work steps did not decode")
+        }
+        XCTAssertEqual(initial.currentDisplayPosition, 1)
+        XCTAssertTrue(initial.isCurrentDisplayStep(initial.steps[0]))
+
+        let advancedEvent = try decodeTurnEvent(workStepsJSON())
+        guard case .workSteps(let advanced) = advancedEvent else {
+            return XCTFail("advanced work steps did not decode")
+        }
+        XCTAssertEqual(advanced.currentDisplayPosition, 2)
+        XCTAssertFalse(advanced.isCurrentDisplayStep(advanced.steps[0]))
+        XCTAssertTrue(advanced.isCurrentDisplayStep(advanced.steps[1]))
     }
 
     func testPlanAndTurnProgressDecodeTypedNeverUnknown() throws {
@@ -4812,5 +4832,87 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.workTrackerAnchors["stream-1"], [],
                        "the same logical tracker must move, never duplicate")
         XCTAssertEqual(vm.workTrackers.count, 1)
+    }
+
+    func testLiveDockGeometryClampsAboveBottomChromeAndSafeArea() {
+        let bounds = AgentLiveDockGeometry.bounds(
+            container: CGSize(width: 390, height: 844),
+            safeArea: EdgeInsets(top: 59, leading: 0, bottom: 34, trailing: 0),
+            player: CGSize(width: 286, height: 161),
+            margin: 12,
+            bottomObstacleMinY: 650)
+        let clamped = AgentLiveDockGeometry.clamp(
+            CGPoint(x: -200, y: 2_000), to: bounds)
+
+        XCTAssertEqual(clamped.x, 155, accuracy: 0.001)
+        XCTAssertEqual(clamped.y, 557.5, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(clamped.y + 80.5, 650 - 12,
+                                 "the PiP must keep a real gap above tracker+composer")
+    }
+
+    func testLiveDockGeometrySnapsToPersistedEdgeAndVerticalFraction() {
+        let bounds = AgentLiveDockGeometry.Bounds(
+            minX: 155, maxX: 235, minY: 100, maxY: 600)
+        XCTAssertEqual(
+            AgentLiveDockGeometry.position(onRight: false, verticalFraction: 0.25, in: bounds),
+            CGPoint(x: 155, y: 225))
+        XCTAssertEqual(
+            AgentLiveDockGeometry.position(onRight: true, verticalFraction: 2, in: bounds),
+            CGPoint(x: 235, y: 600),
+            "rotation/restoration must clamp stale saved fractions")
+    }
+
+    func testLiveDockDismissalAndContextSelectionUseStablePreviewIdentity() {
+        let now = "2026-08-19T10:00:00.000Z"
+        let chromeA = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:a", screenshot: nil, screenshotAt: now,
+            labelBn: "Chrome A", active: true, videoDeviceId: nil)
+        let chromeB = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:b", screenshot: nil, screenshotAt: now,
+            labelBn: "Chrome B", active: true, videoDeviceId: nil)
+        let feed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: nil,
+            videoDeviceId: nil, macDisplays: nil, previews: [chromeA, chromeB])
+        let store = AgentLiveDockStore()
+        store.feed = feed
+        store.reconcilePreviewSelection([chromeA, chromeB])
+        XCTAssertEqual(store.selectedPreview?.id, "browser:a")
+        store.selectPreview("browser:b")
+        XCTAssertEqual(store.selectedPreview?.id, "browser:b")
+
+        store.dismiss()
+        XCTAssertFalse(store.show, "a nil-current feed must stay closed")
+        store.reconcileDismissal(with: feed)
+        XCTAssertFalse(store.show, "an identical poll must not reopen it")
+
+        let newFrame = AgentLiveActivityPreview(
+            surface: "browser", contextId: "browser:a", screenshot: nil,
+            screenshotAt: "2026-08-19T10:00:01.000Z",
+            labelBn: "Chrome A", active: true, videoDeviceId: nil)
+        let refreshed = AgentLiveActivityFeed(
+            active: true, current: nil, steps: [], streaming: false, sessions: nil,
+            screenshot: nil, screenshotAt: nil, screenshotSurface: nil,
+            videoDeviceId: nil, macDisplays: nil, previews: [newFrame])
+        store.feed = refreshed
+        store.reconcileDismissal(with: refreshed)
+        store.reconcilePreviewSelection([newFrame])
+        XCTAssertTrue(store.show)
+        XCTAssertEqual(store.selectedPreview?.id, "browser:a",
+                       "a disappeared context must fall back to the remaining card")
+    }
+
+    func testLiveDockExpiresFrozenFeedAfterFailedPollWindow() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        XCTAssertFalse(AgentLiveDockStore.shouldExpireFeed(
+            lastSuccessfulAt: start,
+            now: start.addingTimeInterval(19.999)))
+        XCTAssertTrue(AgentLiveDockStore.shouldExpireFeed(
+            lastSuccessfulAt: start,
+            now: start.addingTimeInterval(20)))
+        XCTAssertTrue(AgentLiveDockStore.shouldExpireFeed(
+            lastSuccessfulAt: Date(),
+            force: true),
+            "two owner-auth failures must remove a sensitive cached frame immediately")
     }
 }

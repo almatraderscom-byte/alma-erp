@@ -8,18 +8,16 @@
  *
  * Owner-session only (not the daemon's bearer token) — this is the human side.
  */
+import { randomBytes } from 'crypto'
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
+import { getJwt } from '@/lib/api-guards'
 import { isSystemOwner } from '@/lib/roles'
 import {
   authenticateDevice,
-  cancelAllQueued,
-  createPairingTicket,
+  enqueueCommand,
   isMacAgentEnabled,
-  listDevices,
-  recentCommands,
-  revokeDevice,
   setMacAgentEnabled,
 } from '@/agent/lib/mac-agent/bus'
 import { prisma } from '@/lib/prisma'
@@ -27,11 +25,80 @@ import { prisma } from '@/lib/prisma'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const DEVICE_OFFLINE_MS = 90_000
+const PAIRING_CODE_TTL_MS = 10 * 60 * 1000
+
+function generatePairingCode(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const pick = (length: number) => Array.from(randomBytes(length))
+    .map((byte) => alphabet[byte % alphabet.length])
+    .join('')
+  return `${pick(4)}-${pick(4)}`
+}
+
+async function createOwnedPairingTicket(ownerUserId: string, deviceName?: string) {
+  const code = generatePairingCode()
+  const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS)
+  const name = (deviceName ?? '').trim() || 'My Mac'
+  const device = await prisma.macAgentDevice.create({
+    data: { ownerUserId, name, pairingCode: code, pairingExp: expiresAt },
+    select: { id: true },
+  })
+  return { deviceId: device.id, code, expiresAt, deviceName: name }
+}
+
+async function listOwnedDevices(ownerUserId: string) {
+  const rows = await prisma.macAgentDevice.findMany({
+    where: { ownerUserId, revoked: false },
+    orderBy: { lastSeenAt: 'desc' },
+    select: { id: true, name: true, lastSeenAt: true, pairedAt: true, meta: true },
+  })
+  return rows.map((device) => ({
+    id: device.id,
+    name: device.name,
+    online: Boolean(
+      device.lastSeenAt && Date.now() - device.lastSeenAt.getTime() < DEVICE_OFFLINE_MS,
+    ),
+    lastSeenAt: device.lastSeenAt,
+    pairedAt: device.pairedAt,
+    meta: (device.meta as Record<string, unknown> | null) ?? null,
+  }))
+}
+
+async function recentOwnedCommands(ownerUserId: string, limit = 20) {
+  const rows = await prisma.macAgentCommand.findMany({
+    where: { device: { ownerUserId } },
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(Math.max(1, limit), 100),
+    select: {
+      id: true,
+      action: true,
+      params: true,
+      policyLevel: true,
+      status: true,
+      exitCode: true,
+      createdAt: true,
+    },
+  })
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    command: ((row.params as Record<string, unknown> | null)?.command as string) ?? null,
+    policyLevel: row.policyLevel,
+    status: row.status,
+    exitCode: row.exitCode,
+    createdAt: row.createdAt,
+  }))
+}
+
 async function requireOwner(req: NextRequest) {
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const owner = await getJwt(req)
   if (!owner?.sub) return { error: Response.json({ error: 'unauthorized' }, { status: 401 }) }
   if (!isSystemOwner(owner)) return { error: Response.json({ error: 'forbidden' }, { status: 403 }) }
-  return { owner }
+  if (!(await resolveOwnerUserIds()).includes(owner.sub)) {
+    return { error: Response.json({ error: 'forbidden' }, { status: 403 }) }
+  }
+  return { ownerId: owner.sub }
 }
 
 export async function GET(req: NextRequest) {
@@ -67,8 +134,8 @@ export async function GET(req: NextRequest) {
 
   const [enabled, devices, history] = await Promise.all([
     isMacAgentEnabled(),
-    listDevices(),
-    recentCommands(20),
+    listOwnedDevices(gate.ownerId),
+    recentOwnedCommands(gate.ownerId, 20),
   ])
   return Response.json({ enabled, devices, history })
 }
@@ -90,7 +157,7 @@ export async function POST(req: NextRequest) {
 
   if (action === 'pair_code') {
     try {
-      const ticket = await createPairingTicket(body.deviceName)
+      const ticket = await createOwnedPairingTicket(gate.ownerId, body.deviceName)
       return Response.json({ ok: true, ...ticket })
     } catch (err) {
       return Response.json(
@@ -106,7 +173,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'stop') {
-    const cancelled = await cancelAllQueued(body.deviceId)
+    const deviceId = String(body.deviceId ?? '').trim() || undefined
+    const cancelledResult = await prisma.macAgentCommand.updateMany({
+      where: {
+        status: { in: ['queued', 'delivered'] },
+        ...(deviceId ? { deviceId } : {}),
+        device: { ownerUserId: gate.ownerId },
+      },
+      data: { status: 'cancelled', error: 'cancelled_by_owner', resolvedAt: new Date() },
+    })
+    const cancelled = cancelledResult.count
     // The red STOP must also kill a RUNNING screen stream, not only queued
     // commands — the capture timer lives outside the queue. Broadcast to
     // EVERY online Mac: picking one guesses wrong with two paired machines
@@ -114,8 +190,16 @@ export async function POST(req: NextRequest) {
     // Enqueued AFTER the cancel so it survives it; the frame loop settles it
     // off the side-channel within ~1.5s.
     try {
-      const { listDevices, enqueueCommand } = await import('@/agent/lib/mac-agent/bus')
-      for (const d of (await listDevices()).filter((x) => x.online && x.pairedAt)) {
+      const onlineDevices = await prisma.macAgentDevice.findMany({
+        where: {
+          ownerUserId: gate.ownerId,
+          revoked: false,
+          pairedAt: { not: null },
+          lastSeenAt: { gt: new Date(Date.now() - DEVICE_OFFLINE_MS) },
+        },
+        select: { id: true },
+      })
+      for (const d of onlineDevices) {
         await enqueueCommand({ deviceId: d.id, action: 'screen_stream', params: { mode: 'stop' } })
         // W3: app-chat mirrors are timers outside the queue too — same
         // broadcast rule. (A deferring ui_* action learns of the STOP from
@@ -138,7 +222,11 @@ export async function POST(req: NextRequest) {
   if (action === 'unpair') {
     const deviceId = String(body.deviceId ?? '').trim()
     if (!deviceId) return Response.json({ error: 'deviceId_required' }, { status: 400 })
-    await revokeDevice(deviceId)
+    const revoked = await prisma.macAgentDevice.updateMany({
+      where: { id: deviceId, ownerUserId: gate.ownerId, revoked: false },
+      data: { revoked: true, tokenHash: null },
+    })
+    if (revoked.count === 0) return Response.json({ error: 'no_device' }, { status: 404 })
     return Response.json({ ok: true })
   }
 

@@ -45,6 +45,8 @@ final class AssistantParityV2UITests: XCTestCase {
             "testImageSetupSummaryOpensProfessionalSheetWithTruthfulQuote",
             "testApprovedImageSetupStaysReadOnlyWithPosterAspectCanvas",
             "testWorkStepsTrackerLiveShowsDockOnlyNeverDuplicate",
+            "testLiveDockAndExpandedTrackerNeverIntersectComposer",
+            "testMacPiPShowsFallbackBeforeFirstRTCFrame",
             "testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras",
             "testColdSessionRestoreNeverShowsHeroBehindLoader",
         ].contains { name.contains($0) }
@@ -1110,8 +1112,8 @@ final class AssistantParityV2UITests: XCTestCase {
         // tracker surface — no in-chat twin, nothing to overlap the reply.
         let dock = anyElement(fixture, "agent.work-steps.dock.progress")
         XCTAssertTrue(dock.waitForExistence(timeout: 10))
-        XCTAssertTrue(dock.label.contains("1 of 5"),
-                      "dock count must come from durable step evidence")
+        XCTAssertTrue(dock.label.contains("Step 2 of 5"),
+                      "dock must show the current plan step, not the completed count")
         XCTAssertFalse(anyElement(fixture, "agent.work-steps.header").exists,
                        "a running tracker must not render a duplicate in-chat block")
         // Expanding the dock shows the numbered five-step panel while the
@@ -1129,6 +1131,68 @@ final class AssistantParityV2UITests: XCTestCase {
         proofTracker.name = "b103-work-steps-dock-expanded"
         proofTracker.lifetime = .keepAlways
         add(proofTracker)
+    }
+
+    func testLiveDockAndExpandedTrackerNeverIntersectComposer() {
+        let fixture = launchFixture([
+            "ALMA_ASSISTANT_WORK_STEPS_PROOF": "1",
+            "ALMA_LIVE_DOCK_FIXTURE": "pip",
+        ])
+        let player = anyElement(fixture, "agent.live-dock.player")
+        let dock = anyElement(fixture, "agent.work-steps.dock.progress")
+        XCTAssertTrue(player.waitForExistence(timeout: 10))
+        XCTAssertTrue(dock.waitForExistence(timeout: 10))
+
+        let mac = anyElement(fixture, "agent.live-dock.source.mac")
+        XCTAssertTrue(mac.waitForExistence(timeout: 4))
+        tapViaWindow(fixture, mac)
+        XCTAssertEqual(mac.value as? String, "selected")
+
+        guard let window = fixture.windows.allElementsBoundByIndex.first else {
+            return XCTFail("fixture window missing")
+        }
+        let start = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (player.frame.midX - window.frame.minX) / window.frame.width,
+            dy: (player.frame.midY - window.frame.minY) / window.frame.height))
+        let bottomLeft = window.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.90))
+        start.press(forDuration: 0.12, thenDragTo: bottomLeft)
+        Thread.sleep(forTimeInterval: 0.8)
+
+        tapViaWindow(fixture, dock)
+        let panel = anyElement(fixture, "agent.work-steps.dock.panel")
+        let composer = anyElement(fixture, "agent.composer.surface")
+        XCTAssertTrue(panel.waitForExistence(timeout: 5))
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        Thread.sleep(forTimeInterval: 0.8)
+        XCTAssertFalse(player.frame.intersects(panel.frame),
+                       "dragged PiP must re-clamp above an expanded tracker")
+        XCTAssertFalse(player.frame.intersects(composer.frame),
+                       "dragged PiP must never cover the composer")
+        XCTAssertGreaterThanOrEqual(player.frame.minX, window.frame.minX + 8,
+                                    "edge snap must stay inside the visible safe side")
+
+        XCUIDevice.shared.press(.home)
+        _ = fixture.wait(for: .runningBackground, timeout: 4)
+        fixture.activate()
+        XCTAssertTrue(player.waitForExistence(timeout: 4),
+                      "foreground restoration keeps the selected floating card mounted")
+        let proof = XCTAttachment(screenshot: fixture.screenshot())
+        proof.name = "merged-tracker-live-pip-no-overlap"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
+    func testMacPiPShowsFallbackBeforeFirstRTCFrame() {
+        let fixture = launchFixture(["ALMA_LIVE_DOCK_FIXTURE": "rtc-warmup"])
+        XCTAssertTrue(anyElement(fixture, "agent.live-dock.player")
+            .waitForExistence(timeout: 10))
+        XCTAssertTrue(anyElement(fixture, "agent.live-dock.rtc-fallback-frame")
+            .waitForExistence(timeout: 5),
+            "a polled Mac frame must remain visible while Agora joins or fails")
+        let proof = XCTAttachment(screenshot: fixture.screenshot())
+        proof.name = "mac-pip-rtc-warmup-fallback"
+        proof.lifetime = .keepAlways
+        add(proof)
     }
 
     func testSettledTrackerColdVariantShowsCompletedWithoutSpeculativeExtras() {

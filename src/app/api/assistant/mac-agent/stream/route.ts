@@ -8,22 +8,41 @@
  * gated by consent rather than the classifier.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
+import { getJwt } from '@/lib/api-guards'
 import { isSystemOwner } from '@/lib/roles'
-import { activeDevice, enqueueCommand, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { enqueueCommand, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { revokeControl } from '@/agent/lib/mac-agent/remote-control'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+const DEVICE_OFFLINE_MS = 90_000
+
+async function listOwnedDevices(ownerUserId: string) {
+  return prisma.macAgentDevice.findMany({
+    where: { ownerUserId, revoked: false },
+    orderBy: { lastSeenAt: 'desc' },
+    select: { id: true, pairedAt: true, lastSeenAt: true },
+  })
+}
+
+function isOnline(lastSeenAt: Date | null): boolean {
+  return Boolean(lastSeenAt && Date.now() - lastSeenAt.getTime() < DEVICE_OFFLINE_MS)
+}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const owner = await getJwt(req)
   if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!(await resolveOwnerUserIds()).includes(owner.sub)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   let body: { on?: boolean; maxSeconds?: number; displayIndex?: number }
   try {
@@ -41,7 +60,8 @@ export async function POST(req: NextRequest) {
   // Codex found each of those in turn. A stop where nothing streams is a
   // harmless no-op, so the broadcast is simply correct.
   if (body.on === false) {
-    const online = (await listDevices()).filter((d) => d.online && d.pairedAt)
+    const ownedDevices = await listOwnedDevices(owner.sub)
+    const online = ownedDevices.filter((d) => isOnline(d.lastSeenAt) && d.pairedAt)
     if (online.length === 0) {
       return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
     }
@@ -49,11 +69,13 @@ export async function POST(req: NextRequest) {
     // stop (FIFO) and begin capturing after the owner cancelled it (Codex,
     // L7 round 5) — cancel pending starts first, then broadcast the stop for
     // any loop already running.
-    const { prisma } = await import('@/lib/prisma')
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (prisma as any).macAgentCommand
+    await prisma.macAgentCommand
       .updateMany({
-        where: { action: 'screen_stream', status: 'queued' },
+        where: {
+          deviceId: { in: ownedDevices.map((device) => device.id) },
+          action: 'screen_stream',
+          status: 'queued',
+        },
         data: { status: 'cancelled', error: 'superseded_by_stop', resolvedAt: new Date() },
       })
       .catch(() => {})
@@ -72,7 +94,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: true, commandIds: ids, on: false })
   }
 
-  const device = await activeDevice()
+  const device = await prisma.macAgentDevice.findFirst({
+    where: {
+      ownerUserId: owner.sub,
+      revoked: false,
+      pairedAt: { not: null },
+      lastSeenAt: { gt: new Date(Date.now() - DEVICE_OFFLINE_MS) },
+    },
+    orderBy: { lastSeenAt: 'desc' },
+    select: { id: true },
+  })
   if (!device) {
     return Response.json({ error: 'mac_offline', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 409 })
   }

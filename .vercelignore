@@ -12,5 +12,8 @@ tsconfig.tsbuildinfo
 # exceed Vercel's source-upload request limit even though the app source is
 # small.
 .claude/worktrees
+.codex
 ios/App/build
+ios/App/SimulatorScreenshots
 mac-agent/ScreenBroadcaster/.build
+scratch-provenance

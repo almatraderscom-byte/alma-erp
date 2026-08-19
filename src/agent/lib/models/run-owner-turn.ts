@@ -70,6 +70,7 @@ import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progr
 import { loadLatestPlanProgress } from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
+  parseWorkStepsSnapshot,
   projectRuntimeWorkSteps,
   syncPlanTracker,
   workStepsSignature,
@@ -711,10 +712,36 @@ async function* runAlternateProviderTurn(
   const finishTrackerPlanStep = async (ok: boolean, error?: string | null) => {
     const stepId = claimedPlanStepId
     claimedPlanStepId = null
-    if (!stepId) return
+    if (!stepId) return false
     const outcome = await finishPlanStep({ stepId, ok, error })
     const local = trackerPlanSteps.find((step) => step.id === stepId)
     if (local && outcome) local.status = outcome
+    return Boolean(outcome)
+  }
+  /**
+   * Project the durable plan immediately after a transition. Step writers also
+   * refresh in the background for Plan-Driver callers; if that refresh wins the
+   * race, read its persisted snapshot back instead of dropping the live event.
+   * This makes a running row observable while a long tool is still executing.
+   */
+  const currentPlanTrackerEvent = async () => {
+    try {
+      const plan = await loadPlanForWorkTracker(
+        conversationId, turnId, options.continuation === true)
+      if (!plan || !turnId) return null
+      workStepsTrackerId = plan.id
+      const persisted = await syncPlanTracker(plan.id, {
+        currentTurnId: turnId,
+        blockedBy: workStepsBlocker,
+        live: true,
+      })
+      if (persisted) return persisted
+      const refreshed = await loadPlanForWorkTracker(
+        conversationId, turnId, options.continuation === true)
+      return parseWorkStepsSnapshot(refreshed?.trackerSnapshot)
+    } catch {
+      return null
+    }
   }
   const turnStartedMs = Date.now()
   const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
@@ -3137,6 +3164,14 @@ async function* runAlternateProviderTurn(
         // Put this tool's plan step into `running` BEFORE it executes, so the chip
         // shows the part being worked on while it is being worked on.
         await beginTrackerPlanStep(call.name)
+        if (claimedPlanStepId) {
+          const runningSnapshot = await currentPlanTrackerEvent()
+          const runningSignature = workStepsSignature(runningSnapshot)
+          if (runningSnapshot && runningSignature !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = runningSignature
+            yield runningSnapshot
+          }
+        }
         const started = Date.now()
         // Careful mode: an R1/R2 write that would normally just run gets staged
         // as a card instead. Stage-mode tools already make their own card, and
@@ -3318,7 +3353,17 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
-        await finishTrackerPlanStep(result.success, result.error ?? null)
+        const planStepFinished = await finishTrackerPlanStep(result.success, result.error ?? null)
+        // `make_plan` creates the prospective list; a claimed work tool changes
+        // one of its rows. Publish both immediately, before the next model round.
+        if ((call.name === 'make_plan' && result.success) || planStepFinished) {
+          const finishedSnapshot = await currentPlanTrackerEvent()
+          const finishedSignature = workStepsSignature(finishedSnapshot)
+          if (finishedSnapshot && finishedSignature !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = finishedSignature
+            yield finishedSnapshot
+          }
+        }
         // A durable plan just started running: from here this chat IS a work
         // session, and it gets the long-run budget the retired প্ল্যান-ড্রাইভ chip
         // used to grant — earned by the plan actually being enrolled rather than

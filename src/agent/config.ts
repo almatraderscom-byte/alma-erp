@@ -151,8 +151,10 @@ export const AGENT_CONSTITUTION = parityFlagOn(process.env.AGENT_CONSTITUTION)
 export const CONSTITUTION_REINJECT_EVERY = Number(process.env.CONSTITUTION_REINJECT_EVERY) || 6
 
 // P3 — plan-first HARD gate: bind make_plan on round 0 for clearly multi-step
-// work so a weak head can't tool-spray a complex task. OFF by default.
-export const AGENT_PLAN_GATE = parityFlagOn(process.env.AGENT_PLAN_GATE)
+// work so a weak head can't tool-spray a complex task. This is product
+// behaviour now (the native Codex-style tracker needs the prospective plan),
+// so it is ON by default; AGENT_PLAN_GATE=off remains the rollback switch.
+export const AGENT_PLAN_GATE = process.env.AGENT_PLAN_GATE !== 'off'
 // P2 — ground-before-answer HARD gate: force a tool call on round 0 for a live-
 // data question so the model can't answer from memory. OFF by default.
 export const AGENT_GROUNDING_GATE = parityFlagOn(process.env.AGENT_GROUNDING_GATE)

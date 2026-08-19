@@ -84,6 +84,23 @@ describe('layer 2 — the rules that keywords can never get right', () => {
     expect(applyRules('example.com er meta likhe dao')?.skill).toBe('seo-fixing-client-site')
   })
 
+  it('paired-Chrome operations beat SEO-shaped page words and domains', () => {
+    for (const prompt of [
+      'My Mac Chrome-এ live_browser_act দিয়ে https://example.com navigate করো, তারপর title ও URL পড়ো।',
+      'Chrome Companion verification: example.com খুলে visible heading দেখো।',
+      'এটা SEO task নয়—live_browser_look দিয়ে current page title বলো।',
+    ]) {
+      expect(applyRules(prompt)?.skill).toBe('alma-browser-operator')
+    }
+  })
+
+  it('does not steal software work merely because it mentions Chrome or a browser tool', () => {
+    expect(applyRules('Chrome Companion integration bug fix করো')?.skill)
+      .not.toBe('alma-browser-operator')
+    expect(applyRules('live_browser_act API bug fix করো')?.skill)
+      .not.toBe('alma-browser-operator')
+  })
+
   it('an audit of something that is NOT the website is not an SEO job (ADS-0)', () => {
     // The exact sentence that pinned the SEO audit skill on 2026-07-27 and cost
     // the run every ads tool it needed.

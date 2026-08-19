@@ -9186,7 +9186,9 @@ final class AssistantVM {
                       title: title, status: stepStatuses[index],
                       startedAt: nil, finishedAt: nil)
             },
-            updatedAt: "2026-08-11T05:45:00.000Z")
+            // Keep the live proof inside the dock's production freshness
+            // window; a fixed historical timestamp makes this fixture expire.
+            updatedAt: ISO8601DateFormatter().string(from: Date()))
         messages = [answer]
         conversationId = "fixture-work-steps-conversation"
         #if DEBUG
@@ -21109,12 +21111,7 @@ struct AgentWorkStepsDockView: View {
                     .accessibilityIdentifier("agent.work-steps.dock.panel")
                 }
                 HStack(spacing: 8) {
-                    Text(AgentWorkStepGlyph.overallLabel(for: snapshot.status))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .lineLimit(1)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .modifier(AlmaGlassChip(fallback: Color.white.opacity(0.07)))
+                    Spacer(minLength: 0)
                     Button {
                         AlmaAgentHaptics.light()
                         withAnimation(reduceMotion ? nil
@@ -21130,7 +21127,7 @@ struct AgentWorkStepsDockView: View {
                                 Image(systemName: "list.number")
                                     .font(.system(size: 11, weight: .semibold))
                             }
-                            Text("\(snapshot.completedCount) of \(snapshot.steps.count)")
+                            Text("Step \(snapshot.currentDisplayPosition) / \(snapshot.steps.count)")
                                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                         }
                         .foregroundStyle(pal.ink)
@@ -21143,15 +21140,10 @@ struct AgentWorkStepsDockView: View {
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("agent.work-steps.dock.progress")
                     .accessibilityLabel(
-                        "\(snapshot.completedCount) of \(snapshot.steps.count) completed"
-                        + (snapshot.steps.first(where: { $0.status == "running" })
-                            .map { "; ধাপ \($0.position) চলছে" } ?? ""))
+                        "Step \(snapshot.currentDisplayPosition) of \(snapshot.steps.count)"
+                        + "; \(snapshot.completedCount) completed")
                     .accessibilityHint(expanded ? "ধাপের তালিকা বন্ধ করুন" : "ধাপের তালিকা খুলুন")
-                    Text(snapshot.headline)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(pal.muted)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 0)
                 }
             }
             .padding(.horizontal, 14)
@@ -21164,11 +21156,14 @@ struct AgentWorkStepsDockView: View {
     @ViewBuilder private func dockStepRow(
         _ step: AgentWorkStepsSnapshot.Step, snapshot: AgentWorkStepsSnapshot
     ) -> some View {
+        let isCurrent = snapshot.isCurrentDisplayStep(step)
+        let isActivelyWorking = isCurrent
+            && (snapshot.status == "running" || snapshot.status == "preparing")
         let isBlockingOwner = step.status == "waiting_owner"
             && snapshot.blockedByKind == "approval" && snapshot.blockedByRefId != nil
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Group {
-                if step.status == "running", !reduceMotion {
+                if isActivelyWorking, !reduceMotion {
                     AgentWorkStepActiveRing(animated: true)
                 } else {
                     Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
@@ -21178,7 +21173,7 @@ struct AgentWorkStepsDockView: View {
             }
             .frame(width: 17)
             Text("\(step.position). \(step.title)")
-                .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
+                .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
                 // Theme ink, not white: the panel behind is glass now, so the
                 // rows must read on light and dark alike.
                 .foregroundStyle(pal.ink.opacity(step.status == "completed" ? 0.55 : 0.92))
@@ -23932,6 +23927,15 @@ struct AgentRowDebugOverlay: ViewModifier {
     }
 }
 
+/// The PiP must avoid the whole bottom chrome, including the tracker when its
+/// list expands and the composer when the keyboard changes its height.
+struct AgentAssistantBottomChromeMinYKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = min(value, nextValue())
+    }
+}
+
 @available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
@@ -23967,6 +23971,9 @@ struct AssistantScreen: View {
     // opening awakening overlay + hidden pull-to-refresh. Pure additive layers.
     @State private var awakening = AgentAwakeningModel()
     @State private var agentPull = AgentPullState()
+    /// Actual top edge of the tracker+composer safe-area inset in this screen's
+    /// coordinate space. The floating live view uses it as a moving obstacle.
+    @State private var bottomChromeMinY: CGFloat?
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -24341,17 +24348,30 @@ struct AssistantScreen: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            // The live dock sits ABOVE the composer inside the same inset, so it
-            // rides the keyboard with the composer instead of fighting it, and
-            // the chat scroll region shrinks to make room (never an overlay).
             VStack(spacing: 0) {
                 // Build 103 Issue 3 — the compact tracker strip (owner's video
                 // reference) projects the same store as the in-turn block.
                 AgentWorkStepsDockView(vm: vm, pal: AgentPalette(scheme)) { actionId in
                     vm.pendingActionScrollId = actionId
                 }
-                AgentLiveDockView()
                 AgentComposerView(vm: vm, openWeb: openWeb)
+            }
+            .background {
+                GeometryReader { chrome in
+                    Color.clear.preference(
+                        key: AgentAssistantBottomChromeMinYKey.self,
+                        value: chrome.frame(in: .named("agent.assistant.surface")).minY)
+                }
+            }
+        }
+        // Codex-style computer-use PiP: independent of the composer/chat
+        // layout, draggable across the whole Assistant surface, edge-snapped.
+        .overlay { AgentLiveDockView(bottomObstacleMinY: bottomChromeMinY) }
+        .coordinateSpace(name: "agent.assistant.surface")
+        .onPreferenceChange(AgentAssistantBottomChromeMinYKey.self) { next in
+            guard next.isFinite, next > 0 else { return }
+            if bottomChromeMinY.map({ abs($0 - next) > 0.5 }) ?? true {
+                bottomChromeMinY = next
             }
         }
         .task {

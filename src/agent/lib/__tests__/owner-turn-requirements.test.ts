@@ -56,7 +56,9 @@ describe('BP2 gates (P3 plan-first / P2 grounding) — flag-gated, default no-op
     vi.resetModules()
   })
 
-  it('stays false when the flags are off (exact current behaviour)', async () => {
+  it('stays false when the rollback flags are explicitly off', async () => {
+    vi.stubEnv('AGENT_PLAN_GATE', 'off')
+    vi.stubEnv('AGENT_GROUNDING_GATE', 'off')
     vi.resetModules()
     const { deriveOwnerTurnRequirements: derive } = await import('@/agent/lib/owner-turn-requirements')
     expect(derive('প্রথমে অর্ডার দেখো তারপর প্যাক করো তারপর কুরিয়ারে দাও').planFirst).toBe(false)

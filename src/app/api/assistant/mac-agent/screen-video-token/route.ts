@@ -12,17 +12,40 @@
  * viewers get 1000+ so multiple owner devices can watch at once.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { RtcTokenBuilder, RtcRole } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
+import { getJwt } from '@/lib/api-guards'
 import { isSystemOwner } from '@/lib/roles'
-import { authenticateDevice, isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { authenticateDevice, isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import { isKnownViewUid, registerViewUid } from '@/agent/lib/mac-agent/remote-control'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const TOKEN_TTL_SEC = 360 // streams are capped at 300s — no long-lived tokens
+const DEVICE_OFFLINE_MS = 90_000
+
+async function findOwnedViewerDevice(ownerUserId: string, deviceId?: string) {
+  const select = { id: true, pairedAt: true } as const
+  if (deviceId) {
+    return prisma.macAgentDevice.findFirst({
+      where: { id: deviceId, ownerUserId, revoked: false },
+      select,
+    })
+  }
+  return prisma.macAgentDevice.findFirst({
+    where: {
+      ownerUserId,
+      revoked: false,
+      pairedAt: { not: null },
+      lastSeenAt: { gt: new Date(Date.now() - DEVICE_OFFLINE_MS) },
+    },
+    orderBy: { lastSeenAt: 'desc' },
+    select,
+  })
+}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -57,9 +80,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Owner → subscriber for a device they own.
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  const owner = await getJwt(req)
   if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  if (!(await resolveOwnerUserIds()).includes(owner.sub)) {
+    return Response.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   let body: { deviceId?: string; uid?: number }
   try {
@@ -67,10 +93,7 @@ export async function POST(req: NextRequest) {
   } catch {
     body = {}
   }
-  const devices = await listDevices()
-  const device = body.deviceId
-    ? devices.find((d) => d.id === body.deviceId)
-    : devices.find((d) => d.online && d.pairedAt)
+  const device = await findOwnedViewerDevice(owner.sub, String(body.deviceId ?? '').trim() || undefined)
   if (!device) return Response.json({ error: 'no_device' }, { status: 404 })
 
   const channel = `mac-screen-${device.id}`

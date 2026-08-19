@@ -670,6 +670,19 @@ struct AgentWorkStepsSnapshot: Equatable, Sendable {
 
     var isTerminal: Bool { ["completed", "failed", "cancelled"].contains(status) }
     var completedCount: Int { steps.filter { $0.status == "completed" || $0.status == "skipped" }.count }
+    /// Codex-style current step: an explicit running/waiting row wins. While a
+    /// freshly-created plan is still `preparing`, its first pending row is
+    /// already the visible current step. A settled plan rests on its last row.
+    var currentDisplayStep: Step? {
+        steps.first { ["running", "waiting_owner", "waiting_worker"].contains($0.status) }
+            ?? steps.first { $0.status == "pending" }
+            ?? steps.last
+    }
+    var currentDisplayPosition: Int { currentDisplayStep?.position ?? 0 }
+
+    func isCurrentDisplayStep(_ step: Step) -> Bool {
+        !isTerminal && currentDisplayStep?.id == step.id
+    }
 
     static let overallStatuses: Set<String> = [
         "preparing", "running", "waiting_owner", "waiting_worker",

@@ -19,26 +19,61 @@
  * token/pin expires, or the owner revokes.
  */
 import { type NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { RtcTokenBuilder } from 'agora-token'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
+import { getJwt } from '@/lib/api-guards'
 import { isSystemOwner } from '@/lib/roles'
-import { isMacAgentEnabled, listDevices } from '@/agent/lib/mac-agent/bus'
+import { isMacAgentEnabled } from '@/agent/lib/mac-agent/bus'
 import {
   CONTROL_TTL_SEC, ControlHeldByAnother, grantControl, isKnownViewUid, listControlAudit,
   revokeControl,
 } from '@/agent/lib/mac-agent/remote-control'
+import { prisma } from '@/lib/prisma'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+const DEVICE_OFFLINE_MS = 90_000
+
+async function findOwnedControlDevice(ownerUserId: string, deviceId?: string) {
+  const select = { id: true } as const
+  if (deviceId) {
+    return prisma.macAgentDevice.findFirst({
+      where: { id: deviceId, ownerUserId, revoked: false },
+      select,
+    })
+  }
+  return prisma.macAgentDevice.findFirst({
+    where: {
+      ownerUserId,
+      revoked: false,
+      pairedAt: { not: null },
+      lastSeenAt: { gt: new Date(Date.now() - DEVICE_OFFLINE_MS) },
+    },
+    orderBy: { lastSeenAt: 'desc' },
+    select,
+  })
+}
+
+async function requireResolvedOwner(req: NextRequest) {
+  const owner = await getJwt(req)
+  if (!owner?.sub) return { error: Response.json({ error: 'unauthorized' }, { status: 401 }) }
+  if (!isSystemOwner(owner)) {
+    return { error: Response.json({ error: 'forbidden' }, { status: 403 }) }
+  }
+  if (!(await resolveOwnerUserIds()).includes(owner.sub)) {
+    return { error: Response.json({ error: 'forbidden' }, { status: 403 }) }
+  }
+  return { ownerId: owner.sub }
+}
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const gate = await requireResolvedOwner(req)
+  if (gate.error) return gate.error
 
   const appId = process.env.AGORA_APP_ID?.trim()
   const appCertificate = process.env.AGORA_APP_CERTIFICATE?.trim()
@@ -58,10 +93,10 @@ export async function POST(req: NextRequest) {
     body = {}
   }
 
-  const devices = await listDevices()
-  const device = body.deviceId
-    ? devices.find((d) => d.id === body.deviceId)
-    : devices.find((d) => d.online && d.pairedAt)
+  const device = await findOwnedControlDevice(
+    gate.ownerId,
+    String(body.deviceId ?? '').trim() || undefined,
+  )
   if (!device) {
     return Response.json({ error: 'no_device', messageBn: 'আপনার Mac এখন অফলাইন।' }, { status: 404 })
   }
@@ -130,15 +165,11 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
-  const owner = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
-  if (!owner?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(owner)) return Response.json({ error: 'forbidden' }, { status: 403 })
+  const gate = await requireResolvedOwner(req)
+  if (gate.error) return gate.error
 
   const deviceId = req.nextUrl.searchParams.get('deviceId')
-  const devices = await listDevices()
-  const device = deviceId
-    ? devices.find((d) => d.id === deviceId)
-    : devices.find((d) => d.online && d.pairedAt)
+  const device = await findOwnedControlDevice(gate.ownerId, deviceId?.trim() || undefined)
   if (!device) return Response.json({ error: 'no_device' }, { status: 404 })
   return Response.json({ ok: true, deviceId: device.id, sessions: await listControlAudit(device.id) })
 }
