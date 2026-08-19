@@ -32,6 +32,9 @@
 		75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */; };
 		75EE0277D14177856309933B /* CreativeStudioV4WorkspaceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */; };
 		75EE0277D14177856309933C /* CSMaskRepairSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */; };
+		75EE0277D14177856309933D /* CreativeStudioCompositionEditorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F5 /* CreativeStudioCompositionEditorSwiftUI.swift */; };
+		75EE0277D14177856309933E /* CreativeStudioRecipeManagerSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F6 /* CreativeStudioRecipeManagerSwiftUI.swift */; };
+		75EE0277D14177856309933F /* CreativeStudioLifecycleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F7 /* CreativeStudioLifecycleSwiftUI.swift */; };
 		82578EF670271FFDE3168C6E /* Pods_AppParityV2Tests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563C31897C9683E4C39089EC /* Pods_AppParityV2Tests.framework */; };
 		8AE5A46CDEF2B132197C6BDD /* cs_sample_4.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */; };
 		8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */; };
@@ -328,6 +331,9 @@
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioV4WorkspaceSwiftUI.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CSMaskRepairSwiftUI.swift; sourceTree = "<group>"; };
+		E4D7D31FF1297D19D3B7C7F5 /* CreativeStudioCompositionEditorSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioCompositionEditorSwiftUI.swift; sourceTree = "<group>"; };
+		E4D7D31FF1297D19D3B7C7F6 /* CreativeStudioRecipeManagerSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioRecipeManagerSwiftUI.swift; sourceTree = "<group>"; };
+		E4D7D31FF1297D19D3B7C7F7 /* CreativeStudioLifecycleSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioLifecycleSwiftUI.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A001 /* AlmaEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaEntities.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A002 /* EntityCacheBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityCacheBridge.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A003 /* AlmaWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AlmaWidget.entitlements; sourceTree = "<group>"; };
@@ -599,6 +605,9 @@
 				E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */,
 				E4D7D31FF1297D19D3B7C7F3 /* CreativeStudioV4WorkspaceSwiftUI.swift */,
 				E4D7D31FF1297D19D3B7C7F4 /* CSMaskRepairSwiftUI.swift */,
+				E4D7D31FF1297D19D3B7C7F5 /* CreativeStudioCompositionEditorSwiftUI.swift */,
+				E4D7D31FF1297D19D3B7C7F6 /* CreativeStudioRecipeManagerSwiftUI.swift */,
+				E4D7D31FF1297D19D3B7C7F7 /* CreativeStudioLifecycleSwiftUI.swift */,
 				B9A1DBCC4D68569F90B17594 /* CreativeStudioSamples */,
 				035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */,
 				3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */,
@@ -1132,6 +1141,9 @@
 				75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */,
 				75EE0277D14177856309933B /* CreativeStudioV4WorkspaceSwiftUI.swift in Sources */,
 				75EE0277D14177856309933C /* CSMaskRepairSwiftUI.swift in Sources */,
+				75EE0277D14177856309933D /* CreativeStudioCompositionEditorSwiftUI.swift in Sources */,
+				75EE0277D14177856309933E /* CreativeStudioRecipeManagerSwiftUI.swift in Sources */,
+				75EE0277D14177856309933F /* CreativeStudioLifecycleSwiftUI.swift in Sources */,
 				56EBF52AB2CCBE8B449217D1 /* TradingHomeSwiftUI.swift in Sources */,
 				A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */,
 				AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */,

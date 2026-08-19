@@ -256,6 +256,166 @@ struct CSVideoJobStatus: Decodable, Equatable {
     let error: String?
 }
 
+// Production V4 Timeline Lite wire contract. Keep these concrete instead of
+// `[String: AnyEncodable]`: the server owns the same versioned shape and forces
+// `preserveVisualSource`/safe-zone truth before the free ffmpeg rerender queues.
+struct CSVideoTimelineSegment: Codable, Identifiable, Equatable {
+    var id: String
+    var startSec: Double
+    var endSec: Double
+    var order: Int
+}
+
+struct CSVideoCrop: Codable, Equatable {
+    var aspect: String
+    var focusX: Double
+    var focusY: Double
+    var safeZone: Bool
+}
+
+struct CSVideoVolumes: Codable, Equatable {
+    var original: Double
+    var music: Double
+    var voiceover: Double
+}
+
+struct CSVideoTranscriptCue: Codable, Identifiable, Equatable {
+    var id: String
+    var track: String       // caption | voiceover
+    var startSec: Double
+    var endSec: Double
+    var text: String
+}
+
+struct CSVideoCoverPoint: Codable, Equatable { var atSec: Double }
+
+struct CSVideoEditContract: Codable, Equatable {
+    var version: Int
+    var sourceDurationSec: Double
+    var preserveVisualSource: Bool
+    var segments: [CSVideoTimelineSegment]
+    var crop: CSVideoCrop
+    var volumes: CSVideoVolumes
+    var captionPlacement: String
+    var transcript: [CSVideoTranscriptCue]
+    var cover: CSVideoCoverPoint
+    var rerender: [String]
+
+    static let cropAspects = ["original", "9:16", "4:5", "1:1", "16:9"]
+    static let captionPlacements = ["top", "center", "bottom"]
+    static let renderTracks = ["visual", "captions", "audio", "cover"]
+
+    static func fresh(durationSec: Double) -> CSVideoEditContract {
+        let duration = min(7_200, max(0.5, durationSec.isFinite ? durationSec : 15))
+        return CSVideoEditContract(
+            version: 1,
+            sourceDurationSec: duration,
+            preserveVisualSource: true,
+            segments: [.init(id: "clip-1", startSec: 0, endSec: duration, order: 0)],
+            crop: .init(aspect: "original", focusX: 0.5, focusY: 0.5, safeZone: true),
+            volumes: .init(original: 1, music: 0.35, voiceover: 1),
+            captionPlacement: "bottom",
+            transcript: [],
+            cover: .init(atSec: min(0.5, duration)),
+            rerender: renderTracks)
+    }
+
+    var editedDurationSec: Double {
+        segments.reduce(0) { $0 + max(0, $1.endSec - $1.startSec) }
+    }
+
+    /// Older persisted drafts may predate unique cue IDs. Repair only editor
+    /// identity fields locally so SwiftUI never aliases two editable rows.
+    mutating func ensureStableEditorIDs() {
+        var segmentIDs = Set<String>()
+        for index in segments.indices {
+            let id = segments[index].id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty || segmentIDs.contains(id) {
+                segments[index].id = "clip-\(UUID().uuidString)"
+            }
+            segmentIDs.insert(segments[index].id)
+        }
+        var cueIDs = Set<String>()
+        for index in transcript.indices {
+            let id = transcript[index].id.trimmingCharacters(in: .whitespacesAndNewlines)
+            if id.isEmpty || cueIDs.contains(id) {
+                transcript[index].id = "cue-\(UUID().uuidString)"
+            }
+            cueIDs.insert(transcript[index].id)
+        }
+    }
+
+    /// Mirrors the server's rejection boundaries so invalid drafts never queue.
+    /// The route still re-parses and clamps every value authoritatively.
+    var validationMessage: String? {
+        guard version == 1, preserveVisualSource else { return "এই edit contract version support করা যাচ্ছে না" }
+        guard sourceDurationSec.isFinite, (0.5...7_200).contains(sourceDurationSec) else {
+            return "Source duration সঠিক নয়"
+        }
+        guard !segments.isEmpty else { return "অন্তত একটি clip রাখুন" }
+        guard segments.count <= 32 else { return "সর্বোচ্চ ৩২টি clip রাখা যাবে" }
+        guard Set(segments.map(\.id)).count == segments.count,
+              Set(segments.map(\.order)).count == segments.count else {
+            return "Clip order/ID duplicate হয়েছে"
+        }
+        for segment in segments {
+            guard segment.startSec.isFinite, segment.endSec.isFinite,
+                  segment.startSec >= 0, segment.endSec <= sourceDurationSec,
+                  segment.endSec - segment.startSec >= 0.1 else {
+                return "প্রতিটি clip source-এর ভেতরে অন্তত ০.১ সেকেন্ড হতে হবে"
+            }
+        }
+        let outputDuration = editedDurationSec
+        guard outputDuration <= 600 else { return "Edited video সর্বোচ্চ ১০ মিনিট হতে পারে" }
+        guard Self.cropAspects.contains(crop.aspect),
+              crop.focusX.isFinite, crop.focusY.isFinite,
+              (0...1).contains(crop.focusX), (0...1).contains(crop.focusY) else {
+            return "Crop/focus সঠিক নয়"
+        }
+        guard [volumes.original, volumes.music, volumes.voiceover]
+            .allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+            return "Track volume ০–১০০% এর মধ্যে রাখুন"
+        }
+        guard Self.captionPlacements.contains(captionPlacement) else { return "Caption position সঠিক নয়" }
+        guard transcript.count <= 100 else { return "সর্বোচ্চ ১০০টি transcript line রাখা যাবে" }
+        guard Set(transcript.map(\.id)).count == transcript.count else {
+            return "Transcript ID duplicate হয়েছে"
+        }
+        for cue in transcript {
+            let clean = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard ["caption", "voiceover"].contains(cue.track),
+                  !clean.isEmpty, clean.count <= 240,
+                  cue.startSec.isFinite, cue.endSec.isFinite,
+                  cue.startSec >= 0, cue.endSec <= outputDuration,
+                  cue.endSec - cue.startSec >= 0.1 else {
+                return "প্রতিটি transcript line-এ লেখা ও সঠিক ০.১s+ timing দিন"
+            }
+        }
+        guard !rerender.isEmpty, Set(rerender).isSubset(of: Set(Self.renderTracks)) else {
+            return "অন্তত একটি valid render track বাছুন"
+        }
+        guard cover.atSec.isFinite, cover.atSec >= 0, cover.atSec <= outputDuration else {
+            return "Cover point edited duration-এর মধ্যে রাখুন"
+        }
+        return nil
+    }
+}
+
+struct CSVideoEditSource: Decodable, Equatable {
+    let pendingActionId: String
+    let durationSec: Double
+    let sourcePath: String
+    let editContract: CSVideoEditContract?
+}
+
+struct CSPartialVideoFinishResponse: Decodable {
+    let pendingActionId: String
+    let costBdt: Double?
+    let preservedSourcePath: String?
+    let rerender: [String]?
+    let message: String?
+}
+
 struct CSSignedUploadURL: Decodable {
     let uploadUrl: String?
     let path: String?
@@ -500,6 +660,11 @@ enum CSTab: String, CaseIterable, Identifiable {
 @available(iOS 17.0, *)
 @Observable
 final class CreativeStudioVM {
+    private struct VideoOwnerScope: Equatable {
+        let brandProfileId: String
+        let projectId: String
+    }
+
     private enum PendingRun {
         case manual(CSRunPayload)
         case auto(CSAutoRunPayload)
@@ -513,6 +678,9 @@ final class CreativeStudioVM {
     var gallery: [CSGalleryItem] = []
     var models: [CSModel] = []
     var activeProject: CSProjectSummary?
+    /// Set only from the system-owner-only unscoped projects response. A V4
+    /// project selection alone is not role proof, so collaborators fail closed.
+    private var verifiedVideoOwnerScope: VideoOwnerScope?
     var pendingEstimate: CSRunResponse?
     var pendingAudioEstimate: CSAudioEstimate?
     var loading = false
@@ -599,6 +767,9 @@ final class CreativeStudioVM {
             let priorProjectID = activeProject?.id
             let writable = projects.projects.filter { !$0.readonly && $0.brandProfileId != nil }
             activeProject = writable.first { $0.id == priorProjectID } ?? writable.first
+            verifiedVideoOwnerScope = activeProject.flatMap(videoOwnerScope)
+        } else {
+            verifiedVideoOwnerScope = nil
         }
         var query = ["page": "1", "limit": "48"]
         if let project = activeProject, let brandProfileId = project.brandProfileId {
@@ -690,6 +861,26 @@ final class CreativeStudioVM {
     /// saved identities, and every paid confirmation—not a workspace-only filter.
     func activateProject(_ project: CSProjectSummary) async {
         activeProject = project
+        verifiedVideoOwnerScope = nil
+
+        // The scoped V4 project list is intentionally available to creators and
+        // reviewers. Re-prove owner role through the existing owner-only route;
+        // a failed/forbidden lookup leaves video finishing unavailable.
+        if let response: CSProjectsResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/creative-studio/projects"),
+           let verified = response.projects.first(where: {
+               $0.id == project.id
+                   && $0.brandProfileId == project.brandProfileId
+                   && !$0.readonly
+                   && $0.brandProfileId != nil
+           }) {
+            guard activeProject?.id == project.id,
+                  activeProject?.brandProfileId == project.brandProfileId else { return }
+            activeProject = verified
+            verifiedVideoOwnerScope = videoOwnerScope(for: verified)
+        }
+        guard activeProject?.id == project.id,
+              activeProject?.brandProfileId == project.brandProfileId else { return }
         await refreshGallery()
         guard activeProject?.id == project.id else { return }
         if let brandID = project.brandProfileId,
@@ -969,16 +1160,109 @@ final class CreativeStudioVM {
         } catch { toast = "কভার সেট করা যায়নি" }
     }
 
-    /// V3 motion-template finishing for a rendered reel.
+    /// Canonical video actions are owner-scoped exactly like production V4.
+    /// A gallery query value never grants access; the server re-proves this tuple.
+    private func videoOwnerScope(for project: CSProjectSummary) -> VideoOwnerScope? {
+        guard let brandProfileId = project.brandProfileId else { return nil }
+        return VideoOwnerScope(brandProfileId: brandProfileId, projectId: project.id)
+    }
+
+    func canFinishVideo(_ item: CSGalleryItem) -> Bool {
+        guard let project = activeProject,
+              let brandProfileId = project.brandProfileId,
+              item.projectAssetId != nil,
+              item.projectId == project.id,
+              item.brandProfileId == brandProfileId else { return false }
+        return verifiedVideoOwnerScope == VideoOwnerScope(
+            brandProfileId: brandProfileId, projectId: project.id)
+    }
+
+    private func videoScope(for item: CSGalleryItem) throws -> (
+        brandProfileId: String, projectId: String, projectAssetId: String
+    ) {
+        guard let project = activeProject,
+              let brandProfileId = project.brandProfileId,
+              let projectAssetId = item.projectAssetId,
+              item.projectId == project.id,
+              item.brandProfileId == brandProfileId,
+              verifiedVideoOwnerScope == VideoOwnerScope(
+                  brandProfileId: brandProfileId, projectId: project.id) else {
+            throw AlmaAPIError.http(status: 422, body: "studio_video_scope_required")
+        }
+        return (brandProfileId, project.id, projectAssetId)
+    }
+
+    /// GET validates owner access and returns the immutable source duration plus
+    /// the latest persisted edit contract. No rendering or provider cost occurs.
+    func fetchVideoEditSource(_ item: CSGalleryItem) async throws -> CSVideoEditSource {
+        let scope = try videoScope(for: item)
+        return try await AlmaAPI.shared.get(
+            "/api/assistant/creative-studio/video/finish",
+            query: [
+                "pendingActionId": item.id,
+                "brandProfileId": scope.brandProfileId,
+                "projectId": scope.projectId,
+                "projectAssetId": scope.projectAssetId,
+            ])
+    }
+
+    /// V3/V4 motion-template finishing for a rendered reel.
     func finishVideo(_ item: CSGalleryItem, templates: [String: AnyEncodable]) async -> String? {
-        struct Body: Encodable { let pendingActionId: String; let templates: [String: AnyEncodable] }
+        struct Body: Encodable {
+            let pendingActionId: String
+            let templates: [String: AnyEncodable]
+            let brandProfileId: String
+            let projectId: String
+            let projectAssetId: String
+        }
         do {
-            let res: CSAudioQueueResponse = try await AlmaAPI.shared.send(
+            let scope = try videoScope(for: item)
+            let res: CSPartialVideoFinishResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/creative-studio/video/finish",
-                body: Body(pendingActionId: item.id, templates: templates))
-            return res.pendingActionId ?? item.id
+                body: Body(
+                    pendingActionId: item.id, templates: templates,
+                    brandProfileId: scope.brandProfileId,
+                    projectId: scope.projectId,
+                    projectAssetId: scope.projectAssetId))
+            toast = res.message ?? "টেমপ্লেট render queue হয়েছে · ৳0"
+            return res.pendingActionId
         } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "ব্যর্থ হলো" }
         catch { toast = "টেমপ্লেট বসানো শুরু করা যায়নি" }
+        return nil
+    }
+
+    /// Timeline Lite queues only the selected local ffmpeg tracks at zero cost.
+    /// Server parsing remains authoritative and always preserves the visual source.
+    func partiallyFinishVideo(_ item: CSGalleryItem, contract: CSVideoEditContract) async -> String? {
+        struct Body: Encodable {
+            let pendingActionId: String
+            let mode = "partial_edit"
+            let editContract: CSVideoEditContract
+            let brandProfileId: String
+            let projectId: String
+            let projectAssetId: String
+        }
+        guard contract.validationMessage == nil else {
+            toast = contract.validationMessage
+            return nil
+        }
+        do {
+            let scope = try videoScope(for: item)
+            let res: CSPartialVideoFinishResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/video/finish",
+                body: Body(
+                    pendingActionId: item.id,
+                    editContract: contract,
+                    brandProfileId: scope.brandProfileId,
+                    projectId: scope.projectId,
+                    projectAssetId: scope.projectAssetId))
+            toast = res.message ?? "বাছাই করা track render queue হয়েছে · ৳0"
+            return res.pendingActionId
+        } catch let AlmaAPIError.http(_, body) {
+            toast = CS.serverMessage(body) ?? "Timeline edit শুরু করা যায়নি"
+        } catch {
+            toast = "Timeline edit শুরু করা যায়নি"
+        }
         return nil
     }
 
@@ -4104,7 +4388,8 @@ private struct CSDetailSheet: View {
                 // Native finishing (image: brand frame; video: motion templates).
                 // Build-67 rule: an image that ALREADY has finishing is edit-only —
                 // the button opens the editor (text + layout) instead of re-finishing.
-                if item.storagePath != nil && !item.isAudio && (item.isExecuted || !item.isVideo) {
+                if item.storagePath != nil && !item.isAudio && (item.isExecuted || !item.isVideo)
+                    && (!item.isVideo || vm.canFinishVideo(item)) {
                     if !item.isVideo && hasFinishing {
                         Button { showEditor = true; CSHaptic.tap() } label: {
                             Label("এডিট করুন (লেখা + লেআউট)", systemImage: "slider.horizontal.below.rectangle")
@@ -4115,7 +4400,7 @@ private struct CSDetailSheet: View {
                     } else {
                         Button { withAnimation { showFinish.toggle() }; CSHaptic.tap() } label: {
                             Label(showFinish ? "ফিনিশিং বন্ধ করুন"
-                                              : item.isVideo ? "টেমপ্লেট ফিনিশিং" : "ফিনিশিং (logo + code + hook)",
+                                              : item.isVideo ? "ভিডিও ফিনিশিং" : "ফিনিশিং (logo + code + hook)",
                                   systemImage: "wand.and.rays")
                                 .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
                                 .frame(maxWidth: .infinity).padding(14)
@@ -4420,9 +4705,572 @@ struct CSFinishPanel: View {
     }
 }
 
-/// V3 motion-template finishing for a rendered reel (web VideoFinishPanel twin).
+/// Production V4 video finishing keeps the existing native design while exposing
+/// the same Timeline Lite / Templates split as the web workspace.
 @available(iOS 17.0, *)
 struct CSVideoFinishPanel: View {
+    private enum Mode: String, CaseIterable, Identifiable {
+        case timeline, templates
+        var id: String { rawValue }
+        var label: String { self == .timeline ? "✂️ Timeline" : "🎞️ Templates" }
+    }
+
+    let item: CSGalleryItem
+    let vm: CreativeStudioVM
+    let onDone: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @State private var mode: Mode = .timeline
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Video finishing mode", selection: $mode) {
+                ForEach(Mode.allCases) { mode in Text(mode.label).tag(mode) }
+            }
+            .pickerStyle(.segmented)
+
+            if mode == .timeline {
+                CSVideoTimelineFinishPanel(item: item, vm: vm, onDone: onDone)
+            } else {
+                CSMotionTemplateFinishPanel(item: item, vm: vm, onDone: onDone)
+            }
+        }
+        .padding(14).csGlass(scheme, corner: 18)
+    }
+}
+
+/// Scope-authorized Timeline Lite queue surface. Fetching the source is read-only;
+/// the explicit button queues a zero-cost, server-revalidated ffmpeg derivative.
+@available(iOS 17.0, *)
+private struct CSVideoTimelineFinishPanel: View {
+    let item: CSGalleryItem
+    let vm: CreativeStudioVM
+    let onDone: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    @State private var source: CSVideoEditSource?
+    @State private var contract = CSVideoEditContract.fresh(durationSec: 15)
+    @State private var sourceLoading = true
+    @State private var sourceError: String?
+    @State private var queueing = false
+    @State private var working = false
+    @State private var progress = ""
+    @State private var submitTask: Task<Void, Never>?
+    @State private var pollTask: Task<Void, Never>?
+    @State private var lifecycleToken = UUID()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            if sourceLoading {
+                HStack(spacing: 10) {
+                    ProgressView().tint(AgentPalette.coral)
+                    Text("Canonical video source যাচাই হচ্ছে…")
+                        .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).ink)
+                }.padding(.vertical, 8)
+            } else if let sourceError {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(sourceError, systemImage: "lock.trianglebadge.exclamationmark")
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.orange)
+                    Text("Active brand/project-এর owner-accessible canonical asset ছাড়া video render queue হবে না।")
+                        .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    Button("আবার যাচাই করুন") { Task { await loadSource() } }
+                        .font(.system(size: 12, weight: .bold)).foregroundStyle(AgentPalette.coral)
+                }
+                .padding(11)
+                .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
+            } else if working {
+                HStack(spacing: 10) {
+                    ProgressView().tint(AgentPalette.coral)
+                    Text(progress.isEmpty ? "বাছাই করা track render হচ্ছে…" : progress)
+                        .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).ink)
+                }.padding(.vertical, 8)
+            } else {
+                CSVideoTimelineEditor(contract: $contract)
+
+                if let validation = contract.validationMessage {
+                    Label(validation, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Color.orange)
+                        .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("Selected-track partial rerender · ৳0", systemImage: "checkmark.shield.fill")
+                        .font(.system(size: 12.5, weight: .bold)).foregroundStyle(AgentPalette.teal)
+                    Text("Server scope ও source path আবার যাচাই করবে; মূল visual source overwrite বা regenerate হবে না।")
+                        .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }
+
+                Button { CSHaptic.tap(); startSubmit() } label: {
+                    HStack(spacing: 8) {
+                        if queueing { ProgressView().tint(.white) }
+                        Text(queueing ? "শুরু হচ্ছে…" : "বাছাই করা track render করুন · ৳0")
+                            .font(.system(size: 14, weight: .bold))
+                    }
+                    .foregroundStyle(.white).frame(maxWidth: .infinity).padding(13)
+                    .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(queueing || contract.validationMessage != nil || source == nil)
+                .opacity(contract.validationMessage == nil && source != nil ? 1 : 0.5)
+            }
+        }
+        .task(id: "\(item.id):\(vm.activeProject?.id ?? "none")") { await loadSource() }
+        .onDisappear { cancelOperations() }
+    }
+
+    private func loadSource() async {
+        sourceLoading = true
+        sourceError = nil
+        do {
+            let loaded = try await vm.fetchVideoEditSource(item)
+            guard !Task.isCancelled else { return }
+            source = loaded
+            var editorContract = loaded.editContract ?? .fresh(durationSec: loaded.durationSec)
+            editorContract.ensureStableEditorIDs()
+            contract = editorContract
+        } catch {
+            guard !Task.isCancelled else { return }
+            source = nil
+            if let api = error as? AlmaAPIError {
+                switch api {
+                case .notAuthenticated:
+                    sourceError = "সেশন শেষ — আবার লগইন করুন"
+                case let .http(_, body):
+                    sourceError = CS.serverMessage(body) ?? "Canonical video source পাওয়া যায়নি"
+                default:
+                    sourceError = "Canonical video source যাচাই করা যায়নি"
+                }
+            } else {
+                sourceError = "Canonical video source যাচাই করা যায়নি"
+            }
+        }
+        sourceLoading = false
+    }
+
+    private func startSubmit() {
+        guard !queueing, !working, submitTask == nil else { return }
+        let draft = contract
+        if let validation = draft.validationMessage { vm.flash(validation); return }
+        guard source != nil else { return }
+        queueing = true // Synchronous: a second tap cannot enqueue another POST.
+        let token = UUID()
+        lifecycleToken = token
+        submitTask = Task { @MainActor in
+            await submit(draft, token: token)
+        }
+    }
+
+    private func submit(_ draft: CSVideoEditContract, token: UUID) async {
+        defer {
+            if lifecycleToken == token {
+                queueing = false
+                submitTask = nil
+            }
+        }
+        guard !Task.isCancelled, lifecycleToken == token else { return }
+        guard let jobID = await vm.partiallyFinishVideo(item, contract: draft) else { return }
+        guard !Task.isCancelled, lifecycleToken == token else { return }
+        working = true
+        progress = "বাছাই করা track render হচ্ছে… · ৳0"
+        poll(jobID, token: token)
+    }
+
+    private func poll(_ jobID: String, token: UUID) {
+        guard lifecycleToken == token else { return }
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            // Production's 4-second rhythm, bounded so a lost terminal response
+            // cannot leave an invisible background loop alive forever.
+            for _ in 0..<225 {
+                do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+                guard !Task.isCancelled, lifecycleToken == token else { return }
+                guard let job = await vm.fetchJob(jobID) else { continue }
+                guard !Task.isCancelled, lifecycleToken == token else { return }
+                if let p = job.videoProgress, let step = p.step, let total = p.total {
+                    progress = "ধাপ \(almaBn(step))/\(almaBn(total)): \(p.labelBn ?? "")"
+                }
+                if job.status == "executed" {
+                    working = false
+                    vm.flash("Timeline edit সম্পন্ন — মূল source অপরিবর্তিত আছে")
+                    await vm.refreshGallery()
+                    onDone()
+                    return
+                }
+                if job.status == "failed" {
+                    working = false
+                    vm.flash(job.error ?? "Timeline edit ব্যর্থ হয়েছে")
+                    return
+                }
+            }
+            guard lifecycleToken == token else { return }
+            working = false
+            vm.flash("Render এখনো শেষ হয়নি — Gallery থেকে status দেখুন")
+        }
+    }
+
+    private func cancelOperations() {
+        lifecycleToken = UUID()
+        submitTask?.cancel()
+        submitTask = nil
+        pollTask?.cancel()
+        pollTask = nil
+        queueing = false
+        working = false
+    }
+}
+
+/// Native value editor for the production TimelineLite + TranscriptEditor
+/// contract. It never reads files or renders locally; it only prepares the
+/// server-validated, non-destructive edit description.
+@available(iOS 17.0, *)
+private struct CSVideoTimelineEditor: View {
+    @Binding var contract: CSVideoEditContract
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Timeline Lite").font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                    Text("Output \(time(contract.editedDurationSec))s · source \(time(contract.sourceDurationSec))s")
+                        .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }
+                Spacer()
+                Button { addSegment(); CSHaptic.tap() } label: {
+                    Label("Clip", systemImage: "plus").font(.system(size: 11.5, weight: .bold))
+                        .padding(.vertical, 6).padding(.horizontal, 9)
+                        .background(AgentPalette.coral.opacity(0.16), in: Capsule())
+                }
+                .buttonStyle(.plain).foregroundStyle(AgentPalette.coral)
+                .disabled(contract.segments.count >= 32)
+            }
+
+            section("Ordered trim segments") {
+                ForEach(contract.segments) { segment in
+                    let index = contract.segments.firstIndex { $0.id == segment.id } ?? 0
+                    let segmentValue = segmentBinding(segment.id, fallback: segment)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text("CLIP \(almaBn(index + 1))")
+                                .font(.system(size: 10.5, weight: .black)).foregroundStyle(AgentPalette.coral)
+                            Spacer()
+                            Button { moveSegment(segment.id, by: -1) } label: { Image(systemName: "arrow.up") }
+                                .disabled(index == 0)
+                            Button { moveSegment(segment.id, by: 1) } label: { Image(systemName: "arrow.down") }
+                                .disabled(index == contract.segments.count - 1)
+                            Button(role: .destructive) { removeSegment(segment.id) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .disabled(contract.segments.count == 1)
+                        }
+                        HStack(spacing: 8) {
+                            timeField("শুরু", value: segmentValue.startSec)
+                            timeField("শেষ", value: segmentValue.endSec)
+                        }
+                    }
+                    .padding(9)
+                    .background(Color.white.opacity(scheme == .dark ? 0.045 : 0.3), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+
+            section("Crop · focus · safe zone") {
+                cropPreview
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(CSVideoEditContract.cropAspects, id: \.self) { aspect in
+                            chip(aspect == "original" ? "মূল" : aspect, selected: contract.crop.aspect == aspect) {
+                                contract.crop.aspect = aspect
+                            }
+                        }
+                    }
+                }
+                valueSlider("Focus ↔", value: $contract.crop.focusX)
+                valueSlider("Focus ↕", value: $contract.crop.focusY)
+            }
+
+            section("Track volume") {
+                HStack(alignment: .top, spacing: 12) {
+                    volumeSlider("মূল", value: $contract.volumes.original)
+                    volumeSlider("মিউজিক", value: $contract.volumes.music)
+                    volumeSlider("ভয়েস", value: $contract.volumes.voiceover)
+                }
+            }
+
+            section("Caption + cover") {
+                Picker("Caption position", selection: $contract.captionPlacement) {
+                    Text("উপরে").tag("top")
+                    Text("মাঝে").tag("center")
+                    Text("নিচে").tag("bottom")
+                }
+                .pickerStyle(.segmented)
+                HStack {
+                    Text("Cover · \(time(contract.cover.atSec))s")
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+                    Slider(value: coverBinding, in: 0...safeEditedDuration, step: 0.1)
+                        .tint(AgentPalette.coral)
+                }
+            }
+
+            section("এইবার যে track-গুলো render হবে") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(CSVideoEditContract.renderTracks, id: \.self) { track in
+                            chip(renderTrackLabel(track), selected: contract.rerender.contains(track)) {
+                                toggleRenderTrack(track)
+                            }
+                        }
+                    }
+                }
+            }
+
+            transcriptEditor
+        }
+    }
+
+    @ViewBuilder private var transcriptEditor: some View {
+        section("Transcript + timing") {
+            HStack(spacing: 7) {
+                Button { addCue("caption"); CSHaptic.tap() } label: { Label("Caption", systemImage: "plus") }
+                Button { addCue("voiceover"); CSHaptic.tap() } label: { Label("Voice", systemImage: "plus") }
+                Spacer()
+            }
+            .font(.system(size: 11.5, weight: .bold)).foregroundStyle(AgentPalette.coral)
+            .disabled(contract.transcript.count >= 100)
+
+            if contract.transcript.isEmpty {
+                Text("এখনো কোনো timed line নেই")
+                    .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+            } else {
+                ForEach(contract.transcript) { cue in
+                    let cueValue = cueBinding(cue.id, fallback: cue)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Picker("Track", selection: cueValue.track) {
+                                Text("CAPTION").tag("caption")
+                                Text("VOICE").tag("voiceover")
+                            }
+                            .pickerStyle(.segmented).frame(maxWidth: 190)
+                            Spacer()
+                            Button(role: .destructive) { removeCue(cue.id) } label: {
+                                Image(systemName: "trash")
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            timeField("শুরু", value: cueValue.startSec)
+                            timeField("শেষ", value: cueValue.endSec)
+                        }
+                        TextEditor(text: cueTextBinding(cue.id))
+                            .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).ink)
+                            .scrollContentBackground(.hidden).frame(minHeight: 62)
+                            .padding(7).background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .padding(9)
+                    .background(Color.white.opacity(scheme == .dark ? 0.045 : 0.3), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            Text("Caption timing video-তে burn হয়; Voice line timing metadata থাকে, আর existing voice track volume অনুযায়ী mix হয়।")
+                .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private extension CSVideoTimelineEditor {
+    var cropPreview: some View {
+        GeometryReader { proxy in
+            let ratio = cropRatio
+            let width = min(proxy.size.width, proxy.size.height * ratio)
+            let height = width / ratio
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(LinearGradient(
+                        colors: [AgentPalette.coral.opacity(0.36), Color.black.opacity(0.56)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                RoundedRectangle(cornerRadius: 7)
+                    .strokeBorder(Color.white.opacity(0.65), style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    .padding(width * 0.1)
+                Circle().fill(AgentPalette.coral).frame(width: 12, height: 12)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.5), lineWidth: 2))
+                    .position(
+                        x: min(width - 6, max(6, width * CGFloat(contract.crop.focusX))),
+                        y: min(height - 6, max(6, height * CGFloat(contract.crop.focusY))))
+                Text("SAFE ZONE").font(.system(size: 9, weight: .black)).foregroundStyle(.white.opacity(0.8))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading).padding(8)
+            }
+            .frame(width: width, height: height)
+            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+        }
+        .frame(height: 170)
+    }
+
+    var cropRatio: CGFloat {
+        switch contract.crop.aspect {
+        case "9:16": return 9.0 / 16.0
+        case "4:5": return 4.0 / 5.0
+        case "1:1": return 1
+        case "16:9", "original": return 16.0 / 9.0
+        default: return 16.0 / 9.0
+        }
+    }
+
+    var coverBinding: Binding<Double> {
+        Binding(
+            get: { min(max(0, contract.cover.atSec), safeEditedDuration) },
+            set: { contract.cover.atSec = $0 })
+    }
+
+    var safeEditedDuration: Double {
+        let duration = contract.editedDurationSec
+        return duration.isFinite ? max(0.1, min(600, duration)) : 0.1
+    }
+
+    func addSegment() {
+        guard contract.segments.count < 32 else { return }
+        let lastEnd = contract.segments.last?.endSec ?? 0
+        let start = min(max(0, contract.sourceDurationSec - 0.5), lastEnd)
+        let end = min(contract.sourceDurationSec, start + min(3, contract.sourceDurationSec))
+        guard end - start >= 0.1 else { return }
+        contract.segments.append(.init(
+            id: "clip-\(UUID().uuidString)", startSec: start, endSec: end,
+            order: contract.segments.count))
+    }
+
+    func segmentBinding(
+        _ id: String, fallback: CSVideoTimelineSegment
+    ) -> Binding<CSVideoTimelineSegment> {
+        Binding(
+            get: { contract.segments.first { $0.id == id } ?? fallback },
+            set: { updated in
+                guard let index = contract.segments.firstIndex(where: { $0.id == id }) else { return }
+                contract.segments[index] = updated
+            })
+    }
+
+    func moveSegment(_ id: String, by offset: Int) {
+        guard let index = contract.segments.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + offset
+        guard contract.segments.indices.contains(index), contract.segments.indices.contains(target) else { return }
+        contract.segments.swapAt(index, target)
+        normalizeSegmentOrder()
+        CSHaptic.tap()
+    }
+
+    func removeSegment(_ id: String) {
+        guard contract.segments.count > 1 else { return }
+        contract.segments.removeAll { $0.id == id }
+        normalizeSegmentOrder()
+        CSHaptic.tap()
+    }
+
+    func normalizeSegmentOrder() {
+        for position in contract.segments.indices { contract.segments[position].order = position }
+    }
+
+    func addCue(_ track: String) {
+        guard contract.transcript.count < 100 else { return }
+        let duration = safeEditedDuration
+        let priorEnd = contract.transcript.last?.endSec ?? 0
+        let start = min(max(0, duration - 0.5), priorEnd)
+        let end = min(duration, start + min(2, duration))
+        guard end - start >= 0.1 else { return }
+        contract.transcript.append(.init(
+            id: "cue-\(UUID().uuidString)", track: track, startSec: start, endSec: end,
+            text: track == "caption" ? "নতুন ক্যাপশন" : "নতুন ভয়েসওভার লাইন"))
+    }
+
+    func cueBinding(_ id: String, fallback: CSVideoTranscriptCue) -> Binding<CSVideoTranscriptCue> {
+        Binding(
+            get: { contract.transcript.first { $0.id == id } ?? fallback },
+            set: { updated in
+                guard let index = contract.transcript.firstIndex(where: { $0.id == id }) else { return }
+                contract.transcript[index] = updated
+            })
+    }
+
+    func removeCue(_ id: String) {
+        contract.transcript.removeAll { $0.id == id }
+        CSHaptic.tap()
+    }
+
+    func cueTextBinding(_ id: String) -> Binding<String> {
+        Binding(
+            get: { contract.transcript.first { $0.id == id }?.text ?? "" },
+            set: { value in
+                guard let index = contract.transcript.firstIndex(where: { $0.id == id }) else { return }
+                contract.transcript[index].text = String(value.prefix(240))
+            })
+    }
+
+    func toggleRenderTrack(_ track: String) {
+        var selected = Set(contract.rerender)
+        if selected.contains(track) { selected.remove(track) } else { selected.insert(track) }
+        contract.rerender = CSVideoEditContract.renderTracks.filter { selected.contains($0) }
+    }
+
+    func renderTrackLabel(_ track: String) -> String {
+        switch track {
+        case "visual": return "ভিডিও"
+        case "captions": return "ক্যাপশন"
+        case "audio": return "অডিও"
+        case "cover": return "কভার"
+        default: return track
+        }
+    }
+
+    func time(_ value: Double) -> String { String(format: "%.1f", value) }
+
+    func timeField(_ title: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+            TextField(title, value: value, format: .number.precision(.fractionLength(0...2)))
+                .keyboardType(.decimalPad).font(.system(size: 12.5, design: .monospaced))
+                .foregroundStyle(AgentPalette(scheme).ink).padding(8)
+                .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    func valueSlider(_ title: String, value: Binding<Double>) -> some View {
+        HStack(spacing: 9) {
+            Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+                .frame(width: 58, alignment: .leading)
+            Slider(value: value, in: 0...1, step: 0.05).tint(AgentPalette.coral)
+            Text("\(Int((value.wrappedValue * 100).rounded()))%")
+                .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(AgentPalette(scheme).muted).frame(width: 34)
+        }
+    }
+
+    func volumeSlider(_ title: String, value: Binding<Double>) -> some View {
+        VStack(spacing: 4) {
+            Text(title).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+            Slider(value: value, in: 0...1, step: 0.05).tint(AgentPalette.coral)
+            Text("\(Int((value.wrappedValue * 100).rounded()))%")
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(AgentPalette(scheme).muted)
+        }
+    }
+
+    func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(selected ? Color.white : AgentPalette(scheme).muted)
+                .padding(.vertical, 7).padding(.horizontal, 10)
+                .background(selected ? AgentPalette.coral : Color.white.opacity(0.07), in: Capsule())
+        }.buttonStyle(.plain)
+    }
+
+    func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 11.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
+            content()
+        }
+        .padding(10)
+        .background(Color.black.opacity(scheme == .dark ? 0.14 : 0.05), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
+/// Existing zero-cost motion-template controls, hosted by the combined V4 panel.
+@available(iOS 17.0, *)
+private struct CSMotionTemplateFinishPanel: View {
     let item: CSGalleryItem
     let vm: CreativeStudioVM
     let onDone: () -> Void
@@ -4434,15 +5282,20 @@ struct CSVideoFinishPanel: View {
     @State private var days = ""
     @State private var watermark = true
     @State private var endCard = true
+    @State private var queueing = false
     @State private var working = false
     @State private var progress = ""
+    @State private var submitTask: Task<Void, Never>?
+    @State private var pollTask: Task<Void, Never>?
+    @State private var lifecycleToken = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if working {
+            if queueing || working {
                 HStack(spacing: 10) {
                     ProgressView().tint(AgentPalette.coral)
-                    Text(progress.isEmpty ? "টেমপ্লেট রেন্ডার হচ্ছে… (১–৩ মিনিট)" : progress)
+                    Text(queueing ? "টেমপ্লেট queue হচ্ছে…" :
+                            progress.isEmpty ? "টেমপ্লেট রেন্ডার হচ্ছে… (১–৩ মিনিট)" : progress)
                         .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).ink)
                 }.padding(.vertical, 8)
             } else {
@@ -4457,17 +5310,28 @@ struct CSVideoFinishPanel: View {
                 }
                 Toggle("লোগো ওয়াটারমার্ক", isOn: $watermark).font(.system(size: 12.5)).tint(AgentPalette.coral)
                 Toggle("এন্ড কার্ড (CTA)", isOn: $endCard).font(.system(size: 12.5)).tint(AgentPalette.coral)
-                Button { CSHaptic.tap(); Task { await submit() } } label: {
+                Button { CSHaptic.tap(); startSubmit() } label: {
                     Text("টেমপ্লেট বসাও").font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity).padding(13)
                         .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }.buttonStyle(.plain)
             }
         }
-        .padding(14).csGlass(scheme, corner: 18)
+        .onDisappear { cancelOperations() }
     }
 
-    private func submit() async {
+    private func startSubmit() {
+        guard !queueing, !working, submitTask == nil else { return }
+        let templates = templatePayload()
+        queueing = true // Synchronous: a second tap cannot enqueue another POST.
+        let token = UUID()
+        lifecycleToken = token
+        submitTask = Task { @MainActor in
+            await submit(templates, token: token)
+        }
+    }
+
+    private func templatePayload() -> [String: AnyEncodable] {
         var templates: [String: AnyEncodable] = [:]
         if !price.trimmingCharacters(in: .whitespaces).isEmpty {
             templates["pricePop"] = AnyEncodable(["price": price.trimmingCharacters(in: .whitespaces)])
@@ -4486,26 +5350,65 @@ struct CSVideoFinishPanel: View {
             templates["endCard"] = AnyEncodable(card)
         }
         if let d = Int(days), d > 0 { templates["countdown"] = AnyEncodable(["days": d]) }
+        return templates
+    }
 
-        guard let jobId = await vm.finishVideo(item, templates: templates) else { return }
-        working = true
-        // poll to completion (web parity: 4s rhythm)
-        while working {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard let job = await vm.fetchJob(jobId) else { continue }
-            if let p = job.videoProgress, let step = p.step, let total = p.total {
-                progress = "ধাপ \(almaBn(step))/\(almaBn(total)): \(p.labelBn ?? "")"
-            }
-            if job.status == "executed" {
-                working = false
-                vm.flash("টেমপ্লেট বসে গেছে — \"টেমপ্লেট সহ\" ভার্সন দেখুন, Boss")
-                await vm.refreshGallery()
-                onDone()
-            } else if job.status == "failed" {
-                working = false
-                vm.flash(job.error ?? "টেমপ্লেট বসানো ব্যর্থ হয়েছে")
+    private func submit(_ templates: [String: AnyEncodable], token: UUID) async {
+        defer {
+            if lifecycleToken == token {
+                queueing = false
+                submitTask = nil
             }
         }
+        guard !Task.isCancelled, lifecycleToken == token else { return }
+        guard let jobId = await vm.finishVideo(item, templates: templates) else { return }
+        guard !Task.isCancelled, lifecycleToken == token else { return }
+        working = true
+        progress = "টেমপ্লেট রেন্ডার হচ্ছে… (১–৩ মিনিট)"
+        poll(jobId, token: token)
+    }
+
+    private func poll(_ jobID: String, token: UUID) {
+        guard lifecycleToken == token else { return }
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            // Match production's 4-second rhythm, but stop after 15 minutes.
+            for _ in 0..<225 {
+                do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+                guard !Task.isCancelled, lifecycleToken == token else { return }
+                guard let job = await vm.fetchJob(jobID) else { continue }
+                guard !Task.isCancelled, lifecycleToken == token else { return }
+                if let p = job.videoProgress, let step = p.step, let total = p.total {
+                    progress = "ধাপ \(almaBn(step))/\(almaBn(total)): \(p.labelBn ?? "")"
+                }
+                if job.status == "executed" {
+                    working = false
+                    await vm.refreshGallery()
+                    guard !Task.isCancelled, lifecycleToken == token else { return }
+                    vm.flash("টেমপ্লেট বসে গেছে — \"টেমপ্লেট সহ\" ভার্সন দেখুন, Boss")
+                    onDone()
+                    return
+                }
+                if job.status == "failed" {
+                    working = false
+                    vm.flash(job.error ?? "টেমপ্লেট বসানো ব্যর্থ হয়েছে")
+                    return
+                }
+            }
+            guard lifecycleToken == token else { return }
+            working = false
+            vm.flash("Render এখনো শেষ হয়নি — Gallery থেকে status দেখুন")
+        }
+    }
+
+    private func cancelOperations() {
+        lifecycleToken = UUID()
+        submitTask?.cancel()
+        submitTask = nil
+        pollTask?.cancel()
+        pollTask = nil
+        queueing = false
+        working = false
     }
 
     private func field(_ placeholder: String, text: Binding<String>) -> some View {
