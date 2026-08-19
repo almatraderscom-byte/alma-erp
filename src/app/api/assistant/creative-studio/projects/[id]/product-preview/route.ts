@@ -11,9 +11,12 @@ import {
   getProject,
 } from '@/lib/creative-studio/project-service'
 import { hydrateStudioProjectProducts } from '@/agent/lib/creative-studio/studio-project-product-hydration'
+import { listProductImages } from '@/agent/lib/catalog/product-images'
+import { DEFAULT_CATALOG_BUSINESS } from '@/agent/lib/catalog/inventory-lookup'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+const MIN_PRODUCT_IMAGE_BYTES = 1024
 
 function contentType(path: string): string {
   if (/\.png$/i.test(path)) return 'image/png'
@@ -36,11 +39,29 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       throw new StudioAccessError('project_access_forbidden', 403)
     }
     const [hydrated] = await hydrateStudioProjectProducts([project])
-    const source = hydrated.product?.sourceImage
+    let source = hydrated.product?.sourceImage
     if (!source || /^https?:\/\//i.test(source) || source.startsWith('/')) {
       return Response.json({ error: 'product_source_unavailable' }, { status: 404 })
     }
-    const bytes = await agentStorageDownload(source)
+    let bytes = await agentStorageDownload(source)
+    if (bytes.byteLength < MIN_PRODUCT_IMAGE_BYTES && project.product?.code) {
+      const fallbacks = await listProductImages(
+        project.product.code,
+        DEFAULT_CATALOG_BUSINESS,
+        8,
+      )
+      for (const candidate of fallbacks) {
+        if (candidate.storagePath === source) continue
+        const candidateBytes = await agentStorageDownload(candidate.storagePath)
+        if (candidateBytes.byteLength < MIN_PRODUCT_IMAGE_BYTES) continue
+        source = candidate.storagePath
+        bytes = candidateBytes
+        break
+      }
+    }
+    if (bytes.byteLength < MIN_PRODUCT_IMAGE_BYTES) {
+      return Response.json({ error: 'product_source_corrupt' }, { status: 422 })
+    }
     return new Response(new Uint8Array(bytes), {
       headers: {
         'Cache-Control': 'private, no-store, max-age=0',

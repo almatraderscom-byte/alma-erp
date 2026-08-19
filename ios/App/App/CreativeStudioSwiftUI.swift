@@ -16,7 +16,7 @@
 //    GET  /api/assistant/creative-studio/config          → CSStudioConfig
 //    GET  /api/assistant/creative-studio/gallery?page=…   → CSGalleryResponse
 //    GET  /api/assistant/brand-models                     → { models: [...] }
-//    POST /api/assistant/upload         (multipart)       → { path }
+//    POST /api/assistant/creative-studio/reference-upload → scoped { id, path }
 //    POST /api/assistant/creative-studio/run              → { message, jobs, provider }
 //
 //  Verify (page session cannot build the app — pbxproj frozen):
@@ -88,7 +88,31 @@ struct CSModel: Decodable, Identifiable, Equatable {
 struct CSModelsResponse: Decodable { let models: [CSModel] }
 
 struct CSUploadResponse: Decodable { let path: String?; let storagePath: String?; let url: String? }
-struct CSRunResponse: Decodable { let message: String?; let provider: String?; let error: String? }
+struct CSReferenceUploadResponse: Decodable { let id: String; let path: String }
+struct CSUploadResult { let path: String; let referenceId: String? }
+
+struct CSProjectProduct: Decodable { let code: String }
+struct CSProjectSummary: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let readonly: Bool
+    let brandProfileId: String?
+    let product: CSProjectProduct?
+}
+struct CSProjectsResponse: Decodable { let projects: [CSProjectSummary] }
+
+struct CSRunResponse: Decodable, Identifiable {
+    let message: String?
+    let provider: String?
+    let actualModel: String?
+    let error: String?
+    let receipt: String?
+    let receiptId: String?
+    let estimateBdt: Double?
+    let estimateUsd: Double?
+    let maxCostBdt: Double?
+    var id: String { receiptId ?? "run-response" }
+}
 
 /// Manual run payload — nil keys are omitted (matches the web's undefined-omit).
 /// AlmaAPI's JSONEncoder skips nil optionals by default, so plain Encodable works.
@@ -109,14 +133,37 @@ struct CSRunPayload: Encodable {
     var vibe: String?
     var numImages: Int?
     var durationSec: Int?
+    var productReferenceId: String?
+    var modelReferenceId: String?
+    var brandProfileId: String?
+    var projectId: String?
+    var productId: String?
+    var studioSurface: String? = "legacy"
+    var intent: String?
+    var receipt: String?
+    var confirmed: Bool?
+    var idempotencyKey: String?
+    var maxCostBdt: Double?
 }
 
 /// Auto run — one-tap: server picks default model / prompt / background.
 struct CSAutoRunPayload: Encodable {
     var auto = true
+    var mode = "try_on"
     var productImagePath: String
     var includeFamily: Bool
     var includeReel: Bool
+    var modelId: String?
+    var productReferenceId: String?
+    var brandProfileId: String?
+    var projectId: String?
+    var productId: String?
+    var studioSurface: String? = "legacy"
+    var intent: String?
+    var receipt: String?
+    var confirmed: Bool?
+    var idempotencyKey: String?
+    var maxCostBdt: Double?
 }
 
 // ── Finishing (logo + code + hook, applyBrandFrame) ─────────────────────────
@@ -399,9 +446,16 @@ enum CSTab: String, CaseIterable, Identifiable {
 @available(iOS 17.0, *)
 @Observable
 final class CreativeStudioVM {
+    private enum PendingRun {
+        case manual(CSRunPayload)
+        case auto(CSAutoRunPayload)
+    }
+
     var config: CSStudioConfig?
     var gallery: [CSGalleryItem] = []
     var models: [CSModel] = []
+    var activeProject: CSProjectSummary?
+    var pendingEstimate: CSRunResponse?
     var loading = false
     var authExpired = false
     var generating = false
@@ -420,6 +474,7 @@ final class CreativeStudioVM {
         }
     }
     @ObservationIgnored private var toastClearTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingRun: PendingRun?
 
     var galleryFilter = "all"   // all | image | video | executed | pending
 
@@ -448,23 +503,51 @@ final class CreativeStudioVM {
         loading = true
         defer { loading = false }
         async let c: CSStudioConfig? = try? AlmaAPI.shared.get("/api/assistant/creative-studio/config")
+        async let p: CSProjectsResponse? = try? AlmaAPI.shared.get("/api/assistant/creative-studio/projects")
+        let (cfg, projects) = await (c, p)
+        activeProject = projects?.projects.first { !$0.readonly && $0.brandProfileId != nil }
+        var query = ["page": "1", "limit": "24"]
+        if let project = activeProject, let brandProfileId = project.brandProfileId {
+            query["brandProfileId"] = brandProfileId
+            query["projectId"] = project.id
+        }
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
-            "/api/assistant/creative-studio/gallery", query: ["page": "1", "limit": "24"])
-        async let m: CSModelsResponse? = try? AlmaAPI.shared.get("/api/assistant/brand-models")
-        let (cfg, gal, mods) = await (c, g, m)
+            "/api/assistant/creative-studio/gallery", query: query)
+        async let m: CSModelsResponse? = try? AlmaAPI.shared.get(
+            "/api/assistant/brand-models",
+            query: activeProject.map { project in
+                ["brandProfileId": project.brandProfileId ?? "", "projectId": project.id]
+            } ?? [:])
+        let (gal, mods) = await (g, m)
         if let cfg { config = cfg }
         if let gal { gallery = gal.items }
         if let mods { models = mods.models }
-        authExpired = (cfg == nil && gal == nil)
+        authExpired = (cfg == nil && projects == nil && gal == nil)
         // Never show empty grey slots: fall back to real ALMA sample photos until the
         // owner's own creatives/models load. Replaced automatically when live data arrives.
         if gallery.isEmpty { gallery = CS.sampleGallery }
         if models.isEmpty { models = CS.sampleModels }
     }
 
-    /// Upload a picked image to studio storage (web parity: field name is
-    /// `conversationId`, NOT `folder` — the route reads conversationId).
-    func uploadImage(_ data: Data, folder: String) async throws -> String {
+    /// Paid-run inputs use the project-scoped reference endpoint so the server
+    /// can prove product/model ownership before any provider call is made.
+    func uploadImage(_ data: Data, folder: String, referenceKind: String? = nil) async throws -> CSUploadResult {
+        if let referenceKind {
+            guard let project = activeProject, let brandProfileId = project.brandProfileId else {
+                throw AlmaAPIError.http(status: 422, body: "studio_run_scope_required")
+            }
+            let up: CSReferenceUploadResponse = try await AlmaAPI.shared.uploadMultipart(
+                "/api/assistant/creative-studio/reference-upload", fileField: "file",
+                filename: "photo.jpg", mime: "image/jpeg", data: data,
+                fields: [
+                    "brandProfileId": brandProfileId,
+                    "projectId": project.id,
+                    "kind": referenceKind,
+                ])
+            return CSUploadResult(path: up.path, referenceId: up.id)
+        }
+
+        // Non-generation uploads (finishing/model-library) keep their existing route.
         let up: CSUploadResponse = try await AlmaAPI.shared.uploadMultipart(
             "/api/assistant/upload", fileField: "file",
             filename: "photo.jpg", mime: "image/jpeg", data: data,
@@ -472,12 +555,17 @@ final class CreativeStudioVM {
         guard let path = up.path ?? up.storagePath ?? up.url else {
             throw AlmaAPIError.http(status: 422, body: "upload_failed")
         }
-        return path
+        return CSUploadResult(path: path, referenceId: nil)
     }
 
     func refreshGallery() async {
+        var query = ["page": "1", "limit": "24"]
+        if let project = activeProject, let brandProfileId = project.brandProfileId {
+            query["brandProfileId"] = brandProfileId
+            query["projectId"] = project.id
+        }
         if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
-            "/api/assistant/creative-studio/gallery", query: ["page": "1", "limit": "24"]) {
+            "/api/assistant/creative-studio/gallery", query: query) {
             gallery = g.items.isEmpty ? CS.sampleGallery : g.items
         }
     }
@@ -485,49 +573,134 @@ final class CreativeStudioVM {
     /// How many renders are still cooking — drives the banner + polling.
     var pendingCount: Int { gallery.filter { $0.isPending && !$0.id.hasPrefix("sample-") }.count }
 
-    /// Queue a generation with the FULL web payload (all slots + prompt + bg).
-    func run(_ payload: CSRunPayload) async -> Bool {
+    private func scope(_ payload: inout CSRunPayload) throws {
+        guard let project = activeProject, let brandProfileId = project.brandProfileId else {
+            throw AlmaAPIError.http(status: 422, body: "studio_run_scope_required")
+        }
+        payload.brandProfileId = brandProfileId
+        payload.projectId = project.id
+        payload.productId = project.product?.code
+    }
+
+    private func scope(_ payload: inout CSAutoRunPayload) throws {
+        guard let project = activeProject, let brandProfileId = project.brandProfileId else {
+            throw AlmaAPIError.http(status: 422, body: "studio_run_scope_required")
+        }
+        payload.brandProfileId = brandProfileId
+        payload.projectId = project.id
+        payload.productId = project.product?.code
+    }
+
+    private func showRunError(_ error: Error) {
+        if let apiError = error as? AlmaAPIError {
+            switch apiError {
+            case .notAuthenticated:
+                toast = "সেশন শেষ — আবার লগইন করুন"
+                authExpired = true
+            case let .http(_, body):
+                toast = CS.serverMessage(body) ?? "জেনারেট করা গেল না"
+            default:
+                toast = "জেনারেট করা গেল না"
+            }
+            return
+        }
+        toast = "জেনারেট করা গেল না"
+    }
+
+    /// First request an exact, receipt-bound estimate. The view presents the
+    /// owner confirmation before `confirmPendingRun()` can queue a paid job.
+    func run(_ original: CSRunPayload) async -> Bool {
         guard !generating else { return false }
         generating = true
         defer { generating = false }
         do {
-            let res: CSRunResponse = try await AlmaAPI.shared.send("POST", "/api/assistant/creative-studio/run", body: payload)
-            toast = res.message ?? "জেনারেশন শুরু হয়েছে — গ্যালারিতে আসবে"
-            await refreshGallery()
+            var payload = original
+            try scope(&payload)
+            payload.intent = "estimate"
+            payload.maxCostBdt = 500
+            let estimate: CSRunResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/run", body: payload)
+            guard estimate.receipt != nil, estimate.receiptId != nil else {
+                throw AlmaAPIError.http(status: 422, body: "run_estimate_failed")
+            }
+            pendingRun = .manual(original)
+            pendingEstimate = estimate
             return true
-        } catch AlmaAPIError.notAuthenticated {
-            toast = "সেশন শেষ — আবার লগইন করুন"
-            authExpired = true
-        } catch let AlmaAPIError.http(_, body) {
-            toast = CS.serverMessage(body) ?? "জেনারেট করা গেল না"
         } catch {
-            toast = "জেনারেট করা গেল না"
+            showRunError(error)
         }
         return false
     }
 
-    /// One-tap Auto (web parity: auto:true → server uses the default model).
-    func runAuto(productImagePath: String, includeFamily: Bool, includeReel: Bool) async -> Bool {
+    /// One-tap Auto still obeys the same estimate → explicit confirmation gate.
+    func runAuto(productImagePath: String, productReferenceId: String?, modelId: String?, includeFamily: Bool, includeReel: Bool) async -> Bool {
         guard !generating else { return false }
         generating = true
         defer { generating = false }
         do {
-            let res: CSRunResponse = try await AlmaAPI.shared.send(
+            var payload = CSAutoRunPayload(
+                productImagePath: productImagePath,
+                includeFamily: includeFamily,
+                includeReel: includeReel,
+                modelId: modelId,
+                productReferenceId: productReferenceId)
+            try scope(&payload)
+            payload.intent = "estimate"
+            payload.maxCostBdt = 500
+            let estimate: CSRunResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/creative-studio/run",
-                body: CSAutoRunPayload(productImagePath: productImagePath,
-                                       includeFamily: includeFamily, includeReel: includeReel))
-            toast = res.message ?? "✨ তৈরি হচ্ছে — Gallery-তে দেখুন"
-            await refreshGallery()
+                body: payload)
+            guard estimate.receipt != nil, estimate.receiptId != nil else {
+                throw AlmaAPIError.http(status: 422, body: "run_estimate_failed")
+            }
+            pendingRun = .auto(payload)
+            pendingEstimate = estimate
             return true
-        } catch AlmaAPIError.notAuthenticated {
-            toast = "সেশন শেষ — আবার লগইন করুন"
-            authExpired = true
-        } catch let AlmaAPIError.http(_, body) {
-            toast = CS.serverMessage(body) ?? "জেনারেট করা গেল না"
         } catch {
-            toast = "জেনারেট করা গেল না"
+            showRunError(error)
         }
         return false
+    }
+
+    func cancelPendingRun() {
+        pendingEstimate = nil
+        pendingRun = nil
+    }
+
+    func confirmPendingRun(using estimate: CSRunResponse) async {
+        guard !generating,
+              let receipt = estimate.receipt, let receiptId = estimate.receiptId,
+              let pendingRun else { return }
+        generating = true
+        defer { generating = false }
+        do {
+            let response: CSRunResponse
+            switch pendingRun {
+            case .manual(var payload):
+                try scope(&payload)
+                payload.intent = "confirm"
+                payload.receipt = receipt
+                payload.confirmed = true
+                payload.idempotencyKey = "studio:\(receiptId)"
+                payload.maxCostBdt = estimate.maxCostBdt
+                response = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/creative-studio/run", body: payload)
+            case .auto(var payload):
+                try scope(&payload)
+                payload.intent = "confirm"
+                payload.receipt = receipt
+                payload.confirmed = true
+                payload.idempotencyKey = "studio:\(receiptId)"
+                payload.maxCostBdt = estimate.maxCostBdt
+                response = try await AlmaAPI.shared.send(
+                    "POST", "/api/assistant/creative-studio/run", body: payload)
+            }
+            cancelPendingRun()
+            toast = response.message ?? "জেনারেশন শুরু হয়েছে — গ্যালারিতে আসবে"
+            await refreshGallery()
+        } catch {
+            showRunError(error)
+        }
     }
 
     func flash(_ msg: String) { toast = msg }
@@ -1186,9 +1359,10 @@ final class CSSlot {
     var picked: PhotosPickerItem?
     var image: UIImage?
     var path: String?
+    var referenceId: String?
     var uploading = false
 
-    func clear() { picked = nil; image = nil; path = nil; uploading = false }
+    func clear() { picked = nil; image = nil; path = nil; referenceId = nil; uploading = false }
 
     /// Downscale + JPEG (web parity with prepareImageForUpload: HEIC → jpg, max 2048).
     static func jpegData(_ ui: UIImage) -> Data? {
@@ -1204,15 +1378,20 @@ final class CSSlot {
     }
 
     @MainActor
-    func load(_ item: PhotosPickerItem?, vm: CreativeStudioVM, folder: String) async {
+    func load(_ item: PhotosPickerItem?, vm: CreativeStudioVM, folder: String, referenceKind: String?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self),
               let ui = UIImage(data: data) else { return }
         image = ui
         path = nil
+        referenceId = nil
         uploading = true
         defer { uploading = false }
         guard let jpeg = CSSlot.jpegData(ui) else { vm.flash("ছবি পড়া গেল না"); return }
-        do { path = try await vm.uploadImage(jpeg, folder: folder) }
+        do {
+            let upload = try await vm.uploadImage(jpeg, folder: folder, referenceKind: referenceKind)
+            path = upload.path
+            referenceId = upload.referenceId
+        }
         catch { vm.flash("আপলোড ব্যর্থ হলো") }
     }
 }
@@ -1262,6 +1441,23 @@ private struct CSCreateTab: View {
                 }
             }
         }
+        .alert(item: Binding(
+            get: { vm.pendingEstimate },
+            set: { vm.pendingEstimate = $0 }
+        )) { estimate in
+            let bdt = estimate.estimateBdt ?? estimate.maxCostBdt ?? 0
+            let usd = estimate.estimateUsd ?? 0
+            return Alert(
+                title: Text("খরচ নিশ্চিত করুন"),
+                message: Text(String(
+                    format: "Server estimate ৳%.2f ($%.3f)। Actual provider usage Gallery-তে settle হবে।",
+                    bdt, usd)),
+                primaryButton: .cancel(Text("বাতিল"), action: vm.cancelPendingRun),
+                secondaryButton: .default(Text("Confirm & Run")) {
+                    Task { await vm.confirmPendingRun(using: estimate) }
+                }
+            )
+        }
     }
 
     /// Engine quick-switch ON the work screen (owner 2026-07-12) — ONE selector
@@ -1285,7 +1481,7 @@ private struct CSCreateTab: View {
                     engineIdx = 1
                     Task { await vm.saveSettings(imageEngine: "gemini") }
                 }
-                CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: engineIdx == 2) {
+                CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: engineIdx == 2) {
                     engineIdx = 2
                     Task { await vm.saveSettings(imageEngine: "gpt") }
                 }
@@ -1354,7 +1550,8 @@ private struct CSAutoPanel: View {
                     .multilineTextAlignment(.center).frame(maxWidth: .infinity)
             }.padding(.top, 18)
 
-            CSUploadTile(slot: product, vm: vm, label: "Product ছবি", folder: "studio-product", required: true, height: 240)
+            CSUploadTile(slot: product, vm: vm, label: "Product ছবি", folder: "studio-product",
+                         referenceKind: "product", required: true, height: 240)
 
             // Model — tappable: choose which saved model Auto uses (promotes to default)
             if let m = defaultModel {
@@ -1391,6 +1588,8 @@ private struct CSAutoPanel: View {
                 Task {
                     guard let path = product.path else { return }
                     _ = await vm.runAuto(productImagePath: path,
+                                         productReferenceId: product.referenceId,
+                                         modelId: defaultModel?.id,
                                          includeFamily: includeFamily && familyAvailable,
                                          includeReel: includeReel)
                 }
@@ -1406,7 +1605,7 @@ private struct CSAutoPanel: View {
                 .opacity(canRun && !vm.generating ? 1 : 0.45)
             }
             .buttonStyle(.plain).disabled(!canRun || vm.generating)
-            Text("No LLM cost · ছবি render queue\(includeReel ? " · রিলে আলাদা ভিডিও খরচ" : "")")
+            Text("Run-এর আগে exact estimate দেখাবে · actual খরচ Gallery-তে settle হবে\(includeReel ? " · রিলে আলাদা ভিডিও খরচ" : "")")
                 .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 18)
@@ -1579,13 +1778,14 @@ private struct CSAdvancedPanel: View {
     private var slots: some View {
         VStack(spacing: 12) {
             if isFamilyMerge {
-                CSUploadTile(slot: product, vm: vm, label: "বাবা + ছেলে ছবি (১ম)", folder: "studio-product", required: true)
+                CSUploadTile(slot: product, vm: vm, label: "বাবা + ছেলে ছবি (১ম)", folder: "studio-product",
+                             referenceKind: "product", required: true)
                 CSUploadTile(slot: source2, vm: vm, label: "মা + মেয়ে ছবি (২য়)", folder: "studio-source2", required: true)
             } else {
                 if mode.needsProduct {
                     CSUploadTile(slot: product, vm: vm,
                                  label: mode.needsProduct ? "Product / mannequin" : "Product (optional)",
-                                 folder: "studio-product", required: mode.needsProduct)
+                                 folder: "studio-product", referenceKind: "product", required: mode.needsProduct)
                 }
                 if familyActive {
                     familyChecklist
@@ -1595,7 +1795,7 @@ private struct CSAdvancedPanel: View {
                 if mode.needsSource {
                     CSUploadTile(slot: source, vm: vm,
                                  label: mode.id == "image_to_video" ? "Source image for reel" : "Source image",
-                                 folder: "studio-source", required: true)
+                                 folder: "studio-source", referenceKind: "product", required: true)
                 }
             }
         }.padding(.horizontal, 18)
@@ -1748,7 +1948,7 @@ private struct CSAdvancedPanel: View {
             .buttonStyle(.plain).disabled(!canRun || vm.generating)
             Text(isMultiPersonFamily && provider == "fashn"
                  ? "একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে"
-                 : "No LLM cost — direct render queue")
+                 : "Run-এর আগে exact estimate ও confirmation দেখাবে")
                 .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 18).padding(.top, 22)
@@ -1759,8 +1959,10 @@ private struct CSAdvancedPanel: View {
         let bg = CS.backgrounds[bgIdx]
         var payload = CSRunPayload(mode: mode.id)
         payload.provider = provider
-        payload.productImagePath = product.path
+        payload.productImagePath = product.path ?? source.path
+        payload.productReferenceId = product.referenceId ?? source.referenceId
         payload.modelImagePath = model.path
+        payload.modelReferenceId = model.referenceId
         payload.sourceImagePath = source.path ?? product.path ?? model.path
         payload.secondSourceImagePath = isFamilyMerge ? source2.path : nil
         payload.modelId = modelId.isEmpty ? nil : modelId
@@ -1797,6 +1999,7 @@ private struct CSUploadTile: View {
     let vm: CreativeStudioVM
     let label: String
     let folder: String
+    var referenceKind: String? = nil
     var required = false
     var height: CGFloat = 190
     @Environment(\.colorScheme) private var scheme
@@ -1837,7 +2040,9 @@ private struct CSUploadTile: View {
                 .foregroundStyle(slot.image == nil ? Color.white.opacity(0.2) : AgentPalette.coral.opacity(0.5)))
         }
         .buttonStyle(.plain)
-        .onChange(of: slot.picked) { _, new in Task { await slot.load(new, vm: vm, folder: folder) } }
+        .onChange(of: slot.picked) { _, new in
+            Task { await slot.load(new, vm: vm, folder: folder, referenceKind: referenceKind) }
+        }
     }
 }
 
@@ -2972,7 +3177,7 @@ private struct CSLibraryTab: View {
                     CSChip(text: "Nano Banana (ফটোরিয়াল)", on: (vm.settings?.imageEngine ?? "gemini") == "gemini") {
                         Task { await vm.saveSettings(imageEngine: "gemini") }
                     }
-                    CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
+                    CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
                         Task { await vm.saveSettings(imageEngine: "gpt") }
                     }
                     CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: vm.settings?.imageEngine == "seedream") {

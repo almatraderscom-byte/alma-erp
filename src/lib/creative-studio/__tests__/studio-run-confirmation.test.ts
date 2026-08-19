@@ -58,14 +58,20 @@ function createPrismaDouble(initialNow: Date) {
 
   const db = {
     agentKvSetting: {
-      create: async ({ data }: { data: { key: string; value: string } }) => {
-        if (settings.has(data.key)) throw new Error('unique_violation')
+      createMany: async ({
+        data,
+      }: {
+        data: Array<{ key: string; value: string }>
+        skipDuplicates: boolean
+      }) => {
+        const candidate = data[0]
+        if (!candidate || settings.has(candidate.key)) return { count: 0 }
         const row = {
-          ...data,
+          ...candidate,
           updatedAt: new Date(currentTime),
         }
-        settings.set(data.key, row)
-        return row
+        settings.set(candidate.key, row)
+        return { count: 1 }
       },
       findUnique: async ({ where }: { where: { key: string } }) =>
         settings.get(where.key) ?? null,

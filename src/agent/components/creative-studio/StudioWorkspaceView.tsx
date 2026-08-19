@@ -4,12 +4,14 @@ import MaskEditor, { type MaskEditorResult } from '@/agent/components/creative-s
 import {
   fetchModels,
   fetchStudioSettings,
+  getActiveStudioContentContext,
   runAutoStudioJob,
   runStudioJob,
   saveModel,
   setDefaultModel,
   uploadFillMask,
   uploadStudioFile,
+  uploadStudioReference,
   type StudioConfig,
   type StudioSettings,
 } from '@/agent/components/creative-studio/studio-api'
@@ -608,7 +610,9 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   const [modelPreview, setModelPreview] = useState<string | null>(null)
   const [sourcePreview, setSourcePreview] = useState<string | null>(null)
   const [productPath, setProductPath] = useState<string | null>(null)
+  const [productReferenceId, setProductReferenceId] = useState<string | null>(null)
   const [modelPath, setModelPath] = useState<string | null>(null)
+  const [modelReferenceId, setModelReferenceId] = useState<string | null>(null)
   const [sourcePath, setSourcePath] = useState<string | null>(null)
   // full_family merge: 2nd already-generated image (e.g. ma+meye) composited with the 1st.
   const [secondSourcePreview, setSecondSourcePreview] = useState<string | null>(null)
@@ -864,7 +868,9 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
       return null
     })
     setProductPath(null)
+    setProductReferenceId(null)
     setModelPath(null)
+    setModelReferenceId(null)
     setSourcePath(null)
     setSecondSourcePath(null)
   }, [])
@@ -925,16 +931,30 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
   )
 
   const upload = async (file: File, kind: 'product' | 'model' | 'source' | 'source2') => {
-    const path = await uploadStudioFile(file, `studio-${kind}`)
+    const context = getActiveStudioContentContext()
+    const scopedReference = (
+      (kind === 'product' || kind === 'model')
+      && context?.brandProfileId
+      && context.projectId
+    )
+      ? await uploadStudioReference(file, {
+          brandProfileId: context.brandProfileId,
+          projectId: context.projectId,
+          kind,
+        })
+      : null
+    const path = scopedReference?.path ?? await uploadStudioFile(file, `studio-${kind}`)
     const url = URL.createObjectURL(file)
     if (kind === 'product') {
       if (productPreview) URL.revokeObjectURL(productPreview)
       setProductPreview(url)
       setProductPath(path)
+      setProductReferenceId(scopedReference?.id ?? null)
     } else if (kind === 'model') {
       if (modelPreview) URL.revokeObjectURL(modelPreview)
       setModelPreview(url)
       setModelPath(path)
+      setModelReferenceId(scopedReference?.id ?? null)
     } else if (kind === 'source2') {
       if (secondSourcePreview) URL.revokeObjectURL(secondSourcePreview)
       setSecondSourcePreview(url)
@@ -1038,7 +1058,9 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
         clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
         protectedComposite: isMultiPersonFamily ? protectedComposite : undefined,
         productImagePath: productPath ?? undefined,
+        productReferenceId: productReferenceId ?? undefined,
         modelImagePath: modelPath ?? undefined,
+        modelReferenceId: modelReferenceId ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
         secondSourceImagePath: isFamilyMerge ? (secondSourcePath ?? undefined) : undefined,
         modelId: modelId || undefined,
@@ -1150,6 +1172,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                       return null
                     })
                     setModelPath(null)
+                    setModelReferenceId(null)
                   }}
                   onUpload={(f) => {
                     setModelId('')
@@ -1162,6 +1185,7 @@ export function StudioWorkspaceView({ config, onOpenGallery }: { config: StudioC
                       return null
                     })
                     setModelPath(null)
+                    setModelReferenceId(null)
                   }}
                 />
               )}

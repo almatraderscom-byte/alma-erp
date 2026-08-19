@@ -30,6 +30,8 @@ import { resolveModel } from '@/lib/tryon/model-library'
 import { autoProductReferenceError, getOrClassifyGarment } from '@/lib/tryon/art-director'
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { roundMoney } from '@/lib/money'
+import { exactDimensionsFor } from '@/lib/creative-studio/resolution-contract'
+import { gptImage2OutputCostUsd } from '@/lib/creative-studio/gpt-image-2-pricing'
 
 type StudioRunRequest = CreativeStudioRunInput & {
   auto?: boolean
@@ -53,7 +55,6 @@ const GENERIC_PRICING = {
     standard: { '1k': 0.067, '2k': 0.101, '4k': 0.151 },
     pro: { '1k': 0.134, '2k': 0.134, '4k': 0.24 },
   },
-  openai: { standard: 0.05, pro: 0.19 },
   fal: { '1k': 0.0675, '2k': 0.135, '4k': 0.135 },
 } as const
 
@@ -85,8 +86,18 @@ function genericCost(
   const provider = genericImageProvider(model)
   const tier = resolution(input)
   const q = quality(input)
-  const perGeneration = provider === 'openai'
-    ? GENERIC_PRICING.openai[q]
+  const openaiDimensions = provider === 'openai'
+    ? exactDimensionsFor('gpt', tier, input.aspectRatio ?? '4:5')
+    : null
+  if (provider === 'openai' && !openaiDimensions) {
+    throw new Error(`resolution_unsupported:gpt:${tier}:${input.aspectRatio ?? '4:5'}`)
+  }
+  const perGeneration = provider === 'openai' && openaiDimensions
+    ? gptImage2OutputCostUsd(
+        openaiDimensions.width,
+        openaiDimensions.height,
+        q === 'standard' ? 'medium' : 'high',
+      )
     : provider === 'fal'
       ? GENERIC_PRICING.fal[tier]
       : GENERIC_PRICING.gemini[q][tier]
@@ -138,11 +149,7 @@ async function assertEngineAvailable(engine: StudioEngineId): Promise<void> {
 
 async function assertGenericSelectionAvailable(
   selection: Awaited<ReturnType<typeof genericSelection>>,
-  explicitlyRequestedGemini: boolean,
 ): Promise<void> {
-  if (explicitlyRequestedGemini && selection.provider !== 'gemini') {
-    throw new Error(`explicit_provider_model_mismatch:gemini:${selection.provider}`)
-  }
   if (selection.provider === 'gemini' && !process.env.GEMINI_API_KEY?.trim()) {
     throw new Error('explicit_model_unavailable:gemini')
   }
@@ -296,7 +303,7 @@ async function planAdvanced(
       throw new Error(`explicit_engine_mode_unsupported:${requestedEngine}:family`)
     }
     const chainEngine = await resolveChainEngine(requestedEngine)
-    await assertGenericSelectionAvailable(generic, false)
+    await assertGenericSelectionAvailable(generic)
     const chain = familyChainCost({
       variant: input.familyPreset!,
       vtonEngine: chainEngine,
@@ -330,15 +337,17 @@ async function planAdvanced(
   }
 
   if (requestedEngine === 'gemini') {
-    await assertEngineAvailable('gemini')
-    await assertGenericSelectionAvailable(generic, true)
+    // `gemini` is the historical ID of the owner-selected guided-image lane.
+    // Its configured model may be Gemini, GPT Image, or Seedream, so validate
+    // the resolved provider instead of requiring a Gemini key/model pair.
+    await assertGenericSelectionAvailable(generic)
     const usd = genericUnit * count(input)
     return {
       estimateUsd: usd,
       selection: {
         architecture: 'advanced',
         mode: input.mode,
-        provider: 'gemini',
+        provider: generic.provider,
         model: generic.model,
         providers: [generic.provider],
         models: [generic.model],
@@ -371,7 +380,7 @@ async function planAdvanced(
 
   await assertEngineAvailable('fashn')
   if (input.mode === 'try_on' && input.productImagePath && (input.modelImagePath || input.sourceImagePath)) {
-    await assertGenericSelectionAvailable(generic, false)
+    await assertGenericSelectionAvailable(generic)
     const chainEngine = await resolveChainEngine('fashn')
     const usd = count(input) * (
       chainVtonUnit(chainEngine) * attempts
@@ -438,7 +447,7 @@ async function planAuto(
       : 'kids_product_requires_labeled_child_model')
   }
   const generic = await genericSelection({ ...input, generationMode: 'quality', resolution: '2k' })
-  await assertGenericSelectionAvailable(generic, false)
+  await assertGenericSelectionAvailable(generic)
   const genericUnit = genericCost(
     generic.model,
     { ...input, generationMode: 'quality', resolution: '2k' },

@@ -64,21 +64,51 @@ import { buildStudioRunPlan } from '@/lib/creative-studio/studio-run-plan'
 import { getModelByRole } from '@/lib/tryon/model-library'
 import { getOrClassifyGarment } from '@/lib/tryon/art-director'
 import { isFashnConfigured } from '@/lib/fashn/client'
+import { readKv } from '@/lib/creative-studio/taste'
 
 beforeEach(() => {
   vi.mocked(getModelByRole).mockClear()
   vi.mocked(getOrClassifyGarment).mockClear()
   process.env.GEMINI_API_KEY = 'test-gemini-key'
+  vi.mocked(readKv).mockResolvedValue(null)
   process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET =
     'test-only-studio-run-confirmation-secret'
 })
 
 afterEach(() => {
   delete process.env.GEMINI_API_KEY
+  delete process.env.OPENAI_API_KEY
   delete process.env.CREATIVE_STUDIO_RUN_CONFIRMATION_SECRET
 })
 
 describe('Studio run aggregate plan cap', () => {
+  it('resolves the guided-image lane to the configured GPT Image 2 provider', async () => {
+    delete process.env.GEMINI_API_KEY
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+    vi.mocked(readKv).mockImplementation(async (key) => (
+      key === 'cs_image_models'
+        ? JSON.stringify({ standard: 'gpt-image-2', pro: 'gpt-image-2' })
+        : null
+    ))
+
+    const plan = await buildStudioRunPlan({
+      mode: 'try_on',
+      provider: 'gemini',
+      vtonEngine: 'gemini',
+      modelId: 'model-1',
+      modelImagePath: 'models/model-1.png',
+      productImagePath: 'products/product-1.png',
+      generationMode: 'fast',
+      resolution: '1k',
+      pipelineMode: 'preview',
+    })
+
+    expect(plan.selection.provider).toBe('openai')
+    expect(plan.selection.model).toBe('gpt-image-2')
+    expect(plan.selection.providers).toEqual(['openai'])
+    expect(plan.pinned.genericImageModel).toBe('gpt-image-2')
+  })
+
   it('pins an explicit V4 quality policy instead of mutable KV state', async () => {
     const base = {
       auto: true,
