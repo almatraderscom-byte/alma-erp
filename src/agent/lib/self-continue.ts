@@ -48,7 +48,11 @@ async function writeHops(conversationId: string, hops: number): Promise<void> {
 
 /** A turn that finished its work resets the chain. */
 export async function clearHops(conversationId: string): Promise<void> {
-  await prisma.agentKvSetting.delete({ where: { key: hopsKey(conversationId) } }).catch(() => {})
+  // Terminal cleanup can run more than once (for example, the stream owner and
+  // its durable reconciliation path may both observe completion). `delete`
+  // raises Prisma P2025 when the first cleanup already removed the row, which
+  // Prisma logs even though this fail-open call catches the rejection.
+  await prisma.agentKvSetting.deleteMany({ where: { key: hopsKey(conversationId) } }).catch(() => {})
 }
 
 /** The resume instruction the next hop wakes up to. */
