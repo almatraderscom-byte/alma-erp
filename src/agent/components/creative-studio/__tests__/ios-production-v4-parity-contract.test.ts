@@ -78,6 +78,7 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeMaskRepair).toContain('Upload mask & get exact estimate')
     expect(nativeMaskRepair).toContain('.alert("Signed estimate নিশ্চিত করবেন?"')
     expect(nativeMaskRepair).toContain('Confirm & Queue')
+    expect(nativeMaskRepair).toContain('let fittedWidth = min(available, fittedHeight * ratio)')
   })
 
   it('supports owner retention controls, lifecycle job controls and performance attribution', () => {
@@ -85,5 +86,11 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeWorkspace).toContain('controlLifecycle(')
     expect(nativeWorkspace).toContain('Performance & attribution')
     expect(nativeWorkspace).toContain('external publish')
+  })
+
+  it('keeps resolved project scope and voice readiness synchronized with the main studio', () => {
+    expect(nativeWorkspace).toContain('syncSelectedProject()')
+    expect(nativeWorkspace).toContain('CSV4CreateProjectSheet(model: model) { syncSelectedProject() }')
+    expect(nativeWorkspace).toContain('version.providerReady && version.status == "ready"')
   })
 })

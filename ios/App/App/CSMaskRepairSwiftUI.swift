@@ -93,7 +93,11 @@ struct CSMaskRepairSheet: View {
             GeometryReader { proxy in
                 let available = proxy.size.width
                 let ratio = sourceImage.size.width / max(1, sourceImage.size.height)
-                let height = min(available * 1.3, available / max(0.45, ratio))
+                // Draw on the image's actual aspect-fit rectangle. Using the
+                // full container would turn letterbox padding into source
+                // coordinates and shift portrait-image repairs.
+                let fittedHeight = min(proxy.size.height, available / max(0.01, ratio))
+                let fittedWidth = min(available, fittedHeight * ratio)
                 ZStack {
                     Image(uiImage: sourceImage).resizable().scaledToFit()
                     Canvas { context, size in
@@ -112,11 +116,12 @@ struct CSMaskRepairSheet: View {
                     .contentShape(Rectangle())
                     .gesture(drawGesture)
                 }
-                .frame(width: available, height: height)
+                .frame(width: fittedWidth, height: fittedHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.white.opacity(0.15)))
-                .onAppear { canvasSize = CGSize(width: available, height: height) }
-                .onChange(of: proxy.size) { _, _ in canvasSize = CGSize(width: available, height: height) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .onAppear { canvasSize = CGSize(width: fittedWidth, height: fittedHeight) }
+                .onChange(of: proxy.size) { _, _ in canvasSize = CGSize(width: fittedWidth, height: fittedHeight) }
             }.frame(height: min(UIScreen.main.bounds.width * 1.3, 500))
         } else {
             VStack(spacing: 10) {

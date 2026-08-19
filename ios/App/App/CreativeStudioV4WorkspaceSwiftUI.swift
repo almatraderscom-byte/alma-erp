@@ -612,8 +612,13 @@ struct CSV4WorkspaceScreen: View {
                 }
             }
         }
-        .task { await model.load(seedProject: seedProject) }
-        .sheet(isPresented: $createProjectSheet) { CSV4CreateProjectSheet(model: model) }
+        .task {
+            await model.load(seedProject: seedProject)
+            syncSelectedProject()
+        }
+        .sheet(isPresented: $createProjectSheet) {
+            CSV4CreateProjectSheet(model: model) { syncSelectedProject() }
+        }
         .alert("Campaign Pack queue করবেন?", isPresented: $confirmCampaign) {
             Button("বাতিল", role: .cancel) {}
             Button("Confirm & Queue") { Task { await model.queueCampaign(includeFamily: includeFamily, includeReel: includeReel) } }
@@ -670,7 +675,10 @@ struct CSV4WorkspaceScreen: View {
                 .font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette.coralLt)
             Picker("ব্র্যান্ড", selection: Binding(get: { model.selectedBrandID ?? "" }, set: { value in
                 model.selectedBrandID = value
-                Task { await model.reloadBrand() }
+                Task {
+                    await model.reloadBrand()
+                    syncSelectedProject()
+                }
             })) {
                 ForEach(model.brands) { Text("\($0.name) · \($0.role.capitalized)").tag($0.id) }
             }.pickerStyle(.menu)
@@ -824,7 +832,8 @@ struct CSV4WorkspaceScreen: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack { Text("Version \(version.version)").font(.subheadline.weight(.semibold)); Spacer(); status(version.status) }
                             HStack {
-                                if voice.activeVersionId != version.id && version.revokedAt == nil && version.providerDeletedAt == nil {
+                                if voice.activeVersionId != version.id && version.providerReady && version.status == "ready"
+                                    && version.revokedAt == nil && version.providerDeletedAt == nil {
                                     smallAction("Activate", color: .green) { Task { await model.updateVoiceVersion(version, action: "activate") } }
                                 }
                                 if version.revokedAt == nil && version.providerDeletedAt == nil {
@@ -967,11 +976,16 @@ struct CSV4WorkspaceScreen: View {
             .padding(.horizontal, 9).padding(.vertical, 6).background(color.opacity(0.12), in: Capsule())
             .disabled(model.actionBusy)
     }
+
+    private func syncSelectedProject() {
+        if let project = model.selectedProject { onProjectSelected(project) }
+    }
 }
 
 @available(iOS 17.0, *)
 private struct CSV4CreateProjectSheet: View {
     let model: CSV4WorkspaceVM
+    let onCreated: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var description = ""
@@ -988,7 +1002,14 @@ private struct CSV4CreateProjectSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("তৈরি") { Task { if await model.createProject(name: name, description: description) { dismiss() } } }
+                    Button("তৈরি") {
+                        Task {
+                            if await model.createProject(name: name, description: description) {
+                                onCreated()
+                                dismiss()
+                            }
+                        }
+                    }
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.actionBusy)
                 }
             }
