@@ -21,6 +21,9 @@
  */
 import { markStepDone, markStepFailed, markStepRunning } from '@/agent/lib/planner'
 
+/** Planning/control calls manage the checklist; they are not checklist work. */
+export const PLAN_CONTROL_TOOLS = new Set(['make_plan', 'execute_plan', 'get_plan'])
+
 export type AdvanceableStep = {
   id: string
   action: string
@@ -40,6 +43,7 @@ export function pickStepForTool(
   steps: AdvanceableStep[],
   toolName: string,
 ): AdvanceableStep | null {
+  if (PLAN_CONTROL_TOOLS.has(toolName)) return null
   const open = steps.filter((s) => s.status === 'pending' || s.status === 'running')
   if (!open.length) return null
   const named = open.find((s) => s.toolName === toolName)

@@ -20,6 +20,13 @@ describe('pickStepForTool', () => {
     expect(pickStepForTool(steps, 'get_orders')).toBeNull()
   })
 
+  it('never counts plan-control calls as doing the first work step', () => {
+    const steps = [step('s1', 'pending')]
+    expect(pickStepForTool(steps, 'make_plan')).toBeNull()
+    expect(pickStepForTool(steps, 'execute_plan')).toBeNull()
+    expect(pickStepForTool(steps, 'get_plan')).toBeNull()
+  })
+
   it('returns null when every step is finished', () => {
     expect(pickStepForTool([step('s1', 'done', 'get_orders')], 'get_orders')).toBeNull()
   })
