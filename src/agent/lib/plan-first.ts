@@ -71,6 +71,106 @@ export function chooseRoundBoundTool(input: {
   return input.iteration === 0 ? input.workflowTool : null
 }
 
+export function shouldInjectProspectivePlanTool(input: {
+  planFirst: boolean
+  iteration: number
+  lastBudgetRound: boolean
+  shippedToolNames: Iterable<string>
+}): boolean {
+  return input.planFirst
+    && input.iteration === 0
+    && !input.lastBudgetRound
+    && !new Set(input.shippedToolNames).has('make_plan')
+}
+
+export type ProspectivePlanToolInput = {
+  goal: string
+  steps: Array<{
+    action: string
+    tool_name?: string
+    depends_on?: string[]
+  }>
+}
+
+function cleanProspectiveStep(value: string): string {
+  return value
+    .replace(/^\s*(?:step\s*)?[0-9০-৯]+\s*[:.)–—-]?\s*/i, '')
+    .replace(/\.\s+(?:then|do\s+not|don't|never|এরপর|তারপর)\b[\s\S]*$/i, '.')
+    .trim()
+}
+
+/**
+ * Weak tool-calling heads occasionally send the plan under `plan`, use
+ * `{ step, description }`, or omit the goal even though the owner supplied an
+ * exact numbered checklist. The `make_plan` handler correctly rejects those
+ * malformed arguments, but a plan-first turn must not then fall back to a list
+ * of failed tool calls pretending to be the requested plan.
+ *
+ * Normalize only the prospective-plan control call. Valid schema-shaped input
+ * is preserved, while an explicit numbered owner checklist is the authoritative
+ * recovery source. This changes no business data and invents no completed work.
+ */
+export function normalizeProspectivePlanInput(
+  raw: unknown,
+  ownerInstructions: string,
+): ProspectivePlanToolInput {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {}
+  const rawSteps = Array.isArray(input.steps)
+    ? input.steps
+    : Array.isArray(input.plan) ? input.plan : []
+  const normalized = rawSteps.flatMap((entry) => {
+    if (typeof entry === 'string') {
+      const action = cleanProspectiveStep(entry)
+      return action ? [{ action }] : []
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+    const row = entry as Record<string, unknown>
+    const action = cleanProspectiveStep(String(
+      row.action ?? row.step ?? row.description ?? '',
+    ))
+    if (!action) return []
+    const tool = String(row.tool_name ?? row.toolName ?? '').trim()
+    const rawDeps = row.depends_on ?? row.dependsOn
+    const deps = Array.isArray(rawDeps)
+      ? rawDeps.map((value: unknown) => String(value).trim()).filter(Boolean)
+      : []
+    return [{
+      action,
+      ...(tool && tool !== 'none' ? { tool_name: tool } : {}),
+      ...(deps.length ? { depends_on: deps } : {}),
+    }]
+  })
+
+  let steps = normalized
+  if (steps.length < 2) {
+    const numbered: Array<{ action: string }> = []
+    const numberedPattern = /(?:^|[;\n:]\s*)(?:step\s*)?([1-9১-৯])[.)]?\s+(.+?)(?=(?:\s*;\s*|\n+)\s*(?:step\s*)?[1-9১-৯][.)]?\s+|$)/gi
+    for (const match of ownerInstructions.matchAll(numberedPattern)) {
+      const action = cleanProspectiveStep(match[2] ?? '')
+      if (action) numbered.push({ action })
+    }
+    if (numbered.length >= 2) steps = numbered
+  }
+
+  if (steps.length < 2) {
+    const clauses = ownerInstructions
+      .split(/\s*(?:;|\n|\bthen\b|তারপর|এরপর)\s*/i)
+      .map(cleanProspectiveStep)
+      .filter((value) => value.length >= 3)
+    if (clauses.length >= 2) steps = clauses.map((action) => ({ action }))
+  }
+
+  // A forced plan call should never create an unbounded wall of model-authored
+  // rows. Two through eight mirrors the native dock's useful checklist scale.
+  steps = steps.slice(0, 8)
+  const goal = String(input.goal ?? input.title ?? '').trim()
+    || ownerInstructions.trim().slice(0, 240)
+    || 'Requested multi-step work'
+  return { goal, steps }
+}
+
 /**
  * Is this the planning turn for a big job?
  *
