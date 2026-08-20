@@ -80,6 +80,24 @@ export const PROGRESS_UPDATE_EVERY = Number(process.env.AGENT_PROGRESS_UPDATE_EV
 export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES) || 4
 
 /**
+ * Owner report 2026-08-20 (screenshot: a 61-step ads-manager run, near-total
+ * silence after the opening minutes): the flat MAX_PROGRESS_NUDGES=4 was sized
+ * for 8-round turns. Browser/deep/long-run turns now run 30/60/120 rounds, so
+ * after nudge #4 (~round 12) the head could go silent for a HUNDRED more rounds
+ * and the counting rule — the thing that exists because prompt requests never
+ * held — silently expired. The cadence must hold for the WHOLE budget: one
+ * update owed per PROGRESS_UPDATE_EVERY silent rounds, however long the job.
+ * An EXPLICIT AGENT_MAX_PROGRESS_NUDGES stays an absolute cap (an operator
+ * setting 1 means 1, not a floor the scaling walks over); only the unset
+ * default scales with the budget.
+ */
+export function maxProgressNudgesFor(maxIterations: number): number {
+  const explicit = Number(process.env.AGENT_MAX_PROGRESS_NUDGES)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  return Math.max(MAX_PROGRESS_NUDGES, Math.ceil(maxIterations / PROGRESS_UPDATE_EVERY))
+}
+
+/**
  * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing
  * head). After this many tool ROUNDS (model re-invocations that requested tools)
  * the head is forced to stop spree-calling tools and may ONLY hand the rest of
