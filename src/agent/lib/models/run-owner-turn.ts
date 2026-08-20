@@ -2824,6 +2824,37 @@ async function* runAlternateProviderTurn(
           // state's wrap-up, not a mid-run update. Fall through to the normal
           // final path; never consume a wrap-up as interim.
           forcedUpdateRound = false
+          // A deadline-crossing forced draft skips BOTH verifiers (the normal
+          // verify-retry is deliberately off inside the shutdown window) — run
+          // the deterministic factual gate here and salvage to the evidence
+          // line on violation, so the unverified draft can never publish as
+          // the final answer (Codex P1 #816 r14).
+          if (crossedDeadlineNow && iterationText.trim()) {
+            const ledgerNow: ToolLedgerEntry[] = toolRecords.map((r) => ({
+              toolName: r.toolName,
+              success: r.status === 'success',
+              error: r.error ?? undefined,
+            }))
+            const crossingViolations = [
+              ...verifyClaimsAgainstLedger(iterationText.trim(), ledgerNow),
+              ...detectFabricatedStatViolations(iterationText.trim(), ledgerNow),
+              ...detectAsyncCompletionViolation(iterationText.trim(), summarizeAsyncJobEvidence(toolRecords)),
+              ...detectToolExecutionClaims(
+                iterationText.trim(),
+                toolRecords.map((r) => r.toolName),
+                (name) => Boolean(getCapability(name)),
+              ),
+            ]
+            if (crossingViolations.length > 0) {
+              supersedeLastDraft()
+              yield* supersedeStreamedDraft()
+              const okCount = toolRecords.filter((r) => r.status === 'success').length
+              iterationText =
+                `⚠️ সময়সীমার কারণে এখানে থেমেছি — এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে। ` +
+                'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+              timeline.push({ t: 'text', text: iterationText })
+            }
+          }
         }
         if (forcedUpdateRound && !signal?.aborted) {
           forcedUpdateRound = false
@@ -3334,10 +3365,15 @@ async function* runAlternateProviderTurn(
         // find_tool redirect — the whole registry is one hop away, so the honest
         // answer is "let me look it up", never "we can't".
         // find_tool itself always passes (it is the escape hatch).
+        // A deliberately tool-FREE round (forced update, wrap-ups) enforces
+        // even in shadow mode: with zero shipped tools every structured call
+        // is stale or hallucinated, and executing it would break the round's
+        // whole guarantee (Codex P1 #816 r14).
+        const emptyRoundEnforced = iterationTools.length === 0 && model.supportsTools
         if (
-          membershipGateMode !== 'off'
-          && roundToolNames.size > 0
-          && call.name !== FIND_TOOL_NAME
+          (membershipGateMode !== 'off' || emptyRoundEnforced)
+          && (roundToolNames.size > 0 || emptyRoundEnforced)
+          && (call.name !== FIND_TOOL_NAME || emptyRoundEnforced)
           && !roundToolNames.has(call.name)
         ) {
           void logToolEvent({
@@ -3350,7 +3386,7 @@ async function* runAlternateProviderTurn(
               shippedCount: roundToolNames.size,
             },
           })
-          if (membershipGateMode === 'on') {
+          if (membershipGateMode === 'on' || emptyRoundEnforced) {
             const blocked = {
               success: false as const,
               error:
