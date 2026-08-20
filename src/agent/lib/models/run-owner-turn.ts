@@ -2020,6 +2020,7 @@ async function* runAlternateProviderTurn(
   let budgetNudgeSent = false
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
+  let roundBudgetWrapSent = false
   // S0 — whose instruction this turn executes. An unattended Plan-Driver step
   // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
   // the autonomy ladder + money cap instead of inheriting Boss's own authority.
@@ -2277,6 +2278,28 @@ async function* runAlternateProviderTurn(
         ]
       }
 
+      // Codex P1 #811 round 2 — the ITERATION budget deserves the same courtesy
+      // as the serverless deadline: when the loop is on its FINAL round and the
+      // turn has been grinding tools, an interim progress line must not settle
+      // as the answer just because the budget ran dry. Tools are stripped for
+      // this last round (a call made here could never be read anyway — there is
+      // no next round) and the model is told to wrap up properly. Turns that
+      // finish naturally never reach their final round, so this costs nothing.
+      const lastBudgetRound = iteration >= maxIterations - 1 && toolRecords.length > 0
+      if (lastBudgetRound && !roundBudgetWrapSent && !nearDeadline) {
+        roundBudgetWrapSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। ' +
+              'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; ' +
+              'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+          },
+        ]
+      }
+
       // Over budget → strip ALL tools so the marketing head physically cannot
       // spree more; it must finish the marketing job itself and answer now.
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
@@ -2301,7 +2324,7 @@ async function* runAlternateProviderTurn(
       // past it is spend on work the owner may reject (and it buries the card).
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const budgetedTools =
-        nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || lastBudgetRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
         || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
           : premiumOverBudget || standardOverBudget
