@@ -2769,12 +2769,16 @@ async function* runAlternateProviderTurn(
         // final answer — then restore tools and resume the job. If even the
         // tool-free round came back empty, the harness writes the update from
         // evidence it directly observed (same pattern as the wrap-up salvage).
-        if (forcedUpdateRound && (nearDeadline || deadlineNudgeSent)) {
-          // Codex P1 #816 round 2: the clock entered the deadline window after
-          // escalation was scheduled — the round carried BOTH notes and its
-          // text is the deadline wrap-up. Fall through to the normal final
-          // path; never consume it as interim and burn rounds inside the 45s
-          // shutdown window.
+        if (
+          forcedUpdateRound
+          && (nearDeadline || deadlineNudgeSent || cardStaged
+            || overBudget || standardOverBudget || premiumOverBudget)
+        ) {
+          // Codex P1 #816 rounds 2+6: another wrap-up state became active on
+          // the same round (deadline window, staged card, or an exhausted head
+          // tool budget) — the round carried BOTH notes and its text is that
+          // state's wrap-up, not a mid-run update. Fall through to the normal
+          // final path; never consume a wrap-up as interim.
           forcedUpdateRound = false
         }
         if (forcedUpdateRound && !signal?.aborted) {
@@ -3793,6 +3797,9 @@ async function* runAlternateProviderTurn(
         // below with the combined summaries — neither may gain an extra round.
         || delegationAwaiting
         || (autoRanDelegationSummaries.length > 0 && autoRanDelegationSummaries.length === calls.length)
+        // A staged confirm card ends the working part of the turn (Codex P1
+        // #816 round 6) — the card wrap-up below owns the remaining rounds.
+        || confirmCardsEmitted > 0
       // The nudge was IGNORED — the round it was delivered into produced calls
       // and no prose (DS V4, live 2026-08-21, 40 silent steps). Escalate: the
       // next round ships an EMPTY tool list (same lever as the wrap-up round),
