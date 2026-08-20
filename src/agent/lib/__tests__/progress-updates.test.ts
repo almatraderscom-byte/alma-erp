@@ -100,10 +100,12 @@ describe('the budgets are stated, not guessed', () => {
 
   it('the flat constant survives as the floor for short standard turns', () => {
     expect(MAX_PROGRESS_NUDGES).toBeGreaterThan(0)
-    expect(maxProgressNudgesFor(8)).toBe(MAX_PROGRESS_NUDGES)
+    expect(maxProgressNudgesFor(8)).toBeGreaterThanOrEqual(MAX_PROGRESS_NUDGES)
   })
 
-  it('scales with the budget so a long job cannot outlive its updates', () => {
-    expect(maxProgressNudgesFor(120)).toBeGreaterThanOrEqual(Math.ceil(120 / PROGRESS_UPDATE_EVERY))
+  it('caps at the round budget — one nudge per round is the natural ceiling', () => {
+    // Batch-heavy runs owe a nudge nearly every round (Codex P2 #815); the
+    // cap must not exhaust before the budget does.
+    expect(maxProgressNudgesFor(120)).toBe(120)
   })
 })
