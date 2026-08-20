@@ -97,7 +97,12 @@ export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES)
 export function maxProgressNudgesFor(maxIterations: number): number {
   const explicit = Number(process.env.AGENT_MAX_PROGRESS_NUDGES)
   if (Number.isFinite(explicit) && explicit > 0) return explicit
-  return Math.max(MAX_PROGRESS_NUDGES, Math.ceil(maxIterations / PROGRESS_UPDATE_EVERY))
+  // The counter accumulates TOOL STEPS (calls), so a batch-heavy run can
+  // legitimately owe one nudge per model round — cap at the round budget
+  // itself (a nudge can only fire once per round, so this is the natural
+  // ceiling), never at rounds/cadence (Codex P2 #815: that exhausted the cap
+  // halfway through a run whose rounds each carried ≥cadence calls).
+  return Math.max(MAX_PROGRESS_NUDGES, maxIterations)
 }
 
 /**
