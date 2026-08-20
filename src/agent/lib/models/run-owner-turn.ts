@@ -3331,8 +3331,12 @@ async function* runAlternateProviderTurn(
       // many small owner-supervised steps that no cheap worker can take over, so
       // they neither burn the budget nor stay confined to the default cap.
       const browserRound = calls.length > 0 && calls.every((c) => c.name.startsWith('live_browser_'))
+      // A deliberately tool-free round whose calls will ALL be refused by the
+      // empty-round gate did no head work — counting it could flip the very
+      // next real round into the over-budget wrap-up (Codex P1 #816 r19).
+      const refusedHallucinationRound = iterationTools.length === 0 && model.supportsTools && calls.length > 0
       if (browserRound) maxIterations = BROWSER_TURN_MAX_ITERATIONS
-      else headToolRounds++
+      else if (!refusedHallucinationRound) headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
@@ -3903,7 +3907,11 @@ async function* runAlternateProviderTurn(
       // HERE, or the flag repeats forever (Codex P1 #816 r16). Wrap-up states
       // keep their precedence: they own the next round instead.
       if (forcedUpdateRound && calls.length > 0 && !signal?.aborted) {
-        if ((typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000)
+        const crossedNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+        // The deadline machinery must know about a mid-round crossing on THIS
+        // exit too (Codex P1 #816 r19) — turn-end salvage keys off it.
+        if (crossedNow && !deadlineNudgeSent) deadlineNudgeSent = true
+        if (crossedNow
           || nearDeadline || deadlineNudgeSent || cardStaged
           || overBudget || standardOverBudget || premiumOverBudget) {
           forcedUpdateRound = false
@@ -3911,6 +3919,21 @@ async function* runAlternateProviderTurn(
           yield* deliverForcedUpdateNow()
           continue
         }
+      }
+      // The reserved final-budget wrap-up round can ALSO come back as a stale
+      // structured call with no prose (Codex P1 #816 r19) — the calls===0
+      // salvage never runs, so synthesize the wrap-up here before the loop
+      // exits at the budget.
+      if (roundBudgetWrapSent && calls.length > 0 && !iterationText.trim() && !signal?.aborted
+        && iteration >= maxIterations - 1) {
+        const okCount = toolRecords.filter((r) => r.status === 'success').length
+        const wrapText =
+          `⚠️ এই টার্নের কাজের রাউন্ড-বাজেট শেষ হওয়ায় এখানে থেমেছি — ${okCount}টা ধাপ সফল হয়েছে। ` +
+          'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+        timeline.push({ t: 'text', text: wrapText })
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + wrapText
+        yield { type: 'text_delta', delta: sep + wrapText }
       }
 
       // ── Progress updates between phases (owner ask 2026-07-26) ─────────────
