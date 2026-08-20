@@ -1956,7 +1956,10 @@ async function* runAlternateProviderTurn(
   // rounds and speak once at the end. Asking politely in the prompt is a
   // request; counting rounds is a guarantee. These track how many tool rounds
   // have passed with nothing said to Boss, and cap how often we intervene.
-  let roundsSinceOwnerUpdate = 0
+  // Counts completed TOOL STEPS (individual calls), not model rounds — a
+  // batched round of 10 parallel calls is 10 steps of silent work to Boss
+  // (owner correction 2026-08-21: "2 ta dhap sesh holei short reply").
+  let stepsSinceOwnerUpdate = 0
   let progressNudges = 0
   let requirementRetries = 0
   let finalText = ''
@@ -2708,7 +2711,7 @@ async function* runAlternateProviderTurn(
         finalText += sep + iterationText
         yield* reconcileStreamedProse(iterationText, sep)
         // Boss heard something this round — the progress clock starts over.
-        roundsSinceOwnerUpdate = 0
+        stepsSinceOwnerUpdate = 0
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
@@ -3701,16 +3704,18 @@ async function* runAlternateProviderTurn(
       // onno kaje jaw." Today the head can run seven tool rounds and speak once,
       // at the end — Boss watches a spinner and learns nothing until it is over.
       //
-      // Counting rounds is the guarantee; asking in the prompt was the request
-      // that never held. After PROGRESS_UPDATE_EVERY silent tool rounds the head
-      // is told to write two lines and carry on. Bounded, so a long job gets a
-      // handful of updates rather than a running commentary, and the ask is
-      // explicitly NOT a stop: it must keep working in the same turn.
-      roundsSinceOwnerUpdate++
+      // Counting is the guarantee; asking in the prompt was the request that
+      // never held. Owner correction 2026-08-21: count individual TOOL CALLS
+      // (steps), not model rounds — one batched round of 10 parallel calls hid
+      // 10 steps of work behind a single tick of the old round counter. After
+      // PROGRESS_UPDATE_EVERY silent steps the head is told to write two lines
+      // and carry on. The ask is explicitly NOT a stop: it must keep working
+      // in the same turn.
+      stepsSinceOwnerUpdate += calls.length
       if (
         !signal?.aborted
         && !nearDeadline
-        && roundsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
+        && stepsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
         // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
         // upgrade below), so the cap is re-derived from the CURRENT budget.
         && progressNudges < maxProgressNudgesFor(maxIterations)
@@ -3722,13 +3727,13 @@ async function* runAlternateProviderTurn(
         && iteration < maxIterations - 1
       ) {
         progressNudges++
-        roundsSinceOwnerUpdate = 0
+        stepsSinceOwnerUpdate = 0
         messages = [
           ...messages,
           {
             role: 'user',
             content:
-              `[সিস্টেম নোট] Boss ${PROGRESS_UPDATE_EVERY}টা ধাপ ধরে তোমার কাছ থেকে কিছু শোনেননি — `
+              `[সিস্টেম নোট] Boss ${PROGRESS_UPDATE_EVERY}টা কাজের ধাপ হয়ে গেল, তোমার কাছ থেকে কিছু শোনেননি — `
               + 'এখন দুই লাইনে বলো: এ পর্যন্ত কী পেলে/করলে, আর এরপর কী করছ। '
               + 'সংখ্যা থাকলে সংখ্যা দাও। এটা থামার সংকেত নয় — বলেই কাজ চালিয়ে যাও, '
               + 'আর অনুমতি চাইতে হবে না।',
