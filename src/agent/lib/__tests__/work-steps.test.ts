@@ -7,6 +7,7 @@ import {
   parseWorkStepsSnapshot,
   projectRuntimeWorkSteps,
   projectWorkSteps,
+  rememberedWorkStepsBlockerForRefresh,
   reconcileDurableWorkStepsBlocker,
   workStepsSignature,
   type TrackerPlanRow,
@@ -39,6 +40,14 @@ describe('work_steps_snapshot projector', () => {
     const newer = { kind: 'question' as const, refId: 'ask-new' }
     expect(clearMatchingWorkStepsBlocker(newer, 'action-old')).toEqual(newer)
     expect(clearMatchingWorkStepsBlocker(newer, 'ask-new')).toBeNull()
+  })
+
+  it('preserves a queued worker blocker across generic running-step refreshes', () => {
+    const worker = { kind: 'worker' as const, refId: 'action-queued' }
+    const approval = { kind: 'approval' as const, refId: 'action-pending' }
+    expect(rememberedWorkStepsBlockerForRefresh(worker, true)).toEqual(worker)
+    expect(rememberedWorkStepsBlockerForRefresh(approval, true)).toBeNull()
+    expect(rememberedWorkStepsBlockerForRefresh(approval, false)).toEqual(approval)
   })
 
   it('never restores a blocker whose durable card/action is already terminal', () => {

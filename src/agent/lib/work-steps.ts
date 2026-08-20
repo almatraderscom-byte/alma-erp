@@ -51,6 +51,23 @@ export function clearMatchingWorkStepsBlocker(
   return blocker?.refId === refId ? null : blocker
 }
 
+/**
+ * A running plan row proves an owner prompt was resumed, but it does not prove
+ * an approved background worker finished. Keep non-owner blockers until their
+ * owning lifecycle explicitly clears them (and the durable row below confirms
+ * that they are still live).
+ */
+export function rememberedWorkStepsBlockerForRefresh(
+  blocker: WorkStepsBlocker | null,
+  hasRunningStep: boolean,
+): WorkStepsBlocker | null {
+  if (!blocker || !hasRunningStep) return blocker
+  if (blocker.kind === 'approval' || blocker.kind === 'question' || blocker.kind === 'model_switch') {
+    return null
+  }
+  return blocker
+}
+
 /** Reconcile a persisted blocker with the durable card/action row read now. */
 export function reconcileDurableWorkStepsBlocker(
   blocker: WorkStepsBlocker | null,
@@ -374,7 +391,10 @@ export async function syncPlanTracker(
         ? opts.blockedBy
         : opts.clearBlockedByRefId !== undefined
           ? clearMatchingWorkStepsBlocker(rememberedBlockedBy, opts.clearBlockedByRefId)
-          : (plan.steps.some((s) => s.status === 'running') ? null : rememberedBlockedBy)
+          : rememberedWorkStepsBlockerForRefresh(
+              rememberedBlockedBy,
+              plan.steps.some((s) => s.status === 'running'),
+            )
       // The same advisory-locked transaction that writes the snapshot verifies
       // the referenced durable row first. A stale turn can therefore never
       // restore waiting_owner/waiting_worker after an answer or terminal worker
