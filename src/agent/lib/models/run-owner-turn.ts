@@ -1974,6 +1974,15 @@ async function* runAlternateProviderTurn(
   // (owner correction 2026-08-21: "2 ta dhap sesh holei short reply").
   let stepsSinceOwnerUpdate = 0
   let progressNudges = 0
+  // Owner live-catch 2026-08-21 (40 silent steps AFTER the step-cadence nudges
+  // shipped): DS V4 in a 200k-token conversation answers the [সিস্টেম নোট] with
+  // MORE TOOLS and no text — a prompt request, ignored like every prompt-only
+  // rule before it. The escalation is deterministic: when the round after a
+  // nudge produced calls but no owner-visible prose, the NEXT round runs with
+  // an EMPTY tool list, so the model can only write the update; the round
+  // after that resumes work with tools restored.
+  let updateNudgePending = false
+  let forcedUpdateRound = false
   let requirementRetries = 0
   let finalText = ''
   let delegationAwaiting = false
@@ -2268,6 +2277,24 @@ async function* runAlternateProviderTurn(
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        // Boss's own message outranks the cadence machinery — the next rounds
+        // serve HIS instruction, never a pending forced update (Codex P1 #816
+        // round 8: the flag left set consumed his answer as a cadence update).
+        forcedUpdateRound = false
+        updateNudgePending = false
+        // Steering also SUPERSEDES any queued cadence note still sitting at the
+        // transcript tail (Codex P1 #816 r12): the flags are cleared, but the
+        // appended [আপডেট রাউন্ড]/[সিস্টেম নোট] user message would still be the
+        // last instruction the model reads. The notes are only ever appended
+        // after the last provider call, so trimming trailing entries is safe.
+        while (messages.length > 0) {
+          const tail = messages[messages.length - 1]
+          const tailText = 'content' in tail && typeof tail.content === 'string' ? tail.content : ''
+          if (tail.role === 'user'
+            && (tailText.includes('[আপডেট রাউন্ড]') || tailText.startsWith('[সিস্টেম নোট] Boss'))) {
+            messages = messages.slice(0, -1)
+          } else break
+        }
         currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
           .filter(Boolean)
           .join('\n')
@@ -2377,7 +2404,7 @@ async function* runAlternateProviderTurn(
       // past it is spend on work the owner may reject (and it buries the card).
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const budgetedTools =
-        nearDeadline || lastBudgetRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || lastBudgetRound || forcedUpdateRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
         || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
           : premiumOverBudget || standardOverBudget
@@ -2403,7 +2430,7 @@ async function* runAlternateProviderTurn(
       // result no round remains to read, and the forced call would silence the
       // wrap-up prose. The unmet contract is reported by the done-gate instead.
       const contractToolMissing = Boolean(
-        !lastBudgetRound
+        !lastBudgetRound && !forcedUpdateRound
         && requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
       )
       // The prospective plan is controller-required UI/control state. It must
@@ -2719,12 +2746,114 @@ async function* runAlternateProviderTurn(
         if (text) yield { type: 'text_delta', delta: sepBefore + text }
       }
 
+      // ONE factual gate for forced-update prose, used by both the interim
+      // delivery and the deadline-crossing salvage (Codex P1 #816 r15 — the
+      // two inline copies had drifted apart within three review rounds).
+      const forcedUpdateViolations = (text: string) => [
+        ...verifyClaimsAgainstLedger(text, toolRecords.map((r) => ({
+          toolName: r.toolName,
+          success: r.status === 'success',
+          error: r.error ?? undefined,
+        }))),
+        ...detectFabricatedStatViolations(text, toolRecords.map((r) => ({
+          toolName: r.toolName,
+          success: r.status === 'success',
+          error: r.error ?? undefined,
+        }))),
+        ...detectAsyncCompletionViolation(text, summarizeAsyncJobEvidence(toolRecords)),
+        ...detectToolExecutionClaims(
+          text,
+          toolRecords.map((r) => r.toolName),
+          (name) => Boolean(getCapability(name)),
+        ),
+        ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(text)
+          ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
+          : []),
+      ]
+
+      // Deliver the owed forced update from THIS round's prose (or the
+      // harness evidence line), reset the cadence, and hand back an exchange
+      // that never ends on an assistant message. Round-scope so BOTH exits of
+      // a forced round reach it — text-only rounds and rounds whose stale
+      // hallucinated calls the empty-round gate refused (Codex P1 #816 r16).
+      const deliverForcedUpdateNow = function* (): Generator<AgentEvent> {
+        forcedUpdateRound = false
+        let updateText = iterationText.trim()
+        if (updateText && forcedUpdateViolations(updateText).length > 0) {
+          console.info('[progress-cadence] forced update failed claim check — harness line used', {
+            conversationId, model: model.id,
+          })
+          supersedeLastDraft()
+          yield* supersedeStreamedDraft()
+          updateText = ''
+        }
+        if (!updateText) {
+          const okCount = toolRecords.filter((r) => r.status === 'success').length
+          const lastTools = toolRecords
+            .filter((r) => r.status === 'success')
+            .slice(-3)
+            .map((r) => toolDisplay(r.toolName).label)
+            .join(' · ')
+          updateText =
+            `এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে`
+            + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
+            + ' — কাজ চলছে।'
+          timeline.push({ t: 'text', text: updateText })
+        }
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + updateText
+        yield* reconcileStreamedProse(updateText, sep)
+        stepsSinceOwnerUpdate = 0
+        spokeSinceProgress = true
+        preambleSpoken = true
+        console.info('[progress-cadence] forced update delivered', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
+        // Never end the transcript on an assistant message (Codex P1 #816 r3).
+        messages = [
+          ...messages,
+          { role: 'assistant', content: updateText },
+          {
+            role: 'user',
+            content: INTERNAL_NUDGE_MARKER + 'আপডেট পৌঁছেছে — টুল ফিরে এসেছে, এখন কাজ চালিয়ে যাও।',
+          },
+        ]
+      }
+
+      // A forced round's prose takes the factual gate BEFORE it is emitted —
+      // clearing the flag first let a mixed prose+stale-call response bypass
+      // every verifier (Codex P1 #816 r18). A violating draft is superseded
+      // and the flag stays set, so the redelivery site publishes the harness
+      // evidence line instead.
+      if (forcedUpdateRound && iterationText.trim() && calls.length > 0
+        && forcedUpdateViolations(iterationText.trim()).length > 0) {
+        console.info('[progress-cadence] forced update failed claim check — harness line used', {
+          conversationId, model: model.id,
+        })
+        supersedeLastDraft()
+        yield* supersedeStreamedDraft()
+        iterationText = ''
+      }
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
         yield* reconcileStreamedProse(iterationText, sep)
         // Boss heard something this round — the progress clock starts over.
         stepsSinceOwnerUpdate = 0
+        // The nudge was answered the polite way (text alongside the calls) —
+        // no escalation owed.
+        updateNudgePending = false
+        // A forced round that carried prose next to a (refused) stale call:
+        // this prose WAS the update — the redelivery site below must not
+        // publish a second copy (Codex P1 #816 r17). Sample the deadline
+        // BEFORE clearing (Codex P1 r20): a crossing during this round must
+        // still reach the deadline machinery.
+        if (forcedUpdateRound
+          && typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+          && !deadlineNudgeSent) {
+          deadlineNudgeSent = true
+        }
+        forcedUpdateRound = false
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
@@ -2738,6 +2867,24 @@ async function* runAlternateProviderTurn(
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          // Same rule as the top-of-round claim (Codex P1 #816 round 8): the
+          // owner's instruction owns the next rounds — drop any pending
+          // cadence state so his answer is never consumed as an update.
+          forcedUpdateRound = false
+          updateNudgePending = false
+          // Steering also SUPERSEDES any queued cadence note still sitting at the
+          // transcript tail (Codex P1 #816 r12): the flags are cleared, but the
+          // appended [আপডেট রাউন্ড]/[সিস্টেম নোট] user message would still be the
+          // last instruction the model reads. The notes are only ever appended
+          // after the last provider call, so trimming trailing entries is safe.
+          while (messages.length > 0) {
+            const tail = messages[messages.length - 1]
+            const tailText = 'content' in tail && typeof tail.content === 'string' ? tail.content : ''
+            if (tail.role === 'user'
+              && (tailText.includes('[আপডেট রাউন্ড]') || tailText.startsWith('[সিস্টেম নোট] Boss'))) {
+              messages = messages.slice(0, -1)
+            } else break
+          }
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
@@ -2762,6 +2909,53 @@ async function* runAlternateProviderTurn(
               .map((item) => item.clientMessageId)
               .filter((id): id is string => Boolean(id)),
           }
+          continue
+        }
+        // ── Forced update round delivers here (owner escalation 2026-08-21) ──
+        // Tools were stripped for exactly one round so the owed mid-run update
+        // physically had to be prose. Emit it as an INTERIM line — never the
+        // final answer — then restore tools and resume the job. If even the
+        // tool-free round came back empty, the harness writes the update from
+        // evidence it directly observed (same pattern as the wrap-up salvage).
+        // Deadline sampled FRESH — the awaited provider stream can cross into
+        // the 45s window after the round-start sample (Codex P2 #816). A fresh
+        // crossing must ALSO mark the deadline machinery (Codex P1 r11): the
+        // turn-end salvage keys off deadlineNudgeSent, and without it a
+        // mid-window ending was classified as a clean finish.
+        const crossedDeadlineNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+        if (forcedUpdateRound && crossedDeadlineNow && !deadlineNudgeSent) deadlineNudgeSent = true
+        if (
+          forcedUpdateRound
+          && (crossedDeadlineNow
+            || nearDeadline || deadlineNudgeSent || cardStaged
+            || overBudget || standardOverBudget || premiumOverBudget)
+        ) {
+          // Codex P1 #816 rounds 2+6: another wrap-up state became active on
+          // the same round (deadline window, staged card, or an exhausted head
+          // tool budget) — the round carried BOTH notes and its text is that
+          // state's wrap-up, not a mid-run update. Fall through to the normal
+          // final path; never consume a wrap-up as interim.
+          forcedUpdateRound = false
+          // A deadline-crossing forced draft skips BOTH verifiers (the normal
+          // verify-retry is deliberately off inside the shutdown window) — run
+          // the deterministic factual gate here and salvage to the evidence
+          // line on violation, so the unverified draft can never publish as
+          // the final answer (Codex P1 #816 r14).
+          if (crossedDeadlineNow && iterationText.trim()) {
+            const crossingViolations = forcedUpdateViolations(iterationText.trim())
+            if (crossingViolations.length > 0) {
+              supersedeLastDraft()
+              yield* supersedeStreamedDraft()
+              const okCount = toolRecords.filter((r) => r.status === 'success').length
+              iterationText =
+                `⚠️ সময়সীমার কারণে এখানে থেমেছি — এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে। ` +
+                'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+              timeline.push({ t: 'text', text: iterationText })
+            }
+          }
+        }
+        if (forcedUpdateRound && !signal?.aborted) {
+          yield* deliverForcedUpdateNow()
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
@@ -3157,8 +3351,12 @@ async function* runAlternateProviderTurn(
       // many small owner-supervised steps that no cheap worker can take over, so
       // they neither burn the budget nor stay confined to the default cap.
       const browserRound = calls.length > 0 && calls.every((c) => c.name.startsWith('live_browser_'))
+      // A deliberately tool-free round whose calls will ALL be refused by the
+      // empty-round gate did no head work — counting it could flip the very
+      // next real round into the over-budget wrap-up (Codex P1 #816 r19).
+      const refusedHallucinationRound = iterationTools.length === 0 && model.supportsTools && calls.length > 0
       if (browserRound) maxIterations = BROWSER_TURN_MAX_ITERATIONS
-      else headToolRounds++
+      else if (!refusedHallucinationRound) headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
@@ -3192,10 +3390,15 @@ async function* runAlternateProviderTurn(
         // find_tool redirect — the whole registry is one hop away, so the honest
         // answer is "let me look it up", never "we can't".
         // find_tool itself always passes (it is the escape hatch).
+        // A deliberately tool-FREE round (forced update, wrap-ups) enforces
+        // even in shadow mode: with zero shipped tools every structured call
+        // is stale or hallucinated, and executing it would break the round's
+        // whole guarantee (Codex P1 #816 r14).
+        const emptyRoundEnforced = iterationTools.length === 0 && model.supportsTools
         if (
-          membershipGateMode !== 'off'
-          && roundToolNames.size > 0
-          && call.name !== FIND_TOOL_NAME
+          (membershipGateMode !== 'off' || emptyRoundEnforced)
+          && (roundToolNames.size > 0 || emptyRoundEnforced)
+          && (call.name !== FIND_TOOL_NAME || emptyRoundEnforced)
           && !roundToolNames.has(call.name)
         ) {
           void logToolEvent({
@@ -3208,7 +3411,7 @@ async function* runAlternateProviderTurn(
               shippedCount: roundToolNames.size,
             },
           })
-          if (membershipGateMode === 'on') {
+          if (membershipGateMode === 'on' || emptyRoundEnforced) {
             const blocked = {
               success: false as const,
               error:
@@ -3216,10 +3419,16 @@ async function* runAlternateProviderTurn(
                 `আগে find_tool দিয়ে খুঁজে নাও (পুরো রেজিস্ট্রি এক হপ দূরে) — ` +
                 `Boss-কে "এই সক্ষমতা নেই" বলবে না।`,
             }
-            toolRecords.push({
-              id: call.id, toolName: call.name, input: call.input,
-              output: null, status: 'error', durationMs: 0, error: blocked.error,
-            })
+            // A hallucination refused on a deliberately tool-free round is NOT
+            // a real failed step — recording it would let e.g. a fake
+            // save_memory read as a blocked requirement contract (Codex P1
+            // #816 r17). The provider still gets its tool_result.
+            if (!emptyRoundEnforced) {
+              toolRecords.push({
+                id: call.id, toolName: call.name, input: call.input,
+                output: null, status: 'error', durationMs: 0, error: blocked.error,
+              })
+            }
             toolResults.push({ id: call.id, name: call.name, result: blocked })
             yield {
               type: 'tool_end', id: call.id, name: call.name,
@@ -3716,6 +3925,41 @@ async function* runAlternateProviderTurn(
 
       messages = appendToolExchange(messages, calls, toolResults)
 
+      // A forced round that came back with structured calls: the empty-round
+      // gate refused them all (nothing executed), but calls.length > 0 means
+      // the text-only delivery path above never ran — deliver the owed update
+      // HERE, or the flag repeats forever (Codex P1 #816 r16). Wrap-up states
+      // keep their precedence: they own the next round instead.
+      if (forcedUpdateRound && calls.length > 0 && !signal?.aborted) {
+        const crossedNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+        // The deadline machinery must know about a mid-round crossing on THIS
+        // exit too (Codex P1 #816 r19) — turn-end salvage keys off it.
+        if (crossedNow && !deadlineNudgeSent) deadlineNudgeSent = true
+        if (crossedNow
+          || nearDeadline || deadlineNudgeSent || cardStaged
+          || overBudget || standardOverBudget || premiumOverBudget) {
+          forcedUpdateRound = false
+        } else {
+          yield* deliverForcedUpdateNow()
+          continue
+        }
+      }
+      // The reserved final-budget wrap-up round can ALSO come back as a stale
+      // structured call with no prose (Codex P1 #816 r19) — the calls===0
+      // salvage never runs, so synthesize the wrap-up here before the loop
+      // exits at the budget.
+      if (roundBudgetWrapSent && calls.length > 0 && !iterationText.trim() && !signal?.aborted
+        && iteration >= maxIterations - 1) {
+        const okCount = toolRecords.filter((r) => r.status === 'success').length
+        const wrapText =
+          `⚠️ এই টার্নের কাজের রাউন্ড-বাজেট শেষ হওয়ায় এখানে থেমেছি — ${okCount}টা ধাপ সফল হয়েছে। ` +
+          'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+        timeline.push({ t: 'text', text: wrapText })
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + wrapText
+        yield { type: 'text_delta', delta: sep + wrapText }
+      }
+
       // ── Progress updates between phases (owner ask 2026-07-26) ─────────────
       // "ekta part er jnne koyek ta dhap sesh kore amk age update daw, erpor abr
       // onno kaje jaw." Today the head can run seven tool rounds and speak once,
@@ -3728,10 +3972,76 @@ async function* runAlternateProviderTurn(
       // PROGRESS_UPDATE_EVERY silent steps the head is told to write two lines
       // and carry on. The ask is explicitly NOT a stop: it must keep working
       // in the same turn.
-      stepsSinceOwnerUpdate += calls.length
+      // Refused hallucinations did no work — they are not silent STEPS either
+      // (Codex P2 #816 r20).
+      stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : calls.length
+      // Terminal gates outrank the cadence (Codex P1 #816 round 4): a failed
+      // mandatory step or a staged owner question ENDS the turn below — an
+      // escalation `continue` here would skip those checks, restore tools and
+      // let the model run past a failure the loop had already ruled terminal.
+      // Computed ONCE, used by the gates below unchanged.
+      const terminalContractFailure = roundContractFailure
+        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      const roundHitTerminalGate =
+        Boolean(terminalContractFailure)
+        || emittedAskCards.length > 0
+        // Delegation outcomes are terminal too (Codex P1 #816 round 5): an
+        // approval handoff waits for Boss, and an all-delegation round settles
+        // below with the combined summaries — neither may gain an extra round.
+        || delegationAwaiting
+        || (autoRanDelegationSummaries.length > 0 && autoRanDelegationSummaries.length === calls.length)
+        // A staged confirm card ends the working part of the turn (Codex P1
+        // #816 round 6) — the card wrap-up below owns the remaining rounds.
+        || confirmCardsEmitted > 0
+      // The nudge was IGNORED — the round it was delivered into produced calls
+      // and no prose (DS V4, live 2026-08-21, 40 silent steps). Escalate: the
+      // next round ships an EMPTY tool list (same lever as the wrap-up round),
+      // so the only thing the model can do is write the owed two-line update;
+      // the round after that resumes work with tools restored.
+      // Recomputed FRESH here — the round-start consts are stale once this
+      // round's calls incremented headToolRounds. A budget-exhausted head's
+      // next round belongs to the budget machinery (wrap-up or delegate-only
+      // tools, Codex P1 #816 round 7) — never to a forced update.
+      const headBudgetExhaustedNow =
+        (isMarketingHead && headToolRounds >= headToolBudgetFor(MARKETING_HEAD_TOOL_BUDGET, workClass))
+        || (isPremiumHead && delegateOnlyNeutral.length > 0
+          && headToolRounds >= headToolBudgetFor(HEAD_TOOL_BUDGET, workClass))
+        || (standardBudgetLive && headToolRounds >= headToolBudgetFor(STANDARD_HEAD_TOOL_BUDGET, workClass))
+      if (
+        updateNudgePending
+        && !signal?.aborted
+        && !nearDeadline
+        && !lastBudgetRound
+        && !roundHitTerminalGate
+        && !headBudgetExhaustedNow
+        // Codex P1 #816: the forced update consumes iteration+1 as an interim
+        // round — a concluding round must still remain after it, so escalation
+        // needs TWO rounds of headroom, not one. Too late to fit both → the
+        // wrap-up round covers the ending instead.
+        && iteration < maxIterations - 2
+      ) {
+        updateNudgePending = false
+        forcedUpdateRound = true
+        console.info('[progress-cadence] nudge ignored — forcing a tool-free update round', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              INTERNAL_NUDGE_MARKER
+              + '[আপডেট রাউন্ড] এই রাউন্ডে কোনো টুল নেই — শুধু Boss-এর জন্য দুই লাইন লেখো: '
+              + 'এ পর্যন্ত কী পেলে/করলে (সংখ্যাসহ), আর এরপর কী করছ। এরপরের রাউন্ডেই টুল ফিরে পাবে, কাজ চলবে।',
+          },
+        ]
+        continue
+      }
       if (
         !signal?.aborted
         && !nearDeadline
+        && !forcedUpdateRound
+        && !roundHitTerminalGate
         && stepsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
         // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
         // upgrade below), so the cap is re-derived from the CURRENT budget.
@@ -3745,6 +4055,10 @@ async function* runAlternateProviderTurn(
       ) {
         progressNudges++
         stepsSinceOwnerUpdate = 0
+        updateNudgePending = true
+        console.info('[progress-cadence] update nudge injected', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
         messages = [
           ...messages,
           {
@@ -3892,8 +4206,7 @@ async function* runAlternateProviderTurn(
       // The previous code noticed the failure only AFTER letting the model run
       // again; in the live SEO proof that extra round tried target #2 and wrote a
       // checkpoint, adding cost and visible "same work again" behaviour.
-      const terminalContractFailure = roundContractFailure
-        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      // (Computed above, before the cadence blocks, so no nudge can skip it.)
       if (terminalContractFailure) {
         const note = contractToolFailureText(terminalContractFailure)
         const sep = finalText ? '\n\n' : ''
