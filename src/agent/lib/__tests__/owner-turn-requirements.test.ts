@@ -50,23 +50,23 @@ describe('owner turn requirement contract', () => {
   })
 })
 
-describe('BP2 gates (P3 plan-first / P2 grounding) — flag-gated, default no-op', () => {
+describe('BP2 requirements (P3 plan-first / P2 grounding)', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.resetModules()
   })
 
-  it('stays false when the rollback flags are explicitly off', async () => {
+  it('keeps prospective planning on while the grounding rollback flag is off', async () => {
     vi.stubEnv('AGENT_PLAN_GATE', 'off')
     vi.stubEnv('AGENT_GROUNDING_GATE', 'off')
     vi.resetModules()
     const { deriveOwnerTurnRequirements: derive } = await import('@/agent/lib/owner-turn-requirements')
-    expect(derive('প্রথমে অর্ডার দেখো তারপর প্যাক করো তারপর কুরিয়ারে দাও').planFirst).toBe(false)
+    expect(derive('প্রথমে অর্ডার দেখো তারপর প্যাক করো তারপর কুরিয়ারে দাও').planFirst).toBe(true)
     expect(derive('আজকের অর্ডার কত?').groundingRequired).toBe(false)
   })
 
-  it('AGENT_PLAN_GATE=on marks clearly multi-step work, not simple messages', async () => {
-    vi.stubEnv('AGENT_PLAN_GATE', 'on')
+  it('marks clearly multi-step work regardless of the retired plan flag', async () => {
+    vi.stubEnv('AGENT_PLAN_GATE', 'off')
     vi.resetModules()
     const { deriveOwnerTurnRequirements: derive } = await import('@/agent/lib/owner-turn-requirements')
     expect(derive('প্রথমে অর্ডার দেখো তারপর প্যাক করো তারপর কুরিয়ারে দাও').planFirst).toBe(true)
