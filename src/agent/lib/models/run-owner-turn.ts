@@ -2781,7 +2781,10 @@ async function* runAlternateProviderTurn(
         // evidence it directly observed (same pattern as the wrap-up salvage).
         if (
           forcedUpdateRound
-          && (nearDeadline || deadlineNudgeSent || cardStaged
+          // Deadline sampled FRESH — the awaited provider stream can cross
+          // into the 45s window after the round-start sample (Codex P2 #816).
+          && ((typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000)
+            || nearDeadline || deadlineNudgeSent || cardStaged
             || overBudget || standardOverBudget || premiumOverBudget)
         ) {
           // Codex P1 #816 rounds 2+6: another wrap-up state became active on
@@ -2805,7 +2808,12 @@ async function* runAlternateProviderTurn(
               success: r.status === 'success',
               error: r.error ?? undefined,
             }))
-            const updateViolations = verifyClaimsAgainstLedger(updateText, updateLedger)
+            const updateViolations = [
+              ...verifyClaimsAgainstLedger(updateText, updateLedger),
+              // Full factual gate, not just claim/ledger (Codex P1 #816 r10):
+              // an invented live figure after non-read tools must also fail.
+              ...detectFabricatedStatViolations(updateText, updateLedger),
+            ]
             if (updateViolations.length > 0) {
               console.info('[progress-cadence] forced update failed claim check — harness line used', {
                 conversationId, model: model.id, violations: updateViolations.length,
