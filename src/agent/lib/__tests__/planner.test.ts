@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { PlanStep } from '@/agent/lib/planner'
 
 const mockPrisma = {
+  $transaction: vi.fn(),
+  $queryRaw: vi.fn(),
   agentPlan: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -23,7 +25,12 @@ const mockPrisma = {
 }
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockPrisma.$transaction.mockImplementation(
+    async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+  )
+})
 
 /** Fixture builder — every step carries the S0 retry fields. */
 const step = (s: Partial<PlanStep> & { id: string; action: string }): PlanStep => ({
@@ -73,6 +80,7 @@ describe('planner', () => {
       _agentPlanStepId: 'step-original',
       _agentPlanStepIds: ['step-original', 'step-other', 'step-other'],
     })).toEqual(['step-original', 'step-other'])
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2)
   })
 
   it('settles linked rows only from durable terminal outcomes', async () => {
@@ -131,6 +139,7 @@ describe('planner', () => {
     mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ status: 'running', result: null })
     mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
     await expect(linkAskCardToPlanStep('ask-1', 'step-1')).resolves.toBe(true)
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledOnce()
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith({
       where: { id: 'step-1', status: { in: ['pending', 'running'] } },
       data: { result: { [ASK_CARD_PLAN_STEP_RESULT_KEY]: 'ask-1' } },

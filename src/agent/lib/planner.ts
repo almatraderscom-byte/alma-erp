@@ -343,29 +343,36 @@ export async function linkPendingActionToPlanStep(
   pendingActionId: string,
   stepId: string,
 ): Promise<boolean> {
-  const action = await db.agentPendingAction.findUnique({
-    where: { id: pendingActionId },
-    select: { payload: true },
-  })
-  if (!action) return false
-  const payload = jsonRecord(action.payload)
-  const existing = linkedPlanStepIdsFromPendingActionPayload(payload)
-  if (existing.includes(stepId)) return true
-  // A deduped action may satisfy a later prospective row too. Preserve the
-  // first card owner as the compatibility/primary link and append followers;
-  // execution then settles every row represented by the one real action.
-  const linkedStepIds = [...existing, stepId]
-  await db.agentPendingAction.update({
-    where: { id: pendingActionId },
-    data: {
-      payload: {
-        ...payload,
-        [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: linkedStepIds[0],
-        [PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY]: linkedStepIds,
+  return db.$transaction(async (tx: typeof db) => {
+    // The card id is deterministic and may be rediscovered by overlapping
+    // turns. Serialize its JSON read→append→write so two follower rows cannot
+    // both return success while the last writer silently drops the other.
+    const lockKey = `pending-action-plan:${pendingActionId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+    const action = await tx.agentPendingAction.findUnique({
+      where: { id: pendingActionId },
+      select: { payload: true },
+    })
+    if (!action) return false
+    const payload = jsonRecord(action.payload)
+    const existing = linkedPlanStepIdsFromPendingActionPayload(payload)
+    if (existing.includes(stepId)) return true
+    // A deduped action may satisfy a later prospective row too. Preserve the
+    // first card owner as the compatibility/primary link and append followers;
+    // execution then settles every row represented by the one real action.
+    const linkedStepIds = [...existing, stepId]
+    await tx.agentPendingAction.update({
+      where: { id: pendingActionId },
+      data: {
+        payload: {
+          ...payload,
+          [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: linkedStepIds[0],
+          [PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY]: linkedStepIds,
+        },
       },
-    },
+    })
+    return true
   })
-  return true
 }
 
 /**
@@ -379,19 +386,23 @@ export async function linkAskCardToPlanStep(
   askCardId: string,
   stepId: string,
 ): Promise<boolean> {
-  const [card, step] = await Promise.all([
-    db.agentAskCard.findUnique({ where: { id: askCardId }, select: { id: true } }),
-    db.agentPlanStep.findUnique({ where: { id: stepId }, select: { status: true, result: true } }),
-  ])
-  if (!card || !step || !['pending', 'running'].includes(String(step.status))) return false
-  const result = jsonRecord(step.result)
-  const existing = linkedAskCardIdFromPlanStepResult(result)
-  if (existing) return existing === askCardId
-  const linked = await db.agentPlanStep.updateMany({
-    where: { id: stepId, status: { in: ['pending', 'running'] } },
-    data: { result: { ...result, [ASK_CARD_PLAN_STEP_RESULT_KEY]: askCardId } },
+  return db.$transaction(async (tx: typeof db) => {
+    const lockKey = `ask-card-plan-step:${stepId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+    const [card, step] = await Promise.all([
+      tx.agentAskCard.findUnique({ where: { id: askCardId }, select: { id: true } }),
+      tx.agentPlanStep.findUnique({ where: { id: stepId }, select: { status: true, result: true } }),
+    ])
+    if (!card || !step || !['pending', 'running'].includes(String(step.status))) return false
+    const result = jsonRecord(step.result)
+    const existing = linkedAskCardIdFromPlanStepResult(result)
+    if (existing) return existing === askCardId
+    const linked = await tx.agentPlanStep.updateMany({
+      where: { id: stepId, status: { in: ['pending', 'running'] } },
+      data: { result: { ...result, [ASK_CARD_PLAN_STEP_RESULT_KEY]: askCardId } },
+    })
+    return linked.count === 1
   })
-  return linked.count === 1
 }
 
 /**
