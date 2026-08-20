@@ -2779,11 +2779,16 @@ async function* runAlternateProviderTurn(
         // final answer — then restore tools and resume the job. If even the
         // tool-free round came back empty, the harness writes the update from
         // evidence it directly observed (same pattern as the wrap-up salvage).
+        // Deadline sampled FRESH — the awaited provider stream can cross into
+        // the 45s window after the round-start sample (Codex P2 #816). A fresh
+        // crossing must ALSO mark the deadline machinery (Codex P1 r11): the
+        // turn-end salvage keys off deadlineNudgeSent, and without it a
+        // mid-window ending was classified as a clean finish.
+        const crossedDeadlineNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+        if (forcedUpdateRound && crossedDeadlineNow && !deadlineNudgeSent) deadlineNudgeSent = true
         if (
           forcedUpdateRound
-          // Deadline sampled FRESH — the awaited provider stream can cross
-          // into the 45s window after the round-start sample (Codex P2 #816).
-          && ((typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000)
+          && (crossedDeadlineNow
             || nearDeadline || deadlineNudgeSent || cardStaged
             || overBudget || standardOverBudget || premiumOverBudget)
         ) {
@@ -2813,6 +2818,9 @@ async function* runAlternateProviderTurn(
               // Full factual gate, not just claim/ledger (Codex P1 #816 r10):
               // an invented live figure after non-read tools must also fail.
               ...detectFabricatedStatViolations(updateText, updateLedger),
+              // Queued work is not finished work (Codex P1 #816 r11) — the
+              // same async-completion rule as the final-response path.
+              ...detectAsyncCompletionViolation(updateText, summarizeAsyncJobEvidence(toolRecords)),
             ]
             if (updateViolations.length > 0) {
               console.info('[progress-cadence] forced update failed claim check — harness line used', {
