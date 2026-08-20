@@ -173,6 +173,8 @@ describe('native Anthropic loop tracker parity', () => {
     expect(source).toContain("actionTrackerState === 'worker'")
     expect(source).toContain("nativeTrackerBlockedBy = { kind: 'worker', refId: blockerActionId }")
     expect(source).toContain('linkPendingActionToPlanStep(blockerActionId, claimedStepId)')
+    expect(source).toContain('settlePlanStepsLinkedToPendingAction(blockerActionId)')
+    expect(source).toContain('settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)')
     expect(source).toContain("actionTrackerState === 'failed'")
     expect(source).toContain('linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)')
     expect(source).toContain('if (linked)')

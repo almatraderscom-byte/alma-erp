@@ -87,6 +87,7 @@ import {
   linkAskCardToPlanStep,
   linkPendingActionToPlanStep,
   markStepBlocked,
+  settlePlanStepsLinkedToPendingAction,
 } from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
@@ -2028,6 +2029,26 @@ export async function* runAgentTurn(
             if (linked) {
               await markStepBlocked(claimedStepId)
               if (local) local.status = 'pending'
+              if (ownerBlocker.kind === 'approval') {
+                // An older deduplicated card can be approved while this turn
+                // appends its follower link. Reconcile the post-link state so a
+                // fast terminal callback cannot be missed, and an approved job
+                // immediately changes waiting_owner to waiting_worker.
+                const settled = await settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)
+                if (settled) {
+                  nativeTrackerBlockedBy = null
+                } else {
+                  try {
+                    const current = await (prisma as any).agentPendingAction.findUnique({
+                      where: { id: ownerBlocker.refId },
+                      select: { status: true },
+                    })
+                    if (current?.status === 'approved') {
+                      nativeTrackerBlockedBy = { kind: 'worker', refId: ownerBlocker.refId }
+                    }
+                  } catch { /* the original pending snapshot remains truthful */ }
+                }
+              }
             } else {
               // Never strand a row when the result points at a missing card or
               // a conflicting owner. Preserve the blocker in the snapshot, but
@@ -2046,7 +2067,13 @@ export async function* runAgentTurn(
             // Keep the claimed row running and persist the exact callback link;
             // job-result will settle it only after the action becomes executed.
             const linked = await linkPendingActionToPlanStep(blockerActionId, claimedStepId)
-            if (!linked) {
+            if (linked) {
+              // Close the link-vs-fast-worker race: the callback may have
+              // terminalized the action just before this payload link existed.
+              // Re-checking is status-gated and idempotent while still queued.
+              const settled = await settlePlanStepsLinkedToPendingAction(blockerActionId)
+              if (settled) nativeTrackerBlockedBy = null
+            } else {
               const outcome = await finishPlanStep({
                 stepId: claimedStepId,
                 ok: false,
