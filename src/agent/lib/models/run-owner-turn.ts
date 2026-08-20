@@ -2854,6 +2854,11 @@ async function* runAlternateProviderTurn(
                 toolRecords.map((r) => r.toolName),
                 (name) => Boolean(getCapability(name)),
               ),
+              // Hand-written machine blocks (<tool_response>{"success":true}…)
+              // are fabricated evidence, not prose (Codex P1 #816 r13).
+              ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(updateText)
+                ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
+                : []),
             ]
             if (updateViolations.length > 0) {
               console.info('[progress-cadence] forced update failed claim check — harness line used', {
