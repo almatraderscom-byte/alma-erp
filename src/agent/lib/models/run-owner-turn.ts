@@ -2119,10 +2119,11 @@ async function* runAlternateProviderTurn(
   // Qwen, Sonnet) goes straight to the tool call and speaks only afterwards, so
   // Boss watches a spinner and has no idea whether his message landed.
   // So the harness guarantees it instead of hoping for it: one short tool-free
-  // round whose ONLY job is that line. Thinking is off and no tools are offered,
-  // so it is a few dozen output tokens against an already-cached prefix; the
-  // line is streamed instantly and seeded into the transcript, so the model does
-  // not repeat it. Same behaviour on every model — the harness, not the model.
+  // round whose ONLY job is that line. No tools are offered; the line is seeded
+  // into the transcript so the model does not repeat it. Owner ruling 2026-08-20:
+  // the round now THINKS FIRST (official Claude order — thought → opening line
+  // → tools); the reasoning streams to the visible lane before the line.
+  // Same behaviour on every model — the harness, not the model.
   // Skipped for listen mode, tool-free turns, internal continuations and short
   // acknowledgements, which answer instantly anyway.
   if (
@@ -2138,17 +2139,26 @@ async function* runAlternateProviderTurn(
   ) {
     try {
       let line = ''
+      let preThinking = ''
+      // Owner ruling 2026-08-20 (after reading the official Claude order):
+      // THINK FIRST, then the opening line — thought → এক লাইন → tools, matching
+      // interleaved-thinking Claude exactly. The round now runs with the model's
+      // normal thinking mode and the reasoning streams into the visible thinking
+      // lane before the line lands. AGENT_SPEAK_FIRST_THINKING=off restores the
+      // instant thinking-free line.
+      const preambleThinking = process.env.AGENT_SPEAK_FIRST_THINKING !== 'off'
       // The opening line streams RAW to the owner's screen, and Qwen sometimes
       // appends typed `<tool_call>` markup to its narration (owner screenshot
       // 2026-08-15) — the settled copy below was stripped but the live deltas
       // were not. Same holdback filter as the main loop's prose stream.
       const preambleStream = createMarkupStreamFilter()
+      const preambleThinkStream = createMarkupStreamFilter()
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
         messages: [...messages, { role: 'user', content: SPEAK_FIRST_INSTRUCTION }],
         tools: [],
-        thinking: 'none',
+        thinking: preambleThinking ? model.thinking : 'none',
         signal,
         cacheKey: conversationId,
       })) {
@@ -2158,13 +2168,28 @@ async function* runAlternateProviderTurn(
           if (ev.text.trim()) spokeSinceProgress = true
           const safe = preambleStream.push(ev.text)
           if (safe) yield { type: 'text_delta', delta: safe }
+        } else if (ev.type === 'thinking_delta') {
+          // Same never-RAW rule as the main loop: the filter holds back markup
+          // openers so a call split across deltas cannot leak to the lane.
+          preThinking += ev.text
+          const safeThinking = preambleThinkStream.push(ev.text)
+          if (safeThinking) yield { type: 'thinking_delta', delta: safeThinking }
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
+          totalReasoningTokens += ev.reasoningTokens ?? 0
           apiRounds++
         }
+      }
+      // Release held thinking, then record it in the timeline BEFORE the lead
+      // line so a cold reload keeps the true thought → opening-line order.
+      {
+        const tailThinking = preambleThinkStream.flush()
+        if (tailThinking) yield { type: 'thinking_delta', delta: tailThinking }
+        const shownPreThinking = cleanVisibleThinking(stripToolCallMarkup(preThinking))
+        if (shownPreThinking) timeline.push({ t: 'think', text: shownPreThinking.slice(0, 4000) })
       }
       // Release whatever the filter still held (cleaned) so the live line the
       // owner watched matches the settled one below.
