@@ -3778,6 +3778,14 @@ async function* runAlternateProviderTurn(
       // and carry on. The ask is explicitly NOT a stop: it must keep working
       // in the same turn.
       stepsSinceOwnerUpdate += calls.length
+      // Terminal gates outrank the cadence (Codex P1 #816 round 4): a failed
+      // mandatory step or a staged owner question ENDS the turn below — an
+      // escalation `continue` here would skip those checks, restore tools and
+      // let the model run past a failure the loop had already ruled terminal.
+      // Computed ONCE, used by the gates below unchanged.
+      const terminalContractFailure = roundContractFailure
+        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      const roundHitTerminalGate = Boolean(terminalContractFailure) || emittedAskCards.length > 0
       // The nudge was IGNORED — the round it was delivered into produced calls
       // and no prose (DS V4, live 2026-08-21, 40 silent steps). Escalate: the
       // next round ships an EMPTY tool list (same lever as the wrap-up round),
@@ -3788,6 +3796,7 @@ async function* runAlternateProviderTurn(
         && !signal?.aborted
         && !nearDeadline
         && !lastBudgetRound
+        && !roundHitTerminalGate
         // Codex P1 #816: the forced update consumes iteration+1 as an interim
         // round — a concluding round must still remain after it, so escalation
         // needs TWO rounds of headroom, not one. Too late to fit both → the
@@ -3815,6 +3824,7 @@ async function* runAlternateProviderTurn(
         !signal?.aborted
         && !nearDeadline
         && !forcedUpdateRound
+        && !roundHitTerminalGate
         && stepsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
         // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
         // upgrade below), so the cap is re-derived from the CURRENT budget.
@@ -3979,8 +3989,7 @@ async function* runAlternateProviderTurn(
       // The previous code noticed the failure only AFTER letting the model run
       // again; in the live SEO proof that extra round tried target #2 and wrote a
       // checkpoint, adding cost and visible "same work again" behaviour.
-      const terminalContractFailure = roundContractFailure
-        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      // (Computed above, before the cadence blocks, so no nudge can skip it.)
       if (terminalContractFailure) {
         const note = contractToolFailureText(terminalContractFailure)
         const sep = finalText ? '\n\n' : ''
