@@ -40,14 +40,21 @@ export type AdvanceableStep = {
 export function ownerBlockerFromToolResult(result: {
   success: boolean
   data?: unknown
-}): WorkStepsBlocker | null {
+}, pendingActionStatus?: string | null): WorkStepsBlocker | null {
   if (!result.success || !result.data || typeof result.data !== 'object') return null
   const data = result.data as Record<string, unknown>
   if (typeof data.askCardId === 'string' && data.askCardId) {
     return { kind: 'question', refId: data.askCardId }
   }
   if (typeof data.pendingActionId === 'string' && data.pendingActionId) {
-    return { kind: 'approval', refId: data.pendingActionId }
+    // pendingActionId is also the job handle for already-approved background
+    // work. When the caller supplied the durable row status it is authoritative:
+    // only an actually pending action owns an approval card. The explicit flag
+    // remains the safe fallback for pure callers that cannot read the row.
+    const awaitingOwner = pendingActionStatus !== undefined
+      ? pendingActionStatus === 'pending'
+      : data.awaitingApproval === true
+    return awaitingOwner ? { kind: 'approval', refId: data.pendingActionId } : null
   }
   return null
 }

@@ -1985,7 +1985,29 @@ export async function* runAgentTurn(
         }
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
-        const ownerBlocker = ownerBlockerFromToolResult(r.result)
+        const blockerData = r.result.success && r.result.data && typeof r.result.data === 'object'
+          ? r.result.data as Record<string, unknown>
+          : null
+        const blockerActionId = typeof blockerData?.pendingActionId === 'string'
+          ? blockerData.pendingActionId
+          : null
+        let blockerActionStatus: string | null | undefined
+        if (blockerActionId) {
+          try {
+            // pendingActionId is also used as a background-job handle. Read the
+            // durable state before calling it an owner approval; already-approved
+            // or executed jobs must advance normally and never park the tracker.
+            const action = await (prisma as any).agentPendingAction.findUnique({
+              where: { id: blockerActionId },
+              select: { status: true },
+            })
+            blockerActionStatus = typeof action?.status === 'string' ? action.status : null
+          } catch {
+            // Undefined retains the explicit awaitingApproval fallback.
+            blockerActionStatus = undefined
+          }
+        }
+        const ownerBlocker = ownerBlockerFromToolResult(r.result, blockerActionStatus)
         if (ownerBlocker) nativeTrackerBlockedBy = ownerBlocker
         if (claimedStepId) {
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)

@@ -59,6 +59,23 @@ describe('ownerBlockerFromToolResult', () => {
     })).toEqual({ kind: 'approval', refId: 'approval-9' })
   })
 
+  it('uses the durable action status to distinguish approval cards from job handles', () => {
+    const result = {
+      success: true,
+      data: { pendingActionId: 'job-9', awaitingApproval: true },
+    }
+    expect(ownerBlockerFromToolResult(result, 'pending')).toEqual({
+      kind: 'approval',
+      refId: 'job-9',
+    })
+    expect(ownerBlockerFromToolResult(result, 'approved')).toBeNull()
+    expect(ownerBlockerFromToolResult(result, 'executed')).toBeNull()
+    expect(ownerBlockerFromToolResult({
+      success: true,
+      data: { pendingActionId: 'job-10' },
+    })).toBeNull()
+  })
+
   it('propagates an ask-user card as a question blocker', () => {
     expect(ownerBlockerFromToolResult({
       success: true,
@@ -142,7 +159,8 @@ describe('native Anthropic loop tracker parity', () => {
     expect(source).toContain('beginPlanStepForTool(nativeTrackerPlanSteps, tb.name)')
     expect(source).toMatch(/finishPlanStep\(\{\s+stepId: claimedStepId/)
     expect(source).toContain('pickFinalDeliveryStep(nativeTrackerPlanSteps)')
-    expect(source).toContain('ownerBlockerFromToolResult(r.result)')
+    expect(source).toContain('ownerBlockerFromToolResult(r.result, blockerActionStatus)')
+    expect(source).toContain("select: { status: true }")
     expect(source).toContain('linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)')
     expect(source).toContain('linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)')
     expect(source).toContain('if (linked)')
