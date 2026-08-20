@@ -2269,6 +2269,19 @@ async function* runAlternateProviderTurn(
         // round 8: the flag left set consumed his answer as a cadence update).
         forcedUpdateRound = false
         updateNudgePending = false
+        // Steering also SUPERSEDES any queued cadence note still sitting at the
+        // transcript tail (Codex P1 #816 r12): the flags are cleared, but the
+        // appended [আপডেট রাউন্ড]/[সিস্টেম নোট] user message would still be the
+        // last instruction the model reads. The notes are only ever appended
+        // after the last provider call, so trimming trailing entries is safe.
+        while (messages.length > 0) {
+          const tail = messages[messages.length - 1]
+          const tailText = 'content' in tail && typeof tail.content === 'string' ? tail.content : ''
+          if (tail.role === 'user'
+            && (tailText.includes('[আপডেট রাউন্ড]') || tailText.startsWith('[সিস্টেম নোট] Boss'))) {
+            messages = messages.slice(0, -1)
+          } else break
+        }
         currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
           .filter(Boolean)
           .join('\n')
@@ -2747,6 +2760,19 @@ async function* runAlternateProviderTurn(
           // cadence state so his answer is never consumed as an update.
           forcedUpdateRound = false
           updateNudgePending = false
+          // Steering also SUPERSEDES any queued cadence note still sitting at the
+          // transcript tail (Codex P1 #816 r12): the flags are cleared, but the
+          // appended [আপডেট রাউন্ড]/[সিস্টেম নোট] user message would still be the
+          // last instruction the model reads. The notes are only ever appended
+          // after the last provider call, so trimming trailing entries is safe.
+          while (messages.length > 0) {
+            const tail = messages[messages.length - 1]
+            const tailText = 'content' in tail && typeof tail.content === 'string' ? tail.content : ''
+            if (tail.role === 'user'
+              && (tailText.includes('[আপডেট রাউন্ড]') || tailText.startsWith('[সিস্টেম নোট] Boss'))) {
+              messages = messages.slice(0, -1)
+            } else break
+          }
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
@@ -2821,6 +2847,13 @@ async function* runAlternateProviderTurn(
               // Queued work is not finished work (Codex P1 #816 r11) — the
               // same async-completion rule as the final-response path.
               ...detectAsyncCompletionViolation(updateText, summarizeAsyncJobEvidence(toolRecords)),
+              // A named tool claimed as run must be in the ledger (Codex P1
+              // #816 r12) — same rule as the final-response path.
+              ...detectToolExecutionClaims(
+                updateText,
+                toolRecords.map((r) => r.toolName),
+                (name) => Boolean(getCapability(name)),
+              ),
             ]
             if (updateViolations.length > 0) {
               console.info('[progress-cadence] forced update failed claim check — harness line used', {
