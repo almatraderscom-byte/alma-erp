@@ -2810,6 +2810,30 @@ async function* runAlternateProviderTurn(
         // crossing must ALSO mark the deadline machinery (Codex P1 r11): the
         // turn-end salvage keys off deadlineNudgeSent, and without it a
         // mid-window ending was classified as a clean finish.
+        // ONE factual gate for forced-update prose, used by both the interim
+        // delivery and the deadline-crossing salvage (Codex P1 #816 r15 — the
+        // two inline copies had drifted apart within three review rounds).
+        const forcedUpdateViolations = (text: string) => [
+          ...verifyClaimsAgainstLedger(text, toolRecords.map((r) => ({
+            toolName: r.toolName,
+            success: r.status === 'success',
+            error: r.error ?? undefined,
+          }))),
+          ...detectFabricatedStatViolations(text, toolRecords.map((r) => ({
+            toolName: r.toolName,
+            success: r.status === 'success',
+            error: r.error ?? undefined,
+          }))),
+          ...detectAsyncCompletionViolation(text, summarizeAsyncJobEvidence(toolRecords)),
+          ...detectToolExecutionClaims(
+            text,
+            toolRecords.map((r) => r.toolName),
+            (name) => Boolean(getCapability(name)),
+          ),
+          ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(text)
+            ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
+            : []),
+        ]
         const crossedDeadlineNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
         if (forcedUpdateRound && crossedDeadlineNow && !deadlineNudgeSent) deadlineNudgeSent = true
         if (
@@ -2830,21 +2854,7 @@ async function* runAlternateProviderTurn(
           // line on violation, so the unverified draft can never publish as
           // the final answer (Codex P1 #816 r14).
           if (crossedDeadlineNow && iterationText.trim()) {
-            const ledgerNow: ToolLedgerEntry[] = toolRecords.map((r) => ({
-              toolName: r.toolName,
-              success: r.status === 'success',
-              error: r.error ?? undefined,
-            }))
-            const crossingViolations = [
-              ...verifyClaimsAgainstLedger(iterationText.trim(), ledgerNow),
-              ...detectFabricatedStatViolations(iterationText.trim(), ledgerNow),
-              ...detectAsyncCompletionViolation(iterationText.trim(), summarizeAsyncJobEvidence(toolRecords)),
-              ...detectToolExecutionClaims(
-                iterationText.trim(),
-                toolRecords.map((r) => r.toolName),
-                (name) => Boolean(getCapability(name)),
-              ),
-            ]
+            const crossingViolations = forcedUpdateViolations(iterationText.trim())
             if (crossingViolations.length > 0) {
               supersedeLastDraft()
               yield* supersedeStreamedDraft()
@@ -2865,32 +2875,7 @@ async function* runAlternateProviderTurn(
           // a failed tool) is REPLACED by the harness's evidence-only line —
           // deterministic, no retry round spent.
           if (updateText) {
-            const updateLedger: ToolLedgerEntry[] = toolRecords.map((r) => ({
-              toolName: r.toolName,
-              success: r.status === 'success',
-              error: r.error ?? undefined,
-            }))
-            const updateViolations = [
-              ...verifyClaimsAgainstLedger(updateText, updateLedger),
-              // Full factual gate, not just claim/ledger (Codex P1 #816 r10):
-              // an invented live figure after non-read tools must also fail.
-              ...detectFabricatedStatViolations(updateText, updateLedger),
-              // Queued work is not finished work (Codex P1 #816 r11) — the
-              // same async-completion rule as the final-response path.
-              ...detectAsyncCompletionViolation(updateText, summarizeAsyncJobEvidence(toolRecords)),
-              // A named tool claimed as run must be in the ledger (Codex P1
-              // #816 r12) — same rule as the final-response path.
-              ...detectToolExecutionClaims(
-                updateText,
-                toolRecords.map((r) => r.toolName),
-                (name) => Boolean(getCapability(name)),
-              ),
-              // Hand-written machine blocks (<tool_response>{"success":true}…)
-              // are fabricated evidence, not prose (Codex P1 #816 r13).
-              ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(updateText)
-                ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
-                : []),
-            ]
+            const updateViolations = forcedUpdateViolations(updateText)
             if (updateViolations.length > 0) {
               console.info('[progress-cadence] forced update failed claim check — harness line used', {
                 conversationId, model: model.id, violations: updateViolations.length,
