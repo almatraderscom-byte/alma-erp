@@ -1961,6 +1961,15 @@ async function* runAlternateProviderTurn(
   // (owner correction 2026-08-21: "2 ta dhap sesh holei short reply").
   let stepsSinceOwnerUpdate = 0
   let progressNudges = 0
+  // Owner live-catch 2026-08-21 (40 silent steps AFTER the step-cadence nudges
+  // shipped): DS V4 in a 200k-token conversation answers the [সিস্টেম নোট] with
+  // MORE TOOLS and no text — a prompt request, ignored like every prompt-only
+  // rule before it. The escalation is deterministic: when the round after a
+  // nudge produced calls but no owner-visible prose, the NEXT round runs with
+  // an EMPTY tool list, so the model can only write the update; the round
+  // after that resumes work with tools restored.
+  let updateNudgePending = false
+  let forcedUpdateRound = false
   let requirementRetries = 0
   let finalText = ''
   let delegationAwaiting = false
@@ -2364,7 +2373,7 @@ async function* runAlternateProviderTurn(
       // past it is spend on work the owner may reject (and it buries the card).
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const budgetedTools =
-        nearDeadline || lastBudgetRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || lastBudgetRound || forcedUpdateRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
         || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
           : premiumOverBudget || standardOverBudget
@@ -2390,7 +2399,7 @@ async function* runAlternateProviderTurn(
       // result no round remains to read, and the forced call would silence the
       // wrap-up prose. The unmet contract is reported by the done-gate instead.
       const contractToolMissing = Boolean(
-        !lastBudgetRound
+        !lastBudgetRound && !forcedUpdateRound
         && requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
       )
       // The prospective plan is controller-required UI/control state. It must
@@ -2712,6 +2721,9 @@ async function* runAlternateProviderTurn(
         yield* reconcileStreamedProse(iterationText, sep)
         // Boss heard something this round — the progress clock starts over.
         stepsSinceOwnerUpdate = 0
+        // The nudge was answered the polite way (text alongside the calls) —
+        // no escalation owed.
+        updateNudgePending = false
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
@@ -2749,6 +2761,40 @@ async function* runAlternateProviderTurn(
               .map((item) => item.clientMessageId)
               .filter((id): id is string => Boolean(id)),
           }
+          continue
+        }
+        // ── Forced update round delivers here (owner escalation 2026-08-21) ──
+        // Tools were stripped for exactly one round so the owed mid-run update
+        // physically had to be prose. Emit it as an INTERIM line — never the
+        // final answer — then restore tools and resume the job. If even the
+        // tool-free round came back empty, the harness writes the update from
+        // evidence it directly observed (same pattern as the wrap-up salvage).
+        if (forcedUpdateRound && !signal?.aborted) {
+          forcedUpdateRound = false
+          let updateText = iterationText.trim()
+          if (!updateText) {
+            const okCount = toolRecords.filter((r) => r.status === 'success').length
+            const lastTools = toolRecords
+              .filter((r) => r.status === 'success')
+              .slice(-3)
+              .map((r) => toolDisplay(r.toolName).label)
+              .join(' · ')
+            updateText =
+              `এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে`
+              + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
+              + ' — কাজ চলছে।'
+            timeline.push({ t: 'text', text: updateText })
+          }
+          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+          finalText += sep + updateText
+          yield* reconcileStreamedProse(updateText, sep)
+          stepsSinceOwnerUpdate = 0
+          spokeSinceProgress = true
+          preambleSpoken = true
+          console.info('[progress-cadence] forced update delivered', {
+            conversationId, model: model.id, round: iteration + 1,
+          })
+          messages = [...messages, { role: 'assistant', content: updateText }]
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
@@ -3712,9 +3758,39 @@ async function* runAlternateProviderTurn(
       // and carry on. The ask is explicitly NOT a stop: it must keep working
       // in the same turn.
       stepsSinceOwnerUpdate += calls.length
+      // The nudge was IGNORED — the round it was delivered into produced calls
+      // and no prose (DS V4, live 2026-08-21, 40 silent steps). Escalate: the
+      // next round ships an EMPTY tool list (same lever as the wrap-up round),
+      // so the only thing the model can do is write the owed two-line update;
+      // the round after that resumes work with tools restored.
+      if (
+        updateNudgePending
+        && !signal?.aborted
+        && !nearDeadline
+        && !lastBudgetRound
+        && iteration < maxIterations - 1
+      ) {
+        updateNudgePending = false
+        forcedUpdateRound = true
+        console.info('[progress-cadence] nudge ignored — forcing a tool-free update round', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              INTERNAL_NUDGE_MARKER
+              + '[আপডেট রাউন্ড] এই রাউন্ডে কোনো টুল নেই — শুধু Boss-এর জন্য দুই লাইন লেখো: '
+              + 'এ পর্যন্ত কী পেলে/করলে (সংখ্যাসহ), আর এরপর কী করছ। এরপরের রাউন্ডেই টুল ফিরে পাবে, কাজ চলবে।',
+          },
+        ]
+        continue
+      }
       if (
         !signal?.aborted
         && !nearDeadline
+        && !forcedUpdateRound
         && stepsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
         // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
         // upgrade below), so the cap is re-derived from the CURRENT budget.
@@ -3728,6 +3804,10 @@ async function* runAlternateProviderTurn(
       ) {
         progressNudges++
         stepsSinceOwnerUpdate = 0
+        updateNudgePending = true
+        console.info('[progress-cadence] update nudge injected', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
         messages = [
           ...messages,
           {
