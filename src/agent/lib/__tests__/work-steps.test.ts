@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import agentEventSchema from '../../protocol/agent-event.schema.json'
 import {
+  clearMatchingWorkStepsBlocker,
   parseWorkStepsSnapshot,
   projectRuntimeWorkSteps,
   projectWorkSteps,
@@ -34,6 +35,12 @@ function planRow(overrides: Partial<TrackerPlanRow> = {}): TrackerPlanRow {
 }
 
 describe('work_steps_snapshot projector', () => {
+  it('clears only the callback-owned blocker and preserves a newer card/action', () => {
+    const newer = { kind: 'question' as const, refId: 'ask-new' }
+    expect(clearMatchingWorkStepsBlocker(newer, 'action-old')).toEqual(newer)
+    expect(clearMatchingWorkStepsBlocker(newer, 'ask-new')).toBeNull()
+  })
+
   it('never restores a blocker whose durable card/action is already terminal', () => {
     const approval = { kind: 'approval' as const, refId: 'action-1' }
     const worker = { kind: 'worker' as const, refId: 'action-1' }

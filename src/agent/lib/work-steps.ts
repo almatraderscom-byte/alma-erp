@@ -43,6 +43,14 @@ export type WorkStepsBlocker = {
   refId: string
 }
 
+/** An old callback may clear only the blocker it represents, never a newer one. */
+export function clearMatchingWorkStepsBlocker(
+  blocker: WorkStepsBlocker | null,
+  refId: string,
+): WorkStepsBlocker | null {
+  return blocker?.refId === refId ? null : blocker
+}
+
 /** Reconcile a persisted blocker with the durable card/action row read now. */
 export function reconcileDurableWorkStepsBlocker(
   blocker: WorkStepsBlocker | null,
@@ -332,6 +340,8 @@ export async function syncPlanTracker(
   opts: {
     currentTurnId?: string
     blockedBy?: WorkStepsBlocker | null
+    /** Clear only this still-current durable blocker; never erase a newer one. */
+    clearBlockedByRefId?: string
     live?: boolean
     bindAssistantMessageId?: string | null
     now?: Date
@@ -359,9 +369,12 @@ export async function syncPlanTracker(
       const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
       const currentTurnId = opts.currentTurnId
         ?? prior?.currentTurnId ?? plan.originTurnId ?? plan.id
+      const rememberedBlockedBy = prior?.blockedBy ?? null
       let effectiveBlockedBy = opts.blockedBy !== undefined
         ? opts.blockedBy
-        : (plan.steps.some((s) => s.status === 'running') ? null : (prior?.blockedBy ?? null))
+        : opts.clearBlockedByRefId !== undefined
+          ? clearMatchingWorkStepsBlocker(rememberedBlockedBy, opts.clearBlockedByRefId)
+          : (plan.steps.some((s) => s.status === 'running') ? null : rememberedBlockedBy)
       // The same advisory-locked transaction that writes the snapshot verifies
       // the referenced durable row first. A stale turn can therefore never
       // restore waiting_owner/waiting_worker after an answer or terminal worker

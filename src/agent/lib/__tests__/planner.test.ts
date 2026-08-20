@@ -98,8 +98,8 @@ describe('planner', () => {
       }, result: { id: 'post-1' },
     })
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
-      { id: 'step-1', planId: 'plan-1', status: 'pending' },
-      { id: 'step-2', planId: 'plan-2', status: 'running' },
+      { id: 'step-1', planId: 'plan-1', status: 'pending', attemptCount: 0, maxAttempts: 3 },
+      { id: 'step-2', planId: 'plan-2', status: 'running', attemptCount: 0, maxAttempts: 3 },
     ])
     mockPrisma.agentPlanStep.updateMany
       .mockResolvedValueOnce({ count: 1 })
@@ -119,13 +119,36 @@ describe('planner', () => {
       result: { error: 'worker exited 1' },
     })
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
-      { id: 'step-3', planId: 'plan-3', status: 'running' },
+      { id: 'step-3', planId: 'plan-3', status: 'running', attemptCount: 1, maxAttempts: 3 },
     ])
     mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
     await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBe('step-3')
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: { id: 'step-3', status: { in: ['pending', 'running'] } },
-      data: expect.objectContaining({ status: 'failed', error: 'worker exited 1' }),
+      data: expect.objectContaining({
+        status: 'failed',
+        error: 'worker exited 1',
+        attemptCount: 2,
+        nextAttemptAt: expect.any(Date),
+      }),
+    }))
+
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      status: 'expired', type: 'publish',
+      payload: { _agentPlanStepId: 'step-4' },
+      result: null,
+    })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
+      { id: 'step-4', planId: 'plan-4', status: 'pending', attemptCount: 0, maxAttempts: 3 },
+    ])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(settlePlanStepsLinkedToPendingAction('action-2')).resolves.toBe('step-4')
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'failed',
+        attemptCount: 3,
+        nextAttemptAt: null,
+      }),
     }))
   })
 

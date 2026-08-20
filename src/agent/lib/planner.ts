@@ -426,10 +426,16 @@ export async function settlePlanStepsLinkedToPendingAction(
     : `Background action ${action.type} ${action.status}`
   const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
   if (stepIds.length === 0) return null
-  const steps: Array<{ id: string; planId: string; status: string }> =
+  const steps: Array<{
+    id: string
+    planId: string
+    status: string
+    attemptCount: number
+    maxAttempts: number
+  }> =
     await db.agentPlanStep.findMany({
       where: { id: { in: stepIds } },
-      select: { id: true, planId: true, status: true },
+      select: { id: true, planId: true, status: true, attemptCount: true, maxAttempts: true },
     })
   const settledIds: string[] = []
   const touchedPlans = new Set<string>()
@@ -439,6 +445,14 @@ export async function settlePlanStepsLinkedToPendingAction(
       touchedPlans.add(step.planId)
       continue
     }
+    const now = new Date()
+    const retryableFailure = action.status === 'failed'
+    const attemptCount = failed
+      ? (retryableFailure
+          ? Math.min((step.attemptCount ?? 0) + 1, step.maxAttempts ?? 3)
+          : (step.maxAttempts ?? 3))
+      : step.attemptCount
+    const maxAttempts = step.maxAttempts ?? 3
     const settled = await db.agentPlanStep.updateMany({
       where: { id: step.id, status: { in: ['pending', 'running'] } },
       data: {
@@ -450,8 +464,11 @@ export async function settlePlanStepsLinkedToPendingAction(
           output: action.result ?? null,
         },
         error: succeeded ? null : actionError,
-        doneAt: new Date(),
-        nextAttemptAt: null,
+        doneAt: now,
+        attemptCount,
+        nextAttemptAt: retryableFailure && attemptCount < maxAttempts
+          ? new Date(now.getTime() + stepRetryDelayMs(attemptCount))
+          : null,
         turnId: null,
         dispatchedAt: null,
       },
@@ -462,7 +479,7 @@ export async function settlePlanStepsLinkedToPendingAction(
     }
   }
   await Promise.all([...touchedPlans].map((planId) =>
-    syncPlanTracker(planId, { blockedBy: null, live: false })))
+    syncPlanTracker(planId, { clearBlockedByRefId: pendingActionId, live: false })))
   return settledIds[0] ?? null
 }
 
@@ -507,7 +524,7 @@ export async function completePlanStepsLinkedToAskCard(
     }
   }
   await Promise.all([...touchedPlans].map((planId) =>
-    syncPlanTracker(planId, { blockedBy: null, live: false })))
+    syncPlanTracker(planId, { clearBlockedByRefId: askCardId, live: false })))
   return settledIds
 }
 
