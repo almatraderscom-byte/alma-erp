@@ -95,8 +95,10 @@ function fmtTok(n: number): string {
 export type TimelineEntry =
   | { t: 'think'; text: string }
   /** `superseded`: verification rewrote this draft. It remains audit data and is
-   *  never rendered as a separate owner-facing reply. */
-  | { t: 'text'; text: string; state?: 'superseded' }
+   *  never rendered as a separate owner-facing reply. `lead`: the spoken FIRST
+   *  line (speak-first) — position stopped being a safe signal once the
+   *  think-first preamble put a `think` entry ahead of it (PR #813). */
+  | { t: 'text'; text: string; state?: 'superseded'; lead?: true }
   /** The honesty guard re-checked the draft — rendered as activity, not prose. */
   | { t: 'verify'; attempt?: number; max?: number }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
@@ -850,7 +852,13 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
         // thinking first, so reply-then-reasoning reads backwards. Hold it and
         // emit it once the first activity segment exists (or at the end, when
         // the turn had no activity at all).
-        if (i === 0 && e.state !== 'superseded' && e.text.trim()) leadText = e.text
+        // The `lead` flag is authoritative (server marks the spoken line); the
+        // i === 0 fallback keeps pre-flag turns rendering. Think-first (#813)
+        // legitimately places a think entry at index 0, so position alone can
+        // no longer find the line (Codex P2 #813).
+        if ((e.lead === true || i === 0) && e.state !== 'superseded' && e.text.trim()) {
+          if (!leadText.trim()) leadText = e.text
+        }
         continue
       }
       if (e.t === 'file') {
