@@ -2832,7 +2832,14 @@ async function* runAlternateProviderTurn(
         updateNudgePending = false
         // A forced round that carried prose next to a (refused) stale call:
         // this prose WAS the update — the redelivery site below must not
-        // publish a second copy (Codex P1 #816 r17).
+        // publish a second copy (Codex P1 #816 r17). Sample the deadline
+        // BEFORE clearing (Codex P1 r20): a crossing during this round must
+        // still reach the deadline machinery.
+        if (forcedUpdateRound
+          && typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+          && !deadlineNudgeSent) {
+          deadlineNudgeSent = true
+        }
         forcedUpdateRound = false
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
@@ -3948,7 +3955,9 @@ async function* runAlternateProviderTurn(
       // PROGRESS_UPDATE_EVERY silent steps the head is told to write two lines
       // and carry on. The ask is explicitly NOT a stop: it must keep working
       // in the same turn.
-      stepsSinceOwnerUpdate += calls.length
+      // Refused hallucinations did no work — they are not silent STEPS either
+      // (Codex P2 #816 r20).
+      stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : calls.length
       // Terminal gates outrank the cadence (Codex P1 #816 round 4): a failed
       // mandatory step or a staged owner question ENDS the turn below — an
       // escalation `continue` here would skip those checks, restore tools and
