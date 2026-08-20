@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, maxProgressNudgesFor, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import {
   BOOKKEEPING_TOOLS,
@@ -3591,7 +3591,9 @@ async function* runAlternateProviderTurn(
         !signal?.aborted
         && !nearDeadline
         && roundsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
-        && progressNudges < MAX_PROGRESS_NUDGES
+        // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
+        // upgrade below), so the cap is re-derived from the CURRENT budget.
+        && progressNudges < maxProgressNudgesFor(maxIterations)
       ) {
         progressNudges++
         roundsSinceOwnerUpdate = 0
