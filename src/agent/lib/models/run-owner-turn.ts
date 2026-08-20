@@ -2802,7 +2802,19 @@ async function* runAlternateProviderTurn(
           console.info('[progress-cadence] forced update delivered', {
             conversationId, model: model.id, round: iteration + 1,
           })
-          messages = [...messages, { role: 'assistant', content: updateText }]
+          // The transcript must not END on an assistant message — providers
+          // would read the next request as a prefill (rejected on Anthropic
+          // 4.6+, misbehaves elsewhere). Close the exchange with a tiny
+          // internal user turn, same as every other retry path (Codex P1
+          // #816 round 3).
+          messages = [
+            ...messages,
+            { role: 'assistant', content: updateText },
+            {
+              role: 'user',
+              content: INTERNAL_NUDGE_MARKER + 'আপডেট পৌঁছেছে — টুল ফিরে এসেছে, এখন কাজ চালিয়ে যাও।',
+            },
+          ]
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
