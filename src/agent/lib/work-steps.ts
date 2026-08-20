@@ -43,6 +43,23 @@ export type WorkStepsBlocker = {
   refId: string
 }
 
+/** Reconcile a persisted blocker with the durable card/action row read now. */
+export function reconcileDurableWorkStepsBlocker(
+  blocker: WorkStepsBlocker | null,
+  durableStatus: string | null,
+): WorkStepsBlocker | null {
+  if (!blocker) return null
+  if (blocker.kind === 'approval' || blocker.kind === 'worker') {
+    if (durableStatus === 'pending') return { kind: 'approval', refId: blocker.refId }
+    if (durableStatus === 'approved') return { kind: 'worker', refId: blocker.refId }
+    return null
+  }
+  if (blocker.kind === 'question') {
+    return durableStatus === 'pending' ? blocker : null
+  }
+  return blocker
+}
+
 export type WorkStepsSnapshotStep = {
   id: string
   position: number
@@ -342,6 +359,33 @@ export async function syncPlanTracker(
       const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
       const currentTurnId = opts.currentTurnId
         ?? prior?.currentTurnId ?? plan.originTurnId ?? plan.id
+      let effectiveBlockedBy = opts.blockedBy !== undefined
+        ? opts.blockedBy
+        : (plan.steps.some((s) => s.status === 'running') ? null : (prior?.blockedBy ?? null))
+      // The same advisory-locked transaction that writes the snapshot verifies
+      // the referenced durable row first. A stale turn can therefore never
+      // restore waiting_owner/waiting_worker after an answer or terminal worker
+      // callback already cleared it; a concurrent callback waits on this plan
+      // lock and its subsequent terminal snapshot wins.
+      if (effectiveBlockedBy?.kind === 'approval' || effectiveBlockedBy?.kind === 'worker') {
+        const action = await tx.agentPendingAction.findUnique({
+          where: { id: effectiveBlockedBy.refId },
+          select: { status: true },
+        })
+        effectiveBlockedBy = reconcileDurableWorkStepsBlocker(
+          effectiveBlockedBy,
+          typeof action?.status === 'string' ? action.status : null,
+        )
+      } else if (effectiveBlockedBy?.kind === 'question') {
+        const card = await tx.agentAskCard.findUnique({
+          where: { id: effectiveBlockedBy.refId },
+          select: { status: true },
+        })
+        effectiveBlockedBy = reconcileDurableWorkStepsBlocker(
+          effectiveBlockedBy,
+          typeof card?.status === 'string' ? card.status : null,
+        )
+      }
       const snapshot = projectWorkSteps({
         plan,
         currentTurnId,
@@ -350,9 +394,7 @@ export async function syncPlanTracker(
         // A running/dispatched step contradicts a remembered owner blocker —
         // the Plan-Driver resumed past the approval, so the stale reference
         // must not keep projecting waiting_owner (Codex P2, PR #733 round 3).
-        blockedBy: opts.blockedBy !== undefined
-          ? opts.blockedBy
-          : (plan.steps.some((s) => s.status === 'running') ? null : (prior?.blockedBy ?? null)),
+        blockedBy: effectiveBlockedBy,
         live: opts.live ?? plan.steps.some((s) => s.status === 'running'),
         now: opts.now,
       })

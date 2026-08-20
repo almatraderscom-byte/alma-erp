@@ -6,6 +6,7 @@ import {
   parseWorkStepsSnapshot,
   projectRuntimeWorkSteps,
   projectWorkSteps,
+  reconcileDurableWorkStepsBlocker,
   workStepsSignature,
   type TrackerPlanRow,
   type WorkStepsSnapshot,
@@ -33,6 +34,18 @@ function planRow(overrides: Partial<TrackerPlanRow> = {}): TrackerPlanRow {
 }
 
 describe('work_steps_snapshot projector', () => {
+  it('never restores a blocker whose durable card/action is already terminal', () => {
+    const approval = { kind: 'approval' as const, refId: 'action-1' }
+    const worker = { kind: 'worker' as const, refId: 'action-1' }
+    const question = { kind: 'question' as const, refId: 'ask-1' }
+    expect(reconcileDurableWorkStepsBlocker(worker, 'pending')).toEqual(approval)
+    expect(reconcileDurableWorkStepsBlocker(approval, 'approved')).toEqual(worker)
+    expect(reconcileDurableWorkStepsBlocker(worker, 'executed')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(worker, 'failed')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(question, 'answered')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(question, 'pending')).toEqual(question)
+  })
+
   it('casts the advisory lock result so Prisma never deserializes PostgreSQL void', () => {
     const source = readFileSync(new URL('../work-steps.ts', import.meta.url), 'utf8')
     expect(source).toContain(
