@@ -2152,7 +2152,12 @@ async function* runAlternateProviderTurn(
       // 2026-08-15) — the settled copy below was stripped but the live deltas
       // were not. Same holdback filter as the main loop's prose stream.
       const preambleStream = createMarkupStreamFilter()
-      const preambleThinkStream = createMarkupStreamFilter()
+      // Same live filter as the main loop's thinking lane (Codex P1 #813):
+      // markup-only filtering would stream harness-chatter ("the injected
+      // first-line rule…") to the owner — createThinkingStreamFilter was added
+      // precisely to suppress those lines DURING streaming, not just in the
+      // stored copy.
+      const preambleThinkStream = createThinkingStreamFilter()
       for await (const ev of adapter.streamTurn({
         apiModel: model.apiModel,
         system: systemText,
