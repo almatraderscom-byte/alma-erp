@@ -58,15 +58,16 @@ describe('when an update is owed', () => {
   })
 
   // The run he actually watched: seven rounds, one closing sentence.
-  it('would have interrupted the seven-round silent turn twice', () => {
-    expect(simulate(silentRounds(7)).nudges).toBe(2)
+  it('interrupts the seven-round silent turn on cadence', () => {
+    expect(simulate(silentRounds(7)).nudges).toBe(Math.floor(7 / PROGRESS_UPDATE_EVERY))
   })
 
   it('a round that spoke resets the clock — no nagging mid-conversation', () => {
-    const rounds = [
-      { spoke: false }, { spoke: false }, { spoke: true },
-      { spoke: false }, { spoke: false },
-    ]
+    // Speaking at least once per PROGRESS_UPDATE_EVERY rounds keeps the
+    // counter below threshold — no nudge is ever owed.
+    const rounds = Array.from({ length: 6 }, (_, i) => ({
+      spoke: (i + 1) % PROGRESS_UPDATE_EVERY === 0,
+    }))
     expect(simulate(rounds).nudges).toBe(0)
   })
 
