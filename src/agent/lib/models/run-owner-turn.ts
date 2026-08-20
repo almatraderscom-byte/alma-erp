@@ -3785,7 +3785,14 @@ async function* runAlternateProviderTurn(
       // Computed ONCE, used by the gates below unchanged.
       const terminalContractFailure = roundContractFailure
         ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
-      const roundHitTerminalGate = Boolean(terminalContractFailure) || emittedAskCards.length > 0
+      const roundHitTerminalGate =
+        Boolean(terminalContractFailure)
+        || emittedAskCards.length > 0
+        // Delegation outcomes are terminal too (Codex P1 #816 round 5): an
+        // approval handoff waits for Boss, and an all-delegation round settles
+        // below with the combined summaries — neither may gain an extra round.
+        || delegationAwaiting
+        || (autoRanDelegationSummaries.length > 0 && autoRanDelegationSummaries.length === calls.length)
       // The nudge was IGNORED — the round it was delivered into produced calls
       // and no prose (DS V4, live 2026-08-21, 40 silent steps). Escalate: the
       // next round ships an EMPTY tool list (same lever as the wrap-up round),
