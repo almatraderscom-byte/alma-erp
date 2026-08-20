@@ -146,6 +146,10 @@ async function runApprove(
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
     })
+    // Settle here as well as in POST's common tail. Keeping the terminal write
+    // adjacent to its plan callback makes this path safe if runApprove is ever
+    // reused, and the CAS helper makes the common-tail replay harmless.
+    await settlePlanStepsLinkedToPendingAction(actionId).catch(() => null)
     return Response.json({ error: 'expired' }, { status: 410 })
   }
 

@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   isSystemOwner: vi.fn(),
   findMany: vi.fn(),
   updateMany: vi.fn(),
+  isPendingActionExpired: vi.fn(),
+  settlePlanStepsLinkedToPendingAction: vi.fn(),
 }))
 
 vi.mock('next-auth/jwt', () => ({ getToken: mocks.getToken }))
@@ -20,7 +22,10 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 vi.mock('@/agent/lib/pending-action', () => ({
-  isPendingActionExpired: () => false,
+  isPendingActionExpired: mocks.isPendingActionExpired,
+}))
+vi.mock('@/agent/lib/planner', () => ({
+  settlePlanStepsLinkedToPendingAction: mocks.settlePlanStepsLinkedToPendingAction,
 }))
 
 import { GET } from '../route'
@@ -44,6 +49,8 @@ describe('GET /api/assistant/actions pagination', () => {
     mocks.getToken.mockResolvedValue({ sub: 'owner-1' })
     mocks.isSystemOwner.mockReturnValue(true)
     mocks.updateMany.mockResolvedValue({ count: 0 })
+    mocks.isPendingActionExpired.mockReturnValue(false)
+    mocks.settlePlanStepsLinkedToPendingAction.mockResolvedValue(null)
   })
 
   it('returns a stable cursor and only the requested page size', async () => {
@@ -111,5 +118,29 @@ describe('GET /api/assistant/actions pagination', () => {
       'https://alma.test/api/assistant/actions?status=pending&limit=20',
     ))).rejects.toThrow('database unavailable')
     expect(mocks.findMany).toHaveBeenCalledTimes(1)
+  })
+
+  it('settles every plan row whose approval card the pending sweep expires', async () => {
+    mocks.isPendingActionExpired.mockReturnValue(true)
+    mocks.findMany.mockResolvedValue([
+      row('expired-a', '2026-07-29T03:00:00Z'),
+      row('expired-b', '2026-07-29T02:00:00Z'),
+    ])
+    mocks.updateMany.mockResolvedValue({ count: 2 })
+
+    const response = await GET(new NextRequest(
+      'https://alma.test/api/assistant/actions?status=pending&limit=20',
+    ))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ count: 0, actions: [] })
+    expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: { in: ['expired-a', 'expired-b'] }, status: 'pending' },
+      data: expect.objectContaining({ status: 'expired' }),
+    }))
+    expect(mocks.settlePlanStepsLinkedToPendingAction.mock.calls.map(([id]) => id)).toEqual([
+      'expired-a',
+      'expired-b',
+    ])
   })
 })

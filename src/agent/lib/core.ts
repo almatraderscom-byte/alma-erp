@@ -84,6 +84,7 @@ import {
   pickFinalDeliveryStep,
 } from '@/agent/lib/plan-step-advance'
 import {
+  completePlanStepsLinkedToAskCard,
   linkAskCardToPlanStep,
   linkPendingActionToPlanStep,
   markStepBlocked,
@@ -2047,6 +2048,18 @@ export async function* runAgentTurn(
                       nativeTrackerBlockedBy = { kind: 'worker', refId: ownerBlocker.refId }
                     }
                   } catch { /* the original pending snapshot remains truthful */ }
+                }
+              } else {
+                // A deterministic ask card can be answered by an overlapping
+                // turn before this newly claimed row finishes binding. The
+                // answer callback then had no reverse link to settle. Re-read
+                // the durable card only after the row is linked and blocked;
+                // this also repairs the narrower answer-between-link-and-block
+                // race where markStepBlocked temporarily follows a settlement.
+                const settled = await completePlanStepsLinkedToAskCard(ownerBlocker.refId)
+                if (settled.includes(claimedStepId)) {
+                  nativeTrackerBlockedBy = null
+                  if (local) local.status = 'done'
                 }
               }
             } else {

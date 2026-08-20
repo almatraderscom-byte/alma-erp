@@ -15,6 +15,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
+import { settlePlanStepsLinkedToPendingAction } from '@/agent/lib/planner'
 import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
@@ -199,14 +200,19 @@ export async function GET(req: NextRequest) {
   // routes do on a 410) and drop them from the pending view so they disappear.
   const expiredIds = actions.filter((a: { expired: boolean }) => a.expired).map((a: { id: string }) => a.id)
   if (expiredIds.length) {
-    await db.agentPendingAction
+    const retired = await db.agentPendingAction
       .updateMany({
         where: { id: { in: expiredIds }, status: 'pending' },
         data: { status: 'expired', resolvedAt: new Date() },
       })
       .catch((err: unknown) => {
         console.warn('[assistant/actions] expired sweep failed:', err instanceof Error ? err.message : err)
+        return null
       })
+    if (retired) {
+      await Promise.all(expiredIds.map((actionId: string) =>
+        settlePlanStepsLinkedToPendingAction(actionId).catch(() => null)))
+    }
   }
 
   const visible = status === 'pending' ? actions.filter((a: { expired: boolean }) => !a.expired) : actions

@@ -175,6 +175,7 @@ describe('native Anthropic loop tracker parity', () => {
     expect(source).toContain('linkPendingActionToPlanStep(blockerActionId, claimedStepId)')
     expect(source).toContain('settlePlanStepsLinkedToPendingAction(blockerActionId)')
     expect(source).toContain('settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)')
+    expect(source).toContain('completePlanStepsLinkedToAskCard(ownerBlocker.refId)')
     expect(source).toContain("actionTrackerState === 'failed'")
     expect(source).toContain('linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)')
     expect(source).toContain('if (linked)')
@@ -190,5 +191,29 @@ describe('native Anthropic loop tracker parity', () => {
     expect(answerSource).toContain('await completePlanStepsLinkedToAskCard(cardId)')
     expect(answerSource.match(/await settleLinkedPlanSteps\(cardId\)/g)).toHaveLength(3)
     expect(turnSource).toContain('await completePlanStepsLinkedToAskCard(matchedAskCard.id)')
+  })
+
+  it('settles linked plan rows from every approval-card expiration path', () => {
+    const approveSource = readFileSync(
+      new URL('../../../app/api/assistant/actions/[id]/approve/route.ts', import.meta.url),
+      'utf8',
+    )
+    const reviseSource = readFileSync(
+      new URL('../../../app/api/assistant/actions/[id]/revise/route.ts', import.meta.url),
+      'utf8',
+    )
+    const sweepSource = readFileSync(
+      new URL('../../../app/api/assistant/actions/route.ts', import.meta.url),
+      'utf8',
+    )
+    expect(approveSource).toMatch(
+      /data: \{ status: 'expired',[\s\S]{0,400}settlePlanStepsLinkedToPendingAction\(actionId\)/,
+    )
+    expect(reviseSource).toMatch(
+      /data: \{ status: 'expired',[\s\S]{0,400}settlePlanStepsLinkedToPendingAction\(actionId\)/,
+    )
+    expect(sweepSource).toMatch(
+      /status: 'expired'[\s\S]{0,800}settlePlanStepsLinkedToPendingAction\(actionId\)/,
+    )
   })
 })
