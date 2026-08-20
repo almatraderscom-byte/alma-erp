@@ -82,7 +82,11 @@ import {
   ownerBlockerFromToolResult,
   pickFinalDeliveryStep,
 } from '@/agent/lib/plan-step-advance'
-import { linkPendingActionToPlanStep, markStepBlocked } from '@/agent/lib/planner'
+import {
+  linkAskCardToPlanStep,
+  linkPendingActionToPlanStep,
+  markStepBlocked,
+} from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
   syncPlanTracker,
@@ -1987,13 +1991,27 @@ export async function* runAgentTurn(
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
           if (ownerBlocker) {
             // Approval/question cards are successful *staging*, not successful
-            // execution. Put the step back so approve/resume can retry it, and
-            // expose the exact waiting-owner reason in the durable snapshot.
-            if (ownerBlocker.kind === 'approval') {
-              await linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)
+            // execution. Bind the durable card, put the step back while it
+            // waits, and let the real owner-resolution callback settle it.
+            const linked = ownerBlocker.kind === 'approval'
+              ? await linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)
+              : await linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)
+            if (linked) {
+              await markStepBlocked(claimedStepId)
+              if (local) local.status = 'pending'
+            } else {
+              // Never strand a row when the result points at a missing card or
+              // a conflicting owner. Preserve the blocker in the snapshot, but
+              // make linkage failure explicit/retryable instead of pretending
+              // that an unowned approval/question can later settle this step.
+              const outcome = await finishPlanStep({
+                stepId: claimedStepId,
+                ok: false,
+                error: `Could not bind ${ownerBlocker.kind} ${ownerBlocker.refId} to the plan step`,
+                resultSummary: { toolName: tb.name, toolCallId: tb.id },
+              })
+              if (local && outcome) local.status = outcome
             }
-            await markStepBlocked(claimedStepId)
-            if (local) local.status = 'pending'
           } else {
             const outcome = await finishPlanStep({
               stepId: claimedStepId,

@@ -939,6 +939,13 @@ async function* runAlternateProviderTurn(
           matchedAskCard = { ...pendingHit, status: 'answered', selectedOption: chosen }
         }
       }
+      // The chat-send fallback may record an answer before/without the dedicated
+      // answer endpoint. Settle the exact plan row here too; the helper is
+      // status-gated and CAS-idempotent, so a concurrent endpoint is harmless.
+      if (matchedAskCard?.selectedOption) {
+        const { completePlanStepsLinkedToAskCard } = await import('@/agent/lib/planner')
+        await completePlanStepsLinkedToAskCard(matchedAskCard.id)
+      }
       // Phase 5: a bound answer moves the template state machine NOW (e.g. image
       // preview confirm unlocks the post step) — then re-read the runs so the
       // router, snapshot note and tool_choice binding all see the NEW step.

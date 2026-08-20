@@ -46,6 +46,17 @@ function toView(row: Record<string, unknown>): AskCardView {
   }
 }
 
+async function settleLinkedPlanSteps(cardId: string): Promise<void> {
+  try {
+    const { completePlanStepsLinkedToAskCard } = await import('@/agent/lib/planner')
+    await completePlanStepsLinkedToAskCard(cardId)
+  } catch (err) {
+    // The owner's answer is authoritative even if tracker bookkeeping is
+    // temporarily unavailable. A same-answer retry runs this idempotently.
+    console.warn('[ask-cards] linked plan-step settle failed open:', err instanceof Error ? err.message : err)
+  }
+}
+
 export async function getAskCard(cardId: string): Promise<AskCardView | null> {
   const row = await db.agentAskCard.findUnique({ where: { id: cardId }, select: SELECT })
   return row ? toView(row) : null
@@ -63,6 +74,7 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
   if (card.status !== 'pending') {
     // Idempotent success only for the SAME answer; a different one is refused.
     if ((card.selectedOption ?? '').trim() === option.trim()) {
+      await settleLinkedPlanSteps(cardId)
       return { ok: true, alreadyAnswered: true, card }
     }
     return { ok: false, alreadyAnswered: true, reason: 'different_answer_recorded', card }
@@ -80,7 +92,10 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
     // apply the same idempotency rule.
     const again = await db.agentAskCard.findUnique({ where: { id: cardId }, select: SELECT })
     const c2 = again ? toView(again) : card
-    if ((c2.selectedOption ?? '').trim() === option.trim()) return { ok: true, alreadyAnswered: true, card: c2 }
+    if ((c2.selectedOption ?? '').trim() === option.trim()) {
+      await settleLinkedPlanSteps(cardId)
+      return { ok: true, alreadyAnswered: true, card: c2 }
+    }
     return { ok: false, alreadyAnswered: true, reason: 'different_answer_recorded', card: c2 }
   }
 
@@ -119,6 +134,7 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
       console.warn('[ask-cards] run advance failed open:', err instanceof Error ? err.message : err)
     }
   }
+  await settleLinkedPlanSteps(cardId)
   const after = await db.agentAskCard.findUnique({ where: { id: cardId }, select: SELECT })
   return { ok: true, alreadyAnswered: false, card: after ? toView(after) : { ...card, status: 'answered', selectedOption: option } }
 }

@@ -11,10 +11,14 @@ const mockPrisma = {
     update: vi.fn(),
     updateMany: vi.fn(),
     findUnique: vi.fn(),
+    findMany: vi.fn(),
   },
   agentPendingAction: {
     findUnique: vi.fn(),
     update: vi.fn(),
+  },
+  agentAskCard: {
+    findUnique: vi.fn(),
   },
 }
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
@@ -31,25 +35,44 @@ const step = (s: Partial<PlanStep> & { id: string; action: string }): PlanStep =
 })
 
 describe('planner', () => {
-  it('persists approval linkage without overwriting an existing owner', async () => {
+  it('preserves the primary approval owner and links deduplicated follower rows', async () => {
     const {
       linkPendingActionToPlanStep,
       linkedPlanStepIdFromPendingActionPayload,
+      linkedPlanStepIdsFromPendingActionPayload,
     } = await import('@/agent/lib/planner')
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({ payload: { amount: 5 } })
     mockPrisma.agentPendingAction.update.mockResolvedValueOnce({})
     await expect(linkPendingActionToPlanStep('action-1', 'step-1')).resolves.toBe(true)
     expect(mockPrisma.agentPendingAction.update).toHaveBeenCalledWith({
       where: { id: 'action-1' },
-      data: { payload: { amount: 5, _agentPlanStepId: 'step-1' } },
+      data: {
+        payload: {
+          amount: 5,
+          _agentPlanStepId: 'step-1',
+          _agentPlanStepIds: ['step-1'],
+        },
+      },
     })
     expect(linkedPlanStepIdFromPendingActionPayload({ _agentPlanStepId: 'step-1' })).toBe('step-1')
 
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
       payload: { _agentPlanStepId: 'step-original' },
     })
-    await expect(linkPendingActionToPlanStep('action-1', 'step-other')).resolves.toBe(false)
-    expect(mockPrisma.agentPendingAction.update).toHaveBeenCalledTimes(1)
+    await expect(linkPendingActionToPlanStep('action-1', 'step-other')).resolves.toBe(true)
+    expect(mockPrisma.agentPendingAction.update).toHaveBeenLastCalledWith({
+      where: { id: 'action-1' },
+      data: {
+        payload: {
+          _agentPlanStepId: 'step-original',
+          _agentPlanStepIds: ['step-original', 'step-other'],
+        },
+      },
+    })
+    expect(linkedPlanStepIdsFromPendingActionPayload({
+      _agentPlanStepId: 'step-original',
+      _agentPlanStepIds: ['step-original', 'step-other', 'step-other'],
+    })).toEqual(['step-original', 'step-other'])
   })
 
   it('completes the linked row only from a durable executed outcome', async () => {
@@ -61,14 +84,63 @@ describe('planner', () => {
     expect(mockPrisma.agentPlanStep.updateMany).not.toHaveBeenCalled()
 
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
-      status: 'executed', type: 'publish', payload: { _agentPlanStepId: 'step-1' }, result: { id: 'post-1' },
+      status: 'executed', type: 'publish', payload: {
+        _agentPlanStepId: 'step-1',
+        _agentPlanStepIds: ['step-1', 'step-2'],
+      }, result: { id: 'post-1' },
     })
-    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ planId: 'plan-1', status: 'pending' })
-    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
+      { id: 'step-1', planId: 'plan-1', status: 'pending' },
+      { id: 'step-2', planId: 'plan-2', status: 'running' },
+    ])
+    mockPrisma.agentPlanStep.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
     await expect(completePlanStepLinkedToPendingAction('action-1')).resolves.toBe('step-1')
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'step-1', status: { in: ['pending', 'running'] } },
       data: expect.objectContaining({ status: 'done', turnId: null, dispatchedAt: null }),
+    }))
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'step-2', status: { in: ['pending', 'running'] } },
+    }))
+  })
+
+  it('binds an ask card before display and completes only after its durable answer', async () => {
+    const {
+      ASK_CARD_PLAN_STEP_RESULT_KEY,
+      completePlanStepsLinkedToAskCard,
+      linkAskCardToPlanStep,
+    } = await import('@/agent/lib/planner')
+    mockPrisma.agentAskCard.findUnique.mockResolvedValueOnce({ id: 'ask-1' })
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ status: 'running', result: null })
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(linkAskCardToPlanStep('ask-1', 'step-1')).resolves.toBe(true)
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'step-1', status: { in: ['pending', 'running'] } },
+      data: { result: { [ASK_CARD_PLAN_STEP_RESULT_KEY]: 'ask-1' } },
+    })
+
+    mockPrisma.agentAskCard.findUnique.mockResolvedValueOnce({ status: 'pending', selectedOption: null })
+    await expect(completePlanStepsLinkedToAskCard('ask-1')).resolves.toEqual([])
+
+    mockPrisma.agentAskCard.findUnique.mockResolvedValueOnce({ status: 'answered', selectedOption: 'হ্যাঁ' })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{ id: 'step-1', planId: 'plan-1' }])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(completePlanStepsLinkedToAskCard('ask-1')).resolves.toEqual(['step-1'])
+    expect(mockPrisma.agentPlanStep.findMany).toHaveBeenLastCalledWith({
+      where: {
+        status: { in: ['pending', 'running'] },
+        result: { path: [ASK_CARD_PLAN_STEP_RESULT_KEY], equals: 'ask-1' },
+      },
+      select: { id: true, planId: true },
+    })
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'step-1', status: { in: ['pending', 'running'] } },
+      data: expect.objectContaining({
+        status: 'done',
+        result: expect.objectContaining({ selectedOption: 'হ্যাঁ' }),
+      }),
     }))
   })
 

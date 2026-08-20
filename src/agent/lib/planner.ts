@@ -299,6 +299,9 @@ export async function markStepBlocked(stepId: string): Promise<void> {
 
 /** Reserved audit link written into the approval card before it is emitted. */
 export const PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY = '_agentPlanStepId'
+export const PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY = '_agentPlanStepIds'
+/** Reserved reverse link written onto a pending plan row for an ask card. */
+export const ASK_CARD_PLAN_STEP_RESULT_KEY = '_agentAskCardId'
 
 function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -309,6 +312,24 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 /** Pure reader kept public so the payload compatibility contract is testable. */
 export function linkedPlanStepIdFromPendingActionPayload(payload: unknown): string | null {
   const value = jsonRecord(payload)[PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/** All rows that the same deduplicated approval action will satisfy. */
+export function linkedPlanStepIdsFromPendingActionPayload(payload: unknown): string[] {
+  const record = jsonRecord(payload)
+  const primary = linkedPlanStepIdFromPendingActionPayload(record)
+  const followers = Array.isArray(record[PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY])
+    ? (record[PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY] as unknown[])
+        .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+        .map((value) => value.trim())
+    : []
+  return [...new Set([...(primary ? [primary] : []), ...followers])]
+}
+
+/** Pure reader for the reverse ask-card link stored on an unfinished row. */
+export function linkedAskCardIdFromPlanStepResult(result: unknown): string | null {
+  const value = jsonRecord(result)[ASK_CARD_PLAN_STEP_RESULT_KEY]
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
@@ -328,15 +349,49 @@ export async function linkPendingActionToPlanStep(
   })
   if (!action) return false
   const payload = jsonRecord(action.payload)
-  const existing = linkedPlanStepIdFromPendingActionPayload(payload)
-  // A deduped action may be rediscovered by a later turn. Never steal its
-  // original plan-row ownership; the first emitted card remains authoritative.
-  if (existing) return existing === stepId
+  const existing = linkedPlanStepIdsFromPendingActionPayload(payload)
+  if (existing.includes(stepId)) return true
+  // A deduped action may satisfy a later prospective row too. Preserve the
+  // first card owner as the compatibility/primary link and append followers;
+  // execution then settles every row represented by the one real action.
+  const linkedStepIds = [...existing, stepId]
   await db.agentPendingAction.update({
     where: { id: pendingActionId },
-    data: { payload: { ...payload, [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: stepId } },
+    data: {
+      payload: {
+        ...payload,
+        [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: linkedStepIds[0],
+        [PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY]: linkedStepIds,
+      },
+    },
   })
   return true
+}
+
+/**
+ * Bind an owner question to the exact unfinished plan row before the card is
+ * yielded. AgentAskCard has no tracker-specific column, so the reverse link is
+ * stored in the row's JSON result slot while it is pending. The answer path can
+ * then settle every row for that deterministic/deduplicated card without text
+ * matching or a schema migration.
+ */
+export async function linkAskCardToPlanStep(
+  askCardId: string,
+  stepId: string,
+): Promise<boolean> {
+  const [card, step] = await Promise.all([
+    db.agentAskCard.findUnique({ where: { id: askCardId }, select: { id: true } }),
+    db.agentPlanStep.findUnique({ where: { id: stepId }, select: { status: true, result: true } }),
+  ])
+  if (!card || !step || !['pending', 'running'].includes(String(step.status))) return false
+  const result = jsonRecord(step.result)
+  const existing = linkedAskCardIdFromPlanStepResult(result)
+  if (existing) return existing === askCardId
+  const linked = await db.agentPlanStep.updateMany({
+    where: { id: stepId, status: { in: ['pending', 'running'] } },
+    data: { result: { ...result, [ASK_CARD_PLAN_STEP_RESULT_KEY]: askCardId } },
+  })
+  return linked.count === 1
 }
 
 /**
@@ -352,34 +407,88 @@ export async function completePlanStepLinkedToPendingAction(
     select: { status: true, type: true, payload: true, result: true },
   })
   if (!action || action.status !== 'executed') return null
-  const stepId = linkedPlanStepIdFromPendingActionPayload(action.payload)
-  if (!stepId) return null
-  const step = await db.agentPlanStep.findUnique({
-    where: { id: stepId },
-    select: { planId: true, status: true },
-  })
-  if (!step) return null
-  if (step.status === 'done') return stepId
-  const settled = await db.agentPlanStep.updateMany({
-    where: { id: stepId, status: { in: ['pending', 'running'] } },
-    data: {
-      status: 'done',
-      result: {
-        pendingActionId,
-        actionType: action.type,
-        actionStatus: action.status,
-        output: action.result ?? null,
+  const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
+  if (stepIds.length === 0) return null
+  const steps: Array<{ id: string; planId: string; status: string }> =
+    await db.agentPlanStep.findMany({
+      where: { id: { in: stepIds } },
+      select: { id: true, planId: true, status: true },
+    })
+  const settledIds: string[] = []
+  const touchedPlans = new Set<string>()
+  for (const step of steps) {
+    if (step.status === 'done') {
+      settledIds.push(step.id)
+      continue
+    }
+    const settled = await db.agentPlanStep.updateMany({
+      where: { id: step.id, status: { in: ['pending', 'running'] } },
+      data: {
+        status: 'done',
+        result: {
+          pendingActionId,
+          actionType: action.type,
+          actionStatus: action.status,
+          output: action.result ?? null,
+        },
+        error: null,
+        doneAt: new Date(),
+        nextAttemptAt: null,
+        turnId: null,
+        dispatchedAt: null,
       },
-      error: null,
-      doneAt: new Date(),
-      nextAttemptAt: null,
-      turnId: null,
-      dispatchedAt: null,
-    },
+    })
+    if (settled.count === 1) {
+      settledIds.push(step.id)
+      touchedPlans.add(step.planId)
+    }
+  }
+  for (const planId of touchedPlans) void refreshPlanTrackerSnapshot(planId)
+  return settledIds[0] ?? null
+}
+
+/** Settle question rows only after the durable ask card records an answer. */
+export async function completePlanStepsLinkedToAskCard(
+  askCardId: string,
+): Promise<string[]> {
+  const card = await db.agentAskCard.findUnique({
+    where: { id: askCardId },
+    select: { status: true, selectedOption: true },
   })
-  if (settled.count === 0) return null
-  if (step.planId) void refreshPlanTrackerSnapshot(step.planId)
-  return stepId
+  if (!card || card.status !== 'answered') return []
+  const steps: Array<{ id: string; planId: string }> = await db.agentPlanStep.findMany({
+    where: {
+      status: { in: ['pending', 'running'] },
+      result: { path: [ASK_CARD_PLAN_STEP_RESULT_KEY], equals: askCardId },
+    },
+    select: { id: true, planId: true },
+  })
+  const settledIds: string[] = []
+  const touchedPlans = new Set<string>()
+  for (const step of steps) {
+    const settled = await db.agentPlanStep.updateMany({
+      where: { id: step.id, status: { in: ['pending', 'running'] } },
+      data: {
+        status: 'done',
+        result: {
+          askCardId,
+          askCardStatus: card.status,
+          selectedOption: card.selectedOption ?? null,
+        },
+        error: null,
+        doneAt: new Date(),
+        nextAttemptAt: null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    if (settled.count === 1) {
+      settledIds.push(step.id)
+      touchedPlans.add(step.planId)
+    }
+  }
+  for (const planId of touchedPlans) void refreshPlanTrackerSnapshot(planId)
+  return settledIds
 }
 
 /** Queue mode — the step is now waiting on a worker turn (reaped next tick). */
