@@ -2769,6 +2769,14 @@ async function* runAlternateProviderTurn(
         // final answer — then restore tools and resume the job. If even the
         // tool-free round came back empty, the harness writes the update from
         // evidence it directly observed (same pattern as the wrap-up salvage).
+        if (forcedUpdateRound && (nearDeadline || deadlineNudgeSent)) {
+          // Codex P1 #816 round 2: the clock entered the deadline window after
+          // escalation was scheduled — the round carried BOTH notes and its
+          // text is the deadline wrap-up. Fall through to the normal final
+          // path; never consume it as interim and burn rounds inside the 45s
+          // shutdown window.
+          forcedUpdateRound = false
+        }
         if (forcedUpdateRound && !signal?.aborted) {
           forcedUpdateRound = false
           let updateText = iterationText.trim()
