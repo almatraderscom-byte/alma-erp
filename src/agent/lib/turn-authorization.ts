@@ -178,12 +178,14 @@ const OWNER_SERVICE_TOOLS = new Set([
   // power_status) ride along. They control sleep on his own Mac and touch no
   // business state; the worst case is a battery left awake.
   'mac_desk_control',
-  // A prospective plan is UI/control metadata, not a business mutation.  The
-  // owner routinely asks for a read-only audit *and* an up-front Codex-style
-  // checklist; classifying make_plan as a DB write is useful for the registry,
-  // but stripping it here makes those two explicit instructions contradictory
-  // and leaves the native tracker with no agent_plan snapshot to render.
+  // A prospective plan and its execution cursor are UI/control metadata, not
+  // business mutations. The owner routinely asks for a read-only audit *and*
+  // an up-front Codex-style checklist; stripping either half leaves the native
+  // tracker stranded. `execute_plan` itself enforces a second boundary: a
+  // read-only turn may advance the cursor, but can never enroll the plan in
+  // autodrive. Every business tool invoked for a step still passes this gate.
   'make_plan',
+  'execute_plan',
   'ask_user',
   'save_memory',
   'update_memory',

@@ -90,9 +90,10 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
     expect(auth).toEqual({ allowMutations: false, reason: 'explicit_no_action' })
     expect(filterToolsForOwnerTurn([
       { name: 'make_plan' },
+      { name: 'execute_plan' },
       { name: 'get_orders' },
       { name: 'update_order' },
-    ], auth).map((tool) => tool.name)).toEqual(['make_plan', 'get_orders'])
+    ], auth).map((tool) => tool.name)).toEqual(['make_plan', 'execute_plan', 'get_orders'])
   })
 
   it('workflow_continuation authorization allows everything (in-flight work)', () => {
