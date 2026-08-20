@@ -10,6 +10,7 @@ import { recordRejection } from '@/agent/lib/trust-engine'
 import { getModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
+import { settlePlanStepsLinkedToPendingAction } from '@/agent/lib/planner'
 
 export const runtime = 'nodejs'
 // A rejected delegation makes the Sonnet head answer the task itself (one
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
     })
+    await settlePlanStepsLinkedToPendingAction(actionId).catch(() => null)
     return Response.json({ error: 'expired', message: 'অনুমোদনের সময় শেষ — ৩০ মিনিটের মধ্যে সিদ্ধান্ত নিতে হবে।' }, { status: 410 })
   }
 
@@ -121,6 +123,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const now = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
     return Response.json({ error: 'already_resolved', status: now?.status }, { status: 409 })
   }
+  // Rejection is a real terminal outcome for the exact planned action. Settle
+  // its linked tracker row before any type-specific fallback returns.
+  await settlePlanStepsLinkedToPendingAction(actionId).catch((err) => {
+    console.warn('[reject] plan-step settle failed open:', err instanceof Error ? err.message : err)
+  })
   const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
   await pushCurrentPulseLiveActivity()
 

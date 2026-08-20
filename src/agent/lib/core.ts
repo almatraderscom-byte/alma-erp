@@ -80,6 +80,7 @@ import {
   beginPlanStepForTool,
   finishPlanStep,
   ownerBlockerFromToolResult,
+  pendingActionTrackerState,
   pickFinalDeliveryStep,
 } from '@/agent/lib/plan-step-advance'
 import {
@@ -2008,7 +2009,13 @@ export async function* runAgentTurn(
           }
         }
         const ownerBlocker = ownerBlockerFromToolResult(r.result, blockerActionStatus)
+        const actionTrackerState = pendingActionTrackerState(blockerActionStatus)
+        const queuedWorker = Boolean(blockerActionId && actionTrackerState === 'worker')
+        const terminalActionFailure = Boolean(blockerActionId && actionTrackerState === 'failed')
         if (ownerBlocker) nativeTrackerBlockedBy = ownerBlocker
+        else if (queuedWorker && blockerActionId) {
+          nativeTrackerBlockedBy = { kind: 'worker', refId: blockerActionId }
+        }
         if (claimedStepId) {
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
           if (ownerBlocker) {
@@ -2034,6 +2041,28 @@ export async function* runAgentTurn(
               })
               if (local && outcome) local.status = outcome
             }
+          } else if (queuedWorker && blockerActionId) {
+            // approved means queued/running for background actions, not done.
+            // Keep the claimed row running and persist the exact callback link;
+            // job-result will settle it only after the action becomes executed.
+            const linked = await linkPendingActionToPlanStep(blockerActionId, claimedStepId)
+            if (!linked) {
+              const outcome = await finishPlanStep({
+                stepId: claimedStepId,
+                ok: false,
+                error: `Could not bind worker action ${blockerActionId} to the plan step`,
+                resultSummary: { toolName: tb.name, toolCallId: tb.id },
+              })
+              if (local && outcome) local.status = outcome
+            }
+          } else if (terminalActionFailure) {
+            const outcome = await finishPlanStep({
+              stepId: claimedStepId,
+              ok: false,
+              error: `Background action ${blockerActionId} is ${blockerActionStatus}`,
+              resultSummary: { toolName: tb.name, toolCallId: tb.id },
+            })
+            if (local && outcome) local.status = outcome
           } else {
             const outcome = await finishPlanStep({
               stepId: claimedStepId,

@@ -97,6 +97,20 @@ describe('work_steps_snapshot projector', () => {
     expect(snapshot.status).toBe('waiting_worker')
   })
 
+  it('projects an action-linked queued step as waiting_worker', () => {
+    const snapshot = projectWorkSteps({
+      plan: planRow(),
+      currentTurnId: 'turn-1',
+      revision: 2,
+      blockedBy: { kind: 'worker', refId: 'action-queued' },
+      live: true,
+      now: NOW,
+    })
+    expect(snapshot.status).toBe('waiting_worker')
+    expect(snapshot.steps[1].status).toBe('waiting_worker')
+    expect(snapshot.headline).toBe('Worker-এ কাজ চলছে')
+  })
+
   it('chains continuation turns without duplicating the tracker', () => {
     const first = projectWorkSteps({
       plan: planRow(), currentTurnId: 'turn-1', revision: 1, blockedBy: null, live: true, now: NOW,

@@ -32,6 +32,17 @@ export type AdvanceableStep = {
   status: string
 }
 
+export type PendingActionTrackerState = 'approval' | 'worker' | 'complete' | 'failed' | null
+
+/** Durable pending-action status translated into truthful tracker lifecycle. */
+export function pendingActionTrackerState(status: string | null | undefined): PendingActionTrackerState {
+  if (status === 'pending') return 'approval'
+  if (status === 'approved') return 'worker'
+  if (status === 'executed') return 'complete'
+  if (status && ['failed', 'rejected', 'expired', 'cancelled'].includes(status)) return 'failed'
+  return null
+}
+
 /**
  * A successful tool result can still mean "the owner must decide" rather than
  * "the requested action happened". Keep that distinction pure and shared so a
@@ -52,7 +63,7 @@ export function ownerBlockerFromToolResult(result: {
     // only an actually pending action owns an approval card. The explicit flag
     // remains the safe fallback for pure callers that cannot read the row.
     const awaitingOwner = pendingActionStatus !== undefined
-      ? pendingActionStatus === 'pending'
+      ? pendingActionTrackerState(pendingActionStatus) === 'approval'
       : data.awaitingApproval === true
     return awaitingOwner ? { kind: 'approval', refId: data.pendingActionId } : null
   }

@@ -5,7 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { enqueueApprovedActionContinuation } from '@/agent/lib/approval-continuation'
-import { completePlanStepLinkedToPendingAction } from '@/agent/lib/planner'
+import { settlePlanStepsLinkedToPendingAction } from '@/agent/lib/planner'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
@@ -3637,7 +3637,7 @@ export async function POST(
   // synchronous action that durably reached `executed` closes its exact plan
   // row here; queued jobs remain pending until job-result calls the same CAS.
   try {
-    await completePlanStepLinkedToPendingAction(actionId)
+    await settlePlanStepsLinkedToPendingAction(actionId)
   } catch (err) {
     console.warn('[approve] plan-step settle failed (approval unaffected):', err instanceof Error ? err.message : err)
   }

@@ -244,6 +244,9 @@ export function projectWorkSteps(input: {
   if (status === 'waiting_owner') {
     const active = steps.find((s) => s.status === 'running') ?? steps.find((s) => s.status === 'pending')
     if (active) active.status = 'waiting_owner'
+  } else if (status === 'waiting_worker') {
+    const active = steps.find((s) => s.status === 'running') ?? steps.find((s) => s.status === 'pending')
+    if (active) active.status = 'waiting_worker'
   }
 
   const running = steps.find((s) => s.status === 'running')

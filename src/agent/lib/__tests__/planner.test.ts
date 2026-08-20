@@ -75,12 +75,12 @@ describe('planner', () => {
     })).toEqual(['step-original', 'step-other'])
   })
 
-  it('completes the linked row only from a durable executed outcome', async () => {
-    const { completePlanStepLinkedToPendingAction } = await import('@/agent/lib/planner')
+  it('settles linked rows only from durable terminal outcomes', async () => {
+    const { settlePlanStepsLinkedToPendingAction } = await import('@/agent/lib/planner')
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
       status: 'approved', type: 'publish', payload: { _agentPlanStepId: 'step-1' }, result: null,
     })
-    await expect(completePlanStepLinkedToPendingAction('action-1')).resolves.toBeNull()
+    await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBeNull()
     expect(mockPrisma.agentPlanStep.updateMany).not.toHaveBeenCalled()
 
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
@@ -96,13 +96,28 @@ describe('planner', () => {
     mockPrisma.agentPlanStep.updateMany
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 1 })
-    await expect(completePlanStepLinkedToPendingAction('action-1')).resolves.toBe('step-1')
+    await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBe('step-1')
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'step-1', status: { in: ['pending', 'running'] } },
       data: expect.objectContaining({ status: 'done', turnId: null, dispatchedAt: null }),
     }))
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'step-2', status: { in: ['pending', 'running'] } },
+    }))
+
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      status: 'failed', type: 'workbench_run',
+      payload: { _agentPlanStepId: 'step-3' },
+      result: { error: 'worker exited 1' },
+    })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
+      { id: 'step-3', planId: 'plan-3', status: 'running' },
+    ])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBe('step-3')
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'step-3', status: { in: ['pending', 'running'] } },
+      data: expect.objectContaining({ status: 'failed', error: 'worker exited 1' }),
     }))
   })
 

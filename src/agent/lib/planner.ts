@@ -3,7 +3,7 @@
  * for complex multi-step tasks.
  */
 import { prisma } from '@/lib/prisma'
-import { refreshPlanTrackerSnapshot } from '@/agent/lib/work-steps'
+import { refreshPlanTrackerSnapshot, syncPlanTracker } from '@/agent/lib/work-steps'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -395,18 +395,24 @@ export async function linkAskCardToPlanStep(
 }
 
 /**
- * Close the linked row only from a durable `executed` action. This is CAS-safe
- * and idempotent: approval retries and worker callback replays cannot regress a
- * terminal row or complete a different one.
+ * Settle linked rows only from a durable terminal action. This is CAS-safe and
+ * idempotent: approval retries and worker callback replays cannot regress a
+ * terminal row or settle a different one.
  */
-export async function completePlanStepLinkedToPendingAction(
+export async function settlePlanStepsLinkedToPendingAction(
   pendingActionId: string,
 ): Promise<string | null> {
   const action = await db.agentPendingAction.findUnique({
     where: { id: pendingActionId },
     select: { status: true, type: true, payload: true, result: true },
   })
-  if (!action || action.status !== 'executed') return null
+  const succeeded = action?.status === 'executed'
+  const failed = action && ['failed', 'rejected', 'expired', 'cancelled'].includes(action.status)
+  if (!action || (!succeeded && !failed)) return null
+  const actionResult = jsonRecord(action.result)
+  const actionError = typeof actionResult.error === 'string' && actionResult.error.trim()
+    ? actionResult.error.trim()
+    : `Background action ${action.type} ${action.status}`
   const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
   if (stepIds.length === 0) return null
   const steps: Array<{ id: string; planId: string; status: string }> =
@@ -417,21 +423,22 @@ export async function completePlanStepLinkedToPendingAction(
   const settledIds: string[] = []
   const touchedPlans = new Set<string>()
   for (const step of steps) {
-    if (step.status === 'done') {
+    if ((succeeded && step.status === 'done') || (failed && step.status === 'failed')) {
       settledIds.push(step.id)
+      touchedPlans.add(step.planId)
       continue
     }
     const settled = await db.agentPlanStep.updateMany({
       where: { id: step.id, status: { in: ['pending', 'running'] } },
       data: {
-        status: 'done',
+        status: succeeded ? 'done' : 'failed',
         result: {
           pendingActionId,
           actionType: action.type,
           actionStatus: action.status,
           output: action.result ?? null,
         },
-        error: null,
+        error: succeeded ? null : actionError,
         doneAt: new Date(),
         nextAttemptAt: null,
         turnId: null,
@@ -443,7 +450,8 @@ export async function completePlanStepLinkedToPendingAction(
       touchedPlans.add(step.planId)
     }
   }
-  for (const planId of touchedPlans) void refreshPlanTrackerSnapshot(planId)
+  await Promise.all([...touchedPlans].map((planId) =>
+    syncPlanTracker(planId, { blockedBy: null, live: false })))
   return settledIds[0] ?? null
 }
 
@@ -487,7 +495,8 @@ export async function completePlanStepsLinkedToAskCard(
       touchedPlans.add(step.planId)
     }
   }
-  for (const planId of touchedPlans) void refreshPlanTrackerSnapshot(planId)
+  await Promise.all([...touchedPlans].map((planId) =>
+    syncPlanTracker(planId, { blockedBy: null, live: false })))
   return settledIds
 }
 

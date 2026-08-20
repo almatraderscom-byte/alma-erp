@@ -4,6 +4,7 @@ import {
   pickFinalDeliveryStep,
   pickStepForTool,
   ownerBlockerFromToolResult,
+  pendingActionTrackerState,
   projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
@@ -74,6 +75,12 @@ describe('ownerBlockerFromToolResult', () => {
       success: true,
       data: { pendingActionId: 'job-10' },
     })).toBeNull()
+    expect([
+      pendingActionTrackerState('pending'),
+      pendingActionTrackerState('approved'),
+      pendingActionTrackerState('executed'),
+      pendingActionTrackerState('failed'),
+    ]).toEqual(['approval', 'worker', 'complete', 'failed'])
   })
 
   it('propagates an ask-user card as a question blocker', () => {
@@ -162,6 +169,11 @@ describe('native Anthropic loop tracker parity', () => {
     expect(source).toContain('ownerBlockerFromToolResult(r.result, blockerActionStatus)')
     expect(source).toContain("select: { status: true }")
     expect(source).toContain('linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)')
+    expect(source).toContain('pendingActionTrackerState(blockerActionStatus)')
+    expect(source).toContain("actionTrackerState === 'worker'")
+    expect(source).toContain("nativeTrackerBlockedBy = { kind: 'worker', refId: blockerActionId }")
+    expect(source).toContain('linkPendingActionToPlanStep(blockerActionId, claimedStepId)')
+    expect(source).toContain("actionTrackerState === 'failed'")
     expect(source).toContain('linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)')
     expect(source).toContain('if (linked)')
     expect(source).toContain('await markStepBlocked(claimedStepId)')
