@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { completePlanStepLinkedToPendingAction } from '@/agent/lib/planner'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
@@ -426,6 +427,9 @@ export async function POST(req: NextRequest) {
 
   let imageResultClaimedAt: Date | null = null
   if (action.status === 'executed' || action.status === 'failed') {
+    if (action.status === 'executed') {
+      await completePlanStepLinkedToPendingAction(pendingActionId)
+    }
     if (action.type === 'image_gen' && !action.jobResultPending) {
       return Response.json({ ok: true, idempotent: true, status: action.status })
     }
@@ -585,6 +589,9 @@ export async function POST(req: NextRequest) {
       where: { id: pendingActionId },
       data: terminalData,
     })
+    if (status === 'success') {
+      await completePlanStepLinkedToPendingAction(pendingActionId)
+    }
   }
 
   // CSE4 stages own their completion UX inside CampaignPackProgress. Reconcile
@@ -1044,6 +1051,9 @@ export async function POST(req: NextRequest) {
     processedImageEnvelope,
   )) {
     return Response.json({ error: 'image_result_receipt_changed', retryable: true }, { status: 503 })
+  }
+  if (status === 'success') {
+    await completePlanStepLinkedToPendingAction(pendingActionId)
   }
   return Response.json({ success: true })
 }

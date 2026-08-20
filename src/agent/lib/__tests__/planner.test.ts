@@ -9,7 +9,12 @@ const mockPrisma = {
   },
   agentPlanStep: {
     update: vi.fn(),
+    updateMany: vi.fn(),
     findUnique: vi.fn(),
+  },
+  agentPendingAction: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
   },
 }
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
@@ -26,6 +31,47 @@ const step = (s: Partial<PlanStep> & { id: string; action: string }): PlanStep =
 })
 
 describe('planner', () => {
+  it('persists approval linkage without overwriting an existing owner', async () => {
+    const {
+      linkPendingActionToPlanStep,
+      linkedPlanStepIdFromPendingActionPayload,
+    } = await import('@/agent/lib/planner')
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({ payload: { amount: 5 } })
+    mockPrisma.agentPendingAction.update.mockResolvedValueOnce({})
+    await expect(linkPendingActionToPlanStep('action-1', 'step-1')).resolves.toBe(true)
+    expect(mockPrisma.agentPendingAction.update).toHaveBeenCalledWith({
+      where: { id: 'action-1' },
+      data: { payload: { amount: 5, _agentPlanStepId: 'step-1' } },
+    })
+    expect(linkedPlanStepIdFromPendingActionPayload({ _agentPlanStepId: 'step-1' })).toBe('step-1')
+
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      payload: { _agentPlanStepId: 'step-original' },
+    })
+    await expect(linkPendingActionToPlanStep('action-1', 'step-other')).resolves.toBe(false)
+    expect(mockPrisma.agentPendingAction.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('completes the linked row only from a durable executed outcome', async () => {
+    const { completePlanStepLinkedToPendingAction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      status: 'approved', type: 'publish', payload: { _agentPlanStepId: 'step-1' }, result: null,
+    })
+    await expect(completePlanStepLinkedToPendingAction('action-1')).resolves.toBeNull()
+    expect(mockPrisma.agentPlanStep.updateMany).not.toHaveBeenCalled()
+
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      status: 'executed', type: 'publish', payload: { _agentPlanStepId: 'step-1' }, result: { id: 'post-1' },
+    })
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ planId: 'plan-1', status: 'pending' })
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(completePlanStepLinkedToPendingAction('action-1')).resolves.toBe('step-1')
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'step-1', status: { in: ['pending', 'running'] } },
+      data: expect.objectContaining({ status: 'done', turnId: null, dispatchedAt: null }),
+    }))
+  })
+
   it('createPlan persists goal and steps with correct sequence', async () => {
     const { createPlan } = await import('@/agent/lib/planner')
 

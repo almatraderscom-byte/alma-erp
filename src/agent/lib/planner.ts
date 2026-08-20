@@ -297,6 +297,91 @@ export async function markStepBlocked(stepId: string): Promise<void> {
   if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
 }
 
+/** Reserved audit link written into the approval card before it is emitted. */
+export const PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY = '_agentPlanStepId'
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+/** Pure reader kept public so the payload compatibility contract is testable. */
+export function linkedPlanStepIdFromPendingActionPayload(payload: unknown): string | null {
+  const value = jsonRecord(payload)[PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * Persist which durable plan row an approval card represents. The core writes
+ * this before yielding the card, so the later approve/worker callback can close
+ * the exact row from the real action outcome instead of asking the model to redo
+ * an action that already happened.
+ */
+export async function linkPendingActionToPlanStep(
+  pendingActionId: string,
+  stepId: string,
+): Promise<boolean> {
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { payload: true },
+  })
+  if (!action) return false
+  const payload = jsonRecord(action.payload)
+  const existing = linkedPlanStepIdFromPendingActionPayload(payload)
+  // A deduped action may be rediscovered by a later turn. Never steal its
+  // original plan-row ownership; the first emitted card remains authoritative.
+  if (existing) return existing === stepId
+  await db.agentPendingAction.update({
+    where: { id: pendingActionId },
+    data: { payload: { ...payload, [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: stepId } },
+  })
+  return true
+}
+
+/**
+ * Close the linked row only from a durable `executed` action. This is CAS-safe
+ * and idempotent: approval retries and worker callback replays cannot regress a
+ * terminal row or complete a different one.
+ */
+export async function completePlanStepLinkedToPendingAction(
+  pendingActionId: string,
+): Promise<string | null> {
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { status: true, type: true, payload: true, result: true },
+  })
+  if (!action || action.status !== 'executed') return null
+  const stepId = linkedPlanStepIdFromPendingActionPayload(action.payload)
+  if (!stepId) return null
+  const step = await db.agentPlanStep.findUnique({
+    where: { id: stepId },
+    select: { planId: true, status: true },
+  })
+  if (!step) return null
+  if (step.status === 'done') return stepId
+  const settled = await db.agentPlanStep.updateMany({
+    where: { id: stepId, status: { in: ['pending', 'running'] } },
+    data: {
+      status: 'done',
+      result: {
+        pendingActionId,
+        actionType: action.type,
+        actionStatus: action.status,
+        output: action.result ?? null,
+      },
+      error: null,
+      doneAt: new Date(),
+      nextAttemptAt: null,
+      turnId: null,
+      dispatchedAt: null,
+    },
+  })
+  if (settled.count === 0) return null
+  if (step.planId) void refreshPlanTrackerSnapshot(step.planId)
+  return stepId
+}
+
 /** Queue mode — the step is now waiting on a worker turn (reaped next tick). */
 export async function markStepDispatched(stepId: string, turnId: string, now = new Date()): Promise<void> {
   const step = await db.agentPlanStep.update({

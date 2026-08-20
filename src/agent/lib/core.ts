@@ -82,7 +82,7 @@ import {
   ownerBlockerFromToolResult,
   pickFinalDeliveryStep,
 } from '@/agent/lib/plan-step-advance'
-import { markStepBlocked } from '@/agent/lib/planner'
+import { linkPendingActionToPlanStep, markStepBlocked } from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
   syncPlanTracker,
@@ -1981,14 +1981,17 @@ export async function* runAgentTurn(
         }
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
+        const ownerBlocker = ownerBlockerFromToolResult(r.result)
+        if (ownerBlocker) nativeTrackerBlockedBy = ownerBlocker
         if (claimedStepId) {
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
-          const ownerBlocker = ownerBlockerFromToolResult(r.result)
           if (ownerBlocker) {
             // Approval/question cards are successful *staging*, not successful
             // execution. Put the step back so approve/resume can retry it, and
             // expose the exact waiting-owner reason in the durable snapshot.
-            nativeTrackerBlockedBy = ownerBlocker
+            if (ownerBlocker.kind === 'approval') {
+              await linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)
+            }
             await markStepBlocked(claimedStepId)
             if (local) local.status = 'pending'
           } else {
@@ -2000,6 +2003,11 @@ export async function* runAgentTurn(
             })
             if (local && outcome) local.status = outcome
           }
+        }
+        // A card blocks the task even when its tool name does not match the
+        // current prospective row. Publish waiting_owner independently from
+        // row claiming; only row mutation requires a claimed step.
+        if (claimedStepId || ownerBlocker) {
           const finished = await nativeTrackerSnapshot({ live: true })
           const signature = workStepsSignature(finished)
           if (finished && signature !== nativeWorkStepsSignature) {
