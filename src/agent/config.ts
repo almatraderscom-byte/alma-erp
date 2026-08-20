@@ -75,8 +75,11 @@ export const LONG_RUN_TURN_MAX_ITERATIONS = Math.max(
  *
  * Three rounds is about where a spinner starts to feel dead; four nudges cover a
  * long job without turning the reply into running commentary.
+ *
+ * Owner ruling 2026-08-20: TWO rounds, not three — "must 2 ta dhap sesh holei
+ * amk short reply dibe". After every 2 silent tool rounds an update is owed.
  */
-export const PROGRESS_UPDATE_EVERY = Number(process.env.AGENT_PROGRESS_UPDATE_EVERY) || 3
+export const PROGRESS_UPDATE_EVERY = Number(process.env.AGENT_PROGRESS_UPDATE_EVERY) || 2
 export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES) || 4
 
 /**
