@@ -3768,7 +3768,11 @@ async function* runAlternateProviderTurn(
         && !signal?.aborted
         && !nearDeadline
         && !lastBudgetRound
-        && iteration < maxIterations - 1
+        // Codex P1 #816: the forced update consumes iteration+1 as an interim
+        // round — a concluding round must still remain after it, so escalation
+        // needs TWO rounds of headroom, not one. Too late to fit both → the
+        // wrap-up round covers the ending instead.
+        && iteration < maxIterations - 2
       ) {
         updateNudgePending = false
         forcedUpdateRound = true
