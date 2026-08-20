@@ -2264,6 +2264,11 @@ async function* runAlternateProviderTurn(
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        // Boss's own message outranks the cadence machinery — the next rounds
+        // serve HIS instruction, never a pending forced update (Codex P1 #816
+        // round 8: the flag left set consumed his answer as a cadence update).
+        forcedUpdateRound = false
+        updateNudgePending = false
         currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
           .filter(Boolean)
           .join('\n')
@@ -2737,6 +2742,11 @@ async function* runAlternateProviderTurn(
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
+          // Same rule as the top-of-round claim (Codex P1 #816 round 8): the
+          // owner's instruction owns the next rounds — drop any pending
+          // cadence state so his answer is never consumed as an update.
+          forcedUpdateRound = false
+          updateNudgePending = false
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
             .join('\n')
