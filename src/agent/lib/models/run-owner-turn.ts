@@ -2807,6 +2807,20 @@ async function* runAlternateProviderTurn(
         ]
       }
 
+      // A forced round's prose takes the factual gate BEFORE it is emitted —
+      // clearing the flag first let a mixed prose+stale-call response bypass
+      // every verifier (Codex P1 #816 r18). A violating draft is superseded
+      // and the flag stays set, so the redelivery site publishes the harness
+      // evidence line instead.
+      if (forcedUpdateRound && iterationText.trim() && calls.length > 0
+        && forcedUpdateViolations(iterationText.trim()).length > 0) {
+        console.info('[progress-cadence] forced update failed claim check — harness line used', {
+          conversationId, model: model.id,
+        })
+        supersedeLastDraft()
+        yield* supersedeStreamedDraft()
+        iterationText = ''
+      }
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
