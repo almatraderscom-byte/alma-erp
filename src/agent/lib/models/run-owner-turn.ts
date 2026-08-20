@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, MAX_PROGRESS_NUDGES, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, maxProgressNudgesFor, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
 import {
   BOOKKEEPING_TOOLS,
@@ -2025,6 +2025,7 @@ async function* runAlternateProviderTurn(
   let budgetNudgeSent = false
   let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
+  let roundBudgetWrapSent = false
   // S0 — whose instruction this turn executes. An unattended Plan-Driver step
   // stamps 'owner_policy' on its turn row, so every tool call in this loop meets
   // the autonomy ladder + money cap instead of inheriting Boss's own authority.
@@ -2282,6 +2283,28 @@ async function* runAlternateProviderTurn(
         ]
       }
 
+      // Codex P1 #811 round 2 — the ITERATION budget deserves the same courtesy
+      // as the serverless deadline: when the loop is on its FINAL round and the
+      // turn has been grinding tools, an interim progress line must not settle
+      // as the answer just because the budget ran dry. Tools are stripped for
+      // this last round (a call made here could never be read anyway — there is
+      // no next round) and the model is told to wrap up properly. Turns that
+      // finish naturally never reach their final round, so this costs nothing.
+      const lastBudgetRound = iteration >= maxIterations - 1 && toolRecords.length > 0
+      if (lastBudgetRound && !roundBudgetWrapSent && !nearDeadline) {
+        roundBudgetWrapSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'এই টার্নের কাজের রাউন্ড-বাজেট শেষ — এখন আর টুল চালানো যাবে না। ' +
+              'এ পর্যন্ত কী কী করেছ, কী পেলে (সংখ্যা সহ) আর ঠিক কোথায় আছ তা বসকে বাংলায় গুছিয়ে জানাও; ' +
+              'কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+          },
+        ]
+      }
+
       // Over budget → strip ALL tools so the marketing head physically cannot
       // spree more; it must finish the marketing job itself and answer now.
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
@@ -2306,7 +2329,7 @@ async function* runAlternateProviderTurn(
       // past it is spend on work the owner may reject (and it buries the card).
       const cardStaged = confirmCardsEmitted > 0 || emittedAskCards.length > 0
       const budgetedTools =
-        nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || lastBudgetRound || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
         || (standardOverBudget && delegateOnlyNeutral.length === 0)
           ? []
           : premiumOverBudget || standardOverBudget
@@ -2327,8 +2350,13 @@ async function* runAlternateProviderTurn(
       // above emptied the list, it then called the contract's run_website_seo_audit
       // and the membership gate refused it — "বাধ্যতামূলক ধাপ সফল হয়নি" over a tool
       // the server itself had taken away). The demand and the means travel together.
+      // Codex P1 #811 round 3 — the reserved wrap-up round stays GENUINELY
+      // tool-free: restoring a contract tool here would fire a call whose
+      // result no round remains to read, and the forced call would silence the
+      // wrap-up prose. The unmet contract is reported by the done-gate instead.
       const contractToolMissing = Boolean(
-        requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
+        !lastBudgetRound
+        && requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
       )
       const iterationTools = contractToolMissing
         ? [
@@ -2707,6 +2735,24 @@ async function* runAlternateProviderTurn(
           yield* supersedeStreamedDraft()
           continue
         }
+        // The reserved wrap-up round came back EMPTY (weak providers do return
+        // zero text) — there is no iteration left to retry in, so the harness
+        // writes the wrap-up itself from evidence it directly observed, exactly
+        // like the deadline salvage footer. Without this, an earlier interim
+        // line (or the generic fallback) silently became the answer
+        // (Codex P1 #811 round 5).
+        if (roundBudgetWrapSent && !iterationText.trim() && !signal?.aborted) {
+          const okCount = toolRecords.filter((r) => r.status === 'success').length
+          const lastTools = toolRecords
+            .filter((r) => r.status === 'success')
+            .slice(-3)
+            .map((r) => r.toolName)
+            .join(' · ')
+          iterationText =
+            `⚠️ এই টার্নের কাজের রাউন্ড-বাজেট শেষ হওয়ায় এখানে থেমেছি — ${okCount}টা ধাপ সফল হয়েছে`
+            + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
+            + '। Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+        }
         // Fully empty round → nudge the model to continue instead of silently
         // ending the turn with a blank message. Bounded to 2 retries. Applies to
         // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
@@ -2776,6 +2822,11 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !deadlineNudgeSent
+          // The reserved wrap-up round's "continue বললে চালিয়ে যাব" is the
+          // sanctioned promise (same shape as the deadline wrap-up) — an
+          // act-now push here would discard the wrap-up with no round left to
+          // replace it (Codex P1 #811 round 3).
+          && !roundBudgetWrapSent
           && intentNudges < maxIntentNudgesFor(workClass)
           && (intentNudges === 0 || successfulToolCount > successCountAtLastIntentNudge)
           && iterationText.trim()
@@ -2833,8 +2884,10 @@ async function* runAlternateProviderTurn(
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
         // the turn no longer has, and its finalText reset is what strands an empty
-        // message when the abort lands mid-rewrite.
-        if (!signal?.aborted && !deadlineNudgeSent && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
+        // message when the abort lands mid-rewrite. Same for the reserved
+        // final-budget wrap-up round — a retry's `continue` would exit the loop
+        // and strand an older interim line as the answer (Codex P1 #811 round 3).
+        if (!signal?.aborted && !deadlineNudgeSent && !roundBudgetWrapSent && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
           // Build a ledger that carries each tool's success/error — not just its
           // name — so the verifier catches "done!" claims made after a tool that
           // actually FAILED (audit #6). The cheap-head path previously passed only
@@ -2990,7 +3043,12 @@ async function* runAlternateProviderTurn(
           iterationText =
             `⚠️ বাধ্যতামূলক ধাপ ${blockedRequirement.toolName} সফল হয়নি, তাই কাজ সম্পন্ন বলছি না। ` +
             `কারণ: ${blockedRequirement.error ?? 'unknown error'}`
-        } else if (!signal?.aborted && !deadlineNudgeSent && (batchStatus?.requiredTool || explicitMemoryMissing)) {
+        // roundBudgetWrapSent mirrors the deadline guard: the requirement retry
+        // checks the STATIC neutralTools list, so a tool-free wrap-up round
+        // would still be superseded and `continue`d with no round left to
+        // deliver the request — the done-gate reports the unmet contract
+        // instead (Codex P1 #811 round 4).
+        } else if (!signal?.aborted && !deadlineNudgeSent && !roundBudgetWrapSent && (batchStatus?.requiredTool || explicitMemoryMissing)) {
           const needed = explicitMemoryMissing ? 'save_memory' : batchStatus?.requiredTool
           if (needed && neutralTools.some((t) => t.name === needed) && requirementRetries < 2) {
             requirementRetries++
@@ -3600,7 +3658,15 @@ async function* runAlternateProviderTurn(
         !signal?.aborted
         && !nearDeadline
         && roundsSinceOwnerUpdate >= PROGRESS_UPDATE_EVERY
-        && progressNudges < MAX_PROGRESS_NUDGES
+        // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
+        // upgrade below), so the cap is re-derived from the CURRENT budget.
+        && progressNudges < maxProgressNudgesFor(maxIterations)
+        // Codex P1 (#811): a nudge costs the round the `continue` skips to. On
+        // the LAST iteration there is no next round — the note would be
+        // appended and never sent, and the previous interim line would settle
+        // as the final answer. The default budgets divide evenly by the
+        // cadence, so without this the last round is exactly where it lands.
+        && iteration < maxIterations - 1
       ) {
         progressNudges++
         roundsSinceOwnerUpdate = 0
