@@ -3805,12 +3805,22 @@ async function* runAlternateProviderTurn(
       // next round ships an EMPTY tool list (same lever as the wrap-up round),
       // so the only thing the model can do is write the owed two-line update;
       // the round after that resumes work with tools restored.
+      // Recomputed FRESH here — the round-start consts are stale once this
+      // round's calls incremented headToolRounds. A budget-exhausted head's
+      // next round belongs to the budget machinery (wrap-up or delegate-only
+      // tools, Codex P1 #816 round 7) — never to a forced update.
+      const headBudgetExhaustedNow =
+        (isMarketingHead && headToolRounds >= headToolBudgetFor(MARKETING_HEAD_TOOL_BUDGET, workClass))
+        || (isPremiumHead && delegateOnlyNeutral.length > 0
+          && headToolRounds >= headToolBudgetFor(HEAD_TOOL_BUDGET, workClass))
+        || (standardBudgetLive && headToolRounds >= headToolBudgetFor(STANDARD_HEAD_TOOL_BUDGET, workClass))
       if (
         updateNudgePending
         && !signal?.aborted
         && !nearDeadline
         && !lastBudgetRound
         && !roundHitTerminalGate
+        && !headBudgetExhaustedNow
         // Codex P1 #816: the forced update consumes iteration+1 as an interim
         // round — a concluding round must still remain after it, so escalation
         // needs TWO rounds of headroom, not one. Too late to fit both → the
