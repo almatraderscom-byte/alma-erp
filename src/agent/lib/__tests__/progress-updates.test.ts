@@ -109,3 +109,58 @@ describe('the budgets are stated, not guessed', () => {
     expect(maxProgressNudgesFor(120)).toBe(120)
   })
 })
+
+describe('ignored-nudge escalation (owner live-catch 2026-08-21)', () => {
+  // Mirrors the loop: nudge → (round with calls, no prose) → forced tool-free
+  // round → update delivered → work resumes. The guarantee is that between a
+  // nudge and the next batch of work there is at most ONE silent round.
+  function run(rounds: Array<{ toolCalls: number; spoke: boolean }>) {
+    let pending = false
+    let forced = false
+    let steps = 0
+    const events: string[] = []
+    for (const r of rounds) {
+      if (forced) {
+        // tool-free round: the only possible output is the update
+        events.push('update')
+        forced = false
+        steps = 0
+        continue
+      }
+      if (r.spoke) { steps = 0; pending = false; events.push('prose') }
+      steps += r.toolCalls
+      if (pending && r.toolCalls > 0 && !r.spoke) {
+        pending = false
+        forced = true
+        events.push('force')
+        continue
+      }
+      if (steps >= PROGRESS_UPDATE_EVERY) {
+        pending = true
+        steps = 0
+        events.push('nudge')
+      }
+    }
+    return events
+  }
+
+  it('a model that ignores every nudge still yields an update within two rounds', () => {
+    const events = run(Array.from({ length: 6 }, () => ({ toolCalls: 10, spoke: false })))
+    expect(events).toContain('force')
+    expect(events).toContain('update')
+    // No stretch of the run goes nudge→nudge without a delivered update between.
+    const firstNudge = events.indexOf('nudge')
+    const firstUpdate = events.indexOf('update')
+    expect(firstUpdate).toBeGreaterThan(firstNudge)
+    expect(firstUpdate - firstNudge).toBeLessThanOrEqual(3)
+  })
+
+  it('a model that answers the nudge politely never triggers the forced round', () => {
+    const events = run([
+      { toolCalls: 2, spoke: false },   // nudge owed
+      { toolCalls: 2, spoke: true },    // answered with prose alongside calls
+      { toolCalls: 2, spoke: true },
+    ])
+    expect(events).not.toContain('force')
+  })
+})
