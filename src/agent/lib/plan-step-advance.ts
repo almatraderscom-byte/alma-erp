@@ -52,6 +52,26 @@ export function pickStepForTool(
   return first.toolName ? null : first
 }
 
+const FINAL_DELIVERY_STEP_RE =
+  /summari[sz]e|summary|cross[-\s]?check|self[-\s]?check|verify|validation|review|deliver|report|উত্তর|সারাংশ|যাচাই|মিলিয়ে|রিভিউ|ফলাফল/i
+
+/**
+ * A persisted final answer is durable evidence for exactly one remaining
+ * delivery/summary step. It is not evidence for skipped data collection, so we
+ * claim only the final open, tool-free row after every earlier row is done.
+ */
+export function pickFinalDeliveryStep(
+  steps: AdvanceableStep[],
+): AdvanceableStep | null {
+  const open = steps.filter((step) => step.status === 'pending' || step.status === 'running')
+  if (open.length !== 1) return null
+  const candidate = open[0]
+  if (steps[steps.length - 1]?.id !== candidate.id || candidate.toolName) return null
+  const prior = steps.slice(0, -1)
+  if (prior.some((step) => step.status !== 'done' && step.status !== 'skipped')) return null
+  return FINAL_DELIVERY_STEP_RE.test(candidate.action) ? candidate : null
+}
+
 /**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the

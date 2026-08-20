@@ -96,8 +96,15 @@ import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agen
 import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
-import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
-import { beginPlanStepForTool, finishPlanStep } from '@/agent/lib/plan-step-advance'
+import {
+  chooseRoundBoundTool,
+  filterToolsForPlanTurn,
+  isPlanFirstTurn,
+  normalizeProspectivePlanInput,
+  planFirstNote,
+  shouldInjectProspectivePlanTool,
+} from '@/agent/lib/plan-first'
+import { beginPlanStepForTool, finishPlanStep, pickFinalDeliveryStep } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -2353,10 +2360,24 @@ async function* runAlternateProviderTurn(
         !lastBudgetRound
         && requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
       )
-      const iterationTools = contractToolMissing
+      // The prospective plan is controller-required UI/control state. It must
+      // travel with the round even when the router's domain budget did not pick
+      // the plan pack; otherwise the forced call hits the membership gate and
+      // the app can only show failed runtime/tool rows.
+      const planToolMissing = shouldInjectProspectivePlanTool({
+        planFirst: ownerRequirements.planFirst,
+        iteration,
+        lastBudgetRound,
+        shippedToolNames: budgetedTools.map((tool) => tool.name),
+      })
+      const requiredMissingTools = [
+        ...(contractToolMissing ? [requestedContractTool as string] : []),
+        ...(planToolMissing ? ['make_plan'] : []),
+      ]
+      const iterationTools = requiredMissingTools.length
         ? [
             ...budgetedTools,
-            ...(await resolveToolsByName([requestedContractTool as string])).map((t) => ({
+            ...(await resolveToolsByName([...new Set(requiredMissingTools)])).map((t) => ({
               name: t.name,
               description: t.description,
               schema: t.input_schema as object,
@@ -2382,10 +2403,14 @@ async function* runAlternateProviderTurn(
           && !toolRecords.some((r) => r.toolName === 'make_plan')
           ? 'make_plan'
           : null
-      const roundBoundToolName =
-        contractToolName && iterationTools.some((t) => t.name === contractToolName)
+      const roundBoundToolName = chooseRoundBoundTool({
+        iteration,
+        planTool: planBoundTool,
+        contractTool: contractToolName && iterationTools.some((t) => t.name === contractToolName)
           ? contractToolName
-          : iteration === 0 ? (boundToolName ?? planBoundTool) : null
+          : null,
+        workflowTool: boundToolName,
+      })
       // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
       // round 0 of a live-data question so the head cannot answer from memory.
       //
@@ -3172,6 +3197,13 @@ async function* runAlternateProviderTurn(
           toolResults.push({ id: call.id, name: call.name, result: skipped })
           continue
         }
+        // A weak head may use the legacy `{ plan: [{ step, description }] }`
+        // shape even when the shipped schema says `{ goal, steps: [{ action }] }`.
+        // Repair only this controller-required plan call from the owner's exact
+        // instruction before any guard or UI event records the malformed input.
+        if (call.name === 'make_plan' && ownerRequirements.planFirst) {
+          call.input = normalizeProspectivePlanInput(call.input, currentOwnerInstructions)
+        }
         // ── PM-2: the permission mode decides, before anything runs ─────────
         // Plan mode already has no effect tools, so reaching here means the head
         // guessed a name — refuse it with the remedy attached, never a bare
@@ -3755,7 +3787,8 @@ async function* runAlternateProviderTurn(
             lastWorkStepsSignature = workStepsSignature(persisted)
             yield persisted
           }
-        } else if (!trackerPlan && turnId && toolRecords.length > 0) {
+        } else if (!trackerPlan && turnId && toolRecords.length > 0
+          && !ownerRequirements.planFirst) {
           // UNPLANNED work (owner live-test gap 2026-08-12): the head served a
           // complex request directly, without staging a plan. Project honest
           // macro phases from real evidence — tool rounds actually ran. A
@@ -4224,6 +4257,23 @@ async function* runAlternateProviderTurn(
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
+
+    // The final prose itself is the evidence for one explicit tail
+    // summary/delivery step. Never use it to paper over earlier pending work.
+    if (finalText.trim() && workStepsTrackerId) {
+      try {
+        await ensureTrackerPlanSteps()
+        const finalDeliveryStep = pickFinalDeliveryStep(trackerPlanSteps)
+        if (finalDeliveryStep) {
+          const outcome = await finishPlanStep({
+            stepId: finalDeliveryStep.id,
+            ok: true,
+            resultSummary: { assistantMessageId: savedMsg.id as string },
+          })
+          if (outcome) finalDeliveryStep.status = outcome
+        }
+      } catch { /* final reply remains authoritative even if tracker persistence fails */ }
+    }
 
     // Runtime tracker: emit the bound settled snapshot. One revision above the
     // usage-persisted copy — same payload at a higher revision, so replay/cold

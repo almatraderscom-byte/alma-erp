@@ -7,7 +7,7 @@
  * targets.
  */
 
-import { AGENT_PLAN_GATE, AGENT_GROUNDING_GATE } from '@/agent/config'
+import { AGENT_GROUNDING_GATE } from '@/agent/config'
 import { DEEP_SCOPE_RE } from '@/agent/lib/turn-authorization'
 
 export interface OwnerTurnRequirements {
@@ -22,7 +22,7 @@ export interface OwnerTurnRequirements {
    * bigger tool-iteration budget. Never a trimmed-down version of the task.
    */
   deepWork: boolean
-  /** P3 — clearly multi-step work → make_plan first (only true when AGENT_PLAN_GATE on). */
+  /** P3 — clearly multi-step work → make_plan first. */
   planFirst: boolean
   /** P2 — live-data question → must read before answering (only true when AGENT_GROUNDING_GATE on). */
   groundingRequired: boolean
@@ -208,8 +208,11 @@ export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements
   // delivery" line was never emitted on the very turn that needed it.
   const reportArtifact = clientSeo
   const remember = /মনে\s*(?:রাখ|রেখ)|remember\s+this|save\s+(?:this\s+)?(?:to\s+)?memory|don't\s+forget/i.test(t)
-  // P3/P2 — each gated by its own flag (off by default → false → no note, no bind).
-  const planFirst = AGENT_PLAN_GATE && classifyPlanFirst(t)
+  // P3 is product behavior, not an experiment: an explicit/multi-step owner
+  // request must always receive its prospective checklist. A stale deployment
+  // flag previously disabled the only source the native Codex-style tracker can
+  // render, after which raw tool calls leaked into the tracker instead.
+  const planFirst = classifyPlanFirst(t)
   const groundingRequired = AGENT_GROUNDING_GATE && classifyGroundingRequired(t) && !remember && !liveBrowser
   const deepWork = DEEP_SCOPE_RE.test(t) || clientSeo
   // Unflagged on purpose: it forces nothing on its own (see the field comment),

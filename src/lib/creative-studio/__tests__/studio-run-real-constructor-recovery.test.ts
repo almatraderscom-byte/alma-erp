@@ -72,14 +72,20 @@ vi.mock('@/lib/prisma', () => ({
       },
     },
     agentKvSetting: {
-      create: async ({ data }: { data: { key: string; value: string } }) => {
-        if (harness.settings.has(data.key)) throw new Error('unique_violation')
-        const row = {
-          ...data,
-          updatedAt: new Date(harness.nowMs),
+      createMany: async ({ data }: {
+        data: Array<{ key: string; value: string }>
+        skipDuplicates?: boolean
+      }) => {
+        let count = 0
+        for (const entry of data) {
+          if (harness.settings.has(entry.key)) continue
+          harness.settings.set(entry.key, {
+            ...entry,
+            updatedAt: new Date(harness.nowMs),
+          })
+          count += 1
         }
-        harness.settings.set(data.key, row)
-        return row
+        return { count }
       },
       findUnique: async ({ where }: { where: { key: string } }) =>
         harness.settings.get(where.key) ?? null,

@@ -215,13 +215,19 @@ describe('Creative Studio paid-run production boundary', () => {
     expect(`${authorization}\n${plan}`).not.toMatch(/\*\s*100\)\s*\/\s*100/)
   })
 
-  it('pins explicit providers and limits server-side resolution to Auto', () => {
+  it('pins explicit engines and signs the configured generic provider/model', () => {
     const plan = source('src/lib/creative-studio/studio-run-plan.ts')
     const createRun = source('src/lib/creative-studio/create-run.ts')
 
     expect(plan).toContain('explicit_engine_unavailable')
     expect(plan).toContain('explicit_engine_mode_unsupported')
-    expect(plan).toContain('explicit_provider_model_mismatch')
+    // `provider: gemini` is the legacy guided-image lane identifier; GPT Image
+    // and Seedream are now valid configured models in that lane. The estimate
+    // must sign the provider resolved from the exact configured model instead
+    // of rejecting it or silently substituting a different model at execution.
+    expect(plan).toContain('provider: generic.provider')
+    expect(plan).toContain('genericImageModel: generic.model')
+    expect(plan).toContain('assertGenericSelectionAvailable(generic)')
     expect(plan).toContain("architecture: 'auto'")
     expect(createRun).toContain('pinnedGenericImageModel')
     expect(createRun).toContain('pinnedChainVtonEngine')

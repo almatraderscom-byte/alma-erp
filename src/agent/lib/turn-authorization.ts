@@ -178,6 +178,12 @@ const OWNER_SERVICE_TOOLS = new Set([
   // power_status) ride along. They control sleep on his own Mac and touch no
   // business state; the worst case is a battery left awake.
   'mac_desk_control',
+  // A prospective plan is UI/control metadata, not a business mutation.  The
+  // owner routinely asks for a read-only audit *and* an up-front Codex-style
+  // checklist; classifying make_plan as a DB write is useful for the registry,
+  // but stripping it here makes those two explicit instructions contradictory
+  // and leaves the native tracker with no agent_plan snapshot to render.
+  'make_plan',
   'ask_user',
   'save_memory',
   'update_memory',

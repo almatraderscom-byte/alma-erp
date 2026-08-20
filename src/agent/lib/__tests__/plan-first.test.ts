@@ -16,10 +16,92 @@ vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
 import {
   PLAN_TURN_WITHHELD,
+  chooseRoundBoundTool,
   filterToolsForPlanTurn,
   isPlanFirstTurn,
+  normalizeProspectivePlanInput,
   planFirstNote,
+  shouldInjectProspectivePlanTool,
 } from '@/agent/lib/plan-first'
+
+describe('prospective plan binding', () => {
+  it('puts make_plan before a contract or workflow tool on round zero', () => {
+    expect(chooseRoundBoundTool({
+      iteration: 0,
+      planTool: 'make_plan',
+      contractTool: 'get_orders',
+      workflowTool: 'update_order',
+    })).toBe('make_plan')
+  })
+
+  it('returns to the required contract after the plan round', () => {
+    expect(chooseRoundBoundTool({
+      iteration: 1,
+      planTool: null,
+      contractTool: 'get_orders',
+      workflowTool: 'update_order',
+    })).toBe('get_orders')
+  })
+
+  it('injects make_plan into round zero when the router omitted the plan pack', () => {
+    expect(shouldInjectProspectivePlanTool({
+      planFirst: true,
+      iteration: 0,
+      lastBudgetRound: false,
+      shippedToolNames: ['get_dashboard_snapshot', 'get_orders'],
+    })).toBe(true)
+  })
+
+  it('never re-adds make_plan after round zero or into the reserved wrap-up round', () => {
+    expect(shouldInjectProspectivePlanTool({
+      planFirst: true,
+      iteration: 1,
+      lastBudgetRound: false,
+      shippedToolNames: [],
+    })).toBe(false)
+    expect(shouldInjectProspectivePlanTool({
+      planFirst: true,
+      iteration: 0,
+      lastBudgetRound: true,
+      shippedToolNames: [],
+    })).toBe(false)
+  })
+
+  it('recovers the exact four owner-authored steps from a legacy plan payload', () => {
+    const input = normalizeProspectivePlanInput(
+      {
+        plan: [
+          { step: '1. Inspect dashboard', description: 'wrong fallback text' },
+          { step: '2. Inspect orders' },
+          { step: '3. Inspect approvals' },
+          { step: '4. Cross-check and summarize' },
+        ],
+      },
+      'Before work: 1 Inspect dashboard; 2 Inspect orders; 3 Inspect approvals; 4 Cross-check and summarize.',
+    )
+    expect(input.steps.map((step) => step.action)).toEqual([
+      'Inspect dashboard',
+      'Inspect orders',
+      'Inspect approvals',
+      'Cross-check and summarize',
+    ])
+  })
+
+  it('uses an explicit numbered owner checklist when the model omits steps', () => {
+    const input = normalizeProspectivePlanInput(
+      { goal: 'Read-only inspection', steps: [] },
+      'Create four steps: 1 Inspect todays dashboard snapshot; 2 Inspect pending orders; '
+        + '3 Inspect pending approvals; 4 Cross-check and summarize. Then execute them in order. Do not mutate data.',
+    )
+    expect(input.goal).toBe('Read-only inspection')
+    expect(input.steps.map((step) => step.action)).toEqual([
+      'Inspect todays dashboard snapshot',
+      'Inspect pending orders',
+      'Inspect pending approvals',
+      'Cross-check and summarize.',
+    ])
+  })
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
