@@ -2794,6 +2794,27 @@ async function* runAlternateProviderTurn(
         if (forcedUpdateRound && !signal?.aborted) {
           forcedUpdateRound = false
           let updateText = iterationText.trim()
+          // The update publishes and `continue`s past the normal claim checks
+          // below (Codex P1 #816 round 9) — so it takes the SAME ledger
+          // verification here. A violating draft (invented counts, "done" over
+          // a failed tool) is REPLACED by the harness's evidence-only line —
+          // deterministic, no retry round spent.
+          if (updateText) {
+            const updateLedger: ToolLedgerEntry[] = toolRecords.map((r) => ({
+              toolName: r.toolName,
+              success: r.status === 'success',
+              error: r.error ?? undefined,
+            }))
+            const updateViolations = verifyClaimsAgainstLedger(updateText, updateLedger)
+            if (updateViolations.length > 0) {
+              console.info('[progress-cadence] forced update failed claim check — harness line used', {
+                conversationId, model: model.id, violations: updateViolations.length,
+              })
+              supersedeLastDraft()
+              yield* supersedeStreamedDraft()
+              updateText = ''
+            }
+          }
           if (!updateText) {
             const okCount = toolRecords.filter((r) => r.status === 'success').length
             const lastTools = toolRecords
