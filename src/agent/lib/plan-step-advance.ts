@@ -72,6 +72,32 @@ export function pickFinalDeliveryStep(
   return FINAL_DELIVERY_STEP_RE.test(candidate.action) ? candidate : null
 }
 
+export type PlanCompletionRow = { seq: number; action: string; status: string }
+
+/**
+ * Completion-gate projection for the narrow window before the assistant reply
+ * is persisted. The model has already produced the final prose, but the durable
+ * step writer intentionally waits for the message ID. Treat only the exact
+ * final delivery row as satisfied in-memory so we do not schedule a needless
+ * continuation; the canonical plan row is still written only after message
+ * persistence succeeds.
+ */
+export function projectFinalDeliveryForCompletion(
+  rows: PlanCompletionRow[],
+  steps: AdvanceableStep[],
+  hasFinalReply: boolean,
+): { rows: PlanCompletionRow[]; projectedStepId: string | null } {
+  if (!hasFinalReply) return { rows, projectedStepId: null }
+  const step = pickFinalDeliveryStep(steps)
+  if (!step || rows.length !== steps.length) return { rows, projectedStepId: null }
+  const lastIndex = rows.length - 1
+  if (rows[lastIndex]?.action !== step.action) return { rows, projectedStepId: null }
+  return {
+    rows: rows.map((row, index) => index === lastIndex ? { ...row, status: 'done' } : row),
+    projectedStepId: step.id,
+  }
+}
+
 /**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the

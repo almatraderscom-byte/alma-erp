@@ -202,6 +202,22 @@ const OWNER_SERVICE_TOOLS = new Set([
 ])
 
 /**
+ * Plan-control writes that are only metadata on an explicitly read-only turn.
+ *
+ * Their registry classification must stay `write`: on an authorized action
+ * turn `execute_plan` may enroll Plan-Driver. This predicate is the narrower
+ * exception shared by both head loops and the registry permission-mode gate.
+ */
+const READ_ONLY_PLAN_CONTROL_TOOLS = new Set(['make_plan', 'execute_plan', 'get_plan'])
+
+export function isReadOnlyPlanControlTool(
+  name: string,
+  authorization: OwnerTurnAuthorization | undefined,
+): boolean {
+  return authorization?.allowMutations === false && READ_ONLY_PLAN_CONTROL_TOOLS.has(name)
+}
+
+/**
  * Owner-approved policy (2026-07-14), replacing "strip everything but reads":
  *  - explicit_no_action ("কিছু কোরো না") → reads + service tools only. The
  *    owner said don't act; even a card is noise.

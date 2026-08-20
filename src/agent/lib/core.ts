@@ -76,9 +76,12 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
+import { beginPlanStepForTool, finishPlanStep, pickFinalDeliveryStep } from '@/agent/lib/plan-step-advance'
+import { loadPlanForWorkTracker, syncPlanTracker, workStepsSignature } from '@/agent/lib/work-steps'
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
+  isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
 } from '@/agent/lib/turn-authorization'
 import {
@@ -738,6 +741,8 @@ export interface RunAgentTurnOptions {
   permissionMode?: import('@/agent/lib/permission-mode').PermissionMode | null
   /** The live elevation grant when permissionMode is 'elevated'. */
   elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
+  /** Same durable task continued by an approval/auto-resume control turn. */
+  continuation?: boolean
 }
 
 /** One-time nudge injected when the serverless deadline is close. */
@@ -1107,6 +1112,47 @@ export async function* runAgentTurn(
     durationMs: number; error: string | null
   }
   const toolRecords: ToolRecord[] = []
+  // Native Anthropic kill-switch parity: the durable AgentPlan is the same
+  // checklist source used by the universal loop. Keep the full prospective
+  // list visible, then move only the step whose real tool is running.
+  let nativeTrackerPlanSteps: import('@/agent/lib/plan-step-advance').AdvanceableStep[] = []
+  let nativeWorkStepsTrackerId: string | null = null
+  let nativeTrackerOriginTurnId: string | null = null
+  let nativeWorkStepsSignature = ''
+  const loadNativeTrackerPlan = async (force = false) => {
+    if (nativeTrackerPlanSteps.length && !force) return
+    const plan = await loadPlanForWorkTracker(
+      conversationId,
+      turnId,
+      options.continuation === true,
+    )
+    if (!plan) return
+    nativeWorkStepsTrackerId = plan.id
+    nativeTrackerOriginTurnId = plan.originTurnId
+    nativeTrackerPlanSteps = plan.steps.map((step) => ({
+      id: step.id,
+      action: step.action,
+      toolName: step.toolName ?? null,
+      status: step.status,
+    }))
+  }
+  const nativeTrackerSnapshot = async (input: {
+    live: boolean
+    bindAssistantMessageId?: string | null
+  }) => {
+    try {
+      await loadNativeTrackerPlan(true)
+      if (!nativeWorkStepsTrackerId || !turnId) return null
+      return await syncPlanTracker(nativeWorkStepsTrackerId, {
+        currentTurnId: turnId,
+        blockedBy: null,
+        live: input.live,
+        bindAssistantMessageId: input.bindAssistantMessageId,
+      })
+    } catch {
+      return null
+    }
+  }
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }> = []
@@ -1749,6 +1795,7 @@ export async function* runAgentTurn(
         const carefulNeedsCard = await (async () => {
           if (grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
           if (!conversationId) return false
+          if (isReadOnlyPlanControlTool(tb.name, turnAuthorization)) return false
           // Cancelling a permission is never staged — that would trap Boss inside
           // the grant he just asked to end.
           if (tb.name === 'revoke_standing_permission') return false
@@ -1857,6 +1904,8 @@ export async function* runAgentTurn(
 
       const reads: ToolBlock[] = []
       const writes: ToolBlock[] = []
+      await loadNativeTrackerPlan()
+      const nativeTrackedRound = nativeTrackerPlanSteps.length > 0
       for (const tb of toolUseBlocks) {
         // Emit pre-execution events
         const isDelegate = tb.name === 'delegate_to_specialist'
@@ -1870,7 +1919,7 @@ export async function* runAgentTurn(
           yield { type: 'tool_start', id: tb.id, name: tb.name, input: tb.input }
         }
 
-        if (MUTATING_TOOLS.has(tb.name)) {
+        if (nativeTrackedRound || MUTATING_TOOLS.has(tb.name)) {
           writes.push(tb)
         } else {
           reads.push(tb)
@@ -1904,8 +1953,38 @@ export async function* runAgentTurn(
       }
 
       for (const tb of writes) {
+        let claimedStepId: string | null = null
+        if (nativeTrackedRound) {
+          try {
+            claimedStepId = await beginPlanStepForTool(nativeTrackerPlanSteps, tb.name)
+            if (claimedStepId) {
+              const running = await nativeTrackerSnapshot({ live: true })
+              const signature = workStepsSignature(running)
+              if (running && signature !== nativeWorkStepsSignature) {
+                nativeWorkStepsSignature = signature
+                yield running
+              }
+            }
+          } catch { claimedStepId = null }
+        }
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
+        if (claimedStepId) {
+          const outcome = await finishPlanStep({
+            stepId: claimedStepId,
+            ok: r.result.success,
+            error: r.result.error,
+            resultSummary: { toolName: tb.name, toolCallId: tb.id },
+          })
+          const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
+          if (local && outcome) local.status = outcome
+          const finished = await nativeTrackerSnapshot({ live: true })
+          const signature = workStepsSignature(finished)
+          if (finished && signature !== nativeWorkStepsSignature) {
+            nativeWorkStepsSignature = signature
+            yield finished
+          }
+        }
       }
 
       // Emit events and build toolResultContent in ORIGINAL order
@@ -2106,6 +2185,16 @@ export async function* runAgentTurn(
         }
       }
 
+      // make_plan creates the tracker during this round, so it cannot be loaded
+      // before the handler runs. Emit the full prospective list immediately
+      // after the real tool result; later rounds advance that same snapshot.
+      const discoveredTracker = await nativeTrackerSnapshot({ live: true })
+      const discoveredSignature = workStepsSignature(discoveredTracker)
+      if (discoveredTracker && discoveredSignature !== nativeWorkStepsSignature) {
+        nativeWorkStepsSignature = discoveredSignature
+        yield discoveredTracker
+      }
+
       messages = [...messages, { role: 'user', content: toolResultContent }]
 
       // Harness Gap 5 — after a find_tool round, expose the matched tools'
@@ -2230,6 +2319,35 @@ export async function* runAgentTurn(
     })
 
     embedMessageInBackground(savedMsg.id, storedContent)
+
+    // Native-loop final delivery parity: a persisted assistant reply can close
+    // exactly one remaining tool-free summary row, never skipped read work.
+    // Bind the terminal tracker to the origin assistant message so live and
+    // cold-history rendering converge on one block and the dock can disappear.
+    if (joinedText.trim() && nativeWorkStepsTrackerId && turnId) {
+      try {
+        await loadNativeTrackerPlan(true)
+        const finalDeliveryStep = pickFinalDeliveryStep(nativeTrackerPlanSteps)
+        if (finalDeliveryStep) {
+          const outcome = await finishPlanStep({
+            stepId: finalDeliveryStep.id,
+            ok: true,
+            resultSummary: { assistantMessageId: savedMsg.id as string },
+          })
+          if (outcome) finalDeliveryStep.status = outcome
+        }
+        const settled = await nativeTrackerSnapshot({
+          live: false,
+          bindAssistantMessageId: nativeTrackerOriginTurnId === turnId
+            ? (savedMsg.id as string)
+            : null,
+        })
+        if (settled) {
+          nativeWorkStepsSignature = workStepsSignature(settled)
+          yield settled
+        }
+      } catch { /* the saved reply remains authoritative if tracker storage blips */ }
+    }
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

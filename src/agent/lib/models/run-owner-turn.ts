@@ -104,7 +104,12 @@ import {
   planFirstNote,
   shouldInjectProspectivePlanTool,
 } from '@/agent/lib/plan-first'
-import { beginPlanStepForTool, finishPlanStep, pickFinalDeliveryStep } from '@/agent/lib/plan-step-advance'
+import {
+  beginPlanStepForTool,
+  finishPlanStep,
+  pickFinalDeliveryStep,
+  projectFinalDeliveryForCompletion,
+} from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -122,6 +127,7 @@ import {
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
+  isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
   upgradeAuthorizationForDeliverable,
 } from '@/agent/lib/turn-authorization'
@@ -3321,6 +3327,10 @@ async function* runAlternateProviderTurn(
           // the grant he just asked to end (the registry exempts it too).
           && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
+          // A read-only plan cursor is control metadata, not a business effect.
+          // The registry repeats this exact exemption so delegated/native paths
+          // cannot re-stage it after the head has correctly let it through.
+          && !isReadOnlyPlanControlTool(call.name, turnAuthorization)
           // Any tier whose verdict is `card` gets one. Gating on R1/R2 sent an
           // explicitly mapped R3 write (`set_staff_task_due`) to the registry's
           // flat refusal instead of a card (review bot, #667).
@@ -3995,19 +4005,30 @@ async function* runAlternateProviderTurn(
     const hasOwnerGate = emittedAskCards.length > 0 || confirmCardsEmitted > 0 || delegationAwaiting
     let planCompletionDecision: CompletionDecision | null = null
     let planCompletion: Awaited<ReturnType<typeof loadLatestPlanProgress>> = null
+    // When the only open row is the final summary/delivery, the prose already
+    // produced by the head is enough for the completion DECISION. The durable
+    // row still waits for the saved assistant message ID below.
+    let projectedFinalDeliveryStepId: string | null = null
     const planBoundTurn = rememberedLongRun
       || toolRecords.some((record) => record.toolName === 'execute_plan' && record.status === 'success')
     if (planBoundTurn && !hasOwnerGate) {
       try {
         planCompletion = await loadLatestPlanProgress(conversationId)
         if (planCompletion) {
+          const projected = projectFinalDeliveryForCompletion(
+            planCompletion.rows,
+            trackerPlanSteps,
+            Boolean(answerBody().trim()),
+          )
+          projectedFinalDeliveryStepId = projected.projectedStepId
           const contract = completionContractFromPlanProgress({
             ...planCompletion,
+            rows: projected.rows,
             workClass: 'long_run',
           })
           if (contract) {
             planCompletionDecision = decideCompletion(contract)
-            if (planCompletionDecision.action === 'complete') {
+            if (planCompletionDecision.action === 'complete' && !projectedFinalDeliveryStepId) {
               const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
               await resolveCheckpointByTaskRef(planCompletion.planId)
             }
@@ -4300,7 +4321,19 @@ async function* runAlternateProviderTurn(
             ok: true,
             resultSummary: { assistantMessageId: savedMsg.id as string },
           })
-          if (outcome) finalDeliveryStep.status = outcome
+          if (outcome) {
+            finalDeliveryStep.status = outcome
+            // A projected completion is not allowed to clear its checkpoint
+            // until the reply and its plan-row evidence are both durable.
+            if (
+              outcome === 'done'
+              && projectedFinalDeliveryStepId === finalDeliveryStep.id
+              && planCompletion
+            ) {
+              const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+              await resolveCheckpointByTaskRef(planCompletion.planId)
+            }
+          }
         }
       } catch { /* final reply remains authoritative even if tracker persistence fails */ }
     }

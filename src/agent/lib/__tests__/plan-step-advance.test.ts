@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   pickFinalDeliveryStep,
   pickStepForTool,
+  projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
 
@@ -65,5 +67,56 @@ describe('pickFinalDeliveryStep', () => {
       { ...step('summary', 'pending'), action: 'Cross-check and summarize' },
     ]
     expect(pickFinalDeliveryStep(steps)).toBeNull()
+  })
+})
+
+describe('projectFinalDeliveryForCompletion', () => {
+  const completedReads = [
+    step('dashboard', 'done', 'get_dashboard_snapshot'),
+    step('orders', 'done', 'get_orders'),
+    step('approvals', 'done', 'get_pending_approvals'),
+    { ...step('summary', 'pending'), action: 'Cross-check and summarize' },
+  ]
+  const rows = completedReads.map((item, index) => ({
+    seq: index + 1,
+    action: item.action,
+    status: item.status,
+  }))
+
+  it('lets the completion gate count only a produced final delivery reply', () => {
+    const projected = projectFinalDeliveryForCompletion(rows, completedReads, true)
+    expect(projected.projectedStepId).toBe('summary')
+    expect(projected.rows.map((row) => row.status)).toEqual(['done', 'done', 'done', 'done'])
+    expect(rows[3].status).toBe('pending')
+  })
+
+  it('does not project when there is no final reply yet', () => {
+    expect(projectFinalDeliveryForCompletion(rows, completedReads, false)).toEqual({
+      rows,
+      projectedStepId: null,
+    })
+  })
+
+  it('never projects over an earlier unfinished read step', () => {
+    const unfinished = [
+      step('orders', 'pending', 'get_orders'),
+      { ...step('summary', 'pending'), action: 'Cross-check and summarize' },
+    ]
+    const unfinishedRows = unfinished.map((item, index) => ({
+      seq: index + 1,
+      action: item.action,
+      status: item.status,
+    }))
+    expect(projectFinalDeliveryForCompletion(unfinishedRows, unfinished, true).projectedStepId).toBeNull()
+  })
+})
+
+describe('native Anthropic loop tracker parity', () => {
+  it('advances real tool steps and binds the terminal snapshot after reply persistence', () => {
+    const source = readFileSync(new URL('../core.ts', import.meta.url), 'utf8')
+    expect(source).toContain('beginPlanStepForTool(nativeTrackerPlanSteps, tb.name)')
+    expect(source).toContain('finishPlanStep({\n            stepId: claimedStepId')
+    expect(source).toContain('pickFinalDeliveryStep(nativeTrackerPlanSteps)')
+    expect(source).toContain('bindAssistantMessageId: nativeTrackerOriginTurnId === turnId')
   })
 })
