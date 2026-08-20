@@ -2345,8 +2345,13 @@ async function* runAlternateProviderTurn(
       // above emptied the list, it then called the contract's run_website_seo_audit
       // and the membership gate refused it — "বাধ্যতামূলক ধাপ সফল হয়নি" over a tool
       // the server itself had taken away). The demand and the means travel together.
+      // Codex P1 #811 round 3 — the reserved wrap-up round stays GENUINELY
+      // tool-free: restoring a contract tool here would fire a call whose
+      // result no round remains to read, and the forced call would silence the
+      // wrap-up prose. The unmet contract is reported by the done-gate instead.
       const contractToolMissing = Boolean(
-        requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
+        !lastBudgetRound
+        && requestedContractTool && !budgetedTools.some((t) => t.name === requestedContractTool),
       )
       const iterationTools = contractToolMissing
         ? [
@@ -2790,6 +2795,11 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !deadlineNudgeSent
+          // The reserved wrap-up round's "continue বললে চালিয়ে যাব" is the
+          // sanctioned promise (same shape as the deadline wrap-up) — an
+          // act-now push here would discard the wrap-up with no round left to
+          // replace it (Codex P1 #811 round 3).
+          && !roundBudgetWrapSent
           && intentNudges < maxIntentNudgesFor(workClass)
           && (intentNudges === 0 || successfulToolCount > successCountAtLastIntentNudge)
           && iterationText.trim()
@@ -2847,8 +2857,10 @@ async function* runAlternateProviderTurn(
         }
         // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
         // the turn no longer has, and its finalText reset is what strands an empty
-        // message when the abort lands mid-rewrite.
-        if (!signal?.aborted && !deadlineNudgeSent && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
+        // message when the abort lands mid-rewrite. Same for the reserved
+        // final-budget wrap-up round — a retry's `continue` would exit the loop
+        // and strand an older interim line as the answer (Codex P1 #811 round 3).
+        if (!signal?.aborted && !deadlineNudgeSent && !roundBudgetWrapSent && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
           // Build a ledger that carries each tool's success/error — not just its
           // name — so the verifier catches "done!" claims made after a tool that
           // actually FAILED (audit #6). The cheap-head path previously passed only
