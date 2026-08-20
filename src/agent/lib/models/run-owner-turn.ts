@@ -2733,6 +2733,80 @@ async function* runAlternateProviderTurn(
         if (text) yield { type: 'text_delta', delta: sepBefore + text }
       }
 
+      // ONE factual gate for forced-update prose, used by both the interim
+      // delivery and the deadline-crossing salvage (Codex P1 #816 r15 — the
+      // two inline copies had drifted apart within three review rounds).
+      const forcedUpdateViolations = (text: string) => [
+        ...verifyClaimsAgainstLedger(text, toolRecords.map((r) => ({
+          toolName: r.toolName,
+          success: r.status === 'success',
+          error: r.error ?? undefined,
+        }))),
+        ...detectFabricatedStatViolations(text, toolRecords.map((r) => ({
+          toolName: r.toolName,
+          success: r.status === 'success',
+          error: r.error ?? undefined,
+        }))),
+        ...detectAsyncCompletionViolation(text, summarizeAsyncJobEvidence(toolRecords)),
+        ...detectToolExecutionClaims(
+          text,
+          toolRecords.map((r) => r.toolName),
+          (name) => Boolean(getCapability(name)),
+        ),
+        ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(text)
+          ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
+          : []),
+      ]
+
+      // Deliver the owed forced update from THIS round's prose (or the
+      // harness evidence line), reset the cadence, and hand back an exchange
+      // that never ends on an assistant message. Round-scope so BOTH exits of
+      // a forced round reach it — text-only rounds and rounds whose stale
+      // hallucinated calls the empty-round gate refused (Codex P1 #816 r16).
+      const deliverForcedUpdateNow = function* (): Generator<AgentEvent> {
+        forcedUpdateRound = false
+        let updateText = iterationText.trim()
+        if (updateText && forcedUpdateViolations(updateText).length > 0) {
+          console.info('[progress-cadence] forced update failed claim check — harness line used', {
+            conversationId, model: model.id,
+          })
+          supersedeLastDraft()
+          yield* supersedeStreamedDraft()
+          updateText = ''
+        }
+        if (!updateText) {
+          const okCount = toolRecords.filter((r) => r.status === 'success').length
+          const lastTools = toolRecords
+            .filter((r) => r.status === 'success')
+            .slice(-3)
+            .map((r) => toolDisplay(r.toolName).label)
+            .join(' · ')
+          updateText =
+            `এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে`
+            + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
+            + ' — কাজ চলছে।'
+          timeline.push({ t: 'text', text: updateText })
+        }
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + updateText
+        yield* reconcileStreamedProse(updateText, sep)
+        stepsSinceOwnerUpdate = 0
+        spokeSinceProgress = true
+        preambleSpoken = true
+        console.info('[progress-cadence] forced update delivered', {
+          conversationId, model: model.id, round: iteration + 1,
+        })
+        // Never end the transcript on an assistant message (Codex P1 #816 r3).
+        messages = [
+          ...messages,
+          { role: 'assistant', content: updateText },
+          {
+            role: 'user',
+            content: INTERNAL_NUDGE_MARKER + 'আপডেট পৌঁছেছে — টুল ফিরে এসেছে, এখন কাজ চালিয়ে যাও।',
+          },
+        ]
+      }
+
       if (iterationText.trim() && calls.length > 0) {
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + iterationText
@@ -2810,30 +2884,6 @@ async function* runAlternateProviderTurn(
         // crossing must ALSO mark the deadline machinery (Codex P1 r11): the
         // turn-end salvage keys off deadlineNudgeSent, and without it a
         // mid-window ending was classified as a clean finish.
-        // ONE factual gate for forced-update prose, used by both the interim
-        // delivery and the deadline-crossing salvage (Codex P1 #816 r15 — the
-        // two inline copies had drifted apart within three review rounds).
-        const forcedUpdateViolations = (text: string) => [
-          ...verifyClaimsAgainstLedger(text, toolRecords.map((r) => ({
-            toolName: r.toolName,
-            success: r.status === 'success',
-            error: r.error ?? undefined,
-          }))),
-          ...detectFabricatedStatViolations(text, toolRecords.map((r) => ({
-            toolName: r.toolName,
-            success: r.status === 'success',
-            error: r.error ?? undefined,
-          }))),
-          ...detectAsyncCompletionViolation(text, summarizeAsyncJobEvidence(toolRecords)),
-          ...detectToolExecutionClaims(
-            text,
-            toolRecords.map((r) => r.toolName),
-            (name) => Boolean(getCapability(name)),
-          ),
-          ...(/<\s*\/?\s*tool[_-]?(?:response|result|call|output|use)\b/i.test(text)
-            ? [{ claim: 'fabricated tool markup', reason: 'machine block in owner prose' }]
-            : []),
-        ]
         const crossedDeadlineNow = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
         if (forcedUpdateRound && crossedDeadlineNow && !deadlineNudgeSent) deadlineNudgeSent = true
         if (
@@ -2867,59 +2917,7 @@ async function* runAlternateProviderTurn(
           }
         }
         if (forcedUpdateRound && !signal?.aborted) {
-          forcedUpdateRound = false
-          let updateText = iterationText.trim()
-          // The update publishes and `continue`s past the normal claim checks
-          // below (Codex P1 #816 round 9) — so it takes the SAME ledger
-          // verification here. A violating draft (invented counts, "done" over
-          // a failed tool) is REPLACED by the harness's evidence-only line —
-          // deterministic, no retry round spent.
-          if (updateText) {
-            const updateViolations = forcedUpdateViolations(updateText)
-            if (updateViolations.length > 0) {
-              console.info('[progress-cadence] forced update failed claim check — harness line used', {
-                conversationId, model: model.id, violations: updateViolations.length,
-              })
-              supersedeLastDraft()
-              yield* supersedeStreamedDraft()
-              updateText = ''
-            }
-          }
-          if (!updateText) {
-            const okCount = toolRecords.filter((r) => r.status === 'success').length
-            const lastTools = toolRecords
-              .filter((r) => r.status === 'success')
-              .slice(-3)
-              .map((r) => toolDisplay(r.toolName).label)
-              .join(' · ')
-            updateText =
-              `এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে`
-              + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
-              + ' — কাজ চলছে।'
-            timeline.push({ t: 'text', text: updateText })
-          }
-          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
-          finalText += sep + updateText
-          yield* reconcileStreamedProse(updateText, sep)
-          stepsSinceOwnerUpdate = 0
-          spokeSinceProgress = true
-          preambleSpoken = true
-          console.info('[progress-cadence] forced update delivered', {
-            conversationId, model: model.id, round: iteration + 1,
-          })
-          // The transcript must not END on an assistant message — providers
-          // would read the next request as a prefill (rejected on Anthropic
-          // 4.6+, misbehaves elsewhere). Close the exchange with a tiny
-          // internal user turn, same as every other retry path (Codex P1
-          // #816 round 3).
-          messages = [
-            ...messages,
-            { role: 'assistant', content: updateText },
-            {
-              role: 'user',
-              content: INTERNAL_NUDGE_MARKER + 'আপডেট পৌঁছেছে — টুল ফিরে এসেছে, এখন কাজ চালিয়ে যাও।',
-            },
-          ]
+          yield* deliverForcedUpdateNow()
           continue
         }
         // The model TYPED its tool calls. It did no work this round, and the
@@ -3874,6 +3872,22 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // A forced round that came back with structured calls: the empty-round
+      // gate refused them all (nothing executed), but calls.length > 0 means
+      // the text-only delivery path above never ran — deliver the owed update
+      // HERE, or the flag repeats forever (Codex P1 #816 r16). Wrap-up states
+      // keep their precedence: they own the next round instead.
+      if (forcedUpdateRound && calls.length > 0 && !signal?.aborted) {
+        if ((typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000)
+          || nearDeadline || deadlineNudgeSent || cardStaged
+          || overBudget || standardOverBudget || premiumOverBudget) {
+          forcedUpdateRound = false
+        } else {
+          yield* deliverForcedUpdateNow()
+          continue
+        }
+      }
 
       // ── Progress updates between phases (owner ask 2026-07-26) ─────────────
       // "ekta part er jnne koyek ta dhap sesh kore amk age update daw, erpor abr
