@@ -2816,6 +2816,10 @@ async function* runAlternateProviderTurn(
         // The nudge was answered the polite way (text alongside the calls) —
         // no escalation owed.
         updateNudgePending = false
+        // A forced round that carried prose next to a (refused) stale call:
+        // this prose WAS the update — the redelivery site below must not
+        // publish a second copy (Codex P1 #816 r17).
+        forcedUpdateRound = false
         // First-line contract: the model spoke to Boss BEFORE running tools —
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
@@ -3377,10 +3381,16 @@ async function* runAlternateProviderTurn(
                 `আগে find_tool দিয়ে খুঁজে নাও (পুরো রেজিস্ট্রি এক হপ দূরে) — ` +
                 `Boss-কে "এই সক্ষমতা নেই" বলবে না।`,
             }
-            toolRecords.push({
-              id: call.id, toolName: call.name, input: call.input,
-              output: null, status: 'error', durationMs: 0, error: blocked.error,
-            })
+            // A hallucination refused on a deliberately tool-free round is NOT
+            // a real failed step — recording it would let e.g. a fake
+            // save_memory read as a blocked requirement contract (Codex P1
+            // #816 r17). The provider still gets its tool_result.
+            if (!emptyRoundEnforced) {
+              toolRecords.push({
+                id: call.id, toolName: call.name, input: call.input,
+                output: null, status: 'error', durationMs: 0, error: blocked.error,
+              })
+            }
             toolResults.push({ id: call.id, name: call.name, result: blocked })
             yield {
               type: 'tool_end', id: call.id, name: call.name,
