@@ -3594,6 +3594,12 @@ async function* runAlternateProviderTurn(
         // Budget-scaled, not flat: maxIterations can grow mid-turn (browser
         // upgrade below), so the cap is re-derived from the CURRENT budget.
         && progressNudges < maxProgressNudgesFor(maxIterations)
+        // Codex P1 (#811): a nudge costs the round the `continue` skips to. On
+        // the LAST iteration there is no next round — the note would be
+        // appended and never sent, and the previous interim line would settle
+        // as the final answer. The default budgets divide evenly by the
+        // cadence, so without this the last round is exactly where it lands.
+        && iteration < maxIterations - 1
       ) {
         progressNudges++
         roundsSinceOwnerUpdate = 0

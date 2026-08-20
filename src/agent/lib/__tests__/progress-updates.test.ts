@@ -21,14 +21,23 @@ function simulate(
   rounds: Array<{ spoke: boolean }>,
   opts: { nearDeadline?: boolean; maxIterations?: number } = {},
 ) {
-  const maxIterations = opts.maxIterations ?? rounds.length
+  // A short silent stretch normally sits inside a larger turn budget — only
+  // the long-run tests pin maxIterations to the exact round count.
+  const maxIterations = opts.maxIterations ?? Math.max(rounds.length + 1, 8)
   let silent = 0
   let nudges = 0
   const owedAt: number[] = []
   rounds.forEach((r, i) => {
     if (r.spoke) { silent = 0; return }
     silent++
-    if (!opts.nearDeadline && silent >= PROGRESS_UPDATE_EVERY && nudges < maxProgressNudgesFor(maxIterations)) {
+    if (
+      !opts.nearDeadline
+      && silent >= PROGRESS_UPDATE_EVERY
+      && nudges < maxProgressNudgesFor(maxIterations)
+      // Codex P1 (#811): a nudge needs a next round to be delivered in —
+      // never spend the final iteration on one.
+      && i < maxIterations - 1
+    ) {
       nudges++
       silent = 0
       owedAt.push(i)
@@ -65,9 +74,15 @@ describe('when an update is owed', () => {
   // END, never fall silent after a flat handful of nudges.
   it('holds the cadence for the whole of a 120-round long-run budget', () => {
     const { nudges, owedAt } = simulate(silentRounds(120), { maxIterations: 120 })
-    expect(nudges).toBe(Math.floor(120 / PROGRESS_UPDATE_EVERY))
+    // Every PROGRESS_UPDATE_EVERY silent rounds, except the reserved final one.
+    expect(nudges).toBe(Math.floor((120 - 1) / PROGRESS_UPDATE_EVERY))
     // The LAST update is owed near the end of the run, not near the start.
-    expect(owedAt[owedAt.length - 1]).toBeGreaterThanOrEqual(120 - PROGRESS_UPDATE_EVERY)
+    expect(owedAt[owedAt.length - 1]).toBeGreaterThanOrEqual(120 - 1 - PROGRESS_UPDATE_EVERY)
+  })
+
+  it('never spends the final round on a nudge — the answer needs it', () => {
+    const { owedAt } = simulate(silentRounds(30), { maxIterations: 30 })
+    expect(owedAt).not.toContain(30 - 1)
   })
 
   it('never interrupts near the deadline — the wrap-up needs those rounds', () => {
