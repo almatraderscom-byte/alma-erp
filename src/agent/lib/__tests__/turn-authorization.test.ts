@@ -80,6 +80,21 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
     expect(isToolAllowedForOwnerTurn('save_memory', auth)).toBe(true)
   })
 
+  it('keeps prospective plan metadata available during an explicit read-only audit', () => {
+    const prompt =
+      'REAL TRACKER TEST. READ ONLY. Before doing any work, create exactly a 4-step plan. ' +
+      'Then inspect the dashboard, pending orders, pending approvals, and summarize. ' +
+      'Do not write, edit, approve, or change any data.'
+    const auth = deriveOwnerTurnAuthorization(prompt)
+
+    expect(auth).toEqual({ allowMutations: false, reason: 'explicit_no_action' })
+    expect(filterToolsForOwnerTurn([
+      { name: 'make_plan' },
+      { name: 'get_orders' },
+      { name: 'update_order' },
+    ], auth).map((tool) => tool.name)).toEqual(['make_plan', 'get_orders'])
+  })
+
   it('workflow_continuation authorization allows everything (in-flight work)', () => {
     const auth = { allowMutations: true, reason: 'workflow_continuation' as const }
     expect(isToolAllowedForOwnerTurn('post_to_facebook', auth)).toBe(true)

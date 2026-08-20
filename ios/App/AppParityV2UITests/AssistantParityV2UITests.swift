@@ -1122,9 +1122,13 @@ final class AssistantParityV2UITests: XCTestCase {
         tapViaWindow(fixture, dock)
         XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
             .waitForExistence(timeout: 6))
-        XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.panel")
-            .staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "2."))
-            .firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(anyElement(fixture, "agent.work-steps.dock.step.fixture-step-2")
+            .waitForExistence(timeout: 4))
+        XCTAssertTrue(fixture.staticTexts["Finish native picker/recovery UI and focused unit/UI tests"]
+            .waitForExistence(timeout: 4),
+            "the visible row should keep the useful title after ordinal normalization")
+        XCTAssertFalse(fixture.staticTexts["1. Step 1: Finish and review atomic per-image model selection and quote contract"].exists,
+                       "the UI owns the ordinal and must strip duplicate model-authored Step prefixes")
         XCTAssertTrue(fixture.textViews.firstMatch.exists
                       || fixture.textFields.firstMatch.exists,
                       "composer must remain mounted under the expanded panel")

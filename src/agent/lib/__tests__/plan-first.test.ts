@@ -16,10 +16,31 @@ vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
 import {
   PLAN_TURN_WITHHELD,
+  chooseRoundBoundTool,
   filterToolsForPlanTurn,
   isPlanFirstTurn,
   planFirstNote,
 } from '@/agent/lib/plan-first'
+
+describe('prospective plan binding', () => {
+  it('puts make_plan before a contract or workflow tool on round zero', () => {
+    expect(chooseRoundBoundTool({
+      iteration: 0,
+      planTool: 'make_plan',
+      contractTool: 'get_orders',
+      workflowTool: 'update_order',
+    })).toBe('make_plan')
+  })
+
+  it('returns to the required contract after the plan round', () => {
+    expect(chooseRoundBoundTool({
+      iteration: 1,
+      planTool: null,
+      contractTool: 'get_orders',
+      workflowTool: 'update_order',
+    })).toBe('get_orders')
+  })
+})
 
 beforeEach(() => {
   vi.clearAllMocks()

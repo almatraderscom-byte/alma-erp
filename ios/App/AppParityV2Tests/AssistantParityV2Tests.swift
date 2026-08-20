@@ -4041,6 +4041,36 @@ final class AssistantParityV2Tests: XCTestCase {
         }, "typed tool chronology must remain authoritative")
     }
 
+    func testFinalReplySurvivesRepeatedVerifierRetriesUntilAtomicReplacement() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("পুরোনো পূর্ণ উত্তর")])
+        vm.debugApplyTurnEvents([.verificationRetry(attempt: 1, maxAttempts: 2)])
+        vm.debugApplyTurnEvents([.textDelta("প্রথম সংশোধনের খসড়া")])
+
+        XCTAssertEqual(vm.messages.last?.text, "পুরোনো পূর্ণ উত্তর",
+                       "a verifier rewrite remains hidden until it is complete")
+        XCTAssertEqual(vm.messages.last?.verificationReplacementText,
+                       "প্রথম সংশোধনের খসড়া")
+
+        vm.debugApplyTurnEvents([.verificationRetry(attempt: 2, maxAttempts: 2)])
+        XCTAssertEqual(vm.messages.last?.text, "পুরোনো পূর্ণ উত্তর",
+                       "another retry must not blank or restart the visible answer")
+        XCTAssertEqual(vm.messages.last?.verificationReplacementText, "")
+        vm.debugApplyTurnEvents([.textDelta("সংশোধিত পূর্ণ উত্তর")])
+
+        vm.debugApplyTurnEvents([.done(
+            messageId: "answer-1", tokensIn: nil, tokensOut: nil, costUsd: nil,
+            needContinue: false, apiRounds: nil, cacheCreation: nil,
+            cacheRead: nil, roundCostsUsd: nil)])
+
+        XCTAssertEqual(vm.messages.last?.text, "সংশোধিত পূর্ণ উত্তর")
+        XCTAssertNil(vm.messages.last?.verificationReplacementText)
+        XCTAssertTrue(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text == "সংশোধিত পূর্ণ উত্তর" }
+            return false
+        } == true)
+    }
+
     func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
         let citations = AgentMarkdownText.extractCitations("""
         [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).
@@ -4665,6 +4695,22 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertTrue(advanced.isCurrentDisplayStep(advanced.steps[1]))
     }
 
+    func testWorkStepPresentationRemovesRedundantModelOrdinalsOnly() {
+        XCTAssertEqual(
+            AgentWorkStepPresentation.displayTitle(
+                "Step 1: Inspect the live surface", position: 1),
+            "Inspect the live surface")
+        XCTAssertEqual(
+            AgentWorkStepPresentation.displayTitle(
+                "2. Step 2: Verify the simulator", position: 2),
+            "Verify the simulator")
+        XCTAssertEqual(
+            AgentWorkStepPresentation.displayTitle(
+                "Review Step 3 evidence", position: 3),
+            "Review Step 3 evidence",
+            "step wording inside a real title must not be altered")
+    }
+
     func testPlanAndTurnProgressDecodeTypedNeverUnknown() throws {
         let plan = try decodeTurnEvent("""
         {"type": "plan_progress", "planId": "p1", "goal": "g", "headline": "১/২",
@@ -4716,10 +4762,11 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.workTrackers["plan-turn-1"]?.status, "completed")
     }
 
-    func testDockPrefersThePlanTrackerOverTheRuntimeProjection() throws {
+    func testDockShowsOnlyTheCurrentProspectivePlanNeverRuntimeToolRows() throws {
         let vm = AssistantVM()
         vm.conversationId = "conversation-1"
         vm.isStreaming = true
+        vm.currentTurnId = "turn-1"
         // The runtime projection arrives LAST (it re-emits every round), but
         // the dock must still show the real plan tracker — owner 2026-08-15:
         // the chip said "১ of ২" while the work detail listed 5 plan steps.
@@ -4729,46 +4776,50 @@ final class AssistantParityV2Tests: XCTestCase {
         XCTAssertEqual(vm.activeWorkTracker?.trackerId, "plan-turn-1")
         XCTAssertEqual(vm.activeWorkTracker?.source, "agent_plan")
 
-        // A plan tracker from a PREVIOUS turn (died without its terminal
-        // snapshot) must not outrank the live runtime tracker (Codex P2 #765).
+        // A plan tracker from a PREVIOUS turn and a runtime projection from the
+        // current turn must both stay out: tool calls are activity, not a plan.
         let stale = AssistantVM()
         stale.conversationId = "conversation-1"
         stale.isStreaming = true
+        stale.currentTurnId = "turn-1"
         stale.debugMergeWorkSteps(try snapshotFixture(revision: 4, turnId: "turn-OLD"))
         stale.debugMergeWorkSteps(try snapshotFixture(
             revision: 5, updatedAt: "2026-08-11T09:00:00Z", source: "turn_runtime"))
-        XCTAssertEqual(stale.activeWorkTracker?.source, "turn_runtime")
+        XCTAssertNil(stale.activeWorkTracker)
 
         // A stale RUNNING plan with no runtime tracker (first round of a new
         // turn) must not hold the dock (Codex P2 #765) …
         let staleAlone = AssistantVM()
         staleAlone.conversationId = "conversation-1"
         staleAlone.isStreaming = true
+        staleAlone.currentTurnId = "turn-1"
         staleAlone.debugMergeWorkSteps(try snapshotFixture(
             revision: 2, status: "running", turnId: "turn-OLD"))
         XCTAssertNil(staleAlone.activeWorkTracker)
 
-        // … but a plan WAITING ON THE OWNER stays visible however old it is:
-        // it blocks on a decision he still owes, which is exactly what the
-        // dock is for.
+        // A settled reply owns no composer dock, even if its durable plan says
+        // it is waiting on an owner decision; that state remains in-message.
         let waitingOld = AssistantVM()
         waitingOld.conversationId = "conversation-1"
+        waitingOld.currentTurnId = "turn-OLD"
         waitingOld.debugMergeWorkSteps(try snapshotFixture(
             revision: 2, status: "waiting_owner", turnId: "turn-OLD"))
-        XCTAssertEqual(waitingOld.activeWorkTracker?.status, "waiting_owner")
+        XCTAssertNil(waitingOld.activeWorkTracker)
 
-        // With no plan tracker at all, the runtime projection still shows.
+        // With no plan tracker at all, runtime tool rows never manufacture one.
         let runtimeOnly = AssistantVM()
         runtimeOnly.conversationId = "conversation-1"
         runtimeOnly.isStreaming = true
+        runtimeOnly.currentTurnId = "turn-1"
         runtimeOnly.debugMergeWorkSteps(try snapshotFixture(
             revision: 2, source: "turn_runtime"))
-        XCTAssertEqual(runtimeOnly.activeWorkTracker?.source, "turn_runtime")
+        XCTAssertNil(runtimeOnly.activeWorkTracker)
     }
 
     func testDockShowsOnlyLiveWorkNeverPausedOrStalledChips() throws {
         let vm = AssistantVM()
         vm.conversationId = "conversation-1"
+        vm.currentTurnId = "turn-1"
 
         // Streaming turn with a running tracker: the dock chip shows. A live
         // turn emits FRESH snapshots — streaming alone no longer rescues a
@@ -4790,23 +4841,21 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.isStreaming = false
         XCTAssertNil(vm.activeWorkTracker)
 
-        // Away work (salah call, background/worker turn) has NO app stream but
-        // a FRESH running snapshot — the chip must show (owner report
-        // 2026-08-15: the stream requirement hid real work on build 104).
+        // A fresh snapshot cannot outlive the visible reply. Codex removes its
+        // composer chip as soon as the response settles.
         let freshStamp = ISO8601DateFormatter.almaWorkStepsLenient
             .string(from: Date())
         vm.debugMergeWorkSteps(try snapshotFixture(
             revision: 5, status: "running", updatedAt: freshStamp))
-        XCTAssertEqual(vm.activeWorkTracker?.status, "running")
+        XCTAssertNil(vm.activeWorkTracker)
         // The freshness window EXPIRES: the same snapshot evaluated 200s later
         // is gone — the dock's 30s clock tick drives this re-evaluation in the
         // UI (Codex P1 #758).
         XCTAssertNil(vm.activeWorkTracker(now: Date().addingTimeInterval(200)))
 
-        // Waiting states genuinely await someone and stay visible without a
-        // stream; terminal never shows.
+        // Waiting and terminal states never resurrect the dock after settle.
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 6, status: "waiting_owner"))
-        XCTAssertEqual(vm.activeWorkTracker?.status, "waiting_owner")
+        XCTAssertNil(vm.activeWorkTracker)
         vm.debugMergeWorkSteps(try snapshotFixture(revision: 7, status: "completed"))
         XCTAssertNil(vm.activeWorkTracker)
     }

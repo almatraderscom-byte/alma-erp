@@ -53,6 +53,25 @@ export function filterToolsForPlanTurn<T extends { name: string }>(tools: T[]): 
 }
 
 /**
+ * Pick the deterministic tool binding for a provider round.
+ *
+ * A prospective plan is control state for the whole job, so on round zero it
+ * must outrank a workflow/contract tool that would otherwise start doing one
+ * piece of the work before the owner has seen the checklist. Once the plan
+ * exists, the ordinary contract binding resumes unchanged on later rounds.
+ */
+export function chooseRoundBoundTool(input: {
+  iteration: number
+  planTool: string | null
+  contractTool: string | null
+  workflowTool: string | null
+}): string | null {
+  if (input.iteration === 0 && input.planTool) return input.planTool
+  if (input.contractTool) return input.contractTool
+  return input.iteration === 0 ? input.workflowTool : null
+}
+
+/**
  * Is this the planning turn for a big job?
  *
  * Requires ALL of: Boss asked for deep/whole-scope work, and this conversation

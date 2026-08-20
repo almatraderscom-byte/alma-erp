@@ -1733,6 +1733,11 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// server's typed `tool_start` event. It must never become owner-facing
     /// prose; durable history continues to come only from the typed timeline.
     var suppressedRawToolEnvelope: String?
+    /// A verifier rewrite is accumulated off-screen while the last complete
+    /// answer remains visible. Publishing an empty/partial replacement on
+    /// every verification_retry made a full reply disappear and reappear once
+    /// per retry. The terminal event swaps this buffer in atomically.
+    var verificationReplacementText: String?
     /// Legacy projection metadata. New projections never expose superseded prose
     /// as a visible block; selfCorrected carries the owner-facing signal instead.
     var supersededBlockIds: Set<String> = []
@@ -2693,88 +2698,30 @@ final class AssistantVM {
         }
         return result.sorted { $0.trackerId < $1.trackerId }
     }
-    /// The dock projection: the newest non-terminal tracker of THIS chat. The
-    /// dock is navigation/summary over the same store — never a second state
-    /// machine and never a second set of controls.
+    /// The dock projection: the prospective plan for the turn that is visibly
+    /// streaming right now. Runtime/tool-call projections remain useful as
+    /// protocol evidence, but they are not a plan and must never impersonate
+    /// Codex's step tracker in the composer chrome.
     var activeWorkTracker: AgentWorkStepsSnapshot? { activeWorkTracker(now: Date()) }
 
-    /// `now` is a parameter so the dock can re-evaluate on a clock tick —
-    /// time passing is not observable state, and without the tick a stale
-    /// running chip would outlive its freshness window (Codex P1 #758).
-    func activeWorkTracker(now: Date) -> AgentWorkStepsSnapshot? {
-        guard let cid = conversationId else { return nil }
-        // The turn the runtime projection says is running right now (nil before
-        // its first snapshot) — used to keep stale rows out of the dock.
-        let currentRuntimeTurnId = workTrackers.values
-            .filter { $0.source == "turn_runtime" && !$0.isTerminal }
-            .max { $0.updatedAt < $1.updatedAt }?.currentTurnId
+    /// `now` remains in the API because the view uses a TimelineView, but exact
+    /// stream + turn ownership now decides visibility; elapsed time never keeps
+    /// a chip alive after the reply has settled.
+    func activeWorkTracker(now _: Date) -> AgentWorkStepsSnapshot? {
+        guard isStreaming, let cid = conversationId, let liveTurnId = currentTurnId else {
+            return nil
+        }
         return workTrackers.values
-            // The dock is LIVE work only. The turn-end projection honestly
-            // parks an unfinished tracker as "paused" (nothing is running),
-            // and a paused chip lingering after the answer landed is what the
-            // owner reported on build 103 — waiting_* states stay visible
-            // because they genuinely await someone; paused and terminal hide.
-            // A running/preparing chip is judged by FRESHNESS, not the app
-            // stream: away work (salah calls, background/worker turns) runs
-            // with no stream in this app at all, and the stream requirement
-            // hid those real chips on build 104 (owner report 2026-08-15).
-            // The live stream still counts, and a stale snapshot — the
-            // dropped-final-snapshot case — ages out of the dock on its own.
             .filter { snapshot in
-                guard !snapshot.isTerminal, snapshot.status != "paused",
-                      snapshot.conversationId.isEmpty || snapshot.conversationId == cid
+                guard snapshot.source == "agent_plan",
+                      !snapshot.isTerminal,
+                      snapshot.status != "paused",
+                      snapshot.conversationId.isEmpty || snapshot.conversationId == cid,
+                      snapshot.currentTurnId == liveTurnId || snapshot.turnIds.contains(liveTurnId)
                 else { return false }
-                if snapshot.status == "waiting_owner" || snapshot.status == "waiting_worker" {
-                    // A waiting chip lives exactly as long as its blocker: the
-                    // answer/decision resumes the turn in a NEW tracker row, so
-                    // the paused turn's row never hears the resolution and
-                    // would hold the dock forever (owner report 2026-08-15,
-                    // answered ask card). The action registry is the durable
-                    // fate of every ask/approval ref — a terminal ref means
-                    // nothing here is actually waiting. Unknown refs keep the
-                    // honest waiting default.
-                    if let refId = snapshot.blockedByRefId,
-                       let record = actionRegistry[refId], record.state.isTerminal {
-                        return false
-                    }
-                    return true
-                }
-                // Freshness first. The live stream alone is NOT enough: a
-                // previous turn's row that missed settlement would ride every
-                // new stream forever (Codex P2 #765). Streaming only rescues a
-                // tracker that belongs to the turn now running.
-                if let updated = ISO8601DateFormatter.almaWorkStepsLenient
-                    .parseWorkStepsTimestamp(snapshot.updatedAt),
-                   now.timeIntervalSince(updated) < 180 {
-                    return true
-                }
-                guard isStreaming, let live = currentRuntimeTurnId else { return false }
-                return snapshot.currentTurnId == live || snapshot.turnIds.contains(live)
+                return true
             }
-            // The plan tracker is the REAL step list; turn_runtime is a coarse
-            // per-turn projection (owner 2026-08-15: the dock said "১ of ২"
-            // while the work detail showed 5 plan steps). Prefer the plan
-            // tracker — but ONLY when it belongs to the turn now running, or a
-            // previous turn that died without its terminal snapshot would
-            // outrank the live one forever (Codex P2 #765).
-            .max { a, b in
-                let currentTurn = currentRuntimeTurnId
-                func planIsCurrent(_ s: AgentWorkStepsSnapshot) -> Bool {
-                    guard s.source == "agent_plan" else { return false }
-                    if let currentTurn {
-                        return s.currentTurnId == currentTurn || s.turnIds.contains(currentTurn)
-                    }
-                    // No runtime snapshot yet (first round, or a tool-free
-                    // turn): only a FRESH plan may hold the dock, or a previous
-                    // turn's unsettled row would occupy it (Codex P2 #765).
-                    guard let updated = ISO8601DateFormatter.almaWorkStepsLenient
-                        .parseWorkStepsTimestamp(s.updatedAt) else { return false }
-                    return now.timeIntervalSince(updated) < 180
-                }
-                let aPlan = planIsCurrent(a), bPlan = planIsCurrent(b)
-                if aPlan != bPlan { return bPlan }   // the current plan wins
-                return a.updatedAt < b.updatedAt
-            }
+            .max { $0.updatedAt < $1.updatedAt }
     }
     func clearWorkTrackersForConversationSwitch() {
         workTrackers = [:]
@@ -8049,6 +7996,7 @@ final class AssistantVM {
         messages[i].askCards = []
         messages[i].delegations = []
         messages[i].suppressedRawToolEnvelope = nil
+        messages[i].verificationReplacementText = nil
     }
 
     /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
@@ -8154,6 +8102,14 @@ final class AssistantVM {
                 requestLiveMode("writing")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let replacement = messages[i].verificationReplacementText {
+                        let delta = AgentChatMessage.incrementalStreamSuffix(
+                            existing: replacement, incoming: chunk)
+                        guard !delta.isEmpty else { break }
+                        messages[i].verificationReplacementText = replacement + delta
+                        touchedStream = true
+                        break
+                    }
                     let comparisonText = messages[i].text
                         + (messages[i].suppressedRawToolEnvelope ?? "")
                     let delta = AgentChatMessage.incrementalStreamSuffix(
@@ -8350,28 +8306,26 @@ final class AssistantVM {
                     }
                 }
             case .verificationRetry(let attempt, let maxAttempts):
-                // Preserve the rejected draft in audit data, but remove it from the
-                // owner-facing blocks. The verified replacement will be the only
-                // prose rendered when its text deltas arrive.
+                // Keep the last complete answer on screen while the verifier
+                // produces a replacement. The replacement is buffered and swapped
+                // in on terminal success, so repeated retries cannot flash a blank
+                // reply or expose token-sized half answers.
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
-                    // The rewrite replaces the DRAFT ANSWER, never the opening
-                    // line — that line was not what failed the check.
-                    let lead = messages[i].leadProseId
-                    if let lastProse = messages[i].blocks.last(where: {
-                        if case .prose(let pid, _) = $0 { return pid != lead }; return false
-                    }), case .prose(let pid, let draft) = lastProse {
-                        messages[i].supersededBlockIds.insert(pid)
-                        messages[i].timeline.append(.text(draft, superseded: true))
+                    if messages[i].verificationReplacementText == nil {
+                        let lead = messages[i].leadProseId
+                        if let lastProse = messages[i].blocks.last(where: {
+                            if case .prose(let pid, _) = $0 { return pid != lead }; return false
+                        }), case .prose(let pid, let draft) = lastProse {
+                            messages[i].supersededBlockIds.insert(pid)
+                            messages[i].timeline.append(.text(draft, superseded: true))
+                        }
                     }
-                    messages[i].text = lead == nil ? "" : messages[i].leadProseText
-                    messages[i].blocks.removeAll { block in
-                        if case .prose(let pid, _) = block { return pid != lead }
-                        return false
-                    }
-                    messages[i].supersededBlockIds = []
+                    // A later retry supersedes the hidden candidate, not the
+                    // still-visible stable answer.
+                    messages[i].verificationReplacementText = ""
                     messages[i].selfCorrected = true
                     let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
                     messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
@@ -8428,6 +8382,7 @@ final class AssistantVM {
                 }
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
+                    Self.commitVerifiedReplacement(on: &messages[i])
                     if let tokensIn { messages[i].tokensIn = tokensIn }
                     if let tokensOut { messages[i].tokensOut = tokensOut }
                     if let cacheCreation { messages[i].cacheCreation = cacheCreation }
@@ -8454,6 +8409,9 @@ final class AssistantVM {
             case .turnError(let message):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
+                    // Verification never produced a terminal replacement; retain
+                    // the complete draft the owner can already see.
+                    messages[i].verificationReplacementText = nil
                 }
                 sawTerminalEvent = true
                 thinkingLive = false
@@ -8493,6 +8451,26 @@ final class AssistantVM {
         if isStreaming, queuedOwnerMessageCount > 0 {
             Task { [weak self] in await self?.submitQueuedSteeringIfPossible() }
         }
+    }
+
+    /// Replace a verifier-rejected draft only when the complete verified answer
+    /// is available. This is one MainActor mutation: the old answer and the new
+    /// answer are never both absent from the rendered block list.
+    private static func commitVerifiedReplacement(on message: inout AgentChatMessage) {
+        guard let buffered = message.verificationReplacementText else { return }
+        message.verificationReplacementText = nil
+        let replacement = buffered.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !replacement.isEmpty else { return }
+        let lead = message.leadProseId
+        let leadText = message.leadProseText
+        message.blocks.removeAll { block in
+            if case .prose(let id, _) = block { return id != lead }
+            return false
+        }
+        message.blocks.append(.prose(
+            id: "bp-\(message.id)-verified", text: replacement))
+        message.text = leadText + replacement
+        message.supersededBlockIds = []
     }
 
     #if DEBUG
@@ -9185,8 +9163,8 @@ final class AssistantVM {
                 ? ["completed", "completed", "waiting_owner", "pending", "pending"]
                 : ["completed", "running", "pending", "pending", "pending"]
         let titles = [
-            "Finish and review atomic per-image model selection and quote contract",
-            "Finish native picker/recovery UI and focused unit/UI tests",
+            "Step 1: Finish and review atomic per-image model selection and quote contract",
+            "2. Step 2: Finish native picker/recovery UI and focused unit/UI tests",
             "Run backend, worker, type, Swift and simulator verification",
             "Create clean release branch, commit and PR",
             "Verify TestFlight readiness and report",
@@ -9212,11 +9190,13 @@ final class AssistantVM {
                       title: title, status: stepStatuses[index],
                       startedAt: nil, finishedAt: nil)
             },
-            // Keep the live proof inside the dock's production freshness
-            // window; a fixed historical timestamp makes this fixture expire.
+            // Keep the fixture realistic for diagnostics even though exact
+            // stream + turn ownership, not wall-clock age, owns dock visibility.
             updatedAt: ISO8601DateFormatter().string(from: Date()))
         messages = [answer]
         conversationId = "fixture-work-steps-conversation"
+        isStreaming = variant != "settled"
+        currentTurnId = variant != "settled" ? "fixture-turn-1" : nil
         #if DEBUG
         debugSetSessionSurface(.readyConversation(conversationId: "fixture-work-steps-conversation"))
         #endif
@@ -21101,6 +21081,33 @@ enum AgentWorkStepGlyph {
     }
 }
 
+/// Presentation-only cleanup for plan text supplied by different model/provider
+/// paths. The UI already owns the ordinal column, so a model-authored "Step 2:"
+/// prefix would otherwise render as the noisy "2. Step 2: …" seen in production.
+/// Keep the durable snapshot untouched; accessibility continues to announce the
+/// original title so this never becomes a second source of truth.
+@available(iOS 17.0, *)
+enum AgentWorkStepPresentation {
+    static func displayTitle(_ title: String, position: Int) -> String {
+        var value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = [
+            "Step \(position):", "Step \(position) —", "Step \(position) –",
+            "Step \(position) -", "Step \(position).", "\(position).",
+        ]
+        // Two passes also normalize the occasional "1. Step 1: …" payload.
+        for _ in 0..<2 {
+            guard let prefix = prefixes.first(where: {
+                value.range(of: $0, options: [.anchored, .caseInsensitive]) != nil
+            }) else { break }
+            let remainder = String(value.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !remainder.isEmpty else { break }
+            value = remainder
+        }
+        return value
+    }
+}
+
 /// The active-step ring: a partial arc that rotates while the step runs.
 /// Reduce Motion (or a settled tracker) renders a static partial ring.
 @available(iOS 17.0, *)
@@ -21198,6 +21205,8 @@ struct AgentWorkStepsBlockView: View {
 
     @ViewBuilder private func stepRow(_ step: AgentWorkStepsSnapshot.Step) -> some View {
         let isBlockingOwner = step.status == "waiting_owner" && snapshot.blockedByRefId != nil
+        let displayTitle = AgentWorkStepPresentation.displayTitle(
+            step.title, position: step.position)
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Group {
                 if step.status == "running", !reduceMotion, !snapshot.isTerminal {
@@ -21212,7 +21221,7 @@ struct AgentWorkStepsBlockView: View {
             Text("\(step.position).")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(pal.muted)
-            Text(step.title)
+            Text(displayTitle)
                 .font(.system(size: 12.5, weight: step.status == "running" ? .semibold : .regular))
                 .foregroundStyle(step.status == "completed" ? pal.mutedHi : pal.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -21264,15 +21273,16 @@ struct AgentWorkStepsDockView: View {
         if let snapshot = vm.activeWorkTracker(now: now) {
             VStack(spacing: 6) {
                 if expanded {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(snapshot.steps) { step in
                                 dockStepRow(step, snapshot: snapshot)
                             }
                         }
-                        .padding(.vertical, 6)
+                        .padding(6)
                     }
-                    .frame(maxHeight: 236)
+                    .scrollIndicators(.hidden)
+                    .frame(maxHeight: 244)
                     // Owner 2026-08-15: the solid near-black panel looked
                     // unfinished next to the Liquid Glass chips — the panel is
                     // now the shared Agent glass surface (real glass on iOS 26,
@@ -21281,7 +21291,12 @@ struct AgentWorkStepsDockView: View {
                     // 2026-08-13 bleed-through complaint about the 0.35 wash
                     // stays fixed; step text reads in theme ink, not white.
                     .modifier(AlmaAgentGlassBackground(
-                        shape: RoundedRectangle(cornerRadius: 18, style: .continuous), pal: pal))
+                        shape: RoundedRectangle(cornerRadius: 20, style: .continuous), pal: pal))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(pal.borderSubtle.opacity(0.9), lineWidth: 0.75)
+                    }
+                    .shadow(color: .black.opacity(pal.dark ? 0.24 : 0.10), radius: 20, y: 8)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .accessibilityIdentifier("agent.work-steps.dock.panel")
                 }
@@ -21294,7 +21309,7 @@ struct AgentWorkStepsDockView: View {
                             expanded.toggle()
                         }
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             if snapshot.status == "running" || snapshot.status == "preparing",
                                !reduceMotion {
                                 AgentWorkStepActiveRing(animated: true)
@@ -21304,14 +21319,24 @@ struct AgentWorkStepsDockView: View {
                             }
                             Text("Step \(snapshot.currentDisplayPosition) / \(snapshot.steps.count)")
                                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                            Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                                .font(.system(size: 8.5, weight: .bold))
+                                .foregroundStyle(pal.muted)
+                                .accessibilityHidden(true)
                         }
                         .foregroundStyle(pal.ink)
-                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
                         .modifier(AlmaGlassChip(fallback: AgentPalette.coral.opacity(0.14),
                                                 tint: AgentPalette.coral.opacity(0.35)))
+                        .overlay {
+                            Capsule().strokeBorder(
+                                AgentPalette.coral.opacity(pal.dark ? 0.24 : 0.18), lineWidth: 0.75)
+                        }
+                        .shadow(color: .black.opacity(pal.dark ? 0.18 : 0.07), radius: 8, y: 3)
                         .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(AlmaAgentPressStyle())
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("agent.work-steps.dock.progress")
                     .accessibilityLabel(
@@ -21325,6 +21350,10 @@ struct AgentWorkStepsDockView: View {
             .padding(.top, 4)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("agent.work-steps.dock")
+            .onChange(of: snapshot.trackerId) { _, _ in
+                // A new plan must never inherit the previous plan's open panel.
+                expanded = false
+            }
         }
     }
 
@@ -21336,28 +21365,58 @@ struct AgentWorkStepsDockView: View {
             && (snapshot.status == "running" || snapshot.status == "preparing")
         let isBlockingOwner = step.status == "waiting_owner"
             && snapshot.blockedByKind == "approval" && snapshot.blockedByRefId != nil
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
-            Group {
-                if isActivelyWorking, !reduceMotion {
-                    AgentWorkStepActiveRing(animated: true)
-                } else {
-                    Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+        let displayTitle = AgentWorkStepPresentation.displayTitle(
+            step.title, position: step.position)
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                Group {
+                    if isActivelyWorking, !reduceMotion {
+                        AgentWorkStepActiveRing(animated: true)
+                    } else {
+                        Image(systemName: AgentWorkStepGlyph.systemImage(for: step.status))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AgentWorkStepGlyph.tint(for: step.status, pal: pal))
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .padding(.top, 1)
+                Text("\(step.position).")
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(isCurrent ? AgentPalette.coral : pal.muted)
+                    .frame(minWidth: 16, alignment: .trailing)
+                    .padding(.top, 1)
+                Text(displayTitle)
+                    .font(.system(size: 12.75, weight: isCurrent ? .semibold : .regular))
+                    .lineSpacing(1.8)
+                    // Theme ink, not white: the panel behind is glass now, so
+                    // the rows must read on light and dark alike.
+                    .foregroundStyle(pal.ink.opacity(step.status == "completed" ? 0.54 : 0.94))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 2)
+                if isBlockingOwner {
+                    Image(systemName: "arrow.up.right.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                        .padding(.top, 1)
+                        .accessibilityHidden(true)
                 }
             }
-            .frame(width: 17)
-            Text("\(step.position). \(step.title)")
-                .font(.system(size: 12.5, weight: isCurrent ? .semibold : .regular))
-                // Theme ink, not white: the panel behind is glass now, so the
-                // rows must read on light and dark alike.
-                .foregroundStyle(pal.ink.opacity(step.status == "completed" ? 0.55 : 0.92))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 9)
+            .frame(minHeight: 42)
+            .background {
+                if isCurrent {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(AgentPalette.coral.opacity(pal.dark ? 0.12 : 0.075))
+                }
+            }
+            if step.id != snapshot.steps.last?.id {
+                Divider()
+                    .overlay(pal.borderSubtle)
+                    .padding(.leading, 50)
+            }
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 6)
-        .frame(minHeight: 34)
         .contentShape(Rectangle())
         .onTapGesture {
             guard isBlockingOwner, let refId = snapshot.blockedByRefId else { return }
@@ -21366,7 +21425,9 @@ struct AgentWorkStepsDockView: View {
             onOpenBlocker?(refId)
         }
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("agent.work-steps.dock.step.\(step.id)")
         .accessibilityLabel("ধাপ \(step.position), \(step.title), \(AgentWorkStepGlyph.label(for: step.status))")
+        .accessibilityHint(isBlockingOwner ? "অপেক্ষমাণ card-টি খুলুন" : "")
     }
 }
 

@@ -96,7 +96,12 @@ import { chatModeDirective, filterToolsForMode, normalizeChatMode } from '@/agen
 import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeVerdict, normalizePermissionMode, permissionModeNote } from '@/agent/lib/permission-mode'
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
-import { filterToolsForPlanTurn, isPlanFirstTurn, planFirstNote } from '@/agent/lib/plan-first'
+import {
+  chooseRoundBoundTool,
+  filterToolsForPlanTurn,
+  isPlanFirstTurn,
+  planFirstNote,
+} from '@/agent/lib/plan-first'
 import { beginPlanStepForTool, finishPlanStep } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
@@ -2354,10 +2359,14 @@ async function* runAlternateProviderTurn(
           && !toolRecords.some((r) => r.toolName === 'make_plan')
           ? 'make_plan'
           : null
-      const roundBoundToolName =
-        contractToolName && iterationTools.some((t) => t.name === contractToolName)
+      const roundBoundToolName = chooseRoundBoundTool({
+        iteration,
+        planTool: planBoundTool,
+        contractTool: contractToolName && iterationTools.some((t) => t.name === contractToolName)
           ? contractToolName
-          : iteration === 0 ? (boundToolName ?? planBoundTool) : null
+          : null,
+        workflowTool: boundToolName,
+      })
       // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
       // round 0 of a live-data question so the head cannot answer from memory.
       //
