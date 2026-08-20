@@ -2726,6 +2726,24 @@ async function* runAlternateProviderTurn(
           yield* supersedeStreamedDraft()
           continue
         }
+        // The reserved wrap-up round came back EMPTY (weak providers do return
+        // zero text) — there is no iteration left to retry in, so the harness
+        // writes the wrap-up itself from evidence it directly observed, exactly
+        // like the deadline salvage footer. Without this, an earlier interim
+        // line (or the generic fallback) silently became the answer
+        // (Codex P1 #811 round 5).
+        if (roundBudgetWrapSent && !iterationText.trim() && !signal?.aborted) {
+          const okCount = toolRecords.filter((r) => r.status === 'success').length
+          const lastTools = toolRecords
+            .filter((r) => r.status === 'success')
+            .slice(-3)
+            .map((r) => r.toolName)
+            .join(' · ')
+          iterationText =
+            `⚠️ এই টার্নের কাজের রাউন্ড-বাজেট শেষ হওয়ায় এখানে থেমেছি — ${okCount}টা ধাপ সফল হয়েছে`
+            + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
+            + '। Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
+        }
         // Fully empty round → nudge the model to continue instead of silently
         // ending the turn with a blank message. Bounded to 2 retries. Applies to
         // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very

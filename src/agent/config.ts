@@ -87,9 +87,13 @@ export const MAX_PROGRESS_NUDGES = Number(process.env.AGENT_MAX_PROGRESS_NUDGES)
  * and the counting rule — the thing that exists because prompt requests never
  * held — silently expired. The cadence must hold for the WHOLE budget: one
  * update owed per PROGRESS_UPDATE_EVERY silent rounds, however long the job.
- * The flat constant survives as the floor (and the env override still wins).
+ * An EXPLICIT AGENT_MAX_PROGRESS_NUDGES stays an absolute cap (an operator
+ * setting 1 means 1, not a floor the scaling walks over); only the unset
+ * default scales with the budget.
  */
 export function maxProgressNudgesFor(maxIterations: number): number {
+  const explicit = Number(process.env.AGENT_MAX_PROGRESS_NUDGES)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
   return Math.max(MAX_PROGRESS_NUDGES, Math.ceil(maxIterations / PROGRESS_UPDATE_EVERY))
 }
 
