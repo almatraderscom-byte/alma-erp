@@ -3016,7 +3016,12 @@ async function* runAlternateProviderTurn(
           iterationText =
             `⚠️ বাধ্যতামূলক ধাপ ${blockedRequirement.toolName} সফল হয়নি, তাই কাজ সম্পন্ন বলছি না। ` +
             `কারণ: ${blockedRequirement.error ?? 'unknown error'}`
-        } else if (!signal?.aborted && !deadlineNudgeSent && (batchStatus?.requiredTool || explicitMemoryMissing)) {
+        // roundBudgetWrapSent mirrors the deadline guard: the requirement retry
+        // checks the STATIC neutralTools list, so a tool-free wrap-up round
+        // would still be superseded and `continue`d with no round left to
+        // deliver the request — the done-gate reports the unmet contract
+        // instead (Codex P1 #811 round 4).
+        } else if (!signal?.aborted && !deadlineNudgeSent && !roundBudgetWrapSent && (batchStatus?.requiredTool || explicitMemoryMissing)) {
           const needed = explicitMemoryMissing ? 'save_memory' : batchStatus?.requiredTool
           if (needed && neutralTools.some((t) => t.name === needed) && requirementRetries < 2) {
             requirementRetries++
