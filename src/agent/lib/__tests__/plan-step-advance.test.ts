@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import {
   pickFinalDeliveryStep,
   pickStepForTool,
+  ownerBlockerFromToolResult,
   projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
@@ -47,6 +48,30 @@ describe('pickStepForTool', () => {
     // able to find that step when the same call closes it.
     const steps = [step('s1', 'running', 'get_orders'), step('s2', 'pending')]
     expect(pickStepForTool(steps, 'get_orders')?.status).toBe('running')
+  })
+})
+
+describe('ownerBlockerFromToolResult', () => {
+  it('treats a staged approval as waiting-owner evidence, not completed work', () => {
+    expect(ownerBlockerFromToolResult({
+      success: true,
+      data: { pendingActionId: 'approval-9', awaitingApproval: true },
+    })).toEqual({ kind: 'approval', refId: 'approval-9' })
+  })
+
+  it('propagates an ask-user card as a question blocker', () => {
+    expect(ownerBlockerFromToolResult({
+      success: true,
+      data: { askCardId: 'ask-4', options: ['Yes', 'No'] },
+    })).toEqual({ kind: 'question', refId: 'ask-4' })
+  })
+
+  it('does not invent a blocker for completed or failed non-card results', () => {
+    expect(ownerBlockerFromToolResult({ success: true, data: { orderId: 'o-1' } })).toBeNull()
+    expect(ownerBlockerFromToolResult({
+      success: false,
+      data: { pendingActionId: 'approval-9' },
+    })).toBeNull()
   })
 })
 
@@ -115,8 +140,11 @@ describe('native Anthropic loop tracker parity', () => {
   it('advances real tool steps and binds the terminal snapshot after reply persistence', () => {
     const source = readFileSync(new URL('../core.ts', import.meta.url), 'utf8')
     expect(source).toContain('beginPlanStepForTool(nativeTrackerPlanSteps, tb.name)')
-    expect(source).toContain('finishPlanStep({\n            stepId: claimedStepId')
+    expect(source).toMatch(/finishPlanStep\(\{\s+stepId: claimedStepId/)
     expect(source).toContain('pickFinalDeliveryStep(nativeTrackerPlanSteps)')
+    expect(source).toContain('ownerBlockerFromToolResult(r.result)')
+    expect(source).toContain('await markStepBlocked(claimedStepId)')
+    expect(source).toContain('blockedBy: nativeTrackerBlockedBy')
     expect(source).toContain('bindAssistantMessageId: nativeTrackerOriginTurnId === turnId')
   })
 })

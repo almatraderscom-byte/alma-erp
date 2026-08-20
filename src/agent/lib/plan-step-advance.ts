@@ -20,6 +20,7 @@
  * done is worse than one that does not move.
  */
 import { markStepDone, markStepFailed, markStepRunning } from '@/agent/lib/planner'
+import type { WorkStepsBlocker } from '@/agent/lib/work-steps'
 
 /** Planning/control calls manage the checklist; they are not checklist work. */
 export const PLAN_CONTROL_TOOLS = new Set(['make_plan', 'execute_plan', 'get_plan'])
@@ -29,6 +30,26 @@ export type AdvanceableStep = {
   action: string
   toolName?: string | null
   status: string
+}
+
+/**
+ * A successful tool result can still mean "the owner must decide" rather than
+ * "the requested action happened". Keep that distinction pure and shared so a
+ * staged card never becomes completion evidence for its plan row.
+ */
+export function ownerBlockerFromToolResult(result: {
+  success: boolean
+  data?: unknown
+}): WorkStepsBlocker | null {
+  if (!result.success || !result.data || typeof result.data !== 'object') return null
+  const data = result.data as Record<string, unknown>
+  if (typeof data.askCardId === 'string' && data.askCardId) {
+    return { kind: 'question', refId: data.askCardId }
+  }
+  if (typeof data.pendingActionId === 'string' && data.pendingActionId) {
+    return { kind: 'approval', refId: data.pendingActionId }
+  }
+  return null
 }
 
 /**

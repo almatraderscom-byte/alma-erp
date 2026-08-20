@@ -76,8 +76,19 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
-import { beginPlanStepForTool, finishPlanStep, pickFinalDeliveryStep } from '@/agent/lib/plan-step-advance'
-import { loadPlanForWorkTracker, syncPlanTracker, workStepsSignature } from '@/agent/lib/work-steps'
+import {
+  beginPlanStepForTool,
+  finishPlanStep,
+  ownerBlockerFromToolResult,
+  pickFinalDeliveryStep,
+} from '@/agent/lib/plan-step-advance'
+import { markStepBlocked } from '@/agent/lib/planner'
+import {
+  loadPlanForWorkTracker,
+  syncPlanTracker,
+  workStepsSignature,
+  type WorkStepsBlocker,
+} from '@/agent/lib/work-steps'
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
@@ -1119,6 +1130,7 @@ export async function* runAgentTurn(
   let nativeWorkStepsTrackerId: string | null = null
   let nativeTrackerOriginTurnId: string | null = null
   let nativeWorkStepsSignature = ''
+  let nativeTrackerBlockedBy: WorkStepsBlocker | null = null
   const loadNativeTrackerPlan = async (force = false) => {
     if (nativeTrackerPlanSteps.length && !force) return
     const plan = await loadPlanForWorkTracker(
@@ -1145,7 +1157,7 @@ export async function* runAgentTurn(
       if (!nativeWorkStepsTrackerId || !turnId) return null
       return await syncPlanTracker(nativeWorkStepsTrackerId, {
         currentTurnId: turnId,
-        blockedBy: null,
+        blockedBy: nativeTrackerBlockedBy,
         live: input.live,
         bindAssistantMessageId: input.bindAssistantMessageId,
       })
@@ -1970,14 +1982,24 @@ export async function* runAgentTurn(
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
         if (claimedStepId) {
-          const outcome = await finishPlanStep({
-            stepId: claimedStepId,
-            ok: r.result.success,
-            error: r.result.error,
-            resultSummary: { toolName: tb.name, toolCallId: tb.id },
-          })
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
-          if (local && outcome) local.status = outcome
+          const ownerBlocker = ownerBlockerFromToolResult(r.result)
+          if (ownerBlocker) {
+            // Approval/question cards are successful *staging*, not successful
+            // execution. Put the step back so approve/resume can retry it, and
+            // expose the exact waiting-owner reason in the durable snapshot.
+            nativeTrackerBlockedBy = ownerBlocker
+            await markStepBlocked(claimedStepId)
+            if (local) local.status = 'pending'
+          } else {
+            const outcome = await finishPlanStep({
+              stepId: claimedStepId,
+              ok: r.result.success,
+              error: r.result.error,
+              resultSummary: { toolName: tb.name, toolCallId: tb.id },
+            })
+            if (local && outcome) local.status = outcome
+          }
           const finished = await nativeTrackerSnapshot({ live: true })
           const signature = workStepsSignature(finished)
           if (finished && signature !== nativeWorkStepsSignature) {
