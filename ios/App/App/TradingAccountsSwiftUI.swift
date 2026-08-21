@@ -39,6 +39,7 @@ private enum TradingAccountsPalette {
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)     // #059669
     static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502)       // #4ADE80
     static let slate400 = Color(red: 0.580, green: 0.639, blue: 0.722)       // #94A3B8
+    static let blue500 = Color(red: 0.231, green: 0.510, blue: 0.965)        // #3B82F6
     /// Trading hero accent — sage green (owner spec for the Trading pages).
     static let sage = Color(red: 0.51, green: 0.70, blue: 0.60)              // #82B399
 
@@ -192,12 +193,22 @@ struct TradingAccountsSummary: Decodable, Equatable {
     let deposits: Double
     let adjustments: Double
     let merchantProgress: Double
+    // Web STAFF tab reads these too (buy/sell BDT volumes, inventory, spread,
+    // trading-only profit and the merchant target itself).
+    let totalBuyBdt: Double
+    let totalSellBdt: Double
+    let inventoryCostBdt: Double
+    let averageSpread: Double
+    let netTradingProfit: Double
+    let merchantTarget: Double?
 
     private enum Keys: String, CodingKey {
         case startingCapital, currentBalance, totalProfit, totalLoss, totalFees
         case totalExpenses, totalWithdrawals, totalTrades, totalTradedUsdt
         case totalBuyUsdt, totalSellUsdt, usdtBalance, netOperationalProfit
         case roiPct, deposits, adjustments, merchantProgress
+        case totalBuyBdt, totalSellBdt, inventoryCostBdt, averageSpread
+        case netTradingProfit, merchantTarget
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -218,6 +229,12 @@ struct TradingAccountsSummary: Decodable, Equatable {
         deposits = tradingAccountsFlexDouble(c, .deposits) ?? 0
         adjustments = tradingAccountsFlexDouble(c, .adjustments) ?? 0
         merchantProgress = tradingAccountsFlexDouble(c, .merchantProgress) ?? 0
+        totalBuyBdt = tradingAccountsFlexDouble(c, .totalBuyBdt) ?? 0
+        totalSellBdt = tradingAccountsFlexDouble(c, .totalSellBdt) ?? 0
+        inventoryCostBdt = tradingAccountsFlexDouble(c, .inventoryCostBdt) ?? 0
+        averageSpread = tradingAccountsFlexDouble(c, .averageSpread) ?? 0
+        netTradingProfit = tradingAccountsFlexDouble(c, .netTradingProfit) ?? 0
+        merchantTarget = tradingAccountsFlexDouble(c, .merchantTarget)
     }
 }
 
@@ -321,6 +338,74 @@ struct TradingAccountsExpense: Decodable, Identifiable, Equatable {
     static func == (a: TradingAccountsExpense, b: TradingAccountsExpense) -> Bool { a.id == b.id }
 }
 
+/// Web TradingCapitalEntry — the STAFF tab's capital ledger rows.
+struct TradingAccountsCapitalEntry: Decodable, Identifiable, Equatable {
+    let id: String
+    let entryType: String
+    let amount: Double
+    let notes: String?
+    let createdAt: String?
+
+    private enum Keys: String, CodingKey { case id, entryType, amount, notes, createdAt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        entryType = (try? c.decode(String.self, forKey: .entryType)) ?? "—"
+        amount = tradingAccountsFlexDouble(c, .amount) ?? 0
+        notes = try? c.decodeIfPresent(String.self, forKey: .notes)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+    }
+    static func == (a: TradingAccountsCapitalEntry, b: TradingAccountsCapitalEntry) -> Bool { a.id == b.id }
+}
+
+/// Web running timeline row — every balance-moving event with its running totals.
+struct TradingAccountsTimelineItem: Decodable, Identifiable, Equatable {
+    let rawId: String
+    let type: String
+    let label: String
+    let occurredAt: String?
+    let amount: Double
+    let runningBalance: Double
+    let runningProfit: Double
+    var id: String { "\(type)-\(rawId)" }
+
+    private enum Keys: String, CodingKey {
+        case id, type, label, occurredAt, amount, runningBalance, runningProfit
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        rawId = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        type = (try? c.decode(String.self, forKey: .type)) ?? "—"
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? ""
+        occurredAt = try? c.decodeIfPresent(String.self, forKey: .occurredAt)
+        amount = tradingAccountsFlexDouble(c, .amount) ?? 0
+        runningBalance = tradingAccountsFlexDouble(c, .runningBalance) ?? 0
+        runningProfit = tradingAccountsFlexDouble(c, .runningProfit) ?? 0
+    }
+    static func == (a: TradingAccountsTimelineItem, b: TradingAccountsTimelineItem) -> Bool { a.id == b.id }
+}
+
+/// Web SUPER_ADMIN-only "Balance debug" card.
+struct TradingAccountsBalanceDebug: Decodable, Equatable {
+    let rawCalculatedBalance: Double
+    let ledgerTotal: Double
+    let expenseTotal: Double
+    let pendingAdjustments: Double
+    let lastRecalculatedAt: String?
+
+    private enum Keys: String, CodingKey {
+        case rawCalculatedBalance, ledgerTotal, expenseTotal, pendingAdjustments, lastRecalculatedAt
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        rawCalculatedBalance = tradingAccountsFlexDouble(c, .rawCalculatedBalance) ?? 0
+        ledgerTotal = tradingAccountsFlexDouble(c, .ledgerTotal) ?? 0
+        expenseTotal = tradingAccountsFlexDouble(c, .expenseTotal) ?? 0
+        pendingAdjustments = tradingAccountsFlexDouble(c, .pendingAdjustments) ?? 0
+        lastRecalculatedAt = try? c.decodeIfPresent(String.self, forKey: .lastRecalculatedAt)
+    }
+}
+
 /// GET /api/trading/accounts/{id}/summary — flat payload; tolerate `{ ok, data }`.
 struct TradingAccountsDetail: Decodable {
     let account: TradingAccountsRow?
@@ -329,9 +414,13 @@ struct TradingAccountsDetail: Decodable {
     let ranges: TradingAccountsRanges?
     let recentTrades: [TradingAccountsTrade]
     let recentExpenses: [TradingAccountsExpense]
+    let recentCapitalEntries: [TradingAccountsCapitalEntry]
+    let timeline: [TradingAccountsTimelineItem]
+    let balanceDebug: TradingAccountsBalanceDebug?
 
     private enum Keys: String, CodingKey {
         case ok, data, account, summary, today, ranges, recentTrades, recentExpenses
+        case recentCapitalEntries, timeline, balanceDebug
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -342,6 +431,9 @@ struct TradingAccountsDetail: Decodable {
         ranges = try? c.decodeIfPresent(TradingAccountsRanges.self, forKey: .ranges)
         recentTrades = (try? c.decodeIfPresent([TradingAccountsTrade].self, forKey: .recentTrades)) ?? []
         recentExpenses = (try? c.decodeIfPresent([TradingAccountsExpense].self, forKey: .recentExpenses)) ?? []
+        recentCapitalEntries = (try? c.decodeIfPresent([TradingAccountsCapitalEntry].self, forKey: .recentCapitalEntries)) ?? []
+        timeline = (try? c.decodeIfPresent([TradingAccountsTimelineItem].self, forKey: .timeline)) ?? []
+        balanceDebug = try? c.decodeIfPresent(TradingAccountsBalanceDebug.self, forKey: .balanceDebug)
     }
 }
 
@@ -869,9 +961,18 @@ private struct TradingAccountsDetailSheet: View {
     @State private var detail: TradingAccountsDetail? = nil
     @State private var loading = true
     @State private var loadError: String? = nil
-    /// NP-6: web hides approve/reject-delete from non-SUPER_ADMIN — same owner
-    /// probe the Dashboard dock uses (owner-only route answers 403 to others).
+    /// NP-6: web hides approve/reject-delete from non-SUPER_ADMIN. The role comes
+    /// from GET /api/users/me (OrdIdentity), the same source the web ActorContext
+    /// reads — no more 403-probe guessing.
     @State private var superAdmin = false
+    @State private var isAdmin = false
+    // Money entry for THIS account — the web detail page's Add Trade / Expense /
+    // Capital / Screenshot buttons, reusing the native Trading write sheets.
+    @State private var writeVM = TradingHomeVM()
+    @State private var showTrade = false
+    @State private var showExpense = false
+    @State private var showCapital = false
+    @State private var showShot = false
 
     private var account: TradingAccountsRow { detail?.account ?? row }
 
@@ -890,10 +991,15 @@ private struct TradingAccountsDetailSheet: View {
                 } else if let summary = detail?.summary {
                     if summary.currentBalance < 0 { riskWarning }
                     kpiGrid(summary)
+                    actionButtons
                     accountCard(summary)
                     if account.partnershipEnabled == true { partnershipCard }
                     if let today = detail?.today { todayCard(today) }
                     if let ranges = detail?.ranges { rangesStrip(ranges) }
+                    staffCard(summary)
+                    capitalLedgerCard
+                    timelineCard
+                    if superAdmin, let debug = detail?.balanceDebug { balanceDebugCard(debug) }
                     recentTradesCard
                     recentExpensesCard
                     // NP-6 (TR-01/TR-02): trades admin · daily summary · screenshot
@@ -912,13 +1018,30 @@ private struct TradingAccountsDetailSheet: View {
             .padding(18)
         }
         .presentationBackground { TradingAccountsAurora() }
+        .sheet(isPresented: $showTrade) {
+            TradingHomeTradeSheet(vm: writeVM, preselect: row.id)
+        }
+        .sheet(isPresented: $showExpense) {
+            TradingHomeExpenseSheet(vm: writeVM, preselect: row.id)
+        }
+        .sheet(isPresented: $showCapital) {
+            TradingHomeCapitalSheet(vm: writeVM, preselect: row.id)
+        }
+        .sheet(isPresented: $showShot) {
+            TradingHomeShotSheet(vm: writeVM, preselect: row.id)
+        }
+        .onChange(of: writeVM.toast) { _, toast in
+            // A saved trade/expense/capital/screenshot changes this account's numbers.
+            guard toast != nil else { return }
+            Task { detail = try? await vm.loadDetail(id: row.id) }
+        }
         .task {
             do {
                 detail = try await vm.loadDetail(id: row.id)
-                // Owner probe (403 for everyone else) — gates approve/reject-delete UI.
-                struct TodosEnvelope: Decodable {}
-                if let _: TodosEnvelope = try? await AlmaAPI.shared.get("/api/assistant/todos") {
-                    superAdmin = true
+                await writeVM.loadAccountsOnly(status: "ALL")
+                if let me = await OrdIdentity.load() {
+                    superAdmin = me.role == "SUPER_ADMIN"
+                    isAdmin = me.role == "SUPER_ADMIN" || me.role == "ADMIN"
                 }
                 if detail?.summary == nil { loadError = "অ্যাকাউন্ট ডেটা পাওয়া যায়নি" }
             } catch {
@@ -1021,6 +1144,156 @@ private struct TradingAccountsDetailSheet: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    // ── Money entry for this account (web detail page action row) ──
+
+    private var actionButtons: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            detailAction("Add Trade", "plus.circle.fill",
+                         TradingAccountsPalette.accentText(colorScheme)) { showTrade = true }
+            detailAction("Screenshot", "camera.viewfinder", AlmaSwiftTheme.violet) { showShot = true }
+            detailAction("Expense", "banknote",
+                         TradingAccountsPalette.signed(-1, colorScheme)) { showExpense = true }
+            if isAdmin {
+                detailAction("Capital", "arrow.up.arrow.down.circle",
+                             TradingAccountsPalette.sage) { showCapital = true }
+            }
+        }
+    }
+
+    private func detailAction(_ label: String, _ icon: String, _ tint: Color,
+                              action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            VStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                Text(label).font(.system(size: 10, weight: .bold))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 11)
+            .background(tint.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                .strokeBorder(tint.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ── STAFF tab (web StaffPanel stat rows) ──
+
+    private func staffCard(_ s: TradingAccountsSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("STAFF & VOLUMES").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            statRow("Assigned staff", account.assignedUserName ?? "Unassigned")
+            statRow("Completion bonus", TradingAccountsFormat.taka(account.completionBonus ?? 0))
+            statRow("Total traded USDT", TradingAccountsFormat.usdt(s.totalTradedUsdt))
+            statRow("Total buy volume",
+                    "\(TradingAccountsFormat.usdt(s.totalBuyUsdt)) USDT / \(TradingAccountsFormat.taka(s.totalBuyBdt))")
+            statRow("Total sell volume",
+                    "\(TradingAccountsFormat.usdt(s.totalSellUsdt)) USDT / \(TradingAccountsFormat.taka(s.totalSellBdt))")
+            statRow("USDT balance", TradingAccountsFormat.usdt(s.usdtBalance))
+            statRow("Inventory cost", TradingAccountsFormat.taka(s.inventoryCostBdt))
+            statRow("Average spread", String(format: "%.4f", s.averageSpread),
+                    tint: TradingAccountsPalette.signed(s.averageSpread, colorScheme))
+            statRow("Net trading profit", TradingAccountsFormat.taka(s.netTradingProfit),
+                    tint: TradingAccountsPalette.signed(s.netTradingProfit, colorScheme))
+            statRow("Net operational profit", TradingAccountsFormat.taka(s.netOperationalProfit),
+                    tint: TradingAccountsPalette.signed(s.netOperationalProfit, colorScheme))
+            statRow("Merchant Goal / Monthly Target",
+                    s.merchantTarget.map { TradingAccountsFormat.taka($0) } ?? "Not set")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    // ── Capital ledger (web STAFF tab list) ──
+
+    @ViewBuilder private var capitalLedgerCard: some View {
+        let rows = detail?.recentCapitalEntries ?? []
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("CAPITAL LEDGER").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                ForEach(rows.prefix(20)) { r in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(r.entryType).font(.caption.weight(.semibold))
+                            Text(TradingAccountsFormat.dateTime(r.createdAt))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 6)
+                        Text(TradingAccountsFormat.taka(r.amount))
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(TradingAccountsPalette.accentText(colorScheme))
+                    }
+                    if let n = r.notes, !n.isEmpty {
+                        Text(n).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+    }
+
+    // ── Running timeline (web STAFF tab: every event + running balance) ──
+
+    @ViewBuilder private var timelineCard: some View {
+        let rows = detail?.timeline ?? []
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("RUNNING TIMELINE").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                ForEach(rows.prefix(30)) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text("\(item.type) · \(item.label)")
+                                .font(.caption.weight(.semibold)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text(TradingAccountsFormat.taka(item.amount))
+                                .font(.caption.weight(.bold).monospacedDigit())
+                                .foregroundStyle(TradingAccountsPalette.signed(item.amount, colorScheme))
+                        }
+                        HStack(spacing: 8) {
+                            Text(TradingAccountsFormat.dateTime(item.occurredAt))
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Spacer(minLength: 6)
+                            Text("Balance \(TradingAccountsFormat.taka(item.runningBalance))")
+                                .font(.system(size: 9).monospacedDigit())
+                                .foregroundStyle(TradingAccountsPalette.signed(item.runningBalance, colorScheme))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+    }
+
+    // ── Balance debug (web: SUPER_ADMIN only) ──
+
+    private func balanceDebugCard(_ d: TradingAccountsBalanceDebug) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("BALANCE DEBUG").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+            statRow("Calculated", TradingAccountsFormat.taka(d.rawCalculatedBalance))
+            statRow("Ledger total", TradingAccountsFormat.taka(d.ledgerTotal))
+            statRow("Expenses", TradingAccountsFormat.taka(d.expenseTotal))
+            statRow("Adjustments", TradingAccountsFormat.taka(d.pendingAdjustments))
+            statRow("Last recalculated", TradingAccountsFormat.dateTime(d.lastRecalculatedAt))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(TradingAccountsPalette.blue500.opacity(colorScheme == .dark ? 0.12 : 0.07),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+            .strokeBorder(TradingAccountsPalette.blue500.opacity(0.30), lineWidth: 1))
     }
 
     // ── Account card (web left card: type/start · staff · commission · capital rows) ──

@@ -90,7 +90,7 @@ private extension KeyedDecodingContainer {
 // MARK: - Models (same field names the web TradingDashboardResponse & co. declare —
 // camelCase wire, ALL fields optional so one bad row can't kill the screen)
 
-private struct TradingHomeDashKpis: Decodable {
+struct TradingHomeDashKpis: Decodable {
     let activeAccounts: Int?
     let todayTradeCount: Int?
     let todayProfit: Int?
@@ -124,7 +124,7 @@ private struct TradingHomeDashKpis: Decodable {
     }
 }
 
-private struct TradingHomeCompliance: Decodable {
+struct TradingHomeCompliance: Decodable {
     let cutoffHourBd: Int?
     let pastCutoff: Bool?
     let completeCount: Int?
@@ -132,7 +132,7 @@ private struct TradingHomeCompliance: Decodable {
     let overdueCount: Int?
 }
 
-private struct TradingHomePerfRow: Decodable, Identifiable {
+struct TradingHomePerfRow: Decodable, Identifiable {
     let id: String
     let accountTitle: String?
     let currentBalance: Int?
@@ -157,7 +157,7 @@ private struct TradingHomePerfRow: Decodable, Identifiable {
     }
 }
 
-private struct TradingHomeAlert: Decodable, Identifiable {
+struct TradingHomeAlert: Decodable, Identifiable {
     let key: String
     let severity: String?
     let title: String?
@@ -178,10 +178,10 @@ private struct TradingHomeAlert: Decodable, Identifiable {
     }
 }
 
-private struct TradingHomeAccountRef: Decodable { let accountTitle: String? }
-private struct TradingHomeUserRef: Decodable { let name: String? }
+struct TradingHomeAccountRef: Decodable { let accountTitle: String? }
+struct TradingHomeUserRef: Decodable { let name: String? }
 
-private struct TradingHomeTrade: Decodable, Identifiable {
+struct TradingHomeTrade: Decodable, Identifiable {
     let id: String
     let tradingAccountId: String?
     let tradeType: String?
@@ -205,7 +205,7 @@ private struct TradingHomeTrade: Decodable, Identifiable {
     }
 }
 
-private struct TradingHomeExpense: Decodable, Identifiable {
+struct TradingHomeExpense: Decodable, Identifiable {
     let id: String
     let tradingAccountId: String?
     let expenseType: String?
@@ -225,7 +225,7 @@ private struct TradingHomeExpense: Decodable, Identifiable {
 
 /// GET /api/trading/dashboard — flat payload; tolerate an `{ ok, data: {…} }` wrap
 /// too, like the CRM decoder does.
-private struct TradingHomeDashboard: Decodable {
+struct TradingHomeDashboard: Decodable {
     let kpis: TradingHomeDashKpis?
     let screenshotCompliance: TradingHomeCompliance?
     let accountPerformance: [TradingHomePerfRow]
@@ -249,7 +249,7 @@ private struct TradingHomeDashboard: Decodable {
     }
 }
 
-private struct TradingHomeRange: Decodable {
+struct TradingHomeRange: Decodable {
     let netResultBdt: Int?
 
     private enum Keys: String, CodingKey { case netResultBdt, netResult }
@@ -259,7 +259,7 @@ private struct TradingHomeRange: Decodable {
     }
 }
 
-private struct TradingHomeSummaryKpis: Decodable {
+struct TradingHomeSummaryKpis: Decodable {
     let activeAccounts: Int?
     let totalCapital: Int?
     let totalFees: Int?
@@ -280,7 +280,7 @@ private struct TradingHomeSummaryKpis: Decodable {
 }
 
 /// GET /api/trading/summary → { kpis, ranges: { today, yesterday, last7, currentMonth } }.
-private struct TradingHomeSummary: Decodable {
+struct TradingHomeSummary: Decodable {
     let kpis: TradingHomeSummaryKpis?
     let today: TradingHomeRange?
     let yesterday: TradingHomeRange?
@@ -298,7 +298,7 @@ private struct TradingHomeSummary: Decodable {
     }
 }
 
-private struct TradingHomeAccount: Decodable, Identifiable {
+struct TradingHomeAccount: Decodable, Identifiable {
     let id: String
     let accountTitle: String
     let binanceUid: String?
@@ -333,7 +333,7 @@ private struct TradingHomeAccount: Decodable, Identifiable {
 }
 
 /// POST answers `{ ok, ... }` — only ok matters to the sheets (web checks res?.ok).
-private struct TradingHomeMutationResponse: Decodable {
+struct TradingHomeMutationResponse: Decodable {
     let ok: Bool
     let error: String?
     private enum Keys: String, CodingKey { case ok, error }
@@ -345,7 +345,7 @@ private struct TradingHomeMutationResponse: Decodable {
 }
 
 /// GET /api/trading/accounts answers flat `{ accounts, total }`; tolerate a wrap too.
-private struct TradingHomeAccountsResponse: Decodable {
+struct TradingHomeAccountsResponse: Decodable {
     let accounts: [TradingHomeAccount]
 
     private enum Keys: String, CodingKey { case ok, data, accounts }
@@ -360,7 +360,7 @@ private struct TradingHomeAccountsResponse: Decodable {
 
 @available(iOS 17.0, *)
 @Observable
-private final class TradingHomeVM {
+final class TradingHomeVM {
     var dash: TradingHomeDashboard? = nil
     var summary: TradingHomeSummary? = nil
     var accounts: [TradingHomeAccount] = []
@@ -375,6 +375,25 @@ private final class TradingHomeVM {
     var complianceNeedsAttention: Bool {
         let c = dash?.screenshotCompliance
         return ((c?.overdueCount ?? 0) + (c?.dueCount ?? 0)) > 0
+    }
+
+    /// The accounts list on its own — enough to drive the write sheets from a
+    /// screen that does not need the dashboard payload (account detail sheet).
+    func loadAccountsOnly(status: String = "ACTIVE") async {
+        guard accounts.isEmpty else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let a: TradingHomeAccountsResponse = try await AlmaAPI.shared.get(
+                "/api/trading/accounts", query: ["status": status])
+            accounts = a.accounts
+            authExpired = false
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+        } catch {
+            if Self.isCancellation(error) { return }
+            self.error = error.localizedDescription
+        }
     }
 
     func load() async {
@@ -1374,7 +1393,7 @@ import PhotosUI
 
 /// Shared sheet chrome: title bar + footer submit button, web ModalFrame parity.
 @available(iOS 17.0, *)
-private struct TradingHomeSheetFrame<Content: View>: View {
+struct TradingHomeSheetFrame<Content: View>: View {
     let title: String
     let desc: String
     let submitLabel: String
@@ -1428,7 +1447,7 @@ private struct TradingHomeSheetFrame<Content: View>: View {
 
 /// Small labelled numeric/text field, web Input parity.
 @available(iOS 17.0, *)
-private struct TradingHomeField: View {
+struct TradingHomeField: View {
     let placeholder: String
     @Binding var text: String
     var keyboard: UIKeyboardType = .decimalPad
@@ -1445,7 +1464,7 @@ private struct TradingHomeField: View {
 
 /// Account picker used by every write sheet.
 @available(iOS 17.0, *)
-private struct TradingHomeAccountPicker: View {
+struct TradingHomeAccountPicker: View {
     let accounts: [TradingHomeAccount]
     @Binding var selectedId: String
 
@@ -1472,8 +1491,11 @@ private struct TradingHomeAccountPicker: View {
 // ── Add Trade (web TradeEntryModal: BKASH daily summary / BANK P2P engine) ──
 
 @available(iOS 17.0, *)
-private struct TradingHomeTradeSheet: View {
+struct TradingHomeTradeSheet: View {
     let vm: TradingHomeVM
+    /// Opened from an account page → that account is preselected (web passes
+    /// defaultAccountId into every modal the same way).
+    var preselect: String? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var accountId = ""
@@ -1567,7 +1589,7 @@ private struct TradingHomeTradeSheet: View {
                     .foregroundStyle(TradingHomePalette.signed(-1, scheme))
             }
         }
-        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
         .confirmationDialog(
             mode == "BKASH"
                 ? "Bkash summary সেভ করবেন? Net \(TradingHomeFormat.taka(Int(bkashNet.rounded())))"
@@ -1640,8 +1662,11 @@ private struct TradingHomeTradeSheet: View {
 // ── Expense entry (web ExpenseEntryModal — attachment optional) ──
 
 @available(iOS 17.0, *)
-private struct TradingHomeExpenseSheet: View {
+struct TradingHomeExpenseSheet: View {
     let vm: TradingHomeVM
+    /// Opened from an account page → that account is preselected (web passes
+    /// defaultAccountId into every modal the same way).
+    var preselect: String? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var accountId = ""
@@ -1720,7 +1745,7 @@ private struct TradingHomeExpenseSheet: View {
             }
             TradingHomeField(placeholder: "Notes", text: $notes, keyboard: .default)
         }
-        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
         .confirmationDialog(
             "\(TradingHomeFormat.taka(Int(num(amount).rounded()))) খরচ যোগ করবেন (\(expenseType))?",
             isPresented: $confirming, titleVisibility: .visible
@@ -1748,8 +1773,11 @@ private struct TradingHomeExpenseSheet: View {
 // ── Capital entry (web CapitalEntryModal: deposit / withdraw / adjustment) ──
 
 @available(iOS 17.0, *)
-private struct TradingHomeCapitalSheet: View {
+struct TradingHomeCapitalSheet: View {
     let vm: TradingHomeVM
+    /// Opened from an account page → that account is preselected (web passes
+    /// defaultAccountId into every modal the same way).
+    var preselect: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var accountId = ""
     @State private var entryType = "DEPOSIT"
@@ -1782,7 +1810,7 @@ private struct TradingHomeCapitalSheet: View {
             TradingHomeField(placeholder: "Amount", text: $amount)
             TradingHomeField(placeholder: "Notes", text: $notes, keyboard: .default)
         }
-        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
         .confirmationDialog(
             "\(typeLabel) \(TradingHomeFormat.taka(Int(num(amount).rounded()))) পোস্ট করবেন?",
             isPresented: $confirming, titleVisibility: .visible
@@ -1809,8 +1837,11 @@ private struct TradingHomeCapitalSheet: View {
 // ── Compliance screenshot upload (web ScreenshotUploadModal essentials) ──
 
 @available(iOS 17.0, *)
-private struct TradingHomeShotSheet: View {
+struct TradingHomeShotSheet: View {
     let vm: TradingHomeVM
+    /// Opened from an account page → that account is preselected (web passes
+    /// defaultAccountId into every modal the same way).
+    var preselect: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var accountId = ""
     @State private var shotDate = TradingHomeDateHelper.today()
@@ -1866,7 +1897,7 @@ private struct TradingHomeShotSheet: View {
             }
             TradingHomeField(placeholder: "Note (ঐচ্ছিক)", text: $note, keyboard: .default)
         }
-        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
     }
 
     private func submit() {
@@ -1883,7 +1914,7 @@ private struct TradingHomeShotSheet: View {
 }
 
 /// yyyy-MM-dd helpers for the web's date payloads (Dhaka-day semantics live server-side).
-private enum TradingHomeDateHelper {
+enum TradingHomeDateHelper {
     static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"

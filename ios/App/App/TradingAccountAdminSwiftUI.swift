@@ -87,21 +87,30 @@ struct TAAdminTrade: Decodable, Identifiable {
     var isActive: Bool { status != "DELETED" && status != "DELETE_PENDING" }
 }
 
+/// Bkash daily summary — the web TradingBkashDailySummary verbatim
+/// (totalOrders / totalProfitBdt / totalLossBdt / netResultBdt). The earlier
+/// opening/closing/used field names never existed on this endpoint: the list
+/// always read ৳0 and the form POSTed a payload the API ignored, which upserted
+/// a ZERO row over the real one for that date.
 struct TAAdminBkashSummary: Decodable, Identifiable {
     let id: String
     let summaryDate: String?
-    let openingBdt: Double
-    let closingBdt: Double
-    let usedBdt: Double
+    let totalOrders: Int
+    let totalProfitBdt: Double
+    let totalLossBdt: Double
+    let netResultBdt: Double
     let notes: String?
-    private enum Keys: String, CodingKey { case id, summaryDate, openingBdt, closingBdt, usedBdt, notes }
+    private enum Keys: String, CodingKey {
+        case id, summaryDate, totalOrders, totalProfitBdt, totalLossBdt, netResultBdt, notes
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
         summaryDate = try? c.decodeIfPresent(String.self, forKey: .summaryDate)
-        openingBdt = flexDouble(c, .openingBdt) ?? 0
-        closingBdt = flexDouble(c, .closingBdt) ?? 0
-        usedBdt = flexDouble(c, .usedBdt) ?? 0
+        totalOrders = Int(flexDouble(c, .totalOrders) ?? 0)
+        totalProfitBdt = flexDouble(c, .totalProfitBdt) ?? 0
+        totalLossBdt = flexDouble(c, .totalLossBdt) ?? 0
+        netResultBdt = flexDouble(c, .netResultBdt) ?? (totalProfitBdt - totalLossBdt)
         notes = try? c.decodeIfPresent(String.self, forKey: .notes)
     }
 }
@@ -110,17 +119,34 @@ struct TAAdminScreenshot: Decodable, Identifiable {
     let id: String
     let shotDate: String?
     let note: String?
-    let imageUrl: String?
+    let uploaderName: String?
+    /// The API returns `signedUrl` — a RELATIVE path (/api/trading/screenshots/{id}/preview)
+    /// served behind the session cookie. The old decoder looked for imageUrl/url, which
+    /// this endpoint has never sent, so every tile rendered an empty placeholder.
+    let signedPath: String?
     let archivedAt: String?
-    private enum Keys: String, CodingKey { case id, shotDate, note, imageUrl, url, archivedAt }
+    private enum Keys: String, CodingKey {
+        case id, shotDate, note, signedUrl, imageUrl, url, archivedAt, uploader
+    }
+    private struct UploaderRef: Decodable { let name: String? }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         shotDate = try? c.decodeIfPresent(String.self, forKey: .shotDate)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
-        imageUrl = (try? c.decodeIfPresent(String.self, forKey: .imageUrl))
+        uploaderName = (try? c.decodeIfPresent(UploaderRef.self, forKey: .uploader))?.name
+        signedPath = (try? c.decodeIfPresent(String.self, forKey: .signedUrl))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .imageUrl))
             ?? (try? c.decodeIfPresent(String.self, forKey: .url))
         archivedAt = try? c.decodeIfPresent(String.self, forKey: .archivedAt)
+    }
+
+    /// URLSession.shared shares HTTPCookieStorage with AlmaAPI's bridged cookies,
+    /// so AsyncImage can fetch the authenticated preview directly.
+    var imageURL: URL? {
+        guard let signedPath, !signedPath.isEmpty else { return nil }
+        if signedPath.hasPrefix("http") { return URL(string: signedPath) }
+        return URL(string: signedPath, relativeTo: AlmaAPI.baseURL)
     }
 }
 
@@ -316,8 +342,16 @@ final class TAAdminStore {
     }
 
     /// POST /api/trading/accounts/{id}/bkash-summary — daily summary entry.
-    func addBkashSummary(date: String, opening: String, closing: String, notes: String) async -> Bool {
-        guard !busy, let o = Double(opening), let cl = Double(closing) else {
+    /// Payload is the web DailySummaryPanel's verbatim: totalOrders (integer) +
+    /// non-negative totalProfitBdt / totalLossBdt in whole taka. The route upserts
+    /// on (account, date), so a wrong payload overwrites the real row — never send
+    /// field names the route does not read.
+    func addBkashSummary(date: String, orders: String, profit: String, loss: String,
+                         notes: String) async -> Bool {
+        let ordersValue = Int(orders.trimmingCharacters(in: .whitespaces)) ?? 0
+        let profitValue = Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0
+        let lossValue = Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0
+        guard !busy, ordersValue >= 0, profitValue >= 0, lossValue >= 0 else {
             notice = "✗ সংখ্যাগুলো চেক করুন"
             return false
         }
@@ -326,8 +360,9 @@ final class TAAdminStore {
         struct Body: Encodable {
             let tradingAccountId: String
             let summaryDate: String
-            let openingBdt: Int
-            let closingBdt: Int
+            let totalOrders: Int
+            let totalProfitBdt: Int
+            let totalLossBdt: Int
             let notes: String?
         }
         struct Resp: Decodable { let ok: Bool? }
@@ -335,7 +370,9 @@ final class TAAdminStore {
             let _: Resp = try await AlmaAPI.shared.send(
                 "POST", "/api/trading/accounts/\(accountId)/bkash-summary",
                 body: Body(tradingAccountId: accountId, summaryDate: date,
-                           openingBdt: Int(o.rounded()), closingBdt: Int(cl.rounded()),
+                           totalOrders: ordersValue,
+                           totalProfitBdt: Int(profitValue.rounded()),
+                           totalLossBdt: Int(lossValue.rounded()),
                            notes: notes.isEmpty ? nil : notes))
             notice = "✓ Daily summary সেভ হয়েছে"
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -419,6 +456,8 @@ struct TradingAccountAdminSection: View {
     @State private var tradeSheet: TradeSheetMode? = nil
     @State private var showBkashForm = false
     @State private var photoItem: PhotosPickerItem? = nil
+    @State private var zoomShot: TAAdminScreenshot? = nil
+    @State private var shotNote = ""
     @State private var settleConfirm = false
     @State private var settleNotes = ""
     @State private var settleOverride = ""
@@ -474,13 +513,17 @@ struct TradingAccountAdminSection: View {
             TradeActionSheet(store: store, mode: mode) { tradeSheet = nil }
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $zoomShot) { shot in
+            TAShotZoomSheet(shot: shot)
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let img = UIImage(data: data),
                    let jpeg = img.jpegData(compressionQuality: 0.8) {
-                    await store.uploadScreenshot(data: jpeg, note: "")
+                    await store.uploadScreenshot(data: jpeg, note: shotNote)
+                    shotNote = ""
                 }
                 photoItem = nil
             }
@@ -556,11 +599,13 @@ struct TradingAccountAdminSection: View {
             HStack(spacing: 8) {
                 Text(String((b.summaryDate ?? "—").prefix(10)))
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
-                Text("opening \(tk(b.openingBdt)) · closing \(tk(b.closingBdt))")
+                Text("\(b.totalOrders) orders · profit \(tk(b.totalProfitBdt)) · loss \(tk(b.totalLossBdt))")
                     .font(.system(size: 10).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.7)
                 Spacer()
-                Text("used \(tk(b.usedBdt))")
-                    .font(.system(size: 10, weight: .bold).monospacedDigit()).foregroundStyle(amber600)
+                Text("Net \(tk(b.netResultBdt))")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(b.netResultBdt >= 0 ? Color.green : Color.red)
             }
             .padding(.vertical, 3)
             Divider().opacity(0.3)
@@ -570,6 +615,13 @@ struct TradingAccountAdminSection: View {
     // ── Screenshot history + upload ──
 
     @ViewBuilder private var shotsPanel: some View {
+        Text("দিনের Binance প্রোফাইল স্ক্রিনশট। সর্বশেষ ৭টি দেখা যায় · পুরনোগুলো Archived-এ।")
+            .font(.system(size: 10)).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        // Web PerformancePanel note field — the growth note travels with the upload.
+        TextField("Growth note, order count, completion rate…", text: $shotNote)
+            .textFieldStyle(.roundedBorder)
+            .font(.caption)
         HStack {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 Label(store.busy ? "আপলোড হচ্ছে…" : "📸 আপলোড", systemImage: "square.and.arrow.up")
@@ -588,21 +640,15 @@ struct TradingAccountAdminSection: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(store.screenshots) { shot in
                 VStack(alignment: .leading, spacing: 3) {
-                    if let urlStr = shot.imageUrl, let url = URL(string: urlStr) {
-                        AsyncImage(url: url) { img in
-                            img.resizable().scaledToFill()
-                        } placeholder: {
-                            Color.primary.opacity(0.06)
-                        }
-                        .frame(height: 110)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
+                    TAShotThumb(url: shot.imageURL, height: 110)
                     Text(String((shot.shotDate ?? "—").prefix(10)))
                         .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
                     if let note = shot.note, !note.isEmpty {
                         Text(note).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
+                .contentShape(Rectangle())
+                .onTapGesture { zoomShot = shot }
             }
         }
         if store.screenshotsCursor != nil {
@@ -614,6 +660,34 @@ struct TradingAccountAdminSection: View {
             .buttonStyle(.bordered)
             .frame(maxWidth: .infinity)
         }
+        beforeAfterCard
+    }
+
+    /// Web PerformancePanel "Before vs After" — oldest visible shot beside the newest.
+    @ViewBuilder private var beforeAfterCard: some View {
+        let rows = store.screenshots
+        if let after = rows.first, let before = rows.last, before.id != after.id,
+           before.imageURL != nil, after.imageURL != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("BEFORE vs AFTER").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    comparisonShot("Before", before)
+                    comparisonShot("After", after)
+                }
+            }
+            .padding(.top, 6)
+        }
+    }
+
+    private func comparisonShot(_ label: String, _ shot: TAAdminScreenshot) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            TAShotThumb(url: shot.imageURL, height: 96)
+            Text("\(label) · \(String((shot.shotDate ?? "—").prefix(10)))")
+                .font(.system(size: 9, weight: .bold)).foregroundStyle(gold)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { zoomShot = shot }
     }
 
     // ── Settlement (TR-02) ──
@@ -710,22 +784,42 @@ private struct TABkashForm: View {
     let store: TAAdminStore
     let onDone: () -> Void
     @State private var date = ""
-    @State private var opening = ""
-    @State private var closing = ""
+    @State private var orders = ""
+    @State private var profit = ""
+    @State private var loss = ""
     @State private var notes = ""
+
+    /// Web DailySummaryPanel: "Net result is profit minus loss" — same live preview.
+    private var netResult: Double {
+        (Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0)
+            - (Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0)
+    }
 
     var body: some View {
         VStack(spacing: 6) {
+            Text("Bkash Daily Summary — high-volume micro-trading-এর দিনের ফল। Net = profit − loss।")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             TextField("তারিখ YYYY-MM-DD", text: $date)
                 .keyboardType(.numbersAndPunctuation)
-            TextField("Opening ৳", text: $opening).keyboardType(.numberPad)
-            TextField("Closing ৳", text: $closing).keyboardType(.numberPad)
+            TextField("Total orders", text: $orders).keyboardType(.numberPad)
+            TextField("Total profit (BDT)", text: $profit).keyboardType(.decimalPad)
+            TextField("Total loss (BDT)", text: $loss).keyboardType(.decimalPad)
             TextField("Notes", text: $notes)
-            Button(store.busy ? "সেভ…" : "💾 সেভ") {
-                Task { if await store.addBkashSummary(date: date, opening: opening,
-                                                     closing: closing, notes: notes) { onDone() } }
+            HStack {
+                Text("Net result").font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer()
+                Text(tk(netResult))
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(netResult >= 0 ? Color.green : Color.red)
             }
-            .disabled(store.busy || date.count < 10 || opening.isEmpty || closing.isEmpty)
+            Button(store.busy ? "সেভ…" : "💾 সেভ") {
+                Task { if await store.addBkashSummary(date: date, orders: orders,
+                                                     profit: profit, loss: loss,
+                                                     notes: notes) { onDone() } }
+            }
+            .disabled(store.busy || date.count < 10
+                      || (orders.isEmpty && profit.isEmpty && loss.isEmpty))
         }
         .font(.caption)
         .textFieldStyle(.roundedBorder)
@@ -869,5 +963,80 @@ private struct TradeActionSheet: View {
             Text(value).font(.callout.monospacedDigit())
         }
         .font(.caption)
+    }
+}
+
+// MARK: - Screenshot thumbnail + zoom (web <img src={signedUrl}> parity)
+
+/// One performance-screenshot tile. The preview endpoint is cookie-authenticated;
+/// URLSession.shared shares HTTPCookieStorage with AlmaAPI, so AsyncImage works
+/// without any extra bridging. A nil URL falls back to the web's placeholder tone.
+@available(iOS 17.0, *)
+private struct TAShotThumb: View {
+    let url: URL?
+    var height: CGFloat = 110
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+            if let url {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        Image(systemName: "photo").foregroundStyle(.secondary)
+                    default:
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            } else {
+                Image(systemName: "photo").foregroundStyle(.secondary)
+            }
+        }
+        .frame(height: height)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Tap a tile → full-screen view (web opens the signed URL in a new tab).
+@available(iOS 17.0, *)
+private struct TAShotZoomSheet: View {
+    let shot: TAAdminScreenshot
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.horizontal, .vertical]) {
+                if let url = shot.imageURL {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image): image.resizable().scaledToFit()
+                        case .failure: Text("ছবি লোড হয়নি").font(.footnote).foregroundStyle(.secondary)
+                        default: ProgressView()
+                        }
+                    }
+                } else {
+                    Text("ছবি নেই").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(String((shot.shotDate ?? "Screenshot").prefix(10)))
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                if let note = shot.note, !note.isEmpty {
+                    Text(note).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(.ultraThinMaterial)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("বন্ধ") { dismiss() }
+                }
+            }
+        }
     }
 }
