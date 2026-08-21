@@ -124,8 +124,9 @@ struct CSMaskRepairSheet: View {
                             for point in stroke.points.dropFirst() {
                                 path.addLine(to: CGPoint(x: point.x * size.width, y: point.y * size.height))
                             }
-                            // Paint = white (edit). Erase = dark (keep). Inverted flips both.
-                            let paintsWhite = stroke.erase == inverted
+                            // Paint = white (edit), Erase = dark (keep) — always, like the web.
+                            // Invert only flips the base bitmap under the strokes.
+                            let paintsWhite = !stroke.erase
                             context.stroke(path, with: .color(paintsWhite ? .white.opacity(0.82) : .black.opacity(0.7)),
                                            style: StrokeStyle(lineWidth: stroke.width * min(size.width, size.height), lineCap: .round, lineJoin: .round))
                         }
@@ -278,7 +279,7 @@ struct CSMaskRepairSheet: View {
             cg.setLineJoin(.round)
             for stroke in strokes {
                 guard let first = stroke.points.first else { continue }
-                let white = stroke.erase == inverted
+                let white = !stroke.erase
                 cg.setStrokeColor((white ? UIColor.white : UIColor.black).cgColor)
                 cg.setFillColor((white ? UIColor.white : UIColor.black).cgColor)
                 let brushWidth = CGFloat(stroke.width) * min(size.width, size.height)

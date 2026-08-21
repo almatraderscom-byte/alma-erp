@@ -1158,8 +1158,11 @@ final class CreativeStudioVM {
         if galleryProvider != "all" { query["provider"] = galleryProvider }
         if galleryAspect != "all" { query["aspectRatio"] = galleryAspect }
         applyLifecycleQuery(to: &query)
+        let requestedProjectID = activeProject?.id
         guard let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/gallery", query: query) else { toast = "পরের পেজ আনা গেল না"; return }
+        // A project switch mid-flight must not splice the old project's page into the new list.
+        guard activeProject?.id == requestedProjectID, galleryNextCursor == cursor else { return }
         let known = Set(gallery.map(\.id))
         gallery.append(contentsOf: g.items.filter { !known.contains($0.id) })
         galleryNextCursor = g.nextCursor
@@ -4449,9 +4452,12 @@ private struct CSAudioTab: View {
                 "targetLanguage": AnyEncodable(dubLanguage), "seconds": AnyEncodable(dubSeconds),
             ])
         case .voiceChange:
+            // Same owner-only usage context as the owner-voice card; the route rejects
+            // voice_change without it (owner_voice_context_forbidden).
             var body: [String: AnyEncodable] = [
                 "kind": AnyEncodable("voice_change"), "sourcePath": AnyEncodable(paths[0]),
                 "seconds": AnyEncodable(changeSeconds),
+                "usageContext": AnyEncodable("owner_studio"),
             ]
             if let active = vm.audioStatus?.activeVoiceVersionId { body["voiceVersionId"] = AnyEncodable(active) }
             await vm.queueAudio("Voice changer", body: body)

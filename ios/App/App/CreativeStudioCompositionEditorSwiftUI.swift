@@ -1356,7 +1356,7 @@ struct CreativeStudioCompositionEditorScreen: View {
             guard playing, durationSec > 0 else { return }
             while playing, !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                let next = (model.playheadSec + 0.1 * 10).rounded() / 10
+                let next = ((model.playheadSec + 0.1) * 10).rounded() / 10
                 if next >= durationSec { model.playheadSec = 0; playing = false } else { model.playheadSec = next }
             }
         }
