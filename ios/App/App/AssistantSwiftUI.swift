@@ -20182,6 +20182,15 @@ struct AgentModelPickerSheet: View {
     @Bindable var vm: AssistantVM
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    /// Which vendor rows the owner has opened this visit. Absent = use the
+    /// default (open only for the vendor that holds the current pick).
+    @State private var expandedProviders: [String: Bool] = [:]
+
+    private func expansionBinding(_ key: String, defaultOpen: Bool) -> Binding<Bool> {
+        Binding(
+            get: { expandedProviders[key] ?? defaultOpen },
+            set: { expandedProviders[key] = $0 })
+    }
 
     private static let providers: [(key: String, label: String)] = [
         ("anthropic", "Anthropic"), ("google", "Google"),
@@ -20198,14 +20207,33 @@ struct AgentModelPickerSheet: View {
                         dismiss()
                     }
                 }
+                // Collapsed by provider, same reason as the composer menu: the flat
+                // list ran past the bottom of the sheet. The vendor holding the
+                // current pick starts OPEN so the chosen model is one glance away.
                 ForEach(Self.providers, id: \.key) { provider in
                     let group = vm.models.filter { $0.provider == provider.key }
                     if !group.isEmpty {
-                        Section(provider.label) {
-                            ForEach(group) { m in
-                                row(label: m.label, selected: vm.modelId == m.id, pal: pal) {
-                                    vm.selectModel(m.id)
-                                    dismiss()
+                        let holdsSelection = group.contains { $0.id == vm.modelId }
+                        Section {
+                            DisclosureGroup(isExpanded: expansionBinding(provider.key, defaultOpen: holdsSelection)) {
+                                ForEach(group) { m in
+                                    row(label: m.label, selected: vm.modelId == m.id, pal: pal) {
+                                        vm.selectModel(m.id)
+                                        dismiss()
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(provider.label)
+                                        .font(.system(size: 15, weight: holdsSelection ? .semibold : .regular))
+                                        .foregroundStyle(holdsSelection ? AgentPalette.coral : pal.ink)
+                                    Spacer()
+                                    if holdsSelection,
+                                       let picked = group.first(where: { $0.id == vm.modelId }) {
+                                        Text(AgentModelShortName.display(picked.label))
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(AgentPalette.coral)
+                                    }
                                 }
                             }
                         }
@@ -25678,29 +25706,50 @@ final class AssistantBarHooks: NSObject {
         var sections: [UIMenuElement] = [
             UIMenu(options: .displayInline, children: [auto])
         ]
+        // Providers are COLLAPSED into submenus (owner ask 2026-08-21): listing
+        // every model inline made the sheet taller than the screen, so picking
+        // anything meant scrolling past four vendors. Now the menu is one short
+        // list — Auto + five vendor rows + Thinking — and the row carries the
+        // current pick in its title, so the chosen model is readable without
+        // opening anything.
+        func providerMenu(title: String, children: [UIMenuElement], holdsSelection: Bool,
+                          selectedLabel: String?) -> UIMenu {
+            UIMenu(
+                title: holdsSelection && selectedLabel != nil ? "\(title) · \(selectedLabel!)" : title,
+                image: holdsSelection ? UIImage(systemName: "checkmark") : nil,
+                children: children)
+        }
         for provider in providers {
-            let children = models.filter { $0.provider == provider.key }.map { model in
+            let group = models.filter { $0.provider == provider.key }
+            guard !group.isEmpty else { continue }
+            let children: [UIMenuElement] = group.map { model in
                 UIAction(
                     title: model.label,
                     state: selectedId == model.id ? .on : .off
                 ) { _ in onSelect(model.id) }
             }
-            if !children.isEmpty {
-                sections.append(UIMenu(
-                    title: provider.label, options: .displayInline, children: children))
-            }
+            let picked = group.first { $0.id == selectedId }
+            sections.append(providerMenu(
+                title: provider.label, children: children,
+                holdsSelection: picked != nil,
+                selectedLabel: picked.map { AgentModelShortName.display($0.label) }))
         }
         let knownProviders = Set(providers.map(\.key))
-        let other = models.filter { model in
+        let otherModels = models.filter { model in
             guard let provider = model.provider else { return true }
             return !knownProviders.contains(provider)
-        }.map { model in
-            UIAction(title: model.label, state: selectedId == model.id ? .on : .off) { _ in
-                onSelect(model.id)
-            }
         }
-        if !other.isEmpty {
-            sections.append(UIMenu(title: "Other", options: .displayInline, children: other))
+        if !otherModels.isEmpty {
+            let children: [UIMenuElement] = otherModels.map { model in
+                UIAction(title: model.label, state: selectedId == model.id ? .on : .off) { _ in
+                    onSelect(model.id)
+                }
+            }
+            let picked = otherModels.first { $0.id == selectedId }
+            sections.append(providerMenu(
+                title: "Other", children: children,
+                holdsSelection: picked != nil,
+                selectedLabel: picked.map { AgentModelShortName.display($0.label) }))
         }
         // Thinking level (owner ask 2026-08-21) — a SUBMENU rather than another
         // inline block, so the model list stays one clean scroll and the current
