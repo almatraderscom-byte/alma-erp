@@ -451,7 +451,7 @@ struct DigitalProjectsScreen: View {
         VStack(spacing: 6) {
             Image(systemName: "square.grid.2x2").font(.largeTitle).foregroundStyle(.secondary)
             Text("কোনো প্রজেক্ট পাওয়া যায়নি").foregroundStyle(.secondary)
-            Text("ক্লায়েন্ট কাজ ট্র্যাক করতে ওয়েবে প্রজেক্ট যোগ করুন").font(.caption).foregroundStyle(.secondary)
+            Text("উপরের + New Project দিয়ে প্রজেক্ট যোগ করুন").font(.caption).foregroundStyle(.secondary)
         }
         .padding(.top, 60)
         .padding(.bottom, 30)
@@ -462,7 +462,7 @@ struct DigitalProjectsScreen: View {
         Button {
             openWeb("/digital/projects", "CDIT projects")
         } label: {
-            Label("নতুন প্রজেক্ট / সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -706,7 +706,7 @@ private struct DigitalProjectDetailSheet: View {
             dismiss()
             openWeb("/digital/projects", "CDIT projects")
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

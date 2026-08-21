@@ -1135,7 +1135,7 @@ struct TradingTelegramScreen: View {
         Button {
             openWeb("/trading/telegram", "Telegram Quick Entry")
         } label: {
-            Label("কনফার্ম / এডিট / ম্যাপিং — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

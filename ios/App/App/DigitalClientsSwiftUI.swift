@@ -513,7 +513,7 @@ struct DigitalClientsScreen: View {
         VStack(spacing: 6) {
             Image(systemName: "person.crop.rectangle.stack").font(.largeTitle).foregroundStyle(.secondary)
             Text("কোনো ক্লায়েন্ট পাওয়া যায়নি").foregroundStyle(.secondary)
-            Text("ওয়েবে প্রথম এজেন্সি ক্লায়েন্ট যোগ করুন").font(.caption).foregroundStyle(.secondary)
+            Text("উপরের + Add Client দিয়ে প্রথম ক্লায়েন্ট যোগ করুন").font(.caption).foregroundStyle(.secondary)
         }
         .padding(.top, 60)
         .padding(.bottom, 30)
@@ -524,7 +524,7 @@ struct DigitalClientsScreen: View {
         Button {
             openWeb("/digital/clients", "CDIT clients")
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -868,7 +868,7 @@ private struct DigitalClientsDetailSheet: View {
             dismiss()
             openWeb("/digital/clients", "CDIT clients")
         } label: {
-            Label("পেমেন্ট/প্রজেক্ট যোগ — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

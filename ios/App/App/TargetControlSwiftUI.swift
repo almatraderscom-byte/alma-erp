@@ -798,7 +798,7 @@ struct TargetControlScreen: View {
         Button {
             openWeb("/trading/target-control", "Target control")
         } label: {
-            Label("টার্গেট সেট / পেনাল্টি অ্যাকশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

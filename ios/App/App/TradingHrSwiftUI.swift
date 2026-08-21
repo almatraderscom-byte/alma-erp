@@ -820,7 +820,7 @@ struct TradingHrScreen: View {
         Button {
             openWeb("/trading/hr", "Trading HR")
         } label: {
-            Label("প্রোফাইল/রিপোর্ট এডিট — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -1232,7 +1232,7 @@ private struct TradingHrDetailSheet: View {
             dismiss()
             openWeb("/trading/hr", "Trading HR")
         } label: {
-            Label("প্রোফাইল/রিপোর্ট এডিট — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

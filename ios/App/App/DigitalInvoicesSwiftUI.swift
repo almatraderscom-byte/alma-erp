@@ -525,7 +525,7 @@ struct DigitalInvoicesScreen: View {
         VStack(spacing: 6) {
             Text("◈").font(.largeTitle).foregroundStyle(.secondary)
             Text("No invoices in range").font(.subheadline.weight(.semibold))
-            Text("তারিখ বদলান, অথবা ওয়েবে নতুন ইনভয়েস তৈরি করুন")
+            Text("তারিখ বদলান, অথবা + New Invoice দিয়ে তৈরি করুন")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.top, 40)
@@ -537,7 +537,7 @@ struct DigitalInvoicesScreen: View {
         Button {
             openWeb("/digital/invoices", "CDIT Invoices")
         } label: {
-            Label("নতুন ইনভয়েস / পেমেন্ট / PDF — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

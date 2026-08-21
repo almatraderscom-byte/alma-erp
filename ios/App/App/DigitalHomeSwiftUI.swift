@@ -563,7 +563,7 @@ struct DigitalHomeScreen: View {
         Button {
             openWeb("/digital", "CDIT")
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
