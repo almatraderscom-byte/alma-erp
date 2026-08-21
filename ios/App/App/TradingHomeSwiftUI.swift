@@ -728,8 +728,11 @@ struct TradingHomeScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task {
-            await vm.load()
+            // Role first (one small cached call) — the dashboard payload is the slow
+            // part, so this way the admin blocks are decided before the data lands
+            // instead of the board reshaping a second later.
             if role == nil, let me = await OrdIdentity.load() { role = me.role }
+            await vm.load()
         }
         .sheet(isPresented: $showTrade, onDismiss: { actionAccountId = nil }) {
             TradingHomeTradeSheet(vm: vm, preselect: actionAccountId,
@@ -763,6 +766,10 @@ struct TradingHomeScreen: View {
 
     // ── Workflow actions (web TradingQuickActions parity — native sheets, owner
     //    2026-07-11: money entry native). ──
+    /// Web TradingQuickActions is the SAME four for every role — Trade · Screenshot ·
+    /// Summary · Accounts — with Expense as the admin-only page-header button and
+    /// Capital living on the account page (which is native now). Keeping the row
+    /// role-independent also stops it reshaping when the role request lands.
     private var workflowActions: some View {
         HStack(spacing: 8) {
             workflowButton("plus.circle.fill", "Add Trade", TradingHomePalette.gold(colorScheme)) {
@@ -770,28 +777,19 @@ struct TradingHomeScreen: View {
                 tradeInitialMode = "BANK"
                 showTrade = true
             }
-            // Web: staff get trade/screenshot/summary; expense and capital entry are
-            // admin surfaces (page header + account page).
-            if isAdmin {
-                workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) {
-                    actionAccountId = nil
-                    showExpense = true
-                }
-                workflowButton("arrow.up.arrow.down.circle", "Capital", AlmaSwiftTheme.sage) {
-                    actionAccountId = nil
-                    showCapital = true
-                }
-            }
             workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) {
                 actionAccountId = nil
                 showShot = true
             }
-            if !isAdmin {
-                workflowButton("list.bullet.rectangle", "Summary",
-                               TradingHomePalette.gold(colorScheme)) {
+            workflowButton("list.bullet.rectangle", "Summary", AlmaSwiftTheme.sage) {
+                actionAccountId = nil
+                tradeInitialMode = "BKASH"
+                showTrade = true
+            }
+            if isAdmin {
+                workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) {
                     actionAccountId = nil
-                    tradeInitialMode = "BKASH"
-                    showTrade = true
+                    showExpense = true
                 }
             }
         }
