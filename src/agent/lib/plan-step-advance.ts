@@ -51,7 +51,7 @@ export function pendingActionTrackerState(status: string | null | undefined): Pe
   if (status === 'pending') return 'approval'
   if (status === 'approved') return 'worker'
   if (status === 'executed') return 'complete'
-  if (status && ['failed', 'rejected', 'expired', 'cancelled'].includes(status)) return 'failed'
+  if (status && ['failed', 'rejected', 'expired', 'cancelled', 'superseded'].includes(status)) return 'failed'
   return null
 }
 
@@ -104,7 +104,7 @@ export function pickStepForTool(
 }
 
 const FINAL_DELIVERY_STEP_RE =
-  /summari[sz]e|summary|cross[-\s]?check|self[-\s]?check|verify|validation|review|deliver|report|উত্তর|সারাংশ|যাচাই|মিলিয়ে|রিভিউ|ফলাফল/i
+  /summari[sz]e|summary|deliver|report|উত্তর|সারাংশ|ফলাফল/i
 
 /**
  * A persisted final answer is durable evidence for exactly one remaining
@@ -198,6 +198,15 @@ export function completionNeedsCheckpointRetry(input: {
   return input.completionAction === 'complete'
     && !input.projectedStepId
     && !input.checkpointDurablyClosed
+}
+
+/** A plan-bound hop cannot claim completion when its durable rows were unreadable. */
+export function unevaluatedPlanNeedsContinuation(input: {
+  planBoundTurn: boolean
+  hasOwnerGate: boolean
+  planProgressLoaded: boolean
+}): boolean {
+  return input.planBoundTurn && !input.hasOwnerGate && !input.planProgressLoaded
 }
 
 /**

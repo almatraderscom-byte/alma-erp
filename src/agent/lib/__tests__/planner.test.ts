@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { PlanStep } from '@/agent/lib/planner'
 
+const workStepMocks = vi.hoisted(() => ({
+  refreshPlanTrackerSnapshot: vi.fn(),
+  syncPlanTracker: vi.fn(),
+}))
+
 const mockPrisma = {
   $transaction: vi.fn(),
   $queryRaw: vi.fn(),
@@ -24,6 +29,11 @@ const mockPrisma = {
   },
 }
 vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
+vi.mock('@/agent/lib/work-steps', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/agent/lib/work-steps')>()),
+  refreshPlanTrackerSnapshot: workStepMocks.refreshPlanTrackerSnapshot,
+  syncPlanTracker: workStepMocks.syncPlanTracker,
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -34,6 +44,8 @@ beforeEach(() => {
     status: 'running', result: null, attemptCount: 0,
   })
   mockPrisma.agentPlanStep.updateMany.mockResolvedValue({ count: 1 })
+  workStepMocks.refreshPlanTrackerSnapshot.mockResolvedValue(null)
+  workStepMocks.syncPlanTracker.mockResolvedValue(null)
 })
 
 /** Fixture builder — every step carries the S0 retry fields. */
@@ -94,6 +106,38 @@ describe('planner', () => {
       _agentPlanStepIds: ['step-original', 'step-other', 'step-other'],
     })).toEqual(['step-original', 'step-other'])
     expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(4)
+  })
+
+  it('transfers a same-attempt row only from a durably superseded card', async () => {
+    const { linkPendingActionToPlanStep } = await import('@/agent/lib/planner')
+    mockPrisma.agentPendingAction.findUnique
+      .mockResolvedValueOnce({ status: 'pending', payload: {} })
+      .mockResolvedValueOnce({ status: 'superseded' })
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({
+      status: 'pending', attemptCount: 1,
+      result: { _agentPendingActionId: 'action-old', _agentPendingActionAttempt: 1 },
+    })
+    mockPrisma.agentPendingAction.update.mockResolvedValueOnce({})
+
+    await expect(linkPendingActionToPlanStep('action-new', 'step-1')).resolves.toBe(true)
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { result: { _agentPendingActionId: 'action-new', _agentPendingActionAttempt: 1 } },
+    }))
+
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    )
+    mockPrisma.agentPendingAction.findUnique
+      .mockResolvedValueOnce({ status: 'pending', payload: {} })
+      .mockResolvedValueOnce({ status: 'approved' })
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({
+      status: 'pending', attemptCount: 1,
+      result: { _agentPendingActionId: 'action-live', _agentPendingActionAttempt: 1 },
+    })
+
+    await expect(linkPendingActionToPlanStep('action-other', 'step-1')).resolves.toBe(false)
+    expect(mockPrisma.agentPlanStep.updateMany).not.toHaveBeenCalled()
   })
 
   it('settles linked rows only from durable terminal outcomes', async () => {
@@ -177,6 +221,147 @@ describe('planner', () => {
     }])
     await expect(settlePlanStepsLinkedToPendingAction('action-old')).resolves.toBeNull()
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledTimes(4)
+  })
+
+  it('atomically settles a rejected action row without leaving live tracker work', async () => {
+    const { settleRejectedPlanStepsInTransaction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-reject', status: 'pending', attemptCount: 1, maxAttempts: 3,
+      result: { _agentPendingActionId: 'action-reject', _agentPendingActionAttempt: 1 },
+    }])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+
+    await settleRejectedPlanStepsInTransaction(mockPrisma, {
+      id: 'action-reject', type: 'publish',
+      payload: { _agentPlanStepId: 'step-reject' }, result: null,
+    })
+
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'step-reject', status: { in: ['pending', 'running'] }, attemptCount: 1,
+      }),
+      data: expect.objectContaining({
+        status: 'failed', attemptCount: 3, nextAttemptAt: null,
+        result: expect.objectContaining({ actionStatus: 'rejected' }),
+      }),
+    }))
+  })
+
+  it('completes a rejected delegation row only with its durable head-answer message', async () => {
+    const { completeRejectedDelegationPlanStepsInTransaction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-delegation', status: 'running', attemptCount: 0,
+      result: { _agentPendingActionId: 'action-delegation', _agentPendingActionAttempt: 0 },
+    }])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+
+    await completeRejectedDelegationPlanStepsInTransaction(mockPrisma, {
+      id: 'action-delegation', type: 'delegation',
+      payload: { _agentPlanStepId: 'step-delegation' }, result: null,
+    }, 'message-1')
+
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'step-delegation', attemptCount: 0 }),
+      data: expect.objectContaining({
+        status: 'done', error: null,
+        result: expect.objectContaining({
+          delegationFallback: 'head_answer', assistantMessageId: 'message-1',
+        }),
+      }),
+    }))
+  })
+
+  it('moves an unowned claimed row into bounded retry without stealing a card-owned row', async () => {
+    const { markUnlinkedPlanStepRetryable } = await import('@/agent/lib/planner')
+    const now = new Date('2026-08-21T00:00:00Z')
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({
+      planId: 'plan-1', status: 'running', result: null, attemptCount: 0, maxAttempts: 3,
+    })
+
+    await expect(markUnlinkedPlanStepRetryable('step-1', 'link failed', now)).resolves.toBe(true)
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'step-1', attemptCount: 0 }),
+      data: expect.objectContaining({
+        status: 'failed', attemptCount: 1,
+        nextAttemptAt: new Date('2026-08-21T00:02:00Z'),
+      }),
+    }))
+
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    )
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({
+      planId: 'plan-1', status: 'running', attemptCount: 0, maxAttempts: 3,
+      result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 0 },
+    })
+    await expect(markUnlinkedPlanStepRetryable('step-1', 'late failure', now)).resolves.toBe(false)
+    expect(mockPrisma.agentPlanStep.updateMany).not.toHaveBeenCalled()
+
+    vi.clearAllMocks()
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
+    )
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({
+      planId: 'plan-1', status: 'running', attemptCount: 2, maxAttempts: 3,
+      result: { _agentPendingActionId: 'action-old', _agentPendingActionAttempt: 1 },
+    })
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(markUnlinkedPlanStepRetryable('step-1', 'new attempt failed', now)).resolves.toBe(true)
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledOnce()
+  })
+
+  it('requires the persisted tracker projection to clear the exact action blocker', async () => {
+    const { reconcilePlanTrackersForPendingAction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      payload: { _agentPlanStepId: 'step-1' },
+    })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-1', planId: 'plan-1', attemptCount: 0,
+      result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 0 },
+    }])
+    mockPrisma.agentPlan.findUnique
+      .mockResolvedValueOnce({
+        trackerSnapshot: {
+          type: 'work_steps_snapshot', version: 1, trackerId: 'plan-1', revision: 1,
+          blockedBy: { kind: 'approval', refId: 'action-1' },
+          steps: [{ id: 'step-1', status: 'waiting_owner' }],
+        },
+      })
+      .mockResolvedValueOnce({
+        trackerSnapshot: {
+          type: 'work_steps_snapshot', version: 1, trackerId: 'plan-1', revision: 2,
+          blockedBy: null,
+          steps: [{ id: 'step-1', status: 'failed' }],
+        },
+      })
+
+    await expect(reconcilePlanTrackersForPendingAction('action-1', 2)).resolves.toBeUndefined()
+    expect(workStepMocks.syncPlanTracker).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears an old blocker without waiting on a row now owned by its replacement', async () => {
+    const { reconcilePlanTrackersForPendingAction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      payload: { _agentPlanStepId: 'step-1' },
+    })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-1', planId: 'plan-1', attemptCount: 1,
+      result: { _agentPendingActionId: 'action-new', _agentPendingActionAttempt: 1 },
+    }])
+    mockPrisma.agentPlan.findUnique.mockResolvedValueOnce({
+      trackerSnapshot: {
+        type: 'work_steps_snapshot', version: 1, trackerId: 'plan-1', revision: 2,
+        blockedBy: null,
+        steps: [{ id: 'step-1', status: 'waiting_owner' }],
+      },
+    })
+
+    await expect(reconcilePlanTrackersForPendingAction('action-old')).resolves.toBeUndefined()
+    expect(workStepMocks.syncPlanTracker).toHaveBeenCalledWith('plan-1', {
+      clearBlockedByRefId: 'action-old', live: false,
+    })
+    expect(mockPrisma.agentPlan.findUnique).toHaveBeenCalledOnce()
   })
 
   it('binds an ask card before display and completes only after its durable answer', async () => {
@@ -479,12 +664,26 @@ describe('planner', () => {
   it('markStepBlocked returns the step to pending so approval can resume it', async () => {
     const { markStepBlocked } = await import('@/agent/lib/planner')
 
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ planId: 'plan-1' })
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+
     await markStepBlocked('s1')
 
-    expect(mockPrisma.agentPlanStep.update).toHaveBeenCalledWith({
-      where: { id: 's1' },
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith({
+      where: { id: 's1', status: { in: ['pending', 'running'] } },
       data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
-      select: { planId: true },
     })
+  })
+
+  it('markStepBlocked cannot regress a row that a fast callback already settled', async () => {
+    const { markStepBlocked } = await import('@/agent/lib/planner')
+    mockPrisma.agentPlanStep.findUnique.mockResolvedValueOnce({ planId: 'plan-1' })
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 0 })
+
+    await markStepBlocked('s1')
+
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 's1', status: { in: ['pending', 'running'] } },
+    }))
   })
 })

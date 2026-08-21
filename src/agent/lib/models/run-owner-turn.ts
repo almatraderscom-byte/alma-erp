@@ -67,7 +67,15 @@ import { insertControlNote } from '@/agent/lib/control-note-order'
 import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/visible-thinking'
 import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
-import { loadLatestPlanProgress } from '@/agent/lib/planner'
+import {
+  completePlanStepsLinkedToAskCard,
+  linkAskCardToPlanStep,
+  linkPendingActionToPlanStep,
+  loadLatestPlanProgress,
+  markStepBlocked,
+  markUnlinkedPlanStepRetryable,
+  settlePlanStepsLinkedToPendingAction,
+} from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
   parseWorkStepsSnapshot,
@@ -108,10 +116,13 @@ import {
   beginPlanStepForTool,
   completionNeedsCheckpointRetry,
   finishPlanStep,
+  ownerBlockerFromToolResult,
+  pendingActionTrackerState,
   pickFinalDeliveryStep,
   projectFinalDeliveryForCompletion,
   projectedDeliveryNeedsContinuation,
   shouldClearContinuationHops,
+  unevaluatedPlanNeedsContinuation,
 } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
@@ -725,12 +736,113 @@ async function* runAlternateProviderTurn(
         : null
     } catch { claimedPlanStepId = null }
   }
-  const finishTrackerPlanStep = async (ok: boolean, error?: string | null) => {
+  const settleTrackerPlanStep = async (input: {
+    toolName: string
+    toolCallId: string
+    result: { success: boolean; error?: string | null; data?: unknown }
+  }) => {
     const stepId = claimedPlanStepId
     claimedPlanStepId = null
-    if (!stepId) return false
-    const outcome = await finishPlanStep({ stepId, ok, error })
+    const blockerData = input.result.success && input.result.data && typeof input.result.data === 'object'
+      ? input.result.data as Record<string, unknown>
+      : null
+    const blockerActionId = typeof blockerData?.pendingActionId === 'string'
+      ? blockerData.pendingActionId
+      : null
+    let blockerActionStatus: string | null | undefined
+    if (blockerActionId) {
+      try {
+        const action = await (prisma as any).agentPendingAction.findUnique({
+          where: { id: blockerActionId },
+          select: { status: true },
+        })
+        blockerActionStatus = typeof action?.status === 'string' ? action.status : null
+      } catch {
+        blockerActionStatus = undefined
+      }
+    }
+    const ownerBlocker = ownerBlockerFromToolResult(input.result, blockerActionStatus)
+    const actionTrackerState = pendingActionTrackerState(blockerActionStatus)
+    const queuedWorker = Boolean(blockerActionId && actionTrackerState === 'worker')
+    const terminalActionFailure = Boolean(blockerActionId && actionTrackerState === 'failed')
+    if (ownerBlocker) workStepsBlocker = ownerBlocker
+    else if (queuedWorker && blockerActionId) {
+      workStepsBlocker = { kind: 'worker', refId: blockerActionId }
+    }
+    if (!stepId) return Boolean(ownerBlocker || queuedWorker)
     const local = trackerPlanSteps.find((step) => step.id === stepId)
+    const reloadLocalStatus = async () => {
+      try {
+        const persisted = await (prisma as any).agentPlanStep.findUnique({
+          where: { id: stepId },
+          select: { status: true },
+        })
+        if (local && typeof persisted?.status === 'string') local.status = persisted.status
+      } catch { /* durable rows remain authoritative on the next plan reload */ }
+    }
+    const failLink = async (error: string) => {
+      const outcome = await finishPlanStep({
+        stepId,
+        ok: false,
+        error,
+        resultSummary: { toolName: input.toolName, toolCallId: input.toolCallId },
+      })
+      if (local && outcome) local.status = outcome
+      return Boolean(outcome)
+    }
+    if (ownerBlocker) {
+      const linked = ownerBlocker.kind === 'approval'
+        ? await linkPendingActionToPlanStep(ownerBlocker.refId, stepId)
+        : await linkAskCardToPlanStep(ownerBlocker.refId, stepId)
+      if (!linked) {
+        return failLink(`Could not bind ${ownerBlocker.kind} ${ownerBlocker.refId} to the plan step`)
+      }
+      await markStepBlocked(stepId)
+      if (local) local.status = 'pending'
+      if (ownerBlocker.kind === 'approval') {
+        const settled = await settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)
+        if (settled) {
+          workStepsBlocker = null
+          await reloadLocalStatus()
+        } else {
+          try {
+            const current = await (prisma as any).agentPendingAction.findUnique({
+              where: { id: ownerBlocker.refId },
+              select: { status: true },
+            })
+            if (current?.status === 'approved') {
+              workStepsBlocker = { kind: 'worker', refId: ownerBlocker.refId }
+            }
+          } catch { /* the original pending snapshot remains truthful */ }
+        }
+      } else {
+        const settled = await completePlanStepsLinkedToAskCard(ownerBlocker.refId)
+        if (settled.includes(stepId)) {
+          workStepsBlocker = null
+          if (local) local.status = 'done'
+        }
+      }
+      return true
+    }
+    if (queuedWorker && blockerActionId) {
+      const linked = await linkPendingActionToPlanStep(blockerActionId, stepId)
+      if (!linked) return failLink(`Could not bind worker action ${blockerActionId} to the plan step`)
+      const settled = await settlePlanStepsLinkedToPendingAction(blockerActionId)
+      if (settled) {
+        workStepsBlocker = null
+        await reloadLocalStatus()
+      }
+      return true
+    }
+    if (terminalActionFailure) {
+      return failLink(`Background action ${blockerActionId} is ${blockerActionStatus}`)
+    }
+    const outcome = await finishPlanStep({
+      stepId,
+      ok: input.result.success,
+      error: input.result.error,
+      resultSummary: { toolName: input.toolName, toolCallId: input.toolCallId },
+    })
     if (local && outcome) local.status = outcome
     return Boolean(outcome)
   }
@@ -3705,7 +3817,36 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
-        const planStepFinished = await finishTrackerPlanStep(result.success, result.error ?? null)
+        const claimedStepBeforeSettlement = claimedPlanStepId
+        let planStepFinished = false
+        try {
+          planStepFinished = await settleTrackerPlanStep({
+            toolName: call.name,
+            toolCallId: call.id,
+            result,
+          })
+        } catch (err) {
+          // The business tool already ran. Tracker bookkeeping is recovery
+          // metadata and must never erase/abort the real assistant reply.
+          claimedPlanStepId = null
+          planStepFinished = Boolean(claimedStepBeforeSettlement)
+          if (claimedStepBeforeSettlement) {
+            const message = err instanceof Error ? err.message : String(err)
+            await markUnlinkedPlanStepRetryable(
+              claimedStepBeforeSettlement,
+              `Tracker settlement deferred after ${call.name}: ${message}`,
+            ).catch(() => false)
+            try {
+              const persisted = await (prisma as any).agentPlanStep.findUnique({
+                where: { id: claimedStepBeforeSettlement },
+                select: { status: true },
+              })
+              const local = trackerPlanSteps.find((step) => step.id === claimedStepBeforeSettlement)
+              if (local && typeof persisted?.status === 'string') local.status = persisted.status
+            } catch { /* the next durable plan reload remains authoritative */ }
+          }
+          console.warn('[plan-tracker] alternate settlement deferred:', err instanceof Error ? err.message : err)
+        }
         // `make_plan` creates the prospective list; a claimed work tool changes
         // one of its rows. Publish both immediately, before the next model round.
         if ((call.name === 'make_plan' && result.success) || planStepFinished) {
@@ -4379,6 +4520,10 @@ async function* runAlternateProviderTurn(
       completionAction: planCompletionDecision?.action,
       projectedStepId: projectedFinalDeliveryStepId,
       checkpointDurablyClosed: completedPlanCheckpointDurablyClosed,
+    }) || unevaluatedPlanNeedsContinuation({
+      planBoundTurn,
+      hasOwnerGate,
+      planProgressLoaded: planCompletion !== null,
     })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')

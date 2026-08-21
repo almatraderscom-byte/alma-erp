@@ -91,6 +91,7 @@ import {
   linkAskCardToPlanStep,
   linkPendingActionToPlanStep,
   markStepBlocked,
+  markUnlinkedPlanStepRetryable,
   settlePlanStepsLinkedToPendingAction,
 } from '@/agent/lib/planner'
 import {
@@ -2047,6 +2048,16 @@ export async function* runAgentTurn(
         }
         if (claimedStepId) {
           const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
+          const reloadLocalStatus = async () => {
+            try {
+              const persisted = await (prisma as any).agentPlanStep.findUnique({
+                where: { id: claimedStepId },
+                select: { status: true },
+              })
+              if (local && typeof persisted?.status === 'string') local.status = persisted.status
+            } catch { /* durable rows remain authoritative on the next plan reload */ }
+          }
+          try {
           if (ownerBlocker) {
             // Approval/question cards are successful *staging*, not successful
             // execution. Bind the durable card, put the step back while it
@@ -2065,6 +2076,7 @@ export async function* runAgentTurn(
                 const settled = await settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)
                 if (settled) {
                   nativeTrackerBlockedBy = null
+                  await reloadLocalStatus()
                 } else {
                   try {
                     const current = await (prisma as any).agentPendingAction.findUnique({
@@ -2112,7 +2124,10 @@ export async function* runAgentTurn(
               // terminalized the action just before this payload link existed.
               // Re-checking is status-gated and idempotent while still queued.
               const settled = await settlePlanStepsLinkedToPendingAction(blockerActionId)
-              if (settled) nativeTrackerBlockedBy = null
+              if (settled) {
+                nativeTrackerBlockedBy = null
+                await reloadLocalStatus()
+              }
             } else {
               const outcome = await finishPlanStep({
                 stepId: claimedStepId,
@@ -2138,6 +2153,19 @@ export async function* runAgentTurn(
               resultSummary: { toolName: tb.name, toolCallId: tb.id },
             })
             if (local && outcome) local.status = outcome
+          }
+          } catch (err) {
+            // The real tool result wins over tracker bookkeeping. Keep the row
+            // recoverable, but never abort reply persistence. If no card link
+            // committed, CAS the claimed row into the normal bounded-retry
+            // state so owner-gated execution cannot remain orphaned in running.
+            const message = err instanceof Error ? err.message : String(err)
+            await markUnlinkedPlanStepRetryable(
+              claimedStepId,
+              `Tracker settlement deferred after ${tb.name}: ${message}`,
+            ).catch(() => false)
+            await reloadLocalStatus()
+            console.warn('[plan-tracker] native settlement deferred:', err instanceof Error ? err.message : err)
           }
         }
         // A card blocks the task even when its tool name does not match the

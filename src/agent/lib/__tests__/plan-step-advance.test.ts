@@ -12,6 +12,7 @@ import {
   projectedDeliveryNeedsContinuation,
   shouldClearContinuationHops,
   projectFinalDeliveryForCompletion,
+  unevaluatedPlanNeedsContinuation,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
 
@@ -114,6 +115,18 @@ describe('continuationAfterTrackerSettlement', () => {
       completionAction: 'complete', projectedStepId: 'summary', checkpointDurablyClosed: false,
     })).toBe(false)
   })
+
+  it('keeps a plan-bound recovery alive when durable progress cannot be loaded', () => {
+    expect(unevaluatedPlanNeedsContinuation({
+      planBoundTurn: true, hasOwnerGate: false, planProgressLoaded: false,
+    })).toBe(true)
+    expect(unevaluatedPlanNeedsContinuation({
+      planBoundTurn: true, hasOwnerGate: false, planProgressLoaded: true,
+    })).toBe(false)
+    expect(unevaluatedPlanNeedsContinuation({
+      planBoundTurn: true, hasOwnerGate: true, planProgressLoaded: false,
+    })).toBe(false)
+  })
 })
 
 describe('ownerBlockerFromToolResult', () => {
@@ -144,7 +157,8 @@ describe('ownerBlockerFromToolResult', () => {
       pendingActionTrackerState('approved'),
       pendingActionTrackerState('executed'),
       pendingActionTrackerState('failed'),
-    ]).toEqual(['approval', 'worker', 'complete', 'failed'])
+      pendingActionTrackerState('superseded'),
+    ]).toEqual(['approval', 'worker', 'complete', 'failed', 'failed'])
   })
 
   it('propagates an ask-user card as a question blocker', () => {
@@ -180,6 +194,17 @@ describe('pickFinalDeliveryStep', () => {
       { ...step('summary', 'pending'), action: 'Cross-check and summarize' },
     ]
     expect(pickFinalDeliveryStep(steps)).toBeNull()
+  })
+
+  it('does not count a bare verification or review step as prose delivery', () => {
+    expect(pickFinalDeliveryStep([
+      step('read', 'done', 'get_orders'),
+      { ...step('verify', 'pending'), action: 'Verify the real Simulator result' },
+    ])).toBeNull()
+    expect(pickFinalDeliveryStep([
+      step('read', 'done', 'get_orders'),
+      { ...step('review', 'pending'), action: 'Review security permissions' },
+    ])).toBeNull()
   })
 })
 
@@ -247,6 +272,17 @@ describe('native Anthropic loop tracker parity', () => {
     expect(source).toContain('blockedBy: nativeTrackerBlockedBy')
     expect(source).toContain('if (claimedStepId || ownerBlocker)')
     expect(source).toContain('bindAssistantMessageId: nativeTrackerOriginTurnId === turnId')
+  })
+
+  it('keeps alternate-provider approvals, questions, and workers tied to durable outcomes', () => {
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain('ownerBlockerFromToolResult(input.result, blockerActionStatus)')
+    expect(source).toContain('linkPendingActionToPlanStep(ownerBlocker.refId, stepId)')
+    expect(source).toContain('linkAskCardToPlanStep(ownerBlocker.refId, stepId)')
+    expect(source).toContain('settlePlanStepsLinkedToPendingAction(blockerActionId)')
+    expect(source).toContain('completePlanStepsLinkedToAskCard(ownerBlocker.refId)')
+    expect(source).toContain("workStepsBlocker = { kind: 'worker', refId: blockerActionId }")
+    expect(source).toContain("console.warn('[plan-tracker] alternate settlement deferred:'")
   })
 
   it('settles a question row from both durable answer paths', () => {
