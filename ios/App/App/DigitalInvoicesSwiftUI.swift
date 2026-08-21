@@ -599,12 +599,14 @@ private struct DigitalInvoiceCard: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
-                // Web "Preview PDF" — the premium PDF modal is web-only; small link.
+                // Opens the native actions sheet (payment · GAS PDF · premium web
+                // preview) — the old "PDF — ওয়েবে" label promised a web jump it
+                // never made.
                 Button {
                     UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                     onOpenWeb()
                 } label: {
-                    Label("PDF — ওয়েবে", systemImage: "doc.richtext")
+                    Label("PDF / পেমেন্ট", systemImage: "doc.richtext")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8).padding(.vertical, 5)
@@ -1289,6 +1291,21 @@ private struct DigitalInvoiceActionsSheet: View {
                     .buttonStyle(.bordered)
                     .disabled(makingPdf)
                 }
+
+                // The web page's "Preview PDF" renders the PREMIUM branded template in
+                // the browser (react-pdf, client-only — deliberate KEEP_WEB). The share
+                // route renders exactly that model, so the phone can see the same
+                // document instead of only the GAS PDF.
+                Button {
+                    dismiss()
+                    openWeb("/invoice/share/cdit-\(invoice.id)", "Invoice PDF")
+                } label: {
+                    Label("Premium PDF প্রিভিউ (ওয়েব টেমপ্লেট)", systemImage: "doc.richtext")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                }
+                .buttonStyle(.bordered)
 
                 Button {
                     dismiss()

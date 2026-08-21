@@ -1705,6 +1705,7 @@ private struct TradingHrReportSheet: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var reportDate = Date()
+    @State private var screenshotProof = ""
     @State private var selectedAccountIds: Set<String> = []
     @State private var totalTrades = ""
     @State private var profit = ""
@@ -1759,6 +1760,8 @@ private struct TradingHrReportSheet: View {
                     field("Daily profit (BDT)", text: $profit)
                     field("Daily loss (BDT)", text: $loss)
                     field("Issues", text: $issues, keyboard: .default)
+                    // Web form carries a screenshot-proof URL with the report.
+                    field("Screenshot proof URL", text: $screenshotProof, keyboard: .URL)
                     field("Operational notes", text: $opNotes, keyboard: .default)
                 }
                 .padding(18)
@@ -1808,7 +1811,7 @@ private struct TradingHrReportSheet: View {
                 dailyProfitBdt: num(profit),
                 dailyLossBdt: num(loss),
                 issues: issues,
-                screenshotProof: "",
+                screenshotProof: screenshotProof,
                 operationalNotes: opNotes))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok { onDone?(); dismiss() }
