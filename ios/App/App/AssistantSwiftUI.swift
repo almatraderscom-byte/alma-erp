@@ -433,6 +433,10 @@ struct ActiveConversationPointer: Decodable {
     let conversationId: String?
     let projectId: String?
     let modelId: String?
+    /// The chat's thinking level. Without it a cold launch shows "Auto" for a chat
+    /// whose turns really run at High/Max — the pill would understate what Boss is
+    /// paying for (Codex P2).
+    let effortLevel: String?
 }
 
 /// One heterogeneous content block — flat optionals instead of an enum so any
@@ -4757,9 +4761,16 @@ final class AssistantVM {
         struct Row: Decodable {
             let permissionMode: String?
             let pinnedSkill: String?
+            let effortLevel: String?
         }
         guard let row: Row = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)") else { return }
         applyConversationSettings(permissionMode: row.permissionMode, pinnedSkill: row.pinnedSkill)
+        // The row is the source of truth for the level exactly as it is for the
+        // mode; the refresh used to skip it, so a cold launch showed Auto for a
+        // chat pinned to High. Applied here rather than inside
+        // applyConversationSettings so a caller that knows nothing about the level
+        // cannot clear it by omission.
+        effortLevel = row.effortLevel.flatMap(AgentEffortLevel.init(rawValue:))
     }
 
     private func applyConversationSettings(permissionMode rawMode: String?, pinnedSkill: String?) {
@@ -4785,6 +4796,7 @@ final class AssistantVM {
                 selectedSessionIdentity = "server:\(cid)"
                 currentProjectId = ptr.projectId
                 modelId = ptr.modelId
+                effortLevel = ptr.effortLevel.flatMap(AgentEffortLevel.init(rawValue:))
                 let historyToken = UUID()
                 sessionSurface = .loadingHistory(conversationId: cid, requestToken: historyToken)
                 await refreshPermissionModeFromServer()

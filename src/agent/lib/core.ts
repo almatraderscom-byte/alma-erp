@@ -802,8 +802,11 @@ export async function* runAgentTurn(
   // budget, and Auto (null) sends neither — the request stays as it was.
   const nativeEffort = clampEffort(options.effortLevel, chatModel.effort)
   const nativeBudgetDialect = chatModel.effort?.dialect === 'anthropic_budget'
-  const nativeThinkingBlock = nativeBudgetDialect
-    ? { type: 'enabled' as const, budget_tokens: anthropicThinkingBudget(nativeEffort ?? 'medium', 8192) }
+  // Auto (no level) leaves the request untouched here too — the kill-switch path
+  // must not be the one place a Haiku chat quietly gains a 4096-token budget
+  // (Codex P2, second round: the adapter was fixed, this shaping was not).
+  const nativeThinkingBlock = nativeBudgetDialect && nativeEffort
+    ? { type: 'enabled' as const, budget_tokens: anthropicThinkingBudget(nativeEffort, 8192) }
     : { type: 'adaptive' as const }
   const nativeEffortParam = !nativeBudgetDialect && nativeEffort
     ? { output_config: { effort: nativeEffort } }

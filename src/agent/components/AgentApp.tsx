@@ -621,6 +621,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           modelId: string | null
           chatMode: string | null
           permissionMode?: string | null
+          effortLevel?: string | null
         }
         if (!data.conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
@@ -629,6 +630,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           title: null,
           projectId: data.projectId,
           modelId: data.modelId ?? undefined,
+          effortLevel: data.effortLevel ?? null,
           chatMode: data.chatMode,
           permissionMode: data.permissionMode,
           archived: false,
