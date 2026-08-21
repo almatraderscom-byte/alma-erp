@@ -98,6 +98,8 @@ export default function AgentModelSelector({
   const [models, setModels] = useState<ModelOption[]>([])
   const [loading, setLoading] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  /** Monotonic ticket for effort PATCHes — see pickEffort. */
+  const effortRequestRef = useRef(0)
 
   useEffect(() => {
     void fetch('/api/assistant/models')
@@ -161,6 +163,10 @@ export default function AgentModelSelector({
     if (next === previous) return
     onEffortChange(next)
     if (!conversationId) return
+    // Two quick taps used to race: the older PATCH could land last and become the
+    // stored value, or its rollback could overwrite the newer pick (Codex P2).
+    // Every request takes a ticket; only the LATEST one may commit or roll back.
+    const ticket = ++effortRequestRef.current
     setLoading(true)
     try {
       const res = await fetch(`/api/assistant/conversations/${conversationId}`, {
@@ -170,9 +176,9 @@ export default function AgentModelSelector({
       })
       if (!res.ok) throw new Error('effort_update_failed')
     } catch {
-      onEffortChange(previous)
+      if (ticket === effortRequestRef.current) onEffortChange(previous)
     } finally {
-      setLoading(false)
+      if (ticket === effortRequestRef.current) setLoading(false)
     }
   }
 
@@ -250,12 +256,14 @@ export default function AgentModelSelector({
               <div className="flex flex-wrap gap-1 px-3 pb-3 pt-1">
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => void pickEffort(AUTO_EFFORT)}
                   className={cn(
                     'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
                     !activeEffort
                       ? 'border-[#E07A5F] text-[#E07A5F]'
                       : 'border-border text-muted hover:text-cream',
+                    loading && 'opacity-50',
                   )}
                 >
                   Auto
@@ -264,12 +272,14 @@ export default function AgentModelSelector({
                   <button
                     key={lvl}
                     type="button"
+                    disabled={loading}
                     onClick={() => void pickEffort(lvl)}
                     className={cn(
                       'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
                       activeEffort === lvl
                         ? 'border-[#E07A5F] text-[#E07A5F]'
                         : 'border-border text-muted hover:text-cream',
+                      loading && 'opacity-50',
                     )}
                   >
                     {EFFORT_EN[lvl]} · {EFFORT_LABELS[lvl]}

@@ -218,6 +218,12 @@ export async function POST(req: NextRequest) {
   // model). Unset/'auto' → no effort knob is sent and the model's own default
   // stands. Internal (Telegram / worker) turns never carry one.
   const ownerSelectedEffort = isInternalCall ? undefined : parseEffortSetting(body.effortLevel)
+  // A malformed level is REFUSED, never quietly downgraded to Auto (Codex P2).
+  // The PATCH route already 400s on garbage; silently persisting Auto here would
+  // let a stale client cost Boss the depth he picked without anything saying so.
+  if (!isInternalCall && body.effortLevel !== undefined && ownerSelectedEffort === undefined) {
+    return Response.json({ error: 'invalid_effort_level' }, { status: 400 })
+  }
 
   // Owner rule 2026-07-18: the owner's chosen head model runs as head and does ALL
   // the work (Gemini head off, Grok 4.20 the default). New/unpinned conversations +
