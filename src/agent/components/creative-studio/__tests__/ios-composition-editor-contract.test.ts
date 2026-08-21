@@ -36,7 +36,9 @@ describe('native Foundation composition editor contract', () => {
     expect(nativeEditor).toContain('sectionTitle("Canvas"')
     expect(nativeEditor).toContain('canvas.resolution.width')
     expect(nativeEditor).toContain('canvas.safeZones')
-    expect(nativeEditor).toContain('Tracks & clips')
+    // Web EditorTimeline parity: proportional lanes + transport replaced the clip chip list.
+    expect(nativeEditor).toContain('sectionTitle("Timeline"')
+    expect(nativeEditor).toContain('model.reviewSplit(at: model.playheadSec)')
     expect(nativeEditor).toContain('Clip inspector')
   })
 

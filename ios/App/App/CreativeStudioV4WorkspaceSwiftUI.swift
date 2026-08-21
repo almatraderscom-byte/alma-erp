@@ -388,21 +388,22 @@ final class CSV4WorkspaceVM {
         } catch { notice = message(error, fallback: "Project তৈরি হয়নি"); return false }
     }
 
-    func createComposition() async -> CSV4Composition? {
+    /// Web project setup step 2: the owner picks the working frame (preset or custom) before
+    /// the versioned canvas is created. Default stays 4:5 1080×1350.
+    func createComposition(canvas: CSCanvasInput = .init(width: 1080, height: 1350, aspectWidth: 4, aspectHeight: 5)) async -> CSV4Composition? {
         guard canDraft, !actionBusy,
               let brandID = selectedBrandID, let projectID = selectedProjectID else {
             if !canDraft { notice = "Canvas তৈরি করতে Owner অথবা Creator role দরকার" }
             return nil
         }
-        struct Canvas: Encodable { let width = 1080; let height = 1350; let aspectWidth = 4; let aspectHeight = 5 }
-        struct Body: Encodable { let projectId: String; let brandProfileId: String; let idempotencyKey: String; let title: String; let canvas = Canvas() }
+        struct Body: Encodable { let projectId: String; let brandProfileId: String; let idempotencyKey: String; let title: String; let canvas: CSCanvasInput }
         actionBusy = true; defer { actionBusy = false }
         do {
             let response: CSV4CompositionCreateResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/creative-studio/compositions",
                 body: Body(projectId: projectID, brandProfileId: brandID,
                            idempotencyKey: "ios-composition-\(UUID().uuidString)",
-                           title: "\(selectedProject?.name ?? "Creative") composition"))
+                           title: "\(selectedProject?.name ?? "Creative") composition", canvas: canvas))
             if !compositions.contains(where: { $0.id == response.composition.id }) {
                 compositions.insert(response.composition, at: 0)
             }
@@ -478,6 +479,22 @@ final class CSV4WorkspaceVM {
             replaceCampaignPack(response.pack)
             notice = "Draft নির্বাচিত — বাকি campaign stages চলছে"
         } catch { notice = message(error, fallback: "Draft নির্বাচন হয়নি") }
+    }
+
+    /// Web CampaignPackProgress "retry" — only the selected failed stage is re-queued (idempotent).
+    func retryCampaignStage(pack: CSV4CampaignPack, stageID: String) async {
+        guard isOwner, !actionBusy else {
+            if !isOwner { notice = "Stage retry শুধু Owner করতে পারেন" }
+            return
+        }
+        struct Body: Encodable { let stageId: String }
+        actionBusy = true; defer { actionBusy = false }
+        do {
+            let response: CSV4CampaignQueueResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/creative-studio/campaign-packs/\(pack.id)/retry", body: Body(stageId: stageID))
+            replaceCampaignPack(response.pack)
+            notice = "শুধু নির্বাচিত stage আবার queue হয়েছে"
+        } catch { notice = message(error, fallback: "Stage retry হয়নি") }
     }
 
     private func replaceCampaignPack(_ pack: CSV4CampaignPack) {
@@ -635,6 +652,7 @@ struct CSV4WorkspaceScreen: View {
     @State private var model = CSV4WorkspaceVM()
     @State private var section: Section = .overview
     @State private var createProjectSheet = false
+    @State private var canvasSheet = false
     @State private var recipeManagerSheet = false
     @State private var lifecycleControlSheet = false
     @State private var lifecycleReviewSeed: CSV4ReviewItem?
@@ -653,9 +671,11 @@ struct CSV4WorkspaceScreen: View {
     @State private var retentionGrace = 24
     @State private var retentionSeeded = false
 
-    init(seedProject: CSProjectSummary?, onProjectSelected: @escaping (CSProjectSummary) -> Void = { _ in }) {
+    init(seedProject: CSProjectSummary?, initialSection: Section = .overview,
+         onProjectSelected: @escaping (CSProjectSummary) -> Void = { _ in }) {
         self.seedProject = seedProject
         self.onProjectSelected = onProjectSelected
+        _section = State(initialValue: initialSection)
     }
 
     var body: some View {
@@ -693,6 +713,15 @@ struct CSV4WorkspaceScreen: View {
         }
         .sheet(isPresented: $createProjectSheet) {
             CSV4CreateProjectSheet(model: model) { syncSelectedProject() }
+        }
+        .sheet(isPresented: $canvasSheet) {
+            CSCanvasPresetSheet(projectName: model.selectedProject?.name ?? "Creative") { canvas in
+                Task {
+                    if let composition = await model.createComposition(canvas: canvas) {
+                        selectedComposition = composition
+                    }
+                }
+            }
         }
         .sheet(isPresented: $recipeManagerSheet) {
             if let brand = model.selectedBrand, let project = model.selectedProject {
@@ -888,13 +917,9 @@ struct CSV4WorkspaceScreen: View {
                 .buttonStyle(.plain)
             }
             Button {
-                Task {
-                    if let composition = await model.createComposition() {
-                        selectedComposition = composition
-                    }
-                }
+                canvasSheet = true
             } label: {
-                Label("Versioned canvas তৈরি / খুলুন", systemImage: "plus.square.on.square")
+                Label("Versioned canvas তৈরি (preset বাছুন)", systemImage: "plus.square.on.square")
                     .font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).padding(12)
             }
             .buttonStyle(.borderedProminent).tint(AgentPalette.coral)
@@ -1000,6 +1025,22 @@ struct CSV4WorkspaceScreen: View {
                         HStack(alignment: .top, spacing: 9) {
                             ForEach((pack.stages ?? []).filter { $0.stageId == "draft-a" || $0.stageId == "draft-b" }, id: \.stableID) { stage in
                                 campaignDraft(pack: pack, stage: stage)
+                            }
+                        }
+                    }
+                    let failed = (pack.stages ?? []).filter { $0.status == "failed" }
+                    if !failed.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Failed stage — শুধু সেই stage retry হবে, বাকি pack অক্ষত").font(.caption.weight(.bold)).foregroundStyle(.orange)
+                            ForEach(failed, id: \.stableID) { stage in
+                                HStack {
+                                    Text(stage.labelBn).font(.caption)
+                                    Spacer()
+                                    if let stageID = stage.stageId {
+                                        Button("Retry") { Task { await model.retryCampaignStage(pack: pack, stageID: stageID) } }
+                                            .font(.caption2.weight(.bold)).buttonStyle(.bordered).tint(.orange).disabled(model.actionBusy)
+                                    }
+                                }
                             }
                         }
                     }

@@ -31,11 +31,72 @@ import AVKit
 
 // MARK: - Wire models (mirror studio-api.ts; all optional so shape drift never fails a decode)
 
+/// Registry availability snapshot for one engine (mirrors `EngineAvailability`).
+struct CSEngineAvailability: Decodable, Equatable, Identifiable {
+    let id: String
+    let label: String?
+    let labelBn: String?
+    let status: String?
+    let configured: Bool?
+    let enabled: Bool?
+    let runnable: Bool?
+    let killed: Bool?
+    let singlePersonOnly: Bool?
+    let approxCost: String?
+    let warningBn: String?
+    /// Same truth as the web `engineIsSelectable`.
+    var selectable: Bool { configured == true && enabled == true && runnable == true && killed != true }
+}
+
+struct CSGenericImageModels: Decodable, Equatable { let standard: String?; let pro: String? }
+
 struct CSStudioConfig: Decodable, Equatable {
     let fashnConfigured: Bool?
     let geminiConfigured: Bool?
     let veoConfigured: Bool?
+    let falConfigured: Bool?
+    let xaiConfigured: Bool?
     let organization: String?
+    let engines: [CSEngineAvailability]?
+    let singleVtonDefault: String?
+    let genericImageModels: CSGenericImageModels?
+
+    func engine(_ id: String) -> CSEngineAvailability? { engines?.first { $0.id == id } }
+    func isSelectable(_ id: String) -> Bool {
+        if let e = engine(id) { return e.selectable }
+        // Older config payloads (no registry) — fall back to the configured flags.
+        switch id {
+        case "fashn": return fashnConfigured == true
+        case "gemini": return geminiConfigured == true
+        case "xai_imagine": return xaiConfigured == true
+        case "fal_fashn_v16", "fal_idm_vton", "fal_flux_fill": return falConfigured == true
+        default: return false
+        }
+    }
+    var liveEngineCount: Int { engines?.filter(\.selectable).count ?? 0 }
+}
+
+/// Decoded-byte evidence for an artifact (mirrors `StudioArtifactDescriptor`).
+struct CSArtifactDescriptor: Decodable, Equatable {
+    let kind: String?
+    let storagePath: String?
+    let width: Int?
+    let height: Int?
+    let format: String?
+    let byteSize: Int?
+    let requestedTier: String?
+    let requestedAspectRatio: String?
+    var dimensionLabel: String? {
+        guard let width, let height else { return nil }
+        return "\(width)×\(height)" + (format.map { " · \($0.uppercased())" } ?? "")
+    }
+}
+
+struct CSReferenceReceipt: Decodable, Equatable {
+    let expectedCount: Int
+    let sentCount: Int
+    let roles: [String]
+    let allRequiredSent: Bool
 }
 
 struct CSCoverOption: Decodable, Equatable {
@@ -72,10 +133,38 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     let publishable: Bool?
     let aspectRatio: String?
     let costBdt: Double?
+    let costUsd: Double?
+    let reviewSequence: Int?
+    let engine: String?
+    let imageModel: String?
+    let qcDetailsBn: String?
+    let originalVariant: CSArtifactDescriptor?
+    let referenceReceipt: CSReferenceReceipt?
     /// Last finishing inputs (hook/code/theme/layout…) — editor reopens pre-filled.
     let finishParams: CSFinishParams?
 
     var imageURL: URL? { CS.url(thumbUrl ?? previewUrl ?? brandedUrl) }
+    /// Scoped original-download route (web `scopedDownloadUrl`) — only when the
+    /// canonical lineage tuple is present; otherwise the preview URL is used.
+    var scopedDownloadURL: URL? {
+        guard let brandProfileId, let projectId, let projectAssetId, let assetVersionId,
+              let reviewSequence else { return nil }
+        var parts = URLComponents(url: AlmaAPI.baseURL, resolvingAgainstBaseURL: false)
+        parts?.path = "/api/assistant/creative-studio/gallery/download"
+        parts?.queryItems = [
+            .init(name: "id", value: id), .init(name: "brandProfileId", value: brandProfileId),
+            .init(name: "projectId", value: projectId), .init(name: "projectAssetId", value: projectAssetId),
+            .init(name: "assetVersionId", value: assetVersionId), .init(name: "reviewSequence", value: String(reviewSequence)),
+        ]
+        return parts?.url
+    }
+    /// Gallery "Lifecycle" lane, same mapping as the web `libraryItemFromGallery`.
+    var lifecycleBn: String {
+        if archived == true { return "Archived" }
+        if reviewState == "approved" { return "Approved" }
+        if reviewState == "changes_requested" || reviewState == "revised" || reviewState == "draft" { return "Review" }
+        return "Recent"
+    }
     var previewURL: URL? { CS.url(previewUrl) }
     var brandedURL: URL? { CS.url(brandedUrl) }
     var isVideo: Bool { type == "video_gen" || type == "video_edit" || (storagePath?.hasSuffix(".mp4") ?? false) }
@@ -88,7 +177,7 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     var modeLabel: String { CS.modeLabel(mode) }
 }
 
-struct CSGalleryResponse: Decodable { let items: [CSGalleryItem]; let hasMore: Bool?; let total: Int? }
+struct CSGalleryResponse: Decodable { let items: [CSGalleryItem]; let hasMore: Bool?; let total: Int?; let nextCursor: String? }
 
 struct CSModel: Decodable, Identifiable, Equatable {
     let id: String
@@ -96,6 +185,8 @@ struct CSModel: Decodable, Identifiable, Equatable {
     let role: String?
     let isDefault: Bool?
     let imageUrl: String?
+    /// Storage path of the identity reference (web `imagePath`) — what runs accept as a start frame.
+    let imagePath: String?
     var imageURL: URL? { CS.url(imageUrl) }
 }
 struct CSModelsResponse: Decodable { let models: [CSModel] }
@@ -109,6 +200,14 @@ struct CSProjectProduct: Decodable {
     let name: String?
     let priceBdt: Double?
     let sourceImage: String?
+    /// Renderable signed URL (web `previewImage`); `sourceImage` is the storage path sent on runs.
+    let previewImage: String?
+    var previewURL: URL? {
+        // previewImage is either a signed URL or the app-relative product-preview route.
+        if let previewImage, !previewImage.isEmpty { return CS.url(previewImage) }
+        if let sourceImage, sourceImage.hasPrefix("http"), let u = URL(string: sourceImage) { return u }
+        return nil
+    }
 }
 struct CSProjectRecipe: Decodable {
     let id: String
@@ -128,8 +227,29 @@ struct CSProjectSummary: Decodable, Identifiable {
     let currentRecipe: CSProjectRecipe?
     let defaultFolder: String?
     let updatedAt: String?
+    /// Renderable preview of the linked ERP product — the authenticated
+    /// product-preview route (web `hydrateStudioProjectProducts`) when the source is a
+    /// private storage path, else the product's own signed/remote URL.
+    var productPreviewURL: URL? {
+        guard let product else { return nil }
+        if let direct = product.previewURL { return direct }
+        guard let source = product.sourceImage, !source.hasPrefix("/"), let brandProfileId else { return nil }
+        var parts = URLComponents(url: AlmaAPI.baseURL, resolvingAgainstBaseURL: false)
+        parts?.path = "/api/assistant/creative-studio/projects/\(id)/product-preview"
+        parts?.queryItems = [.init(name: "brandProfileId", value: brandProfileId)]
+        return parts?.url
+    }
 }
 struct CSProjectsResponse: Decodable { let projects: [CSProjectSummary] }
+
+/// Signed selection the server pins to an estimate receipt.
+struct CSRunSelection: Decodable {
+    let mode: String?
+    let architecture: String?
+    let provider: String?
+    let model: String?
+    let paidAttemptLimit: Int?
+}
 
 struct CSRunResponse: Decodable, Identifiable {
     let message: String?
@@ -138,10 +258,38 @@ struct CSRunResponse: Decodable, Identifiable {
     let error: String?
     let receipt: String?
     let receiptId: String?
+    let confirmBy: String?
     let estimateBdt: Double?
     let estimateUsd: Double?
     let maxCostBdt: Double?
+    let selection: CSRunSelection?
     var id: String { receiptId ?? "run-response" }
+
+    /// Owner-facing confirmation copy (engine · exact model · QC attempts · expiry).
+    var confirmationBody: String {
+        let bdt = estimateBdt ?? maxCostBdt ?? 0
+        let usd = estimateUsd ?? 0
+        var lines = [String(format: "Server estimate ৳%.0f ($%.3f) · hard cap ৳%.0f", bdt, usd, maxCostBdt ?? bdt)]
+        if let p = selection?.provider ?? provider { lines.append("Engine: \(p)") }
+        if let m = selection?.model ?? actualModel { lines.append("Model: \(m)") }
+        if let a = selection?.paidAttemptLimit { lines.append("QC: সর্বোচ্চ \(almaBn(a))টি paid attempt") }
+        if let confirmBy, let date = ISO8601DateFormatter.csFlexible(confirmBy) {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"; f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+            lines.append("Receipt শেষ: \(f.string(from: date))")
+        }
+        lines.append("Queued ≠ complete — Gallery-তে verified state দেখুন।")
+        return lines.joined(separator: "\n")
+    }
+}
+
+extension ISO8601DateFormatter {
+    static func csFlexible(_ raw: String) -> Date? {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: raw) { return d }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: raw)
+    }
 }
 
 struct CSMaskUploadResponse: Decodable, Equatable {
@@ -216,6 +364,8 @@ struct CSFinishPayload: Encodable {
     var storagePath: String
     var hook: String
     var productCode: String?
+    var productName: String?
+    var price: String?
     var eyebrow: String?
     var offer: String?
     var mode: String?          // lifestyle | model_overlay | product_card
@@ -440,9 +590,28 @@ struct CSVideoRunResponse: Decodable { let jobs: [CSVideoRunJob]?; let message: 
 struct CSAudioPreset: Decodable, Identifiable, Equatable { let id: String; let labelBn: String? }
 struct CSAudioLabStatus: Decodable {
     let voiceCloned: Bool?
+    let activeVoiceVersionId: String?
+    let activeVoiceVersion: Int?
     let styles: [CSAudioPreset]?
     let occasions: [CSAudioPreset]?
 }
+
+/// Studio health (worker/turn-consumer state) — Home "Studio pulse".
+struct CSStudioHealthLite: Decodable {
+    struct Worker: Decodable { let state: String?; let labelBn: String?; let lastSeenBn: String? }
+    let worker: Worker?
+}
+
+/// Owner voice (lifecycle registry) — Gallery "Voice" category.
+struct CSVoiceLite: Decodable, Identifiable {
+    struct Version: Decodable, Identifiable { let id: String; let version: Int; let status: String }
+    let id: String
+    let name: String
+    let provider: String
+    let activeVersionId: String?
+    let versions: [Version]
+}
+struct CSVoicesLiteResponse: Decodable { let voices: [CSVoiceLite] }
 struct CSAudioQueueResponse: Decodable { let pendingActionId: String?; let costBdt: Int?; let error: String? }
 struct CSAudioEstimate: Decodable, Identifiable {
     let requiresConfirmation: Bool?
@@ -484,6 +653,8 @@ enum CS {
         let needsProduct: Bool; let needsModel: Bool; let needsSource: Bool
     }
     static let modes: [Mode] = [
+        .init(id: "generate", label: "Generate", bn: "জেনারেট", icon: "sparkles",
+              fashnOnly: false, isVideo: false, needsProduct: false, needsModel: false, needsSource: false),
         .init(id: "product_to_model", label: "Product→Model", bn: "প্রোডাক্ট", icon: "hanger",
               fashnOnly: false, isVideo: false, needsProduct: true, needsModel: false, needsSource: false),
         .init(id: "try_on", label: "Try-On", bn: "ট্রাই-অন", icon: "person.fill",
@@ -538,6 +709,93 @@ enum CS {
     static let aspects = ["4:5", "1:1", "9:16", "16:9"]
     static let resolutions = ["1K", "2K", "4K"]
     static let genModes = ["Fast", "Balanced", "Quality"]
+
+    // ── Engine registry (mirror STUDIO_ENGINES + ADVANCED_ENGINE_CAPABILITIES) ──
+    struct Engine: Identifiable, Equatable {
+        let id: String; let label: String; let short: String
+        /// Advanced modes this engine can run (exact capability table, not inferred).
+        let modes: Set<String>
+        let singlePersonOnly: Bool
+        let fidelityBn: [String: String]   // mode → limitation copy (optional)
+    }
+    static let engines: [Engine] = [
+        .init(id: "fashn", label: "FASHN Pro (direct)", short: "FASHN",
+              modes: ["product_to_model", "try_on", "model_swap", "face_to_model", "edit"], singlePersonOnly: true,
+              fidelityBn: ["product_to_model": "নতুন pose/background তৈরি হবে; বাছাই করা ব্যক্তির পরিচয় face reference হিসেবে ব্যবহৃত হবে। একই pose রাখতে Try-On নিন।"]),
+        .init(id: "gemini", label: "Guided image (owner-selected)", short: "Guided",
+              modes: ["product_to_model", "try_on", "image_to_video"], singlePersonOnly: false,
+              fidelityBn: ["product_to_model": "সাধারণ multi-image edit — রেফারেন্স পাঠানো হবে, তবে pixel-exact পরিচয়/পোশাক গ্যারান্টি নয়।",
+                           "try_on": "সাধারণ multi-image edit — রেফারেন্স পাঠানো হবে, তবে pixel-exact পরিচয়/পোশাক গ্যারান্টি নয়।",
+                           "image_to_video": "Veo একটি source still গ্রহণ করে; আলাদা product/person pair গ্রহণ করে না।"]),
+        .init(id: "fal_fashn_v16", label: "Fal FASHN v1.6", short: "Fal v1.6",
+              modes: ["try_on"], singlePersonOnly: true, fidelityBn: [:]),
+        .init(id: "fal_idm_vton", label: "IDM-VTON (experimental)", short: "IDM-VTON",
+              modes: ["try_on"], singlePersonOnly: true, fidelityBn: [:]),
+        .init(id: "fal_flux_fill", label: "FLUX Fill (masked edit)", short: "FLUX Fill",
+              modes: ["edit"], singlePersonOnly: false, fidelityBn: ["edit": "Mask repair — Gallery-র ছবিতে \"Precision repair\" থেকে চালান।"]),
+        .init(id: "xai_imagine", label: "Grok Imagine (xAI)", short: "Grok",
+              modes: ["generate", "product_to_model", "try_on"], singlePersonOnly: false,
+              fidelityBn: ["product_to_model": "নির্বাচিত product/person ordered reference হিসেবে যাবে; Grok একটি general editor, dedicated Try-On নয়।"]),
+    ]
+    /// Engines offered for a mode (web: `engines` memo in StudioV3ImageLab). Multi-person
+    /// family renders exclude single-person-only engines except the FASHN chain.
+    static func engines(for mode: String, multiPerson: Bool) -> [Engine] {
+        engines.filter { e in
+            let familyChain = multiPerson && (e.id == "fashn" || e.id == "fal_fashn_v16")
+            let supports = e.modes.contains(mode) || (familyChain && (mode == "product_to_model" || mode == "try_on"))
+            return supports && !(multiPerson && e.singlePersonOnly && !familyChain)
+        }
+    }
+    static func guidedModelLabel(_ model: String?) -> String {
+        switch model {
+        case "gpt-image-2": return "GPT Image 2"
+        case "seedream-5.0-pro": return "Seedream 5 Pro"
+        case "gemini-3.1-flash-image": return "Nano Banana 2"
+        case "gemini-3-pro-image": return "Nano Banana Pro"
+        default: return model ?? "Guided image"
+        }
+    }
+
+    // ── Resolution contract (mirror resolution-contract.ts) ──────────────────
+    struct ResolutionContract { let kind: String; let tiers: [String]; let aspects: [String]; let labelBn: String }
+    static let resolutionContracts: [String: ResolutionContract] = [
+        "fashn": .init(kind: "tiered", tiers: ["1k", "2k", "4k"], aspects: ["4:5", "1:1", "9:16", "16:9", "3:4"], labelBn: "FASHN নেটিভ রেজোলিউশন"),
+        "fal_fashn_v16": .init(kind: "fixed", tiers: [], aspects: [], labelBn: "নেটিভ 864×1296"),
+        "fal_idm_vton": .init(kind: "fixed", tiers: [], aspects: [], labelBn: "প্রোভাইডার নেটিভ সাইজ"),
+        "fal_flux_fill": .init(kind: "source", tiers: [], aspects: [], labelBn: "সোর্স ছবির পিক্সেল"),
+        "xai_imagine": .init(kind: "tiered", tiers: ["1k", "2k"], aspects: ["3:4", "1:1", "9:16", "16:9"], labelBn: "Grok Imagine নেটিভ 1K/2K"),
+        "gemini": .init(kind: "tiered", tiers: ["1k", "2k", "4k"], aspects: ["4:5", "1:1", "9:16", "16:9", "3:4"], labelBn: "Gemini নেটিভ 1K/2K/4K"),
+        "gpt": .init(kind: "tiered", tiers: ["1k", "2k", "4k"], aspects: ["4:5", "1:1", "9:16", "16:9", "3:4"], labelBn: "GPT Image 2 exact size"),
+        "seedream": .init(kind: "tiered", tiers: ["1k", "2k"], aspects: ["4:5", "1:1", "9:16", "16:9", "3:4"], labelBn: "Seedream নেটিভ 1K/2K"),
+    ]
+    /// Final-image engine for the resolution contract (mirror resolveFinalStudioImageEngine).
+    static func finalImageEngine(mode: String, engine: String, familyPreset: String, guided: String) -> String? {
+        if mode == "image_to_video" { return nil }
+        let vton = mode == "product_to_model" || mode == "try_on"
+        let multi = vton && familyPreset != "single"
+        if mode == "generate" || engine == "xai_imagine" { return "xai_imagine" }
+        if multi { return guided }
+        if mode == "try_on" {
+            if engine == "fal_fashn_v16" || engine == "fal_idm_vton" { return engine }
+            return guided
+        }
+        if mode == "product_to_model" { return engine == "gemini" ? guided : "fashn" }
+        if engine == "gemini" { return guided }
+        return engine
+    }
+    static func guidedEngineKey(_ imageEngine: String?) -> String {
+        switch imageEngine { case "gpt": return "gpt"; case "seedream": return "seedream"; default: return "gemini" }
+    }
+
+    // ── Mask presets (exact ids from mask-contract.ts) ───────────────────────
+    static let maskPresets: [(id: String, bn: String, hint: String)] = [
+        ("replace_background", "ব্যাকগ্রাউন্ড বদলাও", "যে ব্যাকগ্রাউন্ড চান লিখুন (যেমন: warm studio, rooftop)"),
+        ("remove_object", "অবজেক্ট/দাগ মুছাও", "কী মুছতে চান (ঐচ্ছিক)"),
+        ("repair_hand", "হাত/ছোট জায়গা ঠিক করো", "কী ঠিক করতে হবে (ঐচ্ছিক)"),
+        ("contact_shadow", "কন্টাক্ট শ্যাডো যোগ করো", "শ্যাডোর ধরন (ঐচ্ছিক)"),
+        ("extend_canvas", "ক্যানভাস বাড়াও", "বাড়ানো অংশে কী থাকবে (ঐচ্ছিক)"),
+        ("custom", "নিজের প্রম্পট", "ঠিক কী বদলাবেন — লিখতেই হবে"),
+    ]
     /// Background presets WITH their prompts (mirror BACKGROUND_PRESETS in constants.ts).
     static let backgrounds: [(id: String, label: String, prompt: String)] = [
         ("studio", "Studio", "clean professional studio backdrop, soft even lighting"),
@@ -546,7 +804,9 @@ enum CS {
         ("lifestyle", "Lifestyle", "relatable Bangladeshi cafe or home interior"),
         ("custom", "Custom", ""),
     ]
-    static let reelDurations = [4, 5, 6, 7, 8]
+    /// 4–8 s = one Veo clip; 16/24 s = deterministic 2×/3× 8 s chain (web VideoLab).
+    static let reelDurations = [4, 5, 6, 7, 8, 16, 24]
+    static let reelChainDurations = [6, 16, 24]
     /// Client-safe mirror of reelCostBdt (Veo ≈ $0.15/s × 125 BDT/USD).
     static func reelCostBdt(_ seconds: Int) -> Int { Int((Double(seconds) * 0.15 * 125).rounded()) }
     static func longReelCostBdt(_ seconds: Int) -> Int {
@@ -678,6 +938,19 @@ final class CreativeStudioVM {
     var gallery: [CSGalleryItem] = []
     var models: [CSModel] = []
     var activeProject: CSProjectSummary?
+    /// Writable, brand-scoped projects (the same list the web header project picker shows).
+    var projects: [CSProjectSummary] = []
+    var health: CSStudioHealthLite?
+    var voices: [CSVoiceLite] = []
+    /// Server cursor for "আরও লোড করুন" (web Gallery load-more).
+    var galleryNextCursor: String?
+    var galleryHasMore = false
+    var galleryLoadingMore = false
+    var galleryTotal = 0
+    /// Gallery → Create hand-off ("এই ছবি থেকে নতুন তৈরি"): consumed once by the Advanced panel.
+    var createSeed: CSGalleryItem?
+    /// Home → Video hand-off (start-frame source for a generated reel).
+    var reelSeed: CSGalleryItem?
     /// Set only from the system-owner-only unscoped projects response. A V4
     /// project selection alone is not role proof, so collaborators fail closed.
     private var verifiedVideoOwnerScope: VideoOwnerScope?
@@ -704,12 +977,14 @@ final class CreativeStudioVM {
     @ObservationIgnored private var pendingRun: PendingRun?
     @ObservationIgnored private var pendingAudio: PendingAudio?
 
-    var galleryFilter = "all"   // all | image | video | approved | review | archived | executed | pending
+    var galleryFilter = "all"   // all | image | video | audio | avatar | voice | approved | review | archived | executed | pending
     var gallerySearch = ""
     var galleryProvider = "all"
     var galleryAspect = "all"
-    var gallerySort = "newest"
+    var gallerySort = "newest"  // newest | oldest | name | cost
     var galleryDensity = "compact" // compact | comfortable | list
+    /// Server only knows newest/oldest; name/cost sort is client-side (web parity).
+    private var serverOrder: String { gallerySort == "oldest" ? "oldest" : "newest" }
 
     // ── Video studio state ────────────────────────────────────────────────
     var videoUploads: [CSVideoUpload] = []
@@ -725,8 +1000,9 @@ final class CreativeStudioVM {
     var filteredGallery: [CSGalleryItem] {
         let lifecycleFiltered: [CSGalleryItem]
         switch galleryFilter {
-        case "image": lifecycleFiltered = gallery.filter { !$0.isVideo }
+        case "image": lifecycleFiltered = gallery.filter { !$0.isVideo && !$0.isAudio }
         case "video": lifecycleFiltered = gallery.filter { $0.isVideo }
+        case "audio": lifecycleFiltered = gallery.filter { $0.isAudio }
         case "executed": lifecycleFiltered = gallery.filter { $0.isExecuted }
         case "pending": lifecycleFiltered = gallery.filter { !$0.isExecuted }
         case "approved": lifecycleFiltered = gallery.filter { $0.reviewState == "approved" }
@@ -739,7 +1015,20 @@ final class CreativeStudioVM {
             if galleryAspect != "all", item.aspectRatio != galleryAspect { return false }
             return true
         }
-        return refined
+        switch gallerySort {
+        case "name": return refined.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case "cost": return refined.sorted { ($0.costUsd ?? $0.costBdt.map { $0 / 125 } ?? -1) > ($1.costUsd ?? $1.costBdt.map { $0 / 125 } ?? -1) }
+        default: return refined
+        }
+    }
+
+    /// Ready (executed) still images — sources for reels, Create hand-off and Finishing.
+    var readyImages: [CSGalleryItem] {
+        gallery.filter { $0.isExecuted && !$0.isVideo && !$0.isAudio && $0.storagePath != nil && !$0.id.hasPrefix("sample-") }
+    }
+    var realModels: [CSModel] { models.filter { !$0.id.hasPrefix("sm-") } }
+    var needsReviewCount: Int {
+        gallery.filter { !$0.id.hasPrefix("sample-") && ($0.assetState == "qc_failed" || $0.assetState == "draft") }.count
     }
 
     var galleryProviders: [String] {
@@ -766,6 +1055,7 @@ final class CreativeStudioVM {
         if let projects {
             let priorProjectID = activeProject?.id
             let writable = projects.projects.filter { !$0.readonly && $0.brandProfileId != nil }
+            self.projects = writable
             activeProject = writable.first { $0.id == priorProjectID } ?? writable.first
             verifiedVideoOwnerScope = activeProject.flatMap(videoOwnerScope)
         } else {
@@ -778,7 +1068,7 @@ final class CreativeStudioVM {
         }
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
-        query["order"] = gallerySort
+        query["order"] = serverOrder
         applyLifecycleQuery(to: &query)
         let galleryQuery = query
         async let g: CSGalleryResponse? = try? AlmaAPI.shared.get(
@@ -788,10 +1078,12 @@ final class CreativeStudioVM {
             query: activeProject.map { project in
                 ["brandProfileId": project.brandProfileId ?? "", "projectId": project.id]
             } ?? [:])
-        let (gal, mods) = await (g, m)
+        async let h: CSStudioHealthLite? = try? AlmaAPI.shared.get("/api/assistant/creative-studio/health")
+        let (gal, mods, hl) = await (g, m, h)
         if let cfg { config = cfg }
-        if let gal { gallery = gal.items }
+        if let gal { gallery = gal.items; galleryNextCursor = gal.nextCursor; galleryHasMore = gal.hasMore ?? false; galleryTotal = gal.total ?? gal.items.count }
         if let mods { models = mods.models }
+        if let hl { health = hl }
         authExpired = (cfg == nil && projects == nil && gal == nil)
         // Never show empty grey slots: fall back to real ALMA sample photos until the
         // owner's own creatives/models load. Replaced automatically when live data arrives.
@@ -837,7 +1129,7 @@ final class CreativeStudioVM {
         }
         let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty { query["q"] = search }
-        query["order"] = gallerySort
+        query["order"] = serverOrder
         if galleryProvider != "all" { query["provider"] = galleryProvider }
         if galleryAspect != "all" { query["aspectRatio"] = galleryAspect }
         applyLifecycleQuery(to: &query)
@@ -845,6 +1137,41 @@ final class CreativeStudioVM {
             "/api/assistant/creative-studio/gallery", query: query) {
             guard activeProject?.id == requestedProjectID else { return }
             gallery = g.items.isEmpty && shouldShowSampleGallery ? CS.sampleGallery : g.items
+            galleryNextCursor = g.nextCursor
+            galleryHasMore = g.hasMore ?? false
+            galleryTotal = g.total ?? g.items.count
+        }
+    }
+
+    /// Web "Load more production assets": append the next server page by cursor.
+    func loadMoreGallery() async {
+        guard galleryHasMore, !galleryLoadingMore, let cursor = galleryNextCursor else { return }
+        galleryLoadingMore = true
+        defer { galleryLoadingMore = false }
+        var query = ["limit": "48", "cursor": cursor, "order": serverOrder]
+        if let project = activeProject, let brandProfileId = project.brandProfileId {
+            query["brandProfileId"] = brandProfileId
+            query["projectId"] = project.id
+        }
+        let search = gallerySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !search.isEmpty { query["q"] = search }
+        if galleryProvider != "all" { query["provider"] = galleryProvider }
+        if galleryAspect != "all" { query["aspectRatio"] = galleryAspect }
+        applyLifecycleQuery(to: &query)
+        guard let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/creative-studio/gallery", query: query) else { toast = "পরের পেজ আনা গেল না"; return }
+        let known = Set(gallery.map(\.id))
+        gallery.append(contentsOf: g.items.filter { !known.contains($0.id) })
+        galleryNextCursor = g.nextCursor
+        galleryHasMore = g.hasMore ?? false
+    }
+
+    /// Owner voices for the Gallery "Voice" lane (scope-filtered registry).
+    func loadVoices() async {
+        guard let project = activeProject, let brandID = project.brandProfileId else { voices = []; return }
+        if let r: CSVoicesLiteResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/creative-studio/voices", query: ["brandProfileId": brandID, "projectId": project.id]) {
+            voices = r.voices
         }
     }
 
@@ -853,6 +1180,9 @@ final class CreativeStudioVM {
         case "approved": query["reviewState"] = "approved"
         case "review": query["reviewState"] = "draft,changes_requested,revised"
         case "archived": query["archived"] = "1"
+        case "image": query["media"] = "image"
+        case "video": query["media"] = "video"
+        case "audio": query["media"] = "audio"
         default: break
         }
     }
@@ -1112,16 +1442,30 @@ final class CreativeStudioVM {
         } catch { toast = "আবার চালানো গেল না" }
     }
 
-    /// One-tap reel from any finished studio image (V4; 16/24s = multi-clip chain).
-    func reelFromImage(_ item: CSGalleryItem, seconds: Int) async {
-        guard let path = item.storagePath else { return }
-        do {
-            let _: CSRunResponse = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/creative-studio/run",
-                body: CSRunPayload(mode: "image_to_video", sourceImagePath: path, durationSec: seconds))
-            toast = "\(almaBn(seconds))s রিল তৈরি হচ্ছে (~৳\(almaBn(CS.longReelCostBdt(seconds)))) — Gallery-তে আসবে"
-            await refreshGallery()
-        } catch { toast = "রিল শুরু করা যায়নি" }
+    /// Generated reel (Veo) from a ready Gallery image or a saved avatar — the SAME signed
+    /// estimate → owner confirmation gate as every paid run (the old direct POST was rejected
+    /// by the server with `run_estimate_required`). 16/24 s = deterministic 2×/3× 8 s chain.
+    func requestReel(sourcePath: String, sourceItem: CSGalleryItem? = nil, modelId: String? = nil,
+                     prompt: String? = nil, vibe: String = "premium", aspect: String = "9:16",
+                     seconds: Int) async -> Bool {
+        var payload = CSRunPayload(mode: "image_to_video")
+        payload.provider = "gemini"
+        payload.sourceImagePath = sourcePath
+        payload.sourcePendingActionId = sourceItem?.id
+        payload.sourceAssetIds = sourceItem?.projectAssetId.map { [$0] }
+        payload.modelId = modelId
+        payload.prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? prompt : nil
+        payload.vibe = vibe
+        payload.aspectRatio = aspect
+        payload.durationSec = seconds
+        payload.studioSurface = "v3"
+        return await run(payload)
+    }
+
+    /// One-tap reel from a finished studio image (detail sheet) — estimate first.
+    func reelFromImage(_ item: CSGalleryItem, seconds: Int) async -> Bool {
+        guard let path = item.storagePath else { return false }
+        return await requestReel(sourcePath: path, sourceItem: item, seconds: seconds)
     }
 
     func finishImage(_ payload: CSFinishPayload) async -> String? {
@@ -1654,6 +1998,8 @@ struct CreativeStudioScreen: View {
     @State private var vm = CreativeStudioVM()
     @State private var tab: CSTab
     @State private var popNav: (() -> Void)?
+    /// Home quick-create → V4 production desk (Projects · Review · Campaign · Voice · Operations).
+    @State private var v4Desk: CSV4WorkspaceScreen.Section?
     /// Web fallback for anything not yet native (finishing editor, drive auth, etc.).
     let openWeb: (_ path: String, _ title: String) -> Void
 
@@ -1670,9 +2016,9 @@ struct CreativeStudioScreen: View {
 
             Group {
                 switch tab {
-                case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { popNav?() })
+                case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { popNav?() }, openDesk: { v4Desk = $0 })
                 case .create:  CSCreateTab(vm: vm, back: { tab = .home })
-                case .gallery: CSGalleryTab(vm: vm)
+                case .gallery: CSGalleryTab(vm: vm, go: { tab = $0 })
                 case .video:   CSVideoTab(vm: vm)
                 case .audio:   CSAudioTab(vm: vm)
                 case .library: CSLibraryTab(vm: vm, openWeb: openWeb)
@@ -1685,6 +2031,12 @@ struct CreativeStudioScreen: View {
         .animation(.easeInOut(duration: 0.28), value: tab)
         .background(AgentPalette(scheme).bg0.ignoresSafeArea())
         .task { await vm.loadAll() }
+        .sheet(item: $v4Desk) { desk in
+            CSV4WorkspaceScreen(seedProject: vm.activeProject, initialSection: desk) { project in
+                Task { await vm.activateProject(project) }
+            }
+            .presentationDetents([.large]).presentationDragIndicator(.visible)
+        }
         .overlay(alignment: .top) { CSToastView(message: vm.toast) }
         // S8 audit fix: auth expiry used to surface only as a toast — the one screen
         // without the standard login-recovery card. Banner gives the re-login path.
@@ -1762,20 +2114,53 @@ private struct CSHomeTab: View {
     let vm: CreativeStudioVM
     let go: (CSTab) -> Void
     let exit: () -> Void
+    /// Opens the V4 production workspace sheet on a specific desk (Projects · Review · Campaign · Voice · Operations).
+    var openDesk: (CSV4WorkspaceScreen.Section) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @State private var filter = "সব"
+    @State private var search = ""
 
-    private var hero: CSGalleryItem? { vm.gallery.first { !$0.isVideo } ?? vm.gallery.first }
-    private var recents: [CSGalleryItem] { Array(vm.gallery.prefix(8)) }
+    private var query: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
+    private func matches(_ text: String) -> Bool { query.isEmpty || text.lowercased().contains(query) }
+
+    /// Chip filter (was decorative before): ছবি / ভিডিও / ফ্যামিলি / লাইফস্টাইল.
+    private func passesChip(_ item: CSGalleryItem) -> Bool {
+        switch filter {
+        case "ছবি": return !item.isVideo && !item.isAudio
+        case "ভিডিও": return item.isVideo
+        case "ফ্যামিলি": return (item.familyPreset != nil && item.familyPreset != "single") || item.mode == "full_family"
+        case "লাইফস্টাইল": return item.brandedUrl != nil || (item.finishParams?.mode == "lifestyle")
+        default: return true
+        }
+    }
+    private var pool: [CSGalleryItem] {
+        vm.gallery.filter { passesChip($0) && matches("\($0.title) \($0.provider ?? "") \($0.mode ?? "")") }
+    }
+    private var hero: CSGalleryItem? { pool.first { !$0.isVideo } ?? pool.first ?? vm.gallery.first }
+    private var recents: [CSGalleryItem] { Array(pool.prefix(8)) }
+    private var projects: [CSProjectSummary] {
+        vm.projects.filter { matches("\($0.name) \($0.product?.code ?? "") \($0.description ?? "")") }
+    }
+    private var models: [CSModel] { vm.realModels.filter { matches("\($0.name ?? "") \($0.role ?? "")") } }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                projectSwitcher.padding(.top, 12)
+                searchField.padding(.top, 10)
                 CSChipRow(items: ["সব", "ছবি", "ভিডিও", "ফ্যামিলি", "লাইফস্টাইল"], selection: $filter)
-                    .padding(.top, 12)
+                    .padding(.top, 12).padding(.horizontal, -18)
 
-                heroCard.padding(.top, 16)
+                if query.isEmpty { heroCard.padding(.top, 16) }
+
+                CSSectionHeader(title: "তৈরি করুন", trailing: "কোনো খরচ confirmation ছাড়া হয় না", action: nil)
+                createGrid
+
+                if !query.isEmpty || !models.isEmpty {
+                    CSSectionHeader(title: "সেভ করা identity", trailing: "সব", action: { go(.library) })
+                    identityStrip
+                }
 
                 CSSectionHeader(title: "শুরু করুন", trailing: "সব মোড") { go(.create) }
                 featureList
@@ -1783,13 +2168,22 @@ private struct CSHomeTab: View {
                 CSSectionHeader(title: "সাম্প্রতিক তৈরি", trailing: "গ্যালারি") { go(.gallery) }
                 recentStrip
 
-                CSSectionHeader(title: "ট্রেন্ডিং সিন", trailing: nil, action: nil)
-                trendingGrid
+                CSSectionHeader(title: "সাম্প্রতিক project", trailing: "সব project", action: { openDesk(.projects) })
+                projectList
+
+                CSSectionHeader(title: "Studio pulse", trailing: "Operations", action: { openDesk(.operations) })
+                pulseCard
+
+                if query.isEmpty {
+                    CSSectionHeader(title: "ট্রেন্ডিং সিন", trailing: nil, action: nil)
+                    trendingGrid
+                }
                 Color.clear.frame(height: 96)
             }
             .padding(.horizontal, 18)
         }
         .claudeTopFade(useNativeEdgeEffect: false)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.loadAll() }
     }
 
@@ -1810,13 +2204,64 @@ private struct CSHomeTab: View {
             Spacer()
             HStack(spacing: 5) {
                 Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(AgentPalette.coralLt)
-                Text("\(almaBn(vm.gallery.count))টি").font(.system(size: 12.5, weight: .bold)).monospacedDigit()
+                Text("\(almaBn(vm.gallery.filter { !$0.id.hasPrefix("sample-") }.count))টি").font(.system(size: 12.5, weight: .bold)).monospacedDigit()
             }
             .foregroundStyle(AgentPalette(scheme).ink)
             .padding(.vertical, 7).padding(.horizontal, 12)
             .csGlass(scheme, corner: 999)
         }
         .padding(.top, 58)
+    }
+
+    /// Web header brand/project picker — the active project is the production scope for
+    /// Create, Gallery, saved identities and every paid confirmation.
+    private var projectSwitcher: some View {
+        Menu {
+            if vm.projects.isEmpty {
+                Text("কোনো writable project নেই")
+            }
+            ForEach(vm.projects) { p in
+                Button {
+                    Task { await vm.activateProject(p) }
+                } label: {
+                    if p.id == vm.activeProject?.id {
+                        Label("\(p.name)\(p.product.map { " · \($0.code)" } ?? "")", systemImage: "checkmark")
+                    } else {
+                        Text("\(p.name)\(p.product.map { " · \($0.code)" } ?? "")")
+                    }
+                }
+            }
+            Divider()
+            Button { openDesk(.projects) } label: { Label("নতুন project / সব project", systemImage: "folder.badge.plus") }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.shield.fill").font(.system(size: 14)).foregroundStyle(AgentPalette.coralLt)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("PRODUCTION SCOPE").font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(AgentPalette.coralLt)
+                    Text(vm.activeProject?.name ?? "Project বাছুন").font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
+                    Text(vm.activeProject.map { "\($0.product?.code ?? "No ERP product") · \($0.currentRecipe?.name ?? "No recipe") · \(almaBn($0.assetCount ?? 0)) assets" } ?? "Create/Gallery/paid run সব এই scope-এ")
+                        .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
+            }
+            .padding(.vertical, 10).padding(.horizontal, 13).csGlass(scheme, corner: 16)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(AgentPalette(scheme).muted)
+            TextField("Project, asset, product code, provider খুঁজুন…", text: $search)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(size: 12.5))
+                .submitLabel(.search)
+                .onSubmit { vm.gallerySearch = search; Task { await vm.refreshGallery() } }
+            if !search.isEmpty {
+                Button { search = ""; vm.gallerySearch = ""; Task { await vm.refreshGallery() } } label: { Image(systemName: "xmark.circle.fill") }
+                    .foregroundStyle(AgentPalette(scheme).muted)
+            }
+        }
+        .padding(.horizontal, 12).frame(height: 42).csGlass(scheme, corner: 13)
     }
 
     private var heroCard: some View {
@@ -1829,7 +2274,7 @@ private struct CSHomeTab: View {
             .overlay(alignment: .topLeading) {
                 HStack(spacing: 8) {
                     CSPill(text: "নির্বাচিত", icon: "sparkles", filled: true)
-                    CSPill(text: "4K · HD", icon: nil, filled: false)
+                    CSPill(text: hero?.originalVariant?.dimensionLabel ?? (hero?.aspectRatio ?? "HD"), icon: nil, filled: false)
                 }.padding(15)
             }
             .overlay(alignment: .bottomLeading) { heroBody }
@@ -1856,14 +2301,62 @@ private struct CSHomeTab: View {
         .padding(18)
     }
 
+    /// Web Home "Start creating" cards — every V4 desk reachable from Home.
+    private var createGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            createCard("ছবি", "Auto বা Advanced · FASHN · Guided · Grok", "photo.on.rectangle.angled") { go(.create) }
+            createCard("ভিডিও / রিল", "Gallery ছবি, avatar বা নিজের শুট থেকে", "film.fill") { go(.video) }
+            createCard("অ্যাভাটার ও মডেল", "Saved identity · AI brand model", "person.crop.circle.fill") { go(.library) }
+            createCard("ভয়েস", "Consent · version · activate", "waveform.badge.mic") { openDesk(.voice) }
+            createCard("অডিও", "মিউজিক · dubbing · SFX · ভয়েস", "waveform") { go(.audio) }
+            createCard("Campaign Pack", "Manifest → 2 draft → pack", "shippingbox.fill") { openDesk(.campaign) }
+            createCard("Long-form", "Versioned canvas · Creative Agent", "rectangle.3.group") { openDesk(.projects) }
+            createCard("Review", "Exact pin · ৳0 render/export", "checkmark.seal.fill") { openDesk(.review) }
+        }
+    }
+
+    private func createCard(_ title: String, _ sub: String, _ icon: String, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon).font(.system(size: 17, weight: .semibold)).foregroundStyle(AgentPalette.coralLt)
+                    .frame(width: 36, height: 36).background(AgentPalette.coral.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                Text(title).font(.system(size: 14, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                Text(sub).font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(12).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
+        }.buttonStyle(.plain)
+    }
+
+    private var identityStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                if models.isEmpty {
+                    Text("কোনো identity মেলেনি").font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
+                        .padding(12).csGlass(scheme, corner: 14)
+                }
+                ForEach(models.prefix(8)) { m in
+                    Button { go(.create); CSHaptic.tap() } label: {
+                        HStack(spacing: 9) {
+                            CSPhoto(url: m.imageURL, ratio: 1).frame(width: 38, height: 38).clipShape(Circle())
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.name ?? "মডেল").font(.system(size: 12.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
+                                Text(m.isDefault == true ? "Default · \(CS.roleBn(m.role))" : CS.roleBn(m.role)).font(.system(size: 10)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+                            }
+                        }.padding(.vertical, 8).padding(.horizontal, 11).csGlass(scheme, corner: 999)
+                    }.buttonStyle(.plain)
+                }
+            }.padding(.vertical, 2)
+        }
+    }
+
     private var featureList: some View {
         VStack(spacing: 12) {
             CSFeatureRow(image: vm.gallery.first?.imageURL, name: "Product→Model", badge: "নতুন",
-                         desc: "প্রোডাক্ট ছবি → রিয়েল মডেল শট", credits: "FASHN / Gemini") { go(.create) }
+                         desc: "প্রোডাক্ট ছবি → রিয়েল মডেল শট", credits: "FASHN / Guided / Grok") { go(.create) }
             CSFeatureRow(image: vm.gallery.dropFirst(1).first?.imageURL, name: "ফ্যামিলি সেট", badge: "প্রিমিয়াম",
-                         desc: "বাবা+ছেলে / মা+মেয়ে — লাইব্রেরির মডেল দিয়ে", credits: "Gemini মাল্টি-পারসন") { go(.create) }
-            CSFeatureRow(image: vm.gallery.dropFirst(2).first?.imageURL, name: "Try-On", badge: nil,
-                         desc: "মডেলের গায়ে আপনার পোশাক", credits: "FASHN tryon-max") { go(.create) }
+                         desc: "বাবা+ছেলে / মা+মেয়ে — লাইব্রেরির মডেল দিয়ে", credits: "FASHN chain + Gemini") { go(.create) }
+            CSFeatureRow(image: vm.gallery.dropFirst(2).first?.imageURL, name: "Generate", badge: nil,
+                         desc: "শুধু প্রম্পট থেকে ক্যাম্পেইন ভিজ্যুয়াল", credits: "Grok Imagine (xAI)") { go(.create) }
         }
         .padding(.top, 2)
     }
@@ -1879,26 +2372,103 @@ private struct CSHomeTab: View {
                     }
                     .frame(width: 116, height: 150).csGlass(scheme, corner: 18)
                 }.buttonStyle(.plain)
+                if recents.isEmpty {
+                    Text(query.isEmpty ? "এই filter-এ কিছু নেই" : "\"\(search)\" মেলেনি").font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
+                        .frame(height: 150).padding(.horizontal, 14).csGlass(scheme, corner: 18)
+                }
                 ForEach(recents) { item in
-                    CSPhoto(url: item.imageURL, ratio: 116.0 / 150.0)
-                        .frame(width: 116, height: 150)
-                        .overlay(alignment: .bottomLeading) {
-                            Text(item.title).font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                                .lineLimit(1).padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(LinearGradient(colors: [.black.opacity(0.72), .clear], startPoint: .bottom, endPoint: .top))
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+                    Button { go(.gallery); CSHaptic.tap() } label: {
+                        CSPhoto(url: item.imageURL, ratio: 116.0 / 150.0)
+                            .frame(width: 116, height: 150)
+                            .overlay(alignment: .bottomLeading) {
+                                Text(item.title).font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                                    .lineLimit(1).padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(LinearGradient(colors: [.black.opacity(0.72), .clear], startPoint: .bottom, endPoint: .top))
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+                    }.buttonStyle(.plain)
                 }
             }.padding(.vertical, 2)
         }
     }
 
+    private var projectList: some View {
+        VStack(spacing: 9) {
+            if projects.isEmpty {
+                Text(vm.projects.isEmpty ? "এই brand-এ writable project নেই — Projects desk থেকে নতুন তৈরি করুন" : "\"\(search)\" কোনো project-এ মেলেনি")
+                    .font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12).csGlass(scheme, corner: 14)
+            }
+            ForEach(projects.prefix(5)) { p in
+                Button { Task { await vm.activateProject(p) }; CSHaptic.tap() } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "folder.fill").font(.system(size: 15)).foregroundStyle(AgentPalette.coralLt)
+                            .frame(width: 34, height: 34).background(AgentPalette.coral.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.name).font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
+                            Text("\(p.product?.code ?? "No ERP product") · \(p.defaultFolder ?? "Creative Studio") · \(almaBn(p.assetCount ?? 0)) assets")
+                                .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(p.currentRecipe?.name ?? "No recipe").font(.system(size: 10.5, weight: .bold)).foregroundStyle(AgentPalette.coralLt).lineLimit(1)
+                            Text(p.updatedAt.map { String($0.prefix(10)) } ?? "").font(.system(size: 9.5)).foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                        if p.id == vm.activeProject?.id {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(AgentPalette.coral)
+                        }
+                    }
+                    .padding(11).csGlass(scheme, corner: 15)
+                }.buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Web "Studio pulse" — worker state, needs-review, live engines (truthful snapshot).
+    private var pulseCard: some View {
+        let workerState = vm.health?.worker?.state ?? "unknown"
+        let workerOK = workerState == "healthy" || workerState == "ok"
+        let engines = (vm.config?.engines ?? []).prefix(5)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                pulseMetric("Worker", vm.health?.worker?.labelBn ?? workerState, tone: workerOK ? AgentPalette.teal : .orange)
+                pulseMetric("Needs review", almaBn(vm.needsReviewCount), tone: vm.needsReviewCount > 0 ? .orange : AgentPalette.teal)
+                pulseMetric("Live engines", almaBn(vm.config?.liveEngineCount ?? 0), tone: AgentPalette.coralLt)
+            }
+            if let seen = vm.health?.worker?.lastSeenBn, !seen.isEmpty {
+                Text(seen).font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+            }
+            if !engines.isEmpty {
+                Divider().opacity(0.25)
+                Text("Provider integrity").font(.system(size: 11, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
+                ForEach(Array(engines)) { e in
+                    HStack {
+                        Circle().fill(e.selectable ? AgentPalette.teal : (e.killed == true ? Color.red : Color.orange)).frame(width: 7, height: 7)
+                        Text(e.labelBn ?? e.label ?? e.id).font(.system(size: 12, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
+                        Spacer()
+                        Text(e.killed == true ? "killed" : (e.selectable ? "live" : (e.status ?? "unavailable").replacingOccurrences(of: "_", with: " ")))
+                            .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    }
+                }
+            } else {
+                Text("Engine snapshot নেই — server config দেখুন").font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted)
+            }
+        }
+        .padding(13).csGlass(scheme, corner: 16)
+    }
+    private func pulseMetric(_ label: String, _ value: String, tone: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.8).foregroundStyle(AgentPalette(scheme).muted)
+            Text(value).font(.system(size: 14, weight: .heavy)).foregroundStyle(tone).lineLimit(1).minimumScaleFactor(0.7)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var trendingGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            ForEach(Array(vm.gallery.prefix(6))) { item in
-                CSGalleryTile(item: item)
+            ForEach(Array(pool.prefix(6))) { item in
+                Button { go(.gallery); CSHaptic.tap() } label: { CSGalleryTile(item: item) }.buttonStyle(.plain)
             }
         }
     }
@@ -1915,8 +2485,46 @@ final class CSSlot {
     var path: String?
     var referenceId: String?
     var uploading = false
+    /// Remote preview (project ERP product / Gallery source) — no upload happened.
+    var remoteURL: URL?
+    /// Gallery source lineage (sourcePendingActionId / sourceAssetIds on the run).
+    var sourceItem: CSGalleryItem?
+    /// Owner-facing origin label ("আপলোড", "প্রজেক্ট প্রোডাক্ট", "গ্যালারি", "ক্লিপবোর্ড").
+    var origin: String?
 
-    func clear() { picked = nil; image = nil; path = nil; referenceId = nil; uploading = false }
+    var hasImage: Bool { image != nil || remoteURL != nil }
+
+    func clear() {
+        picked = nil; image = nil; path = nil; referenceId = nil; uploading = false
+        remoteURL = nil; sourceItem = nil; origin = nil
+    }
+
+    /// Use the active project's ERP catalog image directly (web Auto "Gallery" product tray).
+    func useProjectProduct(_ product: CSProjectProduct, previewURL: URL? = nil) {
+        guard let source = product.sourceImage else { return }
+        clear()
+        path = source
+        remoteURL = previewURL ?? product.previewURL
+        origin = "প্রজেক্ট প্রোডাক্ট · \(product.code)"
+    }
+
+    /// Use a ready Gallery image as the source (web "Continue from a recent image").
+    func useGallery(_ item: CSGalleryItem) {
+        guard let storage = item.storagePath else { return }
+        clear()
+        path = storage
+        remoteURL = item.previewURL ?? item.imageURL
+        sourceItem = item
+        origin = "গ্যালারি · \(item.title)"
+    }
+
+    /// Clipboard image (web "Paste") — uploads like a picked photo.
+    @MainActor
+    func pasteFromClipboard(vm: CreativeStudioVM, folder: String, referenceKind: String?) async -> Bool {
+        guard let ui = UIPasteboard.general.image else { return false }
+        await load(image: ui, vm: vm, folder: folder, referenceKind: referenceKind, origin: "ক্লিপবোর্ড")
+        return true
+    }
 
     /// Downscale + JPEG (web parity with prepareImageForUpload: HEIC → jpg, max 2048).
     static func jpegData(_ ui: UIImage) -> Data? {
@@ -1935,9 +2543,17 @@ final class CSSlot {
     func load(_ item: PhotosPickerItem?, vm: CreativeStudioVM, folder: String, referenceKind: String?) async {
         guard let item, let data = try? await item.loadTransferable(type: Data.self),
               let ui = UIImage(data: data) else { return }
+        await load(image: ui, vm: vm, folder: folder, referenceKind: referenceKind, origin: "আপলোড")
+    }
+
+    @MainActor
+    func load(image ui: UIImage, vm: CreativeStudioVM, folder: String, referenceKind: String?, origin: String) async {
         image = ui
         path = nil
         referenceId = nil
+        remoteURL = nil
+        sourceItem = nil
+        self.origin = origin
         uploading = true
         defer { uploading = false }
         guard let jpeg = CSSlot.jpegData(ui) else { vm.flash("ছবি পড়া গেল না"); return }
@@ -1957,10 +2573,12 @@ private struct CSCreateTab: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var isAdvanced = false
-    /// Unified engine choice (owner 2026-07-12): 0 FASHN Pro · 1 Nano Banana ·
-    /// 2 GPT Image 2 · 3 Seedream 5.0 Pro. Shared with the Advanced panel so the
-    /// quick row and the run pipeline can never disagree.
-    @State private var engineIdx = 0
+    /// Per-run engine (web `engine` state): fashn · gemini (guided) · fal_fashn_v16 ·
+    /// fal_idm_vton · fal_flux_fill · xai_imagine. Seeded from the server default.
+    @State private var engineId = "fashn"
+    /// Guided-model choice (kv `imageEngine`: gemini | gpt | seedream) — owner 2026-07-12:
+    /// picking a render model writes the kv so native = web = worker.
+    @State private var guidedIdx = 0
     @State private var engineSeeded = false
 
     var body: some View {
@@ -1970,8 +2588,12 @@ private struct CSCreateTab: View {
                 CSSegment(items: ["✦ Auto — এক ট্যাপ", "⚙ Advanced"], index: Binding(
                     get: { isAdvanced ? 1 : 0 }, set: { isAdvanced = ($0 == 1) }))
                     .padding(.horizontal, 18).padding(.top, 14)
-                engineRow
-                if isAdvanced { CSAdvancedPanel(vm: vm, engineIdx: $engineIdx) } else { CSAutoPanel(vm: vm) }
+                if isAdvanced {
+                    CSAdvancedPanel(vm: vm, engineId: $engineId, guidedIdx: $guidedIdx)
+                } else {
+                    engineRow
+                    CSAutoPanel(vm: vm)
+                }
                 Color.clear.frame(height: 130)
             }
         }
@@ -1981,72 +2603,57 @@ private struct CSCreateTab: View {
         // never opened this session.
         .task {
             if vm.settings == nil { await vm.loadLibraryExtras() }
-            // Seed the shared engine choice once: FASHN when configured (today's
-            // default behaviour), else whatever render model the kv points at.
             if !engineSeeded {
                 engineSeeded = true
-                if vm.config?.fashnConfigured == true { engineIdx = 0 }
-                else {
-                    switch vm.settings?.imageEngine {
-                    case "gpt": engineIdx = 2
-                    case "seedream": engineIdx = 3
-                    default: engineIdx = 1
-                    }
+                switch vm.settings?.imageEngine {
+                case "gpt": guidedIdx = 1
+                case "seedream": guidedIdx = 2
+                default: guidedIdx = 0
                 }
+                // Auto row offers FASHN + the guided lane; Advanced widens to the full registry.
+                let preferred = vm.config?.singleVtonDefault ?? "fashn"
+                if vm.config?.isSelectable("fashn") == true { engineId = "fashn" }
+                else if vm.config?.isSelectable(preferred) == true { engineId = preferred }
+                else if let live = CS.engines.first(where: { vm.config?.isSelectable($0.id) == true }) { engineId = live.id }
             }
+            // Gallery → Create hand-off lands in Advanced with the source pre-selected.
+            if vm.createSeed != nil { isAdvanced = true }
         }
-        .alert(item: Binding(
-            get: { vm.pendingEstimate },
-            set: { vm.pendingEstimate = $0 }
-        )) { estimate in
-            let bdt = estimate.estimateBdt ?? estimate.maxCostBdt ?? 0
-            let usd = estimate.estimateUsd ?? 0
-            return Alert(
-                title: Text("খরচ নিশ্চিত করুন"),
-                message: Text(String(
-                    format: "Server estimate ৳%.2f ($%.3f)। Actual provider usage Gallery-তে settle হবে।",
-                    bdt, usd)),
-                primaryButton: .cancel(Text("বাতিল"), action: vm.cancelPendingRun),
-                secondaryButton: .default(Text("Confirm & Run")) {
-                    Task { await vm.confirmPendingRun(using: estimate) }
-                }
-            )
-        }
+        .onChange(of: vm.createSeed?.id) { _, new in if new != nil { isAdvanced = true } }
+        .csEstimateAlert(vm: vm)
     }
 
-    /// Engine quick-switch ON the work screen (owner 2026-07-12) — ONE selector
-    /// for the whole pipeline: FASHN Pro (try-on/মডেল-শট) or one of the three
-    /// render models. Picking a render model also writes the cs_image_models kv,
-    /// so the next render uses it everywhere (native = web = worker).
+    /// Auto engine row: FASHN Pro (try-on) or the owner-selected guided render model.
+    /// Picking a render model writes the cs_image_models kv (native = web = worker).
     private var engineRow: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ইঞ্জিন")
                 .font(.system(size: 11, weight: .bold)).tracking(0.6)
                 .foregroundStyle(AgentPalette(scheme).muted)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 6)], alignment: .leading, spacing: 6) {
-                CSChip(text: "FASHN Pro (মডেল-শট)", on: engineIdx == 0) {
-                    if vm.config?.fashnConfigured == true {
-                        engineIdx = 0
-                    } else {
-                        vm.flash("FASHN Pro এখন configure করা নেই")
-                    }
+                CSChip(text: "FASHN Pro (মডেল-শট)", on: engineId == "fashn") {
+                    if vm.config?.isSelectable("fashn") == true { engineId = "fashn" }
+                    else { vm.flash("FASHN Pro এখন configure করা নেই") }
                 }
-                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: engineIdx == 1) {
-                    engineIdx = 1
+                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: engineId == "gemini" && guidedIdx == 0) {
+                    engineId = "gemini"; guidedIdx = 0
                     Task { await vm.saveSettings(imageEngine: "gemini") }
                 }
-                CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: engineIdx == 2) {
-                    engineIdx = 2
+                CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: engineId == "gemini" && guidedIdx == 1) {
+                    engineId = "gemini"; guidedIdx = 1
                     Task { await vm.saveSettings(imageEngine: "gpt") }
                 }
-                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: engineIdx == 3) {
-                    engineIdx = 3
+                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: engineId == "gemini" && guidedIdx == 2) {
+                    engineId = "gemini"; guidedIdx = 2
                     Task { await vm.saveSettings(imageEngine: "seedream") }
                 }
+                if engineId != "fashn" && engineId != "gemini", let e = CS.engines.first(where: { $0.id == engineId }) {
+                    CSChip(text: "\(e.short) (Advanced)", on: true) { isAdvanced = true }
+                }
             }
-            Text(engineIdx == 0
+            Text(engineId == "fashn"
                  ? "Try-on/মডেল-শট FASHN-এ — best realism। ছবি/পোস্টার রেন্ডার পাশের মডেলগুলোতে।"
-                 : "পরের রেন্ডার থেকে কার্যকর · Advanced-এর Run-ও এই ইঞ্জিনে চলবে")
+                 : "পরের রেন্ডার থেকে কার্যকর · Advanced-এ আরও ইঞ্জিন (Fal · IDM-VTON · Grok) আছে")
                 .font(.system(size: 10)).foregroundStyle(AgentPalette(scheme).muted)
         }
         .padding(.horizontal, 18).padding(.top, 12)
@@ -2084,8 +2691,10 @@ private struct CSAutoPanel: View {
     @State private var includeReel = false
     @State private var modelSheet = false
 
-    private var defaultModel: CSModel? { vm.models.first { $0.isDefault == true } ?? vm.models.first }
-    private var realModels: [CSModel] { vm.models.filter { !$0.id.hasPrefix("sm-") } }
+    /// Real saved identities only — the bundled sample models (`sm-*`) must never
+    /// reach a paid run (pre-fix Auto sent `modelId: "sm-0"` when the library was empty).
+    private var realModels: [CSModel] { vm.realModels }
+    private var defaultModel: CSModel? { realModels.first { $0.isDefault == true } ?? realModels.first }
     private var familyAvailable: Bool {
         let roles = Set(realModels.compactMap(\.role))
         return (roles.contains("father") && roles.contains("son"))
@@ -2105,7 +2714,13 @@ private struct CSAutoPanel: View {
             }.padding(.top, 18)
 
             CSUploadTile(slot: product, vm: vm, label: "Product ছবি", folder: "studio-product",
-                         referenceKind: "product", required: true, height: 240)
+                         referenceKind: "product", required: true, height: 240,
+                         allowPaste: true, projectProduct: vm.activeProject?.product,
+                         projectProductPreview: vm.activeProject?.productPreviewURL)
+            if let project = vm.activeProject {
+                Text("স্কোপ: \(project.name)\(project.product.map { " · \($0.code)" } ?? "") — product, model ও Gallery reference এই project-এর ভেতরেই থাকবে")
+                    .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+            }
 
             // Model — tappable: choose which saved model Auto uses (promotes to default)
             if let m = defaultModel {
@@ -2125,7 +2740,7 @@ private struct CSAutoPanel: View {
                     .padding(12).csGlass(scheme, corner: 18)
                 }.buttonStyle(.plain)
             } else {
-                Text("⚠ এখনো কোনো মডেল সেভ করা নেই — লাইব্রেরি ট্যাবে একটি মডেলের ছবি সেভ করুন, তারপর শুধু product দিলেই হবে।")
+                Text("⚠ এখনো কোনো মডেল সেভ করা নেই — লাইব্রেরি ট্যাবে একটি মডেলের ছবি সেভ করুন, তারপর শুধু product দিলেই হবে। নতুন মডেল ছবি দিয়ে এখনই বানাতে চাইলে Advanced → Product→Model নিন।")
                     .font(.system(size: 12)).foregroundStyle(Color(red: 0.95, green: 0.75, blue: 0.3))
                     .padding(13).frame(maxWidth: .infinity, alignment: .leading).csGlass(scheme, corner: 16)
             }
@@ -2179,7 +2794,7 @@ private struct CSAdvancedPanel: View {
     let vm: CreativeStudioVM
     @Environment(\.colorScheme) private var scheme
 
-    @State private var mode = CS.modes[0]
+    @State private var mode = CS.modes[1]     // Product→Model (web default)
     @State private var familyIdx = 0
     @State private var product = CSSlot()
     @State private var model = CSSlot()      // uploaded model photo (clears modelId)
@@ -2194,11 +2809,14 @@ private struct CSAdvancedPanel: View {
     @State private var numImages = 1
     @State private var vibe = 0
     @State private var durationSec = 6
-    @Binding var engineIdx: Int               // shared: 0 FASHN · 1 NB · 2 GPT · 3 Seedream
+    /// Per-run engine + guided render model (shared with the Create header).
+    @Binding var engineId: String
+    @Binding var guidedIdx: Int
     @State private var modelSheet = false
     @State private var addRoleSheet: String?  // family checklist "add" role
+    @State private var seededFromGallery: String?
 
-    private var realModels: [CSModel] { vm.models.filter { !$0.id.hasPrefix("sm-") } }
+    private var realModels: [CSModel] { vm.realModels }
     private var familyId: String { CS.familyIds[familyIdx] }
     private var supportsFamily: Bool { mode.id == "product_to_model" || mode.id == "try_on" }
     /// full_family merge: combine two already-shot images into one frame.
@@ -2207,31 +2825,63 @@ private struct CSAdvancedPanel: View {
     private var familyActive: Bool {
         supportsFamily && !isFamilyMerge && familyId != "single" && CS.familyRequiredRoles[familyId] != nil
     }
-    /// Multi-person renders always run on Gemini (FASHN is single-person only).
+    /// Multi-person renders always run on the Gemini chain (FASHN is single-person only).
     private var isMultiPersonFamily: Bool { supportsFamily && familyId != "single" }
+    private var needsPrompt: Bool { mode.id == "generate" || mode.id == "edit" }
 
-    private var bothProviders: Bool { (vm.config?.fashnConfigured ?? false) && (vm.config?.geminiConfigured ?? false) }
-    private var provider: String {
-        if mode.fashnOnly { return "fashn" }
-        if bothProviders { return engineIdx == 0 ? "fashn" : "gemini" }
-        return (vm.config?.fashnConfigured ?? false) ? "fashn" : "gemini"
+    // ── Engine truth (mirror StudioV3ImageLab) ───────────────────────────────
+    private var engineOptions: [CS.Engine] { CS.engines(for: mode.id, multiPerson: isMultiPersonFamily) }
+    private var selectedEngine: CS.Engine? { CS.engines.first { $0.id == engineId } }
+    private var guidedKvKey: String { ["gemini", "gpt", "seedream"][min(max(guidedIdx, 0), 2)] }
+    private var guidedModelId: String? {
+        guard let cfg = vm.config?.genericImageModels else { return nil }
+        return genMode == 0 ? cfg.standard : cfg.pro
     }
-    /// Bangla label of the picked engine — for the Run button.
-    private var engineLabel: String {
-        if effectiveProvider == "fashn" { return "FASHN Pro" }
-        switch engineIdx {
-        case 2: return "GPT Image 2"
-        case 3: return "Seedream 5.0"
-        default: return "Nano Banana"
+    private var guidedLabel: String {
+        if let m = guidedModelId { return CS.guidedModelLabel(m) }
+        return ["Nano Banana", "GPT Image 2", "Seedream 5.0"][min(max(guidedIdx, 0), 2)]
+    }
+    private func engineLabel(_ e: CS.Engine) -> String { e.id == "gemini" ? "Guided · \(guidedLabel)" : e.label }
+    private var engineSelectable: Bool { vm.config?.isSelectable(engineId) ?? (engineId == "fashn" || engineId == "gemini") }
+    /// Web `provider` — gemini lane vs fashn lane; vtonEngine carries the exact engine.
+    private var provider: String { engineId == "gemini" ? "gemini" : "fashn" }
+    private var engineShort: String {
+        if engineId == "gemini" { return guidedLabel }
+        return selectedEngine?.short ?? engineId
+    }
+
+    // ── Resolution truth (mirror buildStudioResolutionUiState) ───────────────
+    private var finalEngine: String? {
+        CS.finalImageEngine(mode: mode.id, engine: engineId, familyPreset: supportsFamily ? familyId : "single",
+                            guided: CS.guidedEngineKey(guidedKvKey))
+    }
+    private var contract: CS.ResolutionContract? { finalEngine.flatMap { CS.resolutionContracts[$0] } }
+    private var sourceDerivedAspect: Bool { finalEngine == "fashn" && (mode.id == "model_swap" || mode.id == "edit") }
+    private var allowedAspects: [String] {
+        guard let contract, contract.kind == "tiered", !sourceDerivedAspect else { return [] }
+        if finalEngine == "fashn" && mode.id == "face_to_model" {
+            return contract.aspects.filter { ["1:1", "4:5", "3:4", "2:3", "9:16"].contains($0) }
+        }
+        return contract.aspects
+    }
+    private var allowedTiers: [String] { contract?.kind == "tiered" ? (contract?.tiers ?? []) : [] }
+    private var resolutionNote: String {
+        guard let contract else { return "" }
+        switch contract.kind {
+        case "tiered": return sourceDerivedAspect ? "\(contract.labelBn) · আউটপুট অনুপাত সোর্স ছবি থেকে" : contract.labelBn
+        case "fixed": return "\(contract.labelBn) — রেজোলিউশন/অনুপাত বাছাই প্রযোজ্য নয়"
+        case "source": return contract.labelBn
+        default: return contract.labelBn
         }
     }
-    private var effectiveProvider: String { isMultiPersonFamily ? "gemini" : provider }
 
-    private var savedRoles: Set<String> { Set(realModels.compactMap(\.role)) }
-
-    // mirror the web's canRun exactly
+    // mirror the web's ready/canRun exactly
     private var canRun: Bool {
         if product.uploading || model.uploading || source.uploading || source2.uploading { return false }
+        if !engineOptions.contains(where: { $0.id == engineId }) || !engineSelectable { return false }
+        if engineId == "fal_flux_fill" { return false } // mask repair runs from Gallery
+        if needsPrompt && prompt.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+        if mode.id == "generate" { return true }
         if mode.id == "image_to_video" { return source.path != nil || product.path != nil || model.path != nil }
         if isFamilyMerge { return (source.path ?? product.path) != nil && source2.path != nil }
         if familyActive {
@@ -2243,6 +2893,7 @@ private struct CSAdvancedPanel: View {
         if mode.needsSource && source.path == nil { return false }
         return true
     }
+    private var savedRoles: Set<String> { Set(realModels.compactMap(\.role)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2254,11 +2905,15 @@ private struct CSAdvancedPanel: View {
             }
             stepLabel(supportsFamily ? "৩ · ছবি যোগ করুন" : "২ · ছবি যোগ করুন")
             slots
-            stepLabel("প্রম্পট (ঐচ্ছিক)")
-            TextField("যেমন: studio photoshoot, festive mood…", text: $prompt, axis: .vertical)
+            stepLabel(needsPrompt ? "প্রম্পট (আবশ্যক)" : "প্রম্পট (ঐচ্ছিক)")
+            TextField(mode.id == "generate" ? "ক্যাম্পেইন ভিজ্যুয়ালটা বর্ণনা করুন…" : "যেমন: studio photoshoot, festive mood…",
+                      text: $prompt, axis: .vertical)
                 .font(.system(size: 13.5)).foregroundStyle(AgentPalette(scheme).ink)
                 .padding(13).csGlass(scheme, corner: 16).padding(.horizontal, 18)
+            stepLabel("ইঞ্জিন · মডেল")
+            enginePicker
             options
+            readiness
             runButton
         }
         .sheet(isPresented: $modelSheet) {
@@ -2272,13 +2927,51 @@ private struct CSAdvancedPanel: View {
                              set: { addRoleSheet = $0?.role })) { box in
             CSAddModelSheet(vm: vm, lockedRole: box.role)
         }
+        .onAppear { consumeSeed(); reconcileEngine(); reconcileResolution() }
+        .onChange(of: vm.createSeed?.id) { _, _ in consumeSeed() }
+        .onChange(of: mode) { _, _ in reconcileEngine(); reconcileResolution() }
+        .onChange(of: familyIdx) { _, _ in reconcileEngine(); reconcileResolution() }
+        .onChange(of: engineId) { _, _ in reconcileResolution() }
+        .onChange(of: guidedIdx) { _, _ in reconcileResolution() }
+        .onChange(of: genMode) { _, _ in reconcileResolution() }
+    }
+
+    /// Gallery → Create hand-off: the picked image becomes the source of an Edit run.
+    private func consumeSeed() {
+        guard let seed = vm.createSeed, seededFromGallery != seed.id else { return }
+        seededFromGallery = seed.id
+        vm.createSeed = nil
+        if let edit = CS.modes.first(where: { $0.id == "edit" }) { mode = edit }
+        product.clear(); model.clear(); source2.clear(); modelId = ""
+        source.useGallery(seed)
+        vm.flash("গ্যালারির ছবি source হিসেবে বসেছে — মোড বদলাতে পারেন")
+    }
+
+    /// Keep the engine inside the mode's capability set and on a live engine (web effect).
+    private func reconcileEngine() {
+        let options = engineOptions
+        if options.contains(where: { $0.id == engineId && (vm.config?.isSelectable($0.id) ?? true) }) { return }
+        if let live = options.first(where: { vm.config?.isSelectable($0.id) ?? true }) { engineId = live.id }
+        else if let first = options.first { engineId = first.id }
+    }
+
+    /// Snap aspect/resolution onto the engine's contract (no false 4K promise).
+    private func reconcileResolution() {
+        let aspects = allowedAspects
+        if !aspects.isEmpty, !aspects.contains(CS.aspects[aspect]) {
+            if let i = CS.aspects.firstIndex(where: { aspects.contains($0) }) { aspect = i }
+        }
+        let tiers = allowedTiers
+        if !tiers.isEmpty, !tiers.contains(CS.resolutions[resolution].lowercased()) {
+            resolution = tiers.contains("2k") ? 1 : (CS.resolutions.firstIndex { tiers.contains($0.lowercased()) } ?? 0)
+        }
     }
 
     private var modeChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(CS.modes) { m in
-                    let locked = m.fashnOnly && vm.config?.fashnConfigured != true
+                    let locked = m.fashnOnly && vm.config?.isSelectable("fashn") != true
                     Button {
                         guard !locked else { vm.flash("এই mode-এর জন্য FASHN Pro দরকার — এখন configure করা নেই"); return }
                         if mode != m {
@@ -2331,15 +3024,22 @@ private struct CSAdvancedPanel: View {
     @ViewBuilder
     private var slots: some View {
         VStack(spacing: 12) {
-            if isFamilyMerge {
+            if mode.id == "generate" {
+                Text("Generate-এ কোনো product/model reference লাগে না — শুধু প্রম্পট। Grok Imagine (xAI) চালায়।")
+                    .font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
+                    .padding(13).frame(maxWidth: .infinity, alignment: .leading).csGlass(scheme, corner: 16)
+            } else if isFamilyMerge {
                 CSUploadTile(slot: product, vm: vm, label: "বাবা + ছেলে ছবি (১ম)", folder: "studio-product",
-                             referenceKind: "product", required: true)
-                CSUploadTile(slot: source2, vm: vm, label: "মা + মেয়ে ছবি (২য়)", folder: "studio-source2", required: true)
+                             referenceKind: "product", required: true, allowPaste: true, galleryPick: vm.readyImages)
+                CSUploadTile(slot: source2, vm: vm, label: "মা + মেয়ে ছবি (২য়)", folder: "studio-source2", required: true,
+                             galleryPick: vm.readyImages)
             } else {
-                if mode.needsProduct {
+                if mode.needsProduct || mode.id == "edit" {
                     CSUploadTile(slot: product, vm: vm,
                                  label: mode.needsProduct ? "Product / mannequin" : "Product (optional)",
-                                 folder: "studio-product", referenceKind: "product", required: mode.needsProduct)
+                                 folder: "studio-product", referenceKind: "product", required: mode.needsProduct,
+                                 allowPaste: true, projectProduct: vm.activeProject?.product,
+                                 projectProductPreview: vm.activeProject?.productPreviewURL)
                 }
                 if familyActive {
                     familyChecklist
@@ -2349,7 +3049,8 @@ private struct CSAdvancedPanel: View {
                 if mode.needsSource {
                     CSUploadTile(slot: source, vm: vm,
                                  label: mode.id == "image_to_video" ? "Source image for reel" : "Source image",
-                                 folder: "studio-source", referenceKind: "product", required: true)
+                                 folder: "studio-source", referenceKind: "product", required: true,
+                                 allowPaste: true, galleryPick: vm.readyImages)
                 }
             }
         }.padding(.horizontal, 18)
@@ -2432,6 +3133,60 @@ private struct CSAdvancedPanel: View {
         .padding(13).csGlass(scheme, corner: 18)
     }
 
+    /// Web "Provider / model" select: exact engines for the mode with Live / Unavailable /
+    /// Killed truth from the registry; the guided lane shows the owner-selected render model.
+    private var enginePicker: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(engineOptions) { e in
+                        let avail = vm.config?.engine(e.id)
+                        let live = vm.config?.isSelectable(e.id) ?? (e.id == "fashn" || e.id == "gemini")
+                        let status = avail?.killed == true ? "Killed" : (live ? "Live" : "Unavailable")
+                        Button {
+                            if live { engineId = e.id; CSHaptic.tap() }
+                            else { vm.flash("\(e.label) এখন \(status) — \(avail?.warningBn ?? "server config দেখুন")") }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(engineLabel(e)).font(.system(size: 12.5, weight: engineId == e.id ? .bold : .semibold))
+                                HStack(spacing: 4) {
+                                    Circle().fill(live ? AgentPalette.teal : Color.orange).frame(width: 6, height: 6)
+                                    Text(status + (avail?.approxCost.map { " · \($0)" } ?? ""))
+                                        .font(.system(size: 10)).lineLimit(1)
+                                }
+                            }
+                            .foregroundStyle(engineId == e.id ? Color.white : AgentPalette(scheme).muted)
+                            .padding(.vertical, 8).padding(.horizontal, 12)
+                            .background {
+                                if engineId == e.id { RoundedRectangle(cornerRadius: 13, style: .continuous).fill(CS.cta).shadow(color: CS.ctaGlow, radius: 6, y: 3) }
+                                else { RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.06 : 0.5)) }
+                            }
+                            .opacity(live ? 1 : 0.55)
+                        }.buttonStyle(.plain)
+                    }
+                }.padding(.horizontal, 18)
+            }
+            if engineId == "gemini" {
+                HStack(spacing: 6) {
+                    ForEach(Array(["Nano Banana", "GPT Image 2", "Seedream 5.0"].enumerated()), id: \.offset) { i, name in
+                        CSChip(text: name, on: guidedIdx == i) {
+                            guidedIdx = i
+                            Task { await vm.saveSettings(imageEngine: ["gemini", "gpt", "seedream"][i]) }
+                        }
+                    }
+                }.padding(.horizontal, 18)
+            }
+            if let note = selectedEngine?.fidelityBn[mode.id] {
+                Label(note, systemImage: "info.circle").font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    .padding(.horizontal, 18)
+            }
+            if engineId == "fal_flux_fill" {
+                Label("Mask repair Gallery-র যেকোনো ছবির \"Precision repair\" থেকে চালান।", systemImage: "paintbrush.pointed")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(AgentPalette.coral).padding(.horizontal, 18)
+            }
+        }
+    }
+
     @ViewBuilder
     private var options: some View {
         if mode.id == "image_to_video" {
@@ -2443,15 +3198,32 @@ private struct CSAdvancedPanel: View {
                     CSChip(text: "\(almaBn(d))s", on: durationSec == d) { durationSec = d }
                 }
             }.padding(.horizontal, 18)
+            Text(durationSec >= 16 ? "\(durationSec == 16 ? "২" : "৩") × ৮ সেকেন্ড Veo chain, তারপর deterministic ffmpeg assembly · 720p delivery"
+                                   : "এক Veo clip · 720p verified delivery · অনুপাত 9:16")
+                .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).padding(.horizontal, 18).padding(.top, 8)
         } else {
             stepLabel("ব্যাকগ্রাউন্ড")
             CSChipRow(items: CS.backgrounds.map(\.label), selectionIndex: $bgIdx)
             stepLabel("অ্যাসপেক্ট · রেজোলিউশন · কোয়ালিটি")
-            aspectRow
-            HStack(alignment: .top, spacing: 12) {
-                CSSegment(items: CS.resolutions, index: $resolution)
-                CSSegment(items: CS.genModes, index: $genMode)
-            }.padding(.horizontal, 18).padding(.top, 10)
+            if allowedAspects.isEmpty && allowedTiers.isEmpty {
+                Text(resolutionNote).font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    .padding(13).frame(maxWidth: .infinity, alignment: .leading).csGlass(scheme, corner: 14).padding(.horizontal, 18)
+            } else {
+                if !allowedAspects.isEmpty { aspectRow } else {
+                    Text(resolutionNote).font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).padding(.horizontal, 18)
+                }
+                HStack(spacing: 8) {
+                    ForEach(Array(CS.resolutions.enumerated()), id: \.offset) { i, r in
+                        let ok = allowedTiers.contains(r.lowercased())
+                        CSChip(text: ok ? r : "\(r) ✕", on: resolution == i) {
+                            if ok { resolution = i } else { vm.flash("\(r) এই ইঞ্জিনে delivered হয় না — \(contract?.labelBn ?? "")") }
+                        }.opacity(ok ? 1 : 0.45)
+                    }
+                }.padding(.horizontal, 18).padding(.top, 10)
+                Text("\(resolutionNote) · delivered pixels Gallery-তে verify হবে")
+                    .font(.system(size: 10)).foregroundStyle(AgentPalette(scheme).muted).padding(.horizontal, 18).padding(.top, 6)
+            }
+            CSSegment(items: CS.genModes, index: $genMode).padding(.horizontal, 18).padding(.top, 10)
             stepLabel("কয়টি ছবি")
             HStack(spacing: 10) {
                 ForEach(1...4, id: \.self) { n in
@@ -2465,8 +3237,11 @@ private struct CSAdvancedPanel: View {
         HStack(spacing: 10) {
             ForEach(Array(CS.aspects.enumerated()), id: \.offset) { i, r in
                 let sel = aspect == i
+                let ok = allowedAspects.contains(r)
                 let sz = CS.ratioBox(r, maxSide: 30)
-                Button { aspect = i; CSHaptic.tap() } label: {
+                Button {
+                    if ok { aspect = i; CSHaptic.tap() } else { vm.flash("\(r) এই ইঞ্জিনে সমর্থিত নয়") }
+                } label: {
                     VStack(spacing: 7) {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
                             .fill(sel ? AgentPalette.coral.opacity(0.22) : Color.white.opacity(0.06))
@@ -2480,9 +3255,37 @@ private struct CSAdvancedPanel: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 10)
                     .background(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .fill(sel ? AgentPalette.coral.opacity(0.1) : Color.white.opacity(scheme == .dark ? 0.03 : 0.28)))
+                    .opacity(ok ? 1 : 0.4)
                 }.buttonStyle(.plain)
             }
         }.padding(.horizontal, 18)
+    }
+
+    /// Web readiness strip: what blocks the run, and the fidelity truth of the engine.
+    private var readiness: some View {
+        HStack(spacing: 10) {
+            Image(systemName: canRun ? "checkmark.seal.fill" : "lock.fill")
+                .foregroundStyle(canRun ? AgentPalette.teal : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(canRun ? "Configuration ready — owner cost review পরের ধাপ" : "প্রয়োজনীয় context এখনো অসম্পূর্ণ")
+                    .font(.system(size: 12.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                Text(canRun ? "\(engineShort) · \(resolutionNote.isEmpty ? "video" : resolutionNote) · \(CS.genModes[genMode])"
+                            : blockerText)
+                    .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(12).csGlass(scheme, corner: 14).padding(.horizontal, 18).padding(.top, 18)
+    }
+    private var blockerText: String {
+        if !engineSelectable { return "\(selectedEngine?.label ?? engineId) এখন চালু নেই — অন্য ইঞ্জিন বাছুন" }
+        if engineId == "fal_flux_fill" { return "FLUX Fill শুধু Gallery-র Precision repair থেকে চলে" }
+        if needsPrompt && prompt.trimmingCharacters(in: .whitespaces).isEmpty { return "প্রম্পট লিখুন" }
+        if mode.needsProduct && product.path == nil { return "Product ছবি দিন (Paste / প্রজেক্ট প্রোডাক্ট / আপলোড)" }
+        if mode.needsModel && model.path == nil && modelId.isEmpty { return "সেভ করা মডেল বাছুন বা মডেল ছবি দিন" }
+        if mode.needsSource && source.path == nil { return "Source ছবি দিন (গ্যালারি বা আপলোড)" }
+        if familyActive { return "ফ্যামিলি রোলের সব মডেল লাইব্রেরিতে লাগবে" }
+        return "ছবি আপলোড শেষ হতে দিন"
     }
 
     private var runButton: some View {
@@ -2491,7 +3294,7 @@ private struct CSAdvancedPanel: View {
                 HStack(spacing: 9) {
                     if vm.generating { ProgressView().tint(.white) }
                     else { Image(systemName: "wand.and.stars").font(.system(size: 17, weight: .semibold)) }
-                    Text(vm.generating ? "জেনারেট হচ্ছে…" : "Run — \(engineLabel)")
+                    Text(vm.generating ? "Estimate আনা হচ্ছে…" : "Review & generate — \(engineShort)")
                         .font(.system(size: 16, weight: .bold))
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity).padding(16)
@@ -2500,35 +3303,49 @@ private struct CSAdvancedPanel: View {
                 .opacity(canRun && !vm.generating ? 1 : 0.45)
             }
             .buttonStyle(.plain).disabled(!canRun || vm.generating)
-            Text(isMultiPersonFamily && provider == "fashn"
-                 ? "একাধিক মানুষ — FASHN পারে না, Gemini দিয়ে হবে"
-                 : "Run-এর আগে exact estimate ও confirmation দেখাবে")
+            Text(isMultiPersonFamily && engineId == "fashn"
+                 ? "একাধিক মানুষ — FASHN chain + Gemini rescene দিয়ে হবে"
+                 : "Run-এর আগে signed estimate ও owner confirmation দেখাবে")
                 .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 18).padding(.top, 22)
+        .padding(.horizontal, 18).padding(.top, 14)
     }
 
     private func run() async {
-        guard canRun else { vm.flash("প্রয়োজনীয় ছবি এখনো দেওয়া হয়নি"); return }
+        guard canRun else { vm.flash(blockerText); return }
         let bg = CS.backgrounds[bgIdx]
         var payload = CSRunPayload(mode: mode.id)
+        payload.studioSurface = "v3"
         payload.provider = provider
-        payload.productImagePath = product.path ?? source.path
+        let isVton = mode.id == "product_to_model" || mode.id == "try_on"
+        // Web buildRequest: vtonEngine carries the exact engine for VTON modes and Grok.
+        payload.vtonEngine = (engineId == "xai_imagine" || isVton) ? engineId : nil
+        payload.productImagePath = product.path ?? (mode.id == "image_to_video" ? source.path : nil)
         payload.productReferenceId = product.referenceId ?? source.referenceId
         payload.modelImagePath = model.path
         payload.modelReferenceId = model.referenceId
-        payload.sourceImagePath = source.path ?? product.path ?? model.path
+        payload.sourceImagePath = source.path ?? (mode.needsSource ? (product.path ?? model.path) : nil)
         payload.secondSourceImagePath = isFamilyMerge ? source2.path : nil
-        payload.modelId = modelId.isEmpty ? nil : modelId
+        payload.modelId = (modelId.isEmpty || model.path != nil) ? nil : modelId
         payload.familyPreset = supportsFamily ? familyId : nil
         payload.prompt = prompt.isEmpty ? nil : prompt
         payload.backgroundPrompt = bg.id != "custom" ? bg.prompt : (prompt.isEmpty ? nil : prompt)
+        // Gallery source lineage (sourcePendingActionId / sourceAssetIds on the run).
+        if let seed = source.sourceItem ?? product.sourceItem {
+            payload.sourcePendingActionId = seed.id
+            payload.sourceAssetIds = seed.projectAssetId.map { [$0] }
+        }
         if mode.id == "image_to_video" {
             payload.vibe = CS.vibes[vibe].id
             payload.durationSec = durationSec
+        } else if mode.id == "generate" {
+            payload.aspectRatio = allowedAspects.isEmpty ? nil : CS.aspects[aspect]
+            payload.resolution = allowedTiers.isEmpty ? nil : CS.resolutions[resolution].lowercased()
+            payload.generationMode = CS.genModes[genMode].lowercased()
+            payload.numImages = numImages
         } else {
-            payload.aspectRatio = CS.aspects[aspect]
-            payload.resolution = CS.resolutions[resolution].lowercased()
+            if !allowedAspects.isEmpty { payload.aspectRatio = CS.aspects[aspect] }
+            if !allowedTiers.isEmpty { payload.resolution = CS.resolutions[resolution].lowercased() }
             payload.generationMode = CS.genModes[genMode].lowercased()
             payload.numImages = numImages
         }
@@ -2542,13 +3359,14 @@ private struct CSAdvancedPanel: View {
     }
 }
 
+
 /// Identifiable box so a plain role string can drive a .sheet(item:).
 private struct CSRoleBox: Identifiable { let role: String; var id: String { role } }
 
 // ── Shared: photo upload tile bound to a CSSlot ──────────────────────────────
 
 @available(iOS 17.0, *)
-private struct CSUploadTile: View {
+struct CSUploadTile: View {
     @Bindable var slot: CSSlot
     let vm: CreativeStudioVM
     let label: String
@@ -2556,18 +3374,31 @@ private struct CSUploadTile: View {
     var referenceKind: String? = nil
     var required = false
     var height: CGFloat = 190
+    /// Extra source actions (web source card: Paste · project product · Gallery).
+    var allowPaste = false
+    var projectProduct: CSProjectProduct? = nil
+    var projectProductPreview: URL? = nil
+    var galleryPick: [CSGalleryItem]? = nil
     @Environment(\.colorScheme) private var scheme
+    @State private var galleryOpen = false
 
     var body: some View {
-        PhotosPicker(selection: $slot.picked, matching: .images) {
-            ZStack {
-                if let ui = slot.image {
-                    Image(uiImage: ui).resizable().scaledToFill()
+        VStack(spacing: 8) {
+            PhotosPicker(selection: $slot.picked, matching: .images) {
+                ZStack {
+                    if slot.hasImage {
+                        Group {
+                            if let ui = slot.image {
+                                Image(uiImage: ui).resizable().scaledToFill()
+                            } else {
+                                CSPhoto(url: slot.remoteURL, ratio: 1)
+                            }
+                        }
                         .frame(height: height).frame(maxWidth: .infinity).clipped()
                         .overlay(alignment: .bottomLeading) {
-                            Label(slot.uploading ? "আপলোড হচ্ছে…" : "ছবি যোগ হয়েছে",
+                            Label(slot.uploading ? "আপলোড হচ্ছে…" : (slot.origin ?? "ছবি যোগ হয়েছে"),
                                   systemImage: slot.uploading ? "arrow.up.circle" : "checkmark")
-                                .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+                                .font(.system(size: 12, weight: .bold)).foregroundStyle(.white).lineLimit(1)
                                 .padding(.vertical, 7).padding(.horizontal, 13)
                                 .background(.black.opacity(0.55), in: Capsule()).padding(12)
                         }
@@ -2576,27 +3407,62 @@ private struct CSUploadTile: View {
                                 .padding(.vertical, 7).padding(.horizontal, 14)
                                 .background(.white.opacity(0.18), in: Capsule()).padding(12)
                         }
-                } else {
-                    VStack(spacing: 10) {
-                        ZStack { RoundedRectangle(cornerRadius: 16).fill(CS.cta).frame(width: 50, height: 50)
-                            Image(systemName: "plus").font(.system(size: 22, weight: .bold)).foregroundStyle(.white) }
-                            .shadow(color: CS.ctaGlow, radius: 11, y: 6)
-                        Text(label + (required ? " *" : "")).font(.system(size: 14.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
-                        Text("ট্যাপ করে ছবি দিন").font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    } else {
+                        VStack(spacing: 10) {
+                            ZStack { RoundedRectangle(cornerRadius: 16).fill(CS.cta).frame(width: 50, height: 50)
+                                Image(systemName: "plus").font(.system(size: 22, weight: .bold)).foregroundStyle(.white) }
+                                .shadow(color: CS.ctaGlow, radius: 11, y: 6)
+                            Text(label + (required ? " *" : "")).font(.system(size: 14.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                            Text("ট্যাপ করে ছবি দিন").font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                        .frame(maxWidth: .infinity).frame(height: height)
                     }
-                    .frame(maxWidth: .infinity).frame(height: height)
+                }
+                .background(AgentPalette(scheme).glassFill)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.6, dash: slot.hasImage ? [] : [7]))
+                    .foregroundStyle(slot.hasImage ? AgentPalette.coral.opacity(0.5) : Color.white.opacity(0.2)))
+            }
+            .buttonStyle(.plain)
+            .onChange(of: slot.picked) { _, new in
+                Task { await slot.load(new, vm: vm, folder: folder, referenceKind: referenceKind) }
+            }
+
+            if allowPaste || projectProduct != nil || galleryPick != nil {
+                HStack(spacing: 8) {
+                    if allowPaste {
+                        sourceChip("Paste", "doc.on.clipboard") {
+                            Task {
+                                if await !slot.pasteFromClipboard(vm: vm, folder: folder, referenceKind: referenceKind) {
+                                    vm.flash("ক্লিপবোর্ডে কোনো ছবি নেই")
+                                }
+                            }
+                        }
+                    }
+                    if let projectProduct, projectProduct.sourceImage != nil {
+                        sourceChip("প্রজেক্ট প্রোডাক্ট · \(projectProduct.code)", "tag") { slot.useProjectProduct(projectProduct, previewURL: projectProductPreview) }
+                    }
+                    if galleryPick != nil {
+                        sourceChip("গ্যালারি", "photo.on.rectangle.angled") { galleryOpen = true }
+                    }
+                    Spacer(minLength: 0)
                 }
             }
-            .background(AgentPalette(scheme).glassFill)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.6, dash: slot.image == nil ? [7] : []))
-                .foregroundStyle(slot.image == nil ? Color.white.opacity(0.2) : AgentPalette.coral.opacity(0.5)))
         }
-        .buttonStyle(.plain)
-        .onChange(of: slot.picked) { _, new in
-            Task { await slot.load(new, vm: vm, folder: folder, referenceKind: referenceKind) }
+        .sheet(isPresented: $galleryOpen) {
+            CSGalleryPickerSheet(title: "গ্যালারি থেকে ছবি বাছুন", items: galleryPick ?? [],
+                                 selectedId: slot.sourceItem?.id) { item in slot.useGallery(item) }
         }
+    }
+
+    private func sourceChip(_ title: String, _ icon: String, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: {
+            Label(title, systemImage: icon).font(.system(size: 11.5, weight: .bold)).lineLimit(1)
+                .foregroundStyle(AgentPalette.coral)
+                .padding(.vertical, 7).padding(.horizontal, 11)
+                .background(AgentPalette.coral.opacity(0.12), in: Capsule())
+        }.buttonStyle(.plain)
     }
 }
 
@@ -2783,6 +3649,7 @@ private struct CSInlineToggle: View {
 @available(iOS 17.0, *)
 private struct CSGalleryTab: View {
     let vm: CreativeStudioVM
+    var go: (CSTab) -> Void = { _ in }
     @Environment(\.colorScheme) private var scheme
     @State private var detail: CSGalleryItem?
     @State private var deleteTarget: CSGalleryItem?
@@ -2793,16 +3660,20 @@ private struct CSGalleryTab: View {
             : [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     }
 
+    /// Category lanes (web: All · Image · Video · Audio · Voice · Avatar) + lifecycle
+    /// (Recent · Approved · Review · Archived) + the native posted/pending split.
     private let filterMap: [(bn: String, key: String)] =
-        [("সব", "all"), ("ছবি", "image"), ("ভিডিও", "video"), ("Approved", "approved"),
-         ("Review", "review"), ("Archived", "archived"), ("পোস্ট হয়েছে", "executed"), ("পেন্ডিং", "pending")]
+        [("সব", "all"), ("ছবি", "image"), ("ভিডিও", "video"), ("অডিও", "audio"), ("অ্যাভাটার", "avatar"), ("ভয়েস", "voice"),
+         ("Approved", "approved"), ("Review", "review"), ("Archived", "archived"), ("পোস্ট হয়েছে", "executed"), ("পেন্ডিং", "pending")]
+    private var identityLane: Bool { vm.galleryFilter == "avatar" || vm.galleryFilter == "voice" }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(almaBn(vm.gallery.count))টি ক্রিয়েটিভ").font(.system(size: 10, weight: .bold)).tracking(1.2)
-                        .foregroundStyle(AgentPalette.coralLt)
+                    Text("\(almaBn(max(vm.galleryTotal, vm.gallery.filter { !$0.id.hasPrefix("sample-") }.count)))টি server result · \(vm.activeProject?.name ?? "সব project")")
+                        .font(.system(size: 10, weight: .bold)).tracking(1.2)
+                        .foregroundStyle(AgentPalette.coralLt).lineLimit(1)
                     Text("গ্যালারি").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
                 }.padding(.top, 58).padding(.horizontal, 18)
 
@@ -2812,7 +3683,8 @@ private struct CSGalleryTab: View {
                             CSChip(text: f.bn, on: vm.galleryFilter == f.key) {
                                 vm.galleryFilter = f.key
                                 CSHaptic.tap()
-                                Task { await vm.refreshGallery() }
+                                if f.key == "voice" { Task { await vm.loadVoices() } }
+                                else if f.key != "avatar" { Task { await vm.refreshGallery() } }
                             }
                         }
                     }.padding(.horizontal, 18)
@@ -2846,8 +3718,11 @@ private struct CSGalleryTab: View {
                         Menu {
                             Button("Newest") { vm.gallerySort = "newest"; Task { await vm.refreshGallery() } }
                             Button("Oldest") { vm.gallerySort = "oldest"; Task { await vm.refreshGallery() } }
+                            Button("Name") { vm.gallerySort = "name" }
+                            Button("Cost") { vm.gallerySort = "cost" }
                         } label: {
-                            Label(vm.gallerySort == "oldest" ? "Oldest" : "Newest", systemImage: "arrow.up.arrow.down")
+                            Label(["oldest": "Oldest", "name": "Name", "cost": "Cost"][vm.gallerySort] ?? "Newest",
+                                  systemImage: "arrow.up.arrow.down")
                         }
                         .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
                         Spacer(minLength: 0)
@@ -2873,7 +3748,9 @@ private struct CSGalleryTab: View {
                     .csGlass(scheme, corner: 14).padding(.horizontal, 18).padding(.top, 12)
                 }
 
-                if vm.gallery.isEmpty {
+                if identityLane {
+                    identityLaneView.padding(18)
+                } else if vm.gallery.isEmpty {
                     CSEmpty(loading: vm.loading).padding(.top, 40)
                 } else {
                     Group {
@@ -2887,6 +3764,17 @@ private struct CSGalleryTab: View {
                             }
                         }
                     }.padding(18)
+                    if vm.galleryHasMore {
+                        Button { Task { await vm.loadMoreGallery() }; CSHaptic.tap() } label: {
+                            HStack(spacing: 8) {
+                                if vm.galleryLoadingMore { ProgressView().tint(AgentPalette.coral).controlSize(.small) }
+                                Text(vm.galleryLoadingMore ? "লোড হচ্ছে…" : "আরও production asset লোড করুন")
+                                    .font(.system(size: 13, weight: .bold))
+                            }
+                            .foregroundStyle(AgentPalette.coral).frame(maxWidth: .infinity).padding(13)
+                            .csGlass(scheme, corner: 14)
+                        }.buttonStyle(.plain).disabled(vm.galleryLoadingMore).padding(.horizontal, 18)
+                    }
                 }
                 Color.clear.frame(height: 96)
             }
@@ -2902,7 +3790,17 @@ private struct CSGalleryTab: View {
             }
         }
         .sheet(item: $detail) { item in
-            CSDetailSheet(item: item, vm: vm)
+            CSDetailSheet(item: item, vm: vm, siblings: vm.filteredGallery.filter { $0.previewUrl != nil },
+                          onCreateFrom: { seed in
+                              vm.createSeed = seed
+                              detail = nil
+                              go(.create)
+                          },
+                          onReelFrom: { seed in
+                              vm.reelSeed = seed
+                              detail = nil
+                              go(.video)
+                          })
                 .presentationDetents([.large]).presentationDragIndicator(.visible)
         }
         .alert("ছবিটা একেবারে মুছে যাবে — নিশ্চিত?",
@@ -2912,6 +3810,69 @@ private struct CSGalleryTab: View {
                 if let t = deleteTarget { Task { _ = await vm.deleteItem(t) } }
             }
         } message: { Text("ফাইলটাও স্টোরেজ থেকে মুছে যাবে, ফেরত আনা যাবে না।") }
+    }
+
+    /// Avatar / Voice lanes — identity is production context, not generic media (web Gallery).
+    @ViewBuilder private var identityLaneView: some View {
+        if vm.galleryFilter == "avatar" {
+            if vm.realModels.isEmpty {
+                Text("এই scope-এ saved identity নেই — লাইব্রেরি ট্যাবে মডেল সেভ করুন।")
+                    .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(13).csGlass(scheme, corner: 14)
+            } else {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(vm.realModels) { m in
+                        CSPhoto(url: m.imageURL, ratio: 0.78)
+                            .overlay(alignment: .bottomLeading) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(m.name ?? "মডেল").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                                    Text(CS.roleBn(m.role).isEmpty ? (m.role ?? "identity") : CS.roleBn(m.role))
+                                        .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.7))
+                                    Button { go(.create); CSHaptic.tap() } label: {
+                                        Label("Create-এ ব্যবহার", systemImage: "arrow.right").font(.system(size: 10.5, weight: .bold))
+                                            .foregroundStyle(.white).padding(.vertical, 6).padding(.horizontal, 10)
+                                            .background(AgentPalette.coral, in: Capsule())
+                                    }.buttonStyle(.plain)
+                                }.padding(11).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(LinearGradient(colors: [.black.opacity(0.85), .clear], startPoint: .bottom, endPoint: .center))
+                            }
+                            .overlay(alignment: .topLeading) {
+                                if m.isDefault == true {
+                                    Text("Default").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Color(red: 0.17, green: 0.12, blue: 0))
+                                        .padding(.vertical, 4).padding(.horizontal, 8)
+                                        .background(Color(red: 0.91, green: 0.72, blue: 0.27), in: Capsule()).padding(9)
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                }
+            }
+        } else {
+            if vm.voices.isEmpty {
+                Text("এই scope-এ owner voice নেই — অডিও ট্যাবে consented sample দিয়ে clone করুন।")
+                    .font(.system(size: 12.5)).foregroundStyle(AgentPalette(scheme).muted)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(13).csGlass(scheme, corner: 14)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(vm.voices) { v in
+                        HStack(spacing: 12) {
+                            Image(systemName: "waveform.badge.mic").font(.system(size: 20)).foregroundStyle(AgentPalette.coralLt).frame(width: 40)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(v.name).font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                                Text("\(v.provider) · \(almaBn(v.versions.count)) version · active \(v.activeVersionId.map { id in v.versions.first { $0.id == id }.map { "v\($0.version)" } ?? "—" } ?? "none")")
+                                    .font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted)
+                            }
+                            Spacer()
+                            Text(v.activeVersionId == nil ? "Inactive" : "Active").font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(v.activeVersionId == nil ? AgentPalette.coralLt : .green)
+                                .padding(.horizontal, 8).padding(.vertical, 4).background(Color.white.opacity(0.08), in: Capsule())
+                        }
+                        .padding(12).csGlass(scheme, corner: 15)
+                    }
+                    Text("Activate / revoke / delete → লাইব্রেরি → V4 Production Workspace → Voice").font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }
+            }
+        }
     }
 
     private func galleryMenu(_ label: String, value: String, values: [String], set: @escaping (String) -> Void) -> some View {
@@ -3047,11 +4008,17 @@ private struct CSVideoTab: View {
                     Text("ভিডিও").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
                 }.padding(.top, 58).padding(.horizontal, 18)
 
-                Text("নিজের শুট করা ভিডিও দিন — রেসিপি বেছে নিলেই রেডি রিল Gallery-তে চলে আসবে।")
+                Text("Gallery ছবি/avatar থেকে Veo রিল, অথবা নিজের শুট করা ভিডিও → zero-LLM রেসিপি। দুটোই Gallery-তে আসে।")
                     .font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
                     .padding(.horizontal, 18).padding(.top, 6)
 
-                uploadSection.padding(.horizontal, 18).padding(.top, 16)
+                CSReelComposer(vm: vm).padding(.horizontal, 18).padding(.top, 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("🎞️ নিজের শুট → রেসিপি").font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                    Text("Deterministic ffmpeg · ৳0 API spend · source অক্ষত").font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }.padding(.horizontal, 18).padding(.top, 22)
+                uploadSection.padding(.horizontal, 18).padding(.top, 10)
                 uploadsList
                 if selected != nil { recipeSection }
                 musicSection.padding(.horizontal, 18).padding(.top, 18)
@@ -3063,6 +4030,7 @@ private struct CSVideoTab: View {
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.loadVideoStudio() }
         .task { await vm.loadVideoStudio() }
+        .csEstimateAlert(vm: vm)
         // Poll running reel jobs every 4s (same rhythm as the gallery).
         .task(id: vm.hasActiveVideoJobs) {
             guard vm.hasActiveVideoJobs else { return }
@@ -3403,8 +4371,11 @@ private struct CSAudioTab: View {
     @State private var pct: Int?
     @State private var busy = false
     @State private var importKind: AudioImportKind?
+    @State private var dubLanguage = "bn"
+    @State private var dubSeconds = 60
+    @State private var changeSeconds = 30
 
-    enum AudioImportKind: String, Identifiable { case clone, cleanNote; var id: String { rawValue } }
+    enum AudioImportKind: String, Identifiable { case clone, cleanNote, dub, voiceChange; var id: String { rawValue } }
 
     var body: some View {
         ScrollView {
@@ -3420,6 +4391,8 @@ private struct CSAudioTab: View {
                 musicCard
                 wishCard
                 ownerVoiceCard
+                dubbingCard
+                voiceChangerCard
                 cleanNoteCard
                 sfxCard
                 Color.clear.frame(height: 100)
@@ -3470,6 +4443,52 @@ private struct CSAudioTab: View {
             await vm.loadAudioLab()
         case .cleanNote:
             await vm.queueAudio("ভয়েস ক্লিনআপ", body: ["kind": AnyEncodable("clean_voice"), "sourcePath": AnyEncodable(paths[0])])
+        case .dub:
+            await vm.queueAudio("Dubbing → \(dubLanguage.uppercased())", body: [
+                "kind": AnyEncodable("dub"), "sourcePath": AnyEncodable(paths[0]),
+                "targetLanguage": AnyEncodable(dubLanguage), "seconds": AnyEncodable(dubSeconds),
+            ])
+        case .voiceChange:
+            var body: [String: AnyEncodable] = [
+                "kind": AnyEncodable("voice_change"), "sourcePath": AnyEncodable(paths[0]),
+                "seconds": AnyEncodable(changeSeconds),
+            ]
+            if let active = vm.audioStatus?.activeVoiceVersionId { body["voiceVersionId"] = AnyEncodable(active) }
+            await vm.queueAudio("Voice changer", body: body)
+        }
+    }
+
+    /// Web "🌐 Dubbing" — ElevenLabs Dubbing · source voice clone off · $1 ceiling estimate first.
+    private var dubbingCard: some View {
+        card("🌐 Dubbing", "Provider: ElevenLabs Dubbing · source voice clone বন্ধ থাকে · Queue-র আগে $1 ceiling-এর ভেতরে estimate দেখাবে।") {
+            HStack(spacing: 8) {
+                ForEach([("bn", "বাংলা"), ("en", "English"), ("hi", "हिन्दी"), ("ar", "العربية")], id: \.0) { id, bn in
+                    CSChip(text: bn, on: dubLanguage == id) { dubLanguage = id }
+                }
+            }
+            HStack(spacing: 8) {
+                ForEach([30, 60, 120], id: \.self) { s2 in
+                    CSChip(text: "\(almaBn(s2))s", on: dubSeconds == s2) { dubSeconds = s2 }
+                }
+                Spacer()
+                actionBtn(pct.map { "আপলোড \(almaBn($0))%" } ?? "Audio দিন ও estimate দেখুন", disabled: busy || pct != nil) { importKind = .dub }
+            }
+        }
+    }
+
+    /// Web "🎭 Voice changer → Active owner voice" — emotion/timing kept, voice = active owner-only version.
+    private var voiceChangerCard: some View {
+        let active = vm.audioStatus?.activeVoiceVersionId != nil
+        return card("🎭 Voice changer → আমার active ভয়েস",
+                    active ? "Provider: ElevenLabs Voice Changer · emotion/timing থাকবে, voice হবে active owner-only version (v\(almaBn(vm.audioStatus?.activeVoiceVersion ?? 0)))।"
+                           : "আগে একটি voice version activate করুন (লাইব্রেরি → V4 Workspace → Voice)।") {
+            HStack(spacing: 8) {
+                ForEach([15, 30, 60], id: \.self) { s2 in
+                    CSChip(text: "\(almaBn(s2))s", on: changeSeconds == s2) { changeSeconds = s2 }
+                }
+                Spacer()
+                actionBtn(pct.map { "আপলোড \(almaBn($0))%" } ?? "Audio দিন", disabled: busy || pct != nil || !active) { importKind = .voiceChange }
+            }
         }
     }
 
@@ -3598,6 +4617,7 @@ private struct CSLibraryTab: View {
     @State private var logoPicked: PhotosPickerItem?
     @State private var logoSaving = false
     @State private var v4Workspace = false
+    @State private var assetLibrary = false
     // NP-4 (AG-12.drive): native Drive connect state
     @State private var driveConnected = false
     @State private var driveEmail: String? = nil
@@ -3630,6 +4650,22 @@ private struct CSLibraryTab: View {
 
                 CSSectionHeader(title: "আরও", trailing: nil, action: nil).padding(.horizontal, 18)
                 VStack(spacing: 10) {
+                    // Web Projects desk → "Open asset library" (folders · tags · version lineage · Legacy import).
+                    if let project = vm.activeProject {
+                        Button { assetLibrary = true; CSHaptic.tap() } label: {
+                            HStack(spacing: 13) {
+                                Image(systemName: "archivebox.fill").font(.system(size: 17))
+                                    .foregroundStyle(AgentPalette.coralLt).frame(width: 30)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Project asset library").font(.system(size: 14.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                                    Text("\(project.name) · folder · tag · version lineage · Legacy import")
+                                        .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+                            }.padding(14).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
+                        }.buttonStyle(.plain)
+                    }
                     // ড্র্যাগ-এডিটর এখন পুরো নেটিভ — Gallery-তে যেকোনো ছবির "এডিটর" বাটনে।
                     // NP-4 (AG-12.drive): Drive connect runs in ASWebAuthenticationSession
                     // (system handoff) — the whole web Studio no longer opens for it.
@@ -3644,6 +4680,9 @@ private struct CSLibraryTab: View {
         .task { await vm.loadLibraryExtras() }
         .scrollDismissesKeyboard(.interactively)
         .sheet(isPresented: $addSheet) { CSAddModelSheet(vm: vm) }
+        .sheet(isPresented: $assetLibrary) {
+            if let project = vm.activeProject { CSProjectAssetLibrarySheet(project: project) }
+        }
         .sheet(isPresented: $v4Workspace) {
             CSV4WorkspaceScreen(seedProject: vm.activeProject) { project in
                 Task { await vm.activateProject(project) }
@@ -3984,7 +5023,7 @@ private struct CSLibraryTab: View {
 // MARK: - Reusable components
 
 @available(iOS 17.0, *)
-private struct CSPhoto: View {
+struct CSPhoto: View {
     let url: URL?
     var ratio: CGFloat = 0.75   // width / height
     @Environment(\.colorScheme) private var scheme
@@ -4024,7 +5063,7 @@ private struct CSPhoto: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSGalleryTile: View {
+struct CSGalleryTile: View {
     let item: CSGalleryItem
     var onRetry: (() -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
@@ -4129,7 +5168,7 @@ private struct CSFeatureRow: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSSectionHeader: View {
+struct CSSectionHeader: View {
     let title: String; let trailing: String?; var action: (() -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
     var body: some View {
@@ -4150,7 +5189,7 @@ private struct CSSectionHeader: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSPill: View {
+struct CSPill: View {
     let text: String; let icon: String?; let filled: Bool
     var body: some View {
         HStack(spacing: 5) {
@@ -4166,7 +5205,7 @@ private struct CSPill: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSSegment: View {
+struct CSSegment: View {
     let items: [String]
     @Binding var index: Int
     @Environment(\.colorScheme) private var scheme
@@ -4195,7 +5234,7 @@ private struct CSSegment: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSChip: View {
+struct CSChip: View {
     let text: String; let on: Bool; let tap: () -> Void
     @Environment(\.colorScheme) private var scheme
     var body: some View {
@@ -4213,7 +5252,7 @@ private struct CSChip: View {
 
 /// Chip row bound to a String selection (label-based).
 @available(iOS 17.0, *)
-private struct CSChipRow: View {
+struct CSChipRow: View {
     let items: [String]
     var selection: Binding<String>? = nil
     var selectionIndex: Binding<Int>? = nil
@@ -4261,6 +5300,10 @@ private struct CSToggleRow: View {
 private struct CSDetailSheet: View {
     @State var item: CSGalleryItem
     let vm: CreativeStudioVM
+    /// Lightbox neighbours (web prev/next); empty = single item.
+    var siblings: [CSGalleryItem] = []
+    var onCreateFrom: ((CSGalleryItem) -> Void)? = nil
+    var onReelFrom: ((CSGalleryItem) -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var rating: String?
@@ -4300,11 +5343,48 @@ private struct CSDetailSheet: View {
                     .padding(.top, 12)
                 }
 
-                Text(item.title).font(.system(size: 20, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
-                    .padding(.horizontal, 18).padding(.top, 16)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.title).font(.system(size: 20, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
+                    Spacer()
+                    if siblings.count > 1, let idx = siblings.firstIndex(where: { $0.id == item.id }) {
+                        HStack(spacing: 6) {
+                            navButton("chevron.left") { move(-1) }
+                            Text("\(almaBn(idx + 1)) / \(almaBn(siblings.count))").font(.system(size: 11.5, weight: .bold)).monospacedDigit()
+                                .foregroundStyle(AgentPalette(scheme).muted)
+                            navButton("chevron.right") { move(1) }
+                        }
+                    }
+                }
+                .padding(.horizontal, 18).padding(.top, 16)
                 HStack(spacing: 7) {
                     metaTag(item.modeLabel); metaTag(item.provider ?? "—"); metaTag(item.isExecuted ? "পোস্ট হয়েছে" : (item.isFailed ? "ব্যর্থ" : "পেন্ডিং"))
+                    metaTag(item.lifecycleBn)
                 }.padding(.horizontal, 18).padding(.top, 8)
+
+                // Web lightbox facts: verified original · requested aspect · cost · publishable · receipt
+                if !item.id.hasPrefix("sample-") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        fact("Verified original", item.originalVariant?.dimensionLabel ?? "এই record-এ verified descriptor নেই")
+                        fact("Requested aspect", item.aspectRatio ?? "Not recorded")
+                        fact("Engine / model", [item.engine ?? item.provider, item.imageModel].compactMap { $0 }.joined(separator: " · ").isEmpty ? "—" : [item.engine ?? item.provider, item.imageModel].compactMap { $0 }.joined(separator: " · "))
+                        fact("Cost", item.costUsd.map { String(format: "$%.3f", $0) } ?? item.costBdt.map { "৳\(almaBn(Int($0.rounded())))" } ?? "Not recorded")
+                        fact("Publishable", item.publishable == true ? "Server says yes" : "No")
+                        fact("Created", item.createdAt.map { String($0.prefix(10)) } ?? "—")
+                        if let r = item.referenceReceipt {
+                            HStack(spacing: 6) {
+                                Image(systemName: r.allRequiredSent ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(r.allRequiredSent ? AgentPalette.teal : .orange)
+                                Text("Reference receipt · \(almaBn(r.sentCount))/\(almaBn(r.expectedCount)) sent · \(r.roles.joined(separator: ", "))")
+                                    .font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted)
+                            }
+                        }
+                        if let qc = item.qcDetailsBn, !qc.isEmpty {
+                            Text(qc).font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted)
+                        }
+                    }
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).csGlass(scheme, corner: 14)
+                    .padding(.horizontal, 18).padding(.top, 12)
+                }
 
                 // V2: reel cover picker — FB/IG reels need a cover frame
                 if item.isVideo, let covers = item.coverOptions, !covers.isEmpty {
@@ -4348,20 +5428,42 @@ private struct CSDetailSheet: View {
                     }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 14)
                 }
 
-                // V4: one-tap reel from any finished studio image (multi-clip for 16/24s)
-                if item.isExecuted && item.storagePath != nil && !item.isVideo && !item.isAudio {
+                // Create from asset (web "Create from asset" / "Use identity") + reel composer hand-off
+                if item.isExecuted && item.storagePath != nil && !item.isVideo && !item.isAudio && !item.id.hasPrefix("sample-") {
+                    HStack(spacing: 10) {
+                        if let onCreateFrom {
+                            Button { onCreateFrom(item); CSHaptic.tap() } label: {
+                                Label("এই ছবি থেকে নতুন তৈরি", systemImage: "wand.and.stars")
+                                    .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity).padding(13)
+                                    .background(CS.cta, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }.buttonStyle(.plain)
+                        }
+                        if let onReelFrom {
+                            Button { onReelFrom(item); CSHaptic.tap() } label: {
+                                Label("রিল কম্পোজার", systemImage: "film")
+                                    .font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                                    .frame(maxWidth: .infinity).padding(13).csGlass(scheme, corner: 14)
+                            }.buttonStyle(.plain)
+                        }
+                    }.padding(.horizontal, 18).padding(.top, 14)
+
+                    // One-tap reel — same signed estimate → confirmation gate as every paid run
+                    // (the old direct POST was rejected server-side with run_estimate_required).
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("এই ছবি থেকে রিল").font(.system(size: 12.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                        Text("এক ট্যাপে রিল (Veo · 9:16 · premium)").font(.system(size: 12.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
                         HStack(spacing: 8) {
-                            ForEach([6, 16, 24], id: \.self) { d in
-                                Button { Task { await vm.reelFromImage(item, seconds: d) }; CSHaptic.tap() } label: {
+                            ForEach(CS.reelChainDurations, id: \.self) { d in
+                                Button { Task { _ = await vm.reelFromImage(item, seconds: d) }; CSHaptic.tap() } label: {
                                     Text("\(almaBn(d))s ~৳\(almaBn(CS.longReelCostBdt(d)))")
                                         .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
                                         .padding(.vertical, 9).padding(.horizontal, 13)
                                         .background(AgentPalette.coral, in: Capsule())
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(.plain).disabled(vm.generating)
                             }
                         }
+                        Text("আগে signed estimate দেখাবে · \(CS.reelChainDurations.last.map { _ in "16/24s = 2×/3× 8s chain" } ?? "")")
+                            .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
                     }.padding(.horizontal, 18).padding(.top, 14)
                 }
 
@@ -4452,6 +5554,7 @@ private struct CSDetailSheet: View {
         // The main screen's toast floats UNDER this sheet — show it in-sheet too,
         // otherwise finishing/reel/rate feedback is invisible (owner report, build 66).
         .overlay(alignment: .top) { CSToastView(message: vm.toast) }
+        .csEstimateAlert(vm: vm)
         .alert("ছবিটা একেবারে মুছে যাবে — নিশ্চিত?", isPresented: $confirmDelete) {
             Button("বাতিল", role: .cancel) {}
             Button("মুছে ফেলুন", role: .destructive) {
@@ -4517,13 +5620,16 @@ private struct CSDetailSheet: View {
     private var actionsRow: some View {
         HStack(spacing: 10) {
             if displayURL != nil {
-                actionButton(downloading ? "সেভ হচ্ছে…" : "ডাউনলোড",
+                actionButton(downloading ? "সেভ হচ্ছে…" : (item.scopedDownloadURL != nil && !showBranded ? "Original" : "ডাউনলোড"),
                              downloading ? "arrow.triangle.2.circlepath" : "arrow.down.to.line", primary: true) {
                     guard !downloading, let url = displayURL else { return }
                     Task {
                         downloading = true
                         defer { downloading = false }
-                        guard let data = try? await CSMediaSaver.fetch(url) else { vm.flash("ডাউনলোড হয়নি — নেট চেক করুন"); return }
+                        // Original (not branded) → the scoped full-resolution download route when the
+                        // canonical lineage tuple exists (web "Download original"); else the preview URL.
+                        let target = (!showBranded || !hasFinishing) ? (item.scopedDownloadURL ?? url) : url
+                        guard let data = try? await CSMediaSaver.fetch(target), !data.isEmpty else { vm.flash("ডাউনলোড হয়নি — নেট চেক করুন"); return }
                         let ok = await CSMediaSaver.saveToPhotos(
                             data, ext: CSMediaSaver.ext(url, isVideo: item.isVideo), isVideo: item.isVideo)
                         vm.flash(ok ? (item.isVideo ? "ভিডিও ফটো অ্যাপে সেভ হয়েছে ✅" : "ছবি ফটো অ্যাপে সেভ হয়েছে ✅")
@@ -4549,6 +5655,27 @@ private struct CSDetailSheet: View {
     private func metaTag(_ t: String) -> some View {
         Text(t).font(.system(size: 11, weight: .medium)).foregroundStyle(AgentPalette(scheme).muted)
             .padding(.vertical, 4).padding(.horizontal, 10).csGlass(scheme, corner: 999)
+    }
+    private func fact(_ k: String, _ v: String) -> some View {
+        HStack(alignment: .top) {
+            Text(k).font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted)
+            Spacer(minLength: 12)
+            Text(v).font(.system(size: 11, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
+                .multilineTextAlignment(.trailing).lineLimit(2)
+        }
+    }
+    private func navButton(_ icon: String, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: {
+            Image(systemName: icon).font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                .frame(width: 30, height: 30).csGlass(scheme, corner: 999)
+        }.buttonStyle(.plain)
+    }
+    private func move(_ direction: Int) {
+        guard siblings.count > 1, let idx = siblings.firstIndex(where: { $0.id == item.id }) else { return }
+        let next = (idx + direction + siblings.count) % siblings.count
+        player?.pause(); player = nil
+        showFinish = false; framedOverride = nil; rating = nil
+        item = siblings[next]
     }
     private func actionLabel(_ label: String, _ icon: String, primary: Bool) -> some View {
         VStack(spacing: 6) {
@@ -4619,6 +5746,8 @@ struct CSFinishPanel: View {
     @Environment(\.colorScheme) private var scheme
     @State private var hook = ""
     @State private var code = ""
+    @State private var productName = ""
+    @State private var price = ""
     @State private var eyebrow = ""
     @State private var offer = ""
     @State private var modeIdx = 0     // lifestyle | model_overlay | product_card
@@ -4643,7 +5772,11 @@ struct CSFinishPanel: View {
             if isLifestyle {
                 field("অফার লাইন (খালি রাখলে: অফার প্রাইস জানতে ইনবক্স করুন)", text: $offer)
             }
-            field("Product code (যেমন: ALM-315) — ঐচ্ছিক", text: $code)
+            HStack(spacing: 8) {
+                field("Product code (যেমন: ALM-315)", text: $code)
+                field("দাম (যেমন: ৳2,490)", text: $price).frame(width: 130)
+            }
+            field("প্রোডাক্টের নাম — ঐচ্ছিক", text: $productName)
 
             Text("লেআউট").font(.system(size: 11, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
             CSSegment(items: CS.finishModes.map(\.bn), index: $modeIdx)
@@ -4674,6 +5807,8 @@ struct CSFinishPanel: View {
                         storagePath: path,
                         hook: hook.trimmingCharacters(in: .whitespaces),
                         productCode: code.isEmpty ? nil : code,
+                        productName: productName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : productName.trimmingCharacters(in: .whitespaces),
+                        price: price.trimmingCharacters(in: .whitespaces).isEmpty ? nil : price.trimmingCharacters(in: .whitespaces),
                         eyebrow: isLifestyle && !eyebrow.isEmpty ? eyebrow : nil,
                         offer: isLifestyle && !offer.isEmpty ? offer : nil,
                         mode: CS.finishModes[modeIdx].id,
@@ -5454,7 +6589,7 @@ struct CSToastView: View {
 // MARK: - Glass helper + haptics
 
 @available(iOS 17.0, *)
-private extension View {
+extension View {
     func csGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
@@ -5462,6 +6597,25 @@ private extension View {
                         in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .strokeBorder(Color.white.opacity(scheme == .dark ? 0.1 : 0.4), lineWidth: 1))
+    }
+}
+
+/// Signed estimate → owner confirmation alert (web `StudioConfirmationDialog`). Attach to the
+/// view that INITIATED the run (Create tab, Video tab, detail sheet) — SwiftUI alerts under a
+/// presented sheet never show, so the initiator owns the alert.
+@available(iOS 17.0, *)
+extension View {
+    func csEstimateAlert(vm: CreativeStudioVM) -> some View {
+        alert(item: Binding(get: { vm.pendingEstimate }, set: { vm.pendingEstimate = $0 })) { estimate in
+            Alert(
+                title: Text("Signed estimate নিশ্চিত করুন"),
+                message: Text(estimate.confirmationBody),
+                primaryButton: .cancel(Text("বাতিল"), action: vm.cancelPendingRun),
+                secondaryButton: .default(Text("Confirm & Run")) {
+                    Task { await vm.confirmPendingRun(using: estimate) }
+                }
+            )
+        }
     }
 }
 

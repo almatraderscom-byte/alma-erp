@@ -90,7 +90,9 @@ describe('iOS current-production Creative Studio parity', () => {
     expect(nativeStudio).toContain('writable.first { $0.id == priorProjectID }')
     expect(nativeStudio).toContain('query["q"] = search')
     expect(nativeStudio).toContain('.onSubmit { Task { await vm.refreshGallery() } }')
-    expect(nativeStudio).toContain('query["order"] = gallerySort')
+    // Server knows newest/oldest; name/cost sort is client-side (web Gallery parity).
+    expect(nativeStudio).toContain('query["order"] = serverOrder')
+    expect(nativeStudio).toContain('case "name": return refined.sorted')
     expect(nativeWorkspace).toContain('model.invalidateCampaignPreview()')
     expect(nativeWorkspace).toContain('guard selectedBrandID == brandID, selectedProjectID == projectID')
     expect(nativeStudio).toContain('shouldShowSampleGallery')
@@ -177,7 +179,7 @@ describe('iOS current-production Creative Studio parity', () => {
 
   it('protects mask repair from unavailable sources and preserves brush taps', () => {
     expect(nativeStudio).toContain('item.archivedToDrive != true')
-    expect(nativeMaskRepair).toContain('if stroke.count == 1')
+    expect(nativeMaskRepair).toContain('if stroke.points.count == 1')
     expect(nativeMaskRepair).toContain('cg.fillEllipse')
   })
 })
