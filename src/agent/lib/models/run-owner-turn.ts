@@ -709,6 +709,11 @@ async function* runAlternateProviderTurn(
   // A created DB plan is not yet owner-visible control state. Work remains
   // locked until its authoritative snapshot has actually been emitted.
   let prospectivePlanTrackerVisible = false
+  // If the provider finally obeys make_plan on the last allowed round there is
+  // no later model round available to write a useful answer. Remember that
+  // exact edge so the post-loop gate emits the deterministic plan-only result
+  // even when the first projection was immediately visible.
+  let prospectivePlanCreatedOnFinalIteration = false
   // The plan's steps as of the last checklist read, so a tool call can tick off
   // the step it belongs to while the turn is still running — see
   // plan-step-advance.ts for why the autonomous driver could not do this.
@@ -3554,6 +3559,12 @@ async function* runAlternateProviderTurn(
       const prospectivePlanCalls = partitionProspectivePlanCalls(
         calls, withholdProspectivePlanProse)
       const acceptedProspectivePlanCalls = new Set(prospectivePlanCalls.accepted)
+      // Provider siblings rejected by the forced-plan gate are transcript
+      // protocol only: they did no work and must not advance the owner's
+      // progress cadence as if several real steps completed.
+      const progressCallCount = withholdProspectivePlanProse
+        ? acceptedProspectivePlanCalls.size
+        : calls.length
       for (const call of calls) {
         if (withholdProspectivePlanProse && !acceptedProspectivePlanCalls.has(call)) {
           const rejected = {
@@ -3913,6 +3924,9 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
+        if (call.name === 'make_plan' && result.success && iteration >= maxIterations - 1) {
+          prospectivePlanCreatedOnFinalIteration = true
+        }
         const claimedStepBeforeSettlement = claimedPlanStepId
         let planStepFinished = false
         try {
@@ -4219,7 +4233,7 @@ async function* runAlternateProviderTurn(
       // in the same turn.
       // Refused hallucinations did no work — they are not silent STEPS either
       // (Codex P2 #816 r20).
-      stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : calls.length
+      stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : progressCallCount
       // Terminal gates outrank the cadence (Codex P1 #816 round 4): a failed
       // mandatory step or a staged owner question ENDS the turn below — an
       // escalation `continue` here would skip those checks, restore tools and
@@ -4509,7 +4523,7 @@ async function* runAlternateProviderTurn(
     )
     if (ownerRequirements.planFirst
       && prospectivePlanCreatedAfterLoop
-      && !prospectivePlanTrackerVisible) {
+      && (!prospectivePlanTrackerVisible || prospectivePlanCreatedOnFinalIteration)) {
       for (let attempt = 0; attempt < 2 && !prospectivePlanTrackerVisible; attempt++) {
         const finalPlanSnapshot = await currentPlanTrackerEvent()
         if (!finalPlanSnapshot) continue

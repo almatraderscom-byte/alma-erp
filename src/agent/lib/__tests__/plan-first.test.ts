@@ -114,6 +114,8 @@ describe('prospective plan binding', () => {
     const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
     expect(source).toContain('if (!withholdProspectivePlanProse)')
     expect(source).toContain('!acceptedProspectivePlanCalls.has(call)')
+    expect(source).toContain('const progressCallCount = withholdProspectivePlanProse')
+    expect(source).toContain('stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : progressCallCount')
     expect(source).toContain('if (!hideProspectivePlanControl)')
   })
 
@@ -124,6 +126,8 @@ describe('prospective plan binding', () => {
 
     const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
     expect(source).toContain('const prospectivePlanCreatedAfterLoop = toolRecords.some')
+    expect(source).toContain('prospectivePlanCreatedOnFinalIteration = true')
+    expect(source).toContain('!prospectivePlanTrackerVisible || prospectivePlanCreatedOnFinalIteration')
     expect(source).toContain('attempt < 2 && !prospectivePlanTrackerVisible')
     expect(source).toContain('prospectivePlanExitText(prospectivePlanTrackerVisible)')
     expect(source).not.toContain('const projectionFailure =')
