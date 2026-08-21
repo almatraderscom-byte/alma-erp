@@ -140,10 +140,21 @@ struct TradingHomePerfRow: Decodable, Identifiable {
     let health: String?
     let screenshotToday: Bool?
     let screenshotCompliance: String?
+    // Web "Account Performance & Health" table columns.
+    let weeklyPl: Int?
+    let roi: Double?
+    let expenseRatio: Double?
+    let feeTotals: Int?
+    let merchantProgress: Double?
+    let assignedStaff: String?
+    let activityStatus: String?
+    let inactiveDays: Int?
 
     private enum Keys: String, CodingKey {
         case id, accountTitle, currentBalance, dailyPl, health
         case screenshotToday, screenshotCompliance
+        case weeklyPl, roi, expenseRatio, feeTotals, merchantProgress
+        case assignedStaff, activityStatus, inactiveDays
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -154,6 +165,87 @@ struct TradingHomePerfRow: Decodable, Identifiable {
         health = try? c.decodeIfPresent(String.self, forKey: .health)
         screenshotToday = try? c.decodeIfPresent(Bool.self, forKey: .screenshotToday)
         screenshotCompliance = try? c.decodeIfPresent(String.self, forKey: .screenshotCompliance)
+        weeklyPl = c.tradingHomeInt(.weeklyPl)
+        roi = c.tradingHomeDouble(.roi)
+        expenseRatio = c.tradingHomeDouble(.expenseRatio)
+        feeTotals = c.tradingHomeInt(.feeTotals)
+        merchantProgress = c.tradingHomeDouble(.merchantProgress)
+        assignedStaff = try? c.decodeIfPresent(String.self, forKey: .assignedStaff)
+        activityStatus = try? c.decodeIfPresent(String.self, forKey: .activityStatus)
+        inactiveDays = c.tradingHomeInt(.inactiveDays)
+    }
+}
+
+/// Web "Merchant Growth & Capital Risk" card.
+struct TradingHomeMerchantGrowth: Decodable {
+    let averageScore: Double?
+    let trend: String?
+    let weeklyComparison: Double?
+    private enum Keys: String, CodingKey { case averageScore, trend, weeklyComparison }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        averageScore = c.tradingHomeDouble(.averageScore)
+        trend = try? c.decodeIfPresent(String.self, forKey: .trend)
+        weeklyComparison = c.tradingHomeDouble(.weeklyComparison)
+    }
+}
+
+struct TradingHomeCapitalRisk: Decodable {
+    let remainingCapital: Double?
+    let capitalUtilization: Double?
+    let lossExposure: Double?
+    let feeBurden: Double?
+    private enum Keys: String, CodingKey {
+        case remainingCapital, capitalUtilization, lossExposure, feeBurden
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        remainingCapital = c.tradingHomeDouble(.remainingCapital)
+        capitalUtilization = c.tradingHomeDouble(.capitalUtilization)
+        lossExposure = c.tradingHomeDouble(.lossExposure)
+        feeBurden = c.tradingHomeDouble(.feeBurden)
+    }
+}
+
+/// One point of the web MiniOpsTrend sparkline (dashboard `trend` rows).
+struct TradingHomeTrendPoint: Decodable, Identifiable {
+    let date: String
+    let netBdt: Double
+    var id: String { date }
+    private enum Keys: String, CodingKey { case date, netBdt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        date = (try? c.decodeIfPresent(String.self, forKey: .date)) ?? UUID().uuidString
+        netBdt = c.tradingHomeDouble(.netBdt) ?? 0
+    }
+}
+
+/// Web "Staff Performance Rankings" row.
+struct TradingHomeStaffRank: Decodable, Identifiable {
+    let userId: String
+    let name: String?
+    let managedAccounts: Int?
+    let managedCapital: Int?
+    let totalProfitGenerated: Int?
+    let commissionEarned: Int?
+    let activityConsistency: Double?
+    let score: Double?
+    var id: String { userId }
+
+    private enum Keys: String, CodingKey {
+        case userId, name, managedAccounts, managedCapital, totalProfitGenerated
+        case commissionEarned, activityConsistency, score
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        userId = (try? c.decode(String.self, forKey: .userId)) ?? UUID().uuidString
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        managedAccounts = c.tradingHomeInt(.managedAccounts)
+        managedCapital = c.tradingHomeInt(.managedCapital)
+        totalProfitGenerated = c.tradingHomeInt(.totalProfitGenerated)
+        commissionEarned = c.tradingHomeInt(.commissionEarned)
+        activityConsistency = c.tradingHomeDouble(.activityConsistency)
+        score = c.tradingHomeDouble(.score)
     }
 }
 
@@ -163,10 +255,13 @@ struct TradingHomeAlert: Decodable, Identifiable {
     let title: String?
     let message: String?
     let accountTitle: String?
+    let accountId: String?
     let actionUrl: String?
     var id: String { key }
 
-    private enum Keys: String, CodingKey { case key, severity, title, message, accountTitle, actionUrl }
+    private enum Keys: String, CodingKey {
+        case key, severity, title, message, accountTitle, accountId, actionUrl
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         key = (try? c.decode(String.self, forKey: .key)) ?? UUID().uuidString
@@ -174,6 +269,7 @@ struct TradingHomeAlert: Decodable, Identifiable {
         title = try? c.decodeIfPresent(String.self, forKey: .title)
         message = try? c.decodeIfPresent(String.self, forKey: .message)
         accountTitle = try? c.decodeIfPresent(String.self, forKey: .accountTitle)
+        accountId = try? c.decodeIfPresent(String.self, forKey: .accountId)
         actionUrl = try? c.decodeIfPresent(String.self, forKey: .actionUrl)
     }
 }
@@ -232,10 +328,15 @@ struct TradingHomeDashboard: Decodable {
     let alerts: [TradingHomeAlert]
     let latestTrades: [TradingHomeTrade]
     let latestExpenses: [TradingHomeExpense]
+    let merchantGrowth: TradingHomeMerchantGrowth?
+    let capitalRisk: TradingHomeCapitalRisk?
+    let trend: [TradingHomeTrendPoint]
+    let staffRankings: [TradingHomeStaffRank]
 
     private enum Keys: String, CodingKey {
         case ok, data, kpis, screenshotCompliance, accountPerformance, alerts
-        case latestTrades, latestExpenses
+        case latestTrades, latestExpenses, merchantGrowth, capitalRisk, trend
+        case staffRankings
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -246,6 +347,11 @@ struct TradingHomeDashboard: Decodable {
         alerts = (try? c.decodeIfPresent([TradingHomeAlert].self, forKey: .alerts)) ?? []
         latestTrades = (try? c.decodeIfPresent([TradingHomeTrade].self, forKey: .latestTrades)) ?? []
         latestExpenses = (try? c.decodeIfPresent([TradingHomeExpense].self, forKey: .latestExpenses)) ?? []
+        merchantGrowth = try? c.decodeIfPresent(TradingHomeMerchantGrowth.self, forKey: .merchantGrowth)
+        capitalRisk = try? c.decodeIfPresent(TradingHomeCapitalRisk.self, forKey: .capitalRisk)
+        trend = (try? c.decodeIfPresent([TradingHomeTrendPoint].self, forKey: .trend)) ?? []
+        struct RankWrap: Decodable { let rows: [TradingHomeStaffRank]? }
+        staffRankings = (try? c.decodeIfPresent(RankWrap.self, forKey: .staffRankings))??.rows ?? []
     }
 }
 
@@ -265,9 +371,12 @@ struct TradingHomeSummaryKpis: Decodable {
     let totalFees: Int?
     let totalOperatingExpenses: Int?
     let totalTradedUsdt: Double?
+    let totalBuyUsdt: Double?
+    let totalSellUsdt: Double?
 
     private enum Keys: String, CodingKey {
-        case activeAccounts, totalCapital, totalFees, totalOperatingExpenses, totalTradedUsdt
+        case activeAccounts, totalCapital, totalFees, totalOperatingExpenses
+        case totalTradedUsdt, totalBuyUsdt, totalSellUsdt
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -276,6 +385,8 @@ struct TradingHomeSummaryKpis: Decodable {
         totalFees = c.tradingHomeInt(.totalFees)
         totalOperatingExpenses = c.tradingHomeInt(.totalOperatingExpenses)
         totalTradedUsdt = c.tradingHomeDouble(.totalTradedUsdt)
+        totalBuyUsdt = c.tradingHomeDouble(.totalBuyUsdt)
+        totalSellUsdt = c.tradingHomeDouble(.totalSellUsdt)
     }
 }
 
@@ -353,6 +464,26 @@ struct TradingHomeAccountsResponse: Decodable {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         accounts = (try? c.decode([TradingHomeAccount].self, forKey: .accounts)) ?? []
+    }
+}
+
+/// Port of src/lib/trading-alert-cta.ts — an alert key decides which write sheet
+/// its button opens, so a native alert is fixable in place like on the web.
+enum TradingHomeAlertCta {
+    enum Action { case screenshot, summary, trade, view }
+
+    static func forKey(_ key: String) -> (label: String, action: Action) {
+        let type = key.firstIndex(of: ":").map { String(key[key.index(after: $0)...]) } ?? key
+        switch type {
+        case "missing-screenshot", "missing-screenshot-today":
+            return ("Upload Now", .screenshot)
+        case "missing-daily-summary":
+            return ("Add Summary", .summary)
+        case "critical-balance", "loss-threshold", "loss-streak":
+            return ("Add Trade", .trade)
+        default:
+            return ("Open Account", .view)
+        }
     }
 }
 
@@ -554,7 +685,16 @@ struct TradingHomeScreen: View {
     @State private var showExpense = false
     @State private var showCapital = false
     @State private var showShot = false
+    /// Web gates the business KPI row, the performance table and the staff
+    /// rankings behind ADMIN/SUPER_ADMIN (ActorContext). Unknown role = staff view.
+    @State private var role: String? = OrdIdentity.cached?.role
+    /// The account a quick action was fired for (alert CTA / per-account button) —
+    /// the write sheets open with it preselected, like the web modals do.
+    @State private var actionAccountId: String? = nil
+    @State private var tradeInitialMode = "BANK"
     let openWeb: (_ path: String, _ title: String) -> Void
+
+    private var isAdmin: Bool { role == "SUPER_ADMIN" || role == "ADMIN" }
 
     var body: some View {
         ScrollView {
@@ -570,6 +710,11 @@ struct TradingHomeScreen: View {
                     if vm.complianceNeedsAttention { complianceStrip }
                     accountsCard
                     if !(vm.dash?.alerts.isEmpty ?? true) { alertsCard }
+                    if isAdmin {
+                        growthRiskCard
+                        performanceTableCard
+                        staffRankingsCard
+                    }
                     snapshotsCard
                     recentActivity
                 }
@@ -582,11 +727,23 @@ struct TradingHomeScreen: View {
         .background(TradingHomeAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
-        .sheet(isPresented: $showTrade) { TradingHomeTradeSheet(vm: vm) }
-        .sheet(isPresented: $showExpense) { TradingHomeExpenseSheet(vm: vm) }
-        .sheet(isPresented: $showCapital) { TradingHomeCapitalSheet(vm: vm) }
-        .sheet(isPresented: $showShot) { TradingHomeShotSheet(vm: vm) }
+        .task {
+            await vm.load()
+            if role == nil, let me = await OrdIdentity.load() { role = me.role }
+        }
+        .sheet(isPresented: $showTrade, onDismiss: { actionAccountId = nil }) {
+            TradingHomeTradeSheet(vm: vm, preselect: actionAccountId,
+                                  initialMode: tradeInitialMode)
+        }
+        .sheet(isPresented: $showExpense, onDismiss: { actionAccountId = nil }) {
+            TradingHomeExpenseSheet(vm: vm, preselect: actionAccountId)
+        }
+        .sheet(isPresented: $showCapital, onDismiss: { actionAccountId = nil }) {
+            TradingHomeCapitalSheet(vm: vm, preselect: actionAccountId)
+        }
+        .sheet(isPresented: $showShot, onDismiss: { actionAccountId = nil }) {
+            TradingHomeShotSheet(vm: vm, preselect: actionAccountId)
+        }
         .overlay(alignment: .bottom) {
             if let t = vm.toast {
                 Text(t)
@@ -608,7 +765,11 @@ struct TradingHomeScreen: View {
     //    2026-07-11: money entry native). ──
     private var workflowActions: some View {
         HStack(spacing: 8) {
-            workflowButton("plus.circle.fill", "Add Trade", TradingHomePalette.gold(colorScheme)) { showTrade = true }
+            workflowButton("plus.circle.fill", "Add Trade", TradingHomePalette.gold(colorScheme)) {
+                actionAccountId = nil
+                tradeInitialMode = "BANK"
+                showTrade = true
+            }
             workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) { showExpense = true }
             workflowButton("arrow.up.arrow.down.circle", "Capital", AlmaSwiftTheme.sage) { showCapital = true }
             workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) { showShot = true }
@@ -649,6 +810,7 @@ struct TradingHomeScreen: View {
                                 todayNet: k?.netTodayResult,
                                 todayProfit: k?.todayProfit,
                                 todayLoss: k?.todayLoss)
+            if isAdmin {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
                                 GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 TradingHomeBentoStatTile(label: "Active accounts",
@@ -682,9 +844,206 @@ struct TradingHomeScreen: View {
                                          format: { AlmaSwiftTheme.takaShort($0) }, sub: "অপারেটিং খরচ",
                                          tint: TradingHomePalette.red400,
                                          accent: TradingHomePalette.red500)
+                TradingHomeBentoStatTile(label: "Active staff",
+                                         target: k?.activeStaffCount,
+                                         format: { "\($0)" }, sub: "ট্রেড করছে",
+                                         tint: TradingHomePalette.blue400,
+                                         accent: TradingHomePalette.blue400)
+                TradingHomeBentoStatTile(label: "Total buy USDT",
+                                         target: bk?.totalBuyUsdt.map { Int($0.rounded()) },
+                                         format: { "\(TradingHomeFormat.usdtShort(Double($0))) USDT" },
+                                         sub: "মোট কেনা",
+                                         tint: TradingHomePalette.gold(colorScheme),
+                                         accent: AlmaSwiftTheme.coral)
+                TradingHomeBentoStatTile(label: "Total sell USDT",
+                                         target: bk?.totalSellUsdt.map { Int($0.rounded()) },
+                                         format: { "\(TradingHomeFormat.usdtShort(Double($0))) USDT" },
+                                         sub: "মোট বেচা",
+                                         tint: TradingHomePalette.green400,
+                                         accent: TradingHomePalette.emerald600)
+            }
             }
         }
         .padding(.top, 4)
+    }
+
+    // ── Merchant growth & capital risk + 14-day trend (web admin card) ──
+
+    private var growthRiskCard: some View {
+        let g = vm.dash?.merchantGrowth
+        let r = vm.dash?.capitalRisk
+        let trendTone: Color = g?.trend == "UP" ? TradingHomePalette.signed(1, colorScheme)
+            : g?.trend == "DOWN" ? TradingHomePalette.red400
+            : TradingHomePalette.blue400
+        return TradingHomeSectionCard(title: "Merchant Growth & Capital Risk",
+                                      sub: "গ্রোথ স্কোর · ক্যাপিটাল ঝুঁকি",
+                                      trailing: nil, onTrailing: nil) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                                GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                metricPill("Avg growth score", String(format: "%.1f%%", g?.averageScore ?? 0),
+                           TradingHomePalette.signed(1, colorScheme))
+                metricPill("Growth trend", g?.trend ?? "FLAT", trendTone)
+                metricPill("Capital utilization", String(format: "%.1f%%", r?.capitalUtilization ?? 0),
+                           TradingHomePalette.amber500)
+                metricPill("Loss exposure", String(format: "%.1f%%", r?.lossExposure ?? 0),
+                           TradingHomePalette.red400)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 4)
+            trendSpark
+        }
+    }
+
+    private func metricPill(_ label: String, _ value: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            Text(value).font(.subheadline.weight(.bold).monospacedDigit())
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Web MiniOpsTrend — last 14 days of net profit as one stroked path.
+    @ViewBuilder private var trendSpark: some View {
+        let points = Array((vm.dash?.trend ?? []).suffix(14))
+        if points.count >= 2 {
+            let values = points.map(\.netBdt)
+            let minV = min(values.min() ?? 0, 0)
+            let maxV = max(values.max() ?? 1, 1)
+            let span = max(maxV - minV, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                GeometryReader { geo in
+                    Path { path in
+                        for (i, v) in values.enumerated() {
+                            let x = values.count == 1 ? 0
+                                : geo.size.width * CGFloat(i) / CGFloat(values.count - 1)
+                            let y = geo.size.height * (1 - CGFloat((v - minV) / span))
+                            if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                            else { path.addLine(to: CGPoint(x: x, y: y)) }
+                        }
+                    }
+                    .stroke(TradingHomePalette.gold(colorScheme),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                }
+                .frame(height: 72)
+                Text("শেষ \(points.count) দিনের নেট প্রফিট ট্রেন্ড")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+        }
+    }
+
+    // ── Account Performance & Health (web admin table) ──
+
+    private var performanceTableCard: some View {
+        let rows = vm.dash?.accountPerformance ?? []
+        return TradingHomeSectionCard(title: "Account Performance & Health",
+                                      sub: "ব্যালেন্স · P/L · ROI · খরচ · হেলথ",
+                                      trailing: nil, onTrailing: nil) {
+            if rows.isEmpty {
+                emptyLine("No account performance yet")
+            } else {
+                ForEach(Array(rows.prefix(20).enumerated()), id: \.element.id) { idx, row in
+                    if idx > 0 { tradingHomeDivider }
+                    Button {
+                        openWeb("/trading/accounts/\(row.id)", row.accountTitle ?? "Trading account")
+                    } label: {
+                        performanceRow(row)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func performanceRow(_ row: TradingHomePerfRow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.accountTitle ?? "—")
+                        .font(.caption.weight(.bold)).foregroundStyle(.primary).lineLimit(1)
+                    Text("\((row.activityStatus ?? "—").replacingOccurrences(of: "_", with: " ")) · \(row.inactiveDays ?? 0)d idle · \(row.assignedStaff ?? "Unassigned")")
+                        .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                tradingHomePill(row.health ?? "—", TradingHomePalette.health(row.health, colorScheme))
+            }
+            HStack(spacing: 10) {
+                perfMetric("Balance", TradingHomeFormat.taka(row.currentBalance ?? 0),
+                           TradingHomePalette.gold(colorScheme))
+                perfMetric("Daily", TradingHomeFormat.taka(row.dailyPl ?? 0),
+                           TradingHomePalette.signed(row.dailyPl ?? 0, colorScheme))
+                perfMetric("Weekly", TradingHomeFormat.taka(row.weeklyPl ?? 0),
+                           TradingHomePalette.signed(row.weeklyPl ?? 0, colorScheme))
+                perfMetric("ROI", String(format: "%.1f%%", row.roi ?? 0),
+                           TradingHomePalette.signed(Int((row.roi ?? 0).rounded()), colorScheme))
+            }
+            HStack(spacing: 10) {
+                perfMetric("Expense", String(format: "%.1f%%", row.expenseRatio ?? 0),
+                           (row.expenseRatio ?? 0) > 35 ? TradingHomePalette.red400 : .secondary)
+                perfMetric("Fees", TradingHomeFormat.taka(row.feeTotals ?? 0),
+                           TradingHomePalette.amber500)
+                perfMetric("Progress", String(format: "%.1f%%", row.merchantProgress ?? 0), .secondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+
+    private func perfMetric(_ label: String, _ value: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased()).font(.system(size: 8, weight: .bold)).tracking(0.3)
+                .foregroundStyle(.secondary)
+            Text(value).font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // ── Staff Performance Rankings (web admin card) ──
+
+    private var staffRankingsCard: some View {
+        let rows = vm.dash?.staffRankings ?? []
+        return TradingHomeSectionCard(title: "Staff Performance Rankings",
+                                      sub: "স্কোর · কমিশন · কনসিসটেন্সি",
+                                      trailing: nil, onTrailing: nil) {
+            if rows.isEmpty {
+                emptyLine("No staff performance yet")
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, staff in
+                    if idx > 0 { tradingHomeDivider }
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(staff.name ?? "Staff").font(.caption.weight(.bold)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text("Score \(Int((staff.score ?? 0).rounded()))")
+                                .font(.caption.weight(.bold).monospacedDigit())
+                        }
+                        HStack(spacing: 10) {
+                            perfMetric("Accounts", "\(staff.managedAccounts ?? 0)", .secondary)
+                            perfMetric("Capital", TradingHomeFormat.taka(staff.managedCapital ?? 0),
+                                       TradingHomePalette.gold(colorScheme))
+                            perfMetric("Profit", TradingHomeFormat.taka(staff.totalProfitGenerated ?? 0),
+                                       TradingHomePalette.signed(staff.totalProfitGenerated ?? 0, colorScheme))
+                        }
+                        HStack(spacing: 10) {
+                            perfMetric("Commission", TradingHomeFormat.taka(staff.commissionEarned ?? 0),
+                                       TradingHomePalette.signed(1, colorScheme))
+                            perfMetric("Consistency",
+                                       String(format: "%.0f%%", staff.activityConsistency ?? 0),
+                                       TradingHomePalette.blue400)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                }
+            }
+        }
     }
 
     // ── Screenshot compliance strip (web amber tone card — shown only when the
@@ -731,10 +1090,18 @@ struct TradingHomeScreen: View {
             } else {
                 ForEach(Array(vm.accounts.prefix(12).enumerated()), id: \.element.id) { idx, account in
                     if idx > 0 { tradingHomeDivider }
-                    TradingHomeAccountRow(account: account, perf: vm.perfById[account.id]) {
-                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                        openWeb("/trading/accounts/\(account.id)", account.accountTitle)
-                    }
+                    TradingHomeAccountRow(
+                        account: account,
+                        perf: vm.perfById[account.id],
+                        onTap: {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            openWeb("/trading/accounts/\(account.id)", account.accountTitle)
+                        },
+                        onAction: { action in
+                            if action == .summary { tradeInitialMode = "BKASH" }
+                            else if action == .trade { tradeInitialMode = "BANK" }
+                            openAccountAction(action, accountId: account.id)
+                        })
                 }
             }
         }
@@ -744,15 +1111,14 @@ struct TradingHomeScreen: View {
 
     private var alertsCard: some View {
         let alerts = vm.dash?.alerts ?? []
-        return TradingHomeSectionCard(title: "Action required",
-                                      sub: "ফিক্স করতে ওয়েবে খুলুন",
+        return TradingHomeSectionCard(title: isAdmin ? "Action required" : "Your tasks",
+                                      sub: "Upload Now / Add Summary চাপলেই ঠিক হবে",
                                       trailing: "\(alerts.count)",
                                       onTrailing: nil) {
             ForEach(Array(alerts.prefix(8).enumerated()), id: \.element.id) { idx, alert in
                 if idx > 0 { tradingHomeDivider }
-                Button {
-                    openWeb(alert.actionUrl ?? "/trading", alert.accountTitle ?? "Trading")
-                } label: {
+                let cta = TradingHomeAlertCta.forKey(alert.key)
+                VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(alert.title ?? "Alert").font(.caption.weight(.bold))
@@ -767,11 +1133,48 @@ struct TradingHomeScreen: View {
                         tradingHomePill(alert.severity ?? "LOW",
                                         TradingHomePalette.alert(alert.severity, colorScheme))
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 8) {
+                        Button(cta.label) { runAlertCta(cta.action, alert) }
+                            .font(.caption.weight(.bold))
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(TradingHomePalette.gold(colorScheme))
+                        Button("View account") {
+                            openWeb(alert.actionUrl ?? "/trading", alert.accountTitle ?? "Trading")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 14).padding(.vertical, 10)
             }
+        }
+    }
+
+    /// Web handleAlertCta: 'view' pushes the account page, everything else opens
+    /// the matching write sheet with that alert's account preselected.
+    private func runAlertCta(_ action: TradingHomeAlertCta.Action, _ alert: TradingHomeAlert) {
+        if action == .view {
+            openWeb(alert.actionUrl ?? "/trading", alert.accountTitle ?? "Trading")
+            return
+        }
+        openAccountAction(action, accountId: alert.accountId)
+    }
+
+    /// Shared by the alert CTAs and the per-account row buttons.
+    private func openAccountAction(_ action: TradingHomeAlertCta.Action, accountId: String?) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        actionAccountId = accountId ?? vm.accounts.first?.id
+        switch action {
+        case .screenshot: showShot = true
+        case .summary:
+            tradeInitialMode = "BKASH"
+            showTrade = true
+        case .trade:
+            tradeInitialMode = "BANK"
+            showTrade = true
+        case .view: break
         }
     }
 
@@ -922,8 +1325,8 @@ struct TradingHomeScreen: View {
         .padding(.top, 4)
     }
 
-    /// The web page's mutations (trade entry, expense, bKash summary, screenshot
-    /// upload) are NOT native — one escape row covers them all.
+    /// Every mutation on this page is native now; the escape row is only the
+    /// "open the same page on the web" fallback.
     // ── Quick nav — the web's section tabs as native chips. openWeb routes through
     //    pushSmart, so migrated targets open their NATIVE screens (S7 batch). ──
     private var quickNav: some View {
@@ -959,7 +1362,7 @@ struct TradingHomeScreen: View {
         Button {
             openWeb("/trading", "Trading")
         } label: {
-            Label("ট্রেড / স্ক্রিনশট / সামারি — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -1020,9 +1423,44 @@ private struct TradingHomeAccountRow: View {
     let account: TradingHomeAccount
     let perf: TradingHomePerfRow?
     let onTap: () -> Void
+    /// Web MyTradingAccounts MiniActions — Trade · Screenshot · Summary per row.
+    let onAction: (TradingHomeAlertCta.Action) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
+    private var needsScreenshot: Bool {
+        perf?.screenshotCompliance == "DUE" || perf?.screenshotCompliance == "OVERDUE"
+    }
+
     var body: some View {
+        VStack(spacing: 8) {
+            rowBody
+            HStack(spacing: 8) {
+                miniAction("Trade", emphasis: false) { onAction(.trade) }
+                miniAction("Screenshot", emphasis: needsScreenshot) { onAction(.screenshot) }
+                miniAction("Summary", emphasis: false) { onAction(.summary) }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+        }
+    }
+
+    private func miniAction(_ label: String, emphasis: Bool,
+                            action: @escaping () -> Void) -> some View {
+        let tint = emphasis ? TradingHomePalette.gold(colorScheme) : Color.secondary
+        return Button(action: action) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .bold)).tracking(0.3)
+                .foregroundStyle(tint)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(tint.opacity(emphasis ? 0.12 : 0.06),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(tint.opacity(emphasis ? 0.30 : 0.15), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var rowBody: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1051,7 +1489,7 @@ private struct TradingHomeAccountRow: View {
                     }
                 }
             }
-            .padding(.horizontal, 14).padding(.vertical, 11)
+            .padding(.horizontal, 14).padding(.top, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1498,6 +1936,8 @@ struct TradingHomeTradeSheet: View {
     var preselect: String? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    /// Web tradeInitialMode — the "Add Summary" CTA opens straight in BKASH mode.
+    var initialMode: String = "BANK"
     @State private var accountId = ""
     @State private var mode = "BANK"           // BANK | BKASH — web defaults BANK
     @State private var tradeType = "BUY"
@@ -1589,7 +2029,10 @@ struct TradingHomeTradeSheet: View {
                     .foregroundStyle(TradingHomePalette.signed(-1, scheme))
             }
         }
-        .onAppear { if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" } }
+        .onAppear {
+            if accountId.isEmpty { accountId = preselect ?? vm.accounts.first?.id ?? "" }
+            mode = initialMode
+        }
         .confirmationDialog(
             mode == "BKASH"
                 ? "Bkash summary সেভ করবেন? Net \(TradingHomeFormat.taka(Int(bkashNet.rounded())))"
