@@ -2504,10 +2504,14 @@ final class CSSlot {
     var sourceItem: CSGalleryItem?
     /// Owner-facing origin label ("আপলোড", "প্রজেক্ট প্রোডাক্ট", "গ্যালারি", "ক্লিপবোর্ড").
     var origin: String?
+    /// Bumped on every source change; an upload that finishes for an older generation
+    /// must not overwrite the source the owner is now looking at.
+    private(set) var generation = 0
 
     var hasImage: Bool { image != nil || remoteURL != nil }
 
     func clear() {
+        generation += 1
         picked = nil; image = nil; path = nil; referenceId = nil; uploading = false
         remoteURL = nil; sourceItem = nil; origin = nil
     }
@@ -2561,6 +2565,8 @@ final class CSSlot {
 
     @MainActor
     func load(image ui: UIImage, vm: CreativeStudioVM, folder: String, referenceKind: String?, origin: String) async {
+        generation += 1
+        let myGeneration = generation
         image = ui
         path = nil
         referenceId = nil
@@ -2568,14 +2574,16 @@ final class CSSlot {
         sourceItem = nil
         self.origin = origin
         uploading = true
-        defer { uploading = false }
+        defer { if generation == myGeneration { uploading = false } }
         guard let jpeg = CSSlot.jpegData(ui) else { vm.flash("ছবি পড়া গেল না"); return }
         do {
             let upload = try await vm.uploadImage(jpeg, folder: folder, referenceKind: referenceKind)
+            // Source was replaced (project product / Gallery / another pick) while uploading — drop it.
+            guard generation == myGeneration else { return }
             path = upload.path
             referenceId = upload.referenceId
         }
-        catch { vm.flash("আপলোড ব্যর্থ হলো") }
+        catch { if generation == myGeneration { vm.flash("আপলোড ব্যর্থ হলো") } }
     }
 }
 
@@ -3357,10 +3365,13 @@ private struct CSAdvancedPanel: View {
         payload.familyPreset = supportsFamily ? familyId : nil
         payload.prompt = prompt.isEmpty ? nil : prompt
         payload.backgroundPrompt = bg.id != "custom" ? bg.prompt : (prompt.isEmpty ? nil : prompt)
-        // Gallery source lineage (sourcePendingActionId / sourceAssetIds on the run).
-        if let seed = source.sourceItem ?? product.sourceItem {
-            payload.sourcePendingActionId = seed.id
-            payload.sourceAssetIds = seed.projectAssetId.map { [$0] }
+        // Gallery source lineage: every Gallery-backed slot (product / source / 2nd family
+        // image) must be authorized in sourceAssetIds, else source_lineage_scope_mismatch.
+        let galleryItems = [source.sourceItem, product.sourceItem, model.sourceItem, source2.sourceItem].compactMap { $0 }
+        if let primary = galleryItems.first {
+            payload.sourcePendingActionId = primary.id
+            let ids = galleryItems.compactMap(\.projectAssetId)
+            payload.sourceAssetIds = ids.isEmpty ? nil : Array(NSOrderedSet(array: ids)) as? [String]
         }
         if mode.id == "image_to_video" {
             payload.vibe = CS.vibes[vibe].id
