@@ -20,15 +20,66 @@
  * done is worse than one that does not move.
  */
 import { markStepDone, markStepFailed, markStepRunning } from '@/agent/lib/planner'
+import type { WorkStepsBlocker } from '@/agent/lib/work-steps'
 
 /** Planning/control calls manage the checklist; they are not checklist work. */
 export const PLAN_CONTROL_TOOLS = new Set(['make_plan', 'execute_plan', 'get_plan'])
+
+/** Create the prospective tracker before sibling calls can perform its work. */
+export function prioritizePlanCreationForUntrackedRound<T extends { name: string }>(
+  calls: T[],
+  hasTracker: boolean,
+): T[] {
+  if (hasTracker || !calls.some((call) => call.name === 'make_plan')) return calls
+  return [
+    ...calls.filter((call) => call.name === 'make_plan'),
+    ...calls.filter((call) => call.name !== 'make_plan'),
+  ]
+}
 
 export type AdvanceableStep = {
   id: string
   action: string
   toolName?: string | null
   status: string
+}
+
+export type PendingActionTrackerState = 'approval' | 'worker' | 'complete' | 'failed' | null
+
+/** Durable pending-action status translated into truthful tracker lifecycle. */
+export function pendingActionTrackerState(status: string | null | undefined): PendingActionTrackerState {
+  if (status === 'pending') return 'approval'
+  if (status === 'approved') return 'worker'
+  if (status === 'executed') return 'complete'
+  if (status && ['failed', 'rejected', 'expired', 'cancelled', 'superseded'].includes(status)) return 'failed'
+  return null
+}
+
+/**
+ * A successful tool result can still mean "the owner must decide" rather than
+ * "the requested action happened". Keep that distinction pure and shared so a
+ * staged card never becomes completion evidence for its plan row.
+ */
+export function ownerBlockerFromToolResult(result: {
+  success: boolean
+  data?: unknown
+}, pendingActionStatus?: string | null): WorkStepsBlocker | null {
+  if (!result.success || !result.data || typeof result.data !== 'object') return null
+  const data = result.data as Record<string, unknown>
+  if (typeof data.askCardId === 'string' && data.askCardId) {
+    return { kind: 'question', refId: data.askCardId }
+  }
+  if (typeof data.pendingActionId === 'string' && data.pendingActionId) {
+    // pendingActionId is also the job handle for already-approved background
+    // work. When the caller supplied the durable row status it is authoritative:
+    // only an actually pending action owns an approval card. The explicit flag
+    // remains the safe fallback for pure callers that cannot read the row.
+    const awaitingOwner = pendingActionStatus !== undefined
+      ? pendingActionTrackerState(pendingActionStatus) === 'approval'
+      : data.awaitingApproval === true
+    return awaitingOwner ? { kind: 'approval', refId: data.pendingActionId } : null
+  }
+  return null
 }
 
 /**
@@ -53,7 +104,7 @@ export function pickStepForTool(
 }
 
 const FINAL_DELIVERY_STEP_RE =
-  /summari[sz]e|summary|cross[-\s]?check|self[-\s]?check|verify|validation|review|deliver|report|উত্তর|সারাংশ|যাচাই|মিলিয়ে|রিভিউ|ফলাফল/i
+  /summari[sz]e|summary|deliver|report|উত্তর|সারাংশ|ফলাফল/i
 
 /**
  * A persisted final answer is durable evidence for exactly one remaining
@@ -70,6 +121,92 @@ export function pickFinalDeliveryStep(
   const prior = steps.slice(0, -1)
   if (prior.some((step) => step.status !== 'done' && step.status !== 'skipped')) return null
   return FINAL_DELIVERY_STEP_RE.test(candidate.action) ? candidate : null
+}
+
+export type PlanCompletionRow = { seq: number; action: string; status: string }
+
+/**
+ * Completion-gate projection for the narrow window before the assistant reply
+ * is persisted. The model has already produced the final prose, but the durable
+ * step writer intentionally waits for the message ID. Treat only the exact
+ * final delivery row as satisfied in-memory so we do not schedule a needless
+ * continuation; the canonical plan row is still written only after message
+ * persistence succeeds.
+ */
+export function projectFinalDeliveryForCompletion(
+  rows: PlanCompletionRow[],
+  steps: AdvanceableStep[],
+  hasFinalReply: boolean,
+): { rows: PlanCompletionRow[]; projectedStepId: string | null } {
+  if (!hasFinalReply) return { rows, projectedStepId: null }
+  const step = pickFinalDeliveryStep(steps)
+  if (!step || rows.length !== steps.length) return { rows, projectedStepId: null }
+  const lastIndex = rows.length - 1
+  if (rows[lastIndex]?.action !== step.action) return { rows, projectedStepId: null }
+  return {
+    rows: rows.map((row, index) => index === lastIndex ? { ...row, status: 'done' } : row),
+    projectedStepId: step.id,
+  }
+}
+
+/** A durably completed tracker outranks an earlier deadline continuation hint. */
+export function continuationAfterTrackerSettlement(
+  needContinue: boolean,
+  trackerStatus: string | null | undefined,
+): boolean {
+  return needContinue && trackerStatus !== 'completed'
+}
+
+/**
+ * The explicit tracker sync may deduplicate after markStepDone's background
+ * refresh wins. Freshly loaded rows plus the awaited final write are still
+ * durable completion evidence even when no new snapshot is returned.
+ */
+export function continuationAfterPlanRowsSettlement(
+  needContinue: boolean,
+  steps: AdvanceableStep[],
+): boolean {
+  const completed = steps.length > 0
+    && steps.every((step) => step.status === 'done' || step.status === 'skipped')
+  return needContinue && !completed
+}
+
+/** A projected final row cannot suppress recovery until its whole close commits. */
+export function projectedDeliveryNeedsContinuation(
+  projectedStepId: string | null,
+  durablyClosed: boolean,
+): boolean {
+  return Boolean(projectedStepId) && !durablyClosed
+}
+
+/** Never reset the bounded hop budget for a merely projected completion. */
+export function shouldClearContinuationHops(input: {
+  taskUnfinished: boolean
+  projectedStepId: string | null
+  projectedDurablyClosed: boolean
+}): boolean {
+  if (input.taskUnfinished) return false
+  return !input.projectedStepId || input.projectedDurablyClosed
+}
+
+/** A completed plan still needs recovery while its old checkpoint stays open. */
+export function completionNeedsCheckpointRetry(input: {
+  completionAction: string | null | undefined
+  projectedStepId: string | null
+  checkpointDurablyClosed: boolean
+}): boolean {
+  return input.completionAction === 'complete'
+    && !input.projectedStepId
+    && !input.checkpointDurablyClosed
+}
+
+/** A plan-bound hop cannot claim completion when its durable rows were unreadable. */
+export function unevaluatedPlanNeedsContinuation(input: {
+  planBoundTurn: boolean
+  hasOwnerGate: boolean
+  planProgressLoaded: boolean
+}): boolean {
+  return input.planBoundTurn && !input.hasOwnerGate && !input.planProgressLoaded
 }
 
 /**

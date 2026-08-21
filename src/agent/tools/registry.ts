@@ -14,6 +14,7 @@ import {
 } from './tool-contract'
 import { TOOL_CLASSIFICATION } from './capability-classification'
 import {
+  isReadOnlyPlanControlTool,
   isToolAllowedForOwnerTurn,
   type OwnerTurnAuthorization,
 } from '@/agent/lib/turn-authorization'
@@ -902,7 +903,11 @@ export async function runRegisteredTool(
   // Taking a permission AWAY is safe in every mode — gating it would trap Boss
   // inside a grant he just asked to end (review bot, #667).
   const MODE_EXEMPT_TOOLS = new Set(['revoke_standing_permission'])
-  if (ctx.permissionMode && !MODE_EXEMPT_TOOLS.has(tool.name)) {
+  if (
+    ctx.permissionMode
+    && !MODE_EXEMPT_TOOLS.has(tool.name)
+    && !isReadOnlyPlanControlTool(tool.name, ctx.turnAuthorization)
+  ) {
     try {
       const { modeVerdict, normalizePermissionMode } = await import('@/agent/lib/permission-mode')
       const { taskClassForTool } = await import('@/agent/lib/autonomy-task-catalog')

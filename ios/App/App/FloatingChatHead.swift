@@ -670,16 +670,44 @@ final class FloatingChatHead {
             self?.debugDismissRobotPresentation()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
-            AlmaPerfLog.event("robotSelfTest.openCall")
-            self?.openIntercom {
-                RobotSelfTestTrace.mark("robotSelfTest.openCall")
+            self?.debugOpenIntercomWhenReady()
+        }
+    }
+
+    /// UIKit can still be completing the Office Chat dismissal on a freshly
+    /// migrated CI Simulator. Presenting Walkie/Call during that transition is
+    /// ignored and its completion never fires, while the later drag still lets
+    /// the harness claim completion. Wait for a truly presentation-free root,
+    /// then sequence dismissal and drag from the real Intercom completion.
+    private func debugOpenIntercomWhenReady(remainingAttempts: Int = 80) {
+        guard remainingAttempts > 0 else {
+            AlmaPerfLog.event("robotSelfTest.openCallTimeout")
+            return
+        }
+        guard suppressionReasons.isEmpty,
+              overlay?.isHidden == false,
+              button?.isHidden == false,
+              let root = overlay?.rootViewController,
+              root.presentedViewController == nil,
+              root.transitionCoordinator == nil
+        else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.debugOpenIntercomWhenReady(
+                    remainingAttempts: remainingAttempts - 1
+                )
             }
+            return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 14) { [weak self] in
-            self?.debugDismissRobotPresentation()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 16) { [weak self] in
-            self?.debugAnimateDirectionalDrag()
+
+        AlmaPerfLog.event("robotSelfTest.openCall")
+        openIntercom { [weak self] in
+            RobotSelfTestTrace.mark("robotSelfTest.openCall")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                self?.debugDismissRobotPresentation()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                self?.debugAnimateDirectionalDrag()
+            }
         }
     }
 

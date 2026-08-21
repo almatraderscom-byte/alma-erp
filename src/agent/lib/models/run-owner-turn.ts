@@ -67,7 +67,15 @@ import { insertControlNote } from '@/agent/lib/control-note-order'
 import { cleanVisibleThinking, createThinkingStreamFilter } from '@/agent/lib/visible-thinking'
 import { createVisibleProgressContract } from '@/agent/lib/models/visible-progress'
 import { buildPlanProgress, planProgressSignature } from '@/agent/lib/plan-progress'
-import { loadLatestPlanProgress } from '@/agent/lib/planner'
+import {
+  completePlanStepsLinkedToAskCard,
+  linkAskCardToPlanStep,
+  linkPendingActionToPlanStep,
+  loadLatestPlanProgress,
+  markStepBlocked,
+  markUnlinkedPlanStepRetryable,
+  settlePlanStepsLinkedToPendingAction,
+} from '@/agent/lib/planner'
 import {
   loadPlanForWorkTracker,
   parseWorkStepsSnapshot,
@@ -104,7 +112,18 @@ import {
   planFirstNote,
   shouldInjectProspectivePlanTool,
 } from '@/agent/lib/plan-first'
-import { beginPlanStepForTool, finishPlanStep, pickFinalDeliveryStep } from '@/agent/lib/plan-step-advance'
+import {
+  beginPlanStepForTool,
+  completionNeedsCheckpointRetry,
+  finishPlanStep,
+  ownerBlockerFromToolResult,
+  pendingActionTrackerState,
+  pickFinalDeliveryStep,
+  projectFinalDeliveryForCompletion,
+  projectedDeliveryNeedsContinuation,
+  shouldClearContinuationHops,
+  unevaluatedPlanNeedsContinuation,
+} from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -122,6 +141,7 @@ import {
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
+  isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
   upgradeAuthorizationForDeliverable,
 } from '@/agent/lib/turn-authorization'
@@ -716,12 +736,113 @@ async function* runAlternateProviderTurn(
         : null
     } catch { claimedPlanStepId = null }
   }
-  const finishTrackerPlanStep = async (ok: boolean, error?: string | null) => {
+  const settleTrackerPlanStep = async (input: {
+    toolName: string
+    toolCallId: string
+    result: { success: boolean; error?: string | null; data?: unknown }
+  }) => {
     const stepId = claimedPlanStepId
     claimedPlanStepId = null
-    if (!stepId) return false
-    const outcome = await finishPlanStep({ stepId, ok, error })
+    const blockerData = input.result.success && input.result.data && typeof input.result.data === 'object'
+      ? input.result.data as Record<string, unknown>
+      : null
+    const blockerActionId = typeof blockerData?.pendingActionId === 'string'
+      ? blockerData.pendingActionId
+      : null
+    let blockerActionStatus: string | null | undefined
+    if (blockerActionId) {
+      try {
+        const action = await (prisma as any).agentPendingAction.findUnique({
+          where: { id: blockerActionId },
+          select: { status: true },
+        })
+        blockerActionStatus = typeof action?.status === 'string' ? action.status : null
+      } catch {
+        blockerActionStatus = undefined
+      }
+    }
+    const ownerBlocker = ownerBlockerFromToolResult(input.result, blockerActionStatus)
+    const actionTrackerState = pendingActionTrackerState(blockerActionStatus)
+    const queuedWorker = Boolean(blockerActionId && actionTrackerState === 'worker')
+    const terminalActionFailure = Boolean(blockerActionId && actionTrackerState === 'failed')
+    if (ownerBlocker) workStepsBlocker = ownerBlocker
+    else if (queuedWorker && blockerActionId) {
+      workStepsBlocker = { kind: 'worker', refId: blockerActionId }
+    }
+    if (!stepId) return Boolean(ownerBlocker || queuedWorker)
     const local = trackerPlanSteps.find((step) => step.id === stepId)
+    const reloadLocalStatus = async () => {
+      try {
+        const persisted = await (prisma as any).agentPlanStep.findUnique({
+          where: { id: stepId },
+          select: { status: true },
+        })
+        if (local && typeof persisted?.status === 'string') local.status = persisted.status
+      } catch { /* durable rows remain authoritative on the next plan reload */ }
+    }
+    const failLink = async (error: string) => {
+      const outcome = await finishPlanStep({
+        stepId,
+        ok: false,
+        error,
+        resultSummary: { toolName: input.toolName, toolCallId: input.toolCallId },
+      })
+      if (local && outcome) local.status = outcome
+      return Boolean(outcome)
+    }
+    if (ownerBlocker) {
+      const linked = ownerBlocker.kind === 'approval'
+        ? await linkPendingActionToPlanStep(ownerBlocker.refId, stepId)
+        : await linkAskCardToPlanStep(ownerBlocker.refId, stepId)
+      if (!linked) {
+        return failLink(`Could not bind ${ownerBlocker.kind} ${ownerBlocker.refId} to the plan step`)
+      }
+      await markStepBlocked(stepId)
+      if (local) local.status = 'pending'
+      if (ownerBlocker.kind === 'approval') {
+        const settled = await settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)
+        if (settled) {
+          workStepsBlocker = null
+          await reloadLocalStatus()
+        } else {
+          try {
+            const current = await (prisma as any).agentPendingAction.findUnique({
+              where: { id: ownerBlocker.refId },
+              select: { status: true },
+            })
+            if (current?.status === 'approved') {
+              workStepsBlocker = { kind: 'worker', refId: ownerBlocker.refId }
+            }
+          } catch { /* the original pending snapshot remains truthful */ }
+        }
+      } else {
+        const settled = await completePlanStepsLinkedToAskCard(ownerBlocker.refId)
+        if (settled.includes(stepId)) {
+          workStepsBlocker = null
+          if (local) local.status = 'done'
+        }
+      }
+      return true
+    }
+    if (queuedWorker && blockerActionId) {
+      const linked = await linkPendingActionToPlanStep(blockerActionId, stepId)
+      if (!linked) return failLink(`Could not bind worker action ${blockerActionId} to the plan step`)
+      const settled = await settlePlanStepsLinkedToPendingAction(blockerActionId)
+      if (settled) {
+        workStepsBlocker = null
+        await reloadLocalStatus()
+      }
+      return true
+    }
+    if (terminalActionFailure) {
+      return failLink(`Background action ${blockerActionId} is ${blockerActionStatus}`)
+    }
+    const outcome = await finishPlanStep({
+      stepId,
+      ok: input.result.success,
+      error: input.result.error,
+      resultSummary: { toolName: input.toolName, toolCallId: input.toolCallId },
+    })
     if (local && outcome) local.status = outcome
     return Boolean(outcome)
   }
@@ -932,6 +1053,13 @@ async function* runAlternateProviderTurn(
           }).catch(() => {})
           matchedAskCard = { ...pendingHit, status: 'answered', selectedOption: chosen }
         }
+      }
+      // The chat-send fallback may record an answer before/without the dedicated
+      // answer endpoint. Settle the exact plan row here too; the helper is
+      // status-gated and CAS-idempotent, so a concurrent endpoint is harmless.
+      if (matchedAskCard?.selectedOption) {
+        const { completePlanStepsLinkedToAskCard } = await import('@/agent/lib/planner')
+        await completePlanStepsLinkedToAskCard(matchedAskCard.id)
       }
       // Phase 5: a bound answer moves the template state machine NOW (e.g. image
       // preview confirm unlocks the post step) — then re-read the runs so the
@@ -3533,6 +3661,10 @@ async function* runAlternateProviderTurn(
           // the grant he just asked to end (the registry exempts it too).
           && call.name !== 'revoke_standing_permission'
           && permissionMode === 'careful'
+          // A read-only plan cursor is control metadata, not a business effect.
+          // The registry repeats this exact exemption so delegated/native paths
+          // cannot re-stage it after the head has correctly let it through.
+          && !isReadOnlyPlanControlTool(call.name, turnAuthorization)
           // Any tier whose verdict is `card` gets one. Gating on R1/R2 sent an
           // explicitly mapped R3 write (`set_staff_task_due`) to the registry's
           // flat refusal instead of a card (review bot, #667).
@@ -3685,7 +3817,36 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
-        const planStepFinished = await finishTrackerPlanStep(result.success, result.error ?? null)
+        const claimedStepBeforeSettlement = claimedPlanStepId
+        let planStepFinished = false
+        try {
+          planStepFinished = await settleTrackerPlanStep({
+            toolName: call.name,
+            toolCallId: call.id,
+            result,
+          })
+        } catch (err) {
+          // The business tool already ran. Tracker bookkeeping is recovery
+          // metadata and must never erase/abort the real assistant reply.
+          claimedPlanStepId = null
+          planStepFinished = Boolean(claimedStepBeforeSettlement)
+          if (claimedStepBeforeSettlement) {
+            const message = err instanceof Error ? err.message : String(err)
+            await markUnlinkedPlanStepRetryable(
+              claimedStepBeforeSettlement,
+              `Tracker settlement deferred after ${call.name}: ${message}`,
+            ).catch(() => false)
+            try {
+              const persisted = await (prisma as any).agentPlanStep.findUnique({
+                where: { id: claimedStepBeforeSettlement },
+                select: { status: true },
+              })
+              const local = trackerPlanSteps.find((step) => step.id === claimedStepBeforeSettlement)
+              if (local && typeof persisted?.status === 'string') local.status = persisted.status
+            } catch { /* the next durable plan reload remains authoritative */ }
+          }
+          console.warn('[plan-tracker] alternate settlement deferred:', err instanceof Error ? err.message : err)
+        }
         // `make_plan` creates the prospective list; a claimed work tool changes
         // one of its rows. Publish both immediately, before the next model round.
         if ((call.name === 'make_plan' && result.success) || planStepFinished) {
@@ -4313,31 +4474,56 @@ async function* runAlternateProviderTurn(
     const hasOwnerGate = emittedAskCards.length > 0 || confirmCardsEmitted > 0 || delegationAwaiting
     let planCompletionDecision: CompletionDecision | null = null
     let planCompletion: Awaited<ReturnType<typeof loadLatestPlanProgress>> = null
+    let completedPlanCheckpointDurablyClosed = true
+    // When the only open row is the final summary/delivery, the prose already
+    // produced by the head is enough for the completion DECISION. The durable
+    // row still waits for the saved assistant message ID below.
+    let projectedFinalDeliveryStepId: string | null = null
     const planBoundTurn = rememberedLongRun
       || toolRecords.some((record) => record.toolName === 'execute_plan' && record.status === 'success')
     if (planBoundTurn && !hasOwnerGate) {
       try {
         planCompletion = await loadLatestPlanProgress(conversationId)
         if (planCompletion) {
+          const projected = projectFinalDeliveryForCompletion(
+            planCompletion.rows,
+            trackerPlanSteps,
+            Boolean(answerBody().trim()),
+          )
+          projectedFinalDeliveryStepId = projected.projectedStepId
           const contract = completionContractFromPlanProgress({
             ...planCompletion,
+            rows: projected.rows,
             workClass: 'long_run',
           })
           if (contract) {
             planCompletionDecision = decideCompletion(contract)
-            if (planCompletionDecision.action === 'complete') {
+            if (planCompletionDecision.action === 'complete' && !projectedFinalDeliveryStepId) {
+              // False before the attempt so an import/storage exception cannot
+              // accidentally retain the optimistic default through this catch.
+              completedPlanCheckpointDurablyClosed = false
               const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
-              await resolveCheckpointByTaskRef(planCompletion.planId)
+              completedPlanCheckpointDurablyClosed = await resolveCheckpointByTaskRef(
+                planCompletion.planId,
+              )
             }
           }
         }
       } catch { /* fail open to the proven deadline policy */ }
     }
-    const taskUnfinished = shouldAutoContinueTurn({
+    let taskUnfinished = shouldAutoContinueTurn({
       deadlineHit,
       hasAskCard: hasOwnerGate,
       tools: toolRecords,
       completionDecision: planCompletionDecision?.action ?? null,
+    }) || completionNeedsCheckpointRetry({
+      completionAction: planCompletionDecision?.action,
+      projectedStepId: projectedFinalDeliveryStepId,
+      checkpointDurablyClosed: completedPlanCheckpointDurablyClosed,
+    }) || unevaluatedPlanNeedsContinuation({
+      planBoundTurn,
+      hasOwnerGate,
+      planProgressLoaded: planCompletion !== null,
     })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')
@@ -4461,7 +4647,11 @@ async function* runAlternateProviderTurn(
         finalText += note
         yield { type: 'text_delta', delta: note }
       }
-    } else {
+    } else if (shouldClearContinuationHops({
+      taskUnfinished,
+      projectedStepId: projectedFinalDeliveryStepId,
+      projectedDurablyClosed: false,
+    })) {
       // Finished cleanly — the chain resets so the next long job starts fresh.
       const { clearHops } = await import('@/agent/lib/self-continue')
       await clearHops(conversationId).catch(() => {})
@@ -4608,6 +4798,7 @@ async function* runAlternateProviderTurn(
 
     // The final prose itself is the evidence for one explicit tail
     // summary/delivery step. Never use it to paper over earlier pending work.
+    let projectedFinalDeliveryDurablyClosed = false
     if (finalText.trim() && workStepsTrackerId) {
       try {
         await ensureTrackerPlanSteps()
@@ -4618,9 +4809,76 @@ async function* runAlternateProviderTurn(
             ok: true,
             resultSummary: { assistantMessageId: savedMsg.id as string },
           })
-          if (outcome) finalDeliveryStep.status = outcome
+          if (outcome) {
+            finalDeliveryStep.status = outcome
+            // A projected completion is not allowed to clear its checkpoint
+            // until the reply and its plan-row evidence are both durable.
+            if (
+              outcome === 'done'
+              && projectedFinalDeliveryStepId === finalDeliveryStep.id
+              && planCompletion
+            ) {
+              const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+              projectedFinalDeliveryDurablyClosed = await resolveCheckpointByTaskRef(
+                planCompletion.planId,
+              )
+            }
+          }
         }
       } catch { /* final reply remains authoritative even if tracker persistence fails */ }
+    }
+
+    // The completion gate used an in-memory projection so it could judge the
+    // final prose, but that projection is not execution truth. If either the
+    // row close or checkpoint resolution failed, restore continuation and its
+    // server-side wake after the message is safe. The `done` event then agrees
+    // with the durable plan instead of silently abandoning the last row.
+    if (projectedDeliveryNeedsContinuation(
+      projectedFinalDeliveryStepId,
+      projectedFinalDeliveryDurablyClosed,
+    )) {
+      taskUnfinished = true
+      let recoveryWake: { scheduled: boolean; hops: number; reason?: string }
+      try {
+        const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
+        recoveryWake = await scheduleSelfContinue({
+          conversationId,
+          summary:
+            `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
+            + 'Final delivery evidence did not close durably; reload the plan and finish the remaining row.',
+        })
+      } catch {
+        recoveryWake = { scheduled: false, hops: 0, reason: 'projected_delivery_recovery_failed' }
+      }
+      selfContinueWake = recoveryWake
+      if (planCompletion) {
+        try {
+          const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+          await writeCheckpoint({
+            taskRef: planCompletion.planId,
+            taskType: 'plan',
+            state: recoveryWake.scheduled ? 'continuing' : 'failed',
+            goal: planCompletion.goal,
+            summaryBn: 'শেষ delivery ধাপের durable settlement অসম্পূর্ণ; plan row আবার যাচাই করতে হবে।',
+            doneSteps: planCompletion.rows.filter((row) => row.status === 'done').map((row) => row.action).slice(-10),
+            currentStep: planCompletion.rows.find((row) => row.status !== 'done')?.action ?? 'final delivery settlement',
+            artifacts: [],
+            error: recoveryWake.scheduled ? undefined : recoveryWake.reason,
+            nextActions: ['Durable plan rows reload করে final delivery settlement সম্পন্ন করো'],
+            resumeHint: 'আগের কাজ পুনরায় কোরো না; শুধু অসম্পূর্ণ final delivery row/checkpoint settlement শেষ করো।',
+            conversationId,
+            businessId,
+          })
+        } catch { /* done.needContinue still keeps client recovery truthful */ }
+      }
+    }
+    if (projectedFinalDeliveryStepId && shouldClearContinuationHops({
+      taskUnfinished,
+      projectedStepId: projectedFinalDeliveryStepId,
+      projectedDurablyClosed: projectedFinalDeliveryDurablyClosed,
+    })) {
+      const { clearHops } = await import('@/agent/lib/self-continue')
+      await clearHops(conversationId).catch(() => {})
     }
 
     // Runtime tracker: emit the bound settled snapshot. One revision above the

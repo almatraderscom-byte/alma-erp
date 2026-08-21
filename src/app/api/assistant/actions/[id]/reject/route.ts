@@ -1,6 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
-import { timingSafeEqual } from 'crypto'
+import { randomUUID, timingSafeEqual } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
@@ -10,6 +10,12 @@ import { recordRejection } from '@/agent/lib/trust-engine'
 import { getModel, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { logCost } from '@/agent/lib/cost-events'
+import {
+  completeRejectedDelegationPlanStepsInTransaction,
+  reconcilePlanTrackersForPendingAction,
+  settlePlanStepsLinkedToPendingAction,
+  settleRejectedPlanStepsInTransaction,
+} from '@/agent/lib/planner'
 
 export const runtime = 'nodejs'
 // A rejected delegation makes the Sonnet head answer the task itself (one
@@ -56,6 +62,18 @@ function verifyInternalToken(provided: string): boolean {
   }
 }
 
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+const DELEGATION_FALLBACK_MESSAGE_ID = 'delegationFallbackMessageId'
+const DELEGATION_FALLBACK_FAILED = 'delegationFallbackFailed'
+const DELEGATION_FALLBACK_CLAIM_ID = 'delegationFallbackClaimId'
+const DELEGATION_FALLBACK_CLAIMED_AT = 'delegationFallbackClaimedAt'
+const DELEGATION_FALLBACK_LEASE_MS = 3 * 60_000
+
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const disabled = requireAgentEnabled()
@@ -75,15 +93,42 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const action = await db.agentPendingAction.findUnique({ where: { id: actionId } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
-  if (action.status !== 'pending') {
+  const priorResult = jsonRecord(action.result)
+  const fallbackMessageId = typeof priorResult[DELEGATION_FALLBACK_MESSAGE_ID] === 'string'
+    ? String(priorResult[DELEGATION_FALLBACK_MESSAGE_ID])
+    : null
+  const fallbackFailed = priorResult[DELEGATION_FALLBACK_FAILED] === true
+  const retryingRejectedDelegation = action.status === 'rejected'
+    && action.type === 'delegation'
+    && !fallbackMessageId
+    && !fallbackFailed
+  if (action.status !== 'pending' && !retryingRejectedDelegation) {
+    // The action claim and linked plan-row settlement are separate durable
+    // writes. A retry after a transient settlement failure must repair the row
+    // before reporting that this rejection was already resolved.
+    if (['executed', 'failed', 'rejected', 'expired', 'cancelled', 'superseded'].includes(action.status)) {
+      await settlePlanStepsLinkedToPendingAction(actionId)
+      await reconcilePlanTrackersForPendingAction(actionId)
+    }
+    if (action.status === 'rejected' && action.type === 'delegation' && fallbackMessageId) {
+      return Response.json({
+        success: true,
+        status: 'rejected',
+        answered: true,
+        assistantMessageId: fallbackMessageId,
+        replayed: true,
+      })
+    }
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
   }
 
-  if (isPendingActionExpired(action.createdAt, action.type)) {
+  if (!retryingRejectedDelegation && isPendingActionExpired(action.createdAt, action.type)) {
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
     })
+    await settlePlanStepsLinkedToPendingAction(actionId)
+    await reconcilePlanTrackersForPendingAction(actionId)
     return Response.json({ error: 'expired', message: 'অনুমোদনের সময় শেষ — ৩০ মিনিটের মধ্যে সিদ্ধান্ত নিতে হবে।' }, { status: 410 })
   }
 
@@ -101,7 +146,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     typeof (action.payload as { projectId?: unknown } | null)?.projectId === 'string'
       ? String((action.payload as { projectId: string }).projectId)
       : null
-  const rejectedCount = (await db.$transaction(async (tx: typeof db) => {
+  const rejectedCount = retryingRejectedDelegation ? 1 : (await db.$transaction(async (tx: typeof db) => {
+    // Serialize with linkPendingActionToPlanStep's payload ownership write.
+    // Otherwise a just-rendered card could be rejected between its row link and
+    // payload update, committing only one side of the tracker contract.
+    const lockKey = `pending-action-plan:${actionId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
     const rejected = await tx.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },
       // ownerDecided: rejection is always his — nothing in this system auto-rejects.
@@ -115,11 +165,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         data: { status: 'cancelled' },
       })
     }
+    // A delegation rejection is not a task failure: its linked row completes
+    // only in the later transaction that durably stores the head-model answer.
+    if (rejected.count > 0 && action.type !== 'delegation') {
+      const rejectedAction = await tx.agentPendingAction.findUnique({
+        where: { id: actionId },
+        select: { id: true, type: true, payload: true, result: true },
+      })
+      if (!rejectedAction) throw new Error('rejected_action_missing_after_claim')
+      await settleRejectedPlanStepsInTransaction(tx, rejectedAction)
+    }
     return rejected.count
   })) as number
   if (rejectedCount === 0) {
     const now = await db.agentPendingAction.findUnique({ where: { id: actionId }, select: { status: true } })
     return Response.json({ error: 'already_resolved', status: now?.status }, { status: 409 })
+  }
+  // Rows were atomically terminalized with the action above. This idempotent
+  // pass projects the new durable state into tracker snapshots/live surfaces;
+  // a projection failure cannot strand execution truth.
+  if (action.type !== 'delegation') {
+    await settlePlanStepsLinkedToPendingAction(actionId)
+    await reconcilePlanTrackersForPendingAction(actionId)
   }
   const { pushCurrentPulseLiveActivity } = await import('@/agent/lib/pulse-live-update')
   await pushCurrentPulseLiveActivity()
@@ -212,46 +279,193 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const task = String(payload.task ?? '').trim()
     const rawConvId = action.conversationId ?? payload.conversationId
     const conversationId = typeof rawConvId === 'string' && rawConvId.trim() ? rawConvId.trim() : null
-    let answer = ''
-    let tokensIn = 0
-    let tokensOut = 0
+    // Rejecting the card and generating the head answer are necessarily two
+    // transactions. Lease the second phase before the provider call so two
+    // HTTP retries cannot both spend/generate, or race success against failure.
+    const claimId = randomUUID()
+    const claim = await db.$transaction(async (tx: typeof db) => {
+      const lockKey = `pending-action-plan:${actionId}`
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+      const current = await tx.agentPendingAction.findUnique({
+        where: { id: actionId },
+        select: { status: true, type: true, result: true },
+      })
+      if (!current || current.status !== 'rejected' || current.type !== 'delegation') {
+        return { state: 'changed' as const }
+      }
+      const result = jsonRecord(current.result)
+      const messageId = result[DELEGATION_FALLBACK_MESSAGE_ID]
+      if (typeof messageId === 'string' && messageId) {
+        return { state: 'completed' as const, messageId }
+      }
+      if (result[DELEGATION_FALLBACK_FAILED] === true) {
+        return { state: 'failed' as const }
+      }
+      const existingClaimId = result[DELEGATION_FALLBACK_CLAIM_ID]
+      const existingClaimedAt = result[DELEGATION_FALLBACK_CLAIMED_AT]
+      const claimedAtMs = typeof existingClaimedAt === 'string'
+        ? Date.parse(existingClaimedAt)
+        : Number.NaN
+      if (typeof existingClaimId === 'string'
+        && existingClaimId
+        && Number.isFinite(claimedAtMs)
+        && Date.now() - claimedAtMs < DELEGATION_FALLBACK_LEASE_MS) {
+        return { state: 'running' as const }
+      }
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          result: {
+            ...result,
+            [DELEGATION_FALLBACK_CLAIM_ID]: claimId,
+            [DELEGATION_FALLBACK_CLAIMED_AT]: new Date().toISOString(),
+          },
+        },
+      })
+      return { state: 'claimed' as const }
+    })
+    if (claim.state === 'completed') {
+      await reconcilePlanTrackersForPendingAction(actionId)
+      return Response.json({
+        success: true, status: 'rejected', answered: true,
+        assistantMessageId: claim.messageId, replayed: true,
+      })
+    }
+    if (claim.state === 'running') {
+      return Response.json({ success: true, status: 'rejected', fallbackStatus: 'running' }, { status: 202 })
+    }
+    if (claim.state !== 'claimed') {
+      return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
+    }
+    let answer: string
+    let tokensIn: number
+    let tokensOut: number
     try {
       const r = await runHeadDirectAnswer(task)
       answer = r.text
       tokensIn = r.inputTokens
       tokensOut = r.outputTokens
+      if (!answer) throw new Error('head_model_returned_empty_answer')
+      if (!conversationId) throw new Error('delegation_conversation_missing')
     } catch (err) {
       console.warn('[reject] head direct answer failed:', err instanceof Error ? err.message : err)
-      answer = `উত্তর তৈরিতে সমস্যা হলো: ${err instanceof Error ? err.message : String(err)}`
+      const message = err instanceof Error ? err.message : String(err)
+      // Record failure and terminalize the exact owned row atomically. The
+      // marker prevents a later HTTP retry from generating a duplicate answer.
+      const failedByThisClaim = await db.$transaction(async (tx: typeof db) => {
+        const lockKey = `pending-action-plan:${actionId}`
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+        const current = await tx.agentPendingAction.findUnique({
+          where: { id: actionId },
+          select: { id: true, status: true, type: true, payload: true, result: true },
+        })
+        if (!current || current.status !== 'rejected' || current.type !== 'delegation') {
+          return false
+        }
+        const currentResult = jsonRecord(current.result)
+        if (currentResult[DELEGATION_FALLBACK_CLAIM_ID] !== claimId) return false
+        await tx.agentPendingAction.update({
+          where: { id: actionId },
+          data: {
+            result: {
+              ...currentResult,
+              [DELEGATION_FALLBACK_FAILED]: true,
+              delegationFallbackError: message,
+              [DELEGATION_FALLBACK_CLAIM_ID]: null,
+              [DELEGATION_FALLBACK_CLAIMED_AT]: null,
+            },
+          },
+        })
+        await settleRejectedPlanStepsInTransaction(tx, {
+          ...current,
+          result: {
+            ...currentResult,
+            [DELEGATION_FALLBACK_FAILED]: true,
+            delegationFallbackError: message,
+            [DELEGATION_FALLBACK_CLAIM_ID]: null,
+            [DELEGATION_FALLBACK_CLAIMED_AT]: null,
+          },
+        })
+        return true
+      })
+      if (!failedByThisClaim) {
+        return Response.json({ error: 'delegation_fallback_claim_lost', status: 'rejected' }, { status: 409 })
+      }
+      await settlePlanStepsLinkedToPendingAction(actionId)
+      await reconcilePlanTrackersForPendingAction(actionId)
+      return Response.json({ error: 'delegation_fallback_failed', status: 'rejected' }, { status: 502 })
     }
-    const note = answer || '(কোনো উত্তর তৈরি হয়নি)'
     const costUsd = calcModelTurnCostUsd(getModel(DEFAULT_MODEL_ID), { inputTokens: tokensIn, outputTokens: tokensOut })
-    if (conversationId) {
-      await db.agentMessage.create({
+    const completion = await db.$transaction(async (tx: typeof db) => {
+      const lockKey = `pending-action-plan:${actionId}`
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+      const current = await tx.agentPendingAction.findUnique({
+        where: { id: actionId },
+        select: { id: true, status: true, type: true, payload: true, result: true },
+      })
+      if (!current || current.status !== 'rejected' || current.type !== 'delegation') {
+        throw new Error('delegation_rejection_state_changed')
+      }
+      const currentResult = jsonRecord(current.result)
+      const existingMessageId = currentResult[DELEGATION_FALLBACK_MESSAGE_ID]
+      if (typeof existingMessageId === 'string' && existingMessageId) {
+        return { state: 'completed' as const, messageId: existingMessageId, replayed: true }
+      }
+      if (currentResult[DELEGATION_FALLBACK_FAILED] === true) {
+        throw new Error('delegation_fallback_already_failed')
+      }
+      if (currentResult[DELEGATION_FALLBACK_CLAIM_ID] !== claimId) {
+        return { state: 'lost' as const }
+      }
+      const saved = await tx.agentMessage.create({
         data: {
-          conversationId,
+          conversationId: conversationId!,
           role: 'assistant',
-          content: [{ type: 'text', text: note }],
+          content: [{ type: 'text', text: answer }],
           tokensIn,
           tokensOut,
           costUsd,
           usage: { input_tokens: tokensIn, output_tokens: tokensOut, model: getModel(DEFAULT_MODEL_ID).id, delegation_reject_answer: true },
         },
       })
-      await prisma.agentConversation.update({
-        where: { id: conversationId },
+      await tx.agentConversation.update({
+        where: { id: conversationId! },
         data: { updatedAt: new Date() },
       })
-      void logCost({
-        provider: 'anthropic',
-        kind: 'chat',
-        units: { input_tokens: tokensIn, output_tokens: tokensOut, model: getModel(DEFAULT_MODEL_ID).id, via: 'delegation_reject_head_answer' },
-        costUsd,
-        conversationId,
-        dedupKey: `delegreject:${actionId}`,
-      }).catch(() => {})
+      await completeRejectedDelegationPlanStepsInTransaction(tx, current, saved.id)
+      await tx.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          result: {
+            ...currentResult,
+            [DELEGATION_FALLBACK_MESSAGE_ID]: saved.id,
+            delegationFallback: 'head_answer',
+            [DELEGATION_FALLBACK_CLAIM_ID]: null,
+            [DELEGATION_FALLBACK_CLAIMED_AT]: null,
+          },
+        },
+      })
+      return { state: 'completed' as const, messageId: saved.id, replayed: false }
+    })
+    if (completion.state !== 'completed') {
+      return Response.json({ error: 'delegation_fallback_claim_lost', status: 'rejected' }, { status: 409 })
     }
-    return Response.json({ success: true, status: 'rejected', answered: true })
+    await reconcilePlanTrackersForPendingAction(actionId)
+    void logCost({
+      provider: 'anthropic',
+      kind: 'chat',
+      units: { input_tokens: tokensIn, output_tokens: tokensOut, model: getModel(DEFAULT_MODEL_ID).id, via: 'delegation_reject_head_answer' },
+      costUsd,
+      conversationId,
+      dedupKey: `delegreject:${actionId}`,
+    }).catch(() => {})
+    return Response.json({
+      success: true,
+      status: 'rejected',
+      answered: true,
+      assistantMessageId: completion.messageId,
+      replayed: completion.replayed,
+    })
   }
 
   if (action.type === 'content_gate1' || action.type === 'ad_creative_gate') {

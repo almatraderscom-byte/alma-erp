@@ -43,6 +43,48 @@ export type WorkStepsBlocker = {
   refId: string
 }
 
+/** An old callback may clear only the blocker it represents, never a newer one. */
+export function clearMatchingWorkStepsBlocker(
+  blocker: WorkStepsBlocker | null,
+  refId: string,
+): WorkStepsBlocker | null {
+  return blocker?.refId === refId ? null : blocker
+}
+
+/**
+ * A running plan row proves an owner prompt was resumed, but it does not prove
+ * an approved background worker finished. Keep non-owner blockers until their
+ * owning lifecycle explicitly clears them (and the durable row below confirms
+ * that they are still live).
+ */
+export function rememberedWorkStepsBlockerForRefresh(
+  blocker: WorkStepsBlocker | null,
+  hasRunningStep: boolean,
+): WorkStepsBlocker | null {
+  if (!blocker || !hasRunningStep) return blocker
+  if (blocker.kind === 'approval' || blocker.kind === 'question' || blocker.kind === 'model_switch') {
+    return null
+  }
+  return blocker
+}
+
+/** Reconcile a persisted blocker with the durable card/action row read now. */
+export function reconcileDurableWorkStepsBlocker(
+  blocker: WorkStepsBlocker | null,
+  durableStatus: string | null,
+): WorkStepsBlocker | null {
+  if (!blocker) return null
+  if (blocker.kind === 'approval' || blocker.kind === 'worker') {
+    if (durableStatus === 'pending') return { kind: 'approval', refId: blocker.refId }
+    if (durableStatus === 'approved') return { kind: 'worker', refId: blocker.refId }
+    return null
+  }
+  if (blocker.kind === 'question') {
+    return durableStatus === 'pending' ? blocker : null
+  }
+  return blocker
+}
+
 export type WorkStepsSnapshotStep = {
   id: string
   position: number
@@ -244,6 +286,9 @@ export function projectWorkSteps(input: {
   if (status === 'waiting_owner') {
     const active = steps.find((s) => s.status === 'running') ?? steps.find((s) => s.status === 'pending')
     if (active) active.status = 'waiting_owner'
+  } else if (status === 'waiting_worker') {
+    const active = steps.find((s) => s.status === 'running') ?? steps.find((s) => s.status === 'pending')
+    if (active) active.status = 'waiting_worker'
   }
 
   const running = steps.find((s) => s.status === 'running')
@@ -293,6 +338,28 @@ export function workStepsSignature(snapshot: WorkStepsSnapshot | null): string {
 }
 
 /**
+ * Resolve the blocker a serialized tracker refresh is allowed to publish.
+ *
+ * A turn-local `null` means "this call has no blocker"; it is not proof that
+ * another overlapping call — even from the same turn — did not publish one.
+ * Keep the remembered blocker so the transaction can revalidate its durable
+ * card/action below. Callbacks use `clearBlockedByRefId` for compare-and-clear.
+ */
+export function synchronizedWorkStepsBlocker(input: {
+  requested: WorkStepsBlocker | null | undefined
+  remembered: WorkStepsBlocker | null
+  clearRefId?: string
+  hasRunningStep: boolean
+}): WorkStepsBlocker | null {
+  if (input.requested) return input.requested
+  if (input.clearRefId !== undefined) {
+    return clearMatchingWorkStepsBlocker(input.remembered, input.clearRefId)
+  }
+  if (input.requested === null) return input.remembered
+  return rememberedWorkStepsBlockerForRefresh(input.remembered, input.hasRunningStep)
+}
+
+/**
  * Serialized project-and-persist for one plan tracker.
  *
  * Codex P1 rounds on PR #733: (1) two overlapping refreshes constructed the
@@ -312,6 +379,8 @@ export async function syncPlanTracker(
   opts: {
     currentTurnId?: string
     blockedBy?: WorkStepsBlocker | null
+    /** Clear only this still-current durable blocker; never erase a newer one. */
+    clearBlockedByRefId?: string
     live?: boolean
     bindAssistantMessageId?: string | null
     now?: Date
@@ -339,6 +408,37 @@ export async function syncPlanTracker(
       const prior = parseWorkStepsSnapshot(plan.trackerSnapshot)
       const currentTurnId = opts.currentTurnId
         ?? prior?.currentTurnId ?? plan.originTurnId ?? plan.id
+      const rememberedBlockedBy = prior?.blockedBy ?? null
+      let effectiveBlockedBy = synchronizedWorkStepsBlocker({
+        requested: opts.blockedBy,
+        remembered: rememberedBlockedBy,
+        clearRefId: opts.clearBlockedByRefId,
+        hasRunningStep: plan.steps.some((s) => s.status === 'running'),
+      })
+      // The same advisory-locked transaction that writes the snapshot verifies
+      // the referenced durable row first. A stale turn can therefore never
+      // restore waiting_owner/waiting_worker after an answer or terminal worker
+      // callback already cleared it; a concurrent callback waits on this plan
+      // lock and its subsequent terminal snapshot wins.
+      if (effectiveBlockedBy?.kind === 'approval' || effectiveBlockedBy?.kind === 'worker') {
+        const action = await tx.agentPendingAction.findUnique({
+          where: { id: effectiveBlockedBy.refId },
+          select: { status: true },
+        })
+        effectiveBlockedBy = reconcileDurableWorkStepsBlocker(
+          effectiveBlockedBy,
+          typeof action?.status === 'string' ? action.status : null,
+        )
+      } else if (effectiveBlockedBy?.kind === 'question') {
+        const card = await tx.agentAskCard.findUnique({
+          where: { id: effectiveBlockedBy.refId },
+          select: { status: true },
+        })
+        effectiveBlockedBy = reconcileDurableWorkStepsBlocker(
+          effectiveBlockedBy,
+          typeof card?.status === 'string' ? card.status : null,
+        )
+      }
       const snapshot = projectWorkSteps({
         plan,
         currentTurnId,
@@ -347,9 +447,7 @@ export async function syncPlanTracker(
         // A running/dispatched step contradicts a remembered owner blocker —
         // the Plan-Driver resumed past the approval, so the stale reference
         // must not keep projecting waiting_owner (Codex P2, PR #733 round 3).
-        blockedBy: opts.blockedBy !== undefined
-          ? opts.blockedBy
-          : (plan.steps.some((s) => s.status === 'running') ? null : (prior?.blockedBy ?? null)),
+        blockedBy: effectiveBlockedBy,
         live: opts.live ?? plan.steps.some((s) => s.status === 'running'),
         now: opts.now,
       })

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
+  isReadOnlyPlanControlTool,
   isToolAllowedForOwnerTurn,
   upgradeAuthorizationForDeliverable,
 } from '../turn-authorization'
@@ -90,9 +91,19 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
     expect(auth).toEqual({ allowMutations: false, reason: 'explicit_no_action' })
     expect(filterToolsForOwnerTurn([
       { name: 'make_plan' },
+      { name: 'execute_plan' },
       { name: 'get_orders' },
       { name: 'update_order' },
-    ], auth).map((tool) => tool.name)).toEqual(['make_plan', 'get_orders'])
+    ], auth).map((tool) => tool.name)).toEqual(['make_plan', 'execute_plan', 'get_orders'])
+  })
+
+  it('scopes the permission-mode exemption to plan metadata on read-only turns', () => {
+    const readOnly = { allowMutations: false, reason: 'explicit_no_action' as const }
+    const action = { allowMutations: true, reason: 'explicit_action' as const }
+    expect(isReadOnlyPlanControlTool('make_plan', readOnly)).toBe(true)
+    expect(isReadOnlyPlanControlTool('execute_plan', readOnly)).toBe(true)
+    expect(isReadOnlyPlanControlTool('update_order', readOnly)).toBe(false)
+    expect(isReadOnlyPlanControlTool('execute_plan', action)).toBe(false)
   })
 
   it('workflow_continuation authorization allows everything (in-flight work)', () => {

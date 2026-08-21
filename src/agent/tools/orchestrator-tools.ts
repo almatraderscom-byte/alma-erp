@@ -275,6 +275,15 @@ const execute_plan: AgentTool = {
     const doneCriteria = typeof input.done_criteria === 'string' && input.done_criteria.trim()
       ? input.done_criteria.trim()
       : undefined
+    // The validated registry removes raw turnAuthorization from handler input,
+    // then forwards the trusted value inside delegatedToolContext. A read-only
+    // owner turn may move this plan's UI cursor so its four-step tracker can
+    // progress, but must never hand the plan to a background driver: that could
+    // outlive the turn and run write-class steps without the owner's authority.
+    const delegated = input.delegatedToolContext as {
+      turnAuthorization?: { allowMutations?: boolean }
+    } | undefined
+    const readOnlyTurn = delegated?.turnAuthorization?.allowMutations === false
 
     try {
       const plan = await loadPlan(planId)
@@ -285,7 +294,7 @@ const execute_plan: AgentTool = {
 
       // Autodrive ON → hand the plan to the autonomous driver and return. The
       // worker tick advances it step by step; the head does not run steps inline.
-      if (isAutodriveEnabled()) {
+      if (isAutodriveEnabled() && !readOnlyTurn) {
         await enrollPlanForAutodrive(planId, { doneCriteria })
         const updated = await loadPlan(planId)
         return {

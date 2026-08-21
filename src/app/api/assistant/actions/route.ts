@@ -16,6 +16,11 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import {
+  reconcilePlanTrackersForPendingAction,
+  settlePlanStepsLinkedToPendingAction,
+  settleTerminalFailedPlanStepsInTransaction,
+} from '@/agent/lib/planner'
+import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
   selectionForImageAction,
@@ -30,6 +35,13 @@ import { readKv } from '@/lib/creative-studio/taste'
 export const runtime = 'nodejs'
 
 const readImageKv = (key: string) => readKv(key).catch(() => null)
+const EXPIRED_TRACKER_RECONCILE_PENDING = '_agentPlanTrackerReconcilePending'
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
 
 function isMissingImageProjectionColumn(error: unknown): boolean {
   const code = (error as { code?: unknown })?.code
@@ -198,16 +210,82 @@ export async function GET(req: NextRequest) {
   // Transition them to the terminal 'expired' status (same as the approve/reject
   // routes do on a 410) and drop them from the pending view so they disappear.
   const expiredIds = actions.filter((a: { expired: boolean }) => a.expired).map((a: { id: string }) => a.id)
+  // Durable outbox: a prior sweep may have atomically expired action+plan rows
+  // but failed while projecting the tracker snapshot. Keep selecting those
+  // terminal actions until projection succeeds and this marker is cleared.
+  const deferredExpiredRows: Array<{ id: string }> = status === 'pending'
+    ? await db.agentPendingAction.findMany({
+        where: {
+          status: 'expired',
+          result: { path: [EXPIRED_TRACKER_RECONCILE_PENDING], equals: true },
+        },
+        select: { id: true },
+        orderBy: { resolvedAt: 'asc' },
+        take: 50,
+      })
+    : []
+  let retiredIds: string[] = []
   if (expiredIds.length) {
-    await db.agentPendingAction
-      .updateMany({
-        where: { id: { in: expiredIds }, status: 'pending' },
-        data: { status: 'expired', resolvedAt: new Date() },
-      })
-      .catch((err: unknown) => {
+    retiredIds = (await Promise.all(expiredIds.map(async (actionId: string) => {
+      try {
+        return await db.$transaction(async (tx: typeof db) => {
+          const lockKey = `pending-action-plan:${actionId}`
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+          const current = await tx.agentPendingAction.findUnique({
+            where: { id: actionId },
+            select: { id: true, type: true, status: true, payload: true, result: true },
+          })
+          if (!current || current.status !== 'pending') return null
+          const terminalResult = {
+            ...jsonRecord(current.result),
+            [EXPIRED_TRACKER_RECONCILE_PENDING]: true,
+          }
+          const expired = await tx.agentPendingAction.updateMany({
+            where: { id: actionId, status: 'pending' },
+            data: { status: 'expired', resolvedAt: new Date(), result: terminalResult },
+          })
+          if (expired.count !== 1) return null
+          await settleTerminalFailedPlanStepsInTransaction(tx, {
+            ...current,
+            status: 'expired',
+            result: terminalResult,
+          })
+          return actionId
+        })
+      } catch (err) {
         console.warn('[assistant/actions] expired sweep failed:', err instanceof Error ? err.message : err)
-      })
+        return null
+      }
+    }))).filter((id): id is string => Boolean(id))
   }
+  const reconcileIds = [...new Set([
+    ...retiredIds,
+    ...deferredExpiredRows.map((row) => row.id),
+  ])]
+  await Promise.all(reconcileIds.map(async (actionId) => {
+    try {
+      await settlePlanStepsLinkedToPendingAction(actionId)
+      await reconcilePlanTrackersForPendingAction(actionId)
+      await db.$transaction(async (tx: typeof db) => {
+        const lockKey = `pending-action-plan:${actionId}`
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+        const current = await tx.agentPendingAction.findUnique({
+          where: { id: actionId },
+          select: { status: true, result: true },
+        })
+        const result = jsonRecord(current?.result)
+        if (current?.status !== 'expired' || result[EXPIRED_TRACKER_RECONCILE_PENDING] !== true) return
+        await tx.agentPendingAction.update({
+          where: { id: actionId },
+          data: { result: { ...result, [EXPIRED_TRACKER_RECONCILE_PENDING]: false } },
+        })
+      })
+    } catch (err) {
+      // Marker stays true, so the next ordinary pending GET retries this exact
+      // projection instead of losing it after the card left the pending query.
+      console.warn('[assistant/actions] expired tracker projection deferred:', err instanceof Error ? err.message : err)
+    }
+  }))
 
   const visible = status === 'pending' ? actions.filter((a: { expired: boolean }) => !a.expired) : actions
   return Response.json({

@@ -3,7 +3,11 @@
  * for complex multi-step tasks.
  */
 import { prisma } from '@/lib/prisma'
-import { refreshPlanTrackerSnapshot } from '@/agent/lib/work-steps'
+import {
+  parseWorkStepsSnapshot,
+  refreshPlanTrackerSnapshot,
+  syncPlanTracker,
+} from '@/agent/lib/work-steps'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -289,12 +293,590 @@ export async function markStepFailed(stepId: string, error: string, now = new Da
  * touched — waiting for Boss is not a failure.
  */
 export async function markStepBlocked(stepId: string): Promise<void> {
-  const step = await db.agentPlanStep.update({
+  const step = await db.agentPlanStep.findUnique({
     where: { id: stepId },
-    data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
     select: { planId: true },
   })
-  if (step?.planId) void refreshPlanTrackerSnapshot(step.planId)
+  if (!step) return
+  const blocked = await db.agentPlanStep.updateMany({
+    where: { id: stepId, status: { in: ['pending', 'running'] } },
+    data: { status: 'pending', turnId: null, dispatchedAt: null, nextAttemptAt: null },
+  })
+  if (blocked.count === 1) void refreshPlanTrackerSnapshot(step.planId)
+}
+
+/** Reserved audit link written into the approval card before it is emitted. */
+export const PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY = '_agentPlanStepId'
+export const PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY = '_agentPlanStepIds'
+/** Reverse ownership written on the row for stale callback/attempt rejection. */
+export const PENDING_ACTION_PLAN_STEP_RESULT_KEY = '_agentPendingActionId'
+export const PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY = '_agentPendingActionAttempt'
+/** Reserved reverse link written onto a pending plan row for an ask card. */
+export const ASK_CARD_PLAN_STEP_RESULT_KEY = '_agentAskCardId'
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+/** Pure reader kept public so the payload compatibility contract is testable. */
+export function linkedPlanStepIdFromPendingActionPayload(payload: unknown): string | null {
+  const value = jsonRecord(payload)[PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/** All rows that the same deduplicated approval action will satisfy. */
+export function linkedPlanStepIdsFromPendingActionPayload(payload: unknown): string[] {
+  const record = jsonRecord(payload)
+  const primary = linkedPlanStepIdFromPendingActionPayload(record)
+  const followers = Array.isArray(record[PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY])
+    ? (record[PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY] as unknown[])
+        .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+        .map((value) => value.trim())
+    : []
+  return [...new Set([...(primary ? [primary] : []), ...followers])]
+}
+
+/** Pure reader for the reverse ask-card link stored on an unfinished row. */
+export function linkedAskCardIdFromPlanStepResult(result: unknown): string | null {
+  const value = jsonRecord(result)[ASK_CARD_PLAN_STEP_RESULT_KEY]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/** The exact pending action attempt that currently owns a plan row. */
+export function pendingActionOwnershipFromPlanStepResult(result: unknown): {
+  pendingActionId: string
+  attemptCount: number
+} | null {
+  const record = jsonRecord(result)
+  const pendingActionId = record[PENDING_ACTION_PLAN_STEP_RESULT_KEY]
+  const attemptCount = record[PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]
+  if (typeof pendingActionId !== 'string' || !pendingActionId.trim()) return null
+  if (typeof attemptCount !== 'number' || !Number.isInteger(attemptCount) || attemptCount < 0) return null
+  return { pendingActionId: pendingActionId.trim(), attemptCount }
+}
+
+/**
+ * Persist which durable plan row an approval card represents. The core writes
+ * this before yielding the card, so the later approve/worker callback can close
+ * the exact row from the real action outcome instead of asking the model to redo
+ * an action that already happened.
+ */
+export async function linkPendingActionToPlanStep(
+  pendingActionId: string,
+  stepId: string,
+): Promise<boolean> {
+  return db.$transaction(async (tx: typeof db) => {
+    // The card id is deterministic and may be rediscovered by overlapping
+    // turns. Serialize its JSON read→append→write so two follower rows cannot
+    // both return success while the last writer silently drops the other.
+    const lockKey = `pending-action-plan:${pendingActionId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+    const stepLockKey = `plan-step-owner:${stepId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${stepLockKey}))::text AS lock_token`
+    const [action, step] = await Promise.all([
+      tx.agentPendingAction.findUnique({
+        where: { id: pendingActionId },
+        select: { status: true, payload: true },
+      }),
+      tx.agentPlanStep.findUnique({
+        where: { id: stepId },
+        select: { status: true, result: true, attemptCount: true },
+      }),
+    ])
+    if (!action || !step || !['pending', 'running'].includes(String(step.status))) return false
+    const payload = jsonRecord(action.payload)
+    const existing = linkedPlanStepIdsFromPendingActionPayload(payload)
+    const stepResult = jsonRecord(step.result)
+    const priorOwner = pendingActionOwnershipFromPlanStepResult(stepResult)
+    // Two actions may not own the same live attempt. A later retry has a higher
+    // attempt count and is allowed to replace the old terminal action marker.
+    if (priorOwner
+      && priorOwner.pendingActionId !== pendingActionId
+      && priorOwner.attemptCount === step.attemptCount) {
+      const priorAction = await tx.agentPendingAction.findUnique({
+        where: { id: priorOwner.pendingActionId },
+        select: { status: true },
+      })
+      // Revision creates a replacement card for the same execution attempt.
+      // Transfer ownership only when the old card is durably incapable of
+      // executing; a live/approved/executed owner must never be displaced.
+      const replaceable = priorAction
+        && ['superseded', 'failed', 'rejected', 'expired', 'cancelled'].includes(priorAction.status)
+      if (!replaceable) return false
+    }
+    const linked = await tx.agentPlanStep.updateMany({
+      where: {
+        id: stepId,
+        status: { in: ['pending', 'running'] },
+        attemptCount: step.attemptCount,
+      },
+      data: {
+        result: {
+          ...stepResult,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: pendingActionId,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: step.attemptCount,
+        },
+      },
+    })
+    if (linked.count !== 1) return false
+    // A deduped action may satisfy a later prospective row too. Preserve the
+    // first card owner as the compatibility/primary link and append followers;
+    // execution then settles every row represented by the one real action.
+    const linkedStepIds = existing.includes(stepId) ? existing : [...existing, stepId]
+    await tx.agentPendingAction.update({
+      where: { id: pendingActionId },
+      data: {
+        payload: {
+          ...payload,
+          [PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY]: linkedStepIds[0],
+          [PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY]: linkedStepIds,
+        },
+      },
+    })
+    return true
+  })
+}
+
+/**
+ * Bind an owner question to the exact unfinished plan row before the card is
+ * yielded. AgentAskCard has no tracker-specific column, so the reverse link is
+ * stored in the row's JSON result slot while it is pending. The answer path can
+ * then settle every row for that deterministic/deduplicated card without text
+ * matching or a schema migration.
+ */
+export async function linkAskCardToPlanStep(
+  askCardId: string,
+  stepId: string,
+): Promise<boolean> {
+  return db.$transaction(async (tx: typeof db) => {
+    // Share the same ownership lock used by pending-action linkage and tracker
+    // recovery. Otherwise a question link could race a recovery failure write.
+    const lockKey = `plan-step-owner:${stepId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+    const [card, step] = await Promise.all([
+      tx.agentAskCard.findUnique({ where: { id: askCardId }, select: { id: true } }),
+      tx.agentPlanStep.findUnique({ where: { id: stepId }, select: { status: true, result: true } }),
+    ])
+    if (!card || !step || !['pending', 'running'].includes(String(step.status))) return false
+    const result = jsonRecord(step.result)
+    const existing = linkedAskCardIdFromPlanStepResult(result)
+    if (existing) return existing === askCardId
+    const linked = await tx.agentPlanStep.updateMany({
+      where: { id: stepId, status: { in: ['pending', 'running'] } },
+      data: { result: { ...result, [ASK_CARD_PLAN_STEP_RESULT_KEY]: askCardId } },
+    })
+    return linked.count === 1
+  })
+}
+
+/**
+ * A business tool may succeed even if tracker-card linkage throws. Preserve
+ * the real reply, but never abandon an unowned claimed row in `running`: under
+ * the same ownership lock, CAS it to the normal bounded-retry state. If a card
+ * link committed first, its durable callback remains authoritative and this
+ * helper deliberately does nothing.
+ */
+export async function markUnlinkedPlanStepRetryable(
+  stepId: string,
+  error: string,
+  now = new Date(),
+): Promise<boolean> {
+  const planId = await db.$transaction(async (tx: typeof db) => {
+    const lockKey = `plan-step-owner:${stepId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
+    const step: {
+      planId: string
+      status: string
+      result: unknown
+      attemptCount: number
+      maxAttempts: number
+    } | null = await tx.agentPlanStep.findUnique({
+      where: { id: stepId },
+      select: {
+        planId: true,
+        status: true,
+        result: true,
+        attemptCount: true,
+        maxAttempts: true,
+      },
+    })
+    if (!step || !['pending', 'running'].includes(step.status)) return null
+    const pendingOwner = pendingActionOwnershipFromPlanStepResult(step.result)
+    // A failed retry retains its old result JSON until the new attempt binds.
+    // Only ownership of THIS attempt can legitimately wait for a callback;
+    // stale ownership must not leave the newly claimed attempt running forever.
+    if ((pendingOwner && pendingOwner.attemptCount === step.attemptCount)
+      || linkedAskCardIdFromPlanStepResult(step.result)) return null
+
+    const attemptCount = Math.min((step.attemptCount ?? 0) + 1, step.maxAttempts ?? 3)
+    const maxAttempts = step.maxAttempts ?? 3
+    const settled = await tx.agentPlanStep.updateMany({
+      where: {
+        id: stepId,
+        status: { in: ['pending', 'running'] },
+        attemptCount: step.attemptCount,
+      },
+      data: {
+        status: 'failed',
+        result: { ...jsonRecord(step.result), trackerSettlementDeferred: true },
+        error,
+        doneAt: now,
+        attemptCount,
+        nextAttemptAt: attemptCount < maxAttempts
+          ? new Date(now.getTime() + stepRetryDelayMs(attemptCount))
+          : null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    return settled.count === 1 ? step.planId : null
+  })
+  if (!planId) return false
+  await syncPlanTracker(planId, { live: false })
+  return true
+}
+
+/**
+ * Fail linked rows in the SAME transaction that claims an owner rejection.
+ * Throwing on a live-row CAS conflict rolls the action claim back too, so a
+ * rejected card can never become durable while its tracker row stays open.
+ */
+export async function settleTerminalFailedPlanStepsInTransaction(
+  tx: typeof db,
+  action: {
+    id: string
+    type: string
+    status: 'rejected' | 'expired' | 'cancelled' | 'superseded' | 'failed'
+    payload: unknown
+    result?: unknown
+  },
+): Promise<void> {
+  const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
+  if (stepIds.length === 0) return
+  const steps: Array<{
+    id: string
+    status: string
+    attemptCount: number
+    maxAttempts: number
+    result: unknown
+  }> = await tx.agentPlanStep.findMany({
+    where: { id: { in: stepIds } },
+    select: { id: true, status: true, attemptCount: true, maxAttempts: true, result: true },
+  })
+  for (const step of steps) {
+    const owner = pendingActionOwnershipFromPlanStepResult(step.result)
+    if (!owner
+      || owner.pendingActionId !== action.id
+      || owner.attemptCount !== step.attemptCount) continue
+    if (step.status === 'failed') continue
+    if (!['pending', 'running'].includes(step.status)) continue
+    const settled = await tx.agentPlanStep.updateMany({
+      where: {
+        id: step.id,
+        status: { in: ['pending', 'running'] },
+        attemptCount: owner.attemptCount,
+        result: { path: [PENDING_ACTION_PLAN_STEP_RESULT_KEY], equals: action.id },
+      },
+      data: {
+        status: 'failed',
+        result: {
+          pendingActionId: action.id,
+          actionType: action.type,
+          actionStatus: action.status,
+          output: action.result ?? null,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: action.id,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: owner.attemptCount,
+        },
+        error: `Background action ${action.type} ${action.status}`,
+        doneAt: new Date(),
+        attemptCount: step.maxAttempts ?? 3,
+        nextAttemptAt: null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    if (settled.count !== 1) throw new Error('rejected_plan_step_settlement_conflict')
+  }
+}
+
+/** Backward-compatible rejection wrapper used by the owner reject route. */
+export async function settleRejectedPlanStepsInTransaction(
+  tx: typeof db,
+  action: { id: string; type: string; payload: unknown; result?: unknown },
+): Promise<void> {
+  return settleTerminalFailedPlanStepsInTransaction(tx, {
+    ...action,
+    status: 'rejected',
+  })
+}
+
+/**
+ * Delegation rejection means "the head model answers", not "the task failed".
+ * Complete its exact linked rows only inside the same transaction that persists
+ * the fallback answer and its idempotency marker.
+ */
+export async function completeRejectedDelegationPlanStepsInTransaction(
+  tx: typeof db,
+  action: { id: string; type: string; payload: unknown; result?: unknown },
+  assistantMessageId: string,
+): Promise<void> {
+  if (action.type !== 'delegation') throw new Error('delegation_action_required')
+  const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
+  if (stepIds.length === 0) return
+  const steps: Array<{
+    id: string
+    status: string
+    attemptCount: number
+    result: unknown
+  }> = await tx.agentPlanStep.findMany({
+    where: { id: { in: stepIds } },
+    select: { id: true, status: true, attemptCount: true, result: true },
+  })
+  for (const step of steps) {
+    const owner = pendingActionOwnershipFromPlanStepResult(step.result)
+    if (!owner
+      || owner.pendingActionId !== action.id
+      || owner.attemptCount !== step.attemptCount) continue
+    if (step.status === 'done') continue
+    if (!['pending', 'running'].includes(step.status)) continue
+    const completed = await tx.agentPlanStep.updateMany({
+      where: {
+        id: step.id,
+        status: { in: ['pending', 'running'] },
+        attemptCount: owner.attemptCount,
+        result: { path: [PENDING_ACTION_PLAN_STEP_RESULT_KEY], equals: action.id },
+      },
+      data: {
+        status: 'done',
+        result: {
+          pendingActionId: action.id,
+          actionType: action.type,
+          actionStatus: 'rejected',
+          delegationFallback: 'head_answer',
+          assistantMessageId,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: action.id,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: owner.attemptCount,
+        },
+        error: null,
+        doneAt: new Date(),
+        nextAttemptAt: null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    if (completed.count !== 1) throw new Error('delegation_plan_step_completion_conflict')
+  }
+}
+
+/**
+ * Settle linked rows only from a durable terminal action. This is CAS-safe and
+ * idempotent: approval retries and worker callback replays cannot regress a
+ * terminal row or settle a different one.
+ */
+export async function settlePlanStepsLinkedToPendingAction(
+  pendingActionId: string,
+): Promise<string | null> {
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { status: true, type: true, payload: true, result: true },
+  })
+  const succeeded = action?.status === 'executed'
+  const failed = action && ['failed', 'rejected', 'expired', 'cancelled', 'superseded'].includes(action.status)
+  if (!action || (!succeeded && !failed)) return null
+  const actionResult = jsonRecord(action.result)
+  const actionError = typeof actionResult.error === 'string' && actionResult.error.trim()
+    ? actionResult.error.trim()
+    : `Background action ${action.type} ${action.status}`
+  const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
+  if (stepIds.length === 0) return null
+  const steps: Array<{
+    id: string
+    planId: string
+    status: string
+    attemptCount: number
+    maxAttempts: number
+    result: unknown
+  }> =
+    await db.agentPlanStep.findMany({
+      where: { id: { in: stepIds } },
+      select: { id: true, planId: true, status: true, attemptCount: true, maxAttempts: true, result: true },
+    })
+  const settledIds: string[] = []
+  const touchedPlans = new Set<string>()
+  for (const step of steps) {
+    const owner = pendingActionOwnershipFromPlanStepResult(step.result)
+    // The step may already be running a newer retry. Only the action bound to
+    // this exact attempt may settle it; delayed/replayed older callbacks no-op.
+    if (!owner
+      || owner.pendingActionId !== pendingActionId
+      || owner.attemptCount !== step.attemptCount) continue
+    if ((succeeded && step.status === 'done') || (failed && step.status === 'failed')) {
+      settledIds.push(step.id)
+      touchedPlans.add(step.planId)
+      continue
+    }
+    const now = new Date()
+    const retryableFailure = action.status === 'failed'
+    const attemptCount = failed
+      ? (retryableFailure
+          ? Math.min((step.attemptCount ?? 0) + 1, step.maxAttempts ?? 3)
+          : (step.maxAttempts ?? 3))
+      : step.attemptCount
+    const maxAttempts = step.maxAttempts ?? 3
+    const settled = await db.agentPlanStep.updateMany({
+      where: {
+        id: step.id,
+        status: { in: ['pending', 'running'] },
+        attemptCount: owner.attemptCount,
+        result: { path: [PENDING_ACTION_PLAN_STEP_RESULT_KEY], equals: pendingActionId },
+      },
+      data: {
+        status: succeeded ? 'done' : 'failed',
+        result: {
+          pendingActionId,
+          actionType: action.type,
+          actionStatus: action.status,
+          output: action.result ?? null,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: pendingActionId,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: owner.attemptCount,
+        },
+        error: succeeded ? null : actionError,
+        doneAt: now,
+        attemptCount,
+        nextAttemptAt: retryableFailure && attemptCount < maxAttempts
+          ? new Date(now.getTime() + stepRetryDelayMs(attemptCount))
+          : null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    if (settled.count === 1) {
+      settledIds.push(step.id)
+      touchedPlans.add(step.planId)
+    }
+  }
+  await Promise.all([...touchedPlans].map((planId) =>
+    syncPlanTracker(planId, { clearBlockedByRefId: pendingActionId, live: false })))
+  return settledIds[0] ?? null
+}
+
+/**
+ * Tracker snapshots are a projection, but a successful owner endpoint may not
+ * leave a stale waiting-owner dock behind. Rebuild and verify the persisted
+ * snapshot with a short bounded retry before the endpoint reports success.
+ */
+export async function reconcilePlanTrackersForPendingAction(
+  pendingActionId: string,
+  maxAttempts = 3,
+): Promise<void> {
+  const action = await db.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { payload: true },
+  })
+  const stepIds = linkedPlanStepIdsFromPendingActionPayload(action?.payload)
+  if (stepIds.length === 0) return
+  const linkedSteps: Array<{
+    id: string
+    planId: string
+    attemptCount: number
+    result: unknown
+  }> = await db.agentPlanStep.findMany({
+    where: { id: { in: stepIds } },
+    select: { id: true, planId: true, attemptCount: true, result: true },
+  })
+  const stepIdsByPlan = new Map<string, Set<string>>()
+  for (const step of linkedSteps) {
+    // Historical action payloads still identify the plan whose persisted
+    // blocker they may own, even after a replacement action takes the row.
+    const ids = stepIdsByPlan.get(step.planId) ?? new Set<string>()
+    stepIdsByPlan.set(step.planId, ids)
+    // The payload keeps historical follower ids. A replacement action may own
+    // the current retry; the old endpoint still clears its own blocker, but it
+    // must not wait for that newer row to terminalize.
+    const owner = pendingActionOwnershipFromPlanStepResult(step.result)
+    if (!owner
+      || owner.pendingActionId !== pendingActionId
+      || owner.attemptCount !== step.attemptCount) continue
+    ids.add(step.id)
+  }
+
+  for (const [planId, planStepIds] of stepIdsByPlan) {
+    let verified = false
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < Math.max(1, maxAttempts); attempt += 1) {
+      try {
+        await syncPlanTracker(planId, { clearBlockedByRefId: pendingActionId, live: false })
+        const plan = await db.agentPlan.findUnique({
+          where: { id: planId },
+          select: { trackerSnapshot: true },
+        })
+        const snapshot = parseWorkStepsSnapshot(plan?.trackerSnapshot)
+        const stillBlocked = snapshot?.blockedBy?.refId === pendingActionId
+        const staleLinkedRow = snapshot?.steps.some((step) =>
+          planStepIds.has(step.id)
+          && ['pending', 'running', 'waiting_owner', 'waiting_worker'].includes(step.status)) ?? false
+        if (!stillBlocked && !staleLinkedRow) {
+          verified = true
+          break
+        }
+        lastError = new Error('pending_action_tracker_projection_stale')
+      } catch (err) {
+        lastError = err
+      }
+    }
+    if (!verified) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error('pending_action_tracker_projection_failed')
+    }
+  }
+}
+
+/** Settle question rows only after the durable ask card records an answer. */
+export async function completePlanStepsLinkedToAskCard(
+  askCardId: string,
+): Promise<string[]> {
+  const card = await db.agentAskCard.findUnique({
+    where: { id: askCardId },
+    select: { status: true, selectedOption: true },
+  })
+  if (!card || card.status !== 'answered') return []
+  const steps: Array<{ id: string; planId: string }> = await db.agentPlanStep.findMany({
+    where: {
+      status: { in: ['pending', 'running'] },
+      result: { path: [ASK_CARD_PLAN_STEP_RESULT_KEY], equals: askCardId },
+    },
+    select: { id: true, planId: true },
+  })
+  const settledIds: string[] = []
+  const touchedPlans = new Set<string>()
+  for (const step of steps) {
+    const settled = await db.agentPlanStep.updateMany({
+      where: { id: step.id, status: { in: ['pending', 'running'] } },
+      data: {
+        status: 'done',
+        result: {
+          askCardId,
+          askCardStatus: card.status,
+          selectedOption: card.selectedOption ?? null,
+        },
+        error: null,
+        doneAt: new Date(),
+        nextAttemptAt: null,
+        turnId: null,
+        dispatchedAt: null,
+      },
+    })
+    if (settled.count === 1) {
+      settledIds.push(step.id)
+      touchedPlans.add(step.planId)
+    }
+  }
+  await Promise.all([...touchedPlans].map((planId) =>
+    syncPlanTracker(planId, { clearBlockedByRefId: askCardId, live: false })))
+  return settledIds
 }
 
 /** Queue mode — the step is now waiting on a worker turn (reaped next tick). */

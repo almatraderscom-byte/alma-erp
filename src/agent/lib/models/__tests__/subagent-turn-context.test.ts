@@ -148,4 +148,42 @@ describe('the mode is enforced, not merely recorded', () => {
     })
     expect(res.success).toBe(true)
   })
+
+  it('Careful mode lets an explicitly read-only plan cursor reach its handler', async () => {
+    const { runRegisteredTool } = await import('@/agent/tools/registry')
+    let ran = false
+    const executePlan = {
+      name: 'execute_plan',
+      description: 'read-only plan-control test double',
+      input_schema: { type: 'object' as const, properties: {} },
+      handler: async () => { ran = true; return { success: true, data: {} } },
+    }
+    const res = await runRegisteredTool(executePlan, {}, {}, {
+      conversationId: 'c-read-only-plan',
+      businessId: 'ALMA_LIFESTYLE',
+      permissionMode: 'careful',
+      turnAuthorization: { allowMutations: false, reason: 'explicit_no_action' },
+    })
+    expect(res.errorCode).not.toBe('permission_mode_blocked')
+    expect(ran).toBe(true)
+  })
+
+  it('Careful mode still blocks execute_plan when it could enroll autodrive', async () => {
+    const { runRegisteredTool } = await import('@/agent/tools/registry')
+    let ran = false
+    const executePlan = {
+      name: 'execute_plan',
+      description: 'authorized plan-control test double',
+      input_schema: { type: 'object' as const, properties: {} },
+      handler: async () => { ran = true; return { success: true, data: {} } },
+    }
+    const res = await runRegisteredTool(executePlan, {}, {}, {
+      conversationId: 'c-action-plan',
+      businessId: 'ALMA_LIFESTYLE',
+      permissionMode: 'careful',
+      turnAuthorization: { allowMutations: true, reason: 'explicit_action' },
+    })
+    expect(res.errorCode).toBe('permission_mode_blocked')
+    expect(ran).toBe(false)
+  })
 })

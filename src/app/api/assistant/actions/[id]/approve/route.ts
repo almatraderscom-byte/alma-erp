@@ -5,6 +5,10 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { enqueueApprovedActionContinuation } from '@/agent/lib/approval-continuation'
+import {
+  reconcilePlanTrackersForPendingAction,
+  settlePlanStepsLinkedToPendingAction,
+} from '@/agent/lib/planner'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
@@ -53,6 +57,38 @@ export const runtime = 'nodejs'
 // agentic loop of up to 4 iterations), which can take 30-60s. The old 30s cap
 // caused Vercel 504s → the owner saw an "HTTP error" toast after approving.
 export const maxDuration = 120
+
+const TERMINAL_ACTION_STATUSES = new Set([
+  'executed', 'failed', 'rejected', 'expired', 'cancelled', 'superseded',
+])
+
+function approvalResultRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+async function repairTerminalApprovalPlan(
+  actionId: string,
+  action: { status: string; type?: string; result?: unknown },
+): Promise<void> {
+  if (!TERMINAL_ACTION_STATUSES.has(action.status)) return
+  if (action.status === 'rejected' && action.type === 'delegation') {
+    const result = approvalResultRecord(action.result)
+    const fallbackCompleted = typeof result.delegationFallbackMessageId === 'string'
+      && Boolean(result.delegationFallbackMessageId)
+    const fallbackFailed = result.delegationFallbackFailed === true
+    // While the reject route's leased Sonnet fallback is running (or awaiting
+    // a retry), a stale Approve must not terminal-fail its still-open plan row.
+    if (!fallbackCompleted && !fallbackFailed) return
+    if (fallbackCompleted) {
+      await reconcilePlanTrackersForPendingAction(actionId)
+      return
+    }
+  }
+  await settlePlanStepsLinkedToPendingAction(actionId)
+  await reconcilePlanTrackersForPendingAction(actionId)
+}
 
 function verifyInternalToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -127,6 +163,7 @@ async function runApprove(
   const action = await db.agentPendingAction.findUnique({ where: { id: actionId } })
   if (!action) return Response.json({ error: 'not_found' }, { status: 404 })
   if (action.status !== 'pending') {
+    await repairTerminalApprovalPlan(actionId, action)
     return Response.json({ error: 'already_resolved', status: action.status }, { status: 409 })
   }
   if (
@@ -145,6 +182,10 @@ async function runApprove(
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
     })
+    // Settle here as well as in POST's common tail. Keeping the terminal write
+    // adjacent to its plan callback makes this path safe if runApprove is ever
+    // reused, and the CAS helper makes the common-tail replay harmless.
+    await settlePlanStepsLinkedToPendingAction(actionId).catch(() => null)
     return Response.json({ error: 'expired' }, { status: 410 })
   }
 
@@ -3548,6 +3589,18 @@ export async function POST(
   const denied = await authorizeApprovalRequest(req)
   if (denied) return denied
   const actionId = (await ctx.params).id
+  // Repair a synchronous approval whose business transition committed but
+  // tracker settlement failed. This runs before workflow/image guards, both of
+  // which may legitimately short-circuit an already-terminal card.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const preflightAction = await (prisma as any).agentPendingAction.findUnique({
+    where: { id: actionId },
+    select: { status: true, type: true, result: true },
+  })
+  if (preflightAction && TERMINAL_ACTION_STATUSES.has(preflightAction.status)) {
+    await repairTerminalApprovalPlan(actionId, preflightAction)
+    return Response.json({ error: 'already_resolved', status: preflightAction.status }, { status: 409 })
+  }
   // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
@@ -3631,6 +3684,14 @@ export async function POST(
     await syncWorkflowWithPendingAction(actionId, 'approval')
   } catch (err) {
     console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
+  }
+  // The approval handler, not the resumed model, owns completion truth. A
+  // synchronous action that durably reached `executed` closes its exact plan
+  // row here; queued jobs remain pending until job-result calls the same CAS.
+  try {
+    await settlePlanStepsLinkedToPendingAction(actionId)
+  } catch (err) {
+    console.warn('[approve] plan-step settle failed (approval unaffected):', err instanceof Error ? err.message : err)
   }
   try {
     if (res.status >= 200 && res.status < 300 && !visualProofPending) {

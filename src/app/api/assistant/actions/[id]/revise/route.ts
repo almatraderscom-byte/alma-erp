@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { isPendingActionExpired } from '@/agent/lib/pending-action'
+import { settlePlanStepsLinkedToPendingAction } from '@/agent/lib/planner'
 import { isRevisableAction, buildReviseDirective } from '@/agent/lib/revise-pending'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import type { AgentEvent } from '@/agent/lib/core'
@@ -77,6 +78,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       where: { id: actionId },
       data: { status: 'expired', resolvedAt: new Date() },
     })
+    await settlePlanStepsLinkedToPendingAction(actionId).catch(() => null)
     return Response.json({ error: 'expired', message: 'অনুমোদনের সময় শেষ।' }, { status: 410 })
   }
   if (!isRevisableAction(action.type)) {

@@ -77,8 +77,33 @@ import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
 import {
+  beginPlanStepForTool,
+  continuationAfterPlanRowsSettlement,
+  continuationAfterTrackerSettlement,
+  finishPlanStep,
+  ownerBlockerFromToolResult,
+  pendingActionTrackerState,
+  pickFinalDeliveryStep,
+  prioritizePlanCreationForUntrackedRound,
+} from '@/agent/lib/plan-step-advance'
+import {
+  completePlanStepsLinkedToAskCard,
+  linkAskCardToPlanStep,
+  linkPendingActionToPlanStep,
+  markStepBlocked,
+  markUnlinkedPlanStepRetryable,
+  settlePlanStepsLinkedToPendingAction,
+} from '@/agent/lib/planner'
+import {
+  loadPlanForWorkTracker,
+  syncPlanTracker,
+  workStepsSignature,
+  type WorkStepsBlocker,
+} from '@/agent/lib/work-steps'
+import {
   deriveOwnerTurnAuthorization,
   filterToolsForOwnerTurn,
+  isReadOnlyPlanControlTool,
   ownerTurnAuthorizationNote,
 } from '@/agent/lib/turn-authorization'
 import {
@@ -738,6 +763,8 @@ export interface RunAgentTurnOptions {
   permissionMode?: import('@/agent/lib/permission-mode').PermissionMode | null
   /** The live elevation grant when permissionMode is 'elevated'. */
   elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
+  /** Same durable task continued by an approval/auto-resume control turn. */
+  continuation?: boolean
 }
 
 /** One-time nudge injected when the serverless deadline is close. */
@@ -1107,6 +1134,48 @@ export async function* runAgentTurn(
     durationMs: number; error: string | null
   }
   const toolRecords: ToolRecord[] = []
+  // Native Anthropic kill-switch parity: the durable AgentPlan is the same
+  // checklist source used by the universal loop. Keep the full prospective
+  // list visible, then move only the step whose real tool is running.
+  let nativeTrackerPlanSteps: import('@/agent/lib/plan-step-advance').AdvanceableStep[] = []
+  let nativeWorkStepsTrackerId: string | null = null
+  let nativeTrackerOriginTurnId: string | null = null
+  let nativeWorkStepsSignature = ''
+  let nativeTrackerBlockedBy: WorkStepsBlocker | null = null
+  const loadNativeTrackerPlan = async (force = false) => {
+    if (nativeTrackerPlanSteps.length && !force) return
+    const plan = await loadPlanForWorkTracker(
+      conversationId,
+      turnId,
+      options.continuation === true,
+    )
+    if (!plan) return
+    nativeWorkStepsTrackerId = plan.id
+    nativeTrackerOriginTurnId = plan.originTurnId
+    nativeTrackerPlanSteps = plan.steps.map((step) => ({
+      id: step.id,
+      action: step.action,
+      toolName: step.toolName ?? null,
+      status: step.status,
+    }))
+  }
+  const nativeTrackerSnapshot = async (input: {
+    live: boolean
+    bindAssistantMessageId?: string | null
+  }) => {
+    try {
+      await loadNativeTrackerPlan(true)
+      if (!nativeWorkStepsTrackerId || !turnId) return null
+      return await syncPlanTracker(nativeWorkStepsTrackerId, {
+        currentTurnId: turnId,
+        blockedBy: nativeTrackerBlockedBy,
+        live: input.live,
+        bindAssistantMessageId: input.bindAssistantMessageId,
+      })
+    } catch {
+      return null
+    }
+  }
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown; imageRenderSelection?: unknown }> = []
@@ -1749,6 +1818,7 @@ export async function* runAgentTurn(
         const carefulNeedsCard = await (async () => {
           if (grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
           if (!conversationId) return false
+          if (isReadOnlyPlanControlTool(tb.name, turnAuthorization)) return false
           // Cancelling a permission is never staged — that would trap Boss inside
           // the grant he just asked to end.
           if (tb.name === 'revoke_standing_permission') return false
@@ -1857,6 +1927,8 @@ export async function* runAgentTurn(
 
       const reads: ToolBlock[] = []
       const writes: ToolBlock[] = []
+      await loadNativeTrackerPlan()
+      let nativeTrackedRound = nativeTrackerPlanSteps.length > 0
       for (const tb of toolUseBlocks) {
         // Emit pre-execution events
         const isDelegate = tb.name === 'delegate_to_specialist'
@@ -1870,7 +1942,21 @@ export async function* runAgentTurn(
           yield { type: 'tool_start', id: tb.id, name: tb.name, input: tb.input }
         }
 
-        if (MUTATING_TOOLS.has(tb.name)) {
+      }
+
+      // A plan created in this response must exist before any sibling work is
+      // executed. Otherwise the reads finish first and their prospective rows
+      // remain pending forever. Run the control call first, then preserve source
+      // order for every remaining call; the successful make_plan reload below
+      // turns tracking on before the next call is claimed.
+      const createsNativeTrackerThisRound = !nativeTrackedRound
+        && toolUseBlocks.some((tb) => tb.name === 'make_plan')
+      const executionBlocks = prioritizePlanCreationForUntrackedRound(
+        toolUseBlocks,
+        nativeTrackedRound,
+      )
+      for (const tb of executionBlocks) {
+        if (nativeTrackedRound || createsNativeTrackerThisRound || MUTATING_TOOLS.has(tb.name)) {
           writes.push(tb)
         } else {
           reads.push(tb)
@@ -1889,7 +1975,7 @@ export async function* runAgentTurn(
       if (permissionChangeInResponse) {
         writes.length = 0
         reads.length = 0
-        for (const tb of toolUseBlocks) writes.push(tb)
+        for (const tb of executionBlocks) writes.push(tb)
       }
 
       // Execute reads in parallel, writes sequentially after
@@ -1904,8 +1990,195 @@ export async function* runAgentTurn(
       }
 
       for (const tb of writes) {
+        let claimedStepId: string | null = null
+        if (nativeTrackedRound) {
+          try {
+            claimedStepId = await beginPlanStepForTool(nativeTrackerPlanSteps, tb.name)
+            if (claimedStepId) {
+              const running = await nativeTrackerSnapshot({ live: true })
+              const signature = workStepsSignature(running)
+              if (running && signature !== nativeWorkStepsSignature) {
+                nativeWorkStepsSignature = signature
+                yield running
+              }
+            }
+          } catch { claimedStepId = null }
+        }
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
+        if (tb.name === 'make_plan' && r.result.success) {
+          await loadNativeTrackerPlan(true)
+          nativeTrackedRound = nativeTrackerPlanSteps.length > 0
+          const planned = await nativeTrackerSnapshot({ live: true })
+          const plannedSignature = workStepsSignature(planned)
+          if (planned && plannedSignature !== nativeWorkStepsSignature) {
+            nativeWorkStepsSignature = plannedSignature
+            yield planned
+          }
+        }
+        const blockerData = r.result.success && r.result.data && typeof r.result.data === 'object'
+          ? r.result.data as Record<string, unknown>
+          : null
+        const blockerActionId = typeof blockerData?.pendingActionId === 'string'
+          ? blockerData.pendingActionId
+          : null
+        let blockerActionStatus: string | null | undefined
+        if (blockerActionId) {
+          try {
+            // pendingActionId is also used as a background-job handle. Read the
+            // durable state before calling it an owner approval; already-approved
+            // or executed jobs must advance normally and never park the tracker.
+            const action = await (prisma as any).agentPendingAction.findUnique({
+              where: { id: blockerActionId },
+              select: { status: true },
+            })
+            blockerActionStatus = typeof action?.status === 'string' ? action.status : null
+          } catch {
+            // Undefined retains the explicit awaitingApproval fallback.
+            blockerActionStatus = undefined
+          }
+        }
+        const ownerBlocker = ownerBlockerFromToolResult(r.result, blockerActionStatus)
+        const actionTrackerState = pendingActionTrackerState(blockerActionStatus)
+        const queuedWorker = Boolean(blockerActionId && actionTrackerState === 'worker')
+        const terminalActionFailure = Boolean(blockerActionId && actionTrackerState === 'failed')
+        if (ownerBlocker) nativeTrackerBlockedBy = ownerBlocker
+        else if (queuedWorker && blockerActionId) {
+          nativeTrackerBlockedBy = { kind: 'worker', refId: blockerActionId }
+        }
+        if (claimedStepId) {
+          const local = nativeTrackerPlanSteps.find((step) => step.id === claimedStepId)
+          const reloadLocalStatus = async () => {
+            try {
+              const persisted = await (prisma as any).agentPlanStep.findUnique({
+                where: { id: claimedStepId },
+                select: { status: true },
+              })
+              if (local && typeof persisted?.status === 'string') local.status = persisted.status
+            } catch { /* durable rows remain authoritative on the next plan reload */ }
+          }
+          try {
+          if (ownerBlocker) {
+            // Approval/question cards are successful *staging*, not successful
+            // execution. Bind the durable card, put the step back while it
+            // waits, and let the real owner-resolution callback settle it.
+            const linked = ownerBlocker.kind === 'approval'
+              ? await linkPendingActionToPlanStep(ownerBlocker.refId, claimedStepId)
+              : await linkAskCardToPlanStep(ownerBlocker.refId, claimedStepId)
+            if (linked) {
+              await markStepBlocked(claimedStepId)
+              if (local) local.status = 'pending'
+              if (ownerBlocker.kind === 'approval') {
+                // An older deduplicated card can be approved while this turn
+                // appends its follower link. Reconcile the post-link state so a
+                // fast terminal callback cannot be missed, and an approved job
+                // immediately changes waiting_owner to waiting_worker.
+                const settled = await settlePlanStepsLinkedToPendingAction(ownerBlocker.refId)
+                if (settled) {
+                  nativeTrackerBlockedBy = null
+                  await reloadLocalStatus()
+                } else {
+                  try {
+                    const current = await (prisma as any).agentPendingAction.findUnique({
+                      where: { id: ownerBlocker.refId },
+                      select: { status: true },
+                    })
+                    if (current?.status === 'approved') {
+                      nativeTrackerBlockedBy = { kind: 'worker', refId: ownerBlocker.refId }
+                    }
+                  } catch { /* the original pending snapshot remains truthful */ }
+                }
+              } else {
+                // A deterministic ask card can be answered by an overlapping
+                // turn before this newly claimed row finishes binding. The
+                // answer callback then had no reverse link to settle. Re-read
+                // the durable card only after the row is linked and blocked;
+                // this also repairs the narrower answer-between-link-and-block
+                // race where markStepBlocked temporarily follows a settlement.
+                const settled = await completePlanStepsLinkedToAskCard(ownerBlocker.refId)
+                if (settled.includes(claimedStepId)) {
+                  nativeTrackerBlockedBy = null
+                  if (local) local.status = 'done'
+                }
+              }
+            } else {
+              // Never strand a row when the result points at a missing card or
+              // a conflicting owner. Preserve the blocker in the snapshot, but
+              // make linkage failure explicit/retryable instead of pretending
+              // that an unowned approval/question can later settle this step.
+              const outcome = await finishPlanStep({
+                stepId: claimedStepId,
+                ok: false,
+                error: `Could not bind ${ownerBlocker.kind} ${ownerBlocker.refId} to the plan step`,
+                resultSummary: { toolName: tb.name, toolCallId: tb.id },
+              })
+              if (local && outcome) local.status = outcome
+            }
+          } else if (queuedWorker && blockerActionId) {
+            // approved means queued/running for background actions, not done.
+            // Keep the claimed row running and persist the exact callback link;
+            // job-result will settle it only after the action becomes executed.
+            const linked = await linkPendingActionToPlanStep(blockerActionId, claimedStepId)
+            if (linked) {
+              // Close the link-vs-fast-worker race: the callback may have
+              // terminalized the action just before this payload link existed.
+              // Re-checking is status-gated and idempotent while still queued.
+              const settled = await settlePlanStepsLinkedToPendingAction(blockerActionId)
+              if (settled) {
+                nativeTrackerBlockedBy = null
+                await reloadLocalStatus()
+              }
+            } else {
+              const outcome = await finishPlanStep({
+                stepId: claimedStepId,
+                ok: false,
+                error: `Could not bind worker action ${blockerActionId} to the plan step`,
+                resultSummary: { toolName: tb.name, toolCallId: tb.id },
+              })
+              if (local && outcome) local.status = outcome
+            }
+          } else if (terminalActionFailure) {
+            const outcome = await finishPlanStep({
+              stepId: claimedStepId,
+              ok: false,
+              error: `Background action ${blockerActionId} is ${blockerActionStatus}`,
+              resultSummary: { toolName: tb.name, toolCallId: tb.id },
+            })
+            if (local && outcome) local.status = outcome
+          } else {
+            const outcome = await finishPlanStep({
+              stepId: claimedStepId,
+              ok: r.result.success,
+              error: r.result.error,
+              resultSummary: { toolName: tb.name, toolCallId: tb.id },
+            })
+            if (local && outcome) local.status = outcome
+          }
+          } catch (err) {
+            // The real tool result wins over tracker bookkeeping. Keep the row
+            // recoverable, but never abort reply persistence. If no card link
+            // committed, CAS the claimed row into the normal bounded-retry
+            // state so owner-gated execution cannot remain orphaned in running.
+            const message = err instanceof Error ? err.message : String(err)
+            await markUnlinkedPlanStepRetryable(
+              claimedStepId,
+              `Tracker settlement deferred after ${tb.name}: ${message}`,
+            ).catch(() => false)
+            await reloadLocalStatus()
+            console.warn('[plan-tracker] native settlement deferred:', err instanceof Error ? err.message : err)
+          }
+        }
+        // A card blocks the task even when its tool name does not match the
+        // current prospective row. Publish waiting_owner independently from
+        // row claiming; only row mutation requires a claimed step.
+        if (claimedStepId || ownerBlocker) {
+          const finished = await nativeTrackerSnapshot({ live: true })
+          const signature = workStepsSignature(finished)
+          if (finished && signature !== nativeWorkStepsSignature) {
+            nativeWorkStepsSignature = signature
+            yield finished
+          }
+        }
       }
 
       // Emit events and build toolResultContent in ORIGINAL order
@@ -2106,6 +2379,16 @@ export async function* runAgentTurn(
         }
       }
 
+      // make_plan creates the tracker during this round, so it cannot be loaded
+      // before the handler runs. Emit the full prospective list immediately
+      // after the real tool result; later rounds advance that same snapshot.
+      const discoveredTracker = await nativeTrackerSnapshot({ live: true })
+      const discoveredSignature = workStepsSignature(discoveredTracker)
+      if (discoveredTracker && discoveredSignature !== nativeWorkStepsSignature) {
+        nativeWorkStepsSignature = discoveredSignature
+        yield discoveredTracker
+      }
+
       messages = [...messages, { role: 'user', content: toolResultContent }]
 
       // Harness Gap 5 — after a find_tool round, expose the matched tools'
@@ -2187,7 +2470,7 @@ export async function* runAgentTurn(
     // reply (strands the owner mid-task AND leaves a context hole in replayed
     // history so the next turn restarts the task from scratch).
     const coreDeadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const coreTaskUnfinished = shouldAutoContinueTurn({
+    let coreTaskUnfinished = shouldAutoContinueTurn({
       deadlineHit: coreDeadlineHit,
       hasAskCard: emittedAskCards.length > 0,
       tools: toolRecords,
@@ -2230,6 +2513,43 @@ export async function* runAgentTurn(
     })
 
     embedMessageInBackground(savedMsg.id, storedContent)
+
+    // Native-loop final delivery parity: a persisted assistant reply can close
+    // exactly one remaining tool-free summary row, never skipped read work.
+    // Bind the terminal tracker to the origin assistant message so live and
+    // cold-history rendering converge on one block and the dock can disappear.
+    if (joinedText.trim() && nativeWorkStepsTrackerId && turnId) {
+      try {
+        await loadNativeTrackerPlan(true)
+        const finalDeliveryStep = pickFinalDeliveryStep(nativeTrackerPlanSteps)
+        if (finalDeliveryStep) {
+          const outcome = await finishPlanStep({
+            stepId: finalDeliveryStep.id,
+            ok: true,
+            resultSummary: { assistantMessageId: savedMsg.id as string },
+          })
+          if (outcome) finalDeliveryStep.status = outcome
+        }
+        coreTaskUnfinished = continuationAfterPlanRowsSettlement(
+          coreTaskUnfinished,
+          nativeTrackerPlanSteps,
+        )
+        const settled = await nativeTrackerSnapshot({
+          live: false,
+          bindAssistantMessageId: nativeTrackerOriginTurnId === turnId
+            ? (savedMsg.id as string)
+            : null,
+        })
+        if (settled) {
+          coreTaskUnfinished = continuationAfterTrackerSettlement(
+            coreTaskUnfinished,
+            settled.status,
+          )
+          nativeWorkStepsSignature = workStepsSignature(settled)
+          yield settled
+        }
+      } catch { /* the saved reply remains authoritative if tracker storage blips */ }
+    }
 
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({

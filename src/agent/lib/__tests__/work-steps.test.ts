@@ -3,9 +3,13 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import agentEventSchema from '../../protocol/agent-event.schema.json'
 import {
+  clearMatchingWorkStepsBlocker,
   parseWorkStepsSnapshot,
   projectRuntimeWorkSteps,
   projectWorkSteps,
+  rememberedWorkStepsBlockerForRefresh,
+  reconcileDurableWorkStepsBlocker,
+  synchronizedWorkStepsBlocker,
   workStepsSignature,
   type TrackerPlanRow,
   type WorkStepsSnapshot,
@@ -33,6 +37,50 @@ function planRow(overrides: Partial<TrackerPlanRow> = {}): TrackerPlanRow {
 }
 
 describe('work_steps_snapshot projector', () => {
+  it('clears only the callback-owned blocker and preserves a newer card/action', () => {
+    const newer = { kind: 'question' as const, refId: 'ask-new' }
+    expect(clearMatchingWorkStepsBlocker(newer, 'action-old')).toEqual(newer)
+    expect(clearMatchingWorkStepsBlocker(newer, 'ask-new')).toBeNull()
+  })
+
+  it('preserves a queued worker blocker across generic running-step refreshes', () => {
+    const worker = { kind: 'worker' as const, refId: 'action-queued' }
+    const approval = { kind: 'approval' as const, refId: 'action-pending' }
+    expect(rememberedWorkStepsBlockerForRefresh(worker, true)).toEqual(worker)
+    expect(rememberedWorkStepsBlockerForRefresh(approval, true)).toBeNull()
+    expect(rememberedWorkStepsBlockerForRefresh(approval, false)).toEqual(approval)
+  })
+
+  it('does not let an overlapping refresh clear a durable blocker with local null', () => {
+    const approval = { kind: 'approval' as const, refId: 'action-new' }
+    const worker = { kind: 'worker' as const, refId: 'worker-new' }
+    for (const blocker of [approval, worker]) {
+      expect(synchronizedWorkStepsBlocker({
+        requested: null,
+        remembered: blocker,
+        hasRunningStep: true,
+      })).toEqual(blocker)
+      expect(synchronizedWorkStepsBlocker({
+        requested: undefined,
+        remembered: blocker,
+        clearRefId: blocker.refId,
+        hasRunningStep: true,
+      })).toBeNull()
+    }
+  })
+
+  it('never restores a blocker whose durable card/action is already terminal', () => {
+    const approval = { kind: 'approval' as const, refId: 'action-1' }
+    const worker = { kind: 'worker' as const, refId: 'action-1' }
+    const question = { kind: 'question' as const, refId: 'ask-1' }
+    expect(reconcileDurableWorkStepsBlocker(worker, 'pending')).toEqual(approval)
+    expect(reconcileDurableWorkStepsBlocker(approval, 'approved')).toEqual(worker)
+    expect(reconcileDurableWorkStepsBlocker(worker, 'executed')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(worker, 'failed')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(question, 'answered')).toBeNull()
+    expect(reconcileDurableWorkStepsBlocker(question, 'pending')).toEqual(question)
+  })
+
   it('casts the advisory lock result so Prisma never deserializes PostgreSQL void', () => {
     const source = readFileSync(new URL('../work-steps.ts', import.meta.url), 'utf8')
     expect(source).toContain(
@@ -95,6 +143,20 @@ describe('work_steps_snapshot projector', () => {
     })
     expect(snapshot.steps[0].status).toBe('waiting_worker')
     expect(snapshot.status).toBe('waiting_worker')
+  })
+
+  it('projects an action-linked queued step as waiting_worker', () => {
+    const snapshot = projectWorkSteps({
+      plan: planRow(),
+      currentTurnId: 'turn-1',
+      revision: 2,
+      blockedBy: { kind: 'worker', refId: 'action-queued' },
+      live: true,
+      now: NOW,
+    })
+    expect(snapshot.status).toBe('waiting_worker')
+    expect(snapshot.steps[1].status).toBe('waiting_worker')
+    expect(snapshot.headline).toBe('Worker-এ কাজ চলছে')
   })
 
   it('chains continuation turns without duplicating the tracker', () => {
