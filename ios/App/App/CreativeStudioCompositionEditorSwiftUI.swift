@@ -1102,6 +1102,9 @@ struct CreativeStudioCompositionEditorScreen: View {
     @State private var transformRotation: Double = 0
     @State private var transformOpacity: Double = 1
     @State private var volume: Double = 1
+    @State private var playing = false
+    @State private var mediaQuery = ""
+    @State private var mediaKind = "all"
 
     init(brandID: String, projectID: String, compositionID: String, role: String) {
         _model = State(initialValue: CSCEEditorModel(
@@ -1122,7 +1125,9 @@ struct CreativeStudioCompositionEditorScreen: View {
                             identityCard(composition)
                             historyControls(composition)
                             canvasCard
+                            transport
                             trackBrowser
+                            mediaBrowser
                             inspector
                             agentPanel
                             activityCard(composition)
@@ -1319,50 +1324,176 @@ struct CreativeStudioCompositionEditorScreen: View {
         .padding(14).csceCard()
     }
 
+    /// Web stage transport: play / pause · scrubber · split at playhead (S).
+    private var transport: some View {
+        let durationSec = Double(model.canvas?.durationMs ?? 0) / 1_000
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    playing.toggle()
+                } label: {
+                    Image(systemName: playing ? "pause.fill" : "play.fill").font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white).frame(width: 38, height: 38)
+                        .background(Color.orange, in: Circle())
+                }.buttonStyle(.plain).disabled(durationSec <= 0)
+                Text(String(format: "%.1fs / %.1fs", model.playheadSec, durationSec))
+                    .font(.caption.monospacedDigit().weight(.bold))
+                Slider(value: Binding(get: { min(model.playheadSec, max(0.1, durationSec)) },
+                                      set: { model.playheadSec = $0 }),
+                       in: 0...max(0.1, durationSec), step: 0.1)
+                    .tint(.orange)
+                Button {
+                    Task { await model.reviewSplit(at: model.playheadSec) }
+                } label: { Label("Split", systemImage: "scissors") }
+                    .font(.caption.weight(.bold)).buttonStyle(.bordered).tint(.orange)
+                    .disabled(!model.canEdit || model.selectedClip == nil || model.actionBusy)
+            }
+            Text(model.selectedClip.map { "Selected: \(model.selectedNode?.name ?? $0.id)" } ?? "Timeline-এ একটি clip ট্যাপ করুন")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(12).csceCard()
+        .task(id: playing) {
+            guard playing, durationSec > 0 else { return }
+            while playing, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                let next = ((model.playheadSec + 0.1) * 10).rounded() / 10
+                if next >= durationSec { model.playheadSec = 0; playing = false } else { model.playheadSec = next }
+            }
+        }
+    }
+
+    /// Web EditorTimeline: proportional lanes per track, clips at startMs/durationMs, playhead line.
     private var trackBrowser: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("Tracks & clips", icon: "timeline.selection")
+        let durationMs = max(1, model.canvas?.durationMs ?? 1)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionTitle("Timeline", icon: "timeline.selection")
+                Spacer()
+                Text("\(model.orderedTracks.count) tracks · \(model.orderedTracks.reduce(0) { $0 + $1.clips.count }) clips")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             if model.orderedTracks.isEmpty {
                 Text("Track নেই।").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(model.orderedTracks) { track in
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Label(track.name, systemImage: trackIcon(track.kind)).font(.subheadline.weight(.semibold))
-                        Spacer()
-                        if track.locked { Image(systemName: "lock.fill") }
-                        if track.muted { Image(systemName: "speaker.slash.fill") }
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(track.name, systemImage: trackIcon(track.kind)).font(.caption.weight(.semibold)).lineLimit(1)
+                        HStack(spacing: 4) {
+                            if track.locked { Image(systemName: "lock.fill") }
+                            if track.muted { Image(systemName: "speaker.slash.fill") }
+                            Text("\(track.clips.count)")
+                        }.font(.system(size: 9)).foregroundStyle(.secondary)
                     }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                    .frame(width: 88, alignment: .leading)
+                    GeometryReader { proxy in
+                        let width = proxy.size.width
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05))
                             ForEach(track.clips) { clip in
                                 let node = model.document?.nodes.first { $0.id == clip.nodeId }
-                                Button {
-                                    model.select(track: track, clip: clip)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(node?.name ?? clip.id).font(.caption.weight(.bold)).lineLimit(1)
-                                        Text(String(format: "%.2f–%.2fs", Double(clip.startMs) / 1_000, Double(clip.endMs) / 1_000))
-                                            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                                    }
-                                    .frame(width: 142, alignment: .leading)
-                                    .padding(10)
-                                    .background(
-                                        model.selectedClipID == clip.id ? Color.orange.opacity(0.18) : Color.primary.opacity(0.045),
-                                        in: RoundedRectangle(cornerRadius: 11)
-                                    )
-                                    .overlay(RoundedRectangle(cornerRadius: 11).stroke(model.selectedClipID == clip.id ? Color.orange : Color.clear))
+                                let x = width * CGFloat(clip.startMs) / CGFloat(durationMs)
+                                let w = max(18, width * CGFloat(clip.durationMs) / CGFloat(durationMs))
+                                Button { model.select(track: track, clip: clip) } label: {
+                                    Text(node?.name ?? clip.id).font(.system(size: 9, weight: .bold)).lineLimit(1)
+                                        .foregroundStyle(model.selectedClipID == clip.id ? .white : .primary)
+                                        .padding(.horizontal, 5).frame(width: w, height: 30, alignment: .leading)
+                                        .background(model.selectedClipID == clip.id ? Color.orange : clipTint(track.kind), in: RoundedRectangle(cornerRadius: 7))
+                                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.selectedClipID == clip.id ? Color.orange : Color.clear))
                                 }
                                 .buttonStyle(.plain)
+                                .offset(x: min(x, max(0, width - w)))
                             }
+                            Rectangle().fill(Color.orange).frame(width: 2)
+                                .offset(x: min(width - 2, width * CGFloat(model.playheadSec * 1_000) / CGFloat(durationMs)))
+                                .allowsHitTesting(false)
                         }
                     }
+                    .frame(height: 34)
                 }
-                .padding(11)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 13))
+                .padding(8)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
             }
+            // Web ruler marks
+            HStack {
+                ForEach(0..<5, id: \.self) { i in
+                    Text(String(format: "%.1fs", Double(durationMs) / 1_000 * Double(i) / 4)).font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
+                    if i < 4 { Spacer() }
+                }
+            }.padding(.leading, 96)
         }
         .padding(14).csceCard()
+    }
+
+    /// Web EditorMediaPanel: source browser over the composition's nodes with ⌘K-style search.
+    private var mediaBrowser: some View {
+        let needle = mediaQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        let nodes = (model.document?.nodes ?? []).filter { n in
+            (mediaKind == "all" || n.kind == mediaKind)
+                && (needle.isEmpty || "\(n.name) \(n.kind) \(n.content ?? "")".lowercased().contains(needle))
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionTitle("Media & sources", icon: "square.stack.3d.up")
+                Spacer()
+                Text("\(nodes.count)").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Source, caption, provider…", text: $mediaQuery).font(.caption)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+            }
+            .padding(9).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(["all", "video", "image", "caption", "voice", "music", "sfx"], id: \.self) { kind in
+                        Button(kind == "all" ? "All" : kind.capitalized) { mediaKind = kind }
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(mediaKind == kind ? .white : .secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(mediaKind == kind ? Color.orange : Color.primary.opacity(0.05), in: Capsule())
+                    }
+                }
+            }
+            if nodes.isEmpty {
+                Text("কোনো source মেলেনি — filter বা search বদলান। কোনো provider request হয়নি।").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(nodes) { node in
+                let placed = model.orderedTracks.lazy.compactMap { track -> (CSCETrack, CSCEClip)? in
+                    track.clips.first { $0.nodeId == node.id }.map { (track, $0) }
+                }.first
+                Button {
+                    if let placed { model.select(track: placed.0, clip: placed.1) }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: trackIcon(node.kind)).foregroundStyle(.orange).frame(width: 26)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(node.name).font(.caption.weight(.bold)).lineLimit(1)
+                            Text("\(node.kind) · \(placed == nil ? "Source only" : "In composition")" + (node.assetVersionId.map { " · \($0.prefix(10))" } ?? ""))
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        if placed?.1.id == model.selectedClipID { Image(systemName: "checkmark.circle.fill").foregroundStyle(.orange) }
+                    }
+                    .padding(9)
+                    .background(Color.primary.opacity(placed == nil ? 0.03 : 0.05), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain).disabled(placed == nil)
+            }
+            Text("Brand isolated · source versions pinned").font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(14).csceCard()
+    }
+
+    private func clipTint(_ kind: String) -> Color {
+        switch kind {
+        case "video": return Color.blue.opacity(0.25)
+        case "image", "overlay": return Color.purple.opacity(0.22)
+        case "caption", "text": return Color.green.opacity(0.25)
+        case "voice": return Color.teal.opacity(0.25)
+        case "music", "sfx": return Color.pink.opacity(0.22)
+        default: return Color.primary.opacity(0.08)
+        }
     }
 
     @ViewBuilder private var inspector: some View {

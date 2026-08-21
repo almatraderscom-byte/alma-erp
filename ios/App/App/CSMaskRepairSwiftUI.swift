@@ -1,40 +1,52 @@
 //
 //  CSMaskRepairSwiftUI.swift
-//  ALMA — native Production V4 precision mask repair.
+//  ALMA — native Production V4 precision mask repair (FLUX Fill).
 //
 //  White marks the area to edit; black preserves the source. The preparation
 //  upload is free. A signed server estimate and a separate owner confirmation
-//  are required before the provider can be called.
+//  are required before the provider can be called. Presets, brush/erase, undo,
+//  clear, invert, size and feather mirror the web MaskEditor exactly
+//  (mask-contract.ts ids; feather radius = max(2, maxSide / 256|96)).
 //
 
 import SwiftUI
 import UIKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 @available(iOS 17.0, *)
 struct CSMaskRepairSheet: View {
     let item: CSGalleryItem
     let vm: CreativeStudioVM
 
+    private struct Stroke { var points: [CGPoint]; var erase: Bool; var width: Double }
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var sourceImage: UIImage?
-    @State private var strokes: [[CGPoint]] = []
+    @State private var strokes: [Stroke] = []
     @State private var currentStroke: [CGPoint] = []
     @State private var canvasSize: CGSize = .zero
     @State private var brush: Double = 0.045
-    @State private var preset = "repair"
-    @State private var detail = "Repair only the painted area realistically; preserve identity, garment, lighting and perspective outside the mask."
+    @State private var erasing = false
+    @State private var inverted = false
+    @State private var feather = "soft"          // none | soft | wide (web default soft)
+    @State private var preset = "repair_hand"
+    @State private var detail = ""
     @State private var busy = false
     @State private var error: String?
     @State private var estimate: CSRunResponse?
     @State private var pendingPayload: CSRunPayload?
     @State private var confirmRun = false
 
-    private let presets: [(id: String, label: String, prompt: String)] = [
-        ("repair", "Repair", "Repair only the painted area realistically; preserve identity, garment, lighting and perspective outside the mask."),
-        ("remove", "Remove", "Remove the painted object and reconstruct a realistic matching background. Preserve everything outside the mask."),
-        ("garment_detail", "Garment detail", "Correct only the painted garment detail. Preserve fabric, print, seams, body pose, fit, lighting and perspective."),
-    ]
+    private var presetMeta: (id: String, bn: String, hint: String) {
+        CS.maskPresets.first { $0.id == preset } ?? CS.maskPresets[2]
+    }
+    private var detailRequired: Bool { preset == "custom" || preset == "replace_background" }
+    private var canEstimate: Bool {
+        sourceImage != nil && (!strokes.isEmpty || inverted)
+            && (!detailRequired || !detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) && !busy
+    }
 
     var body: some View {
         NavigationStack {
@@ -44,7 +56,8 @@ struct CSMaskRepairSheet: View {
                     VStack(alignment: .leading, spacing: 14) {
                         instruction
                         editor
-                        controls
+                        tools
+                        presetsCard
                         if let error {
                             Label(error, systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption).foregroundStyle(.orange)
@@ -75,15 +88,15 @@ struct CSMaskRepairSheet: View {
                 }
             }
         } message: {
-            Text("Provider \(estimate?.provider ?? "—") · model \(estimate?.actualModel ?? "—") · estimate ৳\(estimate?.estimateBdt ?? 0, specifier: "%.0f") ($\(estimate?.estimateUsd ?? 0, specifier: "%.3f")) · hard cap ৳\(estimate?.maxCostBdt ?? 0, specifier: "%.0f"). এই confirmation-এর আগে কোনো paid call হয়নি।")
+            Text(estimate?.confirmationBody ?? "")
         }
     }
 
     private var instruction: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Label("Paint only what should change", systemImage: "paintbrush.pointed.fill")
+            Label("শুধু যেটা বদলাবে সেটা আঁকুন", systemImage: "paintbrush.pointed.fill")
                 .font(.system(size: 14, weight: .bold)).foregroundStyle(AgentPalette.coralLt)
-            Text("সাদা brush = edit, বাকি অংশ অপরিবর্তিত। Source image কখনো overwrite হবে না; output নতুন version হিসেবে Gallery-তে আসবে।")
+            Text("সাদা brush = edit, বাকি অংশ অপরিবর্তিত। Source image কখনো overwrite হবে না; output নতুন version হিসেবে Gallery-তে আসবে। Mask upload $0 · provider call শুধু confirmation-এর পরে।")
                 .font(.caption).foregroundStyle(AgentPalette(scheme).muted)
         }.padding(13).v4MaskGlass(scheme)
     }
@@ -101,15 +114,21 @@ struct CSMaskRepairSheet: View {
                 ZStack {
                     Image(uiImage: sourceImage).resizable().scaledToFit()
                     Canvas { context, size in
-                        for stroke in strokes + (currentStroke.isEmpty ? [] : [currentStroke]) {
-                            guard let first = stroke.first else { continue }
+                        if inverted {
+                            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white.opacity(0.55)))
+                        }
+                        for stroke in strokes + (currentStroke.isEmpty ? [] : [Stroke(points: currentStroke, erase: erasing, width: brush)]) {
+                            guard let first = stroke.points.first else { continue }
                             var path = Path()
                             path.move(to: CGPoint(x: first.x * size.width, y: first.y * size.height))
-                            for point in stroke.dropFirst() {
+                            for point in stroke.points.dropFirst() {
                                 path.addLine(to: CGPoint(x: point.x * size.width, y: point.y * size.height))
                             }
-                            context.stroke(path, with: .color(.white.opacity(0.82)),
-                                           style: StrokeStyle(lineWidth: brush * min(size.width, size.height), lineCap: .round, lineJoin: .round))
+                            // Paint = white (edit), Erase = dark (keep) — always, like the web.
+                            // Invert only flips the base bitmap under the strokes.
+                            let paintsWhite = !stroke.erase
+                            context.stroke(path, with: .color(paintsWhite ? .white.opacity(0.82) : .black.opacity(0.7)),
+                                           style: StrokeStyle(lineWidth: stroke.width * min(size.width, size.height), lineCap: .round, lineJoin: .round))
                         }
                     }
                     .background(Color.black.opacity(0.13))
@@ -131,26 +150,56 @@ struct CSMaskRepairSheet: View {
         }
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    /// Web toolbar: Brush · Erase · Undo (toolbar) · Clear · Invert · size · feather.
+    private var tools: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                toolChip("Brush", "paintbrush.fill", on: !erasing) { erasing = false }
+                toolChip("Erase", "eraser.fill", on: erasing) { erasing = true }
+                toolChip("Invert", "arrow.triangle.2.circlepath", on: inverted) {
+                    // Web parity: invert the ACCUMULATED mask — base flips and every existing
+                    // stroke flips meaning; strokes drawn afterwards keep brush=white / erase=black.
+                    inverted.toggle()
+                    strokes = strokes.map { Stroke(points: $0.points, erase: !$0.erase, width: $0.width) }
+                }
+                Spacer()
+                Button("Clear") { strokes = []; currentStroke = []; inverted = false }
+                    .font(.caption.weight(.bold)).foregroundStyle(.red).disabled(strokes.isEmpty && !inverted)
+            }
             HStack {
-                Label("Brush", systemImage: "circle.fill").font(.caption.weight(.bold))
+                Label("Size", systemImage: "circle.fill").font(.caption.weight(.bold)).frame(width: 64, alignment: .leading)
                 Slider(value: $brush, in: 0.015...0.12).tint(AgentPalette.coral)
-                Button("Clear") { strokes = []; currentStroke = [] }
-                    .font(.caption.weight(.bold)).foregroundStyle(.red)
+                Text("\(Int((brush * 100).rounded()))").font(.caption2.monospacedDigit()).frame(width: 24)
             }
             HStack(spacing: 8) {
-                ForEach(presets, id: \.id) { value in
-                    Button(value.label) {
-                        preset = value.id; detail = value.prompt; CSHaptic.tap()
-                    }
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(preset == value.id ? .white : AgentPalette(scheme).muted)
-                    .padding(.horizontal, 11).padding(.vertical, 8)
-                    .background(preset == value.id ? AgentPalette.coral : Color.white.opacity(0.06), in: Capsule())
+                Text("Feather").font(.caption.weight(.bold)).frame(width: 64, alignment: .leading)
+                ForEach([("none", "None"), ("soft", "Soft"), ("wide", "Wide")], id: \.0) { id, label in
+                    Button(label) { feather = id; CSHaptic.tap() }
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(feather == id ? .white : AgentPalette(scheme).muted)
+                        .padding(.horizontal, 11).padding(.vertical, 7)
+                        .background(feather == id ? AgentPalette.coral : Color.white.opacity(0.06), in: Capsule())
+                }
+                Spacer()
+            }
+            Text("Feather = mask-এর কিনারা নরম করে (web: max(2, side/256) soft · side/96 wide) — upload-এর আগেই apply হয়।")
+                .font(.caption2).foregroundStyle(AgentPalette(scheme).muted)
+        }.padding(14).v4MaskGlass(scheme)
+    }
+
+    private var presetsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Preset (mask-contract)").font(.caption.weight(.bold)).foregroundStyle(AgentPalette(scheme).muted)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
+                ForEach(CS.maskPresets, id: \.id) { value in
+                    Button(value.bn) { preset = value.id; CSHaptic.tap() }
+                        .font(.system(size: 11.5, weight: .bold)).lineLimit(1)
+                        .foregroundStyle(preset == value.id ? .white : AgentPalette(scheme).muted)
+                        .frame(maxWidth: .infinity).padding(.horizontal, 11).padding(.vertical, 9)
+                        .background(preset == value.id ? AgentPalette.coral : Color.white.opacity(0.06), in: Capsule())
                 }
             }
-            TextField("Repair instruction", text: $detail, axis: .vertical)
+            TextField(presetMeta.hint + (detailRequired ? " *" : ""), text: $detail, axis: .vertical)
                 .lineLimit(2...5).font(.caption)
                 .padding(11).background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
             Button { Task { await prepareEstimate() } } label: {
@@ -161,11 +210,20 @@ struct CSMaskRepairSheet: View {
                 }.frame(maxWidth: .infinity).padding(13)
             }
             .buttonStyle(.borderedProminent).tint(AgentPalette.coral)
-            .disabled(sourceImage == nil || strokes.isEmpty || detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
-            Text("Mask upload $0 · provider call only after the next confirmation")
+            .disabled(!canEstimate)
+            Text("FLUX Fill (fal) · source pixel অপরিবর্তিত · coverage/cost server যাচাই করে · তারপর আলাদা confirmation")
                 .font(.caption2).foregroundStyle(AgentPalette(scheme).muted)
                 .frame(maxWidth: .infinity, alignment: .center)
         }.padding(14).v4MaskGlass(scheme)
+    }
+
+    private func toolChip(_ label: String, _ icon: String, on: Bool, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: {
+            Label(label, systemImage: icon).font(.system(size: 11, weight: .bold))
+                .foregroundStyle(on ? .white : AgentPalette(scheme).muted)
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(on ? AgentPalette.coral : Color.white.opacity(0.06), in: Capsule())
+        }.buttonStyle(.plain)
     }
 
     private var drawGesture: some Gesture {
@@ -176,7 +234,7 @@ struct CSMaskRepairSheet: View {
                     y: min(1, max(0, value.location.y / max(1, canvasSize.height)))))
             }
             .onEnded { _ in
-                if !currentStroke.isEmpty { strokes.append(currentStroke) }
+                if !currentStroke.isEmpty { strokes.append(Stroke(points: currentStroke, erase: erasing, width: brush)) }
                 currentStroke = []
             }
     }
@@ -191,7 +249,7 @@ struct CSMaskRepairSheet: View {
     }
 
     private func prepareEstimate() async {
-        guard let image = sourceImage, !strokes.isEmpty else { return }
+        guard let image = sourceImage, canEstimate else { return }
         busy = true; error = nil
         defer { busy = false }
         guard let png = renderMask(for: image) else { error = "Mask তৈরি হয়নি"; return }
@@ -210,6 +268,8 @@ struct CSMaskRepairSheet: View {
         }
     }
 
+    /// Export: black background + painted strokes as white (erase = black, invert flips),
+    /// feathered with a Gaussian blur, at the source's natural size — same as the web.
     private func renderMask(for image: UIImage) -> Data? {
         let size = CGSize(width: max(1, image.size.width), height: max(1, image.size.height))
         let format = UIGraphicsImageRendererFormat()
@@ -217,19 +277,20 @@ struct CSMaskRepairSheet: View {
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let rendered = renderer.image { context in
-            UIColor.black.setFill()
+            (inverted ? UIColor.white : UIColor.black).setFill()
             context.fill(CGRect(origin: .zero, size: size))
             let cg = context.cgContext
-            cg.setStrokeColor(UIColor.white.cgColor)
-            cg.setFillColor(UIColor.white.cgColor)
-            let brushWidth = CGFloat(brush) * min(size.width, size.height)
-            cg.setLineWidth(brushWidth)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
             for stroke in strokes {
-                guard let first = stroke.first else { continue }
+                guard let first = stroke.points.first else { continue }
+                let white = !stroke.erase
+                cg.setStrokeColor((white ? UIColor.white : UIColor.black).cgColor)
+                cg.setFillColor((white ? UIColor.white : UIColor.black).cgColor)
+                let brushWidth = CGFloat(stroke.width) * min(size.width, size.height)
+                cg.setLineWidth(brushWidth)
                 let start = CGPoint(x: first.x * size.width, y: first.y * size.height)
-                if stroke.count == 1 {
+                if stroke.points.count == 1 {
                     let radius = brushWidth / 2
                     cg.fillEllipse(in: CGRect(x: start.x - radius, y: start.y - radius,
                                               width: brushWidth, height: brushWidth))
@@ -237,13 +298,28 @@ struct CSMaskRepairSheet: View {
                 }
                 cg.beginPath()
                 cg.move(to: start)
-                for point in stroke.dropFirst() {
+                for point in stroke.points.dropFirst() {
                     cg.addLine(to: CGPoint(x: point.x * size.width, y: point.y * size.height))
                 }
                 cg.strokePath()
             }
         }
-        return rendered.pngData()
+        return feathered(rendered)?.pngData() ?? rendered.pngData()
+    }
+
+    /// Web `featherRadiusPx`: none → 0; soft → max(2, side/256); wide → max(2, side/96).
+    private func feathered(_ mask: UIImage) -> UIImage? {
+        guard feather != "none", let cg = mask.cgImage else { return mask }
+        let maxSide = max(mask.size.width, mask.size.height)
+        let radius = max(2, (maxSide / (feather == "soft" ? 256 : 96)).rounded())
+        let input = CIImage(cgImage: cg)
+        let blur = CIFilter.gaussianBlur()
+        blur.inputImage = input.clampedToExtent()
+        blur.radius = Float(radius)
+        guard let output = blur.outputImage?.cropped(to: input.extent) else { return mask }
+        let ctx = CIContext(options: nil)
+        guard let out = ctx.createCGImage(output, from: input.extent) else { return mask }
+        return UIImage(cgImage: out)
     }
 }
 

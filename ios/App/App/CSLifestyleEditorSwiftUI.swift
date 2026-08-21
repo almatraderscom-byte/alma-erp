@@ -202,7 +202,11 @@ struct CSFinishParams: Decodable, Equatable {
 
 enum CSMediaSaver {
     static func fetch(_ url: URL) async throws -> Data {
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(from: url)
+        // The scoped /gallery/download route answers 4xx with JSON — never save that as a photo.
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
         return data
     }
 
