@@ -78,6 +78,7 @@ import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
 import {
   beginPlanStepForTool,
+  continuationAfterPlanRowsSettlement,
   continuationAfterTrackerSettlement,
   finishPlanStep,
   ownerBlockerFromToolResult,
@@ -2501,6 +2502,10 @@ export async function* runAgentTurn(
           })
           if (outcome) finalDeliveryStep.status = outcome
         }
+        coreTaskUnfinished = continuationAfterPlanRowsSettlement(
+          coreTaskUnfinished,
+          nativeTrackerPlanSteps,
+        )
         const settled = await nativeTrackerSnapshot({
           live: false,
           bindAssistantMessageId: nativeTrackerOriginTurnId === turnId

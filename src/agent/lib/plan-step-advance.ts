@@ -158,6 +158,20 @@ export function continuationAfterTrackerSettlement(
 }
 
 /**
+ * The explicit tracker sync may deduplicate after markStepDone's background
+ * refresh wins. Freshly loaded rows plus the awaited final write are still
+ * durable completion evidence even when no new snapshot is returned.
+ */
+export function continuationAfterPlanRowsSettlement(
+  needContinue: boolean,
+  steps: AdvanceableStep[],
+): boolean {
+  const completed = steps.length > 0
+    && steps.every((step) => step.status === 'done' || step.status === 'skipped')
+  return needContinue && !completed
+}
+
+/**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the
  * tool executes; marking running and done in the same breath would mean the owner

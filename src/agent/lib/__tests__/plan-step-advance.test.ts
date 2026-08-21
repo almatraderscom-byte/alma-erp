@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
+  continuationAfterPlanRowsSettlement,
   continuationAfterTrackerSettlement,
   pickFinalDeliveryStep,
   pickStepForTool,
@@ -67,6 +68,18 @@ describe('continuationAfterTrackerSettlement', () => {
     expect(continuationAfterTrackerSettlement(true, 'completed')).toBe(false)
     expect(continuationAfterTrackerSettlement(true, 'running')).toBe(true)
     expect(continuationAfterTrackerSettlement(false, 'completed')).toBe(false)
+  })
+
+  it('uses durable plan rows when the completed snapshot write deduplicates', () => {
+    expect(continuationAfterPlanRowsSettlement(true, [
+      step('read', 'done', 'get_orders'),
+      step('summary', 'done'),
+    ])).toBe(false)
+    expect(continuationAfterPlanRowsSettlement(true, [
+      step('read', 'done', 'get_orders'),
+      step('summary', 'running'),
+    ])).toBe(true)
+    expect(continuationAfterPlanRowsSettlement(true, [])).toBe(true)
   })
 })
 
