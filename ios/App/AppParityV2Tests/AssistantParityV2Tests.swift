@@ -1154,11 +1154,45 @@ final class AssistantParityV2Tests: XCTestCase {
         let elements = AssistantBarHooks.modelMenuElements(
             models: models, selectedId: nil, onSelect: { _ in })
         let menus = elements.compactMap { $0 as? UIMenu }
-        let actions = menus.flatMap(\.children).compactMap { $0 as? UIAction }
 
+        // Providers are COLLAPSED (owner ask 2026-08-21): the top level is the Auto
+        // block plus one row per vendor, and the models live one level down. The old
+        // assertion read only the immediate children, so it described a flat menu
+        // that no longer exists (Codex P1).
         XCTAssertEqual(menus.count, 3)
-        XCTAssertEqual(actions.map(\.title), ["Auto", "Claude", "Gemini"])
-        XCTAssertEqual(actions.first?.state, .on)
+        // Top level: the Auto block, then ONE row per vendor.
+        let autoActions = (menus.first?.children ?? []).compactMap { $0 as? UIAction }
+        XCTAssertEqual(autoActions.map(\.title), ["Auto"])
+        XCTAssertEqual(autoActions.first?.state, .on)
+        XCTAssertEqual(menus.dropFirst().map(\.title), ["Anthropic", "Google"])
+        // …and each vendor's models sit INSIDE its row.
+        XCTAssertEqual(
+            menus.dropFirst().map { menu in
+                menu.children.compactMap { ($0 as? UIAction)?.title }
+            },
+            [["Claude"], ["Gemini"]])
+    }
+
+    func testCollapsedProviderRowNamesTheSelectedModel() {
+        let models = [
+            AgentModelInfo(id: "claude", label: "Claude Opus 4.8", provider: "anthropic", enabled: true,
+                           isDefault: false, contextWindow: 200_000),
+            AgentModelInfo(id: "gemini", label: "Gemini 3.1 Pro", provider: "google", enabled: true,
+                           isDefault: true, contextWindow: 1_000_000),
+        ]
+
+        let elements = AssistantBarHooks.modelMenuElements(
+            models: models, selectedId: "gemini", onSelect: { _ in })
+        let menus = elements.compactMap { $0 as? UIMenu }
+
+        // The vendor holding the pick carries it in its own title, so the running
+        // model is readable without opening the submenu — the whole point of
+        // collapsing. The other vendor row stays a plain name.
+        XCTAssertEqual(menus.dropFirst().map(\.title), ["Anthropic", "Google · Gemini 3.1"])
+        let anthropic = (menus[1].children.compactMap { $0 as? UIAction })
+        let google = (menus[2].children.compactMap { $0 as? UIAction })
+        XCTAssertEqual(anthropic.first?.state, .off)
+        XCTAssertEqual(google.first?.state, .on)
     }
 
     func testNativeContextWindowDecodesProviderMeasuredUsage() throws {

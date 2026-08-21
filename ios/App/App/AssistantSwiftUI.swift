@@ -1289,9 +1289,11 @@ struct AgentModelInfo: Decodable, Identifiable, Equatable {
     /// Thinking levels this model REALLY accepts (server registry, effort.ts):
     /// low | medium | high | xhigh | max. Empty/absent = this model has no dial,
     /// so the picker offers none for it rather than a control that does nothing.
-    let effortLevels: [String]?
+    /// `var` with a default so the memberwise init still works for callers (and
+    /// tests) that predate the thinking level — decoding is unaffected.
+    var effortLevels: [String]? = nil
     /// The provider's own default depth — shown as the "Auto" hint.
-    let effortDefault: String?
+    var effortDefault: String? = nil
     enum CodingKeys: String, CodingKey {
         case id, label, provider, enabled, contextWindow, effortLevels, effortDefault
         case isDefault = "default"
