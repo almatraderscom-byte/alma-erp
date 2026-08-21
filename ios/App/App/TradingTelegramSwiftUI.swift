@@ -155,17 +155,24 @@ struct TradingTelegramDraftGroup: Decodable, Identifiable, Equatable {
     let userName: String
     let telegramUsername: String?
     let telegramUserId: String?
+    let userId: String?
+    let tradingAccountId: String?
     let accountTitle: String?
     let accountAlias: String?
     let drafts: [TradingTelegramDraft]
 
-    var id: String { "\(userName):\(telegramUserId ?? "")-\(accountTitle ?? accountAlias ?? "")" }
+    /// Server group key is (userId, tradingAccountId, telegramUserId) — mirror it, or
+    /// two accounts sharing a title collapse into one card.
+    var id: String {
+        "\(userId ?? userName):\(tradingAccountId ?? accountTitle ?? accountAlias ?? "none"):\(telegramUserId ?? "")"
+    }
     var account: String { accountTitle ?? accountAlias ?? "—" }
     var telegramHandle: String { "@\(telegramUsername ?? telegramUserId ?? "—")" }
 
     private enum Keys: String, CodingKey { case key, drafts }
     private enum KeyKeys: String, CodingKey {
-        case userName, telegramUsername, telegramUserId, accountTitle, accountAlias
+        case userName, telegramUsername, telegramUserId, userId, tradingAccountId
+        case accountTitle, accountAlias
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -173,6 +180,8 @@ struct TradingTelegramDraftGroup: Decodable, Identifiable, Equatable {
         userName = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .userName) } ?? "—"
         telegramUsername = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .telegramUsername) }
         telegramUserId = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .telegramUserId) }
+        userId = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .userId) }
+        tradingAccountId = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .tradingAccountId) }
         accountTitle = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountTitle) }
         accountAlias = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountAlias) }
         drafts = (try? c.decode([TradingTelegramDraft].self, forKey: .drafts)) ?? []
@@ -183,19 +192,26 @@ struct TradingTelegramDraftGroup: Decodable, Identifiable, Equatable {
 /// Staff view (web byDay=1): one card per (day × account) with its drafts.
 struct TradingTelegramDraftDayGroup: Decodable, Identifiable, Equatable {
     let ymd: String
+    let tradingAccountId: String?
     let accountTitle: String?
     let accountAlias: String?
     let drafts: [TradingTelegramDraft]
 
-    var id: String { "\(ymd)-\(accountTitle ?? accountAlias ?? "none")" }
+    /// The server groups by (day, tradingAccountId) — two accounts can share a title,
+    /// an alias, or have neither, so the id must carry the account id or ForEach will
+    /// conflate their cards.
+    var id: String { "\(ymd)-\(tradingAccountId ?? accountTitle ?? accountAlias ?? "none")" }
     var account: String { accountTitle ?? accountAlias ?? "—" }
 
     private enum Keys: String, CodingKey { case key, drafts }
-    private enum KeyKeys: String, CodingKey { case ymd, accountTitle, accountAlias }
+    private enum KeyKeys: String, CodingKey {
+        case ymd, tradingAccountId, accountTitle, accountAlias
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         let k = try? c.nestedContainer(keyedBy: KeyKeys.self, forKey: .key)
         ymd = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .ymd) } ?? "—"
+        tradingAccountId = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .tradingAccountId) }
         accountTitle = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountTitle) }
         accountAlias = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountAlias) }
         drafts = (try? c.decode([TradingTelegramDraft].self, forKey: .drafts)) ?? []

@@ -770,9 +770,30 @@ struct TradingHomeScreen: View {
                 tradeInitialMode = "BANK"
                 showTrade = true
             }
-            workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) { showExpense = true }
-            workflowButton("arrow.up.arrow.down.circle", "Capital", AlmaSwiftTheme.sage) { showCapital = true }
-            workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) { showShot = true }
+            // Web: staff get trade/screenshot/summary; expense and capital entry are
+            // admin surfaces (page header + account page).
+            if isAdmin {
+                workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) {
+                    actionAccountId = nil
+                    showExpense = true
+                }
+                workflowButton("arrow.up.arrow.down.circle", "Capital", AlmaSwiftTheme.sage) {
+                    actionAccountId = nil
+                    showCapital = true
+                }
+            }
+            workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) {
+                actionAccountId = nil
+                showShot = true
+            }
+            if !isAdmin {
+                workflowButton("list.bullet.rectangle", "Summary",
+                               TradingHomePalette.gold(colorScheme)) {
+                    actionAccountId = nil
+                    tradeInitialMode = "BKASH"
+                    showTrade = true
+                }
+            }
         }
     }
     private func workflowButton(_ icon: String, _ label: String, _ tint: Color,
@@ -2088,9 +2109,12 @@ struct TradingHomeTradeSheet: View {
             defer { submitting = false }
             let ok: Bool
             if mode == "BKASH" {
+                // Whole-taka only (src/lib/money.ts roundMoney — the web form rounds
+                // the same way before POSTing), so both surfaces store one number.
                 ok = await vm.submitBkash(.init(
                     tradingAccountId: account.id, summaryDate: bkashDate, totalOrders: 0,
-                    totalProfitBdt: num(bkashProfit), totalLossBdt: num(bkashLoss), notes: notes))
+                    totalProfitBdt: num(bkashProfit).rounded(),
+                    totalLossBdt: num(bkashLoss).rounded(), notes: notes))
             } else {
                 ok = await vm.submitTrade(.init(
                     tradingAccountId: account.id, tradeType: tradeType,

@@ -809,10 +809,13 @@ private struct TABkashForm: View {
     @State private var loss = ""
     @State private var notes = ""
 
-    /// Web DailySummaryPanel: "Net result is profit minus loss" — same live preview.
+    /// Web DailySummaryPanel: "Net result is profit minus loss". Money in this ERP is
+    /// whole taka (src/lib/money.ts roundMoney, which the web form applies before it
+    /// POSTs), so the preview shows the ROUNDED figures that will actually be stored —
+    /// no silent difference between what is typed and what is saved.
     private var netResult: Double {
-        (Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0)
-            - (Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0)
+        ((Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0).rounded())
+            - ((Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0).rounded())
     }
 
     var body: some View {
@@ -827,7 +830,7 @@ private struct TABkashForm: View {
             TextField("Total loss (BDT)", text: $loss).keyboardType(.decimalPad)
             TextField("Notes", text: $notes)
             HStack {
-                Text("Net result").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("Net result (whole taka)").font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
                 Text(tk(netResult))
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
