@@ -681,23 +681,33 @@ private enum TradingHomeFormat {
     }
 }
 
+/// What a write sheet was opened for — kind, which account, and (for a trade) the
+/// mode. Carried by `.sheet(item:)` so the presented sheet always matches the tap.
+private struct TradingHomeSheetRequest: Identifiable {
+    enum Kind: String { case trade, expense, capital, shot }
+    let kind: Kind
+    let accountId: String?
+    var mode: String = "BANK"
+    var id: String { "\(kind.rawValue)-\(accountId ?? "any")-\(mode)" }
+}
+
 // MARK: - Screen
 
 @available(iOS 17.0, *)
 struct TradingHomeScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = TradingHomeVM()
-    @State private var showTrade = false
-    @State private var showExpense = false
-    @State private var showCapital = false
-    @State private var showShot = false
+    /// ONE request drives every write sheet. Separate booleans plus a mode/account
+    /// state meant the sheet could be built from the pre-tap snapshot — the Summary
+    /// action opened in BANK mode because the flag flipped in the same event loop as
+    /// the mode. `.sheet(item:)` carries the payload with the presentation.
+    @State private var sheetRequest: TradingHomeSheetRequest? = nil
     /// Web gates the business KPI row, the performance table and the staff
     /// rankings behind ADMIN/SUPER_ADMIN (ActorContext). Unknown role = staff view.
     @State private var role: String? = OrdIdentity.cached?.role
     /// The account a quick action was fired for (alert CTA / per-account button) —
     /// the write sheets open with it preselected, like the web modals do.
-    @State private var actionAccountId: String? = nil
-    @State private var tradeInitialMode = "BANK"
+
     let openWeb: (_ path: String, _ title: String) -> Void
 
     private var isAdmin: Bool { role == "SUPER_ADMIN" || role == "ADMIN" }
@@ -740,18 +750,17 @@ struct TradingHomeScreen: View {
             if role == nil, let me = await OrdIdentity.load() { role = me.role }
             await vm.load()
         }
-        .sheet(isPresented: $showTrade, onDismiss: { actionAccountId = nil }) {
-            TradingHomeTradeSheet(vm: vm, preselect: actionAccountId,
-                                  initialMode: tradeInitialMode)
-        }
-        .sheet(isPresented: $showExpense, onDismiss: { actionAccountId = nil }) {
-            TradingHomeExpenseSheet(vm: vm, preselect: actionAccountId)
-        }
-        .sheet(isPresented: $showCapital, onDismiss: { actionAccountId = nil }) {
-            TradingHomeCapitalSheet(vm: vm, preselect: actionAccountId)
-        }
-        .sheet(isPresented: $showShot, onDismiss: { actionAccountId = nil }) {
-            TradingHomeShotSheet(vm: vm, preselect: actionAccountId)
+        .sheet(item: $sheetRequest) { req in
+            switch req.kind {
+            case .trade:
+                TradingHomeTradeSheet(vm: vm, preselect: req.accountId, initialMode: req.mode)
+            case .expense:
+                TradingHomeExpenseSheet(vm: vm, preselect: req.accountId)
+            case .capital:
+                TradingHomeCapitalSheet(vm: vm, preselect: req.accountId)
+            case .shot:
+                TradingHomeShotSheet(vm: vm, preselect: req.accountId)
+            }
         }
         .overlay(alignment: .bottom) {
             if let t = vm.toast {
@@ -779,23 +788,17 @@ struct TradingHomeScreen: View {
     private var workflowActions: some View {
         HStack(spacing: 8) {
             workflowButton("plus.circle.fill", "Add Trade", TradingHomePalette.gold(colorScheme)) {
-                actionAccountId = nil
-                tradeInitialMode = "BANK"
-                showTrade = true
+                sheetRequest = .init(kind: .trade, accountId: nil, mode: "BANK")
             }
             workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) {
-                actionAccountId = nil
-                showShot = true
+                sheetRequest = .init(kind: .shot, accountId: nil)
             }
             workflowButton("list.bullet.rectangle", "Summary", AlmaSwiftTheme.sage) {
-                actionAccountId = nil
-                tradeInitialMode = "BKASH"
-                showTrade = true
+                sheetRequest = .init(kind: .trade, accountId: nil, mode: "BKASH")
             }
             if isAdmin {
                 workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) {
-                    actionAccountId = nil
-                    showExpense = true
+                    sheetRequest = .init(kind: .expense, accountId: nil)
                 }
             }
         }
@@ -1129,8 +1132,6 @@ struct TradingHomeScreen: View {
                             openWeb("/trading/accounts/\(account.id)", account.accountTitle)
                         },
                         onAction: { action in
-                            if action == .summary { tradeInitialMode = "BKASH" }
-                            else if action == .trade { tradeInitialMode = "BANK" }
                             openAccountAction(action, accountId: account.id)
                         })
                 }
@@ -1196,15 +1197,11 @@ struct TradingHomeScreen: View {
     /// Shared by the alert CTAs and the per-account row buttons.
     private func openAccountAction(_ action: TradingHomeAlertCta.Action, accountId: String?) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        actionAccountId = accountId ?? vm.accounts.first?.id
+        let id = accountId ?? vm.accounts.first?.id
         switch action {
-        case .screenshot: showShot = true
-        case .summary:
-            tradeInitialMode = "BKASH"
-            showTrade = true
-        case .trade:
-            tradeInitialMode = "BANK"
-            showTrade = true
+        case .screenshot: sheetRequest = .init(kind: .shot, accountId: id)
+        case .summary: sheetRequest = .init(kind: .trade, accountId: id, mode: "BKASH")
+        case .trade: sheetRequest = .init(kind: .trade, accountId: id, mode: "BANK")
         case .view: break
         }
     }
@@ -1977,6 +1974,7 @@ struct TradingHomeTradeSheet: View {
     @State private var feeUsdt = ""
     @State private var notes = ""
     @State private var bkashDate = TradingHomeDateHelper.today()
+    @State private var bkashOrders = ""
     @State private var bkashProfit = ""
     @State private var bkashLoss = ""
     @State private var submitting = false
@@ -2028,6 +2026,10 @@ struct TradingHomeTradeSheet: View {
                     set: { bkashDate = TradingHomeDateHelper.string($0) }
                 ), displayedComponents: .date)
                 .font(.subheadline)
+                // Web BkashDailySummaryModal asks for the order count too. Leaving it
+                // out posted totalOrders: 0, and the route upserts on (account, date) —
+                // so a profit-only save wiped that day's real order count.
+                TradingHomeField(placeholder: "Total Orders", text: $bkashOrders)
                 TradingHomeField(placeholder: "Total daily profit (BDT)", text: $bkashProfit)
                 TradingHomeField(placeholder: "Total daily loss (BDT)", text: $bkashLoss)
                 resultPanel(label: "Net result = profit - loss", value: bkashNet, signed: true)
@@ -2117,7 +2119,8 @@ struct TradingHomeTradeSheet: View {
                 // is a 2-dp decimal, so no rounding here — the route upserts on
                 // (account, date) and a rounded resend would alter a saved row.
                 ok = await vm.submitBkash(.init(
-                    tradingAccountId: account.id, summaryDate: bkashDate, totalOrders: 0,
+                    tradingAccountId: account.id, summaryDate: bkashDate,
+                    totalOrders: Int(bkashOrders.trimmingCharacters(in: .whitespaces)) ?? 0,
                     totalProfitBdt: num(bkashProfit),
                     totalLossBdt: num(bkashLoss), notes: notes))
             } else {
