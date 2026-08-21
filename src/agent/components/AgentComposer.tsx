@@ -32,6 +32,9 @@ interface AgentComposerProps {
   isMobile?: boolean
   activeModelId?: string
   onModelChange?: (modelId: string) => void
+  /** Owner's thinking level for this chat ('auto' = model default). */
+  activeEffort?: string
+  onEffortChange?: (effortLevel: string) => void
   /** Chat mode picker (auto | direct | plan | plan_drive). */
   /** PM-1 permission picker (plan | careful | standard | supervised | elevated). */
   permissionMode?: PermissionMode
@@ -58,6 +61,8 @@ export default function AgentComposer({
   pinnedSkill = null,
   onClearSkillPin,
   onModelChange,
+  activeEffort = 'auto',
+  onEffortChange,
   onVoiceStart,
   seedText,
 }: AgentComposerProps) {
@@ -365,6 +370,8 @@ export default function AgentComposer({
                 conversationId={conversationId}
                 modelId={activeModelId}
                 onModelChange={onModelChange}
+                effortLevel={activeEffort}
+                onEffortChange={onEffortChange}
                 disabled={streaming}
               />
               <AgentUsagePopover

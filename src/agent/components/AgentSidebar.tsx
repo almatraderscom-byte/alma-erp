@@ -17,6 +17,8 @@ export interface Conversation {
   title: string | null
   projectId: string | null
   modelId?: string | null
+  /** Owner's thinking level: low | medium | high | xhigh | max (null = Auto). */
+  effortLevel?: string | null
   /** Execution mode picker: auto | direct | plan | plan_drive (null = auto). */
   chatMode?: string | null
   /**

@@ -323,6 +323,10 @@ struct AgentConversation: Decodable, Identifiable, Equatable {
     var title: String?
     var projectId: String?
     var modelId: String?
+    /// Owner's thinking level for this chat (null = Auto). Belongs to the CHAT,
+    /// like the model and the permission mode — opening it on the phone must show
+    /// the depth the server will actually run.
+    var effortLevel: String?
     var source: String?
     var archived: Bool?
     var pinned: Bool?
@@ -1278,9 +1282,41 @@ struct AgentModelInfo: Decodable, Identifiable, Equatable {
     let enabled: Bool?
     let isDefault: Bool?
     let contextWindow: Int?
+    /// Thinking levels this model REALLY accepts (server registry, effort.ts):
+    /// low | medium | high | xhigh | max. Empty/absent = this model has no dial,
+    /// so the picker offers none for it rather than a control that does nothing.
+    let effortLevels: [String]?
+    /// The provider's own default depth — shown as the "Auto" hint.
+    let effortDefault: String?
     enum CodingKeys: String, CodingKey {
-        case id, label, provider, enabled, contextWindow
+        case id, label, provider, enabled, contextWindow, effortLevels, effortDefault
         case isDefault = "default"
+    }
+}
+
+/// Owner-facing thinking levels. Order = the neutral scale, cheapest first; the
+/// server clamps a level DOWN when the routed head cannot do it (never up).
+enum AgentEffortLevel: String, CaseIterable, Identifiable {
+    case low, medium, high, xhigh, max
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .low: return "Low · দ্রুত"
+        case .medium: return "Normal · স্বাভাবিক"
+        case .high: return "High · বেশি"
+        case .xhigh: return "Extra high · আরও বেশি"
+        case .max: return "Max · সর্বোচ্চ"
+        }
+    }
+    /// Compact form for the composer pill (space is scarce next to the model name).
+    var pillTitle: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Normal"
+        case .high: return "High"
+        case .xhigh: return "X-high"
+        case .max: return "Max"
+        }
     }
 }
 struct AgentModelsResponse: Decodable {
@@ -4174,6 +4210,8 @@ final class AssistantVM {
     /// a safe basis for choosing a context-window limit.
     var liveResolvedModelId: String?
     var modelId: String?             // nil or "auto" = Auto (router picks per turn)
+    /// Owner's thinking level for this chat. nil = Auto (send no effort knob).
+    var effortLevel: AgentEffortLevel?
     var models: [AgentModelInfo] = []
     var usageSnapshot: AgentUsageSnapshot?
     var usageLoading = false
@@ -4181,6 +4219,29 @@ final class AssistantVM {
     private var usageRequestGeneration = 0
 
     var isAutoModel: Bool { modelId == nil || modelId == "auto" }
+
+    /// Levels to OFFER right now. On Auto the head can be any pickable model, so
+    /// only levels every candidate supports are shown — one that some of them lack
+    /// would quietly clamp on the rest and mean two different depths under one
+    /// word. On a pinned model it is exactly that model's list.
+    var availableEffortLevels: [AgentEffortLevel] {
+        let dialled = models.filter { !($0.effortLevels ?? []).isEmpty }
+        guard !dialled.isEmpty else { return [] }
+        if !isAutoModel, let modelId {
+            let raw = models.first { $0.id == modelId }?.effortLevels ?? []
+            return AgentEffortLevel.allCases.filter { raw.contains($0.rawValue) }
+        }
+        return AgentEffortLevel.allCases.filter { level in
+            dialled.allSatisfy { ($0.effortLevels ?? []).contains(level.rawValue) }
+        }
+    }
+
+    /// The level actually in force — an owner pick the current model cannot do is
+    /// not shown as selected here (the server clamps it down at turn time).
+    var effectiveEffortLevel: AgentEffortLevel? {
+        guard let effortLevel, availableEffortLevels.contains(effortLevel) else { return nil }
+        return effortLevel
+    }
     /// What the pill shows: Auto, or the pinned model's label.
     var modelPillLabel: String {
         if isAutoModel {
@@ -4188,6 +4249,12 @@ final class AssistantVM {
         }
         let raw = models.first { $0.id == modelId }?.label ?? modelId ?? "Auto"
         return AgentModelShortName.display(raw)
+    }
+
+    /// Pill text including the depth, so a paid-for level is never invisible.
+    var modelPillLabelWithEffort: String {
+        guard let level = effectiveEffortLevel else { return modelPillLabel }
+        return "\(modelPillLabel) · \(level.pillTitle)"
     }
 
     /// Re-runs when the chat/model changes and once more when a stream settles.
@@ -4315,6 +4382,29 @@ final class AssistantVM {
     /// Owner picks a model (nil = Auto). Web parity: update the pill instantly,
     /// persist on the conversation row when one exists, revert on failure; a new
     /// chat simply carries it in the next send's body.
+    /// Owner picks a thinking level (nil = Auto). Same contract as the model pick:
+    /// optimistic locally, persisted on the conversation row when one exists, and
+    /// rolled back on failure so the pill can never claim a depth the server is
+    /// not running. A brand-new chat carries it in the next send's body.
+    func selectEffort(_ level: AgentEffortLevel?) {
+        let previous = effortLevel
+        effortLevel = level
+        AlmaAgentHaptics.selection()
+        guard let cid = conversationId else { return }
+        Task { [weak self] in
+            do {
+                let _: AgentConversation = try await AlmaAPI.shared.send(
+                    "PATCH", "/api/assistant/conversations/\(cid)",
+                    body: ["effortLevel": level?.rawValue ?? "auto"])
+            } catch {
+                await MainActor.run {
+                    self?.effortLevel = previous
+                    self?.errorToast = "Thinking level বদলানো গেল না"
+                }
+            }
+        }
+    }
+
     func selectModel(_ id: String?) {
         let previous = modelId
         modelId = id
@@ -6239,6 +6329,8 @@ final class AssistantVM {
         selectedSessionIdentity = "server:\(id)"
         let selected = conversations.first { $0.id == id }
         modelId = selected?.modelId   // pinned model follows the chat
+        // …and so does the thinking level: it is stored on the same row.
+        effortLevel = selected?.effortLevel.flatMap(AgentEffortLevel.init(rawValue:))
         liveResolvedModelId = nil
         modelLabel = nil
         answeringModelName = ""
@@ -6368,6 +6460,9 @@ final class AssistantVM {
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
         modelId = nil
+        // A new chat starts on Auto depth for the same reason it starts on the
+        // Auto model: the previous chat's Max must not silently bill the next one.
+        effortLevel = nil
         liveResolvedModelId = nil
         modelLabel = nil
         answeringModelName = ""
@@ -7197,6 +7292,8 @@ final class AssistantVM {
         /// only source. Once the row exists the SERVER reads the mode off it and
         /// ignores whatever a client claims — that guarantee is not weakened here.
         var permissionMode: String? = nil
+        /// Same rule for the thinking level: sent only while creating the chat.
+        var effortLevel: String? = nil
     }
 
     private struct SteeringBody: Encodable {
@@ -7530,7 +7627,8 @@ final class AssistantVM {
                             autoContinueFromTurnId: autoContinueFromTurnId,
                             // Only for a chat that has no row yet — once it exists
                             // the server reads the mode off the row and ignores this.
-                            permissionMode: conversationId == nil ? permissionMode.rawValue : nil)
+                            permissionMode: conversationId == nil ? permissionMode.rawValue : nil,
+                            effortLevel: conversationId == nil ? (effortLevel?.rawValue ?? "auto") : nil)
         if let clientMessageId {
             // Persist BEFORE starting network work. Process death between POST and
             // conversation_id/turn_id can now replay the exact idempotent request.
@@ -20059,6 +20157,27 @@ struct AgentModelPickerSheet: View {
                         }
                     }
                 }
+                // Thinking level — the same list the composer menu shows, kept in
+                // this sheet too so both entry points into the picker carry the
+                // whole setting (a depth dial in only one of them is how a chat
+                // ends up running a level Boss cannot see).
+                if !vm.availableEffortLevels.isEmpty {
+                    Section {
+                        row(label: "⚡ Auto", selected: vm.effectiveEffortLevel == nil, pal: pal) {
+                            vm.selectEffort(nil)
+                        }
+                        ForEach(vm.availableEffortLevels) { level in
+                            row(label: level.title,
+                                selected: vm.effectiveEffortLevel == level, pal: pal) {
+                                vm.selectEffort(level)
+                            }
+                        }
+                    } header: {
+                        Text("Thinking level")
+                    } footer: {
+                        Text("যত উপরের level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ আর সময়ও বাড়ে। Auto = মডেলের নিজের default।")
+                    }
+                }
             }
             .navigationTitle("মডেল")
             .navigationBarTitleDisplayMode(.inline)
@@ -24651,8 +24770,11 @@ struct AssistantScreen: View {
             // its system "Loading…" placeholder even after the API returned.
             barHooks.installModelMenu(
                 models: vm.models, selectedId: vm.modelId,
-                onSelect: { vm.selectModel($0) })
-            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !vm.isStreaming)
+                effortLevels: vm.availableEffortLevels,
+                selectedEffort: vm.effectiveEffortLevel,
+                onSelect: { vm.selectModel($0) },
+                onSelectEffort: { vm.selectEffort($0) })
+            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !vm.isStreaming)
             barHooks.updateUnreadBadge(vm.unreadConversationCount)
             Task { await vm.refreshUnreadCount() }
             barHooks.isPinned = { vm.currentConversationPinned }
@@ -25092,7 +25214,7 @@ struct AssistantScreen: View {
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
         }
-        .onChange(of: vm.modelPillLabel) { _, label in
+        .onChange(of: vm.modelPillLabelWithEffort) { _, label in
             barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
         }
         .onChange(of: vm.unreadConversationCount) { _, count in
@@ -25101,15 +25223,33 @@ struct AssistantScreen: View {
         .onChange(of: vm.models) { _, models in
             barHooks.installModelMenu(
                 models: models, selectedId: vm.modelId,
-                onSelect: { vm.selectModel($0) })
+                effortLevels: vm.availableEffortLevels,
+                selectedEffort: vm.effectiveEffortLevel,
+                onSelect: { vm.selectModel($0) },
+                onSelectEffort: { vm.selectEffort($0) })
         }
         .onChange(of: vm.modelId) { _, selectedId in
             barHooks.installModelMenu(
                 models: vm.models, selectedId: selectedId,
-                onSelect: { vm.selectModel($0) })
+                effortLevels: vm.availableEffortLevels,
+                selectedEffort: vm.effectiveEffortLevel,
+                onSelect: { vm.selectModel($0) },
+                onSelectEffort: { vm.selectEffort($0) })
+        }
+        // The level lives in the same menu AND in the pill, so both are rebuilt
+        // when it changes — a checkmark that lags the pick is how a control stops
+        // being trusted.
+        .onChange(of: vm.effortLevel) { _, level in
+            barHooks.installModelMenu(
+                models: vm.models, selectedId: vm.modelId,
+                effortLevels: vm.availableEffortLevels,
+                selectedEffort: level,
+                onSelect: { vm.selectModel($0) },
+                onSelectEffort: { vm.selectEffort($0) })
+            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !vm.isStreaming)
         }
         .onChange(of: vm.isStreaming) { _, streaming in
-            barHooks.updateModelLabel(vm.modelPillLabel, enabled: !streaming)
+            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !streaming)
         }
         .onAppear {
             // The Assistant already has its own conversation controls; the
@@ -25410,19 +25550,25 @@ final class AssistantBarHooks: NSObject {
 
     func installModelMenu(
         models: [AgentModelInfo], selectedId: String?,
-        onSelect: @escaping (String?) -> Void
+        effortLevels: [AgentEffortLevel] = [], selectedEffort: AgentEffortLevel? = nil,
+        onSelect: @escaping (String?) -> Void,
+        onSelectEffort: ((AgentEffortLevel?) -> Void)? = nil
     ) {
         modelButton?.menu = UIMenu(children: Self.modelMenuElements(
             models: models, selectedId: selectedId,
+            effortLevels: effortLevels, selectedEffort: selectedEffort,
             onSelect: { id in
                 AlmaAgentHaptics.selection()
                 onSelect(id)
-            }))
+            },
+            onSelectEffort: onSelectEffort))
     }
 
     static func modelMenuElements(
         models: [AgentModelInfo], selectedId: String?,
-        onSelect: @escaping (String?) -> Void
+        effortLevels: [AgentEffortLevel] = [], selectedEffort: AgentEffortLevel? = nil,
+        onSelect: @escaping (String?) -> Void,
+        onSelectEffort: ((AgentEffortLevel?) -> Void)? = nil
     ) -> [UIMenuElement] {
         let isAuto = selectedId == nil || selectedId == "auto"
         let auto = UIAction(
@@ -25460,6 +25606,27 @@ final class AssistantBarHooks: NSObject {
         }
         if !other.isEmpty {
             sections.append(UIMenu(title: "Other", options: .displayInline, children: other))
+        }
+        // Thinking level (owner ask 2026-08-21) — a SUBMENU rather than another
+        // inline block, so the model list stays one clean scroll and the current
+        // depth reads off the row title without opening it. Only levels the
+        // current pick genuinely supports are listed (the catalogue carries each
+        // model's real list), so "Max" is never an empty promise.
+        if let onSelectEffort, !effortLevels.isEmpty {
+            let auto = UIAction(title: "Auto", state: selectedEffort == nil ? .on : .off) { _ in
+                AlmaAgentHaptics.selection()
+                onSelectEffort(nil)
+            }
+            let levels = effortLevels.map { level in
+                UIAction(title: level.title, state: selectedEffort == level ? .on : .off) { _ in
+                    AlmaAgentHaptics.selection()
+                    onSelectEffort(level)
+                }
+            }
+            sections.append(UIMenu(
+                title: "Thinking · \(selectedEffort?.pillTitle ?? "Auto")",
+                image: UIImage(systemName: "brain"),
+                children: [UIMenu(options: .displayInline, children: [auto])] + levels))
         }
         return sections
     }

@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { isSelectableModelId } from '@/agent/lib/models/registry'
+import { parseEffortSetting } from '@/agent/lib/models/effort'
 import { headPinClearFields } from '@/agent/lib/models/head-pin'
 import { isPermissionMode } from '@/agent/lib/permission-mode'
 import { prisma } from '@/lib/prisma'
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     where: { id },
     select: {
       id: true, title: true, projectId: true, archived: true, pinned: true,
-      modelId: true, chatMode: true, permissionMode: true, pinnedSkill: true,
+      modelId: true, effortLevel: true, chatMode: true, permissionMode: true, pinnedSkill: true,
       updatedAt: true,
     },
   })
@@ -66,6 +67,20 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     Object.assign(data, headPinClearFields())
   }
 
+  // The thinking-level picker (owner ask 2026-08-21) — same axis as the model
+  // pick above and stored the same way. 'auto' (or null) CLEARS it, which is the
+  // only way back to the provider default, so an unknown string must be refused
+  // loudly rather than silently treated as auto: a typo'd level that quietly
+  // meant "no thinking level" is exactly the kind of control that looks live and
+  // is not.
+  if (body.effortLevel !== undefined) {
+    const parsed = parseEffortSetting(body.effortLevel)
+    if (parsed === undefined) {
+      return Response.json({ error: 'invalid_effort_level' }, { status: 400 })
+    }
+    data.effortLevel = parsed
+  }
+
   // The chat-mode picker was RETIRED on 2026-07-28 (owner: one chip, Claude Code
   // style). Execution style is now derived from the permission mode at turn time,
   // so accepting a write here would store a value that nothing reads — a control
@@ -98,7 +113,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     data,
     select: {
       id: true, title: true, projectId: true, archived: true, pinned: true,
-      modelId: true, chatMode: true, permissionMode: true, pinnedSkill: true,
+      modelId: true, effortLevel: true, chatMode: true, permissionMode: true, pinnedSkill: true,
       updatedAt: true,
     },
   })

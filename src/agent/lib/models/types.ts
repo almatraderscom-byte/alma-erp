@@ -1,3 +1,5 @@
+import type { EffortDialect, EffortLevel } from '@/agent/lib/models/effort'
+
 export interface NeutralTool {
   name: string
   description: string
@@ -58,6 +60,15 @@ export interface ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    /**
+     * Owner's thinking level for this turn, ALREADY clamped to what this model
+     * supports (`clampEffort` in effort.ts). Absent = Auto: send no effort knob
+     * and let the provider default stand — byte-identical to the pre-picker
+     * request, which is what keeps every existing call site unchanged.
+     */
+    effort?: EffortLevel | null
+    /** The dialect `effort` must be written in (registry `effort.dialect`). */
+    effortDialect?: EffortDialect
     /**
      * Phase 3 request controller. Both are OPTIONAL — omitted means provider
      * default, so every existing call site behaves exactly as before.

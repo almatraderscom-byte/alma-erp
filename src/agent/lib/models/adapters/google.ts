@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { sanitizeSchemaForGemini } from '@/agent/lib/models/adapters/gemini-schema'
 import { resolveGenerationParams, type NeutralGenerationParams } from '@/agent/lib/models/generation-params'
+import { geminiThinkingLevel, type EffortDialect, type EffortLevel } from '@/agent/lib/models/effort'
 
 /**
  * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice to
@@ -24,12 +25,21 @@ export function buildGeminiToolConfig(
  * alongside the existing thinking config. Returns undefined when nothing is set
  * (AGENT_UNIFORM_SAMPLING off AND no thoughts) so the request stays byte-identical.
  */
-function buildGeminiGenerationConfig(
+export function buildGeminiGenerationConfig(
   withThoughts: boolean,
   gen: NeutralGenerationParams,
+  effort?: EffortLevel | null,
 ): Record<string, unknown> | undefined {
   const cfg: Record<string, unknown> = {}
-  if (withThoughts) cfg.thinkingConfig = { includeThoughts: true }
+  // Owner's thinking level rides the SAME thinkingConfig object as includeThoughts
+  // (ai.google.dev/gemini-api/docs/thinking): `thinkingLevel` is Gemini's real
+  // depth dial — minimal|low|medium|high, nothing above `high`. It is sent even
+  // when thoughts are not streamed, because depth and visibility are separate
+  // knobs: a turn that opted out of the thought stream still honours the level.
+  const thinkingConfig: Record<string, unknown> = {}
+  if (withThoughts) thinkingConfig.includeThoughts = true
+  if (effort) thinkingConfig.thinkingLevel = geminiThinkingLevel(effort)
+  if (Object.keys(thinkingConfig).length) cfg.thinkingConfig = thinkingConfig
   if (gen.maxTokens !== undefined) cfg.maxOutputTokens = gen.maxTokens
   if (gen.temperature !== undefined) {
     cfg.temperature = gen.temperature
@@ -116,6 +126,8 @@ export class GoogleAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    effort?: EffortLevel | null
+    effortDialect?: EffortDialect
     toolChoice?: NeutralToolChoice
     parallelToolCalls?: boolean
   }): AsyncGenerator<TurnEvent> {
@@ -143,12 +155,18 @@ export class GoogleAdapter implements ProviderAdapter {
     // functionCallingConfig; absent/'auto' leaves the request untouched.
     const toolConfig = buildGeminiToolConfig(args.toolChoice, Boolean(functionDeclarations))
     const gen = resolveGenerationParams({ thinking: args.thinking })
+    // Only Gemini's own dialect belongs in generationConfig; a level resolved for
+    // another provider (Auto head that changed mid-job) is ignored, never guessed at.
+    const effortLevel = args.effortDialect === 'gemini_thinking_level' ? args.effort ?? null : null
     const open = (withThoughts: boolean) => {
       const genModel = this.client.getGenerativeModel({
         model: args.apiModel,
         systemInstruction: args.system,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        generationConfig: buildGeminiGenerationConfig(withThoughts, gen) as any,
+        // Attempt 2 (withThoughts=false) is the REDUCED request: it drops the
+        // thinking level with the thought stream, so one rejected thinkingConfig
+        // key cannot keep failing the retry that exists to rescue the turn.
+        generationConfig: buildGeminiGenerationConfig(withThoughts, gen, withThoughts ? effortLevel : null) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -97,6 +97,7 @@ export async function GET(req: NextRequest) {
       projectId: true,
       businessId: true,
       modelId: true,
+      effortLevel: true,
       chatMode: true,
       permissionMode: true,
       source: true,
@@ -143,7 +144,7 @@ export async function GET(req: NextRequest) {
             where: { id: { in: missing } },
             select: {
               id: true, title: true, projectId: true, businessId: true, modelId: true,
-              chatMode: true, permissionMode: true, source: true, archived: true,
+              effortLevel: true, chatMode: true, permissionMode: true, source: true, archived: true,
               pinned: true, createdAt: true, updatedAt: true,
             },
           })

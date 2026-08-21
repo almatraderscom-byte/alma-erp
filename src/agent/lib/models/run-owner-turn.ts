@@ -172,6 +172,7 @@ import {
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
+import { clampEffort } from '@/agent/lib/models/effort'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
@@ -537,6 +538,13 @@ async function* runAlternateProviderTurn(
   headVia = 'unknown',
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
+  // Owner's thinking level, fitted to THIS head. The picker only offers levels a
+  // model really has, but the Auto head can land anywhere — clampEffort steps
+  // down to the nearest supported level (never up) so "Max" on a Gemini head runs
+  // Gemini's real ceiling instead of a value its API would reject. null = Auto:
+  // no effort knob is sent at all.
+  const headEffort = clampEffort(options.effortLevel, model.effort)
+  const headEffortDialect = model.effort?.dialect
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
   const chatMode = normalizeChatMode(options.chatMode)
   // PM-1 — the permission axis, read from the conversation row by the caller.
@@ -2336,6 +2344,10 @@ async function* runAlternateProviderTurn(
         messages: [...messages, { role: 'user', content: SPEAK_FIRST_INSTRUCTION }],
         tools: [],
         thinking: preambleThinking ? model.thinking : 'none',
+        // The opening line thinks at the SAME depth as the work rounds — a
+        // separate default here would make "High" mean two things in one turn.
+        effort: preambleThinking ? headEffort : null,
+        effortDialect: headEffortDialect,
         signal,
         cacheKey: conversationId,
       })) {
@@ -2747,6 +2759,9 @@ async function* runAlternateProviderTurn(
         messages,
         tools: iterationTools,
         thinking: model.thinking,
+        // Owner's thinking level (effort.ts) — already clamped to this head.
+        effort: headEffort,
+        effortDialect: headEffortDialect,
         signal,
         // Sticky prompt-cache routing (Phase 8): keep every round of THIS
         // conversation on the server that already holds its cached prefix.
