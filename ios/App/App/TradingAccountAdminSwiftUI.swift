@@ -384,8 +384,10 @@ final class TAAdminStore {
         }
     }
 
-    /// Multipart upload — web uploadPerformanceScreenshot parity.
-    func uploadScreenshot(data: Data, note: String) async {
+    /// Multipart upload — web uploadPerformanceScreenshot parity (the web form
+    /// posts the shot DATE alongside the file, so a backfilled screenshot lands on
+    /// the day it belongs to instead of today).
+    func uploadScreenshot(data: Data, note: String, shotDate: String = "") async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -393,6 +395,7 @@ final class TAAdminStore {
         do {
             var fields: [String: String] = [:]
             if !note.isEmpty { fields["note"] = note }
+            if !shotDate.isEmpty { fields["shotDate"] = shotDate }
             let _: Resp = try await AlmaAPI.shared.uploadMultipart(
                 "/api/trading/accounts/\(accountId)/performance",
                 fileField: "file", filename: "performance.jpg", mime: "image/jpeg",
@@ -458,6 +461,7 @@ struct TradingAccountAdminSection: View {
     @State private var photoItem: PhotosPickerItem? = nil
     @State private var zoomShot: TAAdminScreenshot? = nil
     @State private var shotNote = ""
+    @State private var shotDate = ""
     @State private var settleConfirm = false
     @State private var settleNotes = ""
     @State private var settleOverride = ""
@@ -522,7 +526,7 @@ struct TradingAccountAdminSection: View {
                 if let data = try? await item.loadTransferable(type: Data.self),
                    let img = UIImage(data: data),
                    let jpeg = img.jpegData(compressionQuality: 0.8) {
-                    await store.uploadScreenshot(data: jpeg, note: shotNote)
+                    await store.uploadScreenshot(data: jpeg, note: shotNote, shotDate: shotDate)
                     shotNote = ""
                 }
                 photoItem = nil
@@ -618,10 +622,26 @@ struct TradingAccountAdminSection: View {
         Text("দিনের Binance প্রোফাইল স্ক্রিনশট। সর্বশেষ ৭টি দেখা যায় · পুরনোগুলো Archived-এ।")
             .font(.system(size: 10)).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-        // Web PerformancePanel note field — the growth note travels with the upload.
-        TextField("Growth note, order count, completion rate…", text: $shotNote)
-            .textFieldStyle(.roundedBorder)
-            .font(.caption)
+        // Web PerformancePanel date + note fields travel with the upload.
+        HStack(spacing: 8) {
+            TextField("তারিখ YYYY-MM-DD", text: $shotDate)
+                .keyboardType(.numbersAndPunctuation)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .taAdminFieldChrome()
+            TextField("Growth note…", text: $shotNote)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .taAdminFieldChrome()
+        }
+        .onAppear {
+            if shotDate.isEmpty {
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd"
+                f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+                shotDate = f.string(from: Date())
+            }
+        }
         HStack {
             PhotosPicker(selection: $photoItem, matching: .images) {
                 Label(store.busy ? "আপলোড হচ্ছে…" : "📸 আপলোড", systemImage: "square.and.arrow.up")
@@ -822,7 +842,8 @@ private struct TABkashForm: View {
                       || (orders.isEmpty && profit.isEmpty && loss.isEmpty))
         }
         .font(.caption)
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.plain)
+        .taAdminFieldChrome()
         .onAppear {
             let f = DateFormatter()
             f.dateFormat = "yyyy-MM-dd"
@@ -986,7 +1007,13 @@ private struct TAShotThumb: View {
                     case .success(let image):
                         image.resizable().scaledToFill()
                     case .failure:
-                        Image(systemName: "photo").foregroundStyle(.secondary)
+                        // The preview route 404s once a shot passes its 30-day
+                        // expiry — say so instead of showing a dead tile.
+                        VStack(spacing: 3) {
+                            Image(systemName: "clock.badge.xmark").foregroundStyle(.secondary)
+                            Text("মেয়াদ শেষ / লোড হয়নি")
+                                .font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
                     default:
                         ProgressView().controlSize(.small)
                     }
@@ -1039,4 +1066,22 @@ private struct TAShotZoomSheet: View {
             }
         }
     }
+}
+
+
+// MARK: - Field chrome (the app's control surface, not the stock rounded border)
+
+private struct TAAdminFieldChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+    }
+}
+
+private extension View {
+    func taAdminFieldChrome() -> some View { modifier(TAAdminFieldChrome()) }
 }

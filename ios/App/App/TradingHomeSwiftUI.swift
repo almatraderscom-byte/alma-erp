@@ -912,8 +912,14 @@ struct TradingHomeScreen: View {
         let points = Array((vm.dash?.trend ?? []).suffix(14))
         if points.count >= 2 {
             let values = points.map(\.netBdt)
-            let minV = min(values.min() ?? 0, 0)
-            let maxV = max(values.max() ?? 1, 1)
+            // A run of identical days (every net 0 — a quiet week) must not pin the
+            // path to the floor with an empty box above it: pad a flat series so it
+            // draws through the middle.
+            let rawMin = values.min() ?? 0
+            let rawMax = values.max() ?? 0
+            let flat = (rawMax - rawMin) < 0.5
+            let minV = flat ? rawMin - 1 : min(rawMin, 0)
+            let maxV = flat ? rawMax + 1 : max(rawMax, 0)
             let span = max(maxV - minV, 1)
             VStack(alignment: .leading, spacing: 4) {
                 GeometryReader { geo in

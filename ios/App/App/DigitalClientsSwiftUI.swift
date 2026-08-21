@@ -1382,17 +1382,9 @@ struct DigitalClientsPaymentSheet: View {
                                 in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
             }
-            TextField("Transaction ID", text: $transactionId)
-                .textInputAutocapitalization(.never)
-                .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
-            TextField("Payment date (YYYY-MM-DD)", text: $paymentDate)
-                .keyboardType(.numbersAndPunctuation)
-                .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
-            TextField("Note", text: $note)
-                .textFieldStyle(.roundedBorder)
-                .font(.subheadline)
+            paymentField("Transaction ID", $transactionId, autocapitalize: false)
+            paymentField("Payment date (YYYY-MM-DD)", $paymentDate, keyboard: .numbersAndPunctuation)
+            paymentField("Note", $note)
             if let errorText {
                 Text(errorText).font(.caption2.weight(.semibold))
                     .foregroundStyle(DigitalClientsPalette.red500)
@@ -1430,6 +1422,19 @@ struct DigitalClientsPaymentSheet: View {
             Button("হ্যাঁ, রেকর্ড করুন") { submit() }
             Button("বাতিল", role: .cancel) {}
         }
+    }
+
+    /// Same control surface the Amount field wears — no stock rounded borders.
+    private func paymentField(_ placeholder: String, _ text: Binding<String>,
+                              keyboard: UIKeyboardType = .default,
+                              autocapitalize: Bool = true) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .textInputAutocapitalization(autocapitalize ? .sentences : .never)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 
     private func submit() {
