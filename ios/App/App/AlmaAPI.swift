@@ -46,11 +46,18 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
         let provider: String
         var isDefault = false
         var contextWindow = 200_000
+        /// Mirrors the server registry's per-model thinking levels (effort.ts), so
+        /// the offline preview harness exercises the SAME picker the app gets live.
+        var effortLevels: [String] = []
+        var effortDefault: String? = nil
 
         var json: [String: Any] {
-            ["id": id, "label": label, "provider": provider,
-             "enabled": true, "default": isDefault,
-             "contextWindow": contextWindow]
+            var out: [String: Any] = ["id": id, "label": label, "provider": provider,
+                                      "enabled": true, "default": isDefault,
+                                      "contextWindow": contextWindow,
+                                      "effortLevels": effortLevels]
+            if let effortDefault { out["effortDefault"] = effortDefault }
+            return out
         }
     }
 
@@ -61,21 +68,21 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
     }
 
     static let interactivePreviewModels: [InteractivePreviewModel] = [
-        .init(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", isDefault: true),
-        .init(id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "anthropic"),
-        .init(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic"),
-        .init(id: "gemini-3.1-pro", label: "Gemini 3.1 Pro", provider: "google"),
-        .init(id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google"),
-        .init(id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", provider: "google"),
-        .init(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google"),
-        .init(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: "openai"),
-        .init(id: "gpt-5.5", label: "GPT-5.5", provider: "openai"),
+        .init(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", isDefault: true, effortLevels: ["low", "medium", "high", "max"], effortDefault: "high"),
+        .init(id: "claude-opus-4-8", label: "Claude Opus 4.8", provider: "anthropic", effortLevels: ["low", "medium", "high", "xhigh", "max"], effortDefault: "high"),
+        .init(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic", effortLevels: ["low", "medium", "high", "max"]),
+        .init(id: "gemini-3.1-pro", label: "Gemini 3.1 Pro", provider: "google", effortLevels: ["low", "medium", "high"], effortDefault: "high"),
+        .init(id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google", effortLevels: ["low", "medium", "high"], effortDefault: "medium"),
+        .init(id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", provider: "google", effortLevels: ["low", "medium", "high"], effortDefault: "low"),
+        .init(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google", effortLevels: ["low", "medium", "high"], effortDefault: "medium"),
+        .init(id: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: "openai", effortLevels: ["low", "medium", "high", "xhigh", "max"], effortDefault: "medium"),
+        .init(id: "gpt-5.5", label: "GPT-5.5", provider: "openai", effortLevels: ["low", "medium", "high", "xhigh"], effortDefault: "medium"),
         .init(id: "gpt-5.4", label: "GPT-5.4", provider: "openai"),
         .init(id: "gpt-5.4-mini", label: "GPT-5.4 mini", provider: "openai"),
-        .init(id: "or-qwen3-max", label: "Qwen 3.7 Max (OpenRouter)", provider: "openrouter"),
-        .init(id: "or-deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter"),
-        .init(id: "or-grok-4.20", label: "Grok 4.20 (OpenRouter)", provider: "openrouter"),
-        .init(id: "or-deepseek-v4-pro", label: "DeepSeek V4 Pro (OpenRouter)", provider: "openrouter"),
+        .init(id: "or-qwen3-max", label: "Qwen 3.7 Max (OpenRouter)", provider: "openrouter", effortLevels: ["low", "medium", "high"]),
+        .init(id: "or-deepseek-v4-flash", label: "DeepSeek V4 Flash (OpenRouter)", provider: "openrouter", effortLevels: ["low", "medium", "high"]),
+        .init(id: "or-grok-4.20", label: "Grok 4.20 (OpenRouter)", provider: "openrouter", effortLevels: ["low", "medium", "high"]),
+        .init(id: "or-deepseek-v4-pro", label: "DeepSeek V4 Pro (OpenRouter)", provider: "openrouter", effortLevels: ["low", "medium", "high"]),
         .init(id: "or-qwen2.5-vl-72b", label: "Qwen 2.5 VL 72B (OpenRouter)", provider: "openrouter"),
         .init(id: "xai-grok-4.20", label: "Grok 4.20 (xAI direct)", provider: "xai"),
     ]
@@ -545,6 +552,12 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
             if let body = requestJSON(), let selected = body["modelId"] as? String {
                 Self.setInteractiveSelectedModel(selected)
             }
+            // Thinking level: the fixture stores it exactly like the model pick, so
+            // a preview run proves the whole round-trip (tap → PATCH → pill), not
+            // just that the menu renders.
+            if let body = requestJSON(), let level = body["effortLevel"] as? String {
+                Self.setInteractiveSelectedEffort(level)
+            }
             // One response intentionally satisfies both callers on this route:
             // selectModel decodes AgentConversation; permission mode decodes OkResponse.
             respond(status: 200, object: [
@@ -552,6 +565,7 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
                 "id": "fixture-claude-chat",
                 "title": "Sales recovery research",
                 "modelId": Self.currentInteractiveSelectedModel(),
+                "effortLevel": Self.currentInteractiveSelectedEffort() as Any,
                 "permissionMode": "standard",
             ])
             return
@@ -602,6 +616,12 @@ final class AlmaMergeReadinessURLProtocol: URLProtocol {
         guard let data = request.httpBody else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
+
+    private static var interactiveSelectedEffort: String?
+    private static func setInteractiveSelectedEffort(_ level: String) {
+        interactiveSelectedEffort = (level == "auto" || level.isEmpty) ? nil : level
+    }
+    private static func currentInteractiveSelectedEffort() -> String? { interactiveSelectedEffort }
 
     private static func setInteractiveSelectedModel(_ modelId: String) {
         interactiveLock.lock(); defer { interactiveLock.unlock() }

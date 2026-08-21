@@ -64,15 +64,20 @@ export async function GET(req: NextRequest) {
   // 'plan' chat as 'auto' would silently re-arm every tool he had withheld.
   let chatMode: string | null = null
   let permissionMode: string | null = null
+  // Same reason as the mode: a cold launch that restores the model but not the
+  // thinking level shows "Auto" for a chat whose turns really run at High/Max
+  // (Codex P2). One row, one more column.
+  let effortLevel: string | null = null
   if (conversationId) {
     const meta = await prisma.agentConversation.findUnique({
       where: { id: conversationId },
-      select: { projectId: true, modelId: true, chatMode: true, permissionMode: true },
+      select: { projectId: true, modelId: true, chatMode: true, permissionMode: true, effortLevel: true },
     })
     projectId = meta?.projectId ?? null
     modelId = meta?.modelId ?? null
     chatMode = meta?.chatMode ?? null
     permissionMode = meta?.permissionMode ?? null
+    effortLevel = meta?.effortLevel ?? null
   }
 
   return NextResponse.json({
@@ -82,6 +87,7 @@ export async function GET(req: NextRequest) {
     modelId,
     chatMode,
     permissionMode,
+    effortLevel,
   })
 }
 

@@ -172,6 +172,7 @@ import {
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
+import { clampEffort, parseEffortSetting } from '@/agent/lib/models/effort'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
@@ -537,6 +538,13 @@ async function* runAlternateProviderTurn(
   headVia = 'unknown',
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
+  // Owner's thinking level, fitted to THIS head. The picker only offers levels a
+  // model really has, but the Auto head can land anywhere — clampEffort steps
+  // down to the nearest supported level (never up) so "Max" on a Gemini head runs
+  // Gemini's real ceiling instead of a value its API would reject. null = Auto:
+  // no effort knob is sent at all.
+  const headEffort = clampEffort(options.effortLevel, model.effort)
+  const headEffortDialect = model.effort?.dialect
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
   const chatMode = normalizeChatMode(options.chatMode)
   // PM-1 — the permission axis, read from the conversation row by the caller.
@@ -1980,6 +1988,13 @@ async function* runAlternateProviderTurn(
     headTier,
     versions: AGENT_VERSIONS,
     extras: {
+      // The thinking level this turn RAN at (after the per-model clamp), beside
+      // what Boss asked for. A dial nobody can audit is a dial nobody can trust:
+      // this is what proves "Max" reached the provider — and what shows the
+      // step-down when an Auto head could not do the level he picked.
+      effort: headEffort,
+      effortRequested: options.effortLevel ?? null,
+      effortDialect: headEffortDialect ?? null,
       // Phase 36: this turn's interaction contract (mode/emotion/correction)
       // — behaviour becomes measurable per turn, not a prompt hope.
       interaction: interaction
@@ -2336,6 +2351,10 @@ async function* runAlternateProviderTurn(
         messages: [...messages, { role: 'user', content: SPEAK_FIRST_INSTRUCTION }],
         tools: [],
         thinking: preambleThinking ? model.thinking : 'none',
+        // The opening line thinks at the SAME depth as the work rounds — a
+        // separate default here would make "High" mean two things in one turn.
+        effort: preambleThinking ? headEffort : null,
+        effortDialect: headEffortDialect,
         signal,
         cacheKey: conversationId,
       })) {
@@ -2747,6 +2766,9 @@ async function* runAlternateProviderTurn(
         messages,
         tools: iterationTools,
         thinking: model.thinking,
+        // Owner's thinking level (effort.ts) — already clamped to this head.
+        effort: headEffort,
+        effortDialect: headEffortDialect,
         signal,
         // Sticky prompt-cache routing (Phase 8): keep every round of THIS
         // conversation on the server that already holds its cached prefix.
@@ -5662,22 +5684,36 @@ export async function* runOwnerTurn(
   // Boss had already granted arrived with `elevationGrant: null` and was staged
   // or blocked anyway (review bot, #667). The row is the source of truth, so
   // read it here when the caller did not supply it.
-  if (options.elevationGrant === undefined || options.permissionMode === undefined) {
+  //
+  // The owner's THINKING LEVEL rides the same read for the same reason (Codex
+  // P2): those entry points called runOwnerTurn without it, so an approval
+  // continuation or plan-driver turn ran at the provider default while the
+  // picker said Max. One row, one query — the chat route supplies all three, so
+  // it never pays for this read at all.
+  if (
+    options.elevationGrant === undefined
+    || options.permissionMode === undefined
+    || options.effortLevel === undefined
+  ) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const conv = await (prisma as any).agentConversation.findUnique({
         where: { id: conversationId },
-        select: { permissionMode: true, elevationGrant: true },
+        select: { permissionMode: true, elevationGrant: true, effortLevel: true },
       })
       const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
       options = {
         ...options,
         permissionMode: options.permissionMode ?? conv?.permissionMode ?? undefined,
         elevationGrant: options.elevationGrant ?? parseElevationGrant(conv?.elevationGrant),
+        effortLevel: options.effortLevel === undefined
+          ? (parseEffortSetting(conv?.effortLevel) ?? null)
+          : options.effortLevel,
       }
     } catch (err) {
-      // A read failure must not widen anything: no grant is the safe answer, and
-      // the mode falls back to the caller's default exactly as before.
+      // A read failure must not widen anything: no grant is the safe answer, the
+      // mode falls back to the caller's default, and the level falls back to Auto
+      // — exactly as before.
       console.warn('[run-owner-turn] permission row read failed:', err instanceof Error ? err.message : err)
     }
   }

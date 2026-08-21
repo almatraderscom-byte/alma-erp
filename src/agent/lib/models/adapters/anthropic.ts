@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { resolveGenerationParams } from '@/agent/lib/models/generation-params'
+import { anthropicThinkingBudget, type EffortDialect, type EffortLevel } from '@/agent/lib/models/effort'
 
 /**
  * Phase 6 (one turn engine) — native Anthropic as a PROVIDER ADAPTER.
@@ -155,6 +156,8 @@ export class AnthropicAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    effort?: EffortLevel | null
+    effortDialect?: EffortDialect
     toolChoice?: NeutralToolChoice
     parallelToolCalls?: boolean
   }): AsyncGenerator<TurnEvent> {
@@ -173,11 +176,31 @@ export class AnthropicAdapter implements ProviderAdapter {
     // is on; temperature is only present for non-thinking models (extended thinking
     // requires temperature=1), so it is never added to an adaptive-thinking call.
     const gen = resolveGenerationParams({ thinking: args.thinking })
+    const maxTokens = gen.maxTokens ?? 8192
+    // Owner's thinking level (effort.ts). Two different Anthropic contracts:
+    //   4.6+  → `output_config.effort` (SDK-typed, GA)
+    //   pre-4.6 (Haiku 4.5) → an explicit `thinking.budget_tokens`; `effort` and
+    //     `thinking:{adaptive}` are BOTH rejected there, which is why a Haiku head
+    //     used to fall down the retry ladder and think not at all.
+    const budgetDialect = args.effortDialect === 'anthropic_budget'
+    const effortParam = !budgetDialect && args.effort
+      ? { output_config: { effort: args.effort } }
+      : {}
+    // Auto (no level) must leave the request EXACTLY as it was — including on the
+    // budget dialect. Substituting a 'medium' budget there would quietly change
+    // how an untouched Haiku chat thinks, which is the one thing Auto promises not
+    // to do (Codex P2). The explicit budget is sent only for an explicit pick.
+    const thinkingBlock = budgetDialect && args.effort
+      ? {
+          type: 'enabled' as const,
+          budget_tokens: anthropicThinkingBudget(args.effort, maxTokens),
+        }
+      : { type: 'adaptive' as const }
     const buildParams = (withThinking: boolean): Anthropic.Messages.MessageCreateParamsStreaming => ({
       model: args.apiModel,
-      max_tokens: gen.maxTokens ?? 8192,
+      max_tokens: maxTokens,
       ...(gen.temperature !== undefined ? { temperature: gen.temperature, top_p: gen.topP } : {}),
-      ...(withThinking ? { thinking: { type: 'adaptive' as const } } : {}),
+      ...(withThinking ? { thinking: thinkingBlock, ...effortParam } : {}),
       system: [{ type: 'text', text: args.system, cache_control: { type: 'ephemeral' } }],
       ...(tools.length > 0 ? { tools } : {}),
       messages: toAnthropicMessages(args.messages),

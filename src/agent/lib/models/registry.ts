@@ -3,6 +3,8 @@
  * Verify apiModel strings against provider dashboards before trusting in production.
  */
 
+import type { EffortSupport } from '@/agent/lib/models/effort'
+
 export type Provider = 'anthropic' | 'google' | 'openai' | 'openrouter' | 'xai'
 
 export interface ModelEntry {
@@ -24,6 +26,14 @@ export interface ModelEntry {
    */
   cachedInPerM?: number
   thinking?: 'adaptive' | 'level' | 'none'
+  /**
+   * The model's REAL reasoning-effort dial (owner's thinking-level picker).
+   * Verified against provider docs on 2026-08-21 — see effort.ts for the
+   * per-provider wire contracts. Omitted = this model has no effort dial and the
+   * picker offers none for it (the turn then runs at the provider default,
+   * exactly as before the picker existed).
+   */
+  effort?: EffortSupport
   default?: boolean
   /**
    * false = worker-only model: the tier-router may use it for cheap sub-tasks,
@@ -83,6 +93,13 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 3,
     outPerM: 15,
     thinking: 'adaptive',
+    // `output_config.effort` is GA on 4.6+ (no beta header). Sonnet 4.6 predates
+    // `xhigh`, which arrived with Opus 4.7 — offering it here would 400.
+    effort: {
+      dialect: 'anthropic_effort',
+      levels: ['low', 'medium', 'high', 'max'],
+      providerDefault: 'high',
+    },
     default: true,
   },
   {
@@ -99,6 +116,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 5,
     outPerM: 25,
     thinking: 'adaptive',
+    effort: {
+      dialect: 'anthropic_effort',
+      levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      providerDefault: 'high',
+    },
   },
   {
     id: 'claude-haiku-4-5',
@@ -111,6 +133,12 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 1,
     outPerM: 5,
     thinking: 'adaptive',
+    // Pre-4.6 model: `output_config.effort` is REJECTED and `thinking:{adaptive}`
+    // is not its contract either — its depth dial is an explicit thinking budget.
+    effort: {
+      dialect: 'anthropic_budget',
+      levels: ['low', 'medium', 'high', 'max'],
+    },
   },
   {
     id: 'gemini-3.1-pro',
@@ -123,6 +151,13 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 2,
     outPerM: 12,
     thinking: 'level',
+    // ai.google.dev/gemini-api/docs/thinking — 3.1 Pro: low|medium|high (default high).
+    // Gemini has NO level above `high`, so max/xhigh are deliberately not offered.
+    effort: {
+      dialect: 'gemini_thinking_level',
+      levels: ['low', 'medium', 'high'],
+      providerDefault: 'high',
+    },
   },
   {
     id: 'gemini-3.5-flash',
@@ -135,6 +170,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 1.5,
     outPerM: 9,
     thinking: 'level',
+    effort: {
+      dialect: 'gemini_thinking_level',
+      levels: ['low', 'medium', 'high'],
+      providerDefault: 'medium',
+    },
   },
   {
     id: 'gemini-3.1-flash-lite',
@@ -147,6 +187,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.3,
     outPerM: 1.2,
     thinking: 'level',
+    effort: {
+      dialect: 'gemini_thinking_level',
+      levels: ['low', 'medium', 'high'],
+      providerDefault: 'low',
+    },
   },
   {
     // Owner pick 2026-07-31: OpenAI cut GPT-5.6 Luna's price 80% on 2026-07-30
@@ -168,6 +213,13 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 1.2,
     cachedInPerM: 0.02,
     thinking: 'level',
+    // developers.openai.com model page: "Reasoning.effort supports: none, low,
+    // medium (default), high, xhigh, and max."
+    effort: {
+      dialect: 'openai_effort',
+      levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      providerDefault: 'medium',
+    },
   },
   {
     id: 'gpt-5.5',
@@ -180,6 +232,12 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 5,
     outPerM: 30,
     thinking: 'none',
+    // Same doc: gpt-5.5 stops at xhigh — no `max`.
+    effort: {
+      dialect: 'openai_effort',
+      levels: ['low', 'medium', 'high', 'xhigh'],
+      providerDefault: 'medium',
+    },
   },
   {
     id: 'gpt-5.4',
@@ -254,6 +312,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // live step-by-step thinking stream as the Gemini head. Models/providers
     // that can't reason simply return none — the adapter degrades gracefully.
     thinking: 'level',
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
   },
   {
     id: 'or-deepseek-v4-flash',
@@ -267,6 +329,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     outPerM: 0.1876,
     // Same live-thinking request as the Qwen head (see note above).
     thinking: 'level',
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
   },
   // ── Owner-picked additions 2026-07-12 (slugs/pricing/tool-support verified
   // against openrouter.ai /api/v1/models + Google docs the same day) ─────────
@@ -283,6 +349,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.3,
     outPerM: 2.5,
     thinking: 'level',
+    effort: {
+      dialect: 'gemini_thinking_level',
+      levels: ['low', 'medium', 'high'],
+      providerDefault: 'medium',
+    },
   },
   {
     id: 'or-grok-4.20',
@@ -297,6 +368,12 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 1.25,
     outPerM: 2.5,
     thinking: 'level',
+    // OpenRouter normalizes `reasoning.effort` onto each host's own dialect and
+    // clamps anything the target cannot do, so the three shared levels are safe.
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
   },
   {
     id: 'or-deepseek-v4-pro',
@@ -311,6 +388,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.435,
     outPerM: 0.87,
     thinking: 'level',
+    effort: {
+      dialect: 'openrouter_effort',
+      levels: ['low', 'medium', 'high'],
+    },
   },
   {
     // xAI DIRECT (api.x.ai, OpenAI-compatible) — first-party serving for the Grok
@@ -336,6 +417,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // non-Anthropic 0.25× multiplier guessed $0.3125 — 56% too high.
     cachedInPerM: 0.2,
     thinking: 'level',
+    // No `effort` entry ON PURPOSE: xAI direct is the one head we could not
+    // verify (no XAI key outside production, and OpenRouter's live catalog lists
+    // `reasoning` but NOT `reasoning_effort` for x-ai/grok-4.20). The picker
+    // therefore offers no thinking level here rather than a dial that may be
+    // ignored; the OpenRouter twin (or-grok-4.20) has the verified one.
   },
   {
     id: 'or-qwen2.5-vl-72b',

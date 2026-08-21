@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
+import { parseEffortSetting, type EffortLevel } from '@/agent/lib/models/effort'
 import { getDefaultHeadModelId } from '@/agent/lib/models/routing-config'
 import { describeAttachments, hasVisualAttachment, buildVisionNoteBlock } from '@/agent/lib/attachment-vision'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
@@ -118,6 +119,13 @@ interface ChatBody {
   voice?: boolean
   /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
   modelId?: string
+  /**
+   * Owner's thinking level for a NEW web conversation: low|medium|high|xhigh|max
+   * or 'auto'. Same rule as modelId — for an EXISTING conversation the server
+   * reads the stored row and ignores this, so the picker is the one source of
+   * truth and a client cannot quietly raise (or bill) a deeper effort per message.
+   */
+  effortLevel?: string
   /** A2: set by the VPS worker when running an enqueued turn — the turn row the
    * enqueue route already created. Reused instead of creating a second one, and
    * (for a web conversation) it authorizes the internal call. */
@@ -205,6 +213,17 @@ export async function POST(req: NextRequest) {
     !isInternalCall && typeof body.modelId === 'string' && isSelectableModelId(body.modelId.trim())
       ? body.modelId.trim()
       : null
+
+  // Owner's thinking level for a NEW web conversation (the picker beside the
+  // model). Unset/'auto' → no effort knob is sent and the model's own default
+  // stands. Internal (Telegram / worker) turns never carry one.
+  const ownerSelectedEffort = isInternalCall ? undefined : parseEffortSetting(body.effortLevel)
+  // A malformed level is REFUSED, never quietly downgraded to Auto (Codex P2).
+  // The PATCH route already 400s on garbage; silently persisting Auto here would
+  // let a stale client cost Boss the depth he picked without anything saying so.
+  if (!isInternalCall && body.effortLevel !== undefined && ownerSelectedEffort === undefined) {
+    return Response.json({ error: 'invalid_effort_level' }, { status: 400 })
+  }
 
   // Owner rule 2026-07-18: the owner's chosen head model runs as head and does ALL
   // the work (Gemini head off, Grok 4.20 the default). New/unpinned conversations +
@@ -361,6 +380,8 @@ export async function POST(req: NextRequest) {
   // Business scope for the turn — resolved from project or conversation row.
   let businessId: AgentBusinessId | null = null
   let conversationModelId: string = DEFAULT_MODEL_ID
+  /** The chat's stored thinking level; null = Auto (no effort knob is sent). */
+  let conversationEffortLevel: EffortLevel | null = null
   let claimedRequestTurnId: string | null = null
 
   if (requestedProjectId && !personalMode) {
@@ -394,6 +415,7 @@ export async function POST(req: NextRequest) {
           projectId: true,
           businessId: true,
           modelId: true,
+          effortLevel: true,
           chatMode: true,
           permissionMode: true,
           elevationGrant: true,
@@ -417,6 +439,7 @@ export async function POST(req: NextRequest) {
         }
       }
       conversationModelId = conv.modelId ?? defaultHeadModelId
+      conversationEffortLevel = parseEffortSetting(conv.effortLevel) ?? null
       permissionMode = normalizePermissionMode(conv.permissionMode)
       elevationGrant = parseElevationGrant(conv.elevationGrant)
       personalMode = isPersonalProject(conv.project) || personalMode
@@ -466,11 +489,13 @@ export async function POST(req: NextRequest) {
         // New conversation persists the owner's pick; with no explicit pick BOTH web
         // and Telegram default to the owner's head model (Grok) so it does all the work.
         conversationModelId = isInternalCall ? defaultHeadModelId : (ownerSelectedModelId ?? defaultHeadModelId)
+        conversationEffortLevel = ownerSelectedEffort ?? null
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const conv: { id: string } = await (prisma as any).agentConversation.create({
           data: {
             title,
             modelId: conversationModelId,
+            effortLevel: conversationEffortLevel,
             // The mode chip applies from the FIRST message of a new chat, not
             // only after the conversation row exists.
             chatMode,
@@ -770,6 +795,10 @@ export async function POST(req: NextRequest) {
     modelId: isInternalCall
       ? defaultHeadModelId
       : (resumeModelId ?? conversationModelId),
+    // The chat's thinking level rides every turn of that chat — including an
+    // approval continuation, which is the same job and must not silently
+    // re-think at a different depth than the round that staged the card.
+    effortLevel: conversationEffortLevel,
     // P0-1: a workflow continuation (approval resume, internal control) is the
     // SAME job as the turn that opened it, so it resumes on that job's pinned
     // head. This line used to be the bug in disguise: every internal turn was

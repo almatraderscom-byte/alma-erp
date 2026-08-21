@@ -108,6 +108,10 @@ describe('raw-OpenAI dialect compat (gpt-5.6 head)', () => {
   it('adds reasoning_effort none only when tools are present', () => {
     expect(toRawOpenAiCompatParams({}, true)).toEqual({ reasoning_effort: 'none' })
     expect(toRawOpenAiCompatParams({}, false)).toEqual({})
+    // Owner's level rides a TOOL-FREE raw-OpenAI request; a tool-bearing one is
+    // still de-reasoned because that endpoint rejects tools + reasoning together.
+    expect(toRawOpenAiCompatParams({}, false, 'xhigh')).toEqual({ reasoning_effort: 'xhigh' })
+    expect(toRawOpenAiCompatParams({}, true, 'xhigh')).toEqual({ reasoning_effort: 'none' })
   })
 
   it('keeps sampler params untouched', () => {

@@ -7,6 +7,7 @@ import type {
 } from 'openai/resources/chat/completions'
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { resolveGenerationParams, resolveToolSelectionSampler, toOpenAiGenerationParams } from '@/agent/lib/models/generation-params'
+import type { EffortDialect, EffortLevel } from '@/agent/lib/models/effort'
 import { repairToolArgs } from '@/agent/lib/models/tool-arg-repair'
 import { AGENT_UNIFORM_SAMPLING, openAiSchemaSanitizeEnabled } from '@/agent/config'
 import { sanitizeSchemaPortable } from '@/agent/lib/models/adapters/portable-schema'
@@ -96,13 +97,19 @@ export function exactoSlug(apiModel: string, hasTools: boolean): string {
 export function toRawOpenAiCompatParams(
   genParams: Record<string, number>,
   hasTools: boolean,
+  effort?: string | null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...genParams }
   if (out.max_tokens !== undefined) {
     out.max_completion_tokens = out.max_tokens
     delete out.max_tokens
   }
+  // Tools + reasoning cannot coexist on this endpoint, so a tool-bearing request
+  // is still de-reasoned. A TOOL-FREE one can carry the owner's level, which is
+  // the difference between the picker working and silently doing nothing when the
+  // Responses API is off or rejected the request (Codex P2).
   if (hasTools) out.reasoning_effort = 'none'
+  else if (effort) out.reasoning_effort = effort
   return out
 }
 
@@ -511,10 +518,21 @@ export class OpenAiAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    effort?: EffortLevel | null
+    effortDialect?: EffortDialect
     toolChoice?: NeutralToolChoice
     parallelToolCalls?: boolean
     cacheKey?: string
   }): AsyncGenerator<TurnEvent> {
+    // Owner's thinking level. Both OpenAI-dialect knobs take the same words, so
+    // one clamped level serves the raw-OpenAI Responses API and OpenRouter's
+    // normalized `reasoning.effort` alike. A level resolved for a NON-OpenAI
+    // dialect (Auto head switched provider mid-job) is ignored rather than
+    // guessed at.
+    const ownerEffort =
+      args.effortDialect === 'openai_effort' || args.effortDialect === 'openrouter_effort'
+        ? args.effort ?? null
+        : null
     // Raw OpenAI (Luna head): prefer the Responses API — tools + reasoning
     // coexist there and the model's reasoning SUMMARY streams live, so the
     // owner finally sees Luna think (chat/completions forced tool-bearing
@@ -522,7 +540,11 @@ export class OpenAiAdapter implements ProviderAdapter {
     // A create() failure falls through to the proven chat/completions ladder
     // below — the head never goes down over this path.
     if (this.rawOpenAi && openAiResponsesEnabled()) {
-      const wantsReasoning = args.thinking !== 'none'
+      // An explicit level IS a request to reason — gpt-5.5 is registered
+      // `thinking: 'none'` (it was only ever about the streamed thought pane and
+      // the sampler), yet its API documents low→xhigh effort. Without this the
+      // owner could pick "High" on that head and nothing would be sent.
+      const wantsReasoning = args.thinking !== 'none' || Boolean(ownerEffort)
       const rawGen = toOpenAiGenerationParams(resolveGenerationParams({ thinking: args.thinking }))
       const responsesParams: Record<string, unknown> = {
         model: args.apiModel,
@@ -536,7 +558,7 @@ export class OpenAiAdapter implements ProviderAdapter {
           // include reasoning.encrypted_content: with store:false the item
           // must come back encrypted or the next tool round cannot replay it.
           ? {
-            reasoning: { effort: lunaReasoningEffort(), summary: 'auto' },
+            reasoning: { effort: ownerEffort ?? lunaReasoningEffort(), summary: 'auto' },
             include: ['reasoning.encrypted_content'],
           }
           // Non-reasoning request: the sampler is accepted, mirror the shared contract.
@@ -606,9 +628,14 @@ export class OpenAiAdapter implements ProviderAdapter {
     // Gemini head. Gated on the model's registry `thinking` flag; if a
     // provider rejects the extension outright, retry once without it so the
     // head never goes down over a cosmetic feature.
-    const wantReasoning = this.streamReasoning && args.thinking !== 'none'
+    const wantReasoning = this.streamReasoning && (args.thinking !== 'none' || Boolean(ownerEffort))
     const reasoningParam = wantReasoning
-      ? { reasoning: { enabled: true, effort: 'medium' } }
+      // 'medium' was a hard-coded default that ignored the model AND the owner.
+      // OpenRouter accepts none|minimal|low|medium|high|xhigh|max and maps each
+      // onto the host's own dialect (thinking budget %, Gemini thinkingLevel),
+      // clamping anything the target cannot do — so the owner's word travels
+      // unchanged and only the provider decides what it means.
+      ? { reasoning: { enabled: true, effort: ownerEffort ?? 'medium' } }
       : {}
     // Grok caches prefixes automatically — skip the Anthropic-style cache_control
     // extension for x-ai/* models (Phase 3 cleanup; see wantsAnthropicCacheControl).
@@ -651,7 +678,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // Raw-OpenAI dialect: max_tokens → max_completion_tokens + explicit
     // reasoning_effort 'none' on tool-bearing requests (see toRawOpenAiCompatParams).
     const genParams = this.rawOpenAi
-      ? toRawOpenAiCompatParams(rawGenParams, args.tools.length > 0)
+      ? toRawOpenAiCompatParams(rawGenParams, args.tools.length > 0, ownerEffort)
       : rawGenParams
     const baseParams = {
       model: modelSlug,
@@ -761,7 +788,15 @@ export class OpenAiAdapter implements ProviderAdapter {
         errDetail(err),
       )
       try {
-        stream = await createWith429Wait(baseParams as ChatCompletionCreateParamsStreaming)
+        // The middle rung drops provider_prefs/exacto/sampler but KEEPS an
+        // EXPLICIT level (Codex P2): those are unrelated fields, and silently
+        // finishing at the provider default while the turn's telemetry records
+        // the picked depth is exactly the kind of quiet lie this feature exists
+        // to avoid. Only the bare rung below gives the level up, and it says so.
+        stream = await createWith429Wait({
+          ...baseParams,
+          ...(ownerEffort ? reasoningParam : {}),
+        } as ChatCompletionCreateParamsStreaming)
       } catch (err2) {
         if (args.signal?.aborted || isRateLimit(err2)) throw err2
         console.warn(

@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
+import { anthropicThinkingBudget, clampEffort } from '@/agent/lib/models/effort'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -743,6 +744,13 @@ export interface RunAgentTurnOptions {
   businessId?: AgentBusinessId | null
   /** Registry model id — owner /agent only; default claude-sonnet-4-6 when absent. */
   modelId?: string | null
+  /**
+   * Owner's thinking level for this chat (the picker next to the model). Neutral
+   * scale — effort.ts clamps it to what the resolved model really accepts before
+   * it reaches a provider. Absent/null = Auto: nothing is sent and the model's
+   * own default stands, byte-identical to the pre-picker request.
+   */
+  effortLevel?: import('@/agent/lib/models/effort').EffortLevel | null
   /** AgentTurn row id — polled each iteration for an owner-requested server-side cancel. */
   turnId?: string | null
   /**
@@ -788,6 +796,21 @@ export async function* runAgentTurn(
   let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
+  // Owner's thinking level for the native Anthropic loop (kill-switch path
+  // AGENT_NATIVE_ANTHROPIC_LOOP=true). Same contract as the adapter: 4.6+ heads
+  // take `output_config.effort`, pre-4.6 (Haiku 4.5) takes an explicit thinking
+  // budget, and Auto (null) sends neither — the request stays as it was.
+  const nativeEffort = clampEffort(options.effortLevel, chatModel.effort)
+  const nativeBudgetDialect = chatModel.effort?.dialect === 'anthropic_budget'
+  // Auto (no level) leaves the request untouched here too — the kill-switch path
+  // must not be the one place a Haiku chat quietly gains a 4096-token budget
+  // (Codex P2, second round: the adapter was fixed, this shaping was not).
+  const nativeThinkingBlock = nativeBudgetDialect && nativeEffort
+    ? { type: 'enabled' as const, budget_tokens: anthropicThinkingBudget(nativeEffort, 8192) }
+    : { type: 'adaptive' as const }
+  const nativeEffortParam = !nativeBudgetDialect && nativeEffort
+    ? { output_config: { effort: nativeEffort } }
+    : {}
   // Resolve business scope: personal mode is always cross-business; otherwise default to Lifestyle.
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
@@ -1449,7 +1472,8 @@ export async function* runAgentTurn(
         {
           model: apiModel,
           max_tokens: 8192,
-          thinking: { type: 'adaptive' },
+          thinking: nativeThinkingBlock,
+          ...nativeEffortParam,
           system: sanitizeSurrogatesDeep(systemBlocks),
           tools: sanitizeSurrogatesDeep(iterationTools),
           messages: sanitizeSurrogatesDeep(apiMessages),

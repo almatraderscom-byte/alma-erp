@@ -5,12 +5,67 @@ import { cn } from '@/lib/utils'
 
 const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
 const AUTO_MODEL_ID = 'auto'
+/** Sentinel the API understands as "clear the stored level". */
+const AUTO_EFFORT = 'auto'
+
+type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 type ModelOption = {
   id: string
   label: string
   provider: 'anthropic' | 'google' | 'openai' | 'openrouter' | 'xai'
   default?: boolean
+  /** Levels this model REALLY accepts (server-side registry, effort.ts). */
+  effortLevels?: EffortLevel[]
+  /** What the provider does when no level is sent — shown as the Auto hint. */
+  effortDefault?: EffortLevel | null
+}
+
+/** Owner-facing labels. Order = the neutral scale, cheapest first. */
+const EFFORT_ORDER: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max']
+const EFFORT_LABELS: Record<EffortLevel, string> = {
+  low: 'দ্রুত',
+  medium: 'স্বাভাবিক',
+  high: 'বেশি',
+  xhigh: 'আরও বেশি',
+  max: 'সর্বোচ্চ',
+}
+const EFFORT_EN: Record<EffortLevel, string> = {
+  low: 'Low', medium: 'Normal', high: 'High', xhigh: 'Extra high', max: 'Max',
+}
+
+/**
+ * Levels to offer for the CURRENT pick.
+ *
+ * On a concrete model: exactly that model's real list (Gemini stops at 'বেশি',
+ * Sonnet 4.6 has no 'আরও বেশি') — nothing is offered that its API would reject.
+ *
+ * On Auto: the union, because the head can be any of them and Boss must still be
+ * able to say "Max". The honesty comes from saying so out loud — the footer
+ * spells out that a head without that level runs its own ceiling instead, which
+ * is exactly what the server's clamp does (down, never up).
+ */
+/**
+ * Mirror of the server's `clampEffort`: a stored level the current model cannot do
+ * steps DOWN to its ceiling — it does NOT fall back to Auto. Showing "Auto" for a
+ * chat whose row says Max would be the picker lying about what the next turn runs
+ * (Codex P2); showing the clamped level says exactly what will happen.
+ */
+function clampToLevels(stored: string, levels: EffortLevel[]): EffortLevel | null {
+  if (levels.length === 0) return null
+  const wanted = EFFORT_ORDER.indexOf(stored as EffortLevel)
+  if (wanted < 0) return null
+  if (levels.includes(stored as EffortLevel)) return stored as EffortLevel
+  const below = levels.filter((l) => EFFORT_ORDER.indexOf(l) <= wanted)
+  return below.length > 0 ? below[below.length - 1] : levels[0]
+}
+
+function levelsFor(models: ModelOption[], modelId: string): EffortLevel[] {
+  if (modelId !== AUTO_MODEL_ID) {
+    return models.find((m) => m.id === modelId)?.effortLevels ?? []
+  }
+  const offered = new Set(models.flatMap((m) => m.effortLevels ?? []))
+  return EFFORT_ORDER.filter((lvl) => offered.has(lvl))
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -25,6 +80,9 @@ interface AgentModelSelectorProps {
   conversationId: string | null
   modelId: string
   onModelChange: (modelId: string) => void
+  /** 'auto' or a level — the chat's stored thinking level. */
+  effortLevel?: string
+  onEffortChange?: (effortLevel: string) => void
   disabled?: boolean
 }
 
@@ -32,12 +90,16 @@ export default function AgentModelSelector({
   conversationId,
   modelId,
   onModelChange,
+  effortLevel = 'auto',
+  onEffortChange,
   disabled = false,
 }: AgentModelSelectorProps) {
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<ModelOption[]>([])
   const [loading, setLoading] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  /** Monotonic ticket for effort PATCHes — see pickEffort. */
+  const effortRequestRef = useRef(0)
 
   useEffect(() => {
     void fetch('/api/assistant/models')
@@ -61,7 +123,14 @@ export default function AgentModelSelector({
 
   const isAuto = modelId === AUTO_MODEL_ID
   const active = models.find((m) => m.id === modelId)
+  const levels = levelsFor(models, modelId)
+  const activeEffort = clampToLevels(effortLevel, levels)
+  /** True when the stored pick is deeper than this model can go (shown as a note). */
+  const effortClamped = activeEffort !== null && activeEffort !== effortLevel
   const label = isAuto ? 'Auto' : (active?.label ?? 'Claude Sonnet 4.6')
+  // The pill carries the level too, so the depth is visible without opening the
+  // menu — a setting that costs money must not be invisible while it is on.
+  const pillLabel = activeEffort ? `${label} · ${EFFORT_EN[activeEffort]}` : label
 
   async function pick(nextId: string) {
     setOpen(false)
@@ -83,6 +152,36 @@ export default function AgentModelSelector({
     }
   }
 
+  /**
+   * The level is stored on the CONVERSATION, like the model — one PATCH, and the
+   * optimistic state rolls back if the write fails, so the pill can never show a
+   * depth the server is not actually running.
+   */
+  async function pickEffort(next: string) {
+    if (!onEffortChange) return
+    const previous = effortLevel
+    if (next === previous) return
+    onEffortChange(next)
+    if (!conversationId) return
+    // Two quick taps used to race: the older PATCH could land last and become the
+    // stored value, or its rollback could overwrite the newer pick (Codex P2).
+    // Every request takes a ticket; only the LATEST one may commit or roll back.
+    const ticket = ++effortRequestRef.current
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/assistant/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ effortLevel: next }),
+      })
+      if (!res.ok) throw new Error('effort_update_failed')
+    } catch {
+      if (ticket === effortRequestRef.current) onEffortChange(previous)
+    } finally {
+      if (ticket === effortRequestRef.current) setLoading(false)
+    }
+  }
+
   const grouped = models.reduce<Record<string, ModelOption[]>>((acc, m) => {
     acc[m.provider] = acc[m.provider] ?? []
     acc[m.provider].push(m)
@@ -101,7 +200,7 @@ export default function AgentModelSelector({
           (disabled || loading) && 'opacity-50',
         )}
       >
-        <span className="truncate">{loading ? '…' : label}</span>
+        <span className="truncate">{loading ? '…' : pillLabel}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="opacity-40"><path d="M6 9l6 6 6-6"/></svg>
       </button>
 
@@ -149,6 +248,55 @@ export default function AgentModelSelector({
               ))}
             </div>
           ))}
+          {onEffortChange && levels.length > 0 && (
+            <div className="border-t border-border-subtle">
+              <div className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                Thinking level
+              </div>
+              <div className="flex flex-wrap gap-1 px-3 pb-3 pt-1">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void pickEffort(AUTO_EFFORT)}
+                  className={cn(
+                    'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                    !activeEffort
+                      ? 'border-[#E07A5F] text-[#E07A5F]'
+                      : 'border-border text-muted hover:text-cream',
+                    loading && 'opacity-50',
+                  )}
+                >
+                  Auto
+                </button>
+                {levels.map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void pickEffort(lvl)}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                      activeEffort === lvl
+                        ? 'border-[#E07A5F] text-[#E07A5F]'
+                        : 'border-border text-muted hover:text-cream',
+                      loading && 'opacity-50',
+                    )}
+                  >
+                    {EFFORT_EN[lvl]} · {EFFORT_LABELS[lvl]}
+                  </button>
+                ))}
+              </div>
+              <div className="px-3 pb-2.5 text-[10px] leading-relaxed text-muted">
+                {!activeEffort
+                  ? `Auto = মডেলের নিজের default${active?.effortDefault ? ` (${EFFORT_EN[active.effortDefault]})` : ''}`
+                  : effortClamped
+                    ? `${EFFORT_EN[effortLevel as EffortLevel]} সেভ করা আছে — এই model সর্বোচ্চ ${EFFORT_EN[activeEffort]} পারে, তাই ওটাই চলবে।`
+                    : isAuto
+                    ? 'যত বেশি level, তত বেশি ভাবে (খরচ ও সময় বাড়ে)। যে model-এ এই level নেই, সেখানে তার সর্বোচ্চতে নেমে চলবে — যেমন Gemini-তে High।'
+                    : 'যত বেশি level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ ও সময় বাড়ে।'}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

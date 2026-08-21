@@ -352,6 +352,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // 'auto' = let the per-turn router pick the head model (current cost-optimized
   // routing); a concrete id pins that exact model for the conversation.
   const [activeModelId, setActiveModelId] = useState('auto')
+  // Owner's thinking level for this chat ('auto' = the model's own default).
+  // Lives beside the model because it is the same axis and travels the same way:
+  // stored on the conversation, sent with the FIRST message of a new one.
+  const [activeEffort, setActiveEffort] = useState('auto')
   // Chat mode picker (auto | direct | plan | plan_drive) — per conversation, so a
   // "plan only" chat stays plan-only after reload.
   const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
@@ -617,6 +621,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           modelId: string | null
           chatMode: string | null
           permissionMode?: string | null
+          effortLevel?: string | null
         }
         if (!data.conversationId) return
         if (streamingRef.current || activeConvIdRef.current) return
@@ -625,6 +630,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           title: null,
           projectId: data.projectId,
           modelId: data.modelId ?? undefined,
+          effortLevel: data.effortLevel ?? null,
           chatMode: data.chatMode,
           permissionMode: data.permissionMode,
           archived: false,
@@ -778,18 +784,22 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     setActiveConvId(conv.id)
     setActiveConvProjectId(conv.projectId)
     setActiveModelId(conv.modelId ?? 'auto')
+    setActiveEffort(conv.effortLevel ?? 'auto')
     // Deep links and panel buttons hand us a PARTIAL conversation row, so an
     // absent chatMode means "unknown", not "auto" — read the real one rather
     // than silently dropping the owner back into full-tool mode.
     setChatMode(normalizeChatMode(conv.chatMode))
     setPermissionMode(normalizePermissionMode(conv.permissionMode))
-    if (conv.chatMode === undefined || conv.permissionMode === undefined) {
+    if (conv.chatMode === undefined || conv.permissionMode === undefined || conv.effortLevel === undefined) {
       void fetch(`/api/assistant/conversations/${conv.id}`)
-        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null; permissionMode?: string | null } : null))
+        .then(async (r) => (r.ok ? (await r.json()) as { chatMode?: string | null; permissionMode?: string | null; effortLevel?: string | null } : null))
         .then((row) => {
           if (!row) return
           setChatMode(normalizeChatMode(row.chatMode))
           setPermissionMode(normalizePermissionMode(row.permissionMode))
+          // Same partial-row rule as the mode chips: a deep link must not show
+          // "Auto" for a chat that is really pinned to Max.
+          setActiveEffort(row.effortLevel ?? 'auto')
         })
         .catch(() => { /* offline — the chip stays on auto, which withholds nothing */ })
     }
@@ -855,6 +865,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // It used to hard-code Sonnet here, so every "নতুন চ্যাট" silently pinned the
     // most expensive head no matter what the owner had chosen (owner bug 2026-07-26).
     setActiveModelId('auto')
+    setActiveEffort('auto')
     setChatMode(DEFAULT_CHAT_MODE)
     setPinnedSkill(null)
     pendingProjectIdRef.current = projectId ?? null
@@ -1102,6 +1113,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // New conversation: persist the owner's model choice ('auto' or a pinned model)
           // and the mode chip he is looking at right now.
           body.modelId = activeModelId
+          body.effortLevel = activeEffort
           body.permissionMode = permissionMode
         }
         if (fileRefs.length > 0) body.files = fileRefs
@@ -1726,7 +1738,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         toast.error('কাজটা লম্বা — অটো-continue সীমা শেষ। "continue" লিখলে বাকিটা এগোবে।')
       }
     }
-  }, [streaming, activeConvId, activeModelId, resyncActiveConversation])
+  }, [streaming, activeConvId, activeModelId, activeEffort, resyncActiveConversation])
 
   // Keep a stable ref so the auto-continue timer always calls the LATEST
   // handleSend (the useCallback identity changes with its deps).
@@ -1871,7 +1883,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // previously-active conversation's projectId.
     const turnProjectId = activeConvId ? activeConvProjectId : null
     if (activeConvId) body.conversationId = activeConvId
-    else body.modelId = activeModelId // new conv: persist the owner's model choice
+    else {
+      // new conv: persist the owner's model choice AND his thinking level
+      body.modelId = activeModelId
+      body.effortLevel = activeEffort
+    }
     const res = await fetch('/api/assistant/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1947,7 +1963,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // continuous history for the owner.
     if (convId) voiceTurnConvRef.current = { id: convId, projectId: turnProjectId }
     return reply || null
-  }, [activeConvId, activeConvProjectId, activeModelId])
+  }, [activeConvId, activeConvProjectId, activeModelId, activeEffort])
 
   async function stopGeneration() {
     const turnId = activeTurnIdRef.current
@@ -2349,6 +2365,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           isMobile={isMobile}
           activeModelId={activeModelId}
           onModelChange={setActiveModelId}
+          activeEffort={activeEffort}
+          onEffortChange={setActiveEffort}
           permissionMode={permissionMode}
           onPermissionModeChange={setPermissionMode}
           pinnedSkill={pinnedSkill}

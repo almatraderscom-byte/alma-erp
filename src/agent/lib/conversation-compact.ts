@@ -140,7 +140,7 @@ export async function compactConversationIfNeeded(
 ): Promise<CompactResult | null> {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true, archived: true, createdAt: true },
+    select: { id: true, projectId: true, source: true, modelId: true, effortLevel: true, title: true, compactedToId: true, archived: true, createdAt: true },
   })
   if (!conv || conv.compactedToId || conv.archived) return null
 
@@ -174,6 +174,10 @@ export async function compactConversationIfNeeded(
     data: {
       title: conv.title ? `${conv.title} (cont.)` : null,
       modelId: conv.modelId,
+      // The continuation is the SAME job: it must keep the depth Boss picked.
+      // Copying the model but not the level silently dropped a High/Max chat back
+      // to Auto the moment it compacted (Codex P2).
+      effortLevel: conv.effortLevel,
       source: conv.source,
       projectId: conv.projectId,
       contextSummary: summary,
@@ -197,7 +201,7 @@ export async function compactConversationIfNeeded(
 export async function compactConversationById(conversationId: string): Promise<CompactResult> {
   const conv = await db.agentConversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, projectId: true, source: true, modelId: true, title: true, compactedToId: true },
+    select: { id: true, projectId: true, source: true, modelId: true, effortLevel: true, title: true, compactedToId: true },
   })
   if (!conv) throw new Error('not_found')
   if (conv.compactedToId) {
@@ -223,6 +227,10 @@ export async function compactConversationById(conversationId: string): Promise<C
     data: {
       title: conv.title ? `${conv.title} (cont.)` : null,
       modelId: conv.modelId,
+      // The continuation is the SAME job: it must keep the depth Boss picked.
+      // Copying the model but not the level silently dropped a High/Max chat back
+      // to Auto the moment it compacted (Codex P2).
+      effortLevel: conv.effortLevel,
       source: conv.source,
       projectId: conv.projectId,
       contextSummary: summary,

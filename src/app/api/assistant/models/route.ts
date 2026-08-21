@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { MODEL_REGISTRY, modelsByProvider, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import { getModelEnabledMap, isModelEnabledSync, setModelEnabled } from '@/agent/lib/models/model-enabled'
+import { EFFORT_LABELS } from '@/agent/lib/models/effort'
 
 export async function GET(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -25,7 +26,18 @@ export async function GET(req: NextRequest) {
   }
   return Response.json({
     defaultModelId: DEFAULT_MODEL_ID,
-    models: pickable.map(({ id, label, provider, supportsCaching, contextWindow, inPerM, outPerM, default: isDefault }) => ({
+    /** Owner-facing labels for the thinking-level row (web + native read the same list). */
+    effortOptions: (Object.keys(EFFORT_LABELS) as Array<keyof typeof EFFORT_LABELS>).map((level) => ({
+      level,
+      label: EFFORT_LABELS[level].en,
+      labelBn: EFFORT_LABELS[level].bn,
+    })),
+    // The thinking-level picker reads `effortLevels` per model and offers ONLY
+    // those (see effort.ts): Gemini genuinely has nothing above `high`, Sonnet
+    // 4.6 predates `xhigh`, Haiku 4.5 rejects `effort` and runs on a thinking
+    // budget instead. Sending one shared list would put a "Max" on models that
+    // would 400 on it or silently clamp — a dial that lies about what it does.
+    models: pickable.map(({ id, label, provider, supportsCaching, contextWindow, inPerM, outPerM, effort, default: isDefault }) => ({
       id,
       label,
       provider,
@@ -35,6 +47,8 @@ export async function GET(req: NextRequest) {
       outPerM,
       default: isDefault ?? false,
       enabled: isModelEnabledSync(id, enabledMap),
+      effortLevels: effort?.levels ?? [],
+      effortDefault: effort?.providerDefault ?? null,
     })),
     byProvider,
   })
