@@ -4071,6 +4071,57 @@ final class AssistantParityV2Tests: XCTestCase {
         } == true)
     }
 
+    func testMakePlanStartDropsLegacyPrePlanLeadAndKeepsOnlyFinalReply() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("পুরোনো pre-plan পূর্ণ উত্তর")])
+        vm.debugApplyTurnEvents([.preamble("পুরোনো pre-plan পূর্ণ উত্তর")])
+
+        XCTAssertNotNil(vm.messages.last?.leadProseId)
+        vm.debugApplyTurnEvents([.prospectivePlanStart])
+
+        XCTAssertNil(vm.messages.last?.leadProseId)
+        XCTAssertEqual(vm.messages.last?.text, "")
+        XCTAssertFalse(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text.contains("পুরোনো") }
+            return false
+        } == true)
+
+        vm.debugApplyTurnEvents([.textDelta("একবারের সঠিক final reply")])
+        vm.debugApplyTurnEvents([.done(
+            messageId: "answer-plan-1", tokensIn: nil, tokensOut: nil, costUsd: nil,
+            needContinue: false, apiRounds: nil, cacheCreation: nil,
+            cacheRead: nil, roundCostsUsd: nil)])
+
+        XCTAssertEqual(vm.messages.last?.text, "একবারের সঠিক final reply")
+        XCTAssertEqual(vm.messages.last?.blocks.compactMap { block -> String? in
+            if case .prose(_, let text) = block { return text }
+            return nil
+        }, ["একবারের সঠিক final reply"])
+    }
+
+    func testOrdinaryMakePlanKeepsSpokenLeadWithoutProspectiveSignal() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")])
+        vm.debugApplyTurnEvents([.preamble("কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")])
+
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "ordinary-plan", name: "make_plan", inputPretty: #"{"steps":3}"#)])
+
+        XCTAssertNotNil(vm.messages.last?.leadProseId)
+        XCTAssertEqual(vm.messages.last?.text, "কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")
+        XCTAssertTrue(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text.contains("কাজটা বুঝেছি") }
+            return false
+        } == true)
+    }
+
+    func testProspectivePlanStartDecodesTypedNeverUnknown() throws {
+        let event = try decodeTurnEvent(#"{"type":"prospective_plan_start"}"#)
+        guard case .prospectivePlanStart = event else {
+            return XCTFail("prospective_plan_start must remain a typed native event")
+        }
+    }
+
     func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
         let citations = AgentMarkdownText.extractCitations("""
         [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).

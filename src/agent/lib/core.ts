@@ -180,6 +180,10 @@ export type AgentEvent =
   // when a tool starts or a draft is rewritten, but this line is something Boss
   // has already read and must survive both.
   | { type: 'preamble'; text: string }
+  // Explicit compatibility signal for a forced prospective-plan turn. Clients
+  // may clear legacy/replayed pre-plan prose without guessing from an ordinary
+  // model-selected `make_plan` tool call (which must preserve its spoken lead).
+  | { type: 'prospective_plan_start' }
   // SK-3: the skill pinned for this conversation, and why. The owner asked to be
   // able to SEE which skill is running and to change it — this is what feeds the
   // chip beside the model picker. `source: 'owner'` means he chose it himself,

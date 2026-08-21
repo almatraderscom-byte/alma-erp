@@ -866,6 +866,9 @@ enum AgentTurnEvent: Sendable {
     /// says "that prose is the line Boss read" so the client can keep it while
     /// still clearing ordinary mid-turn narration.
     case preamble(String)
+    /// Forced prospective planning starts before any business work. This is an
+    /// explicit reset signal; an ordinary `make_plan` toolStart is not one.
+    case prospectivePlanStart
     /// SK-3 — which skill is running this job, announced BEFORE any work starts
     /// so the owner sees it up front and can change it.
     case skillPinned(skill: String, source: String, reason: String, isolated: Bool)
@@ -964,6 +967,8 @@ enum AgentTurnEvent: Sendable {
             self = .verificationRetry(attempt: ev.attempt ?? 1, maxAttempts: ev.maxAttempts ?? 1)
         case "preamble":
             self = .preamble(ev.text ?? ev.delta ?? "")
+        case "prospective_plan_start":
+            self = .prospectivePlanStart
         case "skill_pinned":
             self = .skillPinned(skill: ev.skill ?? "",
                                 source: ev.source == "owner" ? "owner" : "router",

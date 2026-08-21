@@ -42,6 +42,20 @@ export function buildOpenAiRequestShaping(args: {
 }
 
 /**
+ * The final compatibility retry may drop optional provider shaping, but it
+ * must never weaken a controller-enforced tool choice. Named/required choices
+ * keep plan and workflow ordering deterministic; `none` is a hard safety
+ * choice too. Automatic selection remains omitted as the provider default.
+ */
+export function buildOpenAiFallbackToolChoice(args: {
+  tools: NeutralTool[]
+  toolChoice?: NeutralToolChoice
+}): { tool_choice?: unknown } {
+  const { tool_choice } = buildOpenAiRequestShaping(args)
+  return tool_choice === undefined ? {} : { tool_choice }
+}
+
+/**
  * Grok (x-ai/*) caches automatically on stable prefixes; the Anthropic-style
  * `cache_control` block is ignored there and only muddies the request (audit
  * correction #4). Keep it for the models that DO honour it via OpenRouter
@@ -647,8 +661,8 @@ export class OpenAiAdapter implements ProviderAdapter {
       stream: true as const,
       stream_options: { include_usage: true },
       // Phase 3 request controller: per-call tool_choice + parallel_tool_calls.
-      // Both drop out of the final BARE retry below, so a provider that rejects
-      // either param degrades to plain OpenAI-spec instead of knocking the head over.
+      // The final bare retry drops optional parallel shaping but preserves hard
+      // named/required/none choices so controller ordering cannot silently weaken.
       ...buildOpenAiRequestShaping(args),
       // OpenRouter now ALWAYS returns the billed cost in the final chunk's
       // `usage.cost` (this opt-in flag is a documented no-op kept for intent +
@@ -758,6 +772,7 @@ export class OpenAiAdapter implements ProviderAdapter {
           model: args.apiModel,
           messages: toOpenAiMessages(args.system, args.messages, false),
           tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
+          ...buildOpenAiFallbackToolChoice(args),
           stream: true as const,
           // Raw OpenAI: the PROVIDER DEFAULT reasoning_effort is what 400s a
           // tool-bearing request on gpt-5.6 — dropping our optional params

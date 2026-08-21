@@ -8150,6 +8150,22 @@ final class AssistantVM {
                     }
                     touchedStream = true
                 }
+            case .prospectivePlanStart:
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // Mixed-version/replayed streams may already contain a
+                    // complete-looking pre-plan answer. Only the server's
+                    // explicit forced-plan signal may discard that stale prose;
+                    // ordinary model-selected make_plan keeps its spoken lead.
+                    messages[i].leadProseId = nil
+                    messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
+                    touchedStream = true
+                }
             case .toolStart(let tid, let name, let inputPretty):
                 if let surface = AgentComputerUseSurface.classify(
                     toolName: name, inputPretty: inputPretty) {

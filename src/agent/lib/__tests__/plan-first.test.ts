@@ -9,6 +9,7 @@
  * asks everything at once — and the write tools are withheld so it cannot start
  * the job while claiming to plan.
  */
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const mockPrisma = vi.hoisted(() => ({ agentPendingAction: { count: vi.fn() } }))
@@ -20,8 +21,12 @@ import {
   filterToolsForPlanTurn,
   isPlanFirstTurn,
   normalizeProspectivePlanInput,
+  partitionProspectivePlanCalls,
   planFirstNote,
+  prospectivePlanExitText,
+  prospectivePlanFailureText,
   shouldInjectProspectivePlanTool,
+  shouldWithholdProspectivePlanRoundProse,
 } from '@/agent/lib/plan-first'
 
 describe('prospective plan binding', () => {
@@ -34,7 +39,14 @@ describe('prospective plan binding', () => {
     })).toBe('make_plan')
   })
 
-  it('returns to the required contract after the plan round', () => {
+  it('keeps make_plan ahead of other bindings until the caller reports success', () => {
+    expect(chooseRoundBoundTool({
+      iteration: 1,
+      planTool: 'make_plan',
+      contractTool: 'get_orders',
+      workflowTool: 'update_order',
+    })).toBe('make_plan')
+
     expect(chooseRoundBoundTool({
       iteration: 1,
       planTool: null,
@@ -46,25 +58,109 @@ describe('prospective plan binding', () => {
   it('injects make_plan into round zero when the router omitted the plan pack', () => {
     expect(shouldInjectProspectivePlanTool({
       planFirst: true,
-      iteration: 0,
+      planSatisfied: false,
       lastBudgetRound: false,
       shippedToolNames: ['get_dashboard_snapshot', 'get_orders'],
     })).toBe(true)
   })
 
-  it('never re-adds make_plan after round zero or into the reserved wrap-up round', () => {
+  it('re-adds make_plan on later unsatisfied rounds but not after success or in wrap-up', () => {
     expect(shouldInjectProspectivePlanTool({
       planFirst: true,
-      iteration: 1,
+      planSatisfied: false,
+      lastBudgetRound: false,
+      shippedToolNames: [],
+    })).toBe(true)
+    expect(shouldInjectProspectivePlanTool({
+      planFirst: true,
+      planSatisfied: true,
       lastBudgetRound: false,
       shippedToolNames: [],
     })).toBe(false)
     expect(shouldInjectProspectivePlanTool({
       planFirst: true,
-      iteration: 0,
+      planSatisfied: false,
       lastBudgetRound: true,
       shippedToolNames: [],
     })).toBe(false)
+  })
+
+  it('withholds provider prose only while the forced prospective plan is being created', () => {
+    expect(shouldWithholdProspectivePlanRoundProse('make_plan')).toBe(true)
+    expect(shouldWithholdProspectivePlanRoundProse('get_orders')).toBe(false)
+    expect(shouldWithholdProspectivePlanRoundProse(null)).toBe(false)
+
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain('&& !ownerRequirements.planFirst')
+    expect(source).toContain('if (liveProseEnabled && !withholdProspectivePlanProse)')
+    expect(source).toContain("iterationText = withholdProspectivePlanProse ? '' : cleanedIterationText")
+    expect(source).toContain('if (withholdProspectivePlanProse && calls.length === 0 && !signal?.aborted)')
+    expect(source).toContain('&& !prospectivePlanTrackerVisible)')
+    expect(source).toContain('prospectivePlanTrackerVisible = true')
+  })
+
+  it('accepts one make_plan and rejects sibling work or duplicate plans', () => {
+    const calls = [
+      { id: 'work-before-plan', name: 'get_orders' },
+      { id: 'plan', name: 'make_plan' },
+      { id: 'duplicate-plan', name: 'make_plan' },
+    ]
+    const partition = partitionProspectivePlanCalls(calls, true)
+
+    expect(partition.accepted.map((call) => call.id)).toEqual(['plan'])
+    expect(partition.rejected.map((call) => call.id)).toEqual([
+      'work-before-plan', 'duplicate-plan',
+    ])
+
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain('if (!withholdProspectivePlanProse)')
+    expect(source).toContain('!acceptedProspectivePlanCalls.has(call)')
+    expect(source).toContain('const progressCallCount = withholdProspectivePlanProse')
+    expect(source).toContain('stepsSinceOwnerUpdate += refusedHallucinationRound ? 0 : progressCallCount')
+    expect(source).toContain('if (!hideProspectivePlanControl)')
+  })
+
+  it('reports final-iteration plan projection outcomes explicitly', () => {
+    expect(prospectivePlanExitText(true)).toContain('Step tracker তৈরি হয়েছে')
+    expect(prospectivePlanExitText(true)).toContain('কোনো business action চালাইনি')
+    expect(prospectivePlanExitText(false)).toContain('step tracker verify করা যায়নি')
+
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain('const prospectivePlanCreatedAfterLoop = toolRecords.some')
+    expect(source).toContain('prospectivePlanCreatedOnFinalIteration = true')
+    expect(source).toContain('!prospectivePlanTrackerVisible || prospectivePlanCreatedOnFinalIteration')
+    expect(source).toContain('attempt < 2 && !prospectivePlanTrackerVisible')
+    expect(source).toContain('prospectivePlanExitText(prospectivePlanTrackerVisible)')
+    expect(source).not.toContain('const projectionFailure =')
+  })
+
+  it('reports a failed hidden prospective plan deterministically', () => {
+    const text = prospectivePlanFailureText('database unavailable')
+    expect(text).toContain('Step tracker তৈরি করা যায়নি')
+    expect(text).toContain('কোনো business action চালাইনি')
+    expect(text).toContain('database unavailable')
+
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain("yield { type: 'prospective_plan_start' }")
+    expect(source).toContain('if (hideProspectivePlanControl && !result.success)')
+    expect(source).toContain('if (prospectivePlanFailureTextForRound) break')
+  })
+
+  it('bypasses pre-loop graphs so the prospective-plan signal is first', () => {
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    const actionGraphGate = source.indexOf('const actionGraphOn')
+    const actionGraphCall = source.indexOf('actionGraph = await stageExpenseActionGraph')
+    const routineGraphGate = source.indexOf('const routineGraphOn')
+    const routineGraphCall = source.indexOf('routineGraph = await runRoutineTurnGraph')
+    const prospectiveSignal = source.indexOf("yield { type: 'prospective_plan_start' }")
+    const providerLoop = source.indexOf('for (let iteration = 0; iteration < maxIterations; iteration++)')
+
+    expect(actionGraphCall).toBeGreaterThan(0)
+    expect(routineGraphCall).toBeGreaterThan(actionGraphCall)
+    expect(source.slice(actionGraphGate, actionGraphCall)).toContain('&& !ownerRequirements.planFirst')
+    expect(source.slice(routineGraphGate, routineGraphCall)).toContain('&& !ownerRequirements.planFirst')
+    expect(prospectiveSignal).toBeGreaterThan(routineGraphCall)
+    expect(providerLoop).toBeGreaterThan(prospectiveSignal)
   })
 
   it('recovers the exact four owner-authored steps from a legacy plan payload', () => {
