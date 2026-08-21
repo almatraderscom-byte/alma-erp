@@ -106,6 +106,7 @@ import {
 } from '@/agent/lib/plan-first'
 import {
   beginPlanStepForTool,
+  completionNeedsCheckpointRetry,
   finishPlanStep,
   pickFinalDeliveryStep,
   projectFinalDeliveryForCompletion,
@@ -4332,6 +4333,7 @@ async function* runAlternateProviderTurn(
     const hasOwnerGate = emittedAskCards.length > 0 || confirmCardsEmitted > 0 || delegationAwaiting
     let planCompletionDecision: CompletionDecision | null = null
     let planCompletion: Awaited<ReturnType<typeof loadLatestPlanProgress>> = null
+    let completedPlanCheckpointDurablyClosed = true
     // When the only open row is the final summary/delivery, the prose already
     // produced by the head is enough for the completion DECISION. The durable
     // row still waits for the saved assistant message ID below.
@@ -4356,8 +4358,13 @@ async function* runAlternateProviderTurn(
           if (contract) {
             planCompletionDecision = decideCompletion(contract)
             if (planCompletionDecision.action === 'complete' && !projectedFinalDeliveryStepId) {
+              // False before the attempt so an import/storage exception cannot
+              // accidentally retain the optimistic default through this catch.
+              completedPlanCheckpointDurablyClosed = false
               const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
-              await resolveCheckpointByTaskRef(planCompletion.planId)
+              completedPlanCheckpointDurablyClosed = await resolveCheckpointByTaskRef(
+                planCompletion.planId,
+              )
             }
           }
         }
@@ -4368,6 +4375,10 @@ async function* runAlternateProviderTurn(
       hasAskCard: hasOwnerGate,
       tools: toolRecords,
       completionDecision: planCompletionDecision?.action ?? null,
+    }) || completionNeedsCheckpointRetry({
+      completionAction: planCompletionDecision?.action,
+      projectedStepId: projectedFinalDeliveryStepId,
+      checkpointDurablyClosed: completedPlanCheckpointDurablyClosed,
     })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')

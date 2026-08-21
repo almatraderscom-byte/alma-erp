@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
+  completionNeedsCheckpointRetry,
   continuationAfterPlanRowsSettlement,
   continuationAfterTrackerSettlement,
   pickFinalDeliveryStep,
@@ -100,6 +101,18 @@ describe('continuationAfterTrackerSettlement', () => {
     expect(shouldClearContinuationHops({
       taskUnfinished: false, projectedStepId: null, projectedDurablyClosed: false,
     })).toBe(true)
+  })
+
+  it('keeps a completed-plan recovery bounded until checkpoint close commits', () => {
+    expect(completionNeedsCheckpointRetry({
+      completionAction: 'complete', projectedStepId: null, checkpointDurablyClosed: false,
+    })).toBe(true)
+    expect(completionNeedsCheckpointRetry({
+      completionAction: 'complete', projectedStepId: null, checkpointDurablyClosed: true,
+    })).toBe(false)
+    expect(completionNeedsCheckpointRetry({
+      completionAction: 'complete', projectedStepId: 'summary', checkpointDurablyClosed: false,
+    })).toBe(false)
   })
 })
 

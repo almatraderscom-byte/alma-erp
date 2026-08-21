@@ -189,6 +189,17 @@ export function shouldClearContinuationHops(input: {
   return !input.projectedStepId || input.projectedDurablyClosed
 }
 
+/** A completed plan still needs recovery while its old checkpoint stays open. */
+export function completionNeedsCheckpointRetry(input: {
+  completionAction: string | null | undefined
+  projectedStepId: string | null
+  checkpointDurablyClosed: boolean
+}): boolean {
+  return input.completionAction === 'complete'
+    && !input.projectedStepId
+    && !input.checkpointDurablyClosed
+}
+
 /**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the
