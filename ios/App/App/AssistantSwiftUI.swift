@@ -8150,6 +8150,22 @@ final class AssistantVM {
                     }
                     touchedStream = true
                 }
+            case .prospectivePlanStart:
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    // Mixed-version/replayed streams may already contain a
+                    // complete-looking pre-plan answer. Only the server's
+                    // explicit forced-plan signal may discard that stale prose;
+                    // ordinary model-selected make_plan keeps its spoken lead.
+                    messages[i].leadProseId = nil
+                    messages[i].text = ""
+                    messages[i].blocks.removeAll { block in
+                        if case .prose = block { return true }
+                        return false
+                    }
+                    messages[i].supersededBlockIds = []
+                    touchedStream = true
+                }
             case .toolStart(let tid, let name, let inputPretty):
                 if let surface = AgentComputerUseSurface.classify(
                     toolName: name, inputPretty: inputPretty) {
@@ -8164,14 +8180,6 @@ final class AssistantVM {
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
-                    // Defense in depth for mixed-version/replayed streams: a
-                    // plan-first turn must show the durable checklist before
-                    // answer prose. Older servers/providers could emit and pin
-                    // a complete-looking preamble before make_plan; preserving
-                    // that lead made it disappear/reappear beside the real final.
-                    if name == "make_plan" {
-                        messages[i].leadProseId = nil
-                    }
                     // Pre-tool prose is progress narration. Keep the activity/tool
                     // evidence, but let the post-tool settled answer replace the
                     // visible prose instead of stacking as a second reply.

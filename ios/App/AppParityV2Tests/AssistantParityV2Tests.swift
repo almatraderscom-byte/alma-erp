@@ -4077,8 +4077,7 @@ final class AssistantParityV2Tests: XCTestCase {
         vm.debugApplyTurnEvents([.preamble("পুরোনো pre-plan পূর্ণ উত্তর")])
 
         XCTAssertNotNil(vm.messages.last?.leadProseId)
-        vm.debugApplyTurnEvents([.toolStart(
-            id: "plan-1", name: "make_plan", inputPretty: #"{"steps":4}"#)])
+        vm.debugApplyTurnEvents([.prospectivePlanStart])
 
         XCTAssertNil(vm.messages.last?.leadProseId)
         XCTAssertEqual(vm.messages.last?.text, "")
@@ -4098,6 +4097,29 @@ final class AssistantParityV2Tests: XCTestCase {
             if case .prose(_, let text) = block { return text }
             return nil
         }, ["একবারের সঠিক final reply"])
+    }
+
+    func testOrdinaryMakePlanKeepsSpokenLeadWithoutProspectiveSignal() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")])
+        vm.debugApplyTurnEvents([.preamble("কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")])
+
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "ordinary-plan", name: "make_plan", inputPretty: #"{"steps":3}"#)])
+
+        XCTAssertNotNil(vm.messages.last?.leadProseId)
+        XCTAssertEqual(vm.messages.last?.text, "কাজটা বুঝেছি — প্ল্যান সাজাচ্ছি।")
+        XCTAssertTrue(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text.contains("কাজটা বুঝেছি") }
+            return false
+        } == true)
+    }
+
+    func testProspectivePlanStartDecodesTypedNeverUnknown() throws {
+        let event = try decodeTurnEvent(#"{"type":"prospective_plan_start"}"#)
+        guard case .prospectivePlanStart = event else {
+            return XCTFail("prospective_plan_start must remain a typed native event")
+        }
     }
 
     func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {

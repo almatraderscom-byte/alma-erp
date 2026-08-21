@@ -112,6 +112,7 @@ import {
   partitionProspectivePlanCalls,
   planFirstNote,
   prospectivePlanExitText,
+  prospectivePlanFailureText,
   shouldInjectProspectivePlanTool,
   shouldWithholdProspectivePlanRoundProse,
 } from '@/agent/lib/plan-first'
@@ -1865,13 +1866,28 @@ async function* runAlternateProviderTurn(
   // Any miss falls through to the routine graph, then the normal loop.
   const actionGraphOn = isActionGraphEnabled()
   let actionGraph: StageExpenseResult | null = null
-  if (!listenMode && headTier === 'light' && actionGraphOn && !internalTurn) {
+  if (
+    !listenMode
+    && headTier === 'light'
+    && actionGraphOn
+    && !internalTurn
+    // Prospective-plan turns have a stronger ordering contract than these
+    // pre-loop shortcuts can provide: the durable checklist must be the first
+    // visible work surface. Do not stage/read anything before make_plan.
+    && !ownerRequirements.planFirst
+  ) {
     actionGraph = await stageExpenseActionGraph(lastUserText, { conversationId, turnId })
   }
 
   const routineGraphOn = isRoutineGraphEnabled()
   let routineGraph: RoutineGraphResult | null = null
-  if (!listenMode && headTier === 'light' && !actionGraph?.staged && !internalTurn) {
+  if (
+    !listenMode
+    && headTier === 'light'
+    && !actionGraph?.staged
+    && !internalTurn
+    && !ownerRequirements.planFirst
+  ) {
     // One line per light turn so "why didn't the graph run?" is answerable from
     // runtime logs instead of guesswork (2026-07-15 preview debugging session:
     // VERCEL_ENV visibility couldn't be confirmed any other way).
@@ -2396,6 +2412,12 @@ async function* runAlternateProviderTurn(
   // it, instead of answering vaguely). Same slot as the card-state note: after
   // the cached prefix, marked INTERNAL CONTROL.
   messages = insertControlNote(messages, { role: 'user', content: permissionModeNote(permissionMode, elevationGrant) })
+
+  // Do not make native clients infer a forced prospective-plan turn from the
+  // name of a later tool. Ordinary Plan-Drive/model-selected make_plan calls
+  // keep their spoken lead; this explicit signal alone clears legacy stale
+  // prose before the authoritative checklist arrives.
+  if (ownerRequirements.planFirst) yield { type: 'prospective_plan_start' }
 
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -3555,6 +3577,7 @@ async function* runAlternateProviderTurn(
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
+      let prospectivePlanFailureTextForRound: string | null = null
       const autoRanDelegationSummaries: string[] = []
       const prospectivePlanCalls = partitionProspectivePlanCalls(
         calls, withholdProspectivePlanProse)
@@ -3924,6 +3947,14 @@ async function* runAlternateProviderTurn(
           errorCode: 'errorCode' in result ? result.errorCode : undefined,
         }
         toolRecords.push(toolRecord)
+        if (hideProspectivePlanControl && !result.success) {
+          const note = prospectivePlanFailureText(result.error)
+          prospectivePlanFailureTextForRound = note
+          const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+          finalText += sep + note
+          timeline.push({ t: 'text', text: note })
+          yield { type: 'text_delta', delta: sep + note }
+        }
         if (call.name === 'make_plan' && result.success && iteration >= maxIterations - 1) {
           prospectivePlanCreatedOnFinalIteration = true
         }
@@ -4243,6 +4274,7 @@ async function* runAlternateProviderTurn(
         ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
       const roundHitTerminalGate =
         Boolean(terminalContractFailure)
+        || Boolean(prospectivePlanFailureTextForRound)
         || emittedAskCards.length > 0
         // Delegation outcomes are terminal too (Codex P1 #816 round 5): an
         // approval handoff waits for Boss, and an all-delegation round settles
@@ -4474,6 +4506,12 @@ async function* runAlternateProviderTurn(
         yield { type: 'text_delta', delta: sep + note }
         break
       }
+
+      // The internal make_plan row is intentionally hidden from the activity
+      // timeline, but its persistence failure is not. The deterministic note
+      // above is the terminal result for this turn; never continue into work
+      // without a durable tracker.
+      if (prospectivePlanFailureTextForRound) break
 
       // A QUESTION ENDS THE TURN (owner rule 2026-07-25). Staging an ask card
       // used to only strip the tools for the remaining rounds — the model still

@@ -122,6 +122,11 @@ export function prospectivePlanExitText(trackerVisible: boolean): string {
     : '⚠️ Plan তৈরি হয়েছে, কিন্তু step tracker verify করা যায়নি—তাই কোনো কাজ শুরু করিনি। আবার চেষ্টা করুন।'
 }
 
+export function prospectivePlanFailureText(error?: string | null): string {
+  const reason = String(error ?? 'unknown error').trim().slice(0, 500) || 'unknown error'
+  return `⚠️ Step tracker তৈরি করা যায়নি, তাই কোনো business action চালাইনি। কারণ: ${reason}`
+}
+
 export type ProspectivePlanToolInput = {
   goal: string
   steps: Array<{

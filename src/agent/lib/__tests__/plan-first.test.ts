@@ -24,6 +24,7 @@ import {
   partitionProspectivePlanCalls,
   planFirstNote,
   prospectivePlanExitText,
+  prospectivePlanFailureText,
   shouldInjectProspectivePlanTool,
   shouldWithholdProspectivePlanRoundProse,
 } from '@/agent/lib/plan-first'
@@ -131,6 +132,35 @@ describe('prospective plan binding', () => {
     expect(source).toContain('attempt < 2 && !prospectivePlanTrackerVisible')
     expect(source).toContain('prospectivePlanExitText(prospectivePlanTrackerVisible)')
     expect(source).not.toContain('const projectionFailure =')
+  })
+
+  it('reports a failed hidden prospective plan deterministically', () => {
+    const text = prospectivePlanFailureText('database unavailable')
+    expect(text).toContain('Step tracker তৈরি করা যায়নি')
+    expect(text).toContain('কোনো business action চালাইনি')
+    expect(text).toContain('database unavailable')
+
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    expect(source).toContain("yield { type: 'prospective_plan_start' }")
+    expect(source).toContain('if (hideProspectivePlanControl && !result.success)')
+    expect(source).toContain('if (prospectivePlanFailureTextForRound) break')
+  })
+
+  it('bypasses pre-loop graphs so the prospective-plan signal is first', () => {
+    const source = readFileSync(new URL('../models/run-owner-turn.ts', import.meta.url), 'utf8')
+    const actionGraphGate = source.indexOf('const actionGraphOn')
+    const actionGraphCall = source.indexOf('actionGraph = await stageExpenseActionGraph')
+    const routineGraphGate = source.indexOf('const routineGraphOn')
+    const routineGraphCall = source.indexOf('routineGraph = await runRoutineTurnGraph')
+    const prospectiveSignal = source.indexOf("yield { type: 'prospective_plan_start' }")
+    const providerLoop = source.indexOf('for (let iteration = 0; iteration < maxIterations; iteration++)')
+
+    expect(actionGraphCall).toBeGreaterThan(0)
+    expect(routineGraphCall).toBeGreaterThan(actionGraphCall)
+    expect(source.slice(actionGraphGate, actionGraphCall)).toContain('&& !ownerRequirements.planFirst')
+    expect(source.slice(routineGraphGate, routineGraphCall)).toContain('&& !ownerRequirements.planFirst')
+    expect(prospectiveSignal).toBeGreaterThan(routineGraphCall)
+    expect(providerLoop).toBeGreaterThan(prospectiveSignal)
   })
 
   it('recovers the exact four owner-authored steps from a legacy plan payload', () => {
