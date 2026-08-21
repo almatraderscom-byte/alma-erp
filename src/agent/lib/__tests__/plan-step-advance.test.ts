@@ -9,6 +9,7 @@ import {
   pendingActionTrackerState,
   prioritizePlanCreationForUntrackedRound,
   projectedDeliveryNeedsContinuation,
+  shouldClearContinuationHops,
   projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
@@ -87,6 +88,18 @@ describe('continuationAfterTrackerSettlement', () => {
     expect(projectedDeliveryNeedsContinuation('summary', false)).toBe(true)
     expect(projectedDeliveryNeedsContinuation('summary', true)).toBe(false)
     expect(projectedDeliveryNeedsContinuation(null, false)).toBe(false)
+  })
+
+  it('preserves the hop budget until a projected close is durable', () => {
+    expect(shouldClearContinuationHops({
+      taskUnfinished: false, projectedStepId: 'summary', projectedDurablyClosed: false,
+    })).toBe(false)
+    expect(shouldClearContinuationHops({
+      taskUnfinished: false, projectedStepId: 'summary', projectedDurablyClosed: true,
+    })).toBe(true)
+    expect(shouldClearContinuationHops({
+      taskUnfinished: false, projectedStepId: null, projectedDurablyClosed: false,
+    })).toBe(true)
   })
 })
 

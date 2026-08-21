@@ -142,8 +142,8 @@ export async function writeCheckpoint(input: WriteCheckpointInput): Promise<stri
   }
 }
 
-/** Mark a checkpoint resolved once its task resumed/completed. Best-effort. */
-export async function resolveCheckpointByTaskRef(taskRef: string): Promise<void> {
+/** Mark a checkpoint resolved and report whether the durable write committed. */
+export async function resolveCheckpointByTaskRef(taskRef: string): Promise<boolean> {
   try {
     await db.agentOpenTask.updateMany({
       where: {
@@ -153,8 +153,13 @@ export async function resolveCheckpointByTaskRef(taskRef: string): Promise<void>
       },
       data: { status: 'done', completedAt: new Date() },
     })
-    await pushCurrentPulseLiveActivity()
-  } catch { /* best-effort */ }
+  } catch {
+    return false
+  }
+  // The checkpoint row is already closed. Pulse refresh is presentation-only
+  // and cannot retroactively make the durable settlement fail.
+  await pushCurrentPulseLiveActivity().catch(() => {})
+  return true
 }
 
 export type CheckpointView = { id: string; kind: string; checkpoint: TaskCheckpoint }

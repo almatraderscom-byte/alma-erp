@@ -179,6 +179,16 @@ export function projectedDeliveryNeedsContinuation(
   return Boolean(projectedStepId) && !durablyClosed
 }
 
+/** Never reset the bounded hop budget for a merely projected completion. */
+export function shouldClearContinuationHops(input: {
+  taskUnfinished: boolean
+  projectedStepId: string | null
+  projectedDurablyClosed: boolean
+}): boolean {
+  if (input.taskUnfinished) return false
+  return !input.projectedStepId || input.projectedDurablyClosed
+}
+
 /**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the

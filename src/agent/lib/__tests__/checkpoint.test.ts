@@ -35,6 +35,7 @@ const tasks: TaskRow[] = []
 const actions: ActionRow[] = []
 let idc = 0
 const pings: string[] = []
+let resolveStoreFails = false
 
 function matchWhere(row: TaskRow, where: Record<string, unknown>): boolean {
   for (const [k, v] of Object.entries(where)) {
@@ -64,6 +65,7 @@ vi.mock('@/lib/prisma', () => ({
         return row
       },
       updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Partial<TaskRow> }) => {
+        if (resolveStoreFails && data.status === 'done') throw new Error('checkpoint store unavailable')
         const hits = tasks.filter((t) => matchWhere(t, where))
         for (const h of hits) Object.assign(h, data)
         return { count: hits.length }
@@ -112,6 +114,7 @@ beforeEach(() => {
   pings.length = 0
   nativePushes.length = 0
   idc = 0
+  resolveStoreFails = false
 })
 
 const baseInput = {
@@ -168,7 +171,7 @@ describe('writeCheckpoint', () => {
     expect(nativePushes).toHaveLength(0)
     const note = buildCheckpointSystemNote(await listUnresolvedCheckpoints('conv-1'))
     expect(note).toContain('[CONTINUING]')
-    await resolveCheckpointByTaskRef('plan:10')
+    await expect(resolveCheckpointByTaskRef('plan:10')).resolves.toBe(true)
     expect(tasks[0].status).toBe('done')
   })
 
@@ -181,8 +184,15 @@ describe('writeCheckpoint', () => {
 describe('resolve + resume note', () => {
   it('success on retry closes the checkpoint', async () => {
     await writeCheckpoint(baseInput)
-    await resolveCheckpointByTaskRef('action-1')
+    await expect(resolveCheckpointByTaskRef('action-1')).resolves.toBe(true)
     expect(tasks[0].status).toBe('done')
+  })
+
+  it('reports a checkpoint close that did not commit', async () => {
+    await writeCheckpoint(baseInput)
+    resolveStoreFails = true
+    await expect(resolveCheckpointByTaskRef('action-1')).resolves.toBe(false)
+    expect(tasks[0].status).toBe('open')
   })
 
   it('resume note is self-contained (goal, done, stuck point, artifacts, hint)', async () => {

@@ -110,6 +110,7 @@ import {
   pickFinalDeliveryStep,
   projectFinalDeliveryForCompletion,
   projectedDeliveryNeedsContinuation,
+  shouldClearContinuationHops,
 } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
@@ -4490,7 +4491,11 @@ async function* runAlternateProviderTurn(
         finalText += note
         yield { type: 'text_delta', delta: note }
       }
-    } else {
+    } else if (shouldClearContinuationHops({
+      taskUnfinished,
+      projectedStepId: projectedFinalDeliveryStepId,
+      projectedDurablyClosed: false,
+    })) {
       // Finished cleanly — the chain resets so the next long job starts fresh.
       const { clearHops } = await import('@/agent/lib/self-continue')
       await clearHops(conversationId).catch(() => {})
@@ -4658,8 +4663,9 @@ async function* runAlternateProviderTurn(
               && planCompletion
             ) {
               const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
-              await resolveCheckpointByTaskRef(planCompletion.planId)
-              projectedFinalDeliveryDurablyClosed = true
+              projectedFinalDeliveryDurablyClosed = await resolveCheckpointByTaskRef(
+                planCompletion.planId,
+              )
             }
           }
         }
@@ -4709,6 +4715,14 @@ async function* runAlternateProviderTurn(
           })
         } catch { /* done.needContinue still keeps client recovery truthful */ }
       }
+    }
+    if (projectedFinalDeliveryStepId && shouldClearContinuationHops({
+      taskUnfinished,
+      projectedStepId: projectedFinalDeliveryStepId,
+      projectedDurablyClosed: projectedFinalDeliveryDurablyClosed,
+    })) {
+      const { clearHops } = await import('@/agent/lib/self-continue')
+      await clearHops(conversationId).catch(() => {})
     }
 
     // Runtime tracker: emit the bound settled snapshot. One revision above the
