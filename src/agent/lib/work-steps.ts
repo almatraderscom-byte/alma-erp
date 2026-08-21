@@ -338,6 +338,28 @@ export function workStepsSignature(snapshot: WorkStepsSnapshot | null): string {
 }
 
 /**
+ * Resolve the blocker a serialized tracker refresh is allowed to publish.
+ *
+ * A turn-local `null` means "this call has no blocker"; it is not proof that
+ * another overlapping call — even from the same turn — did not publish one.
+ * Keep the remembered blocker so the transaction can revalidate its durable
+ * card/action below. Callbacks use `clearBlockedByRefId` for compare-and-clear.
+ */
+export function synchronizedWorkStepsBlocker(input: {
+  requested: WorkStepsBlocker | null | undefined
+  remembered: WorkStepsBlocker | null
+  clearRefId?: string
+  hasRunningStep: boolean
+}): WorkStepsBlocker | null {
+  if (input.requested) return input.requested
+  if (input.clearRefId !== undefined) {
+    return clearMatchingWorkStepsBlocker(input.remembered, input.clearRefId)
+  }
+  if (input.requested === null) return input.remembered
+  return rememberedWorkStepsBlockerForRefresh(input.remembered, input.hasRunningStep)
+}
+
+/**
  * Serialized project-and-persist for one plan tracker.
  *
  * Codex P1 rounds on PR #733: (1) two overlapping refreshes constructed the
@@ -387,14 +409,12 @@ export async function syncPlanTracker(
       const currentTurnId = opts.currentTurnId
         ?? prior?.currentTurnId ?? plan.originTurnId ?? plan.id
       const rememberedBlockedBy = prior?.blockedBy ?? null
-      let effectiveBlockedBy = opts.blockedBy !== undefined
-        ? opts.blockedBy
-        : opts.clearBlockedByRefId !== undefined
-          ? clearMatchingWorkStepsBlocker(rememberedBlockedBy, opts.clearBlockedByRefId)
-          : rememberedWorkStepsBlockerForRefresh(
-              rememberedBlockedBy,
-              plan.steps.some((s) => s.status === 'running'),
-            )
+      let effectiveBlockedBy = synchronizedWorkStepsBlocker({
+        requested: opts.blockedBy,
+        remembered: rememberedBlockedBy,
+        clearRefId: opts.clearBlockedByRefId,
+        hasRunningStep: plan.steps.some((s) => s.status === 'running'),
+      })
       // The same advisory-locked transaction that writes the snapshot verifies
       // the referenced durable row first. A stale turn can therefore never
       // restore waiting_owner/waiting_worker after an answer or terminal worker

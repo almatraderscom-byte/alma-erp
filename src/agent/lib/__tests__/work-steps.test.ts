@@ -9,6 +9,7 @@ import {
   projectWorkSteps,
   rememberedWorkStepsBlockerForRefresh,
   reconcileDurableWorkStepsBlocker,
+  synchronizedWorkStepsBlocker,
   workStepsSignature,
   type TrackerPlanRow,
   type WorkStepsSnapshot,
@@ -48,6 +49,24 @@ describe('work_steps_snapshot projector', () => {
     expect(rememberedWorkStepsBlockerForRefresh(worker, true)).toEqual(worker)
     expect(rememberedWorkStepsBlockerForRefresh(approval, true)).toBeNull()
     expect(rememberedWorkStepsBlockerForRefresh(approval, false)).toEqual(approval)
+  })
+
+  it('does not let an overlapping refresh clear a durable blocker with local null', () => {
+    const approval = { kind: 'approval' as const, refId: 'action-new' }
+    const worker = { kind: 'worker' as const, refId: 'worker-new' }
+    for (const blocker of [approval, worker]) {
+      expect(synchronizedWorkStepsBlocker({
+        requested: null,
+        remembered: blocker,
+        hasRunningStep: true,
+      })).toEqual(blocker)
+      expect(synchronizedWorkStepsBlocker({
+        requested: undefined,
+        remembered: blocker,
+        clearRefId: blocker.refId,
+        hasRunningStep: true,
+      })).toBeNull()
+    }
   })
 
   it('never restores a blocker whose durable card/action is already terminal', () => {
