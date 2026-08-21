@@ -1988,6 +1988,13 @@ async function* runAlternateProviderTurn(
     headTier,
     versions: AGENT_VERSIONS,
     extras: {
+      // The thinking level this turn RAN at (after the per-model clamp), beside
+      // what Boss asked for. A dial nobody can audit is a dial nobody can trust:
+      // this is what proves "Max" reached the provider — and what shows the
+      // step-down when an Auto head could not do the level he picked.
+      effort: headEffort,
+      effortRequested: options.effortLevel ?? null,
+      effortDialect: headEffortDialect ?? null,
       // Phase 36: this turn's interaction contract (mode/emotion/correction)
       // — behaviour becomes measurable per turn, not a prompt hope.
       interaction: interaction

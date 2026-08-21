@@ -35,18 +35,22 @@ const EFFORT_EN: Record<EffortLevel, string> = {
 }
 
 /**
- * Levels to offer for the CURRENT pick. On Auto the head can be any pickable
- * model, so the row shows the levels EVERY candidate supports — a level only some
- * of them have would quietly clamp on the rest. On a concrete model it is exactly
- * that model's list (Gemini stops at 'বেশি', Sonnet 4.6 has no 'আরও বেশি').
+ * Levels to offer for the CURRENT pick.
+ *
+ * On a concrete model: exactly that model's real list (Gemini stops at 'বেশি',
+ * Sonnet 4.6 has no 'আরও বেশি') — nothing is offered that its API would reject.
+ *
+ * On Auto: the union, because the head can be any of them and Boss must still be
+ * able to say "Max". The honesty comes from saying so out loud — the footer
+ * spells out that a head without that level runs its own ceiling instead, which
+ * is exactly what the server's clamp does (down, never up).
  */
 function levelsFor(models: ModelOption[], modelId: string): EffortLevel[] {
   if (modelId !== AUTO_MODEL_ID) {
     return models.find((m) => m.id === modelId)?.effortLevels ?? []
   }
-  const withDial = models.filter((m) => (m.effortLevels?.length ?? 0) > 0)
-  if (withDial.length === 0) return []
-  return EFFORT_ORDER.filter((lvl) => withDial.every((m) => m.effortLevels!.includes(lvl)))
+  const offered = new Set(models.flatMap((m) => m.effortLevels ?? []))
+  return EFFORT_ORDER.filter((lvl) => offered.has(lvl))
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -256,9 +260,11 @@ export default function AgentModelSelector({
                 ))}
               </div>
               <div className="px-3 pb-2.5 text-[10px] leading-relaxed text-muted">
-                {activeEffort
-                  ? 'যত বেশি level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ ও সময় বাড়ে।'
-                  : `Auto = মডেলের নিজের default${active?.effortDefault ? ` (${EFFORT_EN[active.effortDefault]})` : ''}`}
+                {!activeEffort
+                  ? `Auto = মডেলের নিজের default${active?.effortDefault ? ` (${EFFORT_EN[active.effortDefault]})` : ''}`
+                  : isAuto
+                    ? 'যত বেশি level, তত বেশি ভাবে (খরচ ও সময় বাড়ে)। যে model-এ এই level নেই, সেখানে তার সর্বোচ্চতে নেমে চলবে — যেমন Gemini-তে High।'
+                    : 'যত বেশি level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ ও সময় বাড়ে।'}
               </div>
             </div>
           )}

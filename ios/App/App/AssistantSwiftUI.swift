@@ -4220,20 +4220,18 @@ final class AssistantVM {
 
     var isAutoModel: Bool { modelId == nil || modelId == "auto" }
 
-    /// Levels to OFFER right now. On Auto the head can be any pickable model, so
-    /// only levels every candidate supports are shown — one that some of them lack
-    /// would quietly clamp on the rest and mean two different depths under one
-    /// word. On a pinned model it is exactly that model's list.
+    /// Levels to OFFER right now. On a pinned model: exactly that model's real
+    /// list, so nothing is offered its API would reject. On Auto: the union — the
+    /// head can be any of them and Boss must still be able to ask for Max; a head
+    /// without that level runs its own ceiling instead (the server clamps DOWN,
+    /// never up), which the picker sheet says in as many words.
     var availableEffortLevels: [AgentEffortLevel] {
-        let dialled = models.filter { !($0.effortLevels ?? []).isEmpty }
-        guard !dialled.isEmpty else { return [] }
         if !isAutoModel, let modelId {
             let raw = models.first { $0.id == modelId }?.effortLevels ?? []
             return AgentEffortLevel.allCases.filter { raw.contains($0.rawValue) }
         }
-        return AgentEffortLevel.allCases.filter { level in
-            dialled.allSatisfy { ($0.effortLevels ?? []).contains(level.rawValue) }
-        }
+        let offered = Set(models.flatMap { $0.effortLevels ?? [] })
+        return AgentEffortLevel.allCases.filter { offered.contains($0.rawValue) }
     }
 
     /// The level actually in force — an owner pick the current model cannot do is
@@ -20175,7 +20173,9 @@ struct AgentModelPickerSheet: View {
                     } header: {
                         Text("Thinking level")
                     } footer: {
-                        Text("যত উপরের level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ আর সময়ও বাড়ে। Auto = মডেলের নিজের default।")
+                        Text(vm.isAutoModel
+                             ? "যত উপরের level, তত বেশি ভাবে — খরচ আর সময়ও বাড়ে। Auto model-এ যে head চলবে তার এই level না থাকলে তার সর্বোচ্চতে নেমে চলবে (যেমন Gemini-তে High)। Auto = মডেলের নিজের default।"
+                             : "যত উপরের level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ আর সময়ও বাড়ে। Auto = মডেলের নিজের default।")
                     }
                 }
             }
