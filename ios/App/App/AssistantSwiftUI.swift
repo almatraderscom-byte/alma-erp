@@ -4223,6 +4223,9 @@ final class AssistantVM {
     var effortLevel: AgentEffortLevel?
     /// Monotonic ticket for level writes — only the latest may roll the UI back.
     private var effortWriteGeneration: UInt64 = 0
+    /// The in-flight level write. Each new write awaits it, so the PATCHes reach
+    /// the row in pick order instead of racing (Codex P2).
+    private var effortWriteChain: Task<Void, Never>?
     var models: [AgentModelInfo] = []
     var usageSnapshot: AgentUsageSnapshot?
     var usageLoading = false
@@ -4417,7 +4420,13 @@ final class AssistantVM {
         // roll back — the server keeps whatever the last PATCH wrote.
         effortWriteGeneration &+= 1
         let generation = effortWriteGeneration
-        Task { [weak self] in
+        // CHAINED, not just ticketed: the previous write is awaited before this
+        // one is sent, so two quick picks reach the row in the order they were
+        // made and the last one Boss chose is the one that persists. The ticket
+        // then decides who may roll the UI back (only the latest).
+        let previousWrite = effortWriteChain
+        effortWriteChain = Task { [weak self] in
+            _ = await previousWrite?.result
             do {
                 let _: AgentConversation = try await AlmaAPI.shared.send(
                     "PATCH", "/api/assistant/conversations/\(cid)",

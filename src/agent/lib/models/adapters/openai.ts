@@ -788,7 +788,15 @@ export class OpenAiAdapter implements ProviderAdapter {
         errDetail(err),
       )
       try {
-        stream = await createWith429Wait(baseParams as ChatCompletionCreateParamsStreaming)
+        // The middle rung drops provider_prefs/exacto/sampler but KEEPS an
+        // EXPLICIT level (Codex P2): those are unrelated fields, and silently
+        // finishing at the provider default while the turn's telemetry records
+        // the picked depth is exactly the kind of quiet lie this feature exists
+        // to avoid. Only the bare rung below gives the level up, and it says so.
+        stream = await createWith429Wait({
+          ...baseParams,
+          ...(ownerEffort ? reasoningParam : {}),
+        } as ChatCompletionCreateParamsStreaming)
       } catch (err2) {
         if (args.signal?.aborted || isRateLimit(err2)) throw err2
         console.warn(
