@@ -1333,7 +1333,20 @@ struct DigitalClientsPaymentSheet: View {
     @State private var errorText: String? = nil
 
     private var taka: Int { Int(Double(amount.replacingOccurrences(of: ",", with: "")) ?? 0) }
-    private var canSubmit: Bool { taka > 0 }
+    /// The GAS payments backend hands payment_date straight to `new Date(...)`, so a
+    /// mistyped date would store a row that month-based revenue never counts. Empty is
+    /// fine (server defaults); anything else must be a real yyyy-MM-dd.
+    private var dateIsValid: Bool {
+        let t = paymentDate.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return true }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        f.isLenient = false
+        return f.date(from: t) != nil
+    }
+    private var canSubmit: Bool { taka > 0 && dateIsValid }
     private var effectiveProjectId: String? {
         if let projectId, !projectId.isEmpty { return projectId }
         return selectedProjectId.isEmpty ? nil : selectedProjectId
@@ -1384,6 +1397,11 @@ struct DigitalClientsPaymentSheet: View {
             }
             paymentField("Transaction ID", $transactionId, autocapitalize: false)
             paymentField("Payment date (YYYY-MM-DD)", $paymentDate, keyboard: .numbersAndPunctuation)
+            if !dateIsValid {
+                Text("তারিখ YYYY-MM-DD ফরম্যাটে দিন")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(DigitalClientsPalette.red500)
+            }
             paymentField("Note", $note)
             if let errorText {
                 Text(errorText).font(.caption2.weight(.semibold))

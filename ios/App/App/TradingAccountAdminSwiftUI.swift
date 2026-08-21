@@ -342,16 +342,20 @@ final class TAAdminStore {
     }
 
     /// POST /api/trading/accounts/{id}/bkash-summary — daily summary entry.
-    /// Payload is the web DailySummaryPanel's verbatim: totalOrders (integer) +
-    /// non-negative totalProfitBdt / totalLossBdt in whole taka. The route upserts
-    /// on (account, date), so a wrong payload overwrites the real row — never send
-    /// field names the route does not read.
+    /// Payload is the web form's verbatim: totalOrders (integer) + non-negative
+    /// totalProfitBdt / totalLossBdt. The column is a 2-dp decimal and the web
+    /// dashboard modal posts what was typed, so amounts travel UNROUNDED — the
+    /// route upserts on (account, date), and rounding here would overwrite a
+    /// decimal row saved from the web with a changed number.
+    /// A non-empty field that does not parse is rejected rather than silently
+    /// becoming 0, for the same reason.
     func addBkashSummary(date: String, orders: String, profit: String, loss: String,
                          notes: String) async -> Bool {
-        let ordersValue = Int(orders.trimmingCharacters(in: .whitespaces)) ?? 0
-        let profitValue = Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0
-        let lossValue = Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0
-        guard !busy, ordersValue >= 0, profitValue >= 0, lossValue >= 0 else {
+        guard !busy else { return false }
+        guard let ordersValue = Self.parseCount(orders),
+              let profitValue = Self.parseAmount(profit),
+              let lossValue = Self.parseAmount(loss),
+              ordersValue >= 0, profitValue >= 0, lossValue >= 0 else {
             notice = "✗ সংখ্যাগুলো চেক করুন"
             return false
         }
@@ -361,8 +365,8 @@ final class TAAdminStore {
             let tradingAccountId: String
             let summaryDate: String
             let totalOrders: Int
-            let totalProfitBdt: Int
-            let totalLossBdt: Int
+            let totalProfitBdt: Double
+            let totalLossBdt: Double
             let notes: String?
         }
         struct Resp: Decodable { let ok: Bool? }
@@ -371,8 +375,8 @@ final class TAAdminStore {
                 "POST", "/api/trading/accounts/\(accountId)/bkash-summary",
                 body: Body(tradingAccountId: accountId, summaryDate: date,
                            totalOrders: ordersValue,
-                           totalProfitBdt: Int(profitValue.rounded()),
-                           totalLossBdt: Int(lossValue.rounded()),
+                           totalProfitBdt: profitValue,
+                           totalLossBdt: lossValue,
                            notes: notes.isEmpty ? nil : notes))
             notice = "✓ Daily summary সেভ হয়েছে"
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -382,6 +386,19 @@ final class TAAdminStore {
             notice = "✗ ব্যর্থ: \(error.localizedDescription)"
             return false
         }
+    }
+
+    /// Empty means "not entered" (0); anything else must parse, so a stray "." or
+    /// pasted text can never post as a zero over a real row.
+    static func parseAmount(_ raw: String) -> Double? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return 0 }
+        return Double(t)
+    }
+    static func parseCount(_ raw: String) -> Int? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return 0 }
+        return Int(t)
     }
 
     /// Multipart upload — web uploadPerformanceScreenshot parity (the web form
@@ -809,13 +826,11 @@ private struct TABkashForm: View {
     @State private var loss = ""
     @State private var notes = ""
 
-    /// Web DailySummaryPanel: "Net result is profit minus loss". Money in this ERP is
-    /// whole taka (src/lib/money.ts roundMoney, which the web form applies before it
-    /// POSTs), so the preview shows the ROUNDED figures that will actually be stored —
-    /// no silent difference between what is typed and what is saved.
+    /// Web DailySummaryPanel: "Net result is profit minus loss" — on the exact
+    /// amounts entered, which is what gets posted.
     private var netResult: Double {
-        ((Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0).rounded())
-            - ((Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0).rounded())
+        (Double(profit.trimmingCharacters(in: .whitespaces)) ?? 0)
+            - (Double(loss.trimmingCharacters(in: .whitespaces)) ?? 0)
     }
 
     var body: some View {
@@ -830,7 +845,7 @@ private struct TABkashForm: View {
             TextField("Total loss (BDT)", text: $loss).keyboardType(.decimalPad)
             TextField("Notes", text: $notes)
             HStack {
-                Text("Net result (whole taka)").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("Net result").font(.system(size: 10)).foregroundStyle(.secondary)
                 Spacer()
                 Text(tk(netResult))
                     .font(.system(size: 11, weight: .bold).monospacedDigit())

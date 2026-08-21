@@ -1024,22 +1024,20 @@ private struct TradingAccountsDetailSheet: View {
             .padding(18)
         }
         .presentationBackground { TradingAccountsAurora() }
-        .sheet(isPresented: $showTrade) {
+        // Refresh on DISMISS, not on the toast string: two identical saves in a row
+        // produce the same toast, so an onChange(of:) never fires the second time and
+        // the summary/timeline/ledger would sit stale.
+        .sheet(isPresented: $showTrade, onDismiss: refreshDetail) {
             TradingHomeTradeSheet(vm: writeVM, preselect: row.id)
         }
-        .sheet(isPresented: $showExpense) {
+        .sheet(isPresented: $showExpense, onDismiss: refreshDetail) {
             TradingHomeExpenseSheet(vm: writeVM, preselect: row.id)
         }
-        .sheet(isPresented: $showCapital) {
+        .sheet(isPresented: $showCapital, onDismiss: refreshDetail) {
             TradingHomeCapitalSheet(vm: writeVM, preselect: row.id)
         }
-        .sheet(isPresented: $showShot) {
+        .sheet(isPresented: $showShot, onDismiss: refreshDetail) {
             TradingHomeShotSheet(vm: writeVM, preselect: row.id)
-        }
-        .onChange(of: writeVM.toast) { _, toast in
-            // A saved trade/expense/capital/screenshot changes this account's numbers.
-            guard toast != nil else { return }
-            Task { detail = try? await vm.loadDetail(id: row.id) }
         }
         .task {
             do {
@@ -1150,6 +1148,10 @@ private struct TradingAccountsDetailSheet: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private func refreshDetail() {
+        Task { detail = try? await vm.loadDetail(id: row.id) }
     }
 
     // ── Money entry for this account (web detail page action row) ──

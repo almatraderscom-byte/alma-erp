@@ -498,6 +498,8 @@ final class TradingHomeVM {
     var loading = false
     var error: String? = nil
     var authExpired = false
+    /// Status filter the account list was loaded with (see loadAccountsOnly).
+    var accountScope = "ACTIVE"
 
     var perfById: [String: TradingHomePerfRow] {
         Dictionary(uniqueKeysWithValues: (dash?.accountPerformance ?? []).map { ($0.id, $0) })
@@ -512,6 +514,10 @@ final class TradingHomeVM {
     /// screen that does not need the dashboard payload (account detail sheet).
     func loadAccountsOnly(status: String = "ACTIVE") async {
         guard accounts.isEmpty else { return }
+        // Remember the scope: a detail sheet opened on a PAUSED/COMPLETED account
+        // loads ALL, and the reload after each write must not narrow it back to
+        // ACTIVE — that would drop the preselected account and disable the sheet.
+        accountScope = status
         loading = true
         defer { loading = false }
         do {
@@ -538,7 +544,7 @@ final class TradingHomeVM {
             async let d: TradingHomeDashboard = AlmaAPI.shared.get("/api/trading/dashboard")
             async let s: TradingHomeSummary = AlmaAPI.shared.get("/api/trading/summary")
             async let a: TradingHomeAccountsResponse = AlmaAPI.shared.get(
-                "/api/trading/accounts", query: ["status": "ACTIVE"])
+                "/api/trading/accounts", query: ["status": accountScope])
             let (dr, sr, ar) = try await (d, s, a)
             dash = dr
             summary = sr
@@ -2107,12 +2113,13 @@ struct TradingHomeTradeSheet: View {
             defer { submitting = false }
             let ok: Bool
             if mode == "BKASH" {
-                // Whole-taka only (src/lib/money.ts roundMoney — the web form rounds
-                // the same way before POSTing), so both surfaces store one number.
+                // The web BkashDailySummaryModal posts what was typed and the column
+                // is a 2-dp decimal, so no rounding here — the route upserts on
+                // (account, date) and a rounded resend would alter a saved row.
                 ok = await vm.submitBkash(.init(
                     tradingAccountId: account.id, summaryDate: bkashDate, totalOrders: 0,
-                    totalProfitBdt: num(bkashProfit).rounded(),
-                    totalLossBdt: num(bkashLoss).rounded(), notes: notes))
+                    totalProfitBdt: num(bkashProfit),
+                    totalLossBdt: num(bkashLoss), notes: notes))
             } else {
                 ok = await vm.submitTrade(.init(
                     tradingAccountId: account.id, tradeType: tradeType,
