@@ -8164,6 +8164,14 @@ final class AssistantVM {
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
+                    // Defense in depth for mixed-version/replayed streams: a
+                    // plan-first turn must show the durable checklist before
+                    // answer prose. Older servers/providers could emit and pin
+                    // a complete-looking preamble before make_plan; preserving
+                    // that lead made it disappear/reappear beside the real final.
+                    if name == "make_plan" {
+                        messages[i].leadProseId = nil
+                    }
                     // Pre-tool prose is progress narration. Keep the activity/tool
                     // evidence, but let the post-tool settled answer replace the
                     // visible prose instead of stacking as a second reply.

@@ -4071,6 +4071,35 @@ final class AssistantParityV2Tests: XCTestCase {
         } == true)
     }
 
+    func testMakePlanStartDropsLegacyPrePlanLeadAndKeepsOnlyFinalReply() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.textDelta("পুরোনো pre-plan পূর্ণ উত্তর")])
+        vm.debugApplyTurnEvents([.preamble("পুরোনো pre-plan পূর্ণ উত্তর")])
+
+        XCTAssertNotNil(vm.messages.last?.leadProseId)
+        vm.debugApplyTurnEvents([.toolStart(
+            id: "plan-1", name: "make_plan", inputPretty: #"{"steps":4}"#)])
+
+        XCTAssertNil(vm.messages.last?.leadProseId)
+        XCTAssertEqual(vm.messages.last?.text, "")
+        XCTAssertFalse(vm.messages.last?.blocks.contains { block in
+            if case .prose(_, let text) = block { return text.contains("পুরোনো") }
+            return false
+        } == true)
+
+        vm.debugApplyTurnEvents([.textDelta("একবারের সঠিক final reply")])
+        vm.debugApplyTurnEvents([.done(
+            messageId: "answer-plan-1", tokensIn: nil, tokensOut: nil, costUsd: nil,
+            needContinue: false, apiRounds: nil, cacheCreation: nil,
+            cacheRead: nil, roundCostsUsd: nil)])
+
+        XCTAssertEqual(vm.messages.last?.text, "একবারের সঠিক final reply")
+        XCTAssertEqual(vm.messages.last?.blocks.compactMap { block -> String? in
+            if case .prose(_, let text) = block { return text }
+            return nil
+        }, ["একবারের সঠিক final reply"])
+    }
+
     func testStructuredCitationExtractionDeduplicatesAndMarksInternalLinks() {
         let citations = AgentMarkdownText.extractCitations("""
         [OpenAI research](https://openai.com/research?publishedAt=2026-08-09) and [duplicate](https://openai.com/research?publishedAt=2026-08-09).

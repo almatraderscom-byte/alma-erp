@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { buildOpenAiRequestShaping, wantsAnthropicCacheControl, exactoSlug } from '../openai'
+import {
+  buildOpenAiFallbackToolChoice,
+  buildOpenAiRequestShaping,
+  wantsAnthropicCacheControl,
+  exactoSlug,
+} from '../openai'
 import { buildGeminiToolConfig } from '../google'
 import type { NeutralTool } from '@/agent/lib/models/types'
 
@@ -31,6 +36,20 @@ describe('OpenAI-dialect request shaping (Phase 3)', () => {
   it('maps parallel_tool_calls both ways', () => {
     expect(buildOpenAiRequestShaping({ tools: TOOLS, parallelToolCalls: false })).toEqual({ parallel_tool_calls: false })
     expect(buildOpenAiRequestShaping({ tools: TOOLS, parallelToolCalls: true })).toEqual({ parallel_tool_calls: true })
+  })
+
+  it('keeps hard tool choices on the final compatibility retry', () => {
+    expect(buildOpenAiFallbackToolChoice({ tools: TOOLS, toolChoice: { name: 'make_plan' } })).toEqual({
+      tool_choice: { type: 'function', function: { name: 'make_plan' } },
+    })
+    expect(buildOpenAiFallbackToolChoice({ tools: TOOLS, toolChoice: 'required' })).toEqual({
+      tool_choice: 'required',
+    })
+    expect(buildOpenAiFallbackToolChoice({ tools: TOOLS, toolChoice: 'none' })).toEqual({
+      tool_choice: 'none',
+    })
+    expect(buildOpenAiFallbackToolChoice({ tools: TOOLS, toolChoice: 'auto' })).toEqual({})
+    expect(buildOpenAiFallbackToolChoice({ tools: [], toolChoice: { name: 'make_plan' } })).toEqual({})
   })
 })
 

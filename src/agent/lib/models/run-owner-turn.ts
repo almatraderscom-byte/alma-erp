@@ -109,8 +109,11 @@ import {
   filterToolsForPlanTurn,
   isPlanFirstTurn,
   normalizeProspectivePlanInput,
+  partitionProspectivePlanCalls,
   planFirstNote,
+  prospectivePlanExitText,
   shouldInjectProspectivePlanTool,
+  shouldWithholdProspectivePlanRoundProse,
 } from '@/agent/lib/plan-first'
 import {
   beginPlanStepForTool,
@@ -703,6 +706,9 @@ async function* runAlternateProviderTurn(
   let lastWorkStepsSignature = ''
   let workStepsBlocker: import('@/agent/lib/work-steps').WorkStepsBlocker | null = null
   let workStepsTrackerId: string | null = null
+  // A created DB plan is not yet owner-visible control state. Work remains
+  // locked until its authoritative snapshot has actually been emitted.
+  let prospectivePlanTrackerVisible = false
   // The plan's steps as of the last checklist read, so a tool call can tick off
   // the step it belongs to while the turn is still running — see
   // plan-step-advance.ts for why the autonomous driver could not do this.
@@ -2273,6 +2279,11 @@ async function* runAlternateProviderTurn(
     && neutralTools.length > 0
     && maxIterations > 0
     && !internalTurn
+    // A plan-first turn has a stricter first-visible-event contract: the
+    // durable prospective checklist must exist before any answer prose. The
+    // ordinary speak-first round is tool-free, so it cannot satisfy that
+    // contract and previously produced the stale answer users watched vanish.
+    && !ownerRequirements.planFirst
     && lastUserText.trim().length >= 12
     && !isContinuationText(lastUserText)
     && !signal?.aborted
@@ -2386,6 +2397,32 @@ async function* runAlternateProviderTurn(
       if (signal?.aborted) break
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
+
+      const prospectivePlanCreatedBeforeRound = toolRecords.some(
+        (record) => record.toolName === 'make_plan' && record.status === 'success',
+      )
+      if (ownerRequirements.planFirst
+        && prospectivePlanCreatedBeforeRound
+        && !prospectivePlanTrackerVisible) {
+        const pendingPlanSnapshot = await currentPlanTrackerEvent()
+        if (pendingPlanSnapshot) {
+          prospectivePlanTrackerVisible = true
+          const pendingSignature = workStepsSignature(pendingPlanSnapshot)
+          if (pendingSignature !== lastWorkStepsSignature) {
+            lastWorkStepsSignature = pendingSignature
+            yield pendingPlanSnapshot
+          }
+        } else if (iteration >= maxIterations - 1) {
+          // Do not publish a verdict yet. The post-loop gate gets two final
+          // projection attempts and then emits exactly one outcome; speaking
+          // here could leave a false failure beside a snapshot that recovers.
+          break
+        } else {
+          // Retry durable projection without asking the provider to recreate
+          // the plan and without allowing any business tool to run meanwhile.
+          continue
+        }
+      }
 
       // Pull durable owner follow-ups before every model round so a running job
       // adapts in place instead of waiting for a second turn.
@@ -2552,9 +2589,11 @@ async function* runAlternateProviderTurn(
       // travel with the round even when the router's domain budget did not pick
       // the plan pack; otherwise the forced call hits the membership gate and
       // the app can only show failed runtime/tool rows.
+      const prospectivePlanSatisfied = prospectivePlanCreatedBeforeRound
+        && prospectivePlanTrackerVisible
       const planToolMissing = shouldInjectProspectivePlanTool({
         planFirst: ownerRequirements.planFirst,
-        iteration,
+        planSatisfied: prospectivePlanSatisfied,
         lastBudgetRound,
         shippedToolNames: budgetedTools.map((tool) => tool.name),
       })
@@ -2582,13 +2621,13 @@ async function* runAlternateProviderTurn(
       // A real tool failure is a blocker, not permission to hammer the same
       // browser/action 20 more times. Stop and surface the exact error.
       const contractToolName = contractFailure ? null : requestedContractTool
-      // P3 — plan-first: bind make_plan on round 0 for clearly multi-step work,
-      // but never over an explicit contract/workflow bind, and only when make_plan
-      // is loaded and hasn't already run this turn.
+      // Plan-first is a hard ordering contract, not a best-effort round-zero
+      // hint. Keep make_plan named-bound until it succeeds; only then may a
+      // contract/workflow tool run. The reserved wrap-up round stays tool-free.
       const planBoundTool =
-        ownerRequirements.planFirst && iteration === 0
+        ownerRequirements.planFirst && !lastBudgetRound
           && iterationTools.some((t) => t.name === 'make_plan')
-          && !toolRecords.some((r) => r.toolName === 'make_plan')
+          && !prospectivePlanSatisfied
           ? 'make_plan'
           : null
       const roundBoundToolName = chooseRoundBoundTool({
@@ -2599,6 +2638,8 @@ async function* runAlternateProviderTurn(
           : null,
         workflowTool: boundToolName,
       })
+      const withholdProspectivePlanProse =
+        shouldWithholdProspectivePlanRoundProse(roundBoundToolName)
       // P2 — ground-before-answer: when nothing else is bound, force ANY tool on
       // round 0 of a live-data question so the head cannot answer from memory.
       //
@@ -2696,8 +2737,14 @@ async function* runAlternateProviderTurn(
               : undefined,
       })) {
         if (ev.type === 'text_delta') {
-          const progress = visibleProgress.responseStarted(iteration + 1)
-          if (progress) yield progress
+          // A forced plan round sometimes writes a complete-looking answer
+          // before its make_plan tool block. It is not an answer and has no
+          // evidence yet: keep both the prose and the "writing" lifecycle
+          // private until the durable plan/tool event is on screen.
+          if (!withholdProspectivePlanProse) {
+            const progress = visibleProgress.responseStarted(iteration + 1)
+            if (progress) yield progress
+          }
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
             thinkingMs = Date.now() - thinkingStartedAt
           }
@@ -2705,7 +2752,7 @@ async function* runAlternateProviderTurn(
           // Live typing: the filter releases prose the moment it is provably
           // not tool markup; the round-end reconciliation below still owns the
           // final, sanitised text.
-          if (liveProseEnabled) {
+          if (liveProseEnabled && !withholdProspectivePlanProse) {
             const safe = proseStream.push(ev.text)
             if (safe) {
               const sep = !streamedProse && finalText && !finalText.endsWith('\n') ? '\n\n' : ''
@@ -2729,9 +2776,14 @@ async function* runAlternateProviderTurn(
           if (safeThinking) yield { type: 'thinking_delta', delta: safeThinking }
         } else if (ev.type === 'tool_start') {
           toolNames.set(ev.id, ev.name)
-          const progress = visibleProgress.toolSelected(iteration + 1, toolDisplay(ev.name).label)
-          if (progress) yield progress
-          yield { type: 'tool_start', id: ev.id, name: ev.name }
+          // A forced plan round is server-gated after the complete provider
+          // response. Do not leak sibling calls (or the internal make_plan
+          // control row) before that gate decides what may execute.
+          if (!withholdProspectivePlanProse) {
+            const progress = visibleProgress.toolSelected(iteration + 1, toolDisplay(ev.name).label)
+            if (progress) yield progress
+            yield { type: 'tool_start', id: ev.id, name: ev.name }
+          }
         } else if (ev.type === 'tool_input') {
           calls.push({ id: ev.id, name: toolNames.get(ev.id) ?? '', input: ev.input, thoughtSignature: ev.thoughtSignature })
         } else if (ev.type === 'usage') {
@@ -2764,9 +2816,16 @@ async function* runAlternateProviderTurn(
       // Same repair pass, second failure mode: the model answering twice in one
       // round. Third sighting, and the style rule against it shipped before the
       // last one — so it is repaired, not requested.
-      iterationText = dropRepeatedBlocks(stripToolCallMarkup(iterationText))
-      if (iterationText !== rawIterationText) {
+      const cleanedIterationText = dropRepeatedBlocks(stripToolCallMarkup(iterationText))
+      if (cleanedIterationText !== rawIterationText) {
         console.info('[model-output] stripped tool-call markup from visible text', {
+          conversationId,
+          model: model.id,
+        })
+      }
+      iterationText = withholdProspectivePlanProse ? '' : cleanedIterationText
+      if (withholdProspectivePlanProse && rawIterationText.trim()) {
+        console.info('[plan-first] withheld pre-plan provider prose', {
           conversationId,
           model: model.id,
         })
@@ -2973,6 +3032,22 @@ async function* runAlternateProviderTurn(
         // exactly the Claude-app shape he asked for. Recorded so the backstop
         // below stays quiet and telemetry can score compliance per model.
         preambleSpoken = true
+      }
+
+      // Some OpenAI-compatible providers can still return prose-only output for
+      // a named tool choice. The draft was deliberately withheld above; keep
+      // the next round bound to make_plan instead of ending the turn without a
+      // tracker or persisting the stale draft as an answer.
+      if (withholdProspectivePlanProse && calls.length === 0 && !signal?.aborted) {
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content: INTERNAL_NUDGE_MARKER
+              + 'Prospective plan এখনো তৈরি হয়নি। কোনো উত্তর লিখবে না; make_plan টুলটি কল করো।',
+          },
+        ]
+        continue
       }
 
       if (calls.length === 0 || signal?.aborted) {
@@ -3476,7 +3551,23 @@ async function* runAlternateProviderTurn(
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       let roundContractFailure: ToolRecord | undefined
       const autoRanDelegationSummaries: string[] = []
+      const prospectivePlanCalls = partitionProspectivePlanCalls(
+        calls, withholdProspectivePlanProse)
+      const acceptedProspectivePlanCalls = new Set(prospectivePlanCalls.accepted)
       for (const call of calls) {
+        if (withholdProspectivePlanProse && !acceptedProspectivePlanCalls.has(call)) {
+          const rejected = {
+            success: false as const,
+            error: call.name === 'make_plan'
+              ? 'এই round-এ একটি make_plan ইতিমধ্যে গ্রহণ করা হয়েছে; duplicate plan তৈরি করা হয়নি।'
+              : `Prospective plan দৃশ্যমান হওয়ার আগে ${call.name} চালানো হয়নি।`,
+          }
+          toolResults.push({ id: call.id, name: call.name, result: rejected })
+          console.warn('[plan-first] rejected provider sibling call before plan', {
+            conversationId, model: model.id, toolName: call.name,
+          })
+          continue
+        }
         // A required-tool failure already happened in this same model round.
         // Do not execute any queued follow-up calls: the failure is terminal for
         // this owner turn, and a fresh owner message may retry it later.
@@ -3619,8 +3710,13 @@ async function* runAlternateProviderTurn(
           }
           continue
         }
-        // Re-emit tool_start with the parsed input so the UI shows the real target.
-        yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
+        // make_plan is rendered as the authoritative checklist snapshot, not as
+        // a raw tool row. Ordinary calls still re-emit parsed input for the UI.
+        const hideProspectivePlanControl =
+          withholdProspectivePlanProse && call.name === 'make_plan'
+        if (!hideProspectivePlanControl) {
+          yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
+        }
         // Put this tool's plan step into `running` BEFORE it executes, so the chip
         // shows the part being worked on while it is being worked on.
         await beginTrackerPlanStep(call.name)
@@ -3852,6 +3948,9 @@ async function* runAlternateProviderTurn(
         if ((call.name === 'make_plan' && result.success) || planStepFinished) {
           const finishedSnapshot = await currentPlanTrackerEvent()
           const finishedSignature = workStepsSignature(finishedSnapshot)
+          if (call.name === 'make_plan' && result.success && finishedSnapshot) {
+            prospectivePlanTrackerVisible = true
+          }
           if (finishedSnapshot && finishedSignature !== lastWorkStepsSignature) {
             lastWorkStepsSignature = finishedSignature
             yield finishedSnapshot
@@ -3866,21 +3965,23 @@ async function* runAlternateProviderTurn(
         }
         if (call.name === contractToolName && !result.success) roundContractFailure = toolRecord
 
-        timeline.push({
-          t: 'tool', name: call.name, ok: result.success,
-          input: compactTimelineInput(call.input),
-          result: toolResultPreview(result),
-          shot: extractScreenshotUrl(result),
-        })
+        if (!hideProspectivePlanControl) {
+          timeline.push({
+            t: 'tool', name: call.name, ok: result.success,
+            input: compactTimelineInput(call.input),
+            result: toolResultPreview(result),
+            shot: extractScreenshotUrl(result),
+          })
 
-        yield {
-          type: 'tool_end',
-          id: call.id,
-          name: call.name,
-          success: result.success,
-          error: result.error,
-          resultPreview: toolResultPreview(result),
-          screenshot: extractScreenshotUrl(result),
+          yield {
+            type: 'tool_end',
+            id: call.id,
+            name: call.name,
+            success: result.success,
+            error: result.error,
+            resultPreview: toolResultPreview(result),
+            screenshot: extractScreenshotUrl(result),
+          }
         }
 
         // A tool filed a document as a conversation artifact (save_artifact, SEO
@@ -4397,6 +4498,35 @@ async function* runAlternateProviderTurn(
 
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
     if (canceled) return
+
+    // A plan can first succeed on the final provider iteration. Its immediate
+    // projection may transiently return null, leaving no later loop iteration
+    // to run the normal retry gate above. Close that edge deterministically:
+    // retry projection without recreating the plan, then publish an explicit
+    // no-work failure instead of falling into the generic empty-turn salvage.
+    const prospectivePlanCreatedAfterLoop = toolRecords.some(
+      (record) => record.toolName === 'make_plan' && record.status === 'success',
+    )
+    if (ownerRequirements.planFirst
+      && prospectivePlanCreatedAfterLoop
+      && !prospectivePlanTrackerVisible) {
+      for (let attempt = 0; attempt < 2 && !prospectivePlanTrackerVisible; attempt++) {
+        const finalPlanSnapshot = await currentPlanTrackerEvent()
+        if (!finalPlanSnapshot) continue
+        prospectivePlanTrackerVisible = true
+        const finalPlanSignature = workStepsSignature(finalPlanSnapshot)
+        if (finalPlanSignature !== lastWorkStepsSignature) {
+          lastWorkStepsSignature = finalPlanSignature
+          yield finalPlanSnapshot
+        }
+      }
+      if (!answerBody()) {
+        const exitText = prospectivePlanExitText(prospectivePlanTrackerVisible)
+        finalText = exitText
+        timeline.push({ t: 'text', text: exitText })
+        yield { type: 'text_delta', delta: exitText }
+      }
+    }
 
     // ── Phase 4 turn-end bookkeeping (all fail-open) ─────────────────────────
     if (!personalMode) {

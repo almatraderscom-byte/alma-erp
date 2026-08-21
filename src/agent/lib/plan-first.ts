@@ -55,10 +55,10 @@ export function filterToolsForPlanTurn<T extends { name: string }>(tools: T[]): 
 /**
  * Pick the deterministic tool binding for a provider round.
  *
- * A prospective plan is control state for the whole job, so on round zero it
- * must outrank a workflow/contract tool that would otherwise start doing one
+ * A prospective plan is control state for the whole job, so until it succeeds
+ * it must outrank a workflow/contract tool that would otherwise start doing one
  * piece of the work before the owner has seen the checklist. Once the plan
- * exists, the ordinary contract binding resumes unchanged on later rounds.
+ * exists, the caller passes `null` and ordinary binding resumes unchanged.
  */
 export function chooseRoundBoundTool(input: {
   iteration: number
@@ -66,21 +66,60 @@ export function chooseRoundBoundTool(input: {
   contractTool: string | null
   workflowTool: string | null
 }): string | null {
-  if (input.iteration === 0 && input.planTool) return input.planTool
+  if (input.planTool) return input.planTool
   if (input.contractTool) return input.contractTool
   return input.iteration === 0 ? input.workflowTool : null
 }
 
 export function shouldInjectProspectivePlanTool(input: {
   planFirst: boolean
-  iteration: number
+  planSatisfied: boolean
   lastBudgetRound: boolean
   shippedToolNames: Iterable<string>
 }): boolean {
   return input.planFirst
-    && input.iteration === 0
+    && !input.planSatisfied
     && !input.lastBudgetRound
     && !new Set(input.shippedToolNames).has('make_plan')
+}
+
+/**
+ * A provider may emit ordinary text before honoring a forced `make_plan` call.
+ * That text is pre-plan draft material: it has no tool evidence yet and showing
+ * it makes a complete-looking reply appear, disappear, and later persist beside
+ * the real verified answer. Keep it private; the next round can speak after the
+ * durable prospective plan is visible.
+ */
+export function shouldWithholdProspectivePlanRoundProse(
+  boundToolName: string | null,
+): boolean {
+  return boundToolName === 'make_plan'
+}
+
+/**
+ * Provider tool-choice support is advisory in practice: compatible endpoints
+ * have returned siblings and duplicate named calls beside a forced make_plan.
+ * The controller therefore accepts exactly one plan-control call and rejects
+ * everything else before any business executor or owner-facing tool event.
+ */
+export function partitionProspectivePlanCalls<T extends { name: string }>(
+  calls: T[],
+  prospectivePlanRound: boolean,
+): { accepted: T[]; rejected: T[] } {
+  if (!prospectivePlanRound) return { accepted: calls, rejected: [] }
+  const accepted: T[] = []
+  const rejected: T[] = []
+  for (const call of calls) {
+    if (call.name === 'make_plan' && accepted.length === 0) accepted.push(call)
+    else rejected.push(call)
+  }
+  return { accepted, rejected }
+}
+
+export function prospectivePlanExitText(trackerVisible: boolean): string {
+  return trackerVisible
+    ? '⚠️ Step tracker তৈরি হয়েছে, কিন্তু এই turn-এর round limit শেষে কাজ শুরু হয়নি—কোনো business action চালাইনি। আবার চেষ্টা করুন।'
+    : '⚠️ Plan তৈরি হয়েছে, কিন্তু step tracker verify করা যায়নি—তাই কোনো কাজ শুরু করিনি। আবার চেষ্টা করুন।'
 }
 
 export type ProspectivePlanToolInput = {
