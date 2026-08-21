@@ -25301,15 +25301,19 @@ struct AssistantScreen: View {
         // The level lives in the same menu AND in the pill, so both are rebuilt
         // when it changes — a checkmark that lags the pick is how a control stops
         // being trusted.
-        .onChange(of: vm.effortLevel) { _, level in
+        .onChange(of: vm.effortLevel) { _, _ in
+            // EFFECTIVE, not raw: a restored Max on a Gemini chat must show the
+            // level that will actually run (High) and keep a matching checked row,
+            // instead of a "Max" nothing in the list corresponds to (Codex P2).
+            let effective = vm.effectiveEffortLevel
             barHooks.installModelMenu(
                 models: vm.models, selectedId: vm.modelId,
                 effortLevels: vm.availableEffortLevels,
-                selectedEffort: level,
+                selectedEffort: effective,
                 onSelect: { vm.selectModel($0) },
                 onSelectEffort: { vm.selectEffort($0) })
             barHooks.updateModelLabel(vm.modelPillLabel,
-                                      effort: level?.pillTitle,
+                                      effort: effective?.pillTitle,
                                       enabled: !vm.isStreaming)
         }
         .onChange(of: vm.isStreaming) { _, streaming in
@@ -25474,7 +25478,10 @@ final class AssistantModelPillButton: UIButton {
         modelText.font = .systemFont(ofSize: 12.5, weight: .semibold)
         modelText.textColor = .secondaryLabel
         modelText.lineBreakMode = .byTruncatingTail
-        modelText.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Keep the DEFAULT (750) resistance: it has to out-rank the 200-priority
+        // resting width so the label's content can widen the pill up to its 158pt
+        // cap. At .defaultLow the pill stayed at 108 and crushed the model name to
+        // "D… · High" instead of growing (caught in the simulator).
         effortText.translatesAutoresizingMaskIntoConstraints = false
         effortText.font = .systemFont(ofSize: 12.5, weight: .semibold)
         effortText.textColor = .secondaryLabel
