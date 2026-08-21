@@ -1995,10 +1995,31 @@ struct TradingHomeTradeSheet: View {
     private var sellNet: Double { netBdt - num(usdtAmount) * avgCostRate }
     private var bkashNet: Double { num(bkashProfit) - num(bkashLoss) }
 
+    /// Empty = not entered. A non-empty value that does not parse must BLOCK the
+    /// save: the bKash route upserts on (account, date), so a silent 0 would replace
+    /// that day's real orders / profit / loss.
+    private var bkashFieldsValid: Bool {
+        let orders = bkashOrders.trimmingCharacters(in: .whitespaces)
+        if !orders.isEmpty, (Int(orders) ?? -1) < 0 { return false }
+        for raw in [bkashProfit, bkashLoss] {
+            let t = raw.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty { continue }
+            guard let v = Double(t.replacingOccurrences(of: ",", with: "")), v >= 0 else { return false }
+        }
+        return true
+    }
+
     private var canSubmit: Bool {
         guard account != nil else { return false }
-        if mode == "BKASH" { return num(bkashProfit) > 0 || num(bkashLoss) > 0 }
+        if mode == "BKASH" {
+            guard bkashFieldsValid else { return false }
+            return num(bkashProfit) > 0 || num(bkashLoss) > 0 || bkashOrdersCount > 0
+        }
         return num(usdtAmount) > 0 && num(bdtRate) > 0 && num(feeUsdt) >= 0
+    }
+
+    private var bkashOrdersCount: Int {
+        Int(bkashOrders.trimmingCharacters(in: .whitespaces)) ?? 0
     }
 
     var body: some View {
@@ -2032,6 +2053,11 @@ struct TradingHomeTradeSheet: View {
                 TradingHomeField(placeholder: "Total Orders", text: $bkashOrders)
                 TradingHomeField(placeholder: "Total daily profit (BDT)", text: $bkashProfit)
                 TradingHomeField(placeholder: "Total daily loss (BDT)", text: $bkashLoss)
+                if !bkashFieldsValid {
+                    Text("Orders পূর্ণসংখ্যা, profit/loss শূন্য বা তার বেশি হতে হবে")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TradingHomePalette.red500)
+                }
                 resultPanel(label: "Net result = profit - loss", value: bkashNet, signed: true)
             } else {
                 Picker("Type", selection: $tradeType) {
@@ -2120,7 +2146,7 @@ struct TradingHomeTradeSheet: View {
                 // (account, date) and a rounded resend would alter a saved row.
                 ok = await vm.submitBkash(.init(
                     tradingAccountId: account.id, summaryDate: bkashDate,
-                    totalOrders: Int(bkashOrders.trimmingCharacters(in: .whitespaces)) ?? 0,
+                    totalOrders: bkashOrdersCount,
                     totalProfitBdt: num(bkashProfit),
                     totalLossBdt: num(bkashLoss), notes: notes))
             } else {
