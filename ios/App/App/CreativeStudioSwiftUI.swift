@@ -734,7 +734,7 @@ enum CS {
         .init(id: "fal_flux_fill", label: "FLUX Fill (masked edit)", short: "FLUX Fill",
               modes: ["edit"], singlePersonOnly: false, fidelityBn: ["edit": "Mask repair — Gallery-র ছবিতে \"Precision repair\" থেকে চালান।"]),
         .init(id: "xai_imagine", label: "Grok Imagine (xAI)", short: "Grok",
-              modes: ["generate", "product_to_model", "try_on"], singlePersonOnly: false,
+              modes: ["generate", "product_to_model", "try_on", "model_swap", "face_to_model", "edit"], singlePersonOnly: false,
               fidelityBn: ["product_to_model": "নির্বাচিত product/person ordered reference হিসেবে যাবে; Grok একটি general editor, dedicated Try-On নয়।"]),
     ]
     /// Engines offered for a mode (web: `engines` memo in StudioV3ImageLab). Multi-person
@@ -2996,9 +2996,11 @@ private struct CSAdvancedPanel: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(CS.modes) { m in
-                    let locked = m.fashnOnly && vm.config?.isSelectable("fashn") != true
+                    // A mode is locked only when NO engine that supports it is live (Grok covers
+                    // swap/face/edit when FASHN is off — same table as advanced-image-capabilities.ts).
+                    let locked = !CS.engines(for: m.id, multiPerson: false).contains { vm.config?.isSelectable($0.id) == true }
                     Button {
-                        guard !locked else { vm.flash("এই mode-এর জন্য FASHN Pro দরকার — এখন configure করা নেই"); return }
+                        guard !locked else { vm.flash("এই mode-এর কোনো engine এখন চালু নেই (FASHN / Grok)"); return }
                         if mode != m {
                             mode = m
                             // stale uploads from another mode must not flow into the next Run

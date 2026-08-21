@@ -156,7 +156,12 @@ struct CSMaskRepairSheet: View {
             HStack(spacing: 8) {
                 toolChip("Brush", "paintbrush.fill", on: !erasing) { erasing = false }
                 toolChip("Erase", "eraser.fill", on: erasing) { erasing = true }
-                toolChip("Invert", "arrow.triangle.2.circlepath", on: inverted) { inverted.toggle() }
+                toolChip("Invert", "arrow.triangle.2.circlepath", on: inverted) {
+                    // Web parity: invert the ACCUMULATED mask — base flips and every existing
+                    // stroke flips meaning; strokes drawn afterwards keep brush=white / erase=black.
+                    inverted.toggle()
+                    strokes = strokes.map { Stroke(points: $0.points, erase: !$0.erase, width: $0.width) }
+                }
                 Spacer()
                 Button("Clear") { strokes = []; currentStroke = []; inverted = false }
                     .font(.caption.weight(.bold)).foregroundStyle(.red).disabled(strokes.isEmpty && !inverted)
