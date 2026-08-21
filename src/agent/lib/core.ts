@@ -78,10 +78,12 @@ import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
 import {
   beginPlanStepForTool,
+  continuationAfterTrackerSettlement,
   finishPlanStep,
   ownerBlockerFromToolResult,
   pendingActionTrackerState,
   pickFinalDeliveryStep,
+  prioritizePlanCreationForUntrackedRound,
 } from '@/agent/lib/plan-step-advance'
 import {
   completePlanStepsLinkedToAskCard,
@@ -1924,7 +1926,7 @@ export async function* runAgentTurn(
       const reads: ToolBlock[] = []
       const writes: ToolBlock[] = []
       await loadNativeTrackerPlan()
-      const nativeTrackedRound = nativeTrackerPlanSteps.length > 0
+      let nativeTrackedRound = nativeTrackerPlanSteps.length > 0
       for (const tb of toolUseBlocks) {
         // Emit pre-execution events
         const isDelegate = tb.name === 'delegate_to_specialist'
@@ -1938,7 +1940,21 @@ export async function* runAgentTurn(
           yield { type: 'tool_start', id: tb.id, name: tb.name, input: tb.input }
         }
 
-        if (nativeTrackedRound || MUTATING_TOOLS.has(tb.name)) {
+      }
+
+      // A plan created in this response must exist before any sibling work is
+      // executed. Otherwise the reads finish first and their prospective rows
+      // remain pending forever. Run the control call first, then preserve source
+      // order for every remaining call; the successful make_plan reload below
+      // turns tracking on before the next call is claimed.
+      const createsNativeTrackerThisRound = !nativeTrackedRound
+        && toolUseBlocks.some((tb) => tb.name === 'make_plan')
+      const executionBlocks = prioritizePlanCreationForUntrackedRound(
+        toolUseBlocks,
+        nativeTrackedRound,
+      )
+      for (const tb of executionBlocks) {
+        if (nativeTrackedRound || createsNativeTrackerThisRound || MUTATING_TOOLS.has(tb.name)) {
           writes.push(tb)
         } else {
           reads.push(tb)
@@ -1957,7 +1973,7 @@ export async function* runAgentTurn(
       if (permissionChangeInResponse) {
         writes.length = 0
         reads.length = 0
-        for (const tb of toolUseBlocks) writes.push(tb)
+        for (const tb of executionBlocks) writes.push(tb)
       }
 
       // Execute reads in parallel, writes sequentially after
@@ -1988,6 +2004,16 @@ export async function* runAgentTurn(
         }
         const r = await execOneTool(tb)
         resultMap.set(r.tb.id, r)
+        if (tb.name === 'make_plan' && r.result.success) {
+          await loadNativeTrackerPlan(true)
+          nativeTrackedRound = nativeTrackerPlanSteps.length > 0
+          const planned = await nativeTrackerSnapshot({ live: true })
+          const plannedSignature = workStepsSignature(planned)
+          if (planned && plannedSignature !== nativeWorkStepsSignature) {
+            nativeWorkStepsSignature = plannedSignature
+            yield planned
+          }
+        }
         const blockerData = r.result.success && r.result.data && typeof r.result.data === 'object'
           ? r.result.data as Record<string, unknown>
           : null
@@ -2415,7 +2441,7 @@ export async function* runAgentTurn(
     // reply (strands the owner mid-task AND leaves a context hole in replayed
     // history so the next turn restarts the task from scratch).
     const coreDeadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const coreTaskUnfinished = shouldAutoContinueTurn({
+    let coreTaskUnfinished = shouldAutoContinueTurn({
       deadlineHit: coreDeadlineHit,
       hasAskCard: emittedAskCards.length > 0,
       tools: toolRecords,
@@ -2482,6 +2508,10 @@ export async function* runAgentTurn(
             : null,
         })
         if (settled) {
+          coreTaskUnfinished = continuationAfterTrackerSettlement(
+            coreTaskUnfinished,
+            settled.status,
+          )
           nativeWorkStepsSignature = workStepsSignature(settled)
           yield settled
         }

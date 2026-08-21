@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
+  continuationAfterTrackerSettlement,
   pickFinalDeliveryStep,
   pickStepForTool,
   ownerBlockerFromToolResult,
   pendingActionTrackerState,
+  prioritizePlanCreationForUntrackedRound,
   projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
@@ -13,6 +15,14 @@ const step = (id: string, status: string, toolName?: string): AdvanceableStep =>
   ({ id, action: id, status, toolName: toolName ?? null })
 
 describe('pickStepForTool', () => {
+  it('runs make_plan before sibling work when the round had no tracker yet', () => {
+    const calls = [{ name: 'get_orders' }, { name: 'make_plan' }, { name: 'get_approvals' }]
+    expect(prioritizePlanCreationForUntrackedRound(calls, false).map((call) => call.name)).toEqual([
+      'make_plan', 'get_orders', 'get_approvals',
+    ])
+    expect(prioritizePlanCreationForUntrackedRound(calls, true)).toBe(calls)
+  })
+
   it('claims the step that names the tool, wherever it sits', () => {
     const steps = [step('s1', 'done', 'get_orders'), step('s2', 'pending', 'get_inventory_status')]
     expect(pickStepForTool(steps, 'get_inventory_status')?.id).toBe('s2')
@@ -49,6 +59,14 @@ describe('pickStepForTool', () => {
     // able to find that step when the same call closes it.
     const steps = [step('s1', 'running', 'get_orders'), step('s2', 'pending')]
     expect(pickStepForTool(steps, 'get_orders')?.status).toBe('running')
+  })
+})
+
+describe('continuationAfterTrackerSettlement', () => {
+  it('suppresses a stale deadline continuation only after durable completion', () => {
+    expect(continuationAfterTrackerSettlement(true, 'completed')).toBe(false)
+    expect(continuationAfterTrackerSettlement(true, 'running')).toBe(true)
+    expect(continuationAfterTrackerSettlement(false, 'completed')).toBe(false)
   })
 })
 

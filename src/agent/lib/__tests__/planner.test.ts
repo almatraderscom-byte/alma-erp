@@ -30,6 +30,10 @@ beforeEach(() => {
   mockPrisma.$transaction.mockImplementation(
     async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma),
   )
+  mockPrisma.agentPlanStep.findUnique.mockResolvedValue({
+    status: 'running', result: null, attemptCount: 0,
+  })
+  mockPrisma.agentPlanStep.updateMany.mockResolvedValue({ count: 1 })
 })
 
 /** Fixture builder — every step carries the S0 retry fields. */
@@ -47,6 +51,7 @@ describe('planner', () => {
       linkPendingActionToPlanStep,
       linkedPlanStepIdFromPendingActionPayload,
       linkedPlanStepIdsFromPendingActionPayload,
+      pendingActionOwnershipFromPlanStepResult,
     } = await import('@/agent/lib/planner')
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({ payload: { amount: 5 } })
     mockPrisma.agentPendingAction.update.mockResolvedValueOnce({})
@@ -62,6 +67,14 @@ describe('planner', () => {
       },
     })
     expect(linkedPlanStepIdFromPendingActionPayload({ _agentPlanStepId: 'step-1' })).toBe('step-1')
+    expect(pendingActionOwnershipFromPlanStepResult({
+      _agentPendingActionId: 'action-1',
+      _agentPendingActionAttempt: 0,
+    })).toEqual({ pendingActionId: 'action-1', attemptCount: 0 })
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'step-1', status: { in: ['pending', 'running'] }, attemptCount: 0 },
+      data: { result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 0 } },
+    })
 
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
       payload: { _agentPlanStepId: 'step-original' },
@@ -80,7 +93,7 @@ describe('planner', () => {
       _agentPlanStepId: 'step-original',
       _agentPlanStepIds: ['step-original', 'step-other', 'step-other'],
     })).toEqual(['step-original', 'step-other'])
-    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2)
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(4)
   })
 
   it('settles linked rows only from durable terminal outcomes', async () => {
@@ -98,19 +111,19 @@ describe('planner', () => {
       }, result: { id: 'post-1' },
     })
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
-      { id: 'step-1', planId: 'plan-1', status: 'pending', attemptCount: 0, maxAttempts: 3 },
-      { id: 'step-2', planId: 'plan-2', status: 'running', attemptCount: 0, maxAttempts: 3 },
+      { id: 'step-1', planId: 'plan-1', status: 'pending', attemptCount: 0, maxAttempts: 3, result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 0 } },
+      { id: 'step-2', planId: 'plan-2', status: 'running', attemptCount: 0, maxAttempts: 3, result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 0 } },
     ])
     mockPrisma.agentPlanStep.updateMany
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 1 })
     await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBe('step-1')
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'step-1', status: { in: ['pending', 'running'] } },
+      where: expect.objectContaining({ id: 'step-1', status: { in: ['pending', 'running'] }, attemptCount: 0 }),
       data: expect.objectContaining({ status: 'done', turnId: null, dispatchedAt: null }),
     }))
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'step-2', status: { in: ['pending', 'running'] } },
+      where: expect.objectContaining({ id: 'step-2', status: { in: ['pending', 'running'] }, attemptCount: 0 }),
     }))
 
     mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
@@ -119,12 +132,14 @@ describe('planner', () => {
       result: { error: 'worker exited 1' },
     })
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
-      { id: 'step-3', planId: 'plan-3', status: 'running', attemptCount: 1, maxAttempts: 3 },
+      { id: 'step-3', planId: 'plan-3', status: 'running', attemptCount: 1, maxAttempts: 3, result: { _agentPendingActionId: 'action-1', _agentPendingActionAttempt: 1 } },
     ])
     mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
     await expect(settlePlanStepsLinkedToPendingAction('action-1')).resolves.toBe('step-3')
     expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
-      where: { id: 'step-3', status: { in: ['pending', 'running'] } },
+      where: expect.objectContaining({
+        id: 'step-3', status: { in: ['pending', 'running'] }, attemptCount: 1,
+      }),
       data: expect.objectContaining({
         status: 'failed',
         error: 'worker exited 1',
@@ -139,7 +154,7 @@ describe('planner', () => {
       result: null,
     })
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([
-      { id: 'step-4', planId: 'plan-4', status: 'pending', attemptCount: 0, maxAttempts: 3 },
+      { id: 'step-4', planId: 'plan-4', status: 'pending', attemptCount: 0, maxAttempts: 3, result: { _agentPendingActionId: 'action-2', _agentPendingActionAttempt: 0 } },
     ])
     mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
     await expect(settlePlanStepsLinkedToPendingAction('action-2')).resolves.toBe('step-4')
@@ -150,6 +165,18 @@ describe('planner', () => {
         nextAttemptAt: null,
       }),
     }))
+
+    mockPrisma.agentPendingAction.findUnique.mockResolvedValueOnce({
+      status: 'failed', type: 'workbench_run',
+      payload: { _agentPlanStepId: 'step-retried' },
+      result: { error: 'old callback' },
+    })
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-retried', planId: 'plan-retry', status: 'running', attemptCount: 2, maxAttempts: 3,
+      result: { _agentPendingActionId: 'action-old', _agentPendingActionAttempt: 1 },
+    }])
+    await expect(settlePlanStepsLinkedToPendingAction('action-old')).resolves.toBeNull()
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledTimes(4)
   })
 
   it('binds an ask card before display and completes only after its durable answer', async () => {

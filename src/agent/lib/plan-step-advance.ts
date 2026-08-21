@@ -25,6 +25,18 @@ import type { WorkStepsBlocker } from '@/agent/lib/work-steps'
 /** Planning/control calls manage the checklist; they are not checklist work. */
 export const PLAN_CONTROL_TOOLS = new Set(['make_plan', 'execute_plan', 'get_plan'])
 
+/** Create the prospective tracker before sibling calls can perform its work. */
+export function prioritizePlanCreationForUntrackedRound<T extends { name: string }>(
+  calls: T[],
+  hasTracker: boolean,
+): T[] {
+  if (hasTracker || !calls.some((call) => call.name === 'make_plan')) return calls
+  return [
+    ...calls.filter((call) => call.name === 'make_plan'),
+    ...calls.filter((call) => call.name !== 'make_plan'),
+  ]
+}
+
 export type AdvanceableStep = {
   id: string
   action: string
@@ -135,6 +147,14 @@ export function projectFinalDeliveryForCompletion(
     rows: rows.map((row, index) => index === lastIndex ? { ...row, status: 'done' } : row),
     projectedStepId: step.id,
   }
+}
+
+/** A durably completed tracker outranks an earlier deadline continuation hint. */
+export function continuationAfterTrackerSettlement(
+  needContinue: boolean,
+  trackerStatus: string | null | undefined,
+): boolean {
+  return needContinue && trackerStatus !== 'completed'
 }
 
 /**

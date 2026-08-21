@@ -300,6 +300,9 @@ export async function markStepBlocked(stepId: string): Promise<void> {
 /** Reserved audit link written into the approval card before it is emitted. */
 export const PENDING_ACTION_PLAN_STEP_PAYLOAD_KEY = '_agentPlanStepId'
 export const PENDING_ACTION_PLAN_STEPS_PAYLOAD_KEY = '_agentPlanStepIds'
+/** Reverse ownership written on the row for stale callback/attempt rejection. */
+export const PENDING_ACTION_PLAN_STEP_RESULT_KEY = '_agentPendingActionId'
+export const PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY = '_agentPendingActionAttempt'
 /** Reserved reverse link written onto a pending plan row for an ask card. */
 export const ASK_CARD_PLAN_STEP_RESULT_KEY = '_agentAskCardId'
 
@@ -333,6 +336,19 @@ export function linkedAskCardIdFromPlanStepResult(result: unknown): string | nul
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+/** The exact pending action attempt that currently owns a plan row. */
+export function pendingActionOwnershipFromPlanStepResult(result: unknown): {
+  pendingActionId: string
+  attemptCount: number
+} | null {
+  const record = jsonRecord(result)
+  const pendingActionId = record[PENDING_ACTION_PLAN_STEP_RESULT_KEY]
+  const attemptCount = record[PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]
+  if (typeof pendingActionId !== 'string' || !pendingActionId.trim()) return null
+  if (typeof attemptCount !== 'number' || !Number.isInteger(attemptCount) || attemptCount < 0) return null
+  return { pendingActionId: pendingActionId.trim(), attemptCount }
+}
+
 /**
  * Persist which durable plan row an approval card represents. The core writes
  * this before yielding the card, so the later approve/worker callback can close
@@ -349,18 +365,47 @@ export async function linkPendingActionToPlanStep(
     // both return success while the last writer silently drops the other.
     const lockKey = `pending-action-plan:${pendingActionId}`
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock_token`
-    const action = await tx.agentPendingAction.findUnique({
-      where: { id: pendingActionId },
-      select: { payload: true },
-    })
-    if (!action) return false
+    const stepLockKey = `pending-action-plan-step:${stepId}`
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${stepLockKey}))::text AS lock_token`
+    const [action, step] = await Promise.all([
+      tx.agentPendingAction.findUnique({
+        where: { id: pendingActionId },
+        select: { payload: true },
+      }),
+      tx.agentPlanStep.findUnique({
+        where: { id: stepId },
+        select: { status: true, result: true, attemptCount: true },
+      }),
+    ])
+    if (!action || !step || !['pending', 'running'].includes(String(step.status))) return false
     const payload = jsonRecord(action.payload)
     const existing = linkedPlanStepIdsFromPendingActionPayload(payload)
-    if (existing.includes(stepId)) return true
+    const stepResult = jsonRecord(step.result)
+    const priorOwner = pendingActionOwnershipFromPlanStepResult(stepResult)
+    // Two actions may not own the same live attempt. A later retry has a higher
+    // attempt count and is allowed to replace the old terminal action marker.
+    if (priorOwner
+      && priorOwner.pendingActionId !== pendingActionId
+      && priorOwner.attemptCount === step.attemptCount) return false
+    const linked = await tx.agentPlanStep.updateMany({
+      where: {
+        id: stepId,
+        status: { in: ['pending', 'running'] },
+        attemptCount: step.attemptCount,
+      },
+      data: {
+        result: {
+          ...stepResult,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: pendingActionId,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: step.attemptCount,
+        },
+      },
+    })
+    if (linked.count !== 1) return false
     // A deduped action may satisfy a later prospective row too. Preserve the
     // first card owner as the compatibility/primary link and append followers;
     // execution then settles every row represented by the one real action.
-    const linkedStepIds = [...existing, stepId]
+    const linkedStepIds = existing.includes(stepId) ? existing : [...existing, stepId]
     await tx.agentPendingAction.update({
       where: { id: pendingActionId },
       data: {
@@ -432,14 +477,21 @@ export async function settlePlanStepsLinkedToPendingAction(
     status: string
     attemptCount: number
     maxAttempts: number
+    result: unknown
   }> =
     await db.agentPlanStep.findMany({
       where: { id: { in: stepIds } },
-      select: { id: true, planId: true, status: true, attemptCount: true, maxAttempts: true },
+      select: { id: true, planId: true, status: true, attemptCount: true, maxAttempts: true, result: true },
     })
   const settledIds: string[] = []
   const touchedPlans = new Set<string>()
   for (const step of steps) {
+    const owner = pendingActionOwnershipFromPlanStepResult(step.result)
+    // The step may already be running a newer retry. Only the action bound to
+    // this exact attempt may settle it; delayed/replayed older callbacks no-op.
+    if (!owner
+      || owner.pendingActionId !== pendingActionId
+      || owner.attemptCount !== step.attemptCount) continue
     if ((succeeded && step.status === 'done') || (failed && step.status === 'failed')) {
       settledIds.push(step.id)
       touchedPlans.add(step.planId)
@@ -454,7 +506,12 @@ export async function settlePlanStepsLinkedToPendingAction(
       : step.attemptCount
     const maxAttempts = step.maxAttempts ?? 3
     const settled = await db.agentPlanStep.updateMany({
-      where: { id: step.id, status: { in: ['pending', 'running'] } },
+      where: {
+        id: step.id,
+        status: { in: ['pending', 'running'] },
+        attemptCount: owner.attemptCount,
+        result: { path: [PENDING_ACTION_PLAN_STEP_RESULT_KEY], equals: pendingActionId },
+      },
       data: {
         status: succeeded ? 'done' : 'failed',
         result: {
@@ -462,6 +519,8 @@ export async function settlePlanStepsLinkedToPendingAction(
           actionType: action.type,
           actionStatus: action.status,
           output: action.result ?? null,
+          [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: pendingActionId,
+          [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: owner.attemptCount,
         },
         error: succeeded ? null : actionError,
         doneAt: now,
