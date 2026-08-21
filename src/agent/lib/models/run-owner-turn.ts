@@ -109,6 +109,7 @@ import {
   finishPlanStep,
   pickFinalDeliveryStep,
   projectFinalDeliveryForCompletion,
+  projectedDeliveryNeedsContinuation,
 } from '@/agent/lib/plan-step-advance'
 import { buildModelSwitchNote } from '@/agent/lib/model-switch'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
@@ -4361,7 +4362,7 @@ async function* runAlternateProviderTurn(
         }
       } catch { /* fail open to the proven deadline policy */ }
     }
-    const taskUnfinished = shouldAutoContinueTurn({
+    let taskUnfinished = shouldAutoContinueTurn({
       deadlineHit,
       hasAskCard: hasOwnerGate,
       tools: toolRecords,
@@ -4636,6 +4637,7 @@ async function* runAlternateProviderTurn(
 
     // The final prose itself is the evidence for one explicit tail
     // summary/delivery step. Never use it to paper over earlier pending work.
+    let projectedFinalDeliveryDurablyClosed = false
     if (finalText.trim() && workStepsTrackerId) {
       try {
         await ensureTrackerPlanSteps()
@@ -4657,10 +4659,56 @@ async function* runAlternateProviderTurn(
             ) {
               const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
               await resolveCheckpointByTaskRef(planCompletion.planId)
+              projectedFinalDeliveryDurablyClosed = true
             }
           }
         }
       } catch { /* final reply remains authoritative even if tracker persistence fails */ }
+    }
+
+    // The completion gate used an in-memory projection so it could judge the
+    // final prose, but that projection is not execution truth. If either the
+    // row close or checkpoint resolution failed, restore continuation and its
+    // server-side wake after the message is safe. The `done` event then agrees
+    // with the durable plan instead of silently abandoning the last row.
+    if (projectedDeliveryNeedsContinuation(
+      projectedFinalDeliveryStepId,
+      projectedFinalDeliveryDurablyClosed,
+    )) {
+      taskUnfinished = true
+      let recoveryWake: { scheduled: boolean; hops: number; reason?: string }
+      try {
+        const { scheduleSelfContinue } = await import('@/agent/lib/self-continue')
+        recoveryWake = await scheduleSelfContinue({
+          conversationId,
+          summary:
+            `মূল কাজ: ${(lastUserText || '').slice(0, 300)}\n`
+            + 'Final delivery evidence did not close durably; reload the plan and finish the remaining row.',
+        })
+      } catch {
+        recoveryWake = { scheduled: false, hops: 0, reason: 'projected_delivery_recovery_failed' }
+      }
+      selfContinueWake = recoveryWake
+      if (planCompletion) {
+        try {
+          const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+          await writeCheckpoint({
+            taskRef: planCompletion.planId,
+            taskType: 'plan',
+            state: recoveryWake.scheduled ? 'continuing' : 'failed',
+            goal: planCompletion.goal,
+            summaryBn: 'শেষ delivery ধাপের durable settlement অসম্পূর্ণ; plan row আবার যাচাই করতে হবে।',
+            doneSteps: planCompletion.rows.filter((row) => row.status === 'done').map((row) => row.action).slice(-10),
+            currentStep: planCompletion.rows.find((row) => row.status !== 'done')?.action ?? 'final delivery settlement',
+            artifacts: [],
+            error: recoveryWake.scheduled ? undefined : recoveryWake.reason,
+            nextActions: ['Durable plan rows reload করে final delivery settlement সম্পন্ন করো'],
+            resumeHint: 'আগের কাজ পুনরায় কোরো না; শুধু অসম্পূর্ণ final delivery row/checkpoint settlement শেষ করো।',
+            conversationId,
+            businessId,
+          })
+        } catch { /* done.needContinue still keeps client recovery truthful */ }
+      }
     }
 
     // Runtime tracker: emit the bound settled snapshot. One revision above the

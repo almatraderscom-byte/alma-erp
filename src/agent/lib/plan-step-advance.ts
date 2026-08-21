@@ -171,6 +171,14 @@ export function continuationAfterPlanRowsSettlement(
   return needContinue && !completed
 }
 
+/** A projected final row cannot suppress recovery until its whole close commits. */
+export function projectedDeliveryNeedsContinuation(
+  projectedStepId: string | null,
+  durablyClosed: boolean,
+): boolean {
+  return Boolean(projectedStepId) && !durablyClosed
+}
+
 /**
  * Claim the step this tool is about to run and put it in `running`, so the chip
  * shows the part being worked on while it is being worked on. Called BEFORE the

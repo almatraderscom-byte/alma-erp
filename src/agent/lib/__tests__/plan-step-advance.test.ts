@@ -8,6 +8,7 @@ import {
   ownerBlockerFromToolResult,
   pendingActionTrackerState,
   prioritizePlanCreationForUntrackedRound,
+  projectedDeliveryNeedsContinuation,
   projectFinalDeliveryForCompletion,
   type AdvanceableStep,
 } from '@/agent/lib/plan-step-advance'
@@ -80,6 +81,12 @@ describe('continuationAfterTrackerSettlement', () => {
       step('summary', 'running'),
     ])).toBe(true)
     expect(continuationAfterPlanRowsSettlement(true, [])).toBe(true)
+  })
+
+  it('restores continuation when a projected delivery close is not durable', () => {
+    expect(projectedDeliveryNeedsContinuation('summary', false)).toBe(true)
+    expect(projectedDeliveryNeedsContinuation('summary', true)).toBe(false)
+    expect(projectedDeliveryNeedsContinuation(null, false)).toBe(false)
   })
 })
 
