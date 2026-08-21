@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => ({
   workflowBlocksApproval: vi.fn(),
   pushPulse: vi.fn(),
   recordApproval: vi.fn(),
+  settlePlanStepsLinkedToPendingAction: vi.fn(),
+  reconcilePlanTrackersForPendingAction: vi.fn(),
 }))
 
 vi.mock('next-auth/jwt', () => ({ getToken: vi.fn() }))
@@ -70,6 +72,10 @@ vi.mock('@/agent/lib/workflow-run', () => ({
 vi.mock('@/agent/lib/pulse-live-update', () => ({ pushCurrentPulseLiveActivity: mocks.pushPulse }))
 vi.mock('@/agent/lib/trust-engine', () => ({ recordApproval: mocks.recordApproval }))
 vi.mock('@/agent/lib/pending-action', () => ({ isPendingActionExpired: () => false }))
+vi.mock('@/agent/lib/planner', () => ({
+  settlePlanStepsLinkedToPendingAction: mocks.settlePlanStepsLinkedToPendingAction,
+  reconcilePlanTrackersForPendingAction: mocks.reconcilePlanTrackersForPendingAction,
+}))
 vi.mock('@/lib/creative-studio/taste', () => ({ readKv: mocks.readKv }))
 vi.mock('@/lib/creative-studio/preview-worker-scope', () => ({
   creativeStudioImageQueueStatus: () => 'approved',
@@ -209,6 +215,8 @@ beforeEach(() => {
   mocks.syncWorkflow.mockResolvedValue(undefined)
   mocks.pushPulse.mockResolvedValue(undefined)
   mocks.recordApproval.mockResolvedValue(undefined)
+  mocks.settlePlanStepsLinkedToPendingAction.mockResolvedValue(null)
+  mocks.reconcilePlanTrackersForPendingAction.mockResolvedValue(undefined)
   mocks.readKv.mockImplementation(async (key: string) => {
     if (key === 'cs_image_models') {
       return JSON.stringify({ standard: 'gemini-3.1-flash-image', pro: 'gemini-3-pro-image' })
@@ -224,6 +232,37 @@ afterEach(() => {
 })
 
 describe('image approval request claim', () => {
+  it('repairs a terminal approval before returning already resolved', async () => {
+    mocks.action!.status = 'executed'
+
+    const response = await approveImage(request(), { params: Promise.resolve({ id: 'image-action' }) })
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'already_resolved', status: 'executed',
+    })
+    expect(mocks.settlePlanStepsLinkedToPendingAction).toHaveBeenCalledWith('image-action')
+    expect(mocks.reconcilePlanTrackersForPendingAction).toHaveBeenCalledWith('image-action')
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+  })
+
+  it('does not fail the plan for a rejected delegation whose head fallback is still leased', async () => {
+    Object.assign(mocks.action as unknown as Record<string, unknown>, {
+      type: 'delegation',
+      status: 'rejected',
+      result: {
+        delegationFallbackClaimId: 'fallback-claim',
+        delegationFallbackClaimedAt: new Date().toISOString(),
+      },
+    })
+
+    const response = await approveImage(request(), { params: Promise.resolve({ id: 'image-action' }) })
+
+    expect(response.status).toBe(409)
+    expect(mocks.settlePlanStepsLinkedToPendingAction).not.toHaveBeenCalled()
+    expect(mocks.reconcilePlanTrackersForPendingAction).not.toHaveBeenCalled()
+  })
+
   it('releases the exact claim when model preflight throws so the owner can retry', async () => {
     mocks.readKv.mockRejectedValueOnce(new Error('KV unavailable'))
 

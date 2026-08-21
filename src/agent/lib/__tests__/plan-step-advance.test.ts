@@ -313,7 +313,9 @@ describe('native Anthropic loop tracker parity', () => {
       /data: \{ status: 'expired',[\s\S]{0,400}settlePlanStepsLinkedToPendingAction\(actionId\)/,
     )
     expect(sweepSource).toMatch(
-      /status: 'expired'[\s\S]{0,800}settlePlanStepsLinkedToPendingAction\(actionId\)/,
+      /status: 'expired'[\s\S]{0,1200}settleTerminalFailedPlanStepsInTransaction\(tx/,
     )
+    expect(sweepSource).toContain("const EXPIRED_TRACKER_RECONCILE_PENDING = '_agentPlanTrackerReconcilePending'")
+    expect(sweepSource).toContain('...deferredExpiredRows.map((row) => row.id)')
   })
 })

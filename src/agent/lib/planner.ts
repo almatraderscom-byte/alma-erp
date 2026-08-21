@@ -543,9 +543,15 @@ export async function markUnlinkedPlanStepRetryable(
  * Throwing on a live-row CAS conflict rolls the action claim back too, so a
  * rejected card can never become durable while its tracker row stays open.
  */
-export async function settleRejectedPlanStepsInTransaction(
+export async function settleTerminalFailedPlanStepsInTransaction(
   tx: typeof db,
-  action: { id: string; type: string; payload: unknown; result?: unknown },
+  action: {
+    id: string
+    type: string
+    status: 'rejected' | 'expired' | 'cancelled' | 'superseded' | 'failed'
+    payload: unknown
+    result?: unknown
+  },
 ): Promise<void> {
   const stepIds = linkedPlanStepIdsFromPendingActionPayload(action.payload)
   if (stepIds.length === 0) return
@@ -578,12 +584,12 @@ export async function settleRejectedPlanStepsInTransaction(
         result: {
           pendingActionId: action.id,
           actionType: action.type,
-          actionStatus: 'rejected',
+          actionStatus: action.status,
           output: action.result ?? null,
           [PENDING_ACTION_PLAN_STEP_RESULT_KEY]: action.id,
           [PENDING_ACTION_PLAN_STEP_ATTEMPT_RESULT_KEY]: owner.attemptCount,
         },
-        error: `Background action ${action.type} rejected`,
+        error: `Background action ${action.type} ${action.status}`,
         doneAt: new Date(),
         attemptCount: step.maxAttempts ?? 3,
         nextAttemptAt: null,
@@ -593,6 +599,17 @@ export async function settleRejectedPlanStepsInTransaction(
     })
     if (settled.count !== 1) throw new Error('rejected_plan_step_settlement_conflict')
   }
+}
+
+/** Backward-compatible rejection wrapper used by the owner reject route. */
+export async function settleRejectedPlanStepsInTransaction(
+  tx: typeof db,
+  action: { id: string; type: string; payload: unknown; result?: unknown },
+): Promise<void> {
+  return settleTerminalFailedPlanStepsInTransaction(tx, {
+    ...action,
+    status: 'rejected',
+  })
 }
 
 /**

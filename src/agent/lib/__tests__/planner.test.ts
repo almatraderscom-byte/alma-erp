@@ -247,6 +247,27 @@ describe('planner', () => {
     }))
   })
 
+  it('atomically settles an expired action row in the same terminal transaction', async () => {
+    const { settleTerminalFailedPlanStepsInTransaction } = await import('@/agent/lib/planner')
+    mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
+      id: 'step-expired', status: 'running', attemptCount: 0, maxAttempts: 3,
+      result: { _agentPendingActionId: 'action-expired', _agentPendingActionAttempt: 0 },
+    }])
+    mockPrisma.agentPlanStep.updateMany.mockResolvedValueOnce({ count: 1 })
+
+    await settleTerminalFailedPlanStepsInTransaction(mockPrisma, {
+      id: 'action-expired', type: 'publish', status: 'expired',
+      payload: { _agentPlanStepId: 'step-expired' }, result: null,
+    })
+
+    expect(mockPrisma.agentPlanStep.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'failed', error: 'Background action publish expired',
+        result: expect.objectContaining({ actionStatus: 'expired' }),
+      }),
+    }))
+  })
+
   it('completes a rejected delegation row only with its durable head-answer message', async () => {
     const { completeRejectedDelegationPlanStepsInTransaction } = await import('@/agent/lib/planner')
     mockPrisma.agentPlanStep.findMany.mockResolvedValueOnce([{
