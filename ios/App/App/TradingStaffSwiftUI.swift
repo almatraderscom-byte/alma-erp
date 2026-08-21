@@ -542,7 +542,7 @@ struct TradingStaffScreen: View {
         Button {
             openWeb("/agent/trading-staff", "Trading staff")
         } label: {
-            Label("সব অপশন (এডিট / লিঙ্ক সহ) — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -721,7 +721,7 @@ private struct TradingStaffDetailSheet: View {
             dismiss()
             openWeb("/agent/trading-staff", "Trading staff")
         } label: {
-            Label("এডিট / Activate-Deactivate — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }

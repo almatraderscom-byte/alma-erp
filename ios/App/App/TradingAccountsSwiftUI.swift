@@ -817,7 +817,7 @@ struct TradingAccountsScreen: View {
         VStack(spacing: 6) {
             Image(systemName: "creditcard").font(.largeTitle).foregroundStyle(.secondary)
             Text("কোনো ট্রেডিং অ্যাকাউন্ট নেই").foregroundStyle(.secondary)
-            Text("অ্যাকাউন্ট তৈরি / এডিট ওয়েবে হয়").font(.caption).foregroundStyle(.secondary)
+            Text("উপরের বাটন দিয়ে নতুন অ্যাকাউন্ট তৈরি করুন").font(.caption).foregroundStyle(.secondary)
         }
         .padding(.top, 60)
         .padding(.bottom, 30)
@@ -827,7 +827,7 @@ struct TradingAccountsScreen: View {
         Button {
             openWeb("/trading/accounts", "Trading accounts")
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
@@ -1365,7 +1365,7 @@ private struct TradingAccountsDetailSheet: View {
                                        : TradingAccountsPalette.signed(1, colorScheme))
             }
             statRow("Last settled", TradingAccountsFormat.day(account.lastPartnershipSettledAt))
-            Text("সেটেলমেন্ট ওয়েবে হয়").font(.caption2).foregroundStyle(.secondary)
+            Text("সেটেলমেন্ট নিচের Settle ট্যাবে").font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -1531,7 +1531,7 @@ private struct TradingAccountsDetailSheet: View {
             dismiss()
             openWeb("/trading/accounts/\(row.id)", row.accountTitle)
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("এই পেজটা ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
