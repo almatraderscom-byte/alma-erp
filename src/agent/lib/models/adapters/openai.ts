@@ -97,13 +97,19 @@ export function exactoSlug(apiModel: string, hasTools: boolean): string {
 export function toRawOpenAiCompatParams(
   genParams: Record<string, number>,
   hasTools: boolean,
+  effort?: string | null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...genParams }
   if (out.max_tokens !== undefined) {
     out.max_completion_tokens = out.max_tokens
     delete out.max_tokens
   }
+  // Tools + reasoning cannot coexist on this endpoint, so a tool-bearing request
+  // is still de-reasoned. A TOOL-FREE one can carry the owner's level, which is
+  // the difference between the picker working and silently doing nothing when the
+  // Responses API is off or rejected the request (Codex P2).
   if (hasTools) out.reasoning_effort = 'none'
+  else if (effort) out.reasoning_effort = effort
   return out
 }
 
@@ -672,7 +678,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // Raw-OpenAI dialect: max_tokens → max_completion_tokens + explicit
     // reasoning_effort 'none' on tool-bearing requests (see toRawOpenAiCompatParams).
     const genParams = this.rawOpenAi
-      ? toRawOpenAiCompatParams(rawGenParams, args.tools.length > 0)
+      ? toRawOpenAiCompatParams(rawGenParams, args.tools.length > 0, ownerEffort)
       : rawGenParams
     const baseParams = {
       model: modelSlug,

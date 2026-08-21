@@ -172,7 +172,7 @@ import {
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId, resolveHeadCostTier, modelDisplayName } from '@/agent/lib/models/registry'
-import { clampEffort } from '@/agent/lib/models/effort'
+import { clampEffort, parseEffortSetting } from '@/agent/lib/models/effort'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { rememberHeadPin } from '@/agent/lib/models/head-pin'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
@@ -5684,22 +5684,36 @@ export async function* runOwnerTurn(
   // Boss had already granted arrived with `elevationGrant: null` and was staged
   // or blocked anyway (review bot, #667). The row is the source of truth, so
   // read it here when the caller did not supply it.
-  if (options.elevationGrant === undefined || options.permissionMode === undefined) {
+  //
+  // The owner's THINKING LEVEL rides the same read for the same reason (Codex
+  // P2): those entry points called runOwnerTurn without it, so an approval
+  // continuation or plan-driver turn ran at the provider default while the
+  // picker said Max. One row, one query — the chat route supplies all three, so
+  // it never pays for this read at all.
+  if (
+    options.elevationGrant === undefined
+    || options.permissionMode === undefined
+    || options.effortLevel === undefined
+  ) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const conv = await (prisma as any).agentConversation.findUnique({
         where: { id: conversationId },
-        select: { permissionMode: true, elevationGrant: true },
+        select: { permissionMode: true, elevationGrant: true, effortLevel: true },
       })
       const { parseElevationGrant } = await import('@/agent/lib/permission-mode')
       options = {
         ...options,
         permissionMode: options.permissionMode ?? conv?.permissionMode ?? undefined,
         elevationGrant: options.elevationGrant ?? parseElevationGrant(conv?.elevationGrant),
+        effortLevel: options.effortLevel === undefined
+          ? (parseEffortSetting(conv?.effortLevel) ?? null)
+          : options.effortLevel,
       }
     } catch (err) {
-      // A read failure must not widen anything: no grant is the safe answer, and
-      // the mode falls back to the caller's default exactly as before.
+      // A read failure must not widen anything: no grant is the safe answer, the
+      // mode falls back to the caller's default, and the level falls back to Auto
+      // — exactly as before.
       console.warn('[run-owner-turn] permission row read failed:', err instanceof Error ? err.message : err)
     }
   }

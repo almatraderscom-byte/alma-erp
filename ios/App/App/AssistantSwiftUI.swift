@@ -3587,6 +3587,11 @@ final class AssistantVM {
         var message: String? = nil
         var files: [AgentFileRef]? = nil
         var modelId: String? = nil
+        /// The thinking level the send carried. Persisted for the same reason the
+        /// model is: if the app dies during the FIRST send of a new chat, the
+        /// replay must recreate the conversation with the depth Boss picked, not
+        /// the provider default (Codex P2).
+        var effortLevel: String? = nil
         var projectId: String? = nil
         var askCardId: String? = nil
         /// Local attachment transaction identities bound to this exact request.
@@ -4234,11 +4239,22 @@ final class AssistantVM {
         return AgentEffortLevel.allCases.filter { offered.contains($0.rawValue) }
     }
 
-    /// The level actually in force — an owner pick the current model cannot do is
-    /// not shown as selected here (the server clamps it down at turn time).
+    /// The level actually in force. Mirrors the server's clamp: a stored pick the
+    /// current model cannot do steps DOWN to its ceiling rather than reading as
+    /// "Auto" — a chat whose row says Max must not display Auto (Codex P2).
     var effectiveEffortLevel: AgentEffortLevel? {
-        guard let effortLevel, availableEffortLevels.contains(effortLevel) else { return nil }
-        return effortLevel
+        guard let effortLevel else { return nil }
+        let levels = availableEffortLevels
+        guard !levels.isEmpty else { return nil }
+        if levels.contains(effortLevel) { return effortLevel }
+        let below = levels.filter { AgentEffortLevel.allCases.firstIndex(of: $0)! <= AgentEffortLevel.allCases.firstIndex(of: effortLevel)! }
+        return below.last ?? levels.first
+    }
+
+    /// True when the stored pick is deeper than this model can go — the sheet says so.
+    var effortClampedDown: Bool {
+        guard let effortLevel, let effective = effectiveEffortLevel else { return false }
+        return effective != effortLevel
     }
     /// What the pill shows: Auto, or the pinned model's label.
     var modelPillLabel: String {
@@ -4578,6 +4594,7 @@ final class AssistantVM {
             selectedSessionIdentity = identity
             currentProjectId = rt.projectId
             modelId = rt.modelId == "auto" ? nil : rt.modelId
+            effortLevel = rt.effortLevel.flatMap { $0 == "auto" ? nil : AgentEffortLevel(rawValue: $0) }
             conversationTitle = "ALMA AI"
             localIdByServerId = [:]
             lastSyncStamp = nil
@@ -4645,7 +4662,10 @@ final class AssistantVM {
         let body = ChatBody(
             conversationId: rt.conversationId, message: text, files: files,
             modelId: rt.modelId ?? "auto", projectId: rt.projectId,
-            clientMessageId: rt.clientMessageId, askCardId: rt.askCardId)
+            clientMessageId: rt.clientMessageId, askCardId: rt.askCardId,
+            // Only a chat that still has no row reads this; an existing one is
+            // governed by its stored level, exactly like the model.
+            effortLevel: rt.conversationId == nil ? (rt.effortLevel ?? "auto") : nil)
         startDirectTurn(body)
     }
 
@@ -7634,6 +7654,7 @@ final class AssistantVM {
                 conversationId: conversationId, turnId: nil,
                 clientMessageId: clientMessageId, lastSeq: -1, startedAt: Date(),
                 message: text, files: files, modelId: modelId ?? "auto",
+                effortLevel: effortLevel?.rawValue ?? "auto",
                 projectId: currentProjectId, askCardId: askCardId,
                 attachmentIds: attachmentIds,
                 sessionIdentity: selectedSessionIdentity)
@@ -20173,9 +20194,11 @@ struct AgentModelPickerSheet: View {
                     } header: {
                         Text("Thinking level")
                     } footer: {
-                        Text(vm.isAutoModel
-                             ? "যত উপরের level, তত বেশি ভাবে — খরচ আর সময়ও বাড়ে। Auto model-এ যে head চলবে তার এই level না থাকলে তার সর্বোচ্চতে নেমে চলবে (যেমন Gemini-তে High)। Auto = মডেলের নিজের default।"
-                             : "যত উপরের level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ আর সময়ও বাড়ে। Auto = মডেলের নিজের default।")
+                        Text(vm.effortClampedDown
+                             ? "সেভ করা level এই model পারে না — তাই তার সর্বোচ্চটাই চলবে।"
+                             : vm.isAutoModel
+                               ? "যত উপরের level, তত বেশি ভাবে — খরচ আর সময়ও বাড়ে। Auto model-এ যে head চলবে তার এই level না থাকলে তার সর্বোচ্চতে নেমে চলবে (যেমন Gemini-তে High)। Auto = মডেলের নিজের default।"
+                               : "যত উপরের level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ আর সময়ও বাড়ে। Auto = মডেলের নিজের default।")
                     }
                 }
             }
@@ -24774,7 +24797,9 @@ struct AssistantScreen: View {
                 selectedEffort: vm.effectiveEffortLevel,
                 onSelect: { vm.selectModel($0) },
                 onSelectEffort: { vm.selectEffort($0) })
-            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !vm.isStreaming)
+            barHooks.updateModelLabel(vm.modelPillLabel,
+                                      effort: vm.effectiveEffortLevel?.pillTitle,
+                                      enabled: !vm.isStreaming)
             barHooks.updateUnreadBadge(vm.unreadConversationCount)
             Task { await vm.refreshUnreadCount() }
             barHooks.isPinned = { vm.currentConversationPinned }
@@ -25214,8 +25239,10 @@ struct AssistantScreen: View {
         .onChange(of: hasBlockingPresentation) { _, shown in
             FloatingChatHead.shared.setSuppressed(shown, reason: "assistant-presentation")
         }
-        .onChange(of: vm.modelPillLabelWithEffort) { _, label in
-            barHooks.updateModelLabel(label, enabled: !vm.isStreaming)
+        .onChange(of: vm.modelPillLabelWithEffort) { _, _ in
+            barHooks.updateModelLabel(vm.modelPillLabel,
+                                      effort: vm.effectiveEffortLevel?.pillTitle,
+                                      enabled: !vm.isStreaming)
         }
         .onChange(of: vm.unreadConversationCount) { _, count in
             barHooks.updateUnreadBadge(count)
@@ -25246,10 +25273,14 @@ struct AssistantScreen: View {
                 selectedEffort: level,
                 onSelect: { vm.selectModel($0) },
                 onSelectEffort: { vm.selectEffort($0) })
-            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !vm.isStreaming)
+            barHooks.updateModelLabel(vm.modelPillLabel,
+                                      effort: level?.pillTitle,
+                                      enabled: !vm.isStreaming)
         }
         .onChange(of: vm.isStreaming) { _, streaming in
-            barHooks.updateModelLabel(vm.modelPillLabelWithEffort, enabled: !streaming)
+            barHooks.updateModelLabel(vm.modelPillLabel,
+                                      effort: vm.effectiveEffortLevel?.pillTitle,
+                                      enabled: !streaming)
         }
         .onAppear {
             // The Assistant already has its own conversation controls; the
@@ -25390,6 +25421,10 @@ final class AssistantModelPillButton: UIButton {
         return UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     }()
     private let modelText = UILabel()
+    /// The thinking level, as its OWN label. Kept separate so the pill truncates
+    /// the model NAME and never the depth: a level Boss is paying for must stay
+    /// readable in the bar, and "Gemini 3.1 Pro · High" does not fit a 108pt pill.
+    private let effortText = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -25404,19 +25439,35 @@ final class AssistantModelPillButton: UIButton {
         modelText.font = .systemFont(ofSize: 12.5, weight: .semibold)
         modelText.textColor = .secondaryLabel
         modelText.lineBreakMode = .byTruncatingTail
+        modelText.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        effortText.translatesAutoresizingMaskIntoConstraints = false
+        effortText.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        effortText.textColor = .secondaryLabel
+        effortText.setContentCompressionResistancePriority(.required, for: .horizontal)
+        effortText.setContentHuggingPriority(.required, for: .horizontal)
+        effortText.isHidden = true
         let chevron = UIImageView(image: UIImage(systemName: "chevron.down",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 8.5, weight: .bold)))
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.tintColor = .tertiaryLabel
-        let stack = UIStackView(arrangedSubviews: [modelText, chevron])
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let stack = UIStackView(arrangedSubviews: [modelText, effortText, chevron])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
         stack.alignment = .center
         stack.spacing = 5
         blur.contentView.addSubview(stack)
 
+        // 108 is the RESTING width (no level). It must yield to the content when a
+        // level is shown, so the priority sits below the labels' compression
+        // resistance — at .defaultHigh it won every time and crushed the model
+        // name to "G…" instead of growing the pill (caught in the simulator).
+        let flexibleWidth = widthAnchor.constraint(equalToConstant: 108)
+        flexibleWidth.priority = UILayoutPriority(200)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 108),
+            flexibleWidth,
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 108),
+            widthAnchor.constraint(lessThanOrEqualToConstant: 158),
             heightAnchor.constraint(equalToConstant: 36),
             blur.leadingAnchor.constraint(equalTo: leadingAnchor),
             blur.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -25438,11 +25489,13 @@ final class AssistantModelPillButton: UIButton {
 
     required init?(coder: NSCoder) { nil }
 
-    func update(label: String, enabled: Bool) {
+    func update(label: String, effort: String? = nil, enabled: Bool) {
         modelText.text = label
+        effortText.text = effort.map { " · " + $0 }
+        effortText.isHidden = effort == nil
         isEnabled = enabled
         alpha = enabled ? 1 : 0.48
-        accessibilityValue = label
+        accessibilityValue = effort.map { "\(label) · \($0)" } ?? label
     }
 
     override var isHighlighted: Bool {
@@ -25523,8 +25576,8 @@ final class AssistantBarHooks: NSObject {
         AlmaAgentHaptics.light()
         onNewChat?()
     }
-    func updateModelLabel(_ label: String, enabled: Bool) {
-        modelButton?.update(label: label, enabled: enabled)
+    func updateModelLabel(_ label: String, effort: String? = nil, enabled: Bool) {
+        modelButton?.update(label: label, effort: effort, enabled: enabled)
     }
 
     /// Unread-chat count on the history (hamburger) disc. 0 hides it entirely —

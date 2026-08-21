@@ -158,15 +158,16 @@ export class GoogleAdapter implements ProviderAdapter {
     // Only Gemini's own dialect belongs in generationConfig; a level resolved for
     // another provider (Auto head that changed mid-job) is ignored, never guessed at.
     const effortLevel = args.effortDialect === 'gemini_thinking_level' ? args.effort ?? null : null
-    const open = (withThoughts: boolean) => {
+    const open = (withThoughts: boolean, keepEffort = true) => {
       const genModel = this.client.getGenerativeModel({
         model: args.apiModel,
         systemInstruction: args.system,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // Attempt 2 (withThoughts=false) is the REDUCED request: it drops the
-        // thinking level with the thought stream, so one rejected thinkingConfig
-        // key cannot keep failing the retry that exists to rescue the turn.
-        generationConfig: buildGeminiGenerationConfig(withThoughts, gen, withThoughts ? effortLevel : null) as any,
+        // The retry drops `includeThoughts`, NOT the owner's depth: those are two
+        // different keys, and a model that rejects thought STREAMING may still
+        // honour `thinkingLevel` (Codex P2). Only the final bare attempt below
+        // drops the level too, so one unknown key can still never strand a turn.
+        generationConfig: buildGeminiGenerationConfig(withThoughts, gen, keepEffort ? effortLevel : null) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -189,15 +190,21 @@ export class GoogleAdapter implements ProviderAdapter {
     // fallback answers instead of persisting an empty message.
     let result: Awaited<ReturnType<typeof open>> | null = null
     let emittedAny = false
-    const attempts = wantThoughts ? [true, false] : [false]
+    // Ladder: full request → thoughts off (depth KEPT) → bare. The middle rung
+    // exists because `includeThoughts` and `thinkingLevel` are separate keys; only
+    // the last rung gives up the owner's depth.
+    const attempts: Array<{ withThoughts: boolean; keepEffort: boolean }> = wantThoughts
+      ? [{ withThoughts: true, keepEffort: true }, { withThoughts: false, keepEffort: true }]
+      : [{ withThoughts: false, keepEffort: true }]
+    if (effortLevel) attempts.push({ withThoughts: false, keepEffort: false })
     for (let attempt = 0; attempt < attempts.length; attempt++) {
-      const withThoughts = attempts[attempt]
+      const { withThoughts, keepEffort } = attempts[attempt]
       const lastAttempt = attempt === attempts.length - 1
       try {
-        result = await open(withThoughts)
+        result = await open(withThoughts, keepEffort)
       } catch (err) {
         if (lastAttempt) throw err
-        console.warn('[google] includeThoughts rejected at open → retrying without it:', err instanceof Error ? err.message : err)
+        console.warn('[google] request rejected at open → retrying reduced:', err instanceof Error ? err.message : err)
         continue
       }
       try {

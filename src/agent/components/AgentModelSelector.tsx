@@ -45,6 +45,21 @@ const EFFORT_EN: Record<EffortLevel, string> = {
  * spells out that a head without that level runs its own ceiling instead, which
  * is exactly what the server's clamp does (down, never up).
  */
+/**
+ * Mirror of the server's `clampEffort`: a stored level the current model cannot do
+ * steps DOWN to its ceiling — it does NOT fall back to Auto. Showing "Auto" for a
+ * chat whose row says Max would be the picker lying about what the next turn runs
+ * (Codex P2); showing the clamped level says exactly what will happen.
+ */
+function clampToLevels(stored: string, levels: EffortLevel[]): EffortLevel | null {
+  if (levels.length === 0) return null
+  const wanted = EFFORT_ORDER.indexOf(stored as EffortLevel)
+  if (wanted < 0) return null
+  if (levels.includes(stored as EffortLevel)) return stored as EffortLevel
+  const below = levels.filter((l) => EFFORT_ORDER.indexOf(l) <= wanted)
+  return below.length > 0 ? below[below.length - 1] : levels[0]
+}
+
 function levelsFor(models: ModelOption[], modelId: string): EffortLevel[] {
   if (modelId !== AUTO_MODEL_ID) {
     return models.find((m) => m.id === modelId)?.effortLevels ?? []
@@ -107,7 +122,9 @@ export default function AgentModelSelector({
   const isAuto = modelId === AUTO_MODEL_ID
   const active = models.find((m) => m.id === modelId)
   const levels = levelsFor(models, modelId)
-  const activeEffort = levels.includes(effortLevel as EffortLevel) ? (effortLevel as EffortLevel) : null
+  const activeEffort = clampToLevels(effortLevel, levels)
+  /** True when the stored pick is deeper than this model can go (shown as a note). */
+  const effortClamped = activeEffort !== null && activeEffort !== effortLevel
   const label = isAuto ? 'Auto' : (active?.label ?? 'Claude Sonnet 4.6')
   // The pill carries the level too, so the depth is visible without opening the
   // menu — a setting that costs money must not be invisible while it is on.
@@ -262,7 +279,9 @@ export default function AgentModelSelector({
               <div className="px-3 pb-2.5 text-[10px] leading-relaxed text-muted">
                 {!activeEffort
                   ? `Auto = মডেলের নিজের default${active?.effortDefault ? ` (${EFFORT_EN[active.effortDefault]})` : ''}`
-                  : isAuto
+                  : effortClamped
+                    ? `${EFFORT_EN[effortLevel as EffortLevel]} সেভ করা আছে — এই model সর্বোচ্চ ${EFFORT_EN[activeEffort]} পারে, তাই ওটাই চলবে।`
+                    : isAuto
                     ? 'যত বেশি level, তত বেশি ভাবে (খরচ ও সময় বাড়ে)। যে model-এ এই level নেই, সেখানে তার সর্বোচ্চতে নেমে চলবে — যেমন Gemini-তে High।'
                     : 'যত বেশি level, তত বেশি ভাবে — উত্তর ভালো হয়, খরচ ও সময় বাড়ে।'}
               </div>

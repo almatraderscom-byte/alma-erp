@@ -109,6 +109,16 @@ describe('Anthropic wire', () => {
     expect(anthropicCapture.params?.thinking).toEqual({ type: 'adaptive' })
   })
 
+  it('Auto on the BUDGET dialect keeps the old request (no budget substituted)', async () => {
+    const { AnthropicAdapter } = await import('@/agent/lib/models/adapters/anthropic')
+    await drain(new AnthropicAdapter().streamTurn({
+      ...BASE, apiModel: 'claude-haiku-4-5-20251001', thinking: 'adaptive',
+      effort: null, effortDialect: 'anthropic_budget',
+    }))
+    expect(anthropicCapture.params?.thinking).toEqual({ type: 'adaptive' })
+    expect(anthropicCapture.params).not.toHaveProperty('output_config')
+  })
+
   it('a pre-4.6 head (Haiku 4.5) gets a thinking BUDGET, never output_config', async () => {
     const { AnthropicAdapter } = await import('@/agent/lib/models/adapters/anthropic')
     await drain(new AnthropicAdapter().streamTurn({

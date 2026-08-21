@@ -186,10 +186,14 @@ export class AnthropicAdapter implements ProviderAdapter {
     const effortParam = !budgetDialect && args.effort
       ? { output_config: { effort: args.effort } }
       : {}
-    const thinkingBlock = budgetDialect
+    // Auto (no level) must leave the request EXACTLY as it was — including on the
+    // budget dialect. Substituting a 'medium' budget there would quietly change
+    // how an untouched Haiku chat thinks, which is the one thing Auto promises not
+    // to do (Codex P2). The explicit budget is sent only for an explicit pick.
+    const thinkingBlock = budgetDialect && args.effort
       ? {
           type: 'enabled' as const,
-          budget_tokens: anthropicThinkingBudget(args.effort ?? 'medium', maxTokens),
+          budget_tokens: anthropicThinkingBudget(args.effort, maxTokens),
         }
       : { type: 'adaptive' as const }
     const buildParams = (withThinking: boolean): Anthropic.Messages.MessageCreateParamsStreaming => ({
