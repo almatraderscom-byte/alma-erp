@@ -1172,8 +1172,11 @@ final class CreativeStudioVM {
     /// Owner voices for the Gallery "Voice" lane (scope-filtered registry).
     func loadVoices() async {
         guard let project = activeProject, let brandID = project.brandProfileId else { voices = []; return }
+        let requestedProjectID = project.id
         if let r: CSVoicesLiteResponse = try? await AlmaAPI.shared.get(
             "/api/assistant/creative-studio/voices", query: ["brandProfileId": brandID, "projectId": project.id]) {
+            // A project switch mid-flight must not leave project A's voices under project B's scope.
+            guard activeProject?.id == requestedProjectID else { return }
             voices = r.voices
         }
     }
@@ -1195,6 +1198,7 @@ final class CreativeStudioVM {
     func activateProject(_ project: CSProjectSummary) async {
         activeProject = project
         verifiedVideoOwnerScope = nil
+        voices = []   // scope-bound lane; the Voice filter reloads it for the new project
 
         // The scoped V4 project list is intentionally available to creators and
         // reviewers. Re-prove owner role through the existing owner-only route;
@@ -1921,16 +1925,22 @@ final class CreativeStudioVM {
         if let b2 { brandStatus = b2 }
     }
 
-    func saveSettings(qcLevel: String? = nil, notifyOnDone: Bool? = nil, imageEngine: String? = nil) async {
+    func saveSettings(qcLevel: String? = nil, notifyOnDone: Bool? = nil, imageEngine: String? = nil,
+                      singleVtonDefault: String? = nil) async {
         var body: [String: AnyEncodable] = [:]
         if let qcLevel { body["qcLevel"] = AnyEncodable(qcLevel) }
         if let notifyOnDone { body["notifyOnDone"] = AnyEncodable(notifyOnDone) }
         if let imageEngine { body["imageEngine"] = AnyEncodable(imageEngine) }
+        // Auto's try-on engine is the server-planned owner default (kv), never a client field.
+        if let singleVtonDefault { body["singleVtonDefault"] = AnyEncodable(singleVtonDefault) }
         do {
             let _: CSOK = try await AlmaAPI.shared.send("POST", "/api/assistant/creative-studio/settings", body: body)
             toast = "সেভ হয়েছে"
             if let st: CSStudioSettings = try? await AlmaAPI.shared.get("/api/assistant/creative-studio/settings") { settings = st }
-        } catch { toast = "হয়নি" }
+            if singleVtonDefault != nil,
+               let cfg: CSStudioConfig = try? await AlmaAPI.shared.get("/api/assistant/creative-studio/config") { config = cfg }
+        } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "হয়নি" }
+        catch { toast = "হয়নি" }
     }
 
     func deleteGarmentCache(_ key: String) async {
@@ -2628,35 +2638,47 @@ private struct CSCreateTab: View {
 
     /// Auto engine row: FASHN Pro (try-on) or the owner-selected guided render model.
     /// Picking a render model writes the cs_image_models kv (native = web = worker).
+    /// Auto's try-on stage runs the SERVER owner default (`singleVtonDefault` kv, pinned by the
+    /// planner) — the client cannot pick a per-run engine in Auto. Tapping a try-on chip therefore
+    /// persists that default; the selected chip always mirrors `config.singleVtonDefault`.
+    /// Guided chips write the `imageEngine` kv used by the rescene/render stage.
     private var engineRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("ইঞ্জিন")
+        let serverDefault = vm.config?.singleVtonDefault ?? "fashn"
+        let vtonOptions: [(id: String, label: String)] = [
+            ("fashn", "FASHN Pro (মডেল-শট)"), ("fal_fashn_v16", "Fal FASHN v1.6"),
+            ("fal_idm_vton", "IDM-VTON"), ("xai_imagine", "Grok Imagine (xAI)"),
+        ].filter { vm.config?.isSelectable($0.id) == true || $0.id == serverDefault }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("TRY-ON ইঞ্জিন · owner default")
                 .font(.system(size: 11, weight: .bold)).tracking(0.6)
                 .foregroundStyle(AgentPalette(scheme).muted)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 6)], alignment: .leading, spacing: 6) {
-                CSChip(text: "FASHN Pro (মডেল-শট)", on: engineId == "fashn") {
-                    if vm.config?.isSelectable("fashn") == true { engineId = "fashn" }
-                    else { vm.flash("FASHN Pro এখন configure করা নেই") }
-                }
-                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: engineId == "gemini" && guidedIdx == 0) {
-                    engineId = "gemini"; guidedIdx = 0
-                    Task { await vm.saveSettings(imageEngine: "gemini") }
-                }
-                CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: engineId == "gemini" && guidedIdx == 1) {
-                    engineId = "gemini"; guidedIdx = 1
-                    Task { await vm.saveSettings(imageEngine: "gpt") }
-                }
-                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: engineId == "gemini" && guidedIdx == 2) {
-                    engineId = "gemini"; guidedIdx = 2
-                    Task { await vm.saveSettings(imageEngine: "seedream") }
-                }
-                if engineId != "fashn" && engineId != "gemini", let e = CS.engines.first(where: { $0.id == engineId }) {
-                    CSChip(text: "\(e.short) (Advanced)", on: true) { isAdvanced = true }
+                ForEach(vtonOptions, id: \.id) { option in
+                    CSChip(text: option.label, on: serverDefault == option.id) {
+                        guard serverDefault != option.id else { return }
+                        guard vm.config?.isSelectable(option.id) == true else { vm.flash("\(option.label) এখন configure করা নেই"); return }
+                        Task { await vm.saveSettings(singleVtonDefault: option.id) }
+                    }
                 }
             }
-            Text(engineId == "fashn"
-                 ? "Try-on/মডেল-শট FASHN-এ — best realism। ছবি/পোস্টার রেন্ডার পাশের মডেলগুলোতে।"
-                 : "পরের রেন্ডার থেকে কার্যকর · Advanced-এ আরও ইঞ্জিন (Fal · IDM-VTON · Grok) আছে")
+            Text("RENDER মডেল (rescene / পোস্টার)")
+                .font(.system(size: 11, weight: .bold)).tracking(0.6)
+                .foregroundStyle(AgentPalette(scheme).muted).padding(.top, 4)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 6)], alignment: .leading, spacing: 6) {
+                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: guidedIdx == 0) {
+                    guidedIdx = 0
+                    Task { await vm.saveSettings(imageEngine: "gemini") }
+                }
+                CSChip(text: "GPT Image 2 (প্রোডাক্ট/পোস্টার)", on: guidedIdx == 1) {
+                    guidedIdx = 1
+                    Task { await vm.saveSettings(imageEngine: "gpt") }
+                }
+                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: guidedIdx == 2) {
+                    guidedIdx = 2
+                    Task { await vm.saveSettings(imageEngine: "seedream") }
+                }
+            }
+            Text("Auto সবসময় server default দিয়ে plan করে — estimate-এ exact engine/model দেখাবে। Per-run engine বাছতে Advanced নিন।")
                 .font(.system(size: 10)).foregroundStyle(AgentPalette(scheme).muted)
         }
         .padding(.horizontal, 18).padding(.top, 12)
