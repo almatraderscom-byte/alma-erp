@@ -4221,6 +4221,8 @@ final class AssistantVM {
     var modelId: String?             // nil or "auto" = Auto (router picks per turn)
     /// Owner's thinking level for this chat. nil = Auto (send no effort knob).
     var effortLevel: AgentEffortLevel?
+    /// Monotonic ticket for level writes — only the latest may roll the UI back.
+    private var effortWriteGeneration: UInt64 = 0
     var models: [AgentModelInfo] = []
     var usageSnapshot: AgentUsageSnapshot?
     var usageLoading = false
@@ -4409,6 +4411,12 @@ final class AssistantVM {
         effortLevel = level
         AlmaAgentHaptics.selection()
         guard let cid = conversationId else { return }
+        // Two picks in quick succession used to race: an out-of-order response
+        // could leave the row on the older level, and a late failure could roll
+        // the UI back over the newer pick (Codex P2). Only the LATEST request may
+        // roll back — the server keeps whatever the last PATCH wrote.
+        effortWriteGeneration &+= 1
+        let generation = effortWriteGeneration
         Task { [weak self] in
             do {
                 let _: AgentConversation = try await AlmaAPI.shared.send(
@@ -4416,8 +4424,9 @@ final class AssistantVM {
                     body: ["effortLevel": level?.rawValue ?? "auto"])
             } catch {
                 await MainActor.run {
-                    self?.effortLevel = previous
-                    self?.errorToast = "Thinking level বদলানো গেল না"
+                    guard let self, self.effortWriteGeneration == generation else { return }
+                    self.effortLevel = previous
+                    self.errorToast = "Thinking level বদলানো গেল না"
                 }
             }
         }
@@ -8067,12 +8076,17 @@ final class AssistantVM {
             let files: [AgentFileRef]
             let clientMessageId: String?
             let askCardId: String?
+            /// The handoff CREATES the chat when there is none yet, so it has to
+            /// carry the thinking level too — otherwise a first message that trips
+            /// the 15s watchdog lands as Auto no matter what Boss picked (Codex P2).
+            let effortLevel: String?
         }
         let enq: TurnEnqueueResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/turn",
             body: TurnBody(conversationId: body.conversationId, message: body.message,
                            files: body.files, clientMessageId: body.clientMessageId,
-                           askCardId: body.askCardId))
+                           askCardId: body.askCardId,
+                           effortLevel: body.conversationId == nil ? body.effortLevel : nil))
         currentTurnId = enq.turnId
         if conversationId == nil, let enqueuedConversationId = enq.conversationId {
             adoptNewConversationId(enqueuedConversationId)

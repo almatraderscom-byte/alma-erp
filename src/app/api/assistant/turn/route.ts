@@ -1,4 +1,5 @@
 import { type NextRequest } from 'next/server'
+import { parseEffortSetting } from '@/agent/lib/models/effort'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
@@ -139,11 +140,21 @@ export async function POST(req: NextRequest) {
     if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
   } else {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // The worker-fallback handoff creates the chat, so it must carry the same
+    // settings the direct path would have persisted — otherwise a first message
+    // that trips the watchdog silently drops the owner's thinking level to Auto
+    // (Codex P2). Malformed input is refused here for the same reason /chat
+    // refuses it, rather than quietly meaning "no level".
+    const requestedEffort = parseEffortSetting(body.effortLevel)
+    if (body.effortLevel !== undefined && requestedEffort === undefined) {
+      return Response.json({ error: 'invalid_effort_level' }, { status: 400 })
+    }
     const conv: { id: string } = await (prisma as any).agentConversation.create({
       data: {
         title: message.slice(0, 60) || null,
         source: 'web',
         projectId: typeof body.projectId === 'string' ? body.projectId : null,
+        effortLevel: requestedEffort ?? null,
       },
       select: { id: true },
     })
