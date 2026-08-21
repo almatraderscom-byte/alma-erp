@@ -859,22 +859,18 @@ private struct TradingAccountsRowCard: View {
                 Spacer(minLength: 6)
                 statusPill
             }
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("BALANCE").font(.system(size: 8, weight: .bold)).tracking(0.4)
-                        .foregroundStyle(.secondary)
-                    Text(TradingAccountsFormat.taka(account.currentBalance ?? 0))
-                        .font(.footnote.weight(.bold).monospacedDigit())
-                        .foregroundStyle(TradingAccountsPalette.balance(account.currentBalance ?? 0, colorScheme))
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text("PROFIT").font(.system(size: 8, weight: .bold)).tracking(0.4)
-                        .foregroundStyle(.secondary)
-                    Text(TradingAccountsFormat.taka(account.totalProfit ?? 0))
-                        .font(.footnote.weight(.bold).monospacedDigit())
-                        .foregroundStyle(TradingAccountsPalette.signed(account.totalProfit ?? 0, colorScheme))
-                }
+            // Web card/table columns: balance · initial capital · profit · expenses
+            // (the desktop table adds withdrawals, kept in the detail sheet).
+            HStack(alignment: .top, spacing: 8) {
+                miniStat("BALANCE", TradingAccountsFormat.taka(account.currentBalance ?? 0),
+                         TradingAccountsPalette.balance(account.currentBalance ?? 0, colorScheme))
+                miniStat("CAPITAL", TradingAccountsFormat.taka(account.startingCapital ?? 0),
+                         TradingAccountsPalette.accentText(colorScheme))
+                miniStat("PROFIT", TradingAccountsFormat.taka(account.totalProfit ?? 0),
+                         TradingAccountsPalette.signed(account.totalProfit ?? 0, colorScheme))
+                miniStat("EXPENSES", TradingAccountsFormat.taka(account.totalExpenses ?? 0),
+                         colorScheme == .dark ? TradingAccountsPalette.amber500
+                                              : TradingAccountsPalette.amber600)
             }
             progressLine
         }
@@ -882,6 +878,16 @@ private struct TradingAccountsRowCard: View {
         .tradingAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
+    }
+
+    private func miniStat(_ label: String, _ value: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.system(size: 8, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            Text(value).font(.system(size: 12, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var subtitle: String {

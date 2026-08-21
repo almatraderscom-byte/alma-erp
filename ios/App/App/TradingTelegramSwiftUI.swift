@@ -180,17 +180,42 @@ struct TradingTelegramDraftGroup: Decodable, Identifiable, Equatable {
     static func == (a: TradingTelegramDraftGroup, b: TradingTelegramDraftGroup) -> Bool { a.id == b.id }
 }
 
+/// Staff view (web byDay=1): one card per (day × account) with its drafts.
+struct TradingTelegramDraftDayGroup: Decodable, Identifiable, Equatable {
+    let ymd: String
+    let accountTitle: String?
+    let accountAlias: String?
+    let drafts: [TradingTelegramDraft]
+
+    var id: String { "\(ymd)-\(accountTitle ?? accountAlias ?? "none")" }
+    var account: String { accountTitle ?? accountAlias ?? "—" }
+
+    private enum Keys: String, CodingKey { case key, drafts }
+    private enum KeyKeys: String, CodingKey { case ymd, accountTitle, accountAlias }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        let k = try? c.nestedContainer(keyedBy: KeyKeys.self, forKey: .key)
+        ymd = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .ymd) } ?? "—"
+        accountTitle = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountTitle) }
+        accountAlias = k.flatMap { try? $0.decodeIfPresent(String.self, forKey: .accountAlias) }
+        drafts = (try? c.decode([TradingTelegramDraft].self, forKey: .drafts)) ?? []
+    }
+    static func == (a: TradingTelegramDraftDayGroup, b: TradingTelegramDraftDayGroup) -> Bool { a.id == b.id }
+}
+
 /// `{ drafts, groups }` — tolerate an apiDataSuccess `{ ok, data: {…} }` wrap too.
 struct TradingTelegramDraftsResponse: Decodable {
     let drafts: [TradingTelegramDraft]
     let groups: [TradingTelegramDraftGroup]
+    let dayGroups: [TradingTelegramDraftDayGroup]
 
-    private enum Keys: String, CodingKey { case ok, data, drafts, groups }
+    private enum Keys: String, CodingKey { case ok, data, drafts, groups, dayGroups }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         drafts = (try? c.decode([TradingTelegramDraft].self, forKey: .drafts)) ?? []
         groups = (try? c.decode([TradingTelegramDraftGroup].self, forKey: .groups)) ?? []
+        dayGroups = (try? c.decode([TradingTelegramDraftDayGroup].self, forKey: .dayGroups)) ?? []
     }
 }
 
@@ -416,8 +441,14 @@ final class TradingTelegramVM {
     // Drafts tab
     var drafts: [TradingTelegramDraft] = []
     var draftGroups: [TradingTelegramDraftGroup] = []
+    var draftDayGroups: [TradingTelegramDraftDayGroup] = []
     var draftStatus = "PENDING"           // PENDING | LOCKED | ALL | REJECTED | POSTED
     static let statuses = ["PENDING", "LOCKED", "ALL", "REJECTED", "POSTED"]
+    /// Web duplicateOnly filter — surfaces the drafts the bot flagged as repeats.
+    var duplicatesOnly = false
+    /// Web isStaffView: a non-admin sees their own drafts grouped by DAY, an admin
+    /// sees every staff member grouped by (staff × account).
+    var isAdmin = true
 
     // Monitor tab (also feeds the hero KPIs)
     var monitor: TradingTelegramMonitor? = nil
@@ -441,9 +472,13 @@ final class TradingTelegramVM {
         do {
             let resp: TradingTelegramDraftsResponse = try await AlmaAPI.shared.get(
                 "/api/trading/telegram/drafts",
-                query: ["status": draftStatus, "limit": "100", "grouped": "1"])
+                query: ["status": draftStatus, "limit": "100",
+                        "grouped": isAdmin ? "1" : nil,
+                        "byDay": isAdmin ? nil : "1",
+                        "duplicateOnly": duplicatesOnly ? "1" : nil])
             drafts = resp.drafts
             draftGroups = resp.groups
+            draftDayGroups = resp.dayGroups
             authExpired = false
             // Monitor payload feeds the hero card — non-fatal if the role can't see it.
             monitor = try? await AlmaAPI.shared.get("/api/trading/telegram/monitor", query: [:])
@@ -822,7 +857,13 @@ struct TradingTelegramScreen: View {
             await vm.load()
             if vm.mappingLoaded { await vm.loadMapping(force: true) }
         }
-        .task { await vm.load() }
+        .task {
+            // Web isStaffView: the role decides grouped-by-staff vs grouped-by-day.
+            if let me = await OrdIdentity.load() {
+                vm.isAdmin = me.role == "SUPER_ADMIN" || me.role == "ADMIN"
+            }
+            await vm.load()
+        }
         .overlay(alignment: .bottom) {
             if let t = vm.toast {
                 Text(t)
@@ -950,8 +991,12 @@ struct TradingTelegramScreen: View {
         bulkBar
         statusChips
         infoBanner
-        if vm.drafts.isEmpty && vm.draftGroups.isEmpty {
+        if vm.drafts.isEmpty && vm.draftGroups.isEmpty && vm.draftDayGroups.isEmpty {
             emptyState("কোনো Telegram ড্রাফট নেই", icon: "paperplane")
+        } else if !vm.draftDayGroups.isEmpty {
+            ForEach(vm.draftDayGroups) { g in
+                TradingTelegramDayGroupCard(group: g, vm: vm)
+            }
         } else if !vm.draftGroups.isEmpty {
             ForEach(vm.draftGroups) { g in
                 TradingTelegramGroupCard(group: g, vm: vm)
@@ -989,14 +1034,39 @@ struct TradingTelegramScreen: View {
                     }
                     .buttonStyle(.plain)
                 }
+                duplicatesChip
             }
             .padding(.horizontal, 2)
         }
     }
 
+    /// Web duplicateOnly checkbox — only the drafts the bot flagged as repeats.
+    private var duplicatesChip: some View {
+        let active = vm.duplicatesOnly
+        let tint = TradingTelegramPalette.amber500
+        return Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            vm.duplicatesOnly.toggle()
+            Task { await vm.load() }
+        } label: {
+            Label("Duplicates", systemImage: active ? "checkmark.circle.fill" : "circle")
+                .font(.caption.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? tint : .secondary)
+                .padding(.horizontal, 11).padding(.vertical, 6)
+                .background(active ? tint.opacity(colorScheme == .dark ? 0.24 : 0.14)
+                                   : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    active ? tint.opacity(0.5)
+                           : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Web amber banner: staff confirm their own drafts — the boss monitors.
     private var infoBanner: some View {
-        Label("স্টাফরা নিজেদের ড্রাফট নিজেরাই কনফার্ম করে — কনফার্মের আগে ব্যালান্স বদলায় না। কনফার্ম/এডিট ওয়েবে।",
+        Label("স্টাফরা নিজেদের ড্রাফট নিজেরাই কনফার্ম করে — কনফার্মের আগে ব্যালান্স বদলায় না।",
               systemImage: "info.circle")
             .font(.caption)
             .foregroundStyle(colorScheme == .dark ? TradingTelegramPalette.amber300
@@ -1081,6 +1151,41 @@ private struct TradingTelegramGroupCard: View {
                     Text(group.userName).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Text("\(group.telegramHandle) · \(group.account)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Text("\(group.drafts.count)")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            }
+            Divider().opacity(0.4)
+            ForEach(group.drafts) { d in
+                TradingTelegramDraftBody(draft: d, showMeta: false, vm: vm)
+            }
+        }
+        .padding(14)
+        .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+}
+
+/// Staff view card — one day × account, newest day first (web dayGroups).
+@available(iOS 17.0, *)
+private struct TradingTelegramDayGroupCard: View {
+    let group: TradingTelegramDraftDayGroup
+    var vm: TradingTelegramVM? = nil
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "calendar")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TradingTelegramPalette.tradeGreen)
+                    .frame(width: 34, height: 34)
+                    .background(TradingTelegramPalette.tradeGreen.opacity(0.14), in: Circle())
+                    .overlay(Circle().strokeBorder(
+                        TradingTelegramPalette.tradeGreen.opacity(0.35), lineWidth: 1))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(group.ymd).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(group.account).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 Text("\(group.drafts.count)")

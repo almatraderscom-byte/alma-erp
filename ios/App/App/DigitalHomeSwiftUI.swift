@@ -93,6 +93,10 @@ private struct DigitalHomeDashboard: Decodable {
     let kpis: DigitalHomeKpis
     let byStatus: [DigitalHomeSlice]
     let byService: [DigitalHomeSlice]
+    /// Web "Partially paid projects" + "Recent Invoices" cards — the two blocks
+    /// the native board never decoded, so they simply were not on the phone.
+    let partialProjects: [DigitalHomePartialProject]
+    let recentInvoices: [DigitalHomeRecentInvoice]
 
     private struct AnyKey: CodingKey {
         var stringValue: String
@@ -122,6 +126,10 @@ private struct DigitalHomeDashboard: Decodable {
         kpis = k
         byStatus = Self.slices(c, "by_status")
         byService = Self.slices(c, "by_service")
+        partialProjects = ((try? c.decodeIfPresent([DigitalHomePartialProject].self,
+                                                   forKey: AnyKey("partial_projects"))) ?? nil) ?? []
+        recentInvoices = ((try? c.decodeIfPresent([DigitalHomeRecentInvoice].self,
+                                                  forKey: AnyKey("recent_invoices"))) ?? nil) ?? []
     }
 
     /// Record<string, number> → slices. JSON dictionaries lose their key order in
@@ -154,6 +162,55 @@ private struct DigitalHomeDashboard: Decodable {
             else { int = 0 }
         }
     }
+}
+
+/// One row of the web "Partially paid projects" card.
+struct DigitalHomePartialProject: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let paymentStatus: String
+    let dueAmount: Double
+
+    private enum Keys: String, CodingKey {
+        case id, project_name, title, payment_status, due_amount
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        name = (try? c.decodeIfPresent(String.self, forKey: .project_name))
+            ?? (try? c.decodeIfPresent(String.self, forKey: .title)) ?? "—"
+        paymentStatus = (try? c.decodeIfPresent(String.self, forKey: .payment_status)) ?? "Unpaid"
+        dueAmount = digitalHomeFlexDouble(c, .due_amount)
+    }
+}
+
+/// One row of the web "Recent Invoices" card.
+struct DigitalHomeRecentInvoice: Decodable, Identifiable {
+    let id: String
+    let clientName: String
+    let paymentStatus: String
+    let amount: Double
+    let dueAmount: Double
+
+    private enum Keys: String, CodingKey {
+        case id, client_name, payment_status, amount, due_amount
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? UUID().uuidString
+        clientName = (try? c.decodeIfPresent(String.self, forKey: .client_name)) ?? "—"
+        paymentStatus = (try? c.decodeIfPresent(String.self, forKey: .payment_status)) ?? "Unpaid"
+        amount = digitalHomeFlexDouble(c, .amount)
+        dueAmount = digitalHomeFlexDouble(c, .due_amount)
+    }
+}
+
+/// GAS answers numbers as Int, Double or String depending on the sheet cell.
+private func digitalHomeFlexDouble<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ k: K) -> Double {
+    if let d = try? c.decodeIfPresent(Double.self, forKey: k) { return d }
+    if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return Double(i) }
+    if let s = try? c.decodeIfPresent(String.self, forKey: k) { return Double(s) ?? 0 }
+    return 0
 }
 
 // MARK: - View model
@@ -242,6 +299,107 @@ struct DigitalHomeScreen: View {
                   emptyIcon: "square.lefthalf.filled",
                   emptyTitle: "No service data",
                   emptyDesc: "Projects will populate this chart")
+        partialProjectsCard(data.partialProjects)
+        recentInvoicesCard(data.recentInvoices)
+    }
+
+    // ── Partially paid projects (web fade(3) card — only when there are rows) ──
+
+    @ViewBuilder private func partialProjectsCard(_ rows: [DigitalHomePartialProject]) -> some View {
+        if !rows.isEmpty {
+            listCard(title: "Partially paid projects") {
+                ForEach(rows) { pr in
+                    Button {
+                        openWeb("/digital/projects", "CDIT projects")
+                    } label: {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pr.name).font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary).lineLimit(1)
+                                Text(pr.id).font(.system(size: 9).monospaced())
+                                    .foregroundStyle(DigitalHomePalette.accentText(colorScheme))
+                            }
+                            Spacer(minLength: 6)
+                            paymentBadge(pr.paymentStatus)
+                            Text("Due \(digitalHomeTaka(pr.dueAmount))")
+                                .font(.caption2.weight(.bold).monospacedDigit())
+                                .foregroundStyle(DigitalHomePalette.warning(colorScheme))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // ── Recent invoices (web fade(4) card) ──
+
+    @ViewBuilder private func recentInvoicesCard(_ rows: [DigitalHomeRecentInvoice]) -> some View {
+        listCard(title: "Recent Invoices") {
+            if rows.isEmpty {
+                VStack(spacing: 4) {
+                    Text("No invoices").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("Create your first agency invoice")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 18)
+            } else {
+                ForEach(rows) { inv in
+                    Button {
+                        openWeb("/digital/invoices", "CDIT invoices")
+                    } label: {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(inv.clientName).font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary).lineLimit(1)
+                                HStack(spacing: 5) {
+                                    Text(inv.id).font(.system(size: 9).monospaced())
+                                        .foregroundStyle(DigitalHomePalette.accentText(colorScheme))
+                                    Text("Due \(digitalHomeTaka(inv.dueAmount))")
+                                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer(minLength: 6)
+                            paymentBadge(inv.paymentStatus)
+                            Text(digitalHomeTaka(inv.amount))
+                                .font(.caption.weight(.bold).monospacedDigit())
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Web PaymentStatusBadge — Paid emerald · Partial Paid amber · Unpaid zinc.
+    private func paymentBadge(_ status: String) -> some View {
+        let tint: Color = status == "Paid" ? DigitalHomePalette.positive(colorScheme)
+            : status == "Partial Paid" ? DigitalHomePalette.warning(colorScheme)
+            : DigitalHomePalette.slate400
+        return Text(status.uppercased())
+            .font(.system(size: 8, weight: .bold)).tracking(0.4)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.30), lineWidth: 0.8))
+            .lineLimit(1)
+    }
+
+    private func digitalHomeTaka(_ v: Double) -> String { "৳\(Int(v.rounded()).formatted())" }
+
+    @ViewBuilder private func listCard<Content: View>(title: String,
+                                                     @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.heavy)).tracking(0.5)
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .digitalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── KPI tiles (web KpiCard rows minus the three the hero carries):

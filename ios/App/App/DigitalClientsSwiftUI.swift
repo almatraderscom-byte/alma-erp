@@ -328,6 +328,10 @@ final class DigitalClientsVM {
         let client_name: String
         let amount: Int
         let payment_method: String
+        // Web "Record payment" form also carries these three.
+        var transaction_id: String? = nil
+        var payment_date: String? = nil
+        var note: String? = nil
         let payment_type = "income"
         let business_id = "CREATIVE_DIGITAL_IT"
     }
@@ -626,9 +630,13 @@ private struct DigitalClientsDetailSheet: View {
             loading = false
         }
         .sheet(isPresented: $showPayment) {
-            DigitalClientsPaymentSheet(clientId: client.id, clientName: client.name, vm: vm) {
-                Task { detail = await vm.detail(id: client.id) }
-            }
+            DigitalClientsPaymentSheet(
+                clientId: client.id, clientName: client.name, vm: vm,
+                onDone: { Task { detail = await vm.detail(id: client.id) } },
+                // Web select: "<project> — due ৳X" for every project of this client.
+                projectOptions: (detail?.projects ?? []).map {
+                    ($0.id, "\($0.projectName) — due ৳\($0.dueAmount.formatted())")
+                })
         }
         .sheet(isPresented: $showNewProject) {
             DigitalClientsProjectSheet(clientId: client.id, clientName: client.name) {
@@ -1282,6 +1290,16 @@ private struct DigitalClientsCreateSheet: View {
     }
 }
 
+/// Today in Asia/Dhaka — the web forms default every date field to it.
+enum DigitalClientsDateHelper {
+    static func today() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        return f.string(from: Date())
+    }
+}
+
 // MARK: - Record payment (owner 2026-07-11: native writes — web client-detail
 // "Record payment" parity, POST /api/digital/payments).
 
@@ -1300,14 +1318,26 @@ struct DigitalClientsPaymentSheet: View {
     private static let methods = ["Bank Transfer", "bKash", "Nagad", "Cash",
                                   "PayPal", "Stripe", "Other"]
 
+    /// Projects to attach the payment to (web shows a "Project (optional)" select
+    /// listing each project with its due amount). Empty when opened from an invoice.
+    var projectOptions: [(id: String, label: String)] = []
+
     @State private var amount = ""
     @State private var method = "Bank Transfer"
+    @State private var selectedProjectId = ""
+    @State private var transactionId = ""
+    @State private var paymentDate = ""
+    @State private var note = ""
     @State private var submitting = false
     @State private var confirming = false
     @State private var errorText: String? = nil
 
     private var taka: Int { Int(Double(amount.replacingOccurrences(of: ",", with: "")) ?? 0) }
     private var canSubmit: Bool { taka > 0 }
+    private var effectiveProjectId: String? {
+        if let projectId, !projectId.isEmpty { return projectId }
+        return selectedProjectId.isEmpty ? nil : selectedProjectId
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1332,6 +1362,37 @@ struct DigitalClientsPaymentSheet: View {
                 .background(Color.primary.opacity(0.06),
                             in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             }
+            if projectId == nil, !projectOptions.isEmpty {
+                Menu {
+                    Button("Project (optional)") { selectedProjectId = "" }
+                    ForEach(projectOptions, id: \.id) { opt in
+                        Button(opt.label) { selectedProjectId = opt.id }
+                    }
+                } label: {
+                    HStack {
+                        Text(projectOptions.first { $0.id == selectedProjectId }?.label
+                             ?? "Project (optional)")
+                            .font(.subheadline.weight(.semibold)).lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12).padding(.vertical, 11)
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+            }
+            TextField("Transaction ID", text: $transactionId)
+                .textInputAutocapitalization(.never)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+            TextField("Payment date (YYYY-MM-DD)", text: $paymentDate)
+                .keyboardType(.numbersAndPunctuation)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+            TextField("Note", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
             if let errorText {
                 Text(errorText).font(.caption2.weight(.semibold))
                     .foregroundStyle(DigitalClientsPalette.red500)
@@ -1356,7 +1417,10 @@ struct DigitalClientsPaymentSheet: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 18)
-        .presentationDetents([.height(320)])
+        .onAppear {
+            if paymentDate.isEmpty { paymentDate = DigitalClientsDateHelper.today() }
+        }
+        .presentationDetents([.height(560), .large])
         .presentationDragIndicator(.visible)
         .background(AlmaSwiftTheme.rootBg(scheme))
         .confirmationDialog(
@@ -1374,9 +1438,12 @@ struct DigitalClientsPaymentSheet: View {
         Task {
             defer { submitting = false }
             let ok = await vm.recordPayment(.init(
-                invoice_id: invoiceId, project_id: projectId,
+                invoice_id: invoiceId, project_id: effectiveProjectId,
                 client_id: clientId, client_name: clientName,
-                amount: taka, payment_method: method))
+                amount: taka, payment_method: method,
+                transaction_id: transactionId.isEmpty ? nil : transactionId,
+                payment_date: paymentDate.isEmpty ? nil : paymentDate,
+                note: note.isEmpty ? nil : note))
             UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
             if ok { onDone?(); dismiss() } else { errorText = vm.toast }
         }
