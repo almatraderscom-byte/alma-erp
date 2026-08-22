@@ -107,7 +107,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       const tail = runTurnTail(
         {
           getReplay: (after, limit) => getReplayEvents(turnId, after, limit, { throwOnError: true }),
-          subscribe: (onEvent) => subscribeTurnEvents(turnId, onEvent),
+          subscribe: (onEvent, signal) => subscribeTurnEvents(turnId, onEvent, { signal }),
           poll: (after, onEvent) => pollTurnEvents(turnId, after, onEvent),
           emit: (evt) => emitEvent(evt.seq, evt.payload),
           control: (payload) => safeEnqueue(`data: ${JSON.stringify(payload)}\n\n`),
