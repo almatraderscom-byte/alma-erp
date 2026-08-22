@@ -177,8 +177,9 @@ test('a failed chat call is reported as an error event with the HTTP status', as
 })
 
 test('an unstored terminal `done` is not accepted: the EOF error is stored instead (Codex P1)', async () => {
-  // The `done` at seq 2 fails every attempt; the fallback error event takes the same seq and lands.
-  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 3 } } })
+  // The `done` at seq 2 fails every attempt of the extended terminal budget (8);
+  // the fallback error event takes the same seq and lands on the next try.
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 8 } } })
   const publisher = fakePublisher()
   const events = [{ type: 'conversation_id', id: 'c' }, { type: 'text_delta', delta: 'x' }, { type: 'done', messageId: 'm' }]
   await runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } })
