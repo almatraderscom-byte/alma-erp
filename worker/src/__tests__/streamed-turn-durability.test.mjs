@@ -175,3 +175,26 @@ test('a failed chat call is reported as an error event with the HTTP status', as
   assert.deepEqual(supabase.rows.map((r) => r.type), ['error'])
   assert.match(supabase.rows[0].payload.message, /chat API 500/)
 })
+
+test('an unstored terminal `done` is not accepted: the EOF error is stored instead (Codex P1)', async () => {
+  // The `done` at seq 2 fails every attempt; the fallback error event takes the same seq and lands.
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 3 } } })
+  const publisher = fakePublisher()
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'text_delta', delta: 'x' }, { type: 'done', messageId: 'm' }]
+  await runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } })
+
+  assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type]), [[0, 'conversation_id'], [1, 'text_delta'], [2, 'error']])
+  assert.equal(supabase.rows[2].payload.message, 'turn_terminal_not_durable:done')
+  assert.ok(!publisher.published.some((p) => p.type === 'done'), 'no synthetic success reached the live tail')
+})
+
+test('when no terminal can be stored at all the job rejects so BullMQ retries (Codex P1)', async () => {
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 99 } } })
+  const publisher = fakePublisher()
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'text_delta', delta: 'x' }, { type: 'done', messageId: 'm' }]
+  await assert.rejects(
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } }),
+    /terminal event could not be stored durably/,
+  )
+  assert.deepEqual(supabase.rows.map((r) => r.seq), [0, 1])
+})
