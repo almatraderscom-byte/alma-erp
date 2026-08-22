@@ -218,9 +218,9 @@ function LifestyleDashboard() {
                 {slaBreaches.length > 3 ? ` +${slaBreaches.length - 3} more` : ''}
               </p>
             </div>
-            <a href="/orders?status=sla" className="text-xs font-bold text-warning hover:text-warning transition-colors shrink-0">
+            <Link href="/orders?status=sla" className="text-xs font-bold text-warning hover:text-warning transition-colors shrink-0">
               View all →
-            </a>
+            </Link>
           </div>
         </motion.div>
       )}
@@ -477,9 +477,9 @@ function LifestyleDashboard() {
           <Card className="overflow-hidden">
             <div className="px-5 py-4 border-b border-border-subtle flex items-center justify-between">
               <h3 className="text-sm font-bold text-cream">Recent Orders</h3>
-              <a href="/orders" className="text-xs font-semibold text-gold hover:text-gold-dim transition-colors">
+              <Link href="/orders" className="text-xs font-semibold text-gold hover:text-gold-dim transition-colors">
                 View all →
-              </a>
+              </Link>
             </div>
             <div className="divide-y divide-border-subtle">
               {loading

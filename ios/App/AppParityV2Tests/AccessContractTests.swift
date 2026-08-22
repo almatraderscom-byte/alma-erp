@@ -147,6 +147,23 @@ final class AccessContractTests: XCTestCase {
         }
     }
 
+    /// Codex P2 (PR #835): a business-scoped entity link is gated under ITS
+    /// business, so an HR user currently in Trading may still open a Lifestyle
+    /// employee link (and the forged Trading selector is refused by the router).
+    @MainActor
+    func testScopedEntityLinkIsGatedUnderItsOwnBusiness() {
+        let session = AlmaSession.shared
+        session.applyFixture(role: .HR, access: AlmaBusinessId.all)
+        session.setBusiness(.ALMA_TRADING)
+        XCTAssertEqual(session.businessId, .ALMA_TRADING)
+        XCTAssertTrue(session.canSee("/employees/EMP-1?business_id=ALMA_LIFESTYLE"))
+        XCTAssertTrue(session.canSee("/trading/hr"))
+        XCTAssertFalse(session.canSee("/orders/ALM-1?business_id=ALMA_LIFESTYLE"),
+                       "HR has no Lifestyle orders page on the web either")
+        session.setBusiness(.ALMA_LIFESTYLE)
+        session.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
+    }
+
     /// Tab bar composition per role × business — the owner-visible outcome.
     func testTabLayoutsPerRole() {
         func tabs(_ role: AlmaRole, _ biz: AlmaBusinessId) -> [String] {

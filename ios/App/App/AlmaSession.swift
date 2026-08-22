@@ -103,12 +103,23 @@ final class AlmaSession {
     /// the user must have access to that business.
     func canSee(_ path: String) -> Bool {
         let bare = path.split(separator: "?").first.map(String.init) ?? path
-        let business = AlmaAccess.business(for: bare, current: businessId)
+        let business = Self.scopedBusiness(in: path) ?? AlmaAccess.business(for: bare, current: businessId)
         // Login / recovery / public share pages never need a business.
         if bare.hasPrefix("/login") || bare.hasPrefix("/forgot-password")
             || bare.hasPrefix("/reset-password") || bare.hasPrefix("/invoice/share") { return true }
         guard allowedBusinesses.contains(business) else { return false }
         return AlmaAccess.isPathAllowedForRole(bare, role: effectiveRole, business: business)
+    }
+
+    /// `business_id` selector stamped on canonical Agent entity links
+    /// (`/employees/EMP-1?business_id=ALMA_LIFESTYLE`). The native router still
+    /// validates it against the route's fixed business before any fetch; here it
+    /// only picks WHICH business the role rule is evaluated under (Codex P2).
+    private static func scopedBusiness(in path: String) -> AlmaBusinessId? {
+        guard let query = path.split(separator: "?").dropFirst().first,
+              let raw = URLComponents(string: "https://x/?\(query)")?
+                  .queryItems?.first(where: { $0.name == "business_id" })?.value else { return nil }
+        return AlmaBusinessId(rawValue: raw)
     }
 
     /// `can(role, capability)` for the signed-in user.
@@ -242,7 +253,15 @@ final class AlmaSession {
             persist(next)
             authed = true
         } catch AlmaAPIError.notAuthenticated {
+            // Definite 401 (AlmaAPI already re-synced cookies and retried): the
+            // session is gone. Drop the cached role / owner flag / business access
+            // so the shell rebuilds to the least-privilege bar and pushes the
+            // native login — a stale identity must never keep a signed-out phone
+            // inside the previous user's role-gated shell (Codex P1, PR #835).
             authed = false
+            userId = nil; role = nil; isOwner = false; businessAccess = []; name = ""
+            OrdIdentity.seed(id: nil, role: nil)
+            UserDefaults.standard.removeObject(forKey: Self.cacheKey)
         } catch {
             // Offline / transient: keep whatever we had; authed stays unknown.
         }
