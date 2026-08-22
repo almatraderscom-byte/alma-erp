@@ -189,6 +189,31 @@ final class AssistantParityV2UITests: XCTestCase {
                        "the no-audio settings fixture must not create an active audio console")
     }
 
+    // Prose lifecycle v2 (incident 2026-08-22): the golden transcript is replayed
+    // through the LIVE reducer — lead → tool → progress → tool → forced update →
+    // verifier swap → final — and must show EVERY committed line after the later
+    // tools and after settlement, with the superseded draft gone.
+    func testProseLifecycleV2ProgressSurvivesLaterToolsAndSettlement() throws {
+        if hasIOS265WebAccessibilityConflict {
+            throw XCTSkip("iOS 26.5 duplicates UIAccessibilityLoaderWebShared in WebCore and WebKit; the reducer contract is unit-tested (ProseLifecycleV2Tests) and the fixture is screenshot-verified in the simulator")
+        }
+        relaunch(fixture: "ALMA_PROSE_V2_FIXTURE", mock: "library")
+
+        let contains = { (needle: String) -> XCUIElement in
+            self.app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", needle)).firstMatch
+        }
+        XCTAssertTrue(contains("বস, অর্ডার আর স্টক দেখে নিচ্ছি").waitForExistence(timeout: 8), "lead")
+        XCTAssertTrue(contains("আগে স্টক দেখছি").waitForExistence(timeout: 4), "progress 1 after a later tool")
+        XCTAssertTrue(contains("এ পর্যন্ত ২টা ধাপ সফল").waitForExistence(timeout: 4), "forced update after a later tool")
+        XCTAssertTrue(contains("রিপোর্ট রেডি").waitForExistence(timeout: 4), "verified final")
+        XCTAssertFalse(contains("কাজ শেষ, সব ঠিক আছে").exists, "the superseded draft must not be shown")
+
+        let proof = XCTAttachment(screenshot: app.screenshot())
+        proof.name = "prose-v2-progress-survives-tools-and-settles"
+        proof.lifetime = .keepAlways
+        add(proof)
+    }
+
     func testSettledOwnerMessageShowsEditWithoutSendAgain() {
         relaunch(fixture: "ALMA_ASSISTANT_OWNER_ACTION_PROOF", mock: "ownerActionProof")
 

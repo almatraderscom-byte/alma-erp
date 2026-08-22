@@ -18,17 +18,22 @@ describe('provider-independent visible progress', () => {
   it('uses the canonical SSE shape and reports only observable lifecycle facts', () => {
     const progress = createVisibleProgressContract()
 
+    // `stage` (prose lifecycle v2): `round` is the hard prose-segment boundary
+    // the lifecycle tracker keys on; clients ignore the field.
     expect(progress.roundStarted(1)).toEqual({
       type: 'progress_update',
       label: 'ধাপ ১ · পরের পদক্ষেপ প্রস্তুত হচ্ছে',
+      stage: 'round',
     })
     expect(progress.toolSelected(1, 'ERP অর্ডার চেক করছি')).toEqual({
       type: 'progress_update',
       label: 'ধাপ ১ · ERP অর্ডার চেক করছি',
+      stage: 'tool',
     })
     expect(progress.responseStarted(1)).toEqual({
       type: 'progress_update',
       label: 'ধাপ ১ · ফল যাচাই করে উত্তর প্রস্তুত হচ্ছে',
+      stage: 'response',
     })
   })
 
@@ -44,6 +49,7 @@ describe('provider-independent visible progress', () => {
     expect(progress.toolSelected(3, 'স্টক দেখছি')).toEqual({
       type: 'progress_update',
       label: 'ধাপ ৩ · স্টক দেখছি',
+      stage: 'tool',
     })
   })
 

@@ -69,6 +69,18 @@
     },
     {
       "$ref": "#/$defs/error"
+    },
+    {
+      "$ref": "#/$defs/prose_start"
+    },
+    {
+      "$ref": "#/$defs/prose_commit"
+    },
+    {
+      "$ref": "#/$defs/prose_supersede"
+    },
+    {
+      "$ref": "#/$defs/turn_protocol"
     }
   ],
   "$defs": {
@@ -201,6 +213,15 @@
         },
         "label": {
           "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "round",
+            "tool",
+            "response"
+          ],
+          "description": "Lifecycle fact kind; `round` is a hard prose-segment boundary for the lifecycle tracker."
         }
       },
       "required": [
@@ -216,6 +237,13 @@
         },
         "delta": {
           "type": "string"
+        },
+        "blockId": {
+          "type": "string",
+          "description": "Prose lifecycle v2: the prose block this delta belongs to (protocol-2 turns only)."
+        },
+        "revision": {
+          "type": "integer"
         }
       },
       "required": [
@@ -1315,6 +1343,118 @@
       "required": [
         "type",
         "message"
+      ]
+    },
+    "prose_start": {
+      "type": "object",
+      "description": "Prose lifecycle v2 — a new owner-prose block opened (protocol-2 turns only). `replaces` names the superseded block this one will atomically replace on commit.",
+      "properties": {
+        "type": {
+          "const": "prose_start"
+        },
+        "blockId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "lead",
+            "progress",
+            "draft",
+            "final"
+          ]
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "replaces": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "blockId",
+        "kind",
+        "revision"
+      ]
+    },
+    "prose_commit": {
+      "type": "object",
+      "description": "Prose lifecycle v2 — the block is settled as lead / progress / final. Carries the full committed text + checksum so replay can self-heal a lost delta.",
+      "properties": {
+        "type": {
+          "const": "prose_commit"
+        },
+        "blockId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "lead",
+            "progress",
+            "final"
+          ]
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "checksum": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "blockId",
+        "kind",
+        "revision",
+        "text"
+      ]
+    },
+    "prose_supersede": {
+      "type": "object",
+      "description": "Prose lifecycle v2 — retire exactly one block. With `replacementBlockId` the block stays visible until that replacement commits; without it the block is removed at once. Replaces `verification_retry` on protocol-2 turns.",
+      "properties": {
+        "type": {
+          "const": "prose_supersede"
+        },
+        "blockId": {
+          "type": "string"
+        },
+        "replacementBlockId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "blockId",
+        "reason"
+      ]
+    },
+    "turn_protocol": {
+      "type": "object",
+      "description": "Route envelope sent before any prose: the prose protocol negotiated for this turn. Clients select their v1/v2 reducer from this fact alone.",
+      "properties": {
+        "type": {
+          "const": "turn_protocol"
+        },
+        "agentProseProtocol": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "agentProseProtocol"
       ]
     }
   }

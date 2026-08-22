@@ -10,6 +10,12 @@ import {
   pollTurnEvents,
   subscribeTurnEvents,
 } from '@/agent/lib/turn-events'
+import {
+  negotiateProseProtocol,
+  projectEventForProtocol,
+  proseProtocolFromVersions,
+  type WireEvent,
+} from '@/agent/lib/presentation/prose-lifecycle'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -47,6 +53,12 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     parseCursor(req.headers.get('last-event-id')),
   )
 
+  // Prose lifecycle v2 mixed-version safety: the client says which prose family
+  // it can reduce (`?proto=2`); the turn row says which family was stored. A v1
+  // client attached to a v2 turn gets a deliberate read-time v1 projection —
+  // the durable log itself keeps the typed family.
+  const clientProtocol = negotiateProseProtocol({ requested: req.nextUrl.searchParams.get('proto') })
+
   const encoder = new TextEncoder()
   const dedup = createSeqDeduper(afterSeq)
 
@@ -65,8 +77,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         }
       }
       // `id:` carries the seq so EventSource's automatic Last-Event-ID resume works.
+      let turnProtocol: 1 | 2 = 1
       const emitEvent = (seq: number, payload: unknown) => {
-        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(payload)}\n\n`)
+        const projected = turnProtocol === 2 && payload && typeof payload === 'object'
+          ? projectEventForProtocol(payload as WireEvent, clientProtocol)
+          : payload
+        if (projected == null) return
+        safeEnqueue(`id: ${seq}\ndata: ${JSON.stringify(projected)}\n\n`)
       }
       const finish = () => {
         if (closed) return
@@ -84,6 +101,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       //    (roadmap 3.5) without a separate status request.
       const snap = await getTurnSnapshot(turnId)
       if (snap) {
+        turnProtocol = proseProtocolFromVersions(snap.versions)
         safeEnqueue(`data: ${JSON.stringify({
           type: 'turn_snapshot',
           turnId: snap.id,
@@ -91,6 +109,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
           status: snap.status,
           lastSeq: snap.lastSeq,
           assistantMessageId: snap.assistantMessageId,
+          // The family this turn's replay/tail is served in for THIS client.
+          agentProseProtocol: Math.min(turnProtocol, clientProtocol),
         })}\n\n`)
       }
 

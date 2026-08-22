@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
+import type { LiveProseBlock } from '@/agent/lib/presentation/live-prose-reducer'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import { type PendingAction } from './AgentConfirmCard'
@@ -98,7 +99,15 @@ export type TimelineEntry =
    *  never rendered as a separate owner-facing reply. `lead`: the spoken FIRST
    *  line (speak-first) — position stopped being a safe signal once the
    *  think-first preamble put a `think` entry ahead of it (PR #813). */
-  | { t: 'text'; text: string; state?: 'superseded'; lead?: true }
+  | {
+      t: 'text'
+      text: string
+      state?: 'superseded' | 'committed' | 'streaming'
+      lead?: true
+      /** Prose lifecycle v2: the server block this entry is the placeholder for. */
+      blockId?: string
+      kind?: 'lead' | 'progress' | 'draft' | 'final'
+    }
   /** The honesty guard re-checked the draft — rendered as activity, not prose. */
   | { t: 'verify'; attempt?: number; max?: number }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
@@ -108,6 +117,14 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
+  /**
+   * Prose lifecycle v2 (prose-lifecycle.ts). `2` = this message's prose is a
+   * list of server-addressed blocks (`prose`) rendered in timeline order; every
+   * committed lead/progress/final block stays on screen across tool starts,
+   * polls and reloads. Absent/1 = the legacy single-answer contract.
+   */
+  proseProtocol?: 1 | 2
+  prose?: LiveProseBlock[]
   files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
   /**
    * Only set on a message Boss typed WHILE a turn was running.
@@ -838,6 +855,32 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
       segs.push({ kind: 'text', text: leadText })
     }
     const entries = msg.timeline ?? []
+    if (msg.proseProtocol === 2) {
+      // Prose lifecycle v2: every visible block renders where its placeholder
+      // sits — no lead guessing, no "only the last text is the answer", and
+      // nothing appended from `msg.text`.
+      const byId = new Map((msg.prose ?? []).map((b) => [b.id, b]))
+      for (const e of entries) {
+        if (e.t === 'text') {
+          if (!e.blockId) continue
+          const b = byId.get(e.blockId)
+          const visible = b
+            ? !b.hidden && (b.state !== 'superseded' || b.awaitingReplacement)
+            : e.state !== 'superseded'
+          const body = (b ? b.text : e.text).trim()
+          if (visible && body) segs.push({ kind: 'text', text: body })
+          continue
+        }
+        if (e.t === 'file') {
+          segs.push({ kind: 'file', entry: e })
+          continue
+        }
+        const last = segs[segs.length - 1]
+        if (last && last.kind === 'steps') last.entries.push(e)
+        else segs.push({ kind: 'steps', entries: [e] })
+      }
+      return segs
+    }
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i]
       // The LEADING text entry is the spoken first line (owner rule 2026-07-25):
@@ -883,7 +926,7 @@ function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: st
       if (body.trim()) segs.push({ kind: 'text', text: body })
     }
     return segs
-  }, [msg.text, msg.timeline])
+  }, [msg.text, msg.timeline, msg.prose, msg.proseProtocol])
 
   if (segments.length === 0) return null
   const lastIdx = segments.length - 1

@@ -5,6 +5,7 @@ import { requireAgentEnabled, requireAnthropicApiKey, requireModelProviderKey } 
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
+import type { AgentEvent } from '@/agent/lib/core'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
 import { parseEffortSetting, type EffortLevel } from '@/agent/lib/models/effort'
@@ -25,6 +26,8 @@ import {
   finalizeTurnIfRunning,
   isRunningTurnForConversation,
   findOrCreateTurnByClientMessageId,
+  getTurnProseProtocol,
+  setTurnProseProtocol,
   findTurnByClientMessageId,
   getTurnSnapshot,
   linkTurnUserMessage,
@@ -33,6 +36,11 @@ import {
 } from '@/agent/lib/turn-status'
 import { traceTurnStage } from '@/agent/lib/turn-stage-trace'
 import { createTurnEventPublisher } from '@/agent/lib/turn-events'
+import {
+  ProseLifecycleTracker,
+  negotiateProseProtocol,
+  withProseLifecycle,
+} from '@/agent/lib/presentation/prose-lifecycle'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
@@ -119,6 +127,11 @@ interface ChatBody {
   /** Set by the voice session — the reply is read aloud (TTS), so the head should
    *  answer TTS-friendly and hand money/irreversible confirmations off to a tap. */
   voice?: boolean
+  /**
+   * Prose lifecycle v2 capability (prose-lifecycle.ts). `2` = the client can
+   * reduce the typed prose family; absent/anything else = legacy protocol 1.
+   */
+  agentProseProtocol?: number | string
   /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
   modelId?: string
   /**
@@ -730,6 +743,17 @@ export async function POST(req: NextRequest) {
   }
   if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
+  // Prose lifecycle v2 (handoff F-01…F-04): ONE protocol per turn. A direct
+  // client negotiates here and the choice is stamped on the turn row; a worker
+  // mirror (internal call) reads the stamp the enqueue route persisted, so the
+  // same turn never streams two prose families. Voice/native-loop/kill-switch
+  // force v1 inside negotiateProseProtocol.
+  const proseProtocol = isInternalCall && turnId
+    ? await getTurnProseProtocol(turnId)
+    : negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
+  if (!isInternalCall) await setTurnProseProtocol(turnId, proseProtocol)
+  const proseLifecycle = new ProseLifecycleTracker({ protocol: proseProtocol, turnId })
+
   // P0-2: for a continuation this stamp lands in a DIFFERENT process from the
   // approve route's stamps, which is exactly the point — the gap between
   // `continuation_enqueued` and this one is the Redis + worker-pickup cost, the
@@ -831,9 +855,10 @@ export async function POST(req: NextRequest) {
     chatMode,
     permissionMode,
     elevationGrant,
+    proseLifecycle,
   }
 
-  async function* runTurn() {
+  async function* runTurn(): AsyncGenerator<AgentEvent> {
     // ALL turns — owner web AND internal (Telegram / VPS-worker continuation) — go
     // through runOwnerTurn so the head-router's safeties always apply. Internal
     // calls used to invoke runAgentTurn (the native Claude path) directly with
@@ -844,7 +869,10 @@ export async function POST(req: NextRequest) {
     // up, delegates to the same runAgentTurn with the same options (behavior
     // preserved); when ANTHROPIC_HEAD_DOWN it transparently redirects to the heavy
     // head (Gemini 3.1 Pro) and applies the owner's model-enabled fallback.
-    yield* runOwnerTurn(conversationId!, turnOptions)
+    // The lifecycle interceptor sees every event exactly once, in order, before
+    // the runner resumes — so the runner's terminal write already holds the
+    // complete block document. On a v1 turn it is a byte-identical pass-through.
+    yield* withProseLifecycle(runOwnerTurn(conversationId!, turnOptions), proseLifecycle) as AsyncGenerator<AgentEvent>
   }
 
   const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'
@@ -950,6 +978,9 @@ export async function POST(req: NextRequest) {
     // (review bot, #692).
     await traceTurnStage(turnId, 'turn_done', errorMsg ? 'error' : 'done').catch(() => {})
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
+    // v2 deltas are block-addressed (no paragraph separators on the wire): the
+    // tracker's committed blocks are the truthful reply text, not the raw join.
+    if (proseLifecycle.protocol === 2) finalText = proseLifecycle.ownerVisibleText() || finalText
     if (turnId && conversationId && convSource === 'web' && !continuationNeeded) {
       try {
         const deliveryId = await enqueueTurnCompletionNotification({
@@ -1014,6 +1045,7 @@ export async function POST(req: NextRequest) {
   let doneTurnMs = -1
   // Short preview of the reply, for the away-push (ntfy) when the app is closed.
   let replyPreview = ''
+  let lastPreviewBlockId: string | undefined
   /** P0-2: first_token is stamped once per turn — the stream can emit thousands. */
   let streamFirstTokenStamped = false
   /** P0-2: the terminal stamp is written once — by done, by error, or by the finally net. */
@@ -1065,6 +1097,9 @@ export async function POST(req: NextRequest) {
       // Give the client the durable turn id so its Stop button can issue a real
       // server-side cancel, and so it can poll this turn's status after re-open.
       if (turnId) emit({ type: 'turn_id', id: turnId })
+      // Sent before any prose: a client picks its v1/v2 reducer from THIS fact
+      // alone, never from the shape of individual events.
+      emit({ type: 'turn_protocol', agentProseProtocol: proseProtocol })
       try {
         for await (const event of runTurn()) {
           emit(event)
@@ -1077,7 +1112,10 @@ export async function POST(req: NextRequest) {
             void traceTurnStage(turnId, 'first_token').catch(() => {})
           }
           if (event.type === 'text_delta' && replyPreview.length < 140) {
-            replyPreview += (event as { delta?: string }).delta ?? ''
+            // v2 deltas carry no paragraph separators; keep the preview readable.
+            const sep = proseProtocol === 2 && replyPreview && (event as { blockId?: string }).blockId !== lastPreviewBlockId ? ' ' : ''
+            lastPreviewBlockId = (event as { blockId?: string }).blockId ?? lastPreviewBlockId
+            replyPreview += sep + ((event as { delta?: string }).delta ?? '')
           } else if (event.type === 'confirm_card' && convSource === 'web') {
             const summary = (event as { summary?: string }).summary
             await notifyOwnerIfAway({

@@ -3,7 +3,7 @@
  * Anthropic models delegate to runAgentTurn (native Claude path).
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, maxProgressNudgesFor, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
@@ -576,7 +576,7 @@ async function* runAlternateProviderTurn(
   // no effort knob is sent at all.
   const headEffort = clampEffort(options.effortLevel, model.effort)
   const headEffortDialect = model.effort?.dialect
-  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null, voiceTurn = false, proseLifecycle = null } = options
   const chatMode = normalizeChatMode(options.chatMode)
   // PM-1 — the permission axis, read from the conversation row by the caller.
   // SHADOW in this phase: the head is told, the turn echoes it and every tool
@@ -2278,6 +2278,16 @@ async function* runAlternateProviderTurn(
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
+  /**
+   * Timeline text push with the prose-lifecycle anchor (prose-lifecycle.ts):
+   * the block currently streaming (or the next one to open) is pinned to this
+   * entry's index, so the settled projection interleaves prose with activity in
+   * true chronology even after the raw timeline is truncated at 60.
+   */
+  const pushTextEntry = (entry: Extract<TimelineEntry, { t: 'text' }>) => {
+    proseLifecycle?.anchorTimeline(timeline.length)
+    timeline.push(entry)
+  }
   /** Mark the most recent DRAFT as superseded — never the spoken first line. */
   const supersedeLastDraft = () => {
     for (let ti = timeline.length - 1; ti >= 0; ti--) {
@@ -2381,7 +2391,7 @@ async function* runAlternateProviderTurn(
       isFinance: true,
     }
     finalText = actionGraph.replyText
-    timeline.push({ t: 'text', text: finalText })
+    pushTextEntry({ t: 'text', text: finalText })
     yield { type: 'text_delta', delta: finalText }
   }
 
@@ -2401,7 +2411,7 @@ async function* runAlternateProviderTurn(
     yield { type: 'tool_start', id: record.id, name: record.toolName, input: record.input }
     yield { type: 'tool_end', id: record.id, name: record.toolName, success: true, resultPreview: preview }
     finalText = g.replyText
-    timeline.push({ t: 'text', text: finalText })
+    pushTextEntry({ t: 'text', text: finalText })
     yield { type: 'text_delta', delta: finalText }
   }
 
@@ -2446,7 +2456,7 @@ async function* runAlternateProviderTurn(
       preambleText = line
       finalText = line
       preambleTimelineIndex = timeline.length
-      timeline.push({ t: 'text', text: line, lead: true })
+      pushTextEntry({ t: 'text', text: line, lead: true })
       yield { type: 'text_delta', delta: line }
       yield { type: 'preamble', text: line }
       messages = [...messages, { role: 'assistant', content: line }]
@@ -2528,7 +2538,7 @@ async function* runAlternateProviderTurn(
         preambleText = line
         finalText = line
         preambleTimelineIndex = timeline.length
-        timeline.push({ t: 'text', text: line, lead: true })
+        pushTextEntry({ t: 'text', text: line, lead: true })
         // Explicit marker so a client never has to GUESS which prose was the
         // opening line (iOS clears narration on tool_start and on a verify
         // rewrite — this line must survive both).
@@ -3063,7 +3073,7 @@ async function* runAlternateProviderTurn(
       if (shownThinking) timeline.push({ t: 'think', text: shownThinking.slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
-      if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      if (iterationText.trim()) pushTextEntry({ t: 'text', text: iterationText.slice(0, 6000) })
       // Every corrective path that DISCARDS this round's prose must also drop
       // the copy already on the owner's screen (Codex P1 #765 round 2):
       // typed-tool retry, act-now nudge, grounding retry, requirement retry and
@@ -3175,7 +3185,7 @@ async function* runAlternateProviderTurn(
             `এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে`
             + (lastTools ? ` (শেষ ধাপগুলো: ${lastTools})` : '')
             + ' — কাজ চলছে।'
-          timeline.push({ t: 'text', text: updateText })
+          pushTextEntry({ t: 'text', text: updateText })
         }
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + updateText
@@ -3350,7 +3360,7 @@ async function* runAlternateProviderTurn(
               iterationText =
                 `⚠️ সময়সীমার কারণে এখানে থেমেছি — এ পর্যন্ত ${okCount}টা ধাপ সফল হয়েছে। ` +
                 'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
-              timeline.push({ t: 'text', text: iterationText })
+              pushTextEntry({ t: 'text', text: iterationText })
             }
           }
         }
@@ -3737,7 +3747,7 @@ async function* runAlternateProviderTurn(
           if (preContractText.trim()) {
             supersedeLastDraft()
           }
-          if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+          if (iterationText.trim()) pushTextEntry({ t: 'text', text: iterationText.slice(0, 6000) })
         }
         if (iterationText) {
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
@@ -4160,7 +4170,7 @@ async function* runAlternateProviderTurn(
           prospectivePlanFailureTextForRound = note
           const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
           finalText += sep + note
-          timeline.push({ t: 'text', text: note })
+          pushTextEntry({ t: 'text', text: note })
           yield { type: 'text_delta', delta: sep + note }
         }
         if (call.name === 'make_plan' && result.success && iteration >= maxIterations - 1) {
@@ -4452,7 +4462,7 @@ async function* runAlternateProviderTurn(
         const wrapText =
           `⚠️ এই টার্নের কাজের রাউন্ড-বাজেট শেষ হওয়ায় এখানে থেমেছি — ${okCount}টা ধাপ সফল হয়েছে। ` +
           'Boss, "continue" বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।'
-        timeline.push({ t: 'text', text: wrapText })
+        pushTextEntry({ t: 'text', text: wrapText })
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + wrapText
         yield { type: 'text_delta', delta: sep + wrapText }
@@ -4710,7 +4720,7 @@ async function* runAlternateProviderTurn(
         const note = contractToolFailureText(terminalContractFailure)
         const sep = finalText ? '\n\n' : ''
         finalText += sep + note
-        timeline.push({ t: 'text', text: note.slice(0, 6000) })
+        pushTextEntry({ t: 'text', text: note.slice(0, 6000) })
         yield { type: 'text_delta', delta: sep + note }
         break
       }
@@ -4750,7 +4760,7 @@ async function* runAlternateProviderTurn(
         const combined = autoRanDelegationSummaries.join('\n\n')
         const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
         finalText += sep + combined
-        timeline.push({ t: 'text', text: combined.slice(0, 6000) })
+        pushTextEntry({ t: 'text', text: combined.slice(0, 6000) })
         yield { type: 'text_delta', delta: sep + combined }
         break
       }
@@ -4791,7 +4801,7 @@ async function* runAlternateProviderTurn(
       if (!answerBody()) {
         const exitText = prospectivePlanExitText(prospectivePlanTrackerVisible)
         finalText = exitText
-        timeline.push({ t: 'text', text: exitText })
+        pushTextEntry({ t: 'text', text: exitText })
         yield { type: 'text_delta', delta: exitText }
       }
     }
@@ -4981,7 +4991,7 @@ async function* runAlternateProviderTurn(
       for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
       timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
       finalText = playbackGate.text
-      timeline.push({ t: 'text', text: playbackGate.text })
+      pushTextEntry({ t: 'text', text: playbackGate.text })
       yield { type: 'text_delta', delta: finalText }
     }
     if (directBrowserLane?.state === 'ready') {
@@ -5047,7 +5057,7 @@ async function* runAlternateProviderTurn(
         for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
         timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
         finalText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
-        timeline.push({ t: 'text', text: finalText })
+        pushTextEntry({ t: 'text', text: finalText })
         yield { type: 'text_delta', delta: finalText }
       }
     }
@@ -5244,8 +5254,13 @@ async function* runAlternateProviderTurn(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
+    // Prose lifecycle v2: the id is chosen BEFORE the insert so the authoritative
+    // block document can name its own message and land in the same write.
+    const assistantMessageId = randomUUID()
+    const presentationV2 = proseLifecycle?.document(assistantMessageId)
     const savedMsg = await db.agentMessage.create({
       data: {
+        id: assistantMessageId,
         conversationId,
         role: 'assistant',
         content: storedContent,
@@ -5272,7 +5287,7 @@ async function* runAlternateProviderTurn(
           grounding: ownerRequirements.groundingRequired
             ? { required: true, satisfiedBy: groundingEvidence(toolRecords) }
             : undefined,
-          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined },
+          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined, presentationV2 },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -5665,7 +5680,7 @@ async function* runAlternateProviderTurn(
           if (playbackGate.replaced) {
             for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
             timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
-            timeline.push({ t: 'text', text: playbackGate.text })
+            pushTextEntry({ t: 'text', text: playbackGate.text })
             yield {
               type: 'verification_retry',
               attempt: MAX_VERIFY_RETRIES,
@@ -5677,16 +5692,18 @@ async function* runAlternateProviderTurn(
           } else {
             yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
           }
+          const salvageMessageId = randomUUID()
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const savedMsg = await (prisma as any).agentMessage.create({
             data: {
+              id: salvageMessageId,
               conversationId, role: 'assistant',
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
               costUsd: totalActualCostUsd != null
                 ? roundUsd(totalActualCostUsd)
                 : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, presentationV2: proseLifecycle?.document(salvageMessageId) },
             },
           })
           yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue }
@@ -5753,16 +5770,18 @@ async function* runAlternateProviderTurn(
             text = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
           }
         }
+        const salvageMessageId = randomUUID()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const savedMsg = await (prisma as any).agentMessage.create({
           data: {
+            id: salvageMessageId,
             conversationId, role: 'assistant',
             content: [{ type: 'text', text }, ...emittedAskCards],
             tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
             costUsd: totalActualCostUsd != null
               ? roundUsd(totalActualCostUsd)
               : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined, presentationV2: proseLifecycle?.document(salvageMessageId) },
           },
         })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5811,7 +5830,7 @@ async function* runAlternateProviderTurn(
         for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
         timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
         finalText = playbackGate.text
-        timeline.push({ t: 'text', text: playbackGate.text })
+        pushTextEntry({ t: 'text', text: playbackGate.text })
         yield { type: 'text_delta', delta: finalText }
       }
       await salvagePartialWorkOnError()
@@ -5879,7 +5898,7 @@ async function* runAlternateProviderTurn(
       for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
       timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
       finalText = playbackGate.text
-      timeline.push({ t: 'text', text: playbackGate.text })
+      pushTextEntry({ t: 'text', text: playbackGate.text })
       yield { type: 'text_delta', delta: finalText }
     }
     await salvagePartialWorkOnError()

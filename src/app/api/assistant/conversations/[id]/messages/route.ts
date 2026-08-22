@@ -7,6 +7,8 @@ import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { buildMessageCursorWhere, buildMessagesPagePlan } from '@/agent/lib/messages-page'
 import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
+import { buildAgentPresentationV2, presentationV1FromV2 } from '@/agent/lib/presentation/build-presentation-v2'
+import { readPresentationV2Document } from '@/agent/lib/presentation/prose-lifecycle'
 import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
@@ -466,9 +468,13 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       })(),
       // ONE canonical, versioned presentation projection (parity roadmap §5) —
       // additive next to every legacy field; both clients converge on this.
-      presentation:
-        m.role === 'assistant'
-          ? buildAgentPresentationV1({
+      // Prose lifecycle v2: when the message carries the authoritative block
+      // document, BOTH projections derive from it — v2 for dual-capable
+      // clients, v1 (lead/final + progress flagged) for older builds. Legacy
+      // rows without a document keep the v1 builder unchanged.
+      ...(m.role === 'assistant'
+        ? (() => {
+            const presentationInput = {
               messageId: m.id,
               content,
               timeline,
@@ -480,8 +486,16 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
               costUsd: m.costUsd != null ? Number(m.costUsd) : null,
               apiRounds: apiRounds ?? null,
               roundCostsUsd: roundCostsUsd ?? null,
-            })
-          : undefined,
+            }
+            const document = readPresentationV2Document(u)
+            if (!document) return { presentation: buildAgentPresentationV1(presentationInput) }
+            const presentationV2 = buildAgentPresentationV2({ ...presentationInput, document })
+            return {
+              presentation: { version: 1 as const, messageId: m.id, ...presentationV1FromV2(presentationV2) },
+              presentationV2,
+            }
+          })()
+        : {}),
     }
   })
 

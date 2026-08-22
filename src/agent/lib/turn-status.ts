@@ -14,6 +14,17 @@
 import { prisma } from '@/lib/prisma'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { lockDirectYouTubeLaneAuthority } from '@/agent/lib/live-browser/turn-lane'
+import { type ProseProtocol } from '@/agent/lib/presentation/prose-lifecycle'
+
+/**
+ * Behaviour-artifact stamp for a new turn row, plus the prose protocol the
+ * client negotiated (prose-lifecycle.ts). Persisted ON the turn so every later
+ * reader — the worker's internal chat call, the durable stream, turn-status —
+ * serves the same family the client selected. Absent = protocol 1.
+ */
+export function turnVersionsFor(proseProtocol?: ProseProtocol | null): Record<string, unknown> {
+  return { ...AGENT_VERSIONS, ...(proseProtocol === 2 ? { agentProseProtocol: 2 } : {}) }
+}
 
 export type TurnStatus = 'running' | 'done' | 'error' | 'canceled'
 export type TurnClaim = { turnId: string | null; claimed: boolean; status: TurnStatus | null }
@@ -33,6 +44,8 @@ export async function createTurn(
      * ladder and the money cap engage on work Boss is not watching.
      */
     instructionOrigin?: 'owner_direct' | 'owner_policy'
+    /** Prose protocol the client negotiated for this turn (default 1). */
+    proseProtocol?: ProseProtocol | null
   },
 ): Promise<string | null> {
   try {
@@ -47,7 +60,7 @@ export async function createTurn(
           clientMessageId: opts?.clientMessageId ?? null,
           executionMode: opts?.executionMode ?? null,
           instructionOrigin: opts?.instructionOrigin ?? null,
-          versions: AGENT_VERSIONS,
+          versions: turnVersionsFor(opts?.proseProtocol),
         },
         select: { id: true },
       })
@@ -72,6 +85,8 @@ export interface TurnSnapshot {
   continuationNeeded: boolean
   startedAt: Date
   updatedAt: Date | null
+  /** Behaviour-artifact stamp + negotiated `agentProseProtocol` (see turnVersionsFor). */
+  versions?: unknown
 }
 
 const TURN_SNAPSHOT_SELECT = {
@@ -86,6 +101,7 @@ const TURN_SNAPSHOT_SELECT = {
   continuationNeeded: true,
   startedAt: true,
   updatedAt: true,
+  versions: true,
 } as const
 
 /**
@@ -101,6 +117,7 @@ export async function findOrCreateTurnByClientMessageId(
   conversationId: string,
   clientMessageId: string,
   executionMode: 'inline' | 'worker',
+  proseProtocol?: ProseProtocol | null,
 ): Promise<{ turn: TurnSnapshot; created: boolean } | null> {
   try {
     return await db().$transaction(async (tx: any) => {
@@ -112,7 +129,7 @@ export async function findOrCreateTurnByClientMessageId(
       })
       if (existing) return { turn: existing as TurnSnapshot, created: false }
       const row = await tx.agentTurn.create({
-        data: { conversationId, status: 'running', clientMessageId, executionMode, versions: AGENT_VERSIONS },
+        data: { conversationId, status: 'running', clientMessageId, executionMode, versions: turnVersionsFor(proseProtocol) },
         select: TURN_SNAPSHOT_SELECT,
       })
       return { turn: row as TurnSnapshot, created: true }
@@ -191,6 +208,33 @@ export async function linkTurnAssistantMessage(turnId: string | null, messageId:
   }
 }
 
+/** The prose protocol a turn was negotiated with (1 when unknown / legacy). */
+export async function getTurnProseProtocol(turnId: string | null | undefined): Promise<ProseProtocol> {
+  if (!turnId) return 1
+  try {
+    const row = await db().agentTurn.findUnique({ where: { id: turnId }, select: { versions: true } })
+    const v = row?.versions as Record<string, unknown> | null | undefined
+    return v?.agentProseProtocol === 2 ? 2 : 1
+  } catch (err) {
+    console.warn('[turn-status] getTurnProseProtocol failed:', err instanceof Error ? err.message : err)
+    return 1
+  }
+}
+
+/**
+ * Record the negotiated prose protocol on an already-created turn row (the
+ * chat route creates some turns through paths that predate negotiation).
+ * Fail-open: a missing stamp simply reads as protocol 1 for later readers.
+ */
+export async function setTurnProseProtocol(turnId: string | null | undefined, proseProtocol: ProseProtocol): Promise<void> {
+  if (!turnId || proseProtocol !== 2) return
+  try {
+    await db().agentTurn.updateMany({ where: { id: turnId }, data: { versions: turnVersionsFor(proseProtocol) } })
+  } catch (err) {
+    console.warn('[turn-status] setTurnProseProtocol failed:', err instanceof Error ? err.message : err)
+  }
+}
+
 /**
  * Claim one execution for a browser-generated logical request id. Direct Vercel
  * execution and the 15s VPS fallback race on the same unique key; only the winner
@@ -200,6 +244,7 @@ export async function claimTurnForRequest(
   conversationId: string,
   requestId: string,
   executionMode: 'inline' | 'worker' = 'inline',
+  proseProtocol?: ProseProtocol | null,
 ): Promise<TurnClaim> {
   try {
     const row = await db().$transaction(async (tx: any) => {
@@ -210,7 +255,7 @@ export async function claimTurnForRequest(
           requestId,
           status: 'running',
           executionMode,
-          versions: AGENT_VERSIONS,
+          versions: turnVersionsFor(proseProtocol),
         },
         select: { id: true, status: true },
       })

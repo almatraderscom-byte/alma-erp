@@ -151,12 +151,24 @@ import {
 // ── Event types ────────────────────────────────────────────────────────────
 
 export type AgentEvent =
-  | { type: 'text_delta'; delta: string }
+  // Prose lifecycle v2 (src/agent/lib/presentation/prose-lifecycle.ts): on a
+  // turn negotiated as protocol 2 every delta names the block it belongs to.
+  // Protocol-1 turns carry neither field (byte-identical legacy wire).
+  | { type: 'text_delta'; delta: string; blockId?: string; revision?: number }
   | { type: 'thinking_delta'; delta: string }
   // Provider-independent lifecycle fact for the visible process lane. This is
   // never model-authored reasoning: native reasoning stays `thinking_delta`,
   // while this event reports only states the harness directly observed.
-  | { type: 'progress_update'; label: string }
+  | { type: 'progress_update'; label: string; stage?: 'round' | 'tool' | 'response' }
+  // Prose lifecycle v2 family — emitted ONLY on protocol-2 turns, by the
+  // lifecycle interceptor (never by the runner directly). A v2 turn never sends
+  // `verification_retry`; a v1 turn never sends these.
+  | { type: 'prose_start'; blockId: string; kind: 'lead' | 'progress' | 'draft' | 'final'; revision: number; replaces?: string }
+  | { type: 'prose_commit'; blockId: string; kind: 'lead' | 'progress' | 'final'; revision: number; text: string; checksum: string }
+  | { type: 'prose_supersede'; blockId: string; replacementBlockId?: string; reason: string }
+  // Route envelope: the protocol this turn was negotiated with, sent before any
+  // prose so a client selects its reducer from this fact alone.
+  | { type: 'turn_protocol'; agentProseProtocol: 1 | 2 }
   // Emitted once at turn start so the UI can show a per-model loading identity
   // (Sonnet = Claude sparkle, DeepSeek = blue dots, Qwen = orb) + a label.
     | {
@@ -822,6 +834,12 @@ export interface RunAgentTurnOptions {
   elevationGrant?: import('@/agent/lib/permission-mode').ElevationGrant | null
   /** Same durable task continued by an approval/auto-resume control turn. */
   continuation?: boolean
+  /**
+   * Prose lifecycle v2 tracker for this turn (created by the route, shared
+   * with the lifecycle interceptor). The runner only anchors timeline text
+   * entries on it and stores its document with the terminal message.
+   */
+  proseLifecycle?: import('@/agent/lib/presentation/prose-lifecycle').ProseLifecycleTracker | null
 }
 
 /** One-time nudge injected when the serverless deadline is close. */
