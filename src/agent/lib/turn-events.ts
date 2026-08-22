@@ -319,16 +319,28 @@ export function pollTurnEvents(
 export async function subscribeTurnEvents(
   turnId: string,
   onEvent: (evt: TurnEvent) => void,
+  opts?: { signal?: AbortSignal },
 ): Promise<{ close: () => Promise<void> } | null> {
   // Must match the Redis the worker PUBLISHES to (LONG_TASK_REDIS_URL on the
   // worker), so the live tail sees the worker's events. Same precedence as the
   // enqueue side: LONG_TASK_REDIS_URL first, then REDIS_URL.
   const url = process.env.LONG_TASK_REDIS_URL || process.env.REDIS_URL
   if (!url) return null
+  const signal = opts?.signal
+  if (signal?.aborted) return null
+  let sub: { disconnect: () => void; quit: () => Promise<unknown> } | null = null
+  // The tailer aborts an attempt that outlives its deadline: stop reconnecting
+  // and fail the pending SUBSCRIBE instead of leaking a client per stream for
+  // the length of a Redis outage (Codex P1 #836 r4).
+  const onAbort = () => { sub?.disconnect() }
+  signal?.addEventListener('abort', onAbort, { once: true })
   try {
     const { default: Redis } = await import('ioredis')
-    const sub = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
-    sub.on('message', (_channel, raw) => {
+    if (signal?.aborted) return null
+    const client = new Redis(url, { maxRetriesPerRequest: null, lazyConnect: false })
+    sub = client
+    client.on('error', () => { /* surfaced by the pending command / close path */ })
+    client.on('message', (_channel, raw) => {
       try {
         const evt = JSON.parse(raw) as TurnEvent
         if (evt && typeof evt.seq === 'number') onEvent(evt)
@@ -336,18 +348,27 @@ export async function subscribeTurnEvents(
         /* malformed publish — ignore */
       }
     })
-    await sub.subscribe(turnEventChannel(turnId))
+    await client.subscribe(turnEventChannel(turnId))
+    if (signal?.aborted) {
+      client.disconnect()
+      return null
+    }
+    signal?.removeEventListener('abort', onAbort)
     return {
       close: async () => {
         try {
-          await sub.quit()
+          await client.quit()
         } catch {
-          sub.disconnect()
+          client.disconnect()
         }
       },
     }
   } catch (err) {
-    console.warn('[turn-events] subscribeTurnEvents failed:', err instanceof Error ? err.message : err)
+    signal?.removeEventListener('abort', onAbort)
+    sub?.disconnect()
+    if (!signal?.aborted) {
+      console.warn('[turn-events] subscribeTurnEvents failed:', err instanceof Error ? err.message : err)
+    }
     return null
   }
 }
