@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   ProseLifecycleTracker,
   negotiateProseProtocol,
+  ownerVisibleTextFromDocument,
   projectEventForProtocol,
   proseProtocolFromVersions,
+  visibleDocumentBlocks,
   type WireEvent,
 } from '../prose-lifecycle'
 import {
@@ -180,5 +182,58 @@ describe('negotiation + mixed-version projection', () => {
     expect(projectEventForProtocol({ type: 'prose_supersede', blockId: 'b', reason: 'rewrite' }, 1))
       .toEqual({ type: 'verification_retry', attempt: 1, maxAttempts: 1, categories: [], snippets: [] })
     expect(projectEventForProtocol({ type: 'done', messageId: 'm' }, 1)).toEqual({ type: 'done', messageId: 'm' })
+  })
+})
+
+describe('error salvage keeps the persisted warning in the document (Codex P1 #834 r3)', () => {
+  const suffix = '⚠️ মডেল-প্রোভাইডারের error-এ টার্নটা থেমেছে — ২টা ধাপের অগ্রগতি সেভ করা আছে। Boss, "continue" বললে ঠিক এখান থেকে চালিয়ে যাব।'
+  const visibleOf = (tracker: ProseLifecycleTracker) =>
+    visibleDocumentBlocks(tracker.document('m').blocks).map((b) => [b.kind, b.text])
+
+  it('appends the warning as its own final block after the streamed prose (ids kept)', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    tracker.process(text('প্রথম অংশ'))
+    tracker.process(tool('1'))
+    tracker.process(toolEnd('1'))
+    tracker.process(round(2))
+    tracker.process(text('দ্বিতীয় অংশ'))
+    const streamedIds = tracker.visibleBlocks().map((b) => b.id)
+    const content = [tracker.ownerVisibleText(), suffix].join('\n\n')
+    tracker.salvage(content, { suffix })
+    expect(visibleOf(tracker)).toEqual([
+      ['progress', 'প্রথম অংশ'],
+      ['final', 'দ্বিতীয় অংশ'],
+      ['final', suffix],
+    ])
+    const doc = tracker.document('m')
+    expect(visibleDocumentBlocks(doc.blocks).slice(0, 2).map((b) => b.id)).toEqual(streamedIds)
+    expect(ownerVisibleTextFromDocument(doc)).toBe(content)
+  })
+
+  it('a tool-only turn gets the warning as its only prose instead of a blank document', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    tracker.process(tool('1'))
+    tracker.process(toolEnd('1'))
+    tracker.salvage(suffix, { suffix })
+    expect(visibleOf(tracker)).toEqual([['final', suffix]])
+  })
+
+  it('a replaced salvage text retires the streamed blocks and becomes the one final block', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    tracker.process(text('ভিডিও চালু করেছি'))
+    const blocker = 'ব্রাউজার lane settle করা যায়নি — Boss, আবার বলুন।'
+    tracker.salvage(blocker)
+    expect(visibleOf(tracker)).toEqual([['final', blocker]])
+    const doc = tracker.document('m')
+    expect(doc.blocks.filter((b) => b.state === 'superseded').map((b) => b.reason)).toEqual(['salvage'])
+    expect(ownerVisibleTextFromDocument(doc)).toBe(blocker)
+  })
+
+  it('is a no-op when the persisted content already equals the visible prose', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    tracker.process(text('সম্পূর্ণ উত্তর'))
+    const before = tracker.document('m')
+    tracker.salvage('সম্পূর্ণ উত্তর', { suffix })
+    expect(tracker.document('m')).toEqual(before)
   })
 })

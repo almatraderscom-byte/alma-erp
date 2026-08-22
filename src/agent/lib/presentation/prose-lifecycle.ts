@@ -234,6 +234,54 @@ export class ProseLifecycleTracker {
       .map((b) => ({ id: b.id, kind: b.kind, text: b.text }))
   }
 
+  /**
+   * Error salvage (Codex P1 #834 r3). When a provider fails mid-turn the runner
+   * persists `text` — the partial prose plus a synthesized failure / continue
+   * warning (or a gate's replacement text) — as the message content. This
+   * document is the read-time authority over that content, so it must say the
+   * same thing: otherwise the polled / cold view shows the partial work, or a
+   * tool-only turn with no prose at all, as a clean success.
+   *
+   * `suffix` is the warning the runner appended. When `text` is exactly the
+   * visible prose plus that suffix, the suffix becomes its own final block and
+   * the streamed blocks keep their ids (live/cold parity for what streamed).
+   * Any other `text` retires the visible blocks (reason 'salvage') and becomes
+   * the single final block — the content wins, never the stale blocks.
+   */
+  salvage(text: string, opts?: { suffix?: string }): void {
+    const wanted = text.trim()
+    if (!wanted) return
+    this.settle()
+    const visible = this.ownerVisibleText().trim()
+    if (wanted === visible) return
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim()
+    const suffix = opts?.suffix?.trim() ?? ''
+    let extra = wanted
+    const extendsVisible =
+      visible.length > 0
+      && suffix.length > 0
+      && wanted.endsWith(suffix)
+      && normalize(wanted.slice(0, wanted.length - suffix.length)) === normalize(visible)
+    if (extendsVisible) {
+      extra = suffix
+    } else {
+      for (const b of this.blocks) {
+        if (b.state === 'superseded' && !b.awaitingReplacement) continue
+        this.supersede(b, 'salvage', false)
+      }
+    }
+    this.blocks.push({
+      id: this.nextId(),
+      kind: 'final',
+      state: 'committed',
+      revision: 1,
+      text: extra,
+      continuable: false,
+      dirty: false,
+      awaitingReplacement: false,
+    })
+  }
+
   // ── interceptor-facing ─────────────────────────────────────────────────
 
   /** Derive lifecycle state from one runner event; return what to forward. */
