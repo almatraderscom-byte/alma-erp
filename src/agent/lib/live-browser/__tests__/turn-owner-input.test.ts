@@ -268,6 +268,15 @@ describe('turn-linked owner input', () => {
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
   })
 
+  it('does not let a generated heartbeat directive revoke the active owner turn', async () => {
+    const turnB = store.turns.get('turn-b')!
+    turnB.instructionOrigin = 'owner_policy'
+    const msgB = store.messages.get('msg-b')!
+    msgB.usage = { heartbeatDirective: true }
+
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
+  })
+
   it('revokes on the newer durable owner message before its AgentTurn is created', async () => {
     store.turns.delete('turn-b')
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(false)

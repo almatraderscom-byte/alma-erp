@@ -183,7 +183,7 @@ export async function isTurnOwnerExecutionCurrent(
         // but it is unattended owner_policy work—not a fresh owner instruction.
         // Its linked turn is filtered below; ignore the matching generated
         // message here so it cannot revoke a witnessed owner browser turn first.
-        if (usage.driverDirective === true) return false
+        if (usage.driverDirective === true || usage.heartbeatDirective === true) return false
         const steering = usage.steering && typeof usage.steering === 'object' && !Array.isArray(usage.steering)
           ? usage.steering as Record<string, unknown>
           : {}
