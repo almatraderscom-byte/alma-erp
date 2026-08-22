@@ -105,6 +105,7 @@ type CorrectionReversalDraft = {
 type PendingSalaryCorrectionRow = {
   id: string
   type: string
+  businessId?: string | null
   createdAt: string
   reason: string
   requester?: { name: string } | null
@@ -310,6 +311,8 @@ function EmployeeDetailPageContent() {
         setPendingCorrections(
           (data.approvals || []).filter(row => {
             if (row.type !== 'SALARY_CORRECTION') return false
+            // Employee IDs repeat across businesses: only this business's rows.
+            if (row.businessId !== employeeBusinessId) return false
             const payload = parseSalaryCorrectionPayload(row.payloadSnapshot)
             return payload?.employeeId === decoded
           }),

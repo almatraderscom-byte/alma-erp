@@ -456,17 +456,19 @@ struct EmployeeCorrectionSnapshot: Decodable, Equatable {
 struct EmployeePendingCorrection: Decodable, Identifiable, Equatable {
     let id: String
     let type: String?
+    let businessId: String?
     let createdAt: String?
     let reason: String?
     let requesterName: String?
     let payload: EmployeeCorrectionSnapshot?
 
-    private enum Keys: String, CodingKey { case id, type, createdAt, reason, requester, payloadSnapshot }
+    private enum Keys: String, CodingKey { case id, type, businessId, createdAt, reason, requester, payloadSnapshot }
     private enum RequesterKeys: String, CodingKey { case name }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         type = try? c.decodeIfPresent(String.self, forKey: .type)
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         let r = try? c.nestedContainer(keyedBy: RequesterKeys.self, forKey: .requester)
@@ -640,9 +642,10 @@ final class EmployeeDetailVM {
         wallet = w
         attendance = a
         legacy = l?.transactions ?? []
-        // Web filter parity: SALARY_CORRECTION rows whose payload targets this employee.
+        // Web filter parity: SALARY_CORRECTION rows of THIS business whose payload
+        // targets this employee (IDs repeat across businesses — Codex P2).
         pendingCorrections = (p?.approvals ?? []).filter {
-            $0.type == "SALARY_CORRECTION" && $0.payload?.employeeId == empId
+            $0.type == "SALARY_CORRECTION" && $0.businessId == businessId && $0.payload?.employeeId == empId
         }
         if w == nil && a == nil {
             error = "বিস্তারিত লোড করা যায়নি — আবার চেষ্টা করুন।"
