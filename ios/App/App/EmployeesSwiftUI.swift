@@ -488,7 +488,8 @@ struct EmployeeApprovalsListResponse: Decodable {
 // MARK: - View models
 
 /// The web BusinessContext default — HR roster lives in the primary business.
-private let employeesBusinessId = "ALMA_LIFESTYLE"
+/// The business the shell is in (AlmaSession) — web BusinessContext parity.
+private var employeesBusinessId: String { AlmaAccess.Context.currentId }
 
 @available(iOS 17.0, *)
 @Observable
@@ -890,7 +891,7 @@ struct EmployeesScreen: View {
                 if let err = vm.error { noticeCard(err) }
                 if let ok = vm.notice { successCard(ok) }
                 statsStrip
-                addEmployeeButton
+                if AlmaSession.shared.can(.employeeWrite) { addEmployeeButton }
                 searchBar
                 roleChips
                 if !vm.loading || !vm.employees.isEmpty { countLine }
@@ -1328,14 +1329,20 @@ private struct EmployeeDetailSheet: View {
 
     private var actionsRow: some View {
         VStack(spacing: 8) {
+            // Web CAPABILITIES: payroll entry = payrollWrite (SUPER_ADMIN/HR),
+            // salary edit = employeeWrite (SUPER_ADMIN/HR).
             HStack(spacing: 8) {
+                if AlmaSession.shared.can(.payrollWrite) {
                 actionButton("+ Payroll entry", icon: "banknote", prominent: true) {
                     vm.actionError = nil; vm.notice = nil
                     showPay = true
                 }
+                }
+                if AlmaSession.shared.can(.employeeWrite) {
                 actionButton("Edit salary", icon: "pencil") {
                     vm.actionError = nil; vm.notice = nil
                     showSalary = true
+                }
                 }
             }
             HStack(spacing: 8) {

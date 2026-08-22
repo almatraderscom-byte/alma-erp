@@ -457,7 +457,7 @@ final class AttendanceVM {
         do {
             let resp: AttendanceDashboardResponse = try await AlmaAPI.shared.get(
                 "/api/attendance",
-                query: ["business_id": viewAll ? "ALL" : "ALMA_LIFESTYLE",
+                query: ["business_id": viewAll ? "ALL" : AlmaAccess.Context.currentId,
                         "date": AttendanceFormat.dayParam(day)])
             kpis = resp.kpis
             records = resp.records

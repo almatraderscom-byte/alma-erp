@@ -313,7 +313,7 @@ final class ExpensesVM {
             let (start, end) = dateFilter.range
             let resp: ExpensesFinanceResponse = try await AlmaAPI.shared.get(
                 "/api/finance",
-                query: ["business_id": "ALMA_LIFESTYLE", "startDate": start, "endDate": end])
+                query: ["business_id": AlmaAccess.Context.currentId, "startDate": start, "endDate": end])
             expenses = resp.expenses
             totalExpenses = resp.totalExpenses
             cashBalance = resp.cashBalance
@@ -365,7 +365,7 @@ final class ExpensesVM {
                 notes: draft.notes.trimmingCharacters(in: .whitespacesAndNewlines),
                 recurring: draft.recurring,
                 date: fmt.string(from: draft.date),
-                businessId: "ALMA_LIFESTYLE",
+                businessId: AlmaAccess.Context.currentId,
                 receiptRef: draft.receiptUrl ?? "",
                 receiptAttachmentId: draft.receiptId)
             let resp: ExpenseAddResponse = try await AlmaAPI.shared.send("POST", "/api/finance", body: body)
@@ -403,7 +403,7 @@ final class ExpensesVM {
         do {
             let res: ReceiptUpload = try await AlmaAPI.shared.uploadMultipart(
                 "/api/finance/receipts", fileField: "file", filename: filename,
-                mime: mime, data: data, fields: ["business_id": "ALMA_LIFESTYLE"])
+                mime: mime, data: data, fields: ["business_id": AlmaAccess.Context.currentId])
             guard let url = res.attachment?.url else {
                 error = res.error ?? "Receipt upload failed"
                 return nil
@@ -561,6 +561,8 @@ struct ExpensesScreen: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
+            // Web: `can(role, 'expenseWrite')` hides the add flow for non-finance roles.
+            if AlmaSession.shared.can(.expenseWrite) {
             Button {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 adding = true
@@ -574,6 +576,7 @@ struct ExpensesScreen: View {
                     .overlay(Capsule().strokeBorder(ExpensePalette.coral.opacity(0.55), lineWidth: 1))
             }
             .buttonStyle(.plain)
+            }
         }
         .padding(.top, 4)
     }

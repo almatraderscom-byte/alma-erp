@@ -140,7 +140,7 @@ struct PaymentAccountsListResponse: Decodable {
 final class PaymentAccountsVM {
     var methods: [PaymentAccountMethod] = []
     /// Same default business the other native tabs scope to (web _businessId default).
-    var businessId = "ALMA_LIFESTYLE"
+    var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
     var loading = false
     var error: String? = nil
     var notice: String? = nil       // transient "Copied" line

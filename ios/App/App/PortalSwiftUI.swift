@@ -582,7 +582,9 @@ struct PortalActionResponse: Decodable {
 @MainActor
 final class PortalVM {
     /// The same business the other native tabs scope to (web _businessId default).
-    static let businessId = "ALMA_LIFESTYLE"
+    /// The business the shell is in (AlmaSession) — a Trading-only staffer's desk
+    /// must query ALMA_TRADING or the server answers 403.
+    static var businessId: String { AlmaAccess.Context.currentId }
 
     var profile: PortalProfile? = nil
     var attendance: PortalAttendanceResponse? = nil

@@ -229,7 +229,7 @@ struct SupplierImportScreen: View {
                     emptyState
                 }
                 importGuide
-                webEscape
+                if AlmaSession.shared.can(.inventoryWrite) { webEscape }
                 Color.clear.frame(height: 8)
             }
             .padding(.horizontal, 14)

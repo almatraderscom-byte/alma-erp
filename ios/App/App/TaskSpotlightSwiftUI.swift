@@ -268,7 +268,7 @@ final class TaskSpotlightVM {
     var assignees: [AssigneeOption] = []
     var creating = false
 
-    func loadAssignees(businessId: String = "ALMA_LIFESTYLE") async {
+    func loadAssignees(businessId: String = AlmaAccess.Context.currentId) async {
         struct Resp: Decodable {
             let users: [AssigneeOption]
             private enum Keys: String, CodingKey { case ok, data, users, assignees }
@@ -289,7 +289,7 @@ final class TaskSpotlightVM {
     func createTask(title: String, description: String, priority: String,
                     deadline: String, bannerUrl: String, ackRequired: Bool,
                     allowDismiss: Bool, assigneeIds: [String],
-                    businessId: String = "ALMA_LIFESTYLE") async -> Bool {
+                    businessId: String = AlmaAccess.Context.currentId) async -> Bool {
         guard !creating, !title.isEmpty, !description.isEmpty, !assigneeIds.isEmpty else {
             error = "Title, description, and at least one assignee required"
             return false

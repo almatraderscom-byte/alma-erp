@@ -124,7 +124,7 @@ struct PortalExpenseSubmitResponse: Decodable {
 @MainActor
 final class PortalExpenseVM {
     /// Same default the API route falls back to (LIFESTYLE_BUSINESS_ID).
-    static let defaultBusinessId = "ALMA_LIFESTYLE"
+    static var defaultBusinessId: String { AlmaAccess.Context.currentId }
 
     var claims: [PortalExpenseClaim] = []
     var pendingTotal = 0

@@ -663,7 +663,7 @@ struct PayrollBusiness: Identifiable, Equatable {
 @Observable
 @MainActor
 final class PayrollVM {
-    var businessId = "ALMA_LIFESTYLE"
+    var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
 
     // Wallet summary
     var wallets: [PayrollEmployeeWallet] = []
@@ -1202,7 +1202,8 @@ struct PayrollScreen: View {
     // ── Pending wallet requests (native approve/reject — web submitReview parity) ──
 
     @ViewBuilder private var pendingRequestsSection: some View {
-        if !vm.pendingRequests.isEmpty {
+        // Web: `showApprovals = can(role, 'advanceApprove')` (SUPER_ADMIN / ADMIN / HR).
+        if !vm.pendingRequests.isEmpty, AlmaSession.shared.can(.advanceApprove) {
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Pending wallet requests")
                 ForEach(vm.pendingRequests) { req in

@@ -255,7 +255,7 @@ private struct SysDiagBusiness: Identifiable, Equatable {
 @Observable
 final class SystemDiagnosticsVM {
     /// Web scopes via the global business switcher — native mirrors it with chips.
-    var businessId = "ALMA_LIFESTYLE"     // web DEFAULT_BUSINESS_ID
+    var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
 
     var data: SystemDiagnosticsResponse? = nil
     var loading = false

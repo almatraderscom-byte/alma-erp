@@ -506,7 +506,7 @@ struct InventoryScreen: View {
         }
         .background(InventoryAurora())
         .claudeTopFade()
-        .overlay(alignment: .bottomTrailing) { addFab }
+        .overlay(alignment: .bottomTrailing) { if AlmaSession.shared.can(.inventoryWrite) { addFab } }
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
         .task { await vm.load() }
@@ -694,9 +694,10 @@ struct InventoryScreen: View {
             Text("No items found").foregroundStyle(.secondary)
             Text("Try another filter or add a product")
                 .font(.caption).foregroundStyle(.secondary)
-            Button("+ Add item") { showAdd = true }
+            if AlmaSession.shared.can(.inventoryWrite) { Button("+ Add item") { showAdd = true }
                 .buttonStyle(.borderedProminent)
                 .tint(InventoryPalette.coral)
+            }
         }
         .padding(.top, 60)
         .padding(.bottom, 30)
@@ -746,12 +747,15 @@ private struct InventoryActionButtons: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // Web `inventoryWrite` (SUPER_ADMIN / ADMIN): read-only roles see no write pills.
+            if AlmaSession.shared.can(.inventoryWrite) {
             pill("Adjust", tint: InventoryPalette.accentText(colorScheme)) { showAdjust = true }
             pill("Price", tint: .secondary) { showEdit = true }
             if item.archived == true {
                 pill("Restore", tint: InventoryPalette.positive(colorScheme)) { confirmRestore = true }
             } else {
                 pill("Archive", tint: InventoryPalette.red500) { confirmArchive = true }
+            }
             }
             if busy { ProgressView().controlSize(.small) }
             Spacer(minLength: 0)

@@ -342,7 +342,7 @@ struct DigitalInvoicesScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
                 heroBoard
-                newInvoiceButton
+                if AlmaSession.shared.can(.cditAdminWrite) { newInvoiceButton }
                 rangeChips
                 statusChips
                 if vm.loading && vm.invoices.isEmpty { loadingRows }

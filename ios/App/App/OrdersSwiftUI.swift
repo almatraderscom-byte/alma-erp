@@ -298,21 +298,19 @@ enum OrdIdentity {
     }
     private struct MeResponse: Decodable { let user: Me? }
 
+    /// Seeded by AlmaSession (the ONE identity fetch for the app) — kept as the
+    /// screens' existing read surface so Orders / Trading keep their role rules.
     private(set) static var cached: Me? = nil
-    private static var inflight: Task<Me?, Never>? = nil
 
+    static func seed(id: String?, role: String?) {
+        cached = Me(id: id, role: role)
+    }
+
+    @MainActor
     static func load() async -> Me? {
         if let cached { return cached }
-        if let inflight { return await inflight.value }
-        let t = Task<Me?, Never> {
-            let me: MeResponse? = try? await AlmaAPI.shared.get("/api/users/me")
-            return me?.user
-        }
-        inflight = t
-        let v = await t.value
-        if v != nil { cached = v }
-        inflight = nil
-        return v
+        await AlmaSession.shared.load()
+        return cached
     }
 
     // ── Role rules (port of src/lib/roles.ts + order-access.ts) ──

@@ -169,6 +169,13 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
     || pathname.startsWith('/api/orders/orders/tracking')
   ) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
   if (pathname.startsWith('/api/finance')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  // Lifestyle P&L dashboard feed (revenue / profit / top products) — the web page
+  // already shows STAFF/HR/VIEWER a no-revenue RoleDashboard instead (page.tsx);
+  // the API itself was open, so a native/curl caller could read it (iOS access
+  // parity audit 2026-08-22). Owner/admin only, same as /api/finance.
+  if (pathname === '/api/dashboard' || pathname.startsWith('/api/dashboard/')) {
+    return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  }
 
   return false
 }

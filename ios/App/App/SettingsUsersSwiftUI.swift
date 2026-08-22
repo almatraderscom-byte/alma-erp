@@ -353,8 +353,8 @@ struct SettingsUsersScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
                 kpiStrip
-                // NP-5 (AD-01): native create — server enforces the admin role gate.
-                if !vm.authExpired {
+                // NP-5 (AD-01): native create — web `userManage` (SUPER_ADMIN / ADMIN).
+                if !vm.authExpired, AlmaSession.shared.can(.userManage) {
                     Button {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         formMode = .create

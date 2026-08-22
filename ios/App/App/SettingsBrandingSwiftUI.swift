@@ -323,6 +323,8 @@ struct SettingsBrandingScreen: View {
                 ForEach(vm.brandings) { branding in
                     VStack(spacing: 6) {
                         SettingsBrandingCard(branding: branding, vm: vm)
+                        // Web `brandingWrite` — SUPER_ADMIN only.
+                        if AlmaSession.shared.can(.brandingWrite) {
                         Button {
                             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                             editTarget = branding
@@ -334,6 +336,7 @@ struct SettingsBrandingScreen: View {
                                 .foregroundStyle(SettingsBrandingPalette.coral)
                         }
                         .buttonStyle(.plain)
+                        }
                     }
                 }
                 if !vm.loading && vm.brandings.isEmpty && vm.error == nil && !vm.authExpired {
