@@ -24,14 +24,14 @@ Deterministic: no model call. Re-run with `npx vitest run selection-audit`.
 | seo-fix-title-thin | almatraders.com এর পুরো দুর্বল title আর thin description gulo thik koro | seo-fixing-own-site | storefront-editing, alma-product-listing, alma-website | ❌ wrong skill |
 | ads-audit-not-seo | amar ads account ta ekbar valo kore audit koro | — | seo-auditing-own-site, seo-fixing-own-site | ⚠️ false trigger |
 | staff | Mustahid ajke kokhon asche? | alma-staff-dispatch | — | ⬜ nothing picked |
-| listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, seo-fixing-client-site | ✅ hit |
+| listing | notun panjabi ta website e tolo | alma-product-listing | alma-product-listing, alma-website, alma-browser-operator | ✅ hit |
 | finance | ei masher khoroch koto holo? | alma-finance-brief | alma-finance-brief | ✅ hit |
 | cs | customer der message gulor reply dao | alma-customer-support | alma-customer-support | ✅ hit |
 | social | facebook e notun product er post dao | alma-product-social-post | alma-product-social-post, alma-product-listing, storefront-editing | ✅ hit |
 | briefing | ajker briefing dao | alma-owner-daily-briefing | alma-owner-daily-briefing | ✅ hit |
 | marketing | marketing kemon cholche? | alma-marketing | alma-marketing | ✅ hit |
 | campaign | ekta meta campaign chalu koro 5000 takar | alma-meta-campaign-launch | alma-meta-campaign-launch, alma-product-listing, seo-fixing-own-site | ✅ hit |
-| website | website e ki ki somossa ache? | alma-website | alma-website, alma-product-listing, seo-fixing-client-site | ✅ hit |
+| website | website e ki ki somossa ache? | alma-website | alma-website, alma-browser-operator, alma-product-listing | ✅ hit |
 | incident | agent ta kaj korche na keno, dekho | alma-agent-incident-diagnosis | alma-agent-incident-diagnosis, mac-health-monitor | ✅ hit |
 | invoice | ei invoice ta ERP te tolo | alma-invoice-to-erp | alma-invoice-to-erp, alma-agent-incident-diagnosis, alma-research | ✅ hit |
 | audience | je customer ra beshi kene tader ekta audience banao | alma-audience-builder | alma-audience-builder, alma-customer-support | ✅ hit |
