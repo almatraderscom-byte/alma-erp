@@ -165,10 +165,19 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
     const subscribeTimeoutMs = opts.subscribeTimeoutMs ?? 1500
     try {
       const attempt = io.subscribe(onLive)
+      const deadlineTimer: { id?: ReturnType<typeof setTimeout> } = {}
       const deadline = new Promise<null>((resolve) => {
-        setTimeout(() => { subscribeTimedOut = true; resolve(null) }, subscribeTimeoutMs)
+        deadlineTimer.id = setTimeout(() => { subscribeTimedOut = true; resolve(null) }, subscribeTimeoutMs)
       })
-      sub = await Promise.race([attempt, deadline])
+      try {
+        sub = await Promise.race([attempt, deadline])
+      } finally {
+        // A subscription that won the race must not be disowned by a deadline
+        // still ticking (Codex P1 #836 r3): it flipped `subscribeTimedOut` 1.5 s
+        // later, every live event was dropped and — `sub` being set — polling
+        // never started: a permanently frozen tail.
+        if (deadlineTimer.id) clearTimeout(deadlineTimer.id)
+      }
       if (subscribeTimedOut) {
         log('subscribe_timeout', { turnId: opts.turnId, afterMs: subscribeTimeoutMs })
         // A late subscription must not leak — and must not become a second

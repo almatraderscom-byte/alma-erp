@@ -230,6 +230,20 @@ describe('turn-stream tailer — replay/subscribe ordering', () => {
     expect(h.finished()).toBe(false)
   })
 
+  it('a subscription that won the race keeps delivering after the deadline would have fired (Codex P1 r3)', async () => {
+    const h = harness({ rows: () => [ev(0)] })
+    const tail = runTurnTail(h.io, { ...base, subscribeTimeoutMs: 10 })
+    await tail.ready
+    expect(h.subscribed()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 40))   // well past the 10 ms deadline
+    h.publish(ev(1))
+    h.publish(ev(2))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 1, 2])
+    expect(h.logs.map((l) => l.event)).not.toContain('subscribe_timeout')
+    expect(h.finished()).toBe(false)
+  })
+
   it('resumes strictly after the client cursor', async () => {
     const h = harness({ rows: () => [ev(0), ev(1), ev(2), ev(3)] })
     const tail = runTurnTail(h.io, { ...base, afterSeq: 1 })

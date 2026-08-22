@@ -1843,6 +1843,23 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
     return
   }
 
+  // Repair-only job for a turn whose terminal event could not be stored
+  // (Codex P1 #837 r3). Retries with backoff on its own; NEVER runs the turn.
+  // Must be matched before the generic turnId branch below.
+  if (job.name === 'repair-terminal' && job.data?.turnId) {
+    const { repairMissingTerminal } = await import('./turn/run-streamed-turn.mjs')
+    const result = await repairMissingTerminal({
+      supabase,
+      turnId: job.data.turnId,
+      status: job.data.status ?? 'error',
+      terminal: job.data.terminal ?? null,
+      redisUrl: LONG_TASK_REDIS_URL,
+    })
+    console.log(`[worker] repair-terminal ${job.data.turnId} → ${result.outcome}`)
+    if (result.outcome === 'failed') throw new Error(`repair-terminal ${job.data.turnId}: ${result.error ?? 'write failed'}`)
+    return
+  }
+
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
   // Redis + the agent_turn_events log so the client can tail/replay it.
@@ -1852,6 +1869,7 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
     // BullMQ stall re-queue, old backlog after a worker restart — must NEVER
     // re-run a turn that already reached a terminal status. The durable turn
     // row is the source of truth: only a still-'running' turn may execute.
+    let repairFailure = null
     try {
       const { data: turnRow } = await supabase
         .from('agent_turns')
@@ -1863,13 +1881,27 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
         // Codex P1 #837: a retry for a FINISHED turn must still be allowed to
         // repair the event log — if no terminal row exists, a tailing client
         // waits forever. Never re-runs the turn; writes one terminal row.
-        const { repairMissingTerminal } = await import('./turn/run-streamed-turn.mjs')
-        await repairMissingTerminal({ supabase, turnId: job.data.turnId, status: turnRow.status })
-        return
+        const { repairMissingTerminal, enqueueTerminalRepair } = await import('./turn/run-streamed-turn.mjs')
+        const result = await repairMissingTerminal({
+          supabase, turnId: job.data.turnId, status: turnRow.status, redisUrl: LONG_TASK_REDIS_URL,
+        })
+        if (result.outcome === 'failed') {
+          // Codex P1 #837 r3: returning here would be BullMQ's last word on a
+          // turn whose terminal is still missing. Hand the repair to its own
+          // retrying job and fail this delivery loudly (outside this try —
+          // the catch below must keep meaning "pre-check unavailable").
+          await enqueueTerminalRepair({
+            redisUrl: LONG_TASK_REDIS_URL,
+            data: { turnId: job.data.turnId, status: turnRow.status },
+          }).catch((e) => console.error(`[worker] streamed-turn ${job.data.turnId} — repair enqueue failed:`, e.message))
+          repairFailure = result.error ?? 'terminal repair failed'
+        }
+        if (!repairFailure) return
       }
     } catch (err) {
       console.warn(`[worker] streamed-turn ${job.data.turnId} status pre-check failed (continuing):`, err.message)
     }
+    if (repairFailure) throw new Error(`streamed-turn ${job.data.turnId}: terminal repair failed — ${repairFailure}`)
     const { runStreamedTurn } = await import('./turn/run-streamed-turn.mjs')
     await runStreamedTurn({ supabase, job, redisUrl: LONG_TASK_REDIS_URL, telegramBot })
     return
