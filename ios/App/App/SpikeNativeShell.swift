@@ -1221,6 +1221,18 @@ final class MoreMenuViewController: UITableViewController {
         let path: String, tabTitle: String, symbol: String
         if ip.section == 1 {
             let biz = visibleBusinesses[ip.row]
+            // A business row is a real session switch (web BusinessContext parity),
+            // exactly like the SwiftUI business sheet: the shell rebuilds the
+            // role-gated tab bar for that business and lands on its home. Only a
+            // tap on the CURRENT business falls through to opening its web home.
+            if #available(iOS 17.0, *),
+               let id = AlmaBusinessId.all.first(where: { $0.homePath == biz.path }) {
+                let session = AlmaSession.shared
+                if session.businessId != id {
+                    session.setBusiness(id)
+                    if session.businessId == id { return }
+                }
+            }
             path = biz.path; tabTitle = biz.name; symbol = biz.symbol
         } else {
             let item = visibleSections[ip.section - 2].items[ip.row]
