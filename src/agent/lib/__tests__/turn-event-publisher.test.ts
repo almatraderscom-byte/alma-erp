@@ -147,3 +147,27 @@ describe('R-3 — durable writes are fail-closed (handoff F-09)', () => {
     expect(pub.durabilityHoles()).toBe(1)
   })
 })
+
+describe('R-3 round 2 — terminal durability repair (Codex P1 #837)', () => {
+  it('a terminal whose write failed is repaired with an explicit durable error terminal', async () => {
+    upsertFailures.remaining = 3   // the `done` fails every attempt…
+    const pub = createTurnEventPublisher('t7', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
+    pub.emit({ type: 'done', messageId: 'm1' })
+    await new Promise((r) => setTimeout(r, 30))
+    upsertFailures.remaining = 0   // …storage is back for the repair
+    const lastSeq = await pub.finish()
+    expect(rows.map((r) => [r.seq, r.type, (r.payload as { message?: string }).message])).toEqual([
+      [1, 'error', 'turn_terminal_not_durable:done'],
+    ])
+    expect(lastSeq).toBe(1)
+    expect(pub.durabilityHoles()).toBe(1)
+  })
+
+  it('finish() rejects when no terminal can be stored at all', async () => {
+    upsertFailures.remaining = 99
+    const pub = createTurnEventPublisher('t8', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
+    pub.emit({ type: 'done', messageId: 'm1' })
+    await expect(pub.finish()).rejects.toThrow(/terminal event could not be stored durably/)
+    expect(rows).toHaveLength(0)
+  })
+})

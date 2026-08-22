@@ -28,6 +28,14 @@
  */
 const DURABLE_WRITE_ATTEMPTS = 3
 const DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
+/**
+ * A TERMINAL row is the one write that may not be given up on quickly: the
+ * chat route has already finalized the turn by then, so a BullMQ retry would
+ * be skipped by the worker's status guard and no later attempt could repair the
+ * log (Codex P1 #837). Keep trying in-process for ~1 minute before rejecting.
+ */
+const TERMINAL_WRITE_ATTEMPTS = 8
+const TERMINAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 16000]
 
 import Redis from 'ioredis'
 import { getAppUrl, getInternalToken } from '../env.mjs'
@@ -83,9 +91,11 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
     console.warn(`[worker] streamed-turn ${turnId} — durable seq lookup failed (starting at 0):`, err?.message ?? err)
   }
 
-  async function storeDurably(row) {
+  async function storeDurably(row, { terminal = false } = {}) {
+    const attempts = terminal ? TERMINAL_WRITE_ATTEMPTS : DURABLE_WRITE_ATTEMPTS
+    const delays = terminal ? TERMINAL_RETRY_DELAYS_MS : DURABLE_RETRY_DELAYS_MS
     let lastError = null
-    for (let attempt = 0; attempt < DURABLE_WRITE_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const { error } = await supabase.from('agent_turn_events').upsert(row, { onConflict: 'turn_id,seq' })
         if (!error) return true
@@ -93,9 +103,9 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
       } catch (err) {
         lastError = err
       }
-      if (attempt < DURABLE_WRITE_ATTEMPTS - 1) await sleep(DURABLE_RETRY_DELAYS_MS[attempt] ?? 500)
+      if (attempt < attempts - 1) await sleep(delays[attempt] ?? 500)
     }
-    console.error(`[worker] streamed-turn ${turnId} — durable write seq ${row.seq} FAILED after ${DURABLE_WRITE_ATTEMPTS} attempts:`, lastError?.message ?? lastError)
+    console.error(`[worker] streamed-turn ${turnId} — durable write seq ${row.seq} FAILED after ${attempts} attempts:`, lastError?.message ?? lastError)
     return false
   }
 
@@ -111,7 +121,7 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
     // Durable first (replay must not miss an event the live tail already lost),
     // then publish, then the liveness stamp. An event we could not store is not
     // published and does not consume its seq: what the tail shows, the log has.
-    const stored = await storeDurably(row)
+    const stored = await storeDurably(row, { terminal: type === 'done' || type === 'error' })
     if (!stored) {
       durableHoles += 1
       return false
@@ -219,5 +229,37 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
     } catch {
       publisher.disconnect?.()
     }
+  }
+}
+
+/**
+ * Repair path for a turn that already reached a terminal status while its
+ * durable event log has no terminal row (the original write failed every
+ * attempt and the job was re-delivered). Writes exactly one terminal row with
+ * the next seq; never re-runs the turn. Idempotent: a log that already ends
+ * with a terminal is left alone.
+ */
+export async function repairMissingTerminal({ supabase, turnId, status }) {
+  try {
+    const { data, error } = await supabase
+      .from('agent_turn_events')
+      .select('seq,type')
+      .eq('turn_id', turnId)
+      .order('seq', { ascending: false })
+      .limit(1)
+    if (error) throw error
+    const last = Array.isArray(data) && data.length > 0 ? data[0] : null
+    if (last && (last.type === 'done' || last.type === 'error')) return false
+    const seq = last && typeof last.seq === 'number' ? last.seq + 1 : 0
+    const message = status === 'done' ? 'turn_terminal_repaired:done' : `turn_terminal_repaired:${status}`
+    const row = { id: `${turnId}:${seq}`, turn_id: turnId, seq, type: 'error', payload: { type: 'error', message } }
+    const { error: writeError } = await supabase.from('agent_turn_events').upsert(row, { onConflict: 'turn_id,seq' })
+    if (writeError) throw writeError
+    await supabase.from('agent_turns').update({ last_seq: seq }).eq('id', turnId)
+    console.warn(`[worker] streamed-turn ${turnId} — repaired missing terminal at seq ${seq}`)
+    return true
+  } catch (err) {
+    console.error(`[worker] streamed-turn ${turnId} — terminal repair failed:`, err?.message ?? err)
+    return false
   }
 }
