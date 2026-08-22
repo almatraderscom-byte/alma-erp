@@ -90,6 +90,7 @@ final class AlmaSession {
         guard allowedBusinesses.contains(id) else { return }
         let before = businessId
         UserDefaults.standard.set(id.rawValue, forKey: Self.businessKey)
+        persistEffectiveBusiness()
         if before != businessId {
             NotificationCenter.default.post(name: .almaBusinessChanged, object: nil)
         }
@@ -157,6 +158,13 @@ final class AlmaSession {
 
     private init() {
         restoreCache()
+        persistEffectiveBusiness()
+    }
+
+    /// Mirror the computed business into UserDefaults for nonisolated readers
+    /// (AlmaAccess.Context.currentId).
+    private func persistEffectiveBusiness() {
+        UserDefaults.standard.set(businessId.rawValue, forKey: AlmaAccess.Context.effectiveKey)
     }
 
     /// Seed from the last confirmed identity so the first tab bar is already right
@@ -174,6 +182,10 @@ final class AlmaSession {
         isOwner = s.isOwner
         businessAccess = s.businessAccess
         name = s.name
+        // The Orders / Trading screens read identity through OrdIdentity.
+        if s.role != nil || s.userId != nil {
+            OrdIdentity.seed(id: s.userId, role: effectiveRole.rawValue)
+        }
     }
 
     private func persist(_ s: Snapshot) {
@@ -236,6 +248,7 @@ final class AlmaSession {
         }
         loaded = true
         lastLoadedAt = Date()
+        persistEffectiveBusiness()
         authVersion += 1
         if snapshot != before {
             NotificationCenter.default.post(name: .almaSessionChanged, object: nil)
@@ -264,9 +277,11 @@ final class AlmaSession {
     func signedOut() {
         let before = snapshot
         userId = nil; role = nil; isOwner = false; businessAccess = []; name = ""
+        OrdIdentity.seed(id: nil, role: nil)
         authed = false
         loaded = false
         UserDefaults.standard.removeObject(forKey: Self.cacheKey)
+        persistEffectiveBusiness()
         authVersion += 1
         if snapshot != before {
             NotificationCenter.default.post(name: .almaSessionChanged, object: nil)
@@ -287,6 +302,7 @@ final class AlmaSession {
                        businessAccess: access, name: "Fixture \(r.label)"))
         authed = true
         loaded = true
+        persistEffectiveBusiness()
         fixtureLocked = true
         authVersion += 1
         NotificationCenter.default.post(name: .almaSessionChanged, object: nil)

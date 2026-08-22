@@ -256,7 +256,8 @@ final class FinanceVM {
     var authExpired = false
 
     /// The same business the other native tabs scope to (web _businessId default).
-    static let businessId = "ALMA_LIFESTYLE"
+    /// The business the shell is in (AlmaSession) — web BusinessContext parity.
+    static var businessId: String { AlmaAccess.Context.currentId }
 
     func load() async {
         loading = true

@@ -409,6 +409,18 @@ enum AlmaAccess {
         role == .SUPER_ADMIN || role == .ADMIN
     }
 
+    /// The CURRENT business, readable from any isolation context (view models,
+    /// default arguments). AlmaSession (MainActor) writes it whenever identity or
+    /// the switcher changes; screens that scope their `business_id` query read it
+    /// here instead of hard-coding ALMA_LIFESTYLE — the fix that lets a
+    /// Trading-only staffer's My Desk / Attendance / Payroll load at all.
+    enum Context {
+        static let effectiveKey = "alma-business-effective"
+        static var currentId: String {
+            UserDefaults.standard.string(forKey: effectiveKey) ?? AlmaBusinessId.default.rawValue
+        }
+    }
+
     /// Which business a route belongs to, the way the web resolves it: `/trading*` →
     /// Trading, `/digital*` → CDIT (proxy.ts), otherwise the business the user is
     /// currently in when the route is valid there (BusinessContext), else Lifestyle.

@@ -339,7 +339,7 @@ final class SettingsTelegramVM {
         ("ALMA_TRADING", "Alma Trading"),
     ]
 
-    var businessId = "ALMA_LIFESTYLE"
+    var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
     var setting: SettingsTelegramSetting? = nil
     var recentQueue: [SettingsTelegramQueueRow] = []
     var dashboard: SettingsTelegramDashboard? = nil
