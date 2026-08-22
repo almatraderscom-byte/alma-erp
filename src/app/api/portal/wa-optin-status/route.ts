@@ -21,7 +21,10 @@ export async function GET(req: NextRequest) {
     if (!gateEnabled) return Response.json({ gateEnabled: false, optedInToday: true })
 
     const optedInToday = await hasOptedInToday(userId)
-    return Response.json({ gateEnabled: true, optedInToday })
+    // Native shells cannot read NEXT_PUBLIC_WA_BUSINESS_NUMBER; tell them whether
+    // there is anything to opt in to (the web gate never locks without a number).
+    const waNumberConfigured = Boolean((process.env.NEXT_PUBLIC_WA_BUSINESS_NUMBER ?? '').replace(/\D/g, ''))
+    return Response.json({ gateEnabled: true, optedInToday, waNumberConfigured })
   } catch {
     // Fail-open: any error must NOT lock the user out.
     return Response.json({ gateEnabled: false, optedInToday: true })

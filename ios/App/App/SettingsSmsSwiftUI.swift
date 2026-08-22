@@ -171,7 +171,7 @@ final class SettingsSmsVM {
     var catalog: [SettingsSmsCatalogItem] = []
     var setting: SettingsSmsSetting? = nil
     var balanceText = "—"
-    var businessId = "ALMA_LIFESTYLE"     // ALMA_LIFESTYLE | CREATIVE_DIGITAL_IT | ALMA_TRADING
+    var businessId = AlmaAccess.Context.currentId   // starts on the shell's current business
     var statusFilter = "ALL"              // ALL | QUEUED | PENDING | SENDING | SENT | DELIVERED | FAILED
     var loading = false
     var error: String? = nil

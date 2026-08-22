@@ -356,7 +356,15 @@
       "classification": "native-required",
       "nativeHandler": "native",
       "screen": "OrdersScreen",
-      "notes": "Native OrderDetailSheet covers detail + status advance/cancel/return + edit + delete-request + invoice (role-gated, ports web order-access.ts). 4 native mutations. Residual 'ওয়েবে খুলুন' is the sanctioned same-page web fallback (roadmap §4.4)."
+      "notes": "Native OrderDetailSheet covers detail + status advance/cancel/return + edit + delete-request + invoice (role-gated, ports web order-access.ts). Query deep links use /orders?focus=<id> and open that exact native detail. 4 native mutations. Residual 'ওয়েবে খুলুন' is the sanctioned same-page web fallback (roadmap §4.4)."
+    },
+    {
+      "path": "/orders/[id]",
+      "pattern": "dynamic",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "OrdersScreen(focusOrderId:)",
+      "notes": "Handled via pathParam fallback in AlmaNativeRouter; exact order is fetched through GET /api/orders/orders?id=…."
     },
     {
       "path": "/orders/new",
@@ -522,6 +530,174 @@
       "classification": "native-required",
       "nativeHandler": "native",
       "screen": "TradingTelegramScreen"
+    },
+    {
+      "path": "/agent/browser-live",
+      "pattern": "exact",
+      "classification": "native-required",
+      "nativeHandler": "native",
+      "screen": "BrowserLiveScreen",
+      "notes": "VPS live browser feed — native since L8/L9."
+    },
+    {
+      "path": "/agent/mac",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/media",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/calls",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/extensions",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/line",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/live",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/quality",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/recordings",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/routing",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/routing/outbound",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/routing/preview",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/blocklist",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/history",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/hold",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/hours",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/limits",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
+    },
+    {
+      "path": "/agent/phone-console/settings/provider",
+      "pattern": "exact",
+      "classification": "temporary-web",
+      "nativeHandler": "web",
+      "notes": "Owner-only agent console page shipped web-first (PBX console / Mac / media); embedded web until a native screen lands.",
+      "gapPhase": "IOSP-9"
     }
   ]
 }

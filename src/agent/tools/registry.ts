@@ -14,6 +14,10 @@ import {
 } from './tool-contract'
 import { TOOL_CLASSIFICATION } from './capability-classification'
 import {
+  enrichToolResultWithEntityLinks,
+  type AgentEntityLink,
+} from '@/agent/lib/entity-links'
+import {
   isReadOnlyPlanControlTool,
   isToolAllowedForOwnerTurn,
   type OwnerTurnAuthorization,
@@ -110,6 +114,8 @@ export interface ToolResult {
   success: boolean
   data?: unknown
   error?: string
+  /** Verified internal destinations derived from this tool's allowlisted output. */
+  entityLinks?: AgentEntityLink[]
   /**
    * Phase 2 result envelope — stable machine error code (see tool-contract.ts
    * TOOL_ERROR_CODES). Handlers may set it themselves; the executor fills it
@@ -622,7 +628,6 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...AUTONOMY_TOOLS,
   ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,
-  ...ORDER_AUTONOMY_TOOLS,
   ...FINANCE_AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
@@ -1617,7 +1622,7 @@ export async function executeTool(
     }
     tool = anyTool
   }
-  return runRegisteredTool(tool, input, serverContext, {
+  const result = await runRegisteredTool(tool, input, serverContext, {
     conversationId,
     businessId,
     turnId,
@@ -1638,6 +1643,12 @@ export async function executeTool(
     confidence: typeof serverContext.confidence === 'number' ? serverContext.confidence : undefined,
     capabilityRevoked: serverContext.capabilityRevoked === true,
     accountScopeOk: serverContext.accountScopeOk === false ? false : undefined,
+  })
+  // Owner-agent result enrichment lives at executeTool (not runRegisteredTool):
+  // the latter is also used by the customer-facing CS registry, which must never
+  // receive private internal navigation metadata.
+  return enrichToolResultWithEntityLinks(name, result, {
+    businessId: businessId === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE',
   })
 }
 

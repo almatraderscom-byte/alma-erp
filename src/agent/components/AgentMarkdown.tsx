@@ -1,16 +1,55 @@
 'use client'
 
 import React, { useCallback } from 'react'
+import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { stripToolCallMarkup } from '@/agent/lib/model-output-sanitize'
+import { classifyAgentMarkdownHref } from '@/agent/lib/markdown-link-router'
 import { impactLight } from '@/lib/haptics'
 
 interface AgentMarkdownProps {
   content: string
   className?: string
   onArtifactDetected?: (content: string, type: 'code' | 'markdown') => void
+}
+
+const MARKDOWN_LINK_CLASS = 'text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]'
+const subscribeToStableOrigin = () => () => {}
+
+function useCurrentOrigin(): string | undefined {
+  return React.useSyncExternalStore(
+    subscribeToStableOrigin,
+    () => window.location.origin,
+    () => undefined,
+  )
+}
+
+function AgentMarkdownLink({ href, children }: { href?: string; children: React.ReactNode }) {
+  // Root-relative links classify identically during SSR and hydration. The exact
+  // browser origin is learned after mount only so an absolute same-origin link can
+  // also become an in-app navigation without introducing a hydration mismatch.
+  const currentOrigin = useCurrentOrigin()
+
+  const destination = React.useMemo(
+    () => classifyAgentMarkdownHref(href, currentOrigin),
+    [href, currentOrigin],
+  )
+
+  if (destination.kind === 'internal') {
+    return <Link href={destination.href} prefetch={false} className={MARKDOWN_LINK_CLASS}>{children}</Link>
+  }
+  if (destination.kind === 'external') {
+    return (
+      <a href={destination.href} target="_blank" rel="noopener noreferrer" className={MARKDOWN_LINK_CLASS}>
+        {children}
+      </a>
+    )
+  }
+  // Keep the label readable, but never create a clickable element for an unsafe
+  // or malformed destination.
+  return <span className={MARKDOWN_LINK_CLASS}>{children}</span>
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -203,11 +242,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           },
           hr() { return <hr className="my-4 border-border-subtle" /> },
           a({ href, children }) {
-            return (
-              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#E07A5F] underline underline-offset-2 hover:text-[#81B29A] [overflow-wrap:anywhere]">
-                {children}
-              </a>
-            )
+            return <AgentMarkdownLink href={href}>{children}</AgentMarkdownLink>
           },
           strong({ children }) { return <strong className="font-bold text-cream">{children}</strong> },
           em({ children }) { return <em className="italic text-muted-hi">{children}</em> },

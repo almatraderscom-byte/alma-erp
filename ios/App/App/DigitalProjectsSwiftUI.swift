@@ -278,7 +278,7 @@ struct DigitalProjectsScreen: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 hero
-                newProjectButton
+                if AlmaSession.shared.can(.cditAdminWrite) { newProjectButton }
                 statusChips
                 searchRow
                 if vm.authExpired { authCard }

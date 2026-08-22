@@ -58,7 +58,21 @@ enum AlmaNativeRouter {
         // S8 audit fix: the three tab pages were reachable natively ONLY as tab roots —
         // any cross-page link (Dashboard "সব দেখুন" → /orders, briefing → /approvals)
         // fell through to the web view. One case each closes that hole.
-        case "/orders": return host(OrdersScreen(openWeb: openWebForced), "Orders")
+        case "/orders":
+            let focusOrderId = queryValue(path, name: "focus")
+            guard let businessId = scopedBusinessId(path, expected: "ALMA_LIFESTYLE") else {
+                return nil
+            }
+            // Preserve existing query behaviour such as /orders?q=…: only the
+            // typed `focus` query belongs to the native detail contract.
+            if path.dropFirst(clean.count).count > 1,
+               focusOrderId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                return nil
+            }
+            return host(OrdersScreen(
+                openWeb: openWebForced,
+                focusOrderId: focusOrderId,
+                businessId: businessId), "Orders")
         case "/orders/new": return host(OrderCreateSheet(onCreated: {}, openWeb: openWebForced), "নতুন অর্ডার")
         case "/approvals": return host(ApprovalsScreen(openWeb: openWebForced), "Approvals")
         case "/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
@@ -147,8 +161,28 @@ enum AlmaNativeRouter {
             // project rows → /digital/clients/{id}) used to fall through to the WEB
             // view (owner report 2026-07-15: "native app must never jump to web").
             // The native list screen opens with that entity's detail sheet focused.
+            if let orderId = pathParam(clean, after: "/orders/") {
+                guard let businessId = scopedBusinessId(path, expected: "ALMA_LIFESTYLE") else {
+                    return nil
+                }
+                return host(OrdersScreen(
+                    openWeb: openWebForced,
+                    focusOrderId: orderId,
+                    businessId: businessId), "Order")
+            }
             if let empId = pathParam(clean, after: "/employees/") {
-                return host(EmployeesScreen(openWeb: openWebForced, focusEmpId: empId), "Employee")
+                // Employees is a SHARED route: a legacy queryless link (Payroll /
+                // Approvals name taps) keeps the business the shell is in, so a
+                // Trading roster tap opens the Trading employee (Codex P1, round 3).
+                // A stamped selector must still match the canonical Lifestyle link.
+                guard let businessId = scopedBusinessId(
+                    path, expected: "ALMA_LIFESTYLE", legacyDefault: AlmaAccess.Context.currentId) else {
+                    return nil
+                }
+                return host(EmployeesScreen(
+                    openWeb: openWebForced,
+                    focusEmpId: empId,
+                    businessId: businessId), "Employee")
             }
             if let clientId = pathParam(clean, after: "/digital/clients/") {
                 return host(DigitalClientsScreen(openWeb: openWebForced, focusClientId: clientId), "Client")
@@ -157,6 +191,9 @@ enum AlmaNativeRouter {
             // last audited dynamic route still falling to web — the native list
             // opens with that account's detail sheet focused.
             if let accountId = pathParam(clean, after: "/trading/accounts/") {
+                guard scopedBusinessId(path, expected: "ALMA_TRADING") != nil else {
+                    return nil
+                }
                 return host(TradingAccountsScreen(openWeb: openWebForced, focusAccountId: accountId), "Trading account")
             }
             return nil
@@ -169,6 +206,15 @@ enum AlmaNativeRouter {
         guard let query = path.split(separator: "?").dropFirst().first else { return nil }
         return URLComponents(string: "https://x/?\(query)")?
             .queryItems?.first { $0.name == name }?.value
+    }
+
+    /// Canonical entity links may carry a business selector. Missing selectors
+    /// remain valid for legacy internal links; present selectors must match the
+    /// route's fixed business before any native model can fetch.
+    private static func scopedBusinessId(_ path: String, expected: String,
+                                         legacyDefault: String? = nil) -> String? {
+        guard let selected = queryValue(path, name: "business_id") else { return legacyDefault ?? expected }
+        return selected == expected ? selected : nil
     }
 
     /// "/employees/EMP-51" after "/employees/" → "EMP-51"; nil when the prefix

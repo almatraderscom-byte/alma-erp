@@ -1370,7 +1370,10 @@ struct TradingHomeScreen: View {
         }
     }
 
+    @ViewBuilder
     private func quickNavChip(_ title: String, _ icon: String, _ path: String, _ navTitle: String) -> some View {
+        // Web nav gate: a Trading staffer never sees Analytics / HR / Targets chips.
+        if AlmaSession.shared.canSee(path) {
         Button {
             openWeb(path, navTitle)
         } label: {
@@ -1384,6 +1387,7 @@ struct TradingHomeScreen: View {
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
         .tradingHomeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
     }
 
     private var webEscape: some View {
