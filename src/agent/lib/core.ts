@@ -318,7 +318,8 @@ export type AgentEvent =
        * visible instead of silent — which is the owner's "must sync" condition.
        */
       permissionMode?: string }
-  | { type: 'error'; message: string }
+  /** `messageId`: the assistant row salvaged before the failure (partial work + warning). */
+  | { type: 'error'; message: string; messageId?: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
 export const MUTATING_TOOLS = new Set([
