@@ -30,6 +30,8 @@ function harness(opts: {
   /** Runs between the subscription being installed and the replay query. */
   betweenSubscribeAndReplay?: (h: Harness) => void
   replayError?: Error
+  /** Fail this many catch-up (gap) queries before succeeding. */
+  catchupFailures?: number
 }): Harness {
   let onLive: ((evt: TurnEvent) => void) | null = null
   let finished = false
@@ -46,6 +48,10 @@ function harness(opts: {
     io: {
       async getReplay(afterSeq, limit) {
         if (opts.replayError) throw opts.replayError
+        if (afterSeq >= 0 && (opts.catchupFailures ?? 0) > 0) {
+          opts.catchupFailures = (opts.catchupFailures ?? 0) - 1
+          throw new Error('catch-up db down')
+        }
         // The race window: the publisher writes + publishes right after the
         // subscription exists but before this query resolves.
         if (opts.betweenSubscribeAndReplay && onLive) {
@@ -109,6 +115,45 @@ describe('turn-stream tailer — replay/subscribe ordering', () => {
     expect(h.emitted).toEqual([0, 1, 2])
     expect(h.logs.map((l) => l.event)).toEqual(['gap_detected', 'replay_catchup'])
     expect(h.logs[0].detail).toMatchObject({ expectedSeq: 1, receivedSeq: 2 })
+  })
+
+  it('a transient catch-up failure is retried once, then healed normally', async () => {
+    const rows: TurnEvent[] = [ev(0)]
+    const h = harness({ rows: () => rows, catchupFailures: 1 })
+    const tail = runTurnTail(h.io, { ...base, catchupRetryDelayMs: 1 })
+    await tail.ready
+    rows.push(ev(1), ev(2))
+    h.publish(ev(2))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 1, 2])
+    expect(h.logs.map((l) => l.event)).toEqual(['gap_detected', 'replay_catchup_failed', 'replay_catchup'])
+  })
+
+  it('a persistent catch-up failure closes the stream instead of skipping past the missing rows (Codex P1)', async () => {
+    const rows: TurnEvent[] = [ev(0)]
+    const h = harness({ rows: () => rows, catchupFailures: 99 })
+    const tail = runTurnTail(h.io, { ...base, catchupRetryDelayMs: 1 })
+    await tail.ready
+    rows.push(ev(1), ev(2))
+    h.publish(ev(2))
+    await tail.flush()
+    expect(h.emitted).toEqual([0])   // seq 2 was NOT accepted — the cursor never moved past 1
+    expect(h.controls).toEqual([{ type: 'error', message: 'turn_replay_unavailable' }])
+    expect(h.finished()).toBe(true)
+  })
+
+  it('a hole inside the catch-up range is reported, never silently healed (Codex P2)', async () => {
+    const rows: TurnEvent[] = [ev(0)]
+    const h = harness({ rows: () => rows })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    rows.push(ev(2), ev(3), ev(4))   // seq 1 never existed durably
+    h.publish(ev(4))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 2, 3, 4])
+    const unhealed = h.logs.filter((l) => l.event === 'gap_unhealed')
+    expect(unhealed).toHaveLength(1)
+    expect(unhealed[0].detail).toMatchObject({ expectedSeq: 1, receivedSeq: 2 })
   })
 
   it('an unhealable gap is logged loudly and the stream continues', async () => {
