@@ -179,6 +179,11 @@ export async function isTurnOwnerExecutionCurrent(
         const usage = row.usage && typeof row.usage === 'object' && !Array.isArray(row.usage)
           ? row.usage as Record<string, unknown>
           : {}
+        // Plan-Driver persists its inline directive as a role=user breadcrumb,
+        // but it is unattended owner_policy work—not a fresh owner instruction.
+        // Its linked turn is filtered below; ignore the matching generated
+        // message here so it cannot revoke a witnessed owner browser turn first.
+        if (usage.driverDirective === true) return false
         const steering = usage.steering && typeof usage.steering === 'object' && !Array.isArray(usage.steering)
           ? usage.steering as Record<string, unknown>
           : {}

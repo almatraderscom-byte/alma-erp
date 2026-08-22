@@ -262,9 +262,8 @@ describe('turn-linked owner input', () => {
   it('does not let newer unattended policy work revoke the active owner turn', async () => {
     const turnB = store.turns.get('turn-b')!
     turnB.instructionOrigin = 'owner_policy'
-    // A policy turn has no owner-authored message; it is background work under
-    // standing authority, not a new instruction that can supersede turn A.
-    store.messages.delete('msg-b')
+    const msgB = store.messages.get('msg-b')!
+    msgB.usage = { driverDirective: true }
 
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
   })
