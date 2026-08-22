@@ -15,6 +15,12 @@ struct RoleDeskScreen: View {
 
     @Environment(\.colorScheme) private var scheme
     @State private var session = AlmaSession.shared
+    /// Step-2 WhatsApp opt-in gate — the native twin of web `StaffWaGate`.
+    /// Kill-switched + FAIL-OPEN exactly like the web: the desk is locked only
+    /// when the server POSITIVELY says the gate is on AND this user has not
+    /// opted in today; any error / loading / missing number shows the desk.
+    @State private var waLocked = false
+    @State private var waChecking = false
 
     private struct DeskCard { let href: String; let icon: String; let title: String; let desc: String }
 
@@ -43,6 +49,37 @@ struct RoleDeskScreen: View {
         }
     }
 
+    /// `/api/portal/wa-optin-status` — same shape the web gate reads.
+    struct WaOptinStatus: Decodable, Equatable {
+        var gateEnabled: Bool?
+        var optedInToday: Bool?
+        var waNumberConfigured: Bool?
+    }
+
+    /// Web `StaffWaGate`: `locked = gateEnabled && optedInToday === false`, and never
+    /// locked when no business WhatsApp number is configured (nothing to opt in to).
+    static func isLocked(_ status: WaOptinStatus?) -> Bool {
+        guard let status else { return false }
+        if status.waNumberConfigured == false { return false }
+        return status.gateEnabled == true && status.optedInToday == false
+    }
+
+    private func checkWaGate() async {
+        #if DEBUG
+        if let fx = ProcessInfo.processInfo.environment["ALMA_WA_GATE_FIXTURE"] {
+            waLocked = (fx == "locked"); return
+        }
+        #endif
+        waChecking = true
+        defer { waChecking = false }
+        do {
+            let status: WaOptinStatus = try await AlmaAPI.shared.getQuietAuth("/api/portal/wa-optin-status")
+            waLocked = Self.isLocked(status)
+        } catch {
+            waLocked = false // fail-open, like the web
+        }
+    }
+
     var body: some View {
         let role = session.effectiveRole
         let desk = Self.desk(for: role)
@@ -50,6 +87,9 @@ struct RoleDeskScreen: View {
         let cards = desk.cards.filter { session.canSee($0.href) }
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if waLocked {
+                    waGateCard
+                } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("স্বাগতম")
                         .font(.caption2.weight(.black))
@@ -98,6 +138,7 @@ struct RoleDeskScreen: View {
                         .buttonStyle(.plain)
                     }
                 }
+                }
             }
             .padding(.horizontal, AlmaSwiftTheme.margin)
             .padding(.top, 8)
@@ -105,6 +146,52 @@ struct RoleDeskScreen: View {
         }
         .background(OrdersAurora())
         .claudeTopFade()
-        .refreshable { await session.reload() }
+        .task { await checkWaGate() }
+        .refreshable { await session.reload(); await checkWaGate() }
+    }
+
+    /// The locked home — same copy as web `StaffWaGate`. The WhatsApp button opens
+    /// the web home page, whose opt-in card carries the business number and the
+    /// pre-written message (the webview owns `NEXT_PUBLIC_WA_BUSINESS_NUMBER`).
+    private var waGateCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("দিনের শুরুতে")
+                .font(.caption2.weight(.black))
+                .tracking(2)
+                .foregroundStyle(AlmaSwiftTheme.coral)
+            Text("WhatsApp-এ যুক্ত হয়ে আনলক করুন")
+                .font(.title3.weight(.black))
+                .foregroundStyle(.primary)
+            Text("আজকের কাজ শুরু করতে নিচের WhatsApp বাটনে চাপ দিন → লেখা মেসেজটা Send করুন। তারপর নিচের বাটনে চাপ দিন।")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                openPath("/", "Dashboard")
+            } label: {
+                Label("WhatsApp-এ যুক্ত হন", systemImage: "message.fill")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color(red: 0.145, green: 0.827, blue: 0.40), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            Button {
+                Task { await checkWaGate() }
+            } label: {
+                Text(waChecking ? "দেখছি…" : "পাঠিয়েছি — আনলক করুন")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(AlmaSwiftTheme.coral.opacity(0.12), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+            .disabled(waChecking)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .lgCard()
+        .accessibilityIdentifier("roleDesk.waGate")
     }
 }

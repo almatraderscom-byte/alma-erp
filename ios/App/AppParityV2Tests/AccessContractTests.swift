@@ -225,4 +225,18 @@ final class AccessContractTests: XCTestCase {
             }
         }
     }
+
+    /// Native twin of web `StaffWaGate`: locked only on a POSITIVE gate-on + not-opted-in
+    /// answer, never when the number is missing, and fail-open on nil (Codex P2).
+    @MainActor
+    func testRoleDeskWaGateMatchesWebStaffWaGate() {
+        typealias S = RoleDeskScreen.WaOptinStatus
+        XCTAssertFalse(RoleDeskScreen.isLocked(nil))
+        XCTAssertFalse(RoleDeskScreen.isLocked(S(gateEnabled: false, optedInToday: true, waNumberConfigured: true)))
+        XCTAssertFalse(RoleDeskScreen.isLocked(S(gateEnabled: true, optedInToday: true, waNumberConfigured: true)))
+        XCTAssertTrue(RoleDeskScreen.isLocked(S(gateEnabled: true, optedInToday: false, waNumberConfigured: true)))
+        XCTAssertTrue(RoleDeskScreen.isLocked(S(gateEnabled: true, optedInToday: false, waNumberConfigured: nil)))
+        XCTAssertFalse(RoleDeskScreen.isLocked(S(gateEnabled: true, optedInToday: false, waNumberConfigured: false)))
+        XCTAssertFalse(RoleDeskScreen.isLocked(S(gateEnabled: true, optedInToday: nil, waNumberConfigured: true)))
+    }
 }
