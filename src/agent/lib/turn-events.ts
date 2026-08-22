@@ -112,6 +112,8 @@ export function createTurnEventPublisher(
   const retryDelaysMs = opts?.retryDelaysMs ?? DEFAULT_DURABLE_RETRY_DELAYS_MS
   let seq = -1
   let holes = 0
+  /** A `done`/`error` whose durable write failed every attempt (type kept for the repair). */
+  let terminalLost: string | null = null
   let chain: Promise<void> = Promise.resolve()
   // Prose lifecycle v2: a text delta may carry `blockId`/`revision`. Deltas are
   // coalesced only within ONE block — merging across blocks would corrupt the
@@ -170,6 +172,7 @@ export function createTurnEventPublisher(
       const stored = await storeDurably(mySeq, event)
       if (!stored) {
         holes += 1
+        if (isTerminalEventType(event.type)) terminalLost = event.type
         return
       }
       try {
@@ -228,6 +231,22 @@ export function createTurnEventPublisher(
     async finish() {
       flushDelta()
       await chain
+      if (terminalLost) {
+        // The log has no terminal: a client that reconnects after the live SSE
+        // dropped would tail forever. Repair with an explicit durable terminal
+        // (its own seq, full retries); if even that fails, reject so the caller
+        // cannot mistake the turn for cleanly finished (Codex P1 #837).
+        const lost = terminalLost
+        terminalLost = null
+        writeRow({ type: 'error', message: `turn_terminal_not_durable:${lost}` } as { type: string })
+        await chain
+        if (terminalLost) {
+          if (redis) {
+            try { await redis.quit() } catch { redis.disconnect?.() }
+          }
+          throw new Error(`[turn-events] turn ${turnId}: terminal event could not be stored durably`)
+        }
+      }
       if (redis) {
         try { await redis.quit() } catch { redis.disconnect?.() }
       }

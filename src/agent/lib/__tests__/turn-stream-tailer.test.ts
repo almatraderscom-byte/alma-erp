@@ -26,7 +26,7 @@ type Harness = {
 
 function harness(opts: {
   rows: () => TurnEvent[]
-  subscribe?: 'ok' | 'none'
+  subscribe?: 'ok' | 'none' | 'hang'
   /** Runs between the subscription being installed and the replay query. */
   betweenSubscribeAndReplay?: (h: Harness) => void
   replayError?: Error
@@ -64,6 +64,7 @@ function harness(opts: {
       },
       async subscribe(cb) {
         if (opts.subscribe === 'none') return null
+        if (opts.subscribe === 'hang') await new Promise(() => {})   // Redis unreachable: never settles
         onLive = cb
         return { close: async () => { onLive = null } }
       },
@@ -218,6 +219,15 @@ describe('turn-stream tailer — replay/subscribe ordering', () => {
     await t2.ready
     expect(settled.controls).toEqual([{ type: 'error', message: 'turn_stream_unavailable' }])
     expect(settled.finished()).toBe(true)
+  })
+
+  it('an unreachable live channel cannot hold back the durable replay: deadline → polling fallback (Codex P1)', async () => {
+    const h = harness({ rows: () => [ev(0), ev(1)], subscribe: 'hang' })
+    const tail = runTurnTail(h.io, { ...base, subscribeTimeoutMs: 20 })
+    await tail.ready
+    expect(h.emitted).toEqual([0, 1])   // replayed + polled despite the hung subscribe
+    expect(h.logs.map((l) => l.event)).toContain('subscribe_timeout')
+    expect(h.finished()).toBe(false)
   })
 
   it('resumes strictly after the client cursor', async () => {

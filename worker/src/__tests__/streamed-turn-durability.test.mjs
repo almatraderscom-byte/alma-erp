@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 process.env.APP_URL = 'https://example.test'
 process.env.AGENT_INTERNAL_TOKEN = 'test-token'
 
-const { runStreamedTurn } = await import('../turn/run-streamed-turn.mjs')
+const { runStreamedTurn, repairMissingTerminal } = await import('../turn/run-streamed-turn.mjs')
 
 /** SSE body from a list of events (plus a keepalive comment, like the route). */
 function sseBody(events) {
@@ -177,8 +177,9 @@ test('a failed chat call is reported as an error event with the HTTP status', as
 })
 
 test('an unstored terminal `done` is not accepted: the EOF error is stored instead (Codex P1)', async () => {
-  // The `done` at seq 2 fails every attempt; the fallback error event takes the same seq and lands.
-  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 3 } } })
+  // The `done` at seq 2 fails every attempt of the extended terminal budget (8);
+  // the fallback error event takes the same seq and lands on the next try.
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 2: { remaining: 8 } } })
   const publisher = fakePublisher()
   const events = [{ type: 'conversation_id', id: 'c' }, { type: 'text_delta', delta: 'x' }, { type: 'done', messageId: 'm' }]
   await runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } })
@@ -197,4 +198,23 @@ test('when no terminal can be stored at all the job rejects so BullMQ retries (C
     /terminal event could not be stored durably/,
   )
   assert.deepEqual(supabase.rows.map((r) => r.seq), [0, 1])
+})
+
+test('a terminal write gets the extended in-process retry budget (Codex P1 #837)', async () => {
+  // The `done` at seq 1 fails 5 times, then lands — well past the ordinary 3 attempts.
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 1: { remaining: 5 } } })
+  const publisher = fakePublisher()
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'done', messageId: 'm' }]
+  await runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } })
+  assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type]), [[0, 'conversation_id'], [1, 'done']])
+  assert.equal(supabase.upsertAttempts.filter((s) => s === 1).length, 6)
+})
+
+test('a stale delivery for a finished turn repairs a missing terminal without re-running the turn', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2] })
+  // The fake select returns only the max seq; pretend the last row was a text delta.
+  const repaired = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done' })
+  assert.equal(repaired, true)
+  assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type, r.payload.message]), [[3, 'error', 'turn_terminal_repaired:done']])
+  assert.deepEqual(supabase.lastSeqUpdates, [{ id: 'turn-1', last_seq: 3 }])
 })

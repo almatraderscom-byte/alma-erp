@@ -1860,6 +1860,11 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
         .maybeSingle()
       if (turnRow && turnRow.status !== 'running') {
         console.warn(`[worker] streamed-turn ${job.data.turnId} skipped — turn already '${turnRow.status}' (stale duplicate delivery)`)
+        // Codex P1 #837: a retry for a FINISHED turn must still be allowed to
+        // repair the event log — if no terminal row exists, a tailing client
+        // waits forever. Never re-runs the turn; writes one terminal row.
+        const { repairMissingTerminal } = await import('./turn/run-streamed-turn.mjs')
+        await repairMissingTerminal({ supabase, turnId: job.data.turnId, status: turnRow.status })
         return
       }
     } catch (err) {

@@ -45,6 +45,12 @@ export interface TurnTailOptions {
   replayPageSize?: number
   /** Delay before the single catch-up retry (tests shorten it). */
   catchupRetryDelayMs?: number
+  /**
+   * Upper bound on the pre-replay subscription attempt. An unreachable Redis
+   * (ioredis with maxRetriesPerRequest: null keeps reconnecting) must not hold
+   * back the durable replay and the polling fallback (Codex P1 #836).
+   */
+  subscribeTimeoutMs?: number
 }
 
 export interface TurnTailHandle {
@@ -61,6 +67,7 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
   let closed = false
   let sub: { close: () => Promise<void> } | null = null
   let replaying = true
+  let subscribeTimedOut = false
   const buffered: TurnEvent[] = []
   let chain: Promise<void> = Promise.resolve()
   const log = io.log ?? (() => {})
@@ -143,7 +150,7 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
   }
 
   const onLive = (evt: TurnEvent) => {
-    if (closed) return
+    if (closed || subscribeTimedOut) return
     if (replaying) {
       buffered.push(evt)
       return
@@ -152,9 +159,23 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
   }
 
   const ready = (async () => {
-    // 1) Subscribe FIRST so nothing published during the replay query is lost.
+    // 1) Subscribe FIRST so nothing published during the replay query is lost —
+    //    but never wait on it longer than the deadline: already-persisted rows
+    //    must flow even while the live channel is down.
+    const subscribeTimeoutMs = opts.subscribeTimeoutMs ?? 1500
     try {
-      sub = await io.subscribe(onLive)
+      const attempt = io.subscribe(onLive)
+      const deadline = new Promise<null>((resolve) => {
+        setTimeout(() => { subscribeTimedOut = true; resolve(null) }, subscribeTimeoutMs)
+      })
+      sub = await Promise.race([attempt, deadline])
+      if (subscribeTimedOut) {
+        log('subscribe_timeout', { turnId: opts.turnId, afterMs: subscribeTimeoutMs })
+        // A late subscription must not leak — and must not become a second
+        // delivery path next to the polling fallback.
+        void attempt.then((late) => { void late?.close() }).catch(() => {})
+        sub = null
+      }
     } catch (err) {
       log('subscribe_failed', { turnId: opts.turnId, error: err instanceof Error ? err.message : String(err) })
       sub = null
