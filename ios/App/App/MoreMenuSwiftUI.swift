@@ -1340,10 +1340,12 @@ private struct MoreProfileSheet: View {
         AlmaAPI.shared.invalidateCookieCache()
         // Fail closed: drop role / business access so the shell rebuilds to the
         // least-privilege bar before anyone else signs in on this phone.
+        // The shell rebuilds its tabs on that notification and pushes the native
+        // login itself (onSessionChanged) — the More nav this sheet was opened from
+        // no longer exists after the rebuild, so no push from here.
         AlmaSession.shared.signedOut()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         dismiss()
-        openPath("/login", "Login")
     }
 
     private func purgeSessionCookies() async {

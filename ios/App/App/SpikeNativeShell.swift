@@ -1616,6 +1616,14 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         selectedIndex = 0
         applyTheme()
         refreshApprovalsBadge()
+        // Signed out (explicit sign-out wiped the identity): land on the native
+        // login right away — the web redirects to /login the same way.
+        if s.authed == false, s.role == nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let nav = self.selectedViewController as? UINavigationController else { return }
+                self.pushSmart(on: nav, path: "/login", title: "Sign in", icon: "person.crop.circle")
+            }
+        }
     }
 
     /// Identity can change behind the app's back (role edited by the owner, account
