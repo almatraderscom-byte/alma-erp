@@ -97,6 +97,55 @@ final class WeakRef<T: AnyObject> {
     weak var value: T?
 }
 
+/// Home-tab container for NON-owner roles: any content VC laid over the Capacitor
+/// bridge VC, which stays mounted (loaded, in the window hierarchy, touch-disabled)
+/// so push / reminders / the N1–N5 bridges keep running — the same reason
+/// DashboardHostController exists for the owner's P&L dashboard.
+final class AlmaCapacitorBackedController: UIViewController {
+    private let capacitor: UIViewController
+    private let content: UIViewController
+
+    init(capacitor: UIViewController, content: UIViewController) {
+        self.capacitor = capacitor
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(capacitor)
+        capacitor.view.translatesAutoresizingMaskIntoConstraints = false
+        capacitor.view.isUserInteractionEnabled = false
+        view.addSubview(capacitor.view)
+        capacitor.didMove(toParent: self)
+
+        addChild(content)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        content.view.backgroundColor = AlmaTheme.rootBg
+        view.addSubview(content.view)
+        content.didMove(toParent: self)
+
+        NSLayoutConstraint.activate([
+            capacitor.view.topAnchor.constraint(equalTo: view.topAnchor),
+            capacitor.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            capacitor.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            capacitor.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            content.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // The Capacitor WKWebView re-asserts itself to the front on load/scroll.
+        if content.view.superview === view { view.bringSubviewToFront(content.view) }
+    }
+}
+
 // MARK: - Shared SwiftUI palette
 
 /// The ALMA theme, mirrored for SwiftUI screens (owner rule: native screens must wear
@@ -273,7 +322,23 @@ extension AlmaTabBarController {
         case .unknown:
             AlmaPerfLog.event("route.unknown", path)
             presentUnknownRouteAlert(on: nav, path: path, title: title, icon: icon)
+        case .denied:
+            AlmaPerfLog.event("route.denied", path)
+            presentDeniedRouteAlert(on: nav, path: path)
         }
+    }
+
+    /// Role gate (web parity: proxy.ts redirects, ActorContext bounces). A link,
+    /// notification, Siri intent or shortcut to a page this user may not open is
+    /// refused with an honest Bangla notice — never silently opened, never a 403 card.
+    private func presentDeniedRouteAlert(on nav: UINavigationController?, path: String) {
+        let alert = UIAlertController(
+            title: "এই পেজে আপনার অ্যাক্সেস নেই",
+            message: "আপনার অ্যাকাউন্টের পারমিশনে এই পেজটি নেই:\n\(path)",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "ঠিক আছে", style: .cancel))
+        (nav ?? selectedViewController as? UINavigationController)?
+            .topViewController?.present(alert, animated: true)
     }
 
     /// IOSP-1 fail-loud path: an internal route the contract doesn't know.
@@ -363,6 +428,88 @@ extension AlmaTabBarController {
         dvc.willMove(toParent: nil)
         dvc.view.removeFromSuperview()
         dvc.removeFromParent()
+    }
+
+    /// The FIRST tab for the signed-in role. Owner/admin on Lifestyle keep the
+    /// native P&L dashboard; every other role/business gets its web home page
+    /// (`roleHomePath`) — the RoleDesk for `/`, Trading/CDIT/Employees/Trading-HR
+    /// natively — with the Capacitor bridge mounted BEHIND it, because push /
+    /// reminders / the N1–N5 bridges live in that webview and must keep running.
+    func makeHomeTab(href: String) -> UINavigationController {
+        if href == "/" || href == "/dashboard" {
+            if #available(iOS 17.0, *), AlmaSwiftUIFlag.isActive, !AlmaSession.shared.isAdmin {
+                return makeCapacitorBackedTab(href: "/", title: "Dashboard", icon: "square.grid.2x2") { openWeb in
+                    AlmaHostingController(rootView: RoleDeskScreen(openPath: openWeb))
+                }
+            }
+            return makeDashboardTab()
+        }
+        if #available(iOS 17.0, *), AlmaSwiftUIFlag.isActive {
+            let meta = AlmaShellCatalog.tabTitle(for: href, business: AlmaSession.shared.businessId)
+            return makeCapacitorBackedTab(href: href, title: meta.title, icon: meta.symbol) { openWeb in
+                AlmaNativeRouter.screen(for: href, openWebForced: openWeb)
+            }
+        }
+        return webTab(href, Self.fallbackTitle(href), "square.grid.2x2")
+    }
+
+    /// Any content tab by href: the three bespoke builders keep their exact
+    /// construction; everything else hosts the router's native screen (or the
+    /// web page when no native screen exists yet).
+    func makeTab(href: String) -> UINavigationController {
+        switch href {
+        case "/orders": return makeOrdersTab()
+        case "/agent": return makeAssistantTab()
+        case "/approvals": return makeApprovalsTab()
+        default: break
+        }
+        let business: AlmaBusinessId
+        if #available(iOS 17.0, *) { business = AlmaSession.shared.businessId } else { business = .ALMA_LIFESTYLE }
+        let meta = AlmaShellCatalog.tabTitle(for: href, business: business)
+        if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
+            let navRef = WeakRef<UINavigationController>()
+            if let screen = AlmaNativeRouter.screen(
+                for: href, openWebForced: smartOpen(origin: href, navRef: navRef, icon: meta.symbol)) {
+                screen.title = meta.title
+                let nav = Self.darkNav(root: screen, tabTitle: meta.title, icon: meta.symbol, largeTitles: false)
+                navRef.value = nav
+                return nav
+            }
+        }
+        return webTab(href, meta.title, meta.symbol)
+    }
+
+    private static func fallbackTitle(_ href: String) -> String {
+        let segment = href.split(separator: "/").last.map(String.init) ?? "Home"
+        return segment.prefix(1).uppercased() + segment.dropFirst()
+    }
+
+    /// A home tab whose native content sits OVER the (detached + re-mounted)
+    /// Capacitor bridge VC — see DashboardHostController for why the bridge must
+    /// stay in the hierarchy. `build` receives the tab's smart openWeb closure.
+    @available(iOS 17.0, *)
+    private func makeCapacitorBackedTab(href: String, title: String, icon: String,
+                                        build: (_ openWeb: @escaping (_ path: String, _ title: String) -> Void) -> UIViewController?)
+        -> UINavigationController {
+        guard let dvc = dashboardVC else { return webTab(href, title, icon) }
+        detachDashboardVC(dvc)
+        let navRef = WeakRef<UINavigationController>()
+        let openWeb = smartOpen(origin: href, navRef: navRef, icon: icon)
+        guard let content = build(openWeb) else {
+            // No native screen for this home yet — the web page, bridge behind it.
+            let web = AlmaWebTabViewController(url: URL(string: Self.base + href)!,
+                                               tabTitle: title, systemImage: icon, hideWebHeader: true)
+            let container = AlmaCapacitorBackedController(capacitor: dvc, content: web)
+            container.title = title
+            let nav = Self.darkNav(root: container, tabTitle: title, icon: icon, largeTitles: false)
+            navRef.value = nav
+            return nav
+        }
+        let container = AlmaCapacitorBackedController(capacitor: dvc, content: content)
+        container.title = title
+        let nav = Self.darkNav(root: container, tabTitle: title, icon: icon, largeTitles: false)
+        navRef.value = nav
+        return nav
     }
 
     func makeOrdersTab() -> UINavigationController {
@@ -591,14 +738,11 @@ extension AlmaTabBarController {
     /// toggle — the Dashboard (Capacitor) instance is preserved untouched.
     /// (makeAssistantTab lives in AssistantSwiftUI.swift.)
     @objc func onSwiftUIFlagChanged() {
-        guard var vcs = viewControllers, vcs.count == 5 else { return }
-        vcs[0] = makeDashboardTab()   // native ⇄ Capacitor (VC stays mounted either way)
-        vcs[1] = makeOrdersTab()
-        vcs[2] = makeAssistantTab()
-        vcs[3] = makeApprovalsTab()
-        vcs[4] = makeMoreTab()
-        setViewControllers(vcs, animated: false)
+        let keep = selectedIndex
+        setViewControllers(buildTabs(), animated: false)   // role-gated composition, same rule
+        if let count = viewControllers?.count, keep < count { selectedIndex = keep }
         applyTheme() // restyle the fresh navs (glass strip installs via applyNav)
+        refreshApprovalsBadge()
     }
 
     // MARK: - Notification-tap deep link (AlmaNavBridge → exact page)
@@ -640,13 +784,10 @@ extension AlmaTabBarController {
         let query = path.dropFirst(clean.count)
         let hasQuery = query.count > 1 // "?" alone is not a real query
 
-        // Tab roots: 0 Dashboard, 1 Orders, 2 Assistant, 3 Approvals, 4 More.
-        let tabRoots: [String: Int] = [
-            "/": 0, "/dashboard": 0,
-            "/orders": 1,
-            "/agent": 2,
-            "/approvals": 3,
-        ]
+        // Tab roots are whatever the role-gated bar currently holds (buildTabs).
+        var tabRoots: [String: Int] = [:]
+        for (i, h) in tabHrefs.enumerated() where h != "/more" { tabRoots[h] = i }
+        if let home = tabRoots["/"] { tabRoots["/dashboard"] = home }
         if !hasQuery, let index = tabRoots[clean] {
             AlmaPerfLog.event("route.tabRoot", clean)
             selectTabRootStably(index)
