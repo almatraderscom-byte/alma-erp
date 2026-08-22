@@ -329,7 +329,9 @@ export async function recordLiveBrowserLookReceipt(
     conversationId?: string
     businessId?: string
     turnId?: string
+    directBrowserTask?: boolean
     directBrowserOwnerRequest?: string
+    ownerRequestText?: string
   },
 ): Promise<BrowserObservationReceipt> {
   const conversationId = textField(ctx.conversationId)
@@ -343,6 +345,7 @@ export async function recordLiveBrowserLookReceipt(
   if (!identity.documentId) throw new Error('browser_observation_document_required')
 
   const directBrowserOwnerRequest = textField(ctx.directBrowserOwnerRequest)
+    || (ctx.directBrowserTask ? textField(ctx.ownerRequestText) : '')
   let run = await activeRunOfKind(conversationId, 'browser_setup')
   if (!run) {
     const tpl = getWorkflowTemplate('browser_setup')
@@ -832,7 +835,9 @@ export async function onWorkflowToolExecuted(
     conversationId?: string
     businessId?: string
     turnId?: string
+    directBrowserTask?: boolean
     directBrowserOwnerRequest?: string
+    ownerRequestText?: string
   },
 ): Promise<void> {
   const conversationId = ctx.conversationId
