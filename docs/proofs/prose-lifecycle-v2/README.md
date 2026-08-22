@@ -68,3 +68,39 @@ verified final; the superseded draft "কাজ শেষ, সব ঠিক আ�
   `ProseLifecycleV2Tests` 10/10 (`xcodebuild-test-4.log`). Note for the rig: the
   simulator's Face ID *Enrolled* toggle makes the app-lock prompt block the XCTest
   host ("test runner hung before establishing connection") — keep it OFF for unit runs.
+
+### 2026-08-23 — web E2E on the PR-A preview (owner logged in; Chrome `?native=1`)
+Preview: `alma-erp-git-claude-ios-agent-reply-pe-4fee1e-maruf-s-projects2.vercel.app`,
+conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
+"অর্ডার আর স্টক দুটোই চেক করে ছোট রিপোর্ট দাও" (DeepSeek V4 Flash head, 8 steps, 4m13s).
+- LIVE: the opening line and the progress line "Boss, অর্ডার আর স্টক দুটোই চেক করছি — আগে
+  pending orders ও sales দেখে নিচ্ছি।" stayed on screen across the following tool starts
+  (execute_plan ×2, find_tool, get_orders…) — screenshots taken at 38s / 48s / 57s / 1m27s.
+- DONE: settled message kept both progress lines + the verified final; the superseded draft
+  (reason `rewrite`) hidden; "🔁 নিজে যাচাই করে ঠিক করেছে" badge shown.
+- COLD (GET `/messages`, message `2cbbe6bc…`): `usage.presentationV2.blocks` =
+  `[progress/committed, progress/committed, draft/superseded(rewrite), final/committed]`;
+  `presentationV2.protocol = 2`, fingerprint `fc6c1d51`, prose = 2 progress + 1 final;
+  derived v1 `presentation` prose states `[progress, progress, final]`. After a full page
+  reload the same blocks render between the tool rows.
+- Note: the first line was committed as `progress` (the model spoke it in the same round as
+  its first tool call, so no `preamble` marker) — visually identical; old clients drop it
+  exactly as before (no regression).
+- Observed, NOT caused by this change (pre-existing plan/continuation path): after the turn,
+  the server auto-continuation ran 12 hops in ~14 s (19:41:49–19:42:03), each
+  "⚠️ Plan তৈরি হয়েছে, কিন্তু step tracker verify করা যায়নি…", then "hop limit reached".
+  Flagged to the owner for a separate fix (30 s hop delay not honoured; `execute_plan`
+  absent from the head's tool list).
+
+### R-1 — identity (handoff F-12 / F-05) + combined iOS run on the stacked top
+- `done.messageId` / `turn_snapshot.assistantMessageId` / turn-status `assistantMessageId`
+  bind the streaming tail (`serverId`); the settle merge pairs by that exact id first,
+  positional pairing is only the legacy fallback; a tool-only tail survives a poll
+  (retained by content, not by `text` alone).
+- iOS unit tests on the stacked top (R-1 ⊃ R-4 ⊃ R-3 ⊃ R-2 ⊃ PR-A), full `AppParityV2Tests`
+  target, serial (`-parallel-testing-enabled NO`, `test-without-building`):
+  **415 tests, 0 failures** (`xcodebuild-test-7.log`) — includes ProseLifecycleV2Tests 10,
+  ProseRetentionTests 2, ProseIdentityTests 3 and the 400 pre-existing tests.
+- Rig trap: with Xcode's parallel testing a second simulator ("ALMA Integration Verify")
+  hosted the test app and died before XCTest connected ("Test crashed with signal kill
+  before establishing connection"); run serially on the explicit device.

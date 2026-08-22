@@ -5826,3 +5826,78 @@ final class ProseRetentionTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.proseProtocol, 2, "the negotiated protocol survives the wipe")
     }
 }
+
+// MARK: - Reliability epic R-1 (identity) — handoff F-12 / F-05
+
+@MainActor
+final class ProseIdentityTests: XCTestCase {
+    func testDoneAndSnapshotBindTheExactAssistantRow() {
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("উত্তর", blockId: "t:p1")])
+        vm.debugApplyTurnEvents([.done(messageId: "assistant-row-7", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        XCTAssertEqual(vm.messages.last?.serverId, "assistant-row-7")
+
+        let recovering = AssistantVM()
+        recovering.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                       lastSeq: 9, agentProseProtocol: 2,
+                                                       assistantMessageId: "assistant-row-9")])
+        XCTAssertEqual(recovering.messages.last?.serverId, "assistant-row-9")
+    }
+
+    func testSettleMergePairsTheTailByServerIdNotByPosition() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-1",
+                                     outgoingState: .accepted, text: "রিপোর্ট দাও")
+        owner.createdAt = "2026-08-23T01:00:00.000Z"
+        vm.messages = [owner]
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("স্ট্রিম করা উত্তর", blockId: "t:p1"),
+                                 .done(messageId: "server-answer", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        let tailId = try XCTUnwrap(vm.messages.last?.id)
+        XCTAssertTrue(tailId.hasPrefix("stream-"))
+
+        // A later background assistant row is LAST in the history page: the old
+        // positional rule paired the streamed tail with it.
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-owner","clientMessageId":"client-1","role":"user","createdAt":"2026-08-23T01:00:00.000Z","content":[{"type":"text","text":"রিপোর্ট দাও"}]},
+          {"id":"server-answer","role":"assistant","createdAt":"2026-08-23T01:00:05.000Z","content":[{"type":"text","text":"স্ট্রিম করা উত্তর"}]},
+          {"id":"server-background","role":"assistant","createdAt":"2026-08-23T01:00:09.000Z","content":[{"type":"text","text":"ব্যাকগ্রাউন্ড রিপোর্ট"}]}
+        ]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let answer = try XCTUnwrap(vm.messages.first { $0.serverId == "server-answer" })
+        XCTAssertEqual(answer.id, tailId, "the streamed tail keeps its SwiftUI identity on ITS row")
+        XCTAssertEqual(answer.text, "স্ট্রিম করা উত্তর")
+        let background = try XCTUnwrap(vm.messages.first { $0.serverId == "server-background" })
+        XCTAssertNotEqual(background.id, tailId, "the background row is a separate message, not the tail")
+        XCTAssertEqual(vm.messages.filter { $0.role == .assistant }.count, 2)
+    }
+
+    func testToolOnlyTailSurvivesAPollThatHasNotPersistedItYet() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-2",
+                                     outgoingState: .accepted, text: "স্টক দেখো")
+        owner.createdAt = "2026-08-23T01:10:00.000Z"
+        vm.messages = [owner]
+        // Legacy v1 turn: the tool start cleared the narration, leaving a tool-only tail.
+        vm.debugApplyTurnEvents([.textDelta("দেখছি…"), .toolStart(id: "tool-1", name: "get_inventory_status", inputPretty: nil)])
+        XCTAssertEqual(vm.messages.last?.text, "")
+        XCTAssertFalse(vm.messages.last?.tools.isEmpty ?? true)
+
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [{"id":"server-owner","clientMessageId":"client-2","role":"user","createdAt":"2026-08-23T01:10:00.000Z","content":[{"type":"text","text":"স্টক দেখো"}]}]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let tail = try XCTUnwrap(vm.messages.last)
+        XCTAssertEqual(tail.role, .assistant)
+        XCTAssertFalse(tail.tools.isEmpty, "a poll must not discard the tool-only streaming tail")
+    }
+}
