@@ -7,6 +7,7 @@ const store = vi.hoisted(() => ({
     status: string
     cancelRequested: boolean
     startedAt: Date
+    instructionOrigin: 'owner_direct' | 'owner_policy' | null
   }>(),
   messages: new Map<string, {
     id: string
@@ -25,6 +26,9 @@ const prismaMock = vi.hoisted(() => ({
       id: string | { not?: string; notIn?: string[] }
       conversationId: string
       startedAt?: { gte: Date }
+      status?: string
+      cancelRequested?: boolean
+      OR?: Array<{ instructionOrigin: 'owner_direct' | 'owner_policy' | null }>
     } }) => {
       if (store.reject) throw new Error('database unavailable')
       const idFilter = where.id
@@ -38,6 +42,9 @@ const prismaMock = vi.hoisted(() => ({
           && (!idFilter.notIn || !idFilter.notIn.includes(id))
           && row.conversationId === where.conversationId
           && (!where.startedAt || row.startedAt.getTime() >= where.startedAt.gte.getTime())
+          && (!where.status || row.status === where.status)
+          && (where.cancelRequested === undefined || row.cancelRequested === where.cancelRequested)
+          && (!where.OR || where.OR.some((clause) => row.instructionOrigin === clause.instructionOrigin))
         ))
         .map(([id]) => ({ id }))[0] ?? null
     }),
@@ -107,6 +114,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.001Z'),
+      instructionOrigin: null,
     })
     store.turns.set('turn-b', {
       conversationId: 'conv-1',
@@ -114,6 +122,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.002Z'),
+      instructionOrigin: null,
     })
     store.messages.set('msg-a', {
       id: 'msg-a',
@@ -254,6 +263,38 @@ describe('turn-linked owner input', () => {
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-b')).toBe(true)
   })
 
+  it('does not let newer unattended policy work revoke the active owner turn', async () => {
+    const turnB = store.turns.get('turn-b')!
+    turnB.instructionOrigin = 'owner_policy'
+    const msgB = store.messages.get('msg-b')!
+    msgB.usage = { driverDirective: true }
+
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
+  })
+
+  it('does not let a generated heartbeat directive revoke the active owner turn', async () => {
+    const turnB = store.turns.get('turn-b')!
+    turnB.instructionOrigin = 'owner_policy'
+    const msgB = store.messages.get('msg-b')!
+    msgB.usage = { heartbeatDirective: true }
+
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
+  })
+
+  it('does not grant a newer policy turn parallel authority over an active owner turn', async () => {
+    const turnB = store.turns.get('turn-b')!
+    turnB.instructionOrigin = 'owner_policy'
+    const msgB = store.messages.get('msg-b')!
+    msgB.usage = { heartbeatDirective: true }
+
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-b')).toBe(false)
+
+    const turnA = store.turns.get('turn-a')!
+    turnA.status = 'completed'
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-b')).toBe(true)
+  })
+
   it('revokes on the newer durable owner message before its AgentTurn is created', async () => {
     store.turns.delete('turn-b')
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(false)
@@ -272,6 +313,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.003Z'),
+      instructionOrigin: null,
     })
     store.messages.set('msg-c', {
       id: 'msg-c',
@@ -306,6 +348,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: turnA.startedAt,
+      instructionOrigin: null,
     })
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(false)
 

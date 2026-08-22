@@ -153,6 +153,7 @@ export async function isTurnOwnerExecutionCurrent(
         cancelRequested: true,
         startedAt: true,
         userMessageId: true,
+        instructionOrigin: true,
       },
     })
     if (!current || current.status !== 'running' || current.cancelRequested) return false
@@ -179,6 +180,11 @@ export async function isTurnOwnerExecutionCurrent(
         const usage = row.usage && typeof row.usage === 'object' && !Array.isArray(row.usage)
           ? row.usage as Record<string, unknown>
           : {}
+        // Plan-Driver persists its inline directive as a role=user breadcrumb,
+        // but it is unattended owner_policy work—not a fresh owner instruction.
+        // Its linked turn is filtered below; ignore the matching generated
+        // message here so it cannot revoke a witnessed owner browser turn first.
+        if (usage.driverDirective === true || usage.heartbeatDirective === true) return false
         const steering = usage.steering && typeof usage.steering === 'object' && !Array.isArray(usage.steering)
           ? usage.steering as Record<string, unknown>
           : {}
@@ -186,11 +192,38 @@ export async function isTurnOwnerExecutionCurrent(
       })
       if (supersedingOwnerInput) return false
     }
+    if (current.instructionOrigin === 'owner_policy') {
+      const activeOwnerTurn = await client.agentTurn.findFirst({
+        where: {
+          conversationId: normalizedConversationId,
+          id: { not: normalizedTurnId },
+          status: 'running',
+          cancelRequested: false,
+          OR: [
+            { instructionOrigin: null },
+            { instructionOrigin: 'owner_direct' },
+          ],
+        },
+        select: { id: true },
+      })
+      // Policy work may coexist in the conversation, but it must never gain
+      // parallel browser authority while an owner-authored turn is active.
+      if (activeOwnerTurn) return false
+    }
     const competing = await client.agentTurn.findFirst({
       where: {
         conversationId: normalizedConversationId,
         id: { not: normalizedTurnId },
         startedAt: { gte: current.startedAt },
+        // Only another owner-authored turn can supersede the owner's current
+        // browser authority. Unattended Plan-Driver/heartbeat work is stamped
+        // owner_policy and may start while a witnessed browser turn is waiting
+        // on Chrome; treating that background work as a newer owner instruction
+        // makes the next receipt-bound ACT spuriously stale.
+        OR: [
+          { instructionOrigin: null },
+          { instructionOrigin: 'owner_direct' },
+        ],
       },
       select: { id: true },
     })
