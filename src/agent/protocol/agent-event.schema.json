@@ -1338,6 +1338,9 @@
         },
         "message": {
           "type": "string"
+        },
+        "messageId": {
+          "type": "string"
         }
       },
       "required": [

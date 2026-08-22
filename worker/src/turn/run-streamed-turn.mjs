@@ -35,6 +35,9 @@ const DURABLE_RETRY_DELAYS_MS = [50, 200, 600]
  * log (Codex P1 #837). Keep trying in-process for ~1 minute before rejecting.
  */
 const TERMINAL_WRITE_ATTEMPTS = 8
+/** Repair-job enqueue after a lost terminal: the last durable retry path. */
+const REPAIR_ENQUEUE_ATTEMPTS = 3
+const REPAIR_ENQUEUE_DELAYS_MS = [1000, 3000]
 const TERMINAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 16000]
 
 import Redis from 'ioredis'
@@ -84,12 +87,22 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   async function scheduleTerminalRepair({ status, terminal }) {
     if (repairScheduled) return
     repairScheduled = true
-    try {
-      await enqueueRepair({ turnId, status, terminal })
-      console.warn(`[worker] streamed-turn ${turnId} — terminal repair job enqueued (${status})`)
-    } catch (err) {
-      console.error(`[worker] streamed-turn ${turnId} — terminal repair enqueue FAILED:`, err?.message ?? err)
+    // The turn job has attempts:1, so this enqueue is the only durable retry
+    // path left: a transient Redis hiccup must not end it (Codex P1 #837 r5).
+    let lastError = null
+    for (let attempt = 0; attempt < REPAIR_ENQUEUE_ATTEMPTS; attempt++) {
+      try {
+        await enqueueRepair({ turnId, status, terminal })
+        console.warn(`[worker] streamed-turn ${turnId} — terminal repair job enqueued (${status})`)
+        return
+      } catch (err) {
+        lastError = err
+      }
+      if (attempt < REPAIR_ENQUEUE_ATTEMPTS - 1) await sleep(REPAIR_ENQUEUE_DELAYS_MS[attempt] ?? 3000)
     }
+    // Postgres AND Redis both down: nothing durable is reachable. Say so loudly
+    // — the operator alert is the remaining path (never swallow it silently).
+    console.error(`[worker] streamed-turn ${turnId} — terminal repair enqueue FAILED after ${REPAIR_ENQUEUE_ATTEMPTS} attempts (turn has NO durable terminal):`, lastError?.message ?? lastError)
   }
 
   // A retried job must continue the durable sequence, never overwrite rows a
@@ -311,7 +324,7 @@ export async function enqueueTerminalRepair({ redisUrl, data }) {
  *
  * @returns {Promise<{ outcome: 'repaired' | 'already_terminal' | 'failed', seq?: number, error?: string }>}
  */
-export async function repairMissingTerminal({ supabase, turnId, status, terminal = null, publisher = null, redisUrl = null, sleep = null }) {
+export async function repairMissingTerminal({ supabase, turnId, status, terminal = null, publisher = null, redisUrl = null, sleep = null, publishTimeoutMs = REPAIR_PUBLISH_TIMEOUT_MS }) {
   try {
     // A terminal is a terminal wherever it sits: the chat route emits
     // `conversation_compacted` AFTER `done` and the worker mirrors both, so the
@@ -329,7 +342,7 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
       // Idempotent for the log — but a retry after a failed publish must still
       // reach the subscribed tails, so the existing terminal is (re)published;
       // tails dedupe by seq.
-      const published = await publishRepairedTerminal({ turnId, row: existing, publisher, redisUrl, sleep })
+      const published = await publishRepairedTerminal({ turnId, row: existing, publisher, redisUrl, sleep, publishTimeoutMs })
       if (!published) return { outcome: 'failed', seq: existing.seq, error: 'terminal present but not published' }
       return { outcome: 'already_terminal', seq: existing.seq }
     }
@@ -355,7 +368,7 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
     // The row is durable, but a tail that already subscribed never polls the
     // log: an unpublished repair is NOT complete — report failure so the job
     // retries (the retry takes the already_terminal → republish path).
-    const published = await publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep })
+    const published = await publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep, publishTimeoutMs })
     if (!published) return { outcome: 'failed', seq, error: 'terminal repaired but not published' }
     return { outcome: 'repaired', seq }
   } catch (err) {
@@ -366,10 +379,32 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
 
 const REPAIR_PUBLISH_ATTEMPTS = 3
 const REPAIR_PUBLISH_DELAYS_MS = [250, 750]
+/** A publish that has not returned by then is treated as failed — never let a
+ *  reconnecting client park the (concurrency-1) worker (Codex P1 #837 r5). */
+const REPAIR_PUBLISH_TIMEOUT_MS = 5000
+
+function withTimeout(promise, ms, label) {
+  let timer = null
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([promise, deadline]).finally(() => { if (timer) clearTimeout(timer) })
+}
 
 /** @returns {Promise<boolean>} true when published (or no channel was configured — nothing to reach). */
-async function publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep }) {
-  const owned = !publisher && redisUrl ? new Redis(redisUrl, { maxRetriesPerRequest: null }) : null
+async function publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep, publishTimeoutMs = REPAIR_PUBLISH_TIMEOUT_MS }) {
+  // A repair-owned client must fail fast: maxRetriesPerRequest:null (right for
+  // the live publisher of a running turn) would keep the first publish pending
+  // across reconnect attempts and the retry loop would never advance.
+  const owned = !publisher && redisUrl
+    ? new Redis(redisUrl, {
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        connectTimeout: Math.min(publishTimeoutMs, 5000),
+        retryStrategy: (times) => (times > 3 ? null : 500),
+      })
+    : null
+  if (owned) owned.on('error', () => { /* surfaced by the failed publish */ })
   const client = publisher ?? owned
   if (!client) return true
   const wait = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
@@ -378,7 +413,7 @@ async function publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep
     let lastError = null
     for (let attempt = 0; attempt < REPAIR_PUBLISH_ATTEMPTS; attempt++) {
       try {
-        await client.publish(turnEventChannel(turnId), message)
+        await withTimeout(client.publish(turnEventChannel(turnId), message), publishTimeoutMs, `repair publish ${turnId}`)
         return true
       } catch (err) {
         lastError = err
