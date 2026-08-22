@@ -96,7 +96,9 @@ describe('compaction keeps prose anchors pointing at the stored entries (Codex P
     const update = seq.indexOf('prose:শেষ ধাপের আপডেট')
     expect(seq[update + 1]).toBe('tool:final_tool')
     expect(seq[update + 2]).toBe('prose:ফাইনাল')
-    expect(seq[0]).toBe('prose:লিড')
+    // The FIRST thinking row survives compaction (Codex P1 #838 r5), so the
+    // spoken lead renders right after it — never first, never behind a tool.
+    expect(seq.slice(0, 2)).toEqual(['thinking:think 0', 'prose:লিড'])
     // Without the remap the stale anchors would land the update far earlier.
     const stale = buildAgentPresentationV2({ messageId: 'm', timeline: stored.timeline, document: tracker.document('m') })
     const staleSeq = stale.blocks.map((b) => (b.type === 'prose' ? `prose:${b.text}` : 'activity'))
@@ -119,5 +121,35 @@ describe('prose whose anchors were dropped keeps document order (Codex P2 #838)'
     const p = buildAgentPresentationV2({ messageId: 'm', timeline: stored.timeline, document: doc })
     const texts = p.blocks.filter((b) => b.type === 'prose').map((b) => (b as { text: string }).text)
     expect(texts).toEqual(Array.from({ length: 80 }, (_, i) => `p${i}`))
+  })
+})
+
+describe('the first thinking row survives compaction (Codex P1 #838 r5)', () => {
+  it('a lead anchored before the first thought still renders thought → lead → tool after compaction', () => {
+    // 62 entries, cap 60: the old rule dropped the two OLDEST thinking rows —
+    // including the first one the lead is deferred behind.
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: 'turn-first-think' })
+    const timeline: Array<Record<string, unknown>> = []
+    tracker.process({ type: 'text_delta', delta: 'Boss, দেখছি।' })          // the spoken lead
+    tracker.anchorTimeline(timeline.length)
+    timeline.push({ t: 'text', text: 'Boss, দেখছি।' })
+    tracker.process({ type: 'preamble', text: 'Boss, দেখছি।' })
+    timeline.push({ t: 'think', text: 'প্রথম চিন্তা' })                       // index 1 — must survive
+    timeline.push({ t: 'tool', name: 'get_orders', ok: true })
+    timeline.push({ t: 'think', text: 'দ্বিতীয় চিন্তা' })
+    for (let i = 0; i < 57; i++) timeline.push({ t: 'tool', name: `t${i}`, ok: true })
+    tracker.process({ type: 'tool_start', id: 'x', name: 'get_orders' })
+    tracker.process({ type: 'progress_update', label: 'শেষ', stage: 'round' })
+    tracker.process({ type: 'text_delta', delta: 'শেষ উত্তর' })
+    tracker.anchorTimeline(timeline.length)
+    timeline.push({ t: 'text', text: 'শেষ উত্তর' })
+    expect(timeline.length).toBe(62)
+
+    const stored = compactTimelineWithIndexMap(timeline, 60)
+    expect(stored.timeline.filter((e) => e.t === 'think').map((e) => e.text)).toContain('প্রথম চিন্তা')
+    const doc = tracker.document('m', { remapTimelineIndex: (i) => stored.indexMap[i] })
+    const p = buildAgentPresentationV2({ messageId: 'm', timeline: stored.timeline, document: doc })
+    const shape = p.blocks.slice(0, 3).map((b) => (b.type === 'prose' ? `prose:${b.kind}` : `activity:${(b as { activityType: string }).activityType}`))
+    expect(shape).toEqual(['activity:thinking', 'prose:lead', 'activity:tool'])
   })
 })

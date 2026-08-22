@@ -7,10 +7,13 @@
  * already keeps every committed prose block, but the timeline is still what the
  * v1 projection, the legacy web fallback and the activity rows read.
  *
- * Rule: never drop an owner-prose entry, a verification row or a file row.
- * Under pressure, drop the OLDEST thinking rows first, then the oldest tool
- * rows; only if prose alone exceeds the cap keep the most recent entries (the
- * terminal block is always last, so it is always kept).
+ * Rule: never drop an owner-prose entry, a verification row or a file row —
+ * nor the FIRST thinking row: the settled projection defers the spoken lead
+ * until after the first thought, so dropping that row while a later one
+ * survives would push the lead behind later activity (Codex P1 #838 r5).
+ * Under pressure, drop the OLDEST other thinking rows first, then the oldest
+ * tool rows; only if protected rows alone exceed the cap keep the most recent
+ * entries (the terminal block is always last, so it is always kept).
  */
 
 export type CompactableTimelineEntry = { t?: unknown; [k: string]: unknown }
@@ -38,9 +41,14 @@ export function compactTimelineWithIndexMap<T extends CompactableTimelineEntry>(
     return { timeline: [...timeline], indexMap: timeline.map((_, i) => i) }
   }
   const kept: Array<{ entry: T; index: number }> = timeline.map((entry, index) => ({ entry, index }))
+  const firstThinkIndex = timeline.findIndex(
+    (e) => e.t === 'think' && typeof e.text === 'string' && (e.text as string).trim().length > 0,
+  )
+  const protectedEntry = (k: { entry: T; index: number }) =>
+    ALWAYS_KEEP.has(String(k.entry.t)) || k.index === firstThinkIndex
   const drop = (kind: string) => {
     for (let i = 0; i < kept.length && kept.length > cap; ) {
-      if (kept[i].entry.t === kind) kept.splice(i, 1)
+      if (kept[i].entry.t === kind && !protectedEntry(kept[i])) kept.splice(i, 1)
       else i += 1
     }
   }
@@ -49,7 +57,7 @@ export function compactTimelineWithIndexMap<T extends CompactableTimelineEntry>(
   if (kept.length > cap) {
     // Unknown kinds next; then, as a last resort, the oldest of everything.
     for (let i = 0; i < kept.length && kept.length > cap; ) {
-      if (!ALWAYS_KEEP.has(String(kept[i].entry.t))) kept.splice(i, 1)
+      if (!protectedEntry(kept[i])) kept.splice(i, 1)
       else i += 1
     }
     while (kept.length > cap) kept.shift()
