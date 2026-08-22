@@ -27,7 +27,7 @@ function sseBody(events) {
   }
 }
 
-function fakeSupabase({ existingSeqs = [], upsertErrorsBySeq = {}, selectError = null } = {}) {
+function fakeSupabase({ existingSeqs = [], existingLastType = 'text_delta', upsertErrorsBySeq = {}, selectError = null } = {}) {
   const rows = []
   const lastSeqUpdates = []
   const upsertAttempts = []
@@ -57,7 +57,7 @@ function fakeSupabase({ existingSeqs = [], upsertErrorsBySeq = {}, selectError =
                       async limit() {
                         if (selectError) return { data: null, error: selectError }
                         const max = existingSeqs.length ? Math.max(...existingSeqs) : null
-                        return { data: max == null ? [] : [{ seq: max }], error: null }
+                        return { data: max == null ? [] : [{ seq: max, type: existingLastType }], error: null }
                       },
                     }
                   },
@@ -194,7 +194,7 @@ test('when no terminal can be stored at all the job rejects so BullMQ retries (C
   const publisher = fakePublisher()
   const events = [{ type: 'conversation_id', id: 'c' }, { type: 'text_delta', delta: 'x' }, { type: 'done', messageId: 'm' }]
   await assert.rejects(
-    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep } }),
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep, enqueueRepair: async () => {} } }),
     /terminal event could not be stored durably/,
   )
   assert.deepEqual(supabase.rows.map((r) => r.seq), [0, 1])
@@ -212,9 +212,65 @@ test('a terminal write gets the extended in-process retry budget (Codex P1 #837)
 
 test('a stale delivery for a finished turn repairs a missing terminal without re-running the turn', async () => {
   const supabase = fakeSupabase({ existingSeqs: [0, 1, 2] })
-  // The fake select returns only the max seq; pretend the last row was a text delta.
+  // The last durable row was a text delta: the log has no terminal.
   const repaired = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done' })
-  assert.equal(repaired, true)
+  assert.deepEqual(repaired, { outcome: 'repaired', seq: 3 })
   assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type, r.payload.message]), [[3, 'error', 'turn_terminal_repaired:done']])
   assert.deepEqual(supabase.lastSeqUpdates, [{ id: 'turn-1', last_seq: 3 }])
+})
+
+test('a lost terminal is handed to the repair-only job with the REAL terminal event (Codex P1 #837 r3)', async () => {
+  // The turn job runs with attempts:1 — without its own job the repair path
+  // would never run. The carried `done` keeps the messageId for the client.
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 1: { remaining: 99 }, 2: { remaining: 99 } } })
+  const publisher = fakePublisher()
+  const enqueued = []
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'done', messageId: 'm-real' }]
+  await assert.rejects(
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep, enqueueRepair: async (data) => { enqueued.push(data) } } }),
+    /terminal event could not be stored durably/,
+  )
+  assert.deepEqual(enqueued, [{ turnId: 'turn-1', status: 'done', terminal: { type: 'done', messageId: 'm-real' } }])
+})
+
+test('a failing repair enqueue never masks the original failure and is scheduled only once', async () => {
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 1: { remaining: 99 }, 2: { remaining: 99 } } })
+  const publisher = fakePublisher()
+  let calls = 0
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'done', messageId: 'm' }]
+  await assert.rejects(
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep, enqueueRepair: async () => { calls += 1; throw new Error('redis down') } } }),
+    /terminal event could not be stored durably/,
+  )
+  assert.equal(calls, 1)
+})
+
+test('the repair stores the carried terminal verbatim and publishes it to live subscribers (Codex P1 #837 r3)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2] })
+  const publisher = fakePublisher()
+  const result = await repairMissingTerminal({
+    supabase, turnId: 'turn-1', status: 'done', terminal: { type: 'done', messageId: 'm-real' }, publisher,
+  })
+  assert.deepEqual(result, { outcome: 'repaired', seq: 3 })
+  assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type, r.payload]), [[3, 'done', { type: 'done', messageId: 'm-real' }]])
+  assert.deepEqual(publisher.published, [{ seq: 3, type: 'done', payload: { type: 'done', messageId: 'm-real' } }])
+  assert.deepEqual(supabase.lastSeqUpdates, [{ id: 'turn-1', last_seq: 3 }])
+})
+
+test('a log that already ends with a terminal is left alone (idempotent repair)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2], existingLastType: 'done' })
+  const publisher = fakePublisher()
+  const result = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done', publisher })
+  assert.deepEqual(result, { outcome: 'already_terminal', seq: 2 })
+  assert.deepEqual(supabase.rows, [])
+  assert.deepEqual(publisher.published, [])
+})
+
+test('a repair that cannot write reports failure — never a silent success (Codex P1 #837 r3)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2], upsertErrorsBySeq: { 3: { remaining: 99 } } })
+  const publisher = fakePublisher()
+  const result = await repairMissingTerminal({ supabase, turnId: 'turn-1', status: 'done', publisher })
+  assert.equal(result.outcome, 'failed')
+  assert.match(result.error, /injected failure seq 3/)
+  assert.deepEqual(publisher.published, [])
 })

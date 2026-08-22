@@ -71,6 +71,26 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   let durableHoles = 0
   /** 'done' | 'error' whose durable write failed every attempt. */
   let terminalLost = null
+  /** The terminal event itself, so the repair job can store it verbatim. */
+  let lostTerminalEvent = null
+  let repairScheduled = false
+  const enqueueRepair = deps.enqueueRepair ?? ((data) => enqueueTerminalRepair({ redisUrl, data }))
+
+  // Codex P1 #837 r3: the turn job is enqueued with attempts:1 (a turn is not
+  // idempotent), so a throw here is BullMQ's final word — the finished-turn
+  // guard and `repairMissingTerminal()` would never run. A lost terminal is
+  // handed to its own retrying, repair-only job instead; it never re-runs the
+  // turn. Failing to enqueue it must not mask the original failure.
+  async function scheduleTerminalRepair({ status, terminal }) {
+    if (repairScheduled) return
+    repairScheduled = true
+    try {
+      await enqueueRepair({ turnId, status, terminal })
+      console.warn(`[worker] streamed-turn ${turnId} — terminal repair job enqueued (${status})`)
+    } catch (err) {
+      console.error(`[worker] streamed-turn ${turnId} — terminal repair enqueue FAILED:`, err?.message ?? err)
+    }
+  }
 
   // A retried job must continue the durable sequence, never overwrite rows a
   // previous attempt already wrote (upsert with update:{} would keep the old
@@ -186,6 +206,7 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
             else if (event?.type === 'error') sawError = event.message || 'turn_error'
           } else if (event?.type === 'done' || event?.type === 'error') {
             terminalLost = event.type
+            lostTerminalEvent = event
           }
         }
       }
@@ -199,9 +220,13 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
       const message = terminalLost ? `turn_terminal_not_durable:${terminalLost}` : 'turn_stream_ended_without_terminal'
       const stored = await emit({ type: 'error', message })
       if (!stored) {
-        // Nothing durable marks this turn finished. Surface it to BullMQ so the
-        // job is retried (seq resumes from the durable max) instead of
-        // resolving as if it had succeeded.
+        // Nothing durable marks this turn finished. Hand the terminal to the
+        // repair job (the real `done`/`error` when we have it) and surface the
+        // failure to BullMQ instead of resolving as if it had succeeded.
+        await scheduleTerminalRepair({
+          status: terminalLost === 'done' ? 'done' : 'error',
+          terminal: lostTerminalEvent ?? { type: 'error', message },
+        })
         throw new Error(`streamed-turn ${turnId}: terminal event could not be stored durably`)
       }
       sawError = message
@@ -211,8 +236,14 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   } catch (err) {
     sawError = err.message
     console.error(`[worker] streamed-turn ${turnId} failed:`, err.message)
+    // The EOF path above already spent the terminal budget and scheduled the
+    // repair — a second 8-attempt write of the same failure is pure delay.
+    if (repairScheduled) throw err
     const stored = await emit({ type: 'error', message: err.message })
-    if (!stored) throw err
+    if (!stored) {
+      await scheduleTerminalRepair({ status: 'error', terminal: { type: 'error', message: err.message } })
+      throw err
+    }
   } finally {
     // Owner ping for a slow turn that finished while they were away (mirrors A1).
     const elapsed = Date.now() - startedAt
@@ -233,13 +264,54 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
 }
 
 /**
+ * Enqueue the repair-only job for a turn whose terminal could not be stored
+ * (Codex P1 #837 r3). Same queue as the turn itself, but its own job name and
+ * a real retry budget with backoff — PostgREST outages that outlast the
+ * in-process terminal budget are exactly what it is for. Deterministic jobId:
+ * one outstanding repair per turn.
+ */
+export async function enqueueTerminalRepair({ redisUrl, data }) {
+  const { Queue } = await import('bullmq')
+  // Producer-only connection: fail fast instead of queueing commands against a
+  // Redis that is down — the caller is already on a failure path and must not
+  // hang behind ioredis' infinite reconnect.
+  const queue = new Queue('long-agent-task', {
+    connection: {
+      url: redisUrl,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      retryStrategy: (times) => (times > 3 ? null : 500),
+    },
+  })
+  try {
+    const job = await queue.add('repair-terminal', data, {
+      jobId: `repair-${data.turnId}`,
+      attempts: 10,
+      backoff: { type: 'exponential', delay: 5000 },
+      priority: 1,
+      removeOnComplete: true,
+      removeOnFail: 100,
+    })
+    return job.id ?? null
+  } finally {
+    await queue.close().catch(() => {})
+  }
+}
+
+/**
  * Repair path for a turn that already reached a terminal status while its
  * durable event log has no terminal row (the original write failed every
- * attempt and the job was re-delivered). Writes exactly one terminal row with
- * the next seq; never re-runs the turn. Idempotent: a log that already ends
- * with a terminal is left alone.
+ * attempt; reached via the repair job or a re-delivered turn job). Writes
+ * exactly one terminal row with the next seq — the carried `terminal` event
+ * verbatim when the caller has it, else a synthesized error — and PUBLISHES it
+ * on the turn channel: a tail that already subscribed never polls the log
+ * (Codex P1 #837 r3), so a row alone would leave it on keepalives. Never
+ * re-runs the turn. Idempotent: a log that already ends with a terminal is
+ * left alone.
+ *
+ * @returns {Promise<{ outcome: 'repaired' | 'already_terminal' | 'failed', seq?: number, error?: string }>}
  */
-export async function repairMissingTerminal({ supabase, turnId, status }) {
+export async function repairMissingTerminal({ supabase, turnId, status, terminal = null, publisher = null, redisUrl = null }) {
   try {
     const { data, error } = await supabase
       .from('agent_turn_events')
@@ -249,17 +321,39 @@ export async function repairMissingTerminal({ supabase, turnId, status }) {
       .limit(1)
     if (error) throw error
     const last = Array.isArray(data) && data.length > 0 ? data[0] : null
-    if (last && (last.type === 'done' || last.type === 'error')) return false
+    if (last && (last.type === 'done' || last.type === 'error')) return { outcome: 'already_terminal', seq: last.seq }
     const seq = last && typeof last.seq === 'number' ? last.seq + 1 : 0
-    const message = status === 'done' ? 'turn_terminal_repaired:done' : `turn_terminal_repaired:${status}`
-    const row = { id: `${turnId}:${seq}`, turn_id: turnId, seq, type: 'error', payload: { type: 'error', message } }
+    const carried = terminal && (terminal.type === 'done' || terminal.type === 'error') ? terminal : null
+    const payload = carried ?? {
+      type: 'error',
+      message: status === 'done' ? 'turn_terminal_repaired:done' : `turn_terminal_repaired:${status}`,
+    }
+    const row = { id: `${turnId}:${seq}`, turn_id: turnId, seq, type: payload.type, payload }
     const { error: writeError } = await supabase.from('agent_turn_events').upsert(row, { onConflict: 'turn_id,seq' })
     if (writeError) throw writeError
     await supabase.from('agent_turns').update({ last_seq: seq }).eq('id', turnId)
-    console.warn(`[worker] streamed-turn ${turnId} — repaired missing terminal at seq ${seq}`)
-    return true
+    console.warn(`[worker] streamed-turn ${turnId} — repaired missing terminal at seq ${seq} (${payload.type})`)
+    await publishRepairedTerminal({ turnId, row, publisher, redisUrl })
+    return { outcome: 'repaired', seq }
   } catch (err) {
     console.error(`[worker] streamed-turn ${turnId} — terminal repair failed:`, err?.message ?? err)
-    return false
+    return { outcome: 'failed', error: err?.message ?? String(err) }
+  }
+}
+
+async function publishRepairedTerminal({ turnId, row, publisher, redisUrl }) {
+  const owned = !publisher && redisUrl ? new Redis(redisUrl, { maxRetriesPerRequest: null }) : null
+  const client = publisher ?? owned
+  if (!client) return
+  try {
+    await client.publish(turnEventChannel(turnId), JSON.stringify({ seq: row.seq, type: row.type, payload: row.payload }))
+  } catch (err) {
+    // The row is durable; a reconnecting tail replays it. Only a tail that is
+    // already subscribed misses out, and that needs Redis to be up anyway.
+    console.warn(`[worker] streamed-turn ${turnId} — repaired terminal publish failed:`, err?.message ?? err)
+  } finally {
+    if (owned) {
+      try { await owned.quit() } catch { owned.disconnect?.() }
+    }
   }
 }
