@@ -628,6 +628,25 @@ describe('post-execution hooks feed the machine', () => {
     expect(focusMock.ensureFocusForWorkflowRun).not.toHaveBeenCalled()
   })
 
+  it('recovers the direct owner request from validated executor context', async () => {
+    await onWorkflowToolExecuted('live_browser_look', {}, {
+      currentUrl: 'https://www.youtube.com/',
+      device: 'My Mac Chrome',
+      deviceId: 'device-mac-1',
+      documentId: 'doc-youtube-1',
+    }, {
+      ...ctx,
+      directBrowserTask: true,
+      ownerRequestText: 'Play Fix You on YouTube.',
+    })
+
+    const session = (store.workflowRun[0].facts as {
+      browserSession: Record<string, unknown>
+    }).browserSession
+    expect(session.directBrowserOwnerRequest).toBe('Play Fix You on YouTube.')
+    expect(focusMock.ensureFocusForWorkflowRun).not.toHaveBeenCalled()
+  })
+
   it('restores workflow focus when an ordinary browser task reuses a direct receipt run', async () => {
     const observation = {
       currentUrl: 'https://www.youtube.com/',
