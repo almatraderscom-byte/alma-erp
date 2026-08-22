@@ -119,9 +119,11 @@ enum AlmaNavCoordinator {
 
         // Role × business gate first (AlmaSession = the web's roles.ts port).
         // Public pages (share links, privacy) are not ERP routes and pass.
+        // The FULL path goes to the gate: a canonical entity link carries its
+        // verified business_id selector and is evaluated under that business.
         if !publicWebRoutes.contains(bare),
            !publicWebPrefixes.contains(where: { bare.hasPrefix($0) }),
-           !AlmaSession.shared.canSee(bare) {
+           !AlmaSession.shared.canSee(path) {
             return .denied
         }
 

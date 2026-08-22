@@ -1608,6 +1608,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let next = AlmaShellCatalog.tabHrefs(role: s.effectiveRole, business: s.businessId) + ["/more"]
         guard next != tabHrefs else {
             refreshApprovalsBadge()
+            pushLoginIfSignedOut()
             return
         }
         AlmaPerfLog.event("shell.rebuildTabs", next.joined(separator: ","))
@@ -1616,13 +1617,20 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         selectedIndex = 0
         applyTheme()
         refreshApprovalsBadge()
-        // Signed out (explicit sign-out wiped the identity): land on the native
-        // login right away — the web redirects to /login the same way.
-        if s.authed == false, s.role == nil {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let nav = self.selectedViewController as? UINavigationController else { return }
-                self.pushSmart(on: nav, path: "/login", title: "Sign in", icon: "person.crop.circle")
-            }
+        pushLoginIfSignedOut()
+    }
+
+    /// Signed out (explicit sign-out or a definite 401 wiped the identity): land
+    /// on the native login right away — the web redirects to /login the same way.
+    /// Idempotent: a foreground re-check must not stack a second login screen.
+    private func pushLoginIfSignedOut() {
+        guard #available(iOS 17.0, *) else { return }
+        let s = AlmaSession.shared
+        guard s.authed == false, s.role == nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let nav = self.selectedViewController as? UINavigationController else { return }
+            if nav.topViewController?.title == "Sign in" { return }
+            self.pushSmart(on: nav, path: "/login", title: "Sign in", icon: "person.crop.circle")
         }
     }
 

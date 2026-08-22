@@ -103,7 +103,14 @@ final class AlmaSession {
     /// the user must have access to that business.
     func canSee(_ path: String) -> Bool {
         let bare = path.split(separator: "?").first.map(String.init) ?? path
-        let business = Self.scopedBusiness(in: path) ?? AlmaAccess.business(for: bare, current: businessId)
+        let scoped = Self.scopedBusiness(in: path)
+        // A forged selector on an exact-record route (/orders/{id}?business_id=
+        // ALMA_TRADING) is not an access question — the native router refuses the
+        // pairing itself (.unknown, no fetch). Only a selector that matches the
+        // route's fixed business decides WHICH business the role rule runs under.
+        if let scoped, let fixed = AlmaAccess.entityRouteBusiness(bare, hasExactFocus: Self.hasFocus(in: path)),
+           scoped != fixed { return true }
+        let business = scoped ?? AlmaAccess.business(for: bare, current: businessId)
         // Login / recovery / public share pages never need a business.
         if bare.hasPrefix("/login") || bare.hasPrefix("/forgot-password")
             || bare.hasPrefix("/reset-password") || bare.hasPrefix("/invoice/share") { return true }
@@ -115,6 +122,13 @@ final class AlmaSession {
     /// (`/employees/EMP-1?business_id=ALMA_LIFESTYLE`). The native router still
     /// validates it against the route's fixed business before any fetch; here it
     /// only picks WHICH business the role rule is evaluated under (Codex P2).
+    private static func hasFocus(in path: String) -> Bool {
+        guard let query = path.split(separator: "?").dropFirst().first,
+              let raw = URLComponents(string: "https://x/?\(query)")?
+                  .queryItems?.first(where: { $0.name == "focus" })?.value else { return false }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private static func scopedBusiness(in path: String) -> AlmaBusinessId? {
         guard let query = path.split(separator: "?").dropFirst().first,
               let raw = URLComponents(string: "https://x/?\(query)")?
@@ -269,7 +283,9 @@ final class AlmaSession {
         lastLoadedAt = Date()
         persistEffectiveBusiness()
         authVersion += 1
-        if snapshot != before {
+        // A definite 401 always wakes the shell (even when the identity was
+        // already empty — a fresh install) so it can land on the native login.
+        if snapshot != before || authed == false {
             NotificationCenter.default.post(name: .almaSessionChanged, object: nil)
         }
         if businessId != beforeBusiness {

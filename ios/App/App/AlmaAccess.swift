@@ -421,6 +421,21 @@ enum AlmaAccess {
         }
     }
 
+    /// The FIXED business of an exact-record entity route (mirrors
+    /// `entityRouteBusinessId` in businesses.ts): Lifestyle order / employee,
+    /// Trading account. nil for everything else.
+    static func entityRouteBusiness(_ bare: String, hasExactFocus: Bool = false) -> AlmaBusinessId? {
+        func oneParam(_ prefix: String) -> Bool {
+            guard bare.hasPrefix(prefix) else { return false }
+            let rest = bare.dropFirst(prefix.count)
+            return !rest.isEmpty && !rest.contains("/")
+        }
+        if (bare == "/orders" && hasExactFocus) || oneParam("/orders/") { return .ALMA_LIFESTYLE }
+        if oneParam("/employees/") { return .ALMA_LIFESTYLE }
+        if oneParam("/trading/accounts/") { return .ALMA_TRADING }
+        return nil
+    }
+
     /// Which business a route belongs to, the way the web resolves it: `/trading*` →
     /// Trading, `/digital*` → CDIT (proxy.ts), otherwise the business the user is
     /// currently in when the route is valid there (BusinessContext), else Lifestyle.

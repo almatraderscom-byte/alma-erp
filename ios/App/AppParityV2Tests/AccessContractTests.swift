@@ -160,6 +160,24 @@ final class AccessContractTests: XCTestCase {
         XCTAssertTrue(session.canSee("/trading/hr"))
         XCTAssertFalse(session.canSee("/orders/ALM-1?business_id=ALMA_LIFESTYLE"),
                        "HR has no Lifestyle orders page on the web either")
+        // Coordinator passes the FULL path to the gate (Codex P2, round 2).
+        if case .native = AlmaNavCoordinator.decide(
+            path: "/employees/EMP-1?business_id=ALMA_LIFESTYLE", openWebForced: { _, _ in }) {
+        } else {
+            XCTFail("HR in Trading must open a Lifestyle employee entity link natively")
+        }
+        if case .denied = AlmaNavCoordinator.decide(
+            path: "/orders/ALM-1?business_id=ALMA_LIFESTYLE", openWebForced: { _, _ in }) {
+        } else {
+            XCTFail("HR must be denied a Lifestyle order link")
+        }
+        // A forged selector is refused by the router (.unknown), never turned into
+        // an access verdict — no fetch, no wrong screen, no "no access" message.
+        if case .unknown = AlmaNavCoordinator.decide(
+            path: "/employees/EMP-1?business_id=ALMA_TRADING", openWebForced: { _, _ in }) {
+        } else {
+            XCTFail("forged business selector must be refused as unknown")
+        }
         session.setBusiness(.ALMA_LIFESTYLE)
         session.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
     }
