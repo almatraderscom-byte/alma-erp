@@ -249,7 +249,7 @@ test('a lost terminal is handed to the repair-only job with the REAL terminal ev
   assert.deepEqual(enqueued, [{ turnId: 'turn-1', status: 'done', terminal: { type: 'done', messageId: 'm-real' } }])
 })
 
-test('a failing repair enqueue never masks the original failure and is scheduled only once', async () => {
+test('a failing repair enqueue is retried, never masks the original failure, and is scheduled once per job', async () => {
   const supabase = fakeSupabase({ upsertErrorsBySeq: { 1: { remaining: 99 }, 2: { remaining: 99 } } })
   const publisher = fakePublisher()
   let calls = 0
@@ -258,7 +258,33 @@ test('a failing repair enqueue never masks the original failure and is scheduled
     runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep, enqueueRepair: async () => { calls += 1; throw new Error('redis down') } } }),
     /terminal event could not be stored durably/,
   )
-  assert.equal(calls, 1)
+  assert.equal(calls, 3, 'three enqueue attempts (Codex P1 #837 r5), then the original throw')
+})
+
+test('a transient enqueue failure succeeds on retry', async () => {
+  const supabase = fakeSupabase({ upsertErrorsBySeq: { 1: { remaining: 99 }, 2: { remaining: 99 } } })
+  const publisher = fakePublisher()
+  const enqueued = []
+  let calls = 0
+  const events = [{ type: 'conversation_id', id: 'c' }, { type: 'done', messageId: 'm' }]
+  await assert.rejects(
+    runStreamedTurn({ supabase, job, redisUrl: 'redis://unused', telegramBot: null, deps: { fetch: fakeFetch(events), publisher, sleep: noSleep, enqueueRepair: async (data) => { calls += 1; if (calls === 1) throw new Error('blip'); enqueued.push(data) } } }),
+    /terminal event could not be stored durably/,
+  )
+  assert.equal(calls, 2)
+  assert.equal(enqueued.length, 1)
+})
+
+test('a publish that never returns is bounded by the publish timeout (Codex P1 #837 r5)', async () => {
+  const supabase = fakeSupabase({ existingSeqs: [0, 1, 2] })
+  const hanging = { attempts: 0, published: [], async publish() { this.attempts += 1; await new Promise(() => {}) }, async quit() {} }
+  const result = await repairMissingTerminal({
+    supabase, turnId: 'turn-1', status: 'done', terminal: { type: 'done', messageId: 'm' }, publisher: hanging, sleep: noSleep, publishTimeoutMs: 20,
+  })
+  assert.equal(result.outcome, 'failed')
+  assert.match(result.error, /not published/)
+  assert.equal(hanging.attempts, 3, 'each bounded attempt timed out, the loop advanced')
+  assert.deepEqual(supabase.rows.map((r) => [r.seq, r.type]), [[3, 'done']])
 })
 
 test('the repair stores the carried terminal verbatim and publishes it to live subscribers (Codex P1 #837 r3)', async () => {
