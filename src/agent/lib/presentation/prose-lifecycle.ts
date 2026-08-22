@@ -247,6 +247,12 @@ export class ProseLifecycleTracker {
    * the streamed blocks keep their ids (live/cold parity for what streamed).
    * Any other `text` retires the visible blocks (reason 'salvage') and becomes
    * the single final block — the content wins, never the stale blocks.
+   *
+   * The wire events for the change (supersedes, then start + commit of the new
+   * block) are QUEUED, not returned: these paths end with an `error`, not a
+   * `done`, so nothing would drain them. The runner / route emits
+   * `drainQueued()` before the terminal event, and the live reducers land on
+   * exactly the transcript a reload shows (Codex P1 #834 r4).
    */
   salvage(text: string, opts?: { suffix?: string }): void {
     const wanted = text.trim()
@@ -262,15 +268,16 @@ export class ProseLifecycleTracker {
       && suffix.length > 0
       && wanted.endsWith(suffix)
       && normalize(wanted.slice(0, wanted.length - suffix.length)) === normalize(visible)
+    const out: WireEvent[] = []
     if (extendsVisible) {
       extra = suffix
     } else {
       for (const b of this.blocks) {
         if (b.state === 'superseded' && !b.awaitingReplacement) continue
-        this.supersede(b, 'salvage', false)
+        out.push(...this.supersede(b, 'salvage', false))
       }
     }
-    this.blocks.push({
+    const block: TrackerBlock = {
       id: this.nextId(),
       kind: 'final',
       state: 'committed',
@@ -279,7 +286,24 @@ export class ProseLifecycleTracker {
       continuable: false,
       dirty: false,
       awaitingReplacement: false,
-    })
+    }
+    this.blocks.push(block)
+    out.push(...this.v2([
+      { type: 'prose_start', blockId: block.id, kind: 'final', revision: 1 },
+      { type: 'prose_commit', blockId: block.id, kind: 'final', revision: 1, text: extra, checksum: fnv1aHex(extra) },
+    ]))
+    this.queued.push(...out)
+  }
+
+  /**
+   * Lifecycle events queued by `settle()` / `salvage()` on a path that will NOT
+   * end with `done` (the runner yields them, or the route emits them, right
+   * before the terminal `error`). Empty for a v1 turn.
+   */
+  drainQueued(): WireEvent[] {
+    const out = this.queued
+    this.queued = []
+    return out
   }
 
   // ── interceptor-facing ─────────────────────────────────────────────────
