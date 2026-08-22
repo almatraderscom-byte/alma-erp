@@ -9,6 +9,8 @@
  *     with no successful read this turn (flag-gated).
  */
 import { AGENT_FACT_GATE, AGENT_STYLE_GATE } from '@/agent/config'
+import { isPotentialYouTubePlaybackMutation } from '@/agent/lib/live-browser/intent'
+import { playbackExpectationMatchesRequest } from '@/agent/lib/live-browser/playback-verifier'
 import { isCopyOnlyOwnerRequest } from '@/agent/lib/owner-intent-contract'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -30,6 +32,8 @@ export type ClaimViolationCategory =
   | 'fabricated_stat'
   | 'robotic_style'
   | 'async_unverified'
+  /** A media-playing claim lacks the two-sample semantic browser proof. */
+  | 'media_playback_unverified'
   /** The reply named a tool and said it ran, but that tool never ran this turn. */
   | 'tool_not_called'
   /** The opening line promised something; the work failed and the reply never said so. */
@@ -59,6 +63,204 @@ export interface ToolLedgerEntry {
   toolName: string
   success: boolean
   error?: string
+}
+
+export interface PlaybackProofLedgerEntry {
+  toolName: string
+  status: 'success' | 'error'
+  output: Record<string, unknown> | null
+}
+
+const PLAYBACK_SUCCESS_LANGUAGE =
+  /(?:চলছে|বাজছে|বাজিয়ে\s*দিয়েছি|বাজিয়ে\s*দিয়েছি|চালু\s*(?:হয়েছে|হয়েছে|করে\s*দিয়েছি|করে\s*দিয়েছি)|চালিয়ে\s*দিয়েছি|চালিয়ে\s*দিয়েছি|প্লে\s*(?:হচ্ছে|করছে)|শুরু\s*(?:হয়েছে|হয়েছে|করে\s*দিয়েছি)|\b(?:done|enjoy|now\s+playing|is\s+playing|started\s+playing|playing\s+now|i\s+(?:have\s+)?played\s+it|it'?s\s+on)\b)/i
+const PLAYBACK_BLOCKER =
+  /(?:চলছে\s*না|বাজছে\s*না|চালু\s*(?:হয়নি|হয়নি)|প্লে\s*(?:হচ্ছে\s*না|হয়নি|হয়নি)|শুরু\s*(?:হয়নি|হয়নি)|যাচাই\s*(?:হয়নি|হয়নি|করা\s*যায়নি|করা\s*যায়নি)|পারিনি|এখনও?\s*(?:paused|loading|বিজ্ঞাপন)|(?:লগইন|captcha|ক্যাপচা|pairing|paired\s+chrome|chrome)\s*(?:is\s+)?(?:দরকার|offline|অফলাইন|নেই)|\b(?:not\s+(?:playing|verified)|couldn'?t\s+(?:play|verify)|could\s+not\s+(?:play|verify)|unable\s+to\s+(?:play|verify)|still\s+(?:paused|loading)|login\s+required|captcha|required\s+pairing|paired\s+chrome\s+(?:is\s+)?offline)\b)/i
+const NEGATIVE_PLAYBACK_SPAN =
+  /(?:চলছে\s*না|বাজছে\s*না|চালু\s*(?:হয়নি|হয়নি)|প্লে\s*(?:হচ্ছে\s*না|হয়নি|হয়নি)|শুরু\s*(?:হয়নি|হয়নি)|যাচাই\s*(?:হয়নি|হয়নি|করা\s*যায়নি|করা\s*যায়নি)|পারিনি|\bnot\s+(?:playing|verified)\b|\bcouldn'?t\s+(?:play|verify)\b|\bcould\s+not\s+(?:play|verify)\b|\bunable\s+to\s+(?:play|verify)\b)/gi
+
+function youtubeHost(value: unknown): boolean {
+  const host = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '')
+  return host === 'youtube.com'
+}
+
+// A player clock is live evidence, not a durable fact. Keep the final claim
+// lease deliberately shorter than the general LOOK→ACT receipt lease: a song
+// may be paused, muted, replaced, or ended immediately after the sample.
+export const PLAYBACK_PROOF_MAX_AGE_MS = 15_000
+export const BROWSER_PLAYBACK_VERIFIED_OUTPUT_UNCHECKED =
+  '✅ Requested YouTube media-র foreground player-এ two fresh sample-এ media clock advancing ছিল; HTML media element ও Chrome tab unmuted ছিল। ' +
+  '⚠️ এই browser path macOS system/output-device mute, volume বা speaker output যাচাই করতে পারে না—তাই আপনি শব্দ শুনতে পাচ্ছেন বলে দাবি করছি না।'
+
+export interface MediaPlaybackFinalGate {
+  text: string
+  /** Visible/model prose must be superseded by this server-authored text. */
+  replaced: boolean
+  playbackRequested: boolean
+  /** Browser/player proof only; does not assert macOS speaker audibility. */
+  browserPlaybackVerified: boolean
+}
+
+export function mediaPlaybackGateAuthorizesCompletion(gate: {
+  replaced: boolean
+  playbackRequested?: boolean
+  browserPlaybackVerified?: boolean
+}): boolean {
+  return gate.playbackRequested === true
+    ? gate.browserPlaybackVerified === true
+    : !gate.replaced
+}
+
+function currentPlaybackProof(
+  ownerText: string,
+  records: PlaybackProofLedgerEntry[],
+): { verified: boolean; reasons: string[] } {
+  const latest = [...records]
+    .reverse()
+    .find((record) => record.toolName === 'live_browser_look' || record.toolName === 'live_browser_act')
+  if (!latest || latest.toolName !== 'live_browser_look' || latest.status !== 'success') {
+    return { verified: false, reasons: ['final_browser_step_is_not_a_successful_look'] }
+  }
+  const data = latest.output?.data as {
+    device?: unknown
+    deviceId?: unknown
+    currentUrl?: unknown
+    observationReceipt?: unknown
+    observationIssuedAt?: unknown
+    observationExpiresAt?: unknown
+    playbackVerification?: {
+      verified?: unknown
+      expectedMedia?: unknown
+      expectedHost?: unknown
+      playbackObservedAt?: unknown
+      reasons?: unknown
+    }
+  } | undefined
+  const proof = data?.playbackVerification
+  const reasons = Array.isArray(proof?.reasons) ? proof.reasons.map(String) : []
+  if (proof?.verified !== true) return { verified: false, reasons: reasons.length ? reasons : ['semantic_proof_missing'] }
+  if (!youtubeHost(proof.expectedHost) || !youtubeHost(data?.currentUrl)) {
+    return { verified: false, reasons: ['youtube_host_not_bound'] }
+  }
+  if (typeof data?.device !== 'string' || !data.device.trim()) {
+    return { verified: false, reasons: ['device_not_bound'] }
+  }
+  const deviceId = typeof data?.deviceId === 'string' ? data.deviceId.trim() : ''
+  if (!deviceId) return { verified: false, reasons: ['device_id_not_bound'] }
+  if (typeof data?.observationReceipt !== 'string' || !data.observationReceipt.trim()) {
+    return { verified: false, reasons: ['observation_receipt_missing'] }
+  }
+  const issuedAt = Date.parse(typeof data?.observationIssuedAt === 'string' ? data.observationIssuedAt : '')
+  const expiresAt = Date.parse(typeof data?.observationExpiresAt === 'string' ? data.observationExpiresAt : '')
+  const playbackObservedAt = Date.parse(
+    typeof proof.playbackObservedAt === 'string' ? proof.playbackObservedAt : '',
+  )
+  const now = Date.now()
+  if (
+    !Number.isFinite(issuedAt)
+    || !Number.isFinite(expiresAt)
+    || !Number.isFinite(playbackObservedAt)
+    || issuedAt > now + 1_000
+    || playbackObservedAt > issuedAt + 1_000
+    || expiresAt <= issuedAt
+    || playbackObservedAt >= expiresAt
+    || expiresAt <= now
+    || playbackObservedAt > now + 1_000
+    || now - playbackObservedAt > PLAYBACK_PROOF_MAX_AGE_MS
+  ) {
+    return { verified: false, reasons: ['playback_proof_stale'] }
+  }
+  const latestSuccessfulAct = records
+    .slice(0, records.lastIndexOf(latest))
+    .reverse()
+    .find((record) => record.toolName === 'live_browser_act' && record.status === 'success')
+  if (latestSuccessfulAct) {
+    const actedDeviceId = (latestSuccessfulAct.output?.data as { deviceId?: unknown } | undefined)?.deviceId
+    if (typeof actedDeviceId !== 'string' || actedDeviceId.trim() !== deviceId) {
+      return { verified: false, reasons: ['playback_proof_device_changed'] }
+    }
+  }
+  const expectedMedia = typeof proof.expectedMedia === 'string' ? proof.expectedMedia : ''
+  if (!playbackExpectationMatchesRequest(ownerText, expectedMedia)) {
+    return { verified: false, reasons: ['owner_media_query_not_bound'] }
+  }
+  return { verified: true, reasons: [] }
+}
+
+function honestPlaybackBlocker(replyText: string): boolean {
+  if (!PLAYBACK_BLOCKER.test(replyText)) return false
+  // “আগে not playing ছিল, now playing” is not a blocker. Remove the negative
+  // span and see whether the reply still makes a current success claim.
+  return !PLAYBACK_SUCCESS_LANGUAGE.test(replyText.replace(NEGATIVE_PLAYBACK_SPAN, ' '))
+}
+
+/** Semantic end-state check shared by the native and universal head loops. */
+export function detectUnverifiedMediaPlayback(
+  ownerText: string,
+  replyText: string,
+  records: PlaybackProofLedgerEntry[],
+): ClaimViolation[] {
+  if (!isPotentialYouTubePlaybackMutation(ownerText)) return []
+  if (currentPlaybackProof(ownerText, records).verified) return []
+  if (honestPlaybackBlocker(replyText)) return []
+  const snippet = replyText.match(PLAYBACK_SUCCESS_LANGUAGE)?.[0]
+    ?? (replyText.slice(0, 120) || 'unsupported playback completion')
+  return [{
+    category: 'media_playback_unverified',
+    ruleId: 'youtube_playback_requires_advancing_clock',
+    matchedSnippet: snippet,
+    requiredTools: ['live_browser_look(expectedMedia, expectedHost)'],
+  }]
+}
+
+/**
+ * Retry prompts are advisory. This is the turn-end hard stop used after retry
+ * exhaustion and deadline salvage: unsupported playback completion is replaced
+ * with one honest outcome instead of leaking as a confident final answer.
+ */
+export function hardGateMediaPlaybackFinalText(
+  ownerText: string,
+  replyText: string,
+  records: PlaybackProofLedgerEntry[],
+): MediaPlaybackFinalGate {
+  if (!isPotentialYouTubePlaybackMutation(ownerText)) {
+    return {
+      text: replyText,
+      replaced: false,
+      playbackRequested: false,
+      browserPlaybackVerified: false,
+    }
+  }
+  const proof = currentPlaybackProof(ownerText, records)
+  // A finite prose regex can avoid an unnecessary retry, but it cannot serve as
+  // an authorization token. Model prose may mix a caveat with an unsupported
+  // success synonym the regex has never seen. Only server-validated proof may
+  // preserve model-authored final text.
+  if (proof.verified) {
+    // Browser evidence cannot establish Mac output-device volume/mute. Never
+    // preserve model-authored "you can hear it" prose; replace it with the
+    // precise, server-authored scope of what the two samples actually prove.
+    return {
+      text: BROWSER_PLAYBACK_VERIFIED_OUTPUT_UNCHECKED,
+      replaced: true,
+      playbackRequested: true,
+      browserPlaybackVerified: true,
+    }
+  }
+  const detail = proof.reasons.length ? ` (${proof.reasons.slice(0, 4).join(', ')})` : ''
+  return {
+    text:
+      '⚠️ Playback যাচাই হয়নি, তাই গান/ভিডিওটি চলছে বলে দাবি করছি না। ' +
+      'Paired Chrome-এ requested title, youtube.com, একই visible unmuted player এবং advancing media clock-এর final proof পাওয়া যায়নি' +
+      `${detail}।`,
+    replaced: true,
+    playbackRequested: true,
+    browserPlaybackVerified: false,
+  }
 }
 
 interface ClaimRule {
@@ -1244,6 +1446,11 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'কোনো check_* tool এখনো status "executed" দেখায়নি। কিউ করা মানে শেষ হওয়া নয়। ' +
     'হয় check tool দিয়ে executed status আনুন, তারপর আসল ফলাফল (স্কোর/ফাইন্ডিংস/লিংক) সহ রিপোর্ট দিন; ' +
     'নয়তো সৎভাবে চলমান অবস্থা বলুন — "crawl চলছে, শেষ হলেই নিজে থেকেই পুরো রিপোর্ট দেবো"। কখনো আগেভাগে "শেষ" বলবেন না।',
+  media_playback_unverified:
+    'আপনি বলেছেন চাওয়া গান/ভিডিও চলছে, কিন্তু screenshot বা click-success playback প্রমাণ নয়। ' +
+    'live_browser_look আবার call করুন: expectedMedia-তে Boss-এর চাওয়া title/query এবং expectedHost-এ youtube.com দিন। ' +
+    'শুধু playbackVerification.verified=true (matching title/host, ready player, ad নয়, দুই sample-এ currentTime এগিয়েছে) পেলে playing বলুন; ' +
+    'না হলে সৎভাবে paused/loading/ad/verification failure জানান।',
   tool_not_called:
     'আপনি একটা tool-এর নাম ধরে বলেছেন সেটা চলেছে, কিন্তু এই turn-এ ওই tool কল-ই হয়নি। ' +
     'সাথে যে id / সংখ্যা / ধাপের তালিকা দিয়েছেন সেগুলোও তাহলে বানানো — এটা Boss-এর সবচেয়ে বড় আপত্তি। ' +

@@ -62,11 +62,11 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const device = await authenticateDevice(bearer(req))
+  const device = await authenticateDevice(bearer(req), {
+    allowRevocationPending: true,
+  })
   if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!(await isLiveBrowserEnabled())) {
-    return Response.json({ error: 'live_browser_disabled' }, { status: 409 })
-  }
+  const enabled = await isLiveBrowserEnabled()
 
   let raw: unknown
   try {
@@ -77,8 +77,16 @@ export async function POST(req: NextRequest) {
   const parsed = parseBrowserFrame(raw)
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
 
-  const lease = await getActiveBrowserPreviewLease(device.id)
-  if (!lease) return Response.json({ error: 'preview_lease_inactive' }, { status: 409 })
+  // Global OFF blocks all ordinary capture, but an effect that won final
+  // authorization before STOP must remain witnessed until its exact outcome.
+  const lease = await getActiveBrowserPreviewLease(device.id, {
+    requireExecuting: !enabled || device.revocationPending,
+  })
+  if (!lease) {
+    return Response.json({
+      error: enabled ? 'preview_lease_inactive' : 'live_browser_disabled',
+    }, { status: 409 })
+  }
   if (!frameMatchesLease(parsed, lease)) {
     return Response.json({ error: 'preview_lease_changed' }, { status: 409 })
   }

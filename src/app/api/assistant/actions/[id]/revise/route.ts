@@ -8,6 +8,7 @@ import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { settlePlanStepsLinkedToPendingAction } from '@/agent/lib/planner'
 import { isRevisableAction, buildReviseDirective } from '@/agent/lib/revise-pending'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
+import { lockDirectYouTubeLaneAuthority } from '@/agent/lib/live-browser/turn-lane'
 import type { AgentEvent } from '@/agent/lib/core'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
@@ -65,7 +66,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   const actionId = params.id
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
   const action = await db.agentPendingAction.findUnique({ where: { id: actionId } })
@@ -146,24 +146,31 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   // Persist Boss's opinion as an owner turn so the head picks it up as the latest
   // message (and it leaves an auditable trail in the conversation).
-  await db.agentMessage.create({
-    data: {
-      conversationId,
-      role: 'user',
-      content: [{ type: 'text', text: buildReviseDirective({
-        id: actionId,
-        type: String(action.type),
-        summary: String(action.summary ?? ''),
-        feedback,
-        // media_plan cards: pin the head to THIS card's project so a chat with
-        // several media projects can never revise/supersede the wrong one.
-        anchor:
-          action.type === 'media_plan' &&
-          typeof (action.payload as { projectId?: unknown } | null)?.projectId === 'string'
-            ? { 'media projectId (plan_media_video-এ এই projectId-ই দেবে)': String((action.payload as { projectId: string }).projectId) }
-            : undefined,
-      }) }],
-    },
+  await db.$transaction(async (tx: typeof db) => {
+    // An owner revision supersedes any in-flight browser authority just like a
+    // chat/steer message. Take the same per-conversation advisory lock in the
+    // transaction that accepts the owner row, so an old turn cannot authorize
+    // an effect and then let this newer instruction commit in the gap.
+    await lockDirectYouTubeLaneAuthority(tx, conversationId)
+    await tx.agentMessage.create({
+      data: {
+        conversationId,
+        role: 'user',
+        content: [{ type: 'text', text: buildReviseDirective({
+          id: actionId,
+          type: String(action.type),
+          summary: String(action.summary ?? ''),
+          feedback,
+          // media_plan cards: pin the head to THIS card's project so a chat with
+          // several media projects can never revise/supersede the wrong one.
+          anchor:
+            action.type === 'media_plan' &&
+            typeof (action.payload as { projectId?: unknown } | null)?.projectId === 'string'
+              ? { 'media projectId (plan_media_video-এ এই projectId-ই দেবে)': String((action.payload as { projectId: string }).projectId) }
+              : undefined,
+        }) }],
+      },
+    })
   })
 
   const controller = new AbortController()

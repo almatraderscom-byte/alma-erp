@@ -30,7 +30,9 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
-  const device = await authenticateDevice(bearer(req))
+  const device = await authenticateDevice(bearer(req), {
+    allowRevocationPending: true,
+  })
   if (!device) return Response.json({ error: 'unauthorized' }, { status: 401 })
 
   let body: ResultBody

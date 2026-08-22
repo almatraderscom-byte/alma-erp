@@ -71,6 +71,15 @@ export function chooseRoundBoundTool(input: {
   return input.iteration === 0 ? input.workflowTool : null
 }
 
+/** A named provider choice is legal only when that exact schema survived every
+ * turn-level filter. This keeps workflow binding from re-widening closed lanes. */
+export function boundToolWhenShipped(
+  toolName: string | null,
+  shippedToolNames: Iterable<string>,
+): string | null {
+  return toolName && new Set(shippedToolNames).has(toolName) ? toolName : null
+}
+
 export function shouldInjectProspectivePlanTool(input: {
   planFirst: boolean
   planSatisfied: boolean

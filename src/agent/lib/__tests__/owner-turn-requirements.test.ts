@@ -23,6 +23,17 @@ describe('owner turn requirement contract', () => {
     })
   })
 
+  it('treats direct YouTube playback as paired live-Chrome work, not a five-page audit', () => {
+    const r = deriveOwnerTurnRequirements('ইউটিউবে Coke Studio Bangla গানটা চালাও')
+    const note = buildOwnerRequirementNote(r)
+
+    expect(r.liveBrowser).toBe(true)
+    expect(r.clientSeo).toBe(false)
+    expect(note).toContain('Paired live Chrome is REQUIRED')
+    expect(note).toContain('shell/Mac-command fallback is forbidden')
+    expect(note).not.toContain('5 distinct pages')
+  })
+
   // Live miss 2026-07-25 — the owner's plain-English order. reportArtifact used
   // to need the literal word "report"/"file"/"client", so the very turn that
   // ordered a deep audit did not require a deliverable.

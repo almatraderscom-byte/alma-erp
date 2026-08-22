@@ -1,7 +1,23 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { frameMatchesLease, parseBrowserFrame } from '../route'
+
+const mocks = vi.hoisted(() => ({
+  authenticateDevice: vi.fn(),
+  getActiveBrowserPreviewLease: vi.fn(),
+  isLiveBrowserEnabled: vi.fn(),
+  storeBrowserPreviewFrame: vi.fn(),
+}))
+
+vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: vi.fn(() => null) }))
+vi.mock('@/agent/lib/live-browser/companion', () => ({
+  authenticateDevice: mocks.authenticateDevice,
+  getActiveBrowserPreviewLease: mocks.getActiveBrowserPreviewLease,
+  isLiveBrowserEnabled: mocks.isLiveBrowserEnabled,
+  storeBrowserPreviewFrame: mocks.storeBrowserPreviewFrame,
+}))
+
+import { frameMatchesLease, parseBrowserFrame, POST } from '../route'
 
 describe('live-browser frame contract', () => {
   const now = Date.parse('2026-08-19T10:00:00.000Z')
@@ -12,6 +28,17 @@ describe('live-browser frame contract', () => {
     turnId: 'turn-1',
     conversationId: 'conv-1',
   }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.authenticateDevice.mockResolvedValue({ id: 'device-1' })
+    mocks.isLiveBrowserEnabled.mockResolvedValue(true)
+    mocks.storeBrowserPreviewFrame.mockResolvedValue({
+      accepted: true,
+      frameAt: new Date(base.capturedAt),
+      frameSeq: 1,
+    })
+  })
 
   it('accepts only canonical Chrome tab contexts', () => {
     expect(parseBrowserFrame(base, now).ok).toBe(true)
@@ -47,5 +74,85 @@ describe('live-browser frame contract', () => {
     expect(route).toContain('leaseExpiresAt: lease.expiresAt.toISOString()')
     expect(extension).toContain("const renewedExpiry = typeof ack?.leaseExpiresAt === 'string'")
     expect(extension).toContain("previewGrant = { ...current, expiresAt: ack.leaseExpiresAt }")
+  })
+
+  it('keeps only the exact executing preview ingest alive while global STOP is OFF', async () => {
+    const capturedAt = new Date().toISOString()
+    const lease = {
+      deviceId: 'device-1',
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+      expiresAt: new Date(Date.now() + 30_000),
+    }
+    mocks.isLiveBrowserEnabled.mockResolvedValue(false)
+    mocks.getActiveBrowserPreviewLease.mockResolvedValue(lease)
+    mocks.storeBrowserPreviewFrame.mockResolvedValue({
+      accepted: true,
+      frameAt: new Date(capturedAt),
+      frameSeq: 2,
+    })
+
+    const response = await POST(new Request('http://localhost/api/assistant/live-browser/frames', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer paired-device-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ...base, capturedAt }),
+    }) as never)
+
+    expect(response.status).toBe(200)
+    expect(mocks.getActiveBrowserPreviewLease).toHaveBeenCalledWith('device-1', {
+      requireExecuting: true,
+    })
+    expect(mocks.storeBrowserPreviewFrame).toHaveBeenCalledOnce()
+  })
+
+  it('requires the exact executing preview while device revocation is pending', async () => {
+    const capturedAt = new Date().toISOString()
+    mocks.authenticateDevice.mockResolvedValue({
+      id: 'device-1',
+      revocationPending: true,
+    })
+    mocks.getActiveBrowserPreviewLease.mockResolvedValue({
+      deviceId: 'device-1',
+      turnId: 'turn-1',
+      conversationId: 'conv-1',
+      expiresAt: new Date(Date.now() + 30_000),
+    })
+
+    const response = await POST(new Request('http://localhost/api/assistant/live-browser/frames', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer pending-device-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ...base, capturedAt }),
+    }) as never)
+
+    expect(response.status).toBe(200)
+    expect(mocks.authenticateDevice).toHaveBeenCalledWith('pending-device-token', {
+      allowRevocationPending: true,
+    })
+    expect(mocks.getActiveBrowserPreviewLease).toHaveBeenCalledWith('device-1', {
+      requireExecuting: true,
+    })
+  })
+
+  it('rejects frame ingest while OFF when no exact executing lease remains', async () => {
+    mocks.isLiveBrowserEnabled.mockResolvedValue(false)
+    mocks.getActiveBrowserPreviewLease.mockResolvedValue(null)
+    const response = await POST(new Request('http://localhost/api/assistant/live-browser/frames', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer paired-device-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ...base, capturedAt: new Date().toISOString() }),
+    }) as never)
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toEqual({ error: 'live_browser_disabled' })
+    expect(mocks.storeBrowserPreviewFrame).not.toHaveBeenCalled()
   })
 })

@@ -21,6 +21,33 @@ import { findPromptLeaks } from '@/agent/lib/skill-engine/isolation'
 import { countTypedToolCalls, createMarkupStreamFilter, dropRepeatedBlocks, stripToolCallMarkup, typedToolCallsInsteadOfCalling } from '@/agent/lib/model-output-sanitize'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
 import {
+  DIRECT_BROWSER_ALLOWED_TOOL_NAMES,
+  DIRECT_BROWSER_SHELL_DENYLIST,
+  DIRECT_BROWSER_TOOL_NAMES,
+  directBrowserFallbackViolation,
+  filterDirectBrowserToolInventory,
+  isDirectBrowserExecutionTool,
+  isDirectYouTubeBrowserTask,
+  isPotentialYouTubeComputerUseMutation,
+} from '@/agent/lib/live-browser/intent'
+import {
+  DIRECT_YOUTUBE_ROUTE_MISS_BLOCKER,
+  DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER,
+  DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES,
+  hardGateUnavailableDirectYouTubeLane,
+  isDirectYouTubeTurnLaneCurrent,
+  resolveDirectYouTubeTurnRequest,
+  revokeDirectYouTubeTurnLaneForSteering,
+  settleDirectYouTubeTurnLane,
+  supersedeDirectYouTubeAskCards,
+  type DirectYouTubeTurnLane,
+} from '@/agent/lib/live-browser/turn-lane'
+import {
+  loadTurnOwnerInputBinding,
+  snapshotTurnHistoryRows,
+  turnScopedOwnerInput,
+} from '@/agent/lib/live-browser/turn-owner-input'
+import {
   claimsCompletion,
   dependencyBlockMessage,
   doneGateMessage,
@@ -105,6 +132,7 @@ import { adviseForAction, filterToolsForPermissionMode, isFamilyGrantLive, modeV
 import { effectiveWorkClass, loadRememberedWorkClass, rememberWorkClass } from '@/agent/lib/turn-work-class'
 import { capabilityPreflightBlock } from '@/agent/lib/capability-preflight'
 import {
+  boundToolWhenShipped,
   chooseRoundBoundTool,
   filterToolsForPlanTurn,
   isPlanFirstTurn,
@@ -167,6 +195,9 @@ import {
   detectAsyncCompletionViolation,
   detectToolExecutionClaims,
   detectFabricatedToolResponse,
+  detectUnverifiedMediaPlayback,
+  hardGateMediaPlaybackFinalText,
+  mediaPlaybackGateAuthorizesCompletion,
   summarizeAsyncJobEvidence,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
@@ -598,11 +629,18 @@ async function* runAlternateProviderTurn(
   // beside the tokens once the reply lands.
   const turnStartedAtMs = Date.now()
 
+  const requestedTurnOwnerInput = options.turnOwnerInput
+    ?? await loadTurnOwnerInputBinding(conversationId, turnId)
   const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
-    orderBy: { createdAt: 'asc' },
-    select: { role: true, content: true },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, role: true, content: true, createdAt: true },
   })
+  const historySnapshot = snapshotTurnHistoryRows(allRows, requestedTurnOwnerInput)
+  const turnOwnerInput = historySnapshot.state === 'ready'
+    && !historySnapshot.hasLaterRows
+    ? requestedTurnOwnerInput
+    : { state: 'unavailable' as const }
 
   // B3 tail compaction — the PRIMARY cost lever on this path. This used to run
   // only on the native Claude head (core.ts); the alternate path shipped the
@@ -613,34 +651,38 @@ async function* runAlternateProviderTurn(
   // running summary and keep only the recent window. Row order is createdAt asc,
   // so dropOldest lines up with rows.slice(). Fail-open keeps everything.
   let tailSummary: string | undefined
-  let rows = allRows
-  try {
-    const tail = await applyTailCompaction(conversationId)
-    if (tail.dropOldest > 0) rows = allRows.slice(tail.dropOldest)
-    if (tail.tailSummary) tailSummary = tail.tailSummary
-  } catch (err) {
-    console.warn('[run-owner-turn] tail compaction failed:', err instanceof Error ? err.message : String(err))
+  let rows = historySnapshot.rows
+  if (!historySnapshot.hasLaterRows) {
+    try {
+      const tail = await applyTailCompaction(conversationId)
+      if (tail.dropOldest > 0) rows = rows.slice(tail.dropOldest)
+      if (tail.tailSummary) tailSummary = tail.tailSummary
+    } catch (err) {
+      console.warn('[run-owner-turn] tail compaction failed:', err instanceof Error ? err.message : String(err))
+    }
   }
 
   // Durable ask-card answers — joined into the history notes so every question
   // card in context carries its options AND the owner's exact recorded choice
   // (misbinding guard, owner bug 2026-07-12). Fail-open to plain notes.
   let askAnswers: Map<string, { status: string; selectedOption: string | null }> | undefined
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
-      await (prisma as any).agentAskCard.findMany({
-        where: { conversationId },
-        select: { id: true, status: true, selectedOption: true },
-      })
-    askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
-  } catch { /* fail-open */ }
+  if (!historySnapshot.hasLaterRows) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
+        await (prisma as any).agentAskCard.findMany({
+          where: { conversationId },
+          select: { id: true, status: true, selectedOption: true },
+        })
+      askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
+    } catch { /* fail-open */ }
+  }
 
   // P1-6 — the task card: the job's state compiled ONCE from the records that
   // already hold it (focus, workflow run, corrections), so a continuation can
   // resume from notes instead of re-deriving everything from the transcript.
   // Compiled here because the history trim just below depends on having it.
-  const taskCard = options.continuation
+  const taskCard = options.continuation && !historySnapshot.hasLaterRows
     ? await compileTaskCard(conversationId)
     : { text: '', trimSafe: false }
   const taskCardText = taskCard.text
@@ -651,7 +693,7 @@ async function* runAlternateProviderTurn(
   // করো"। He is right: the resume directive already carries what was achieved and
   // what is next, so replaying the whole thread only re-bills tokens for context
   // the hop does not need.
-  const isSelfContinueHop = /^\[SELF-CONTINUE/m.test(lastUserTextPeek(allRows))
+  const isSelfContinueHop = /^\[SELF-CONTINUE/m.test(lastUserTextPeek(rows))
   if (isSelfContinueHop && rows.length > SELF_CONTINUE_KEEP_MESSAGES) {
     rows = rows.slice(-SELF_CONTINUE_KEEP_MESSAGES)
   }
@@ -693,8 +735,34 @@ async function* runAlternateProviderTurn(
     if (m.role !== 'user' || !('content' in m)) continue
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
-  const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
-  let currentOwnerInstructions = lastUserText
+  const historyLastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const scopedOwnerInput = turnScopedOwnerInput(turnOwnerInput, historyLastUserText)
+  const lastUserText = scopedOwnerInput.authoritativeText
+  const explicitAskCardId = scopedOwnerInput.state === 'exact'
+    ? scopedOwnerInput.askCardId
+    : null
+  const directBrowserLane: DirectYouTubeTurnLane | null = scopedOwnerInput.state === 'exact'
+    ? await resolveDirectYouTubeTurnRequest(
+        conversationId,
+        [scopedOwnerInput.authoritativeText],
+        turnId ?? undefined,
+        {
+          askCardId: scopedOwnerInput.askCardId,
+          selectedOption: scopedOwnerInput.authoritativeText,
+        },
+      )
+    : scopedOwnerInput.state === 'unavailable'
+      ? { state: 'unavailable', ownerRequest: scopedOwnerInput.blockerOwnerText, token: null }
+      : null
+  const directBrowserOwnerRequest = directBrowserLane?.ownerRequest ?? null
+  const directBrowserLaneUnavailable = directBrowserLane?.state === 'unavailable'
+  const directBrowserTurnAllowedTools = directBrowserLaneUnavailable
+    ? DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES
+    : DIRECT_BROWSER_ALLOWED_TOOL_NAMES
+  const browserOwnerText = directBrowserOwnerRequest ?? lastUserText
+  const directBrowserTask = directBrowserLane !== null
+  let directBrowserSteeringRevoked = false
+  let currentOwnerInstructions = browserOwnerText
   // Boss just pointed out a fault. One block, this turn only, telling the head
   // how to answer a correction — concede first, rank the complaints himself,
   // name the failure, then go VERIFY instead of arguing. Appended after the
@@ -892,17 +960,17 @@ async function* runAlternateProviderTurn(
     }
   }
   const turnStartedMs = Date.now()
-  const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
+  const ownerCorrectionNudge = buildOwnerCorrectionNudge(browserOwnerText)
   if (ownerCorrectionNudge) {
     messages = insertControlNote(messages, { role: 'user', content: ownerCorrectionNudge })
   }
-  const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
-  const liveToolExecutionRequired = requiresLiveToolExecution(lastUserText)
+  const ownerRequirements = deriveOwnerTurnRequirements(browserOwnerText)
+  const liveToolExecutionRequired = requiresLiveToolExecution(browserOwnerText)
   // A derived deliverable requirement (client SEO batch / live-browser walk) is
   // itself an action order — the gate must not mark such a message
   // information_only and disarm the very contract it just built (2026-07-25).
   let turnAuthorization = upgradeAuthorizationForDeliverable(
-    deriveOwnerTurnAuthorization(lastUserText),
+    deriveOwnerTurnAuthorization(browserOwnerText),
     ownerRequirements.clientSeo || ownerRequirements.liveBrowser,
   )
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
@@ -924,7 +992,7 @@ async function* runAlternateProviderTurn(
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
   // (short salah replies like "porechi" can be triaged here, not only to the Claude head).
   let intakeContextBlock: string | undefined
-  if (!suppressWork) {
+  if (!directBrowserTask && !suppressWork) {
     const autoMark = await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
     if (autoMark.marked.length) {
       const fresh = autoMark.marked[autoMark.marked.length - 1]
@@ -967,7 +1035,7 @@ async function* runAlternateProviderTurn(
   // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
   // "4 tay" as "4 calls" (live-hit 2026-07-17 — happened on THIS path in personal
   // mode, which suppressWork skips, so this step runs for personal turns too).
-  if (!listenMode && !intakeContextBlock && lastUserText) {
+  if (!directBrowserTask && !listenMode && !intakeContextBlock && lastUserText) {
     try {
       const hint = buildReminderTimeHintBlock(lastUserText)
       if (hint) intakeContextBlock = hint
@@ -982,7 +1050,7 @@ async function* runAlternateProviderTurn(
   // then hand the surviving runs to the router + the snapshot note below.
   // Fail-open: workflow bookkeeping must never block a turn.
   let workflowRuns: WorkflowRunView[] = []
-  if (!suppressWork) {
+  if (!directBrowserTask && !suppressWork) {
     try {
       if (turnAuthorization.allowMutations && ownerRequirements.clientSeo) {
         await ensureClientSeoBatchWorkflow({
@@ -992,7 +1060,8 @@ async function* runAlternateProviderTurn(
           requirements: ownerRequirements,
         })
       }
-      workflowRuns = await reconcileConversationWorkflows(conversationId)
+      workflowRuns = (await reconcileConversationWorkflows(conversationId))
+        .filter((run) => run.kind !== 'browser_setup')
     } catch (err) {
       console.warn('[run-owner-turn] workflow reconcile failed open:', err instanceof Error ? err.message : err)
     }
@@ -1010,18 +1079,7 @@ async function* runAlternateProviderTurn(
   // AGENT-IOS-001 (client side): an option tap ships the tapped card's id as an
   // `ask_card_ref` marker block on the user message row — bind to that EXACT card
   // first, no text-match guessing (two recent cards can share an option like "হ্যাঁ").
-  let explicitAskCardId: string | null = null
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const r = rows[i] as { role?: string; content?: unknown }
-    if (r.role !== 'user') continue
-    if (Array.isArray(r.content)) {
-      const ref = (r.content as Array<{ type?: string; askCardId?: unknown }>)
-        .find((b) => b?.type === 'ask_card_ref' && typeof b.askCardId === 'string')
-      explicitAskCardId = (ref?.askCardId as string | undefined) ?? null
-    }
-    break
-  }
-  if (!suppressWork && !listenMode && lastUserText) {
+  if (!directBrowserTask && !suppressWork && !listenMode && lastUserText) {
     try {
       if (explicitAskCardId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1098,7 +1156,8 @@ async function* runAlternateProviderTurn(
           ? (sepIndex >= 0 ? firstLine.slice(sepIndex + 3).trim() : firstLine)
           : matchedAskCard.selectedOption
         await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, workflowAnswer, 'turn')
-        workflowRuns = await relist(conversationId)
+        workflowRuns = (await relist(conversationId))
+          .filter((run) => run.kind !== 'browser_setup')
       }
     } catch { /* fail-open — the note/advance are aids, never blockers */ }
   }
@@ -1110,7 +1169,7 @@ async function* runAlternateProviderTurn(
   // Gate: AGENT_CONTINUITY_RESOLVER off|shadow|on (unset → preview on, prod
   // shadow). Fail-open: null → exactly the legacy behaviour below.
   let continuity: Awaited<ReturnType<typeof resolveConversationContinuity>> = null
-  if (lastUserText) {
+  if (!directBrowserTask && lastUserText) {
     continuity = await resolveConversationContinuity({
       conversationId,
       text: lastUserText,
@@ -1220,7 +1279,7 @@ async function* runAlternateProviderTurn(
     ? Promise.resolve<Awaited<ReturnType<typeof buildActiveSkills>>>({
         block: '', pinned: null, manifest: null, isolated: null, heldBack: null,
       })
-    : buildActiveSkills(lastUserText, { conversationId })
+    : buildActiveSkills(browserOwnerText, { conversationId })
   const crossSurfacePromise = (async () => {
     if (suppressWork || telegramFastPath) return []
     const skills = await activeSkillsPromise
@@ -1246,7 +1305,7 @@ async function* runAlternateProviderTurn(
     // Phase 3: state-aware router first (pending cards / checkpoints / plans
     // precede text routing, ≤24 tools) — falls back to the legacy selector when
     // the flag is off or no confident signal exists.
-    selectOwnerHeadTools({ conversationId, text: lastUserText, personalMode, businessId, headTier }),
+    selectOwnerHeadTools({ conversationId, text: browserOwnerText, personalMode, businessId, headTier }),
     suppressWork || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
     // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
     // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
@@ -1304,7 +1363,7 @@ async function* runAlternateProviderTurn(
       reason: activeSkills.heldBack.reason,
     }
   }
-  let ownerIntentTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  let ownerIntentTools = filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
   // Plan-before-work on a big job (owner ask 2026-07-26). The FIRST deep-work
   // turn of a conversation plans and asks everything at once; the staging/write
   // tools are withheld so it cannot half-start the job while "planning".
@@ -1360,6 +1419,33 @@ async function* runAlternateProviderTurn(
       }
     }
   }
+
+  // Product capability backstop: production's state router may still be in
+  // shadow and the broad skill switch may be off. A strict direct YouTube task
+  // nevertheless gets the exact paired-Chrome tools on every head.
+  if (directBrowserTask) {
+    const present = new Set(ownerIntentTools.map((tool) => tool.name))
+    const required = directBrowserLaneUnavailable
+      ? [...DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES]
+      : [...DIRECT_BROWSER_TOOL_NAMES]
+    const missing = required.filter((name) => !present.has(name))
+    if (missing.length > 0) {
+      try {
+        const extra = await resolveToolsByName([...missing])
+        ownerIntentTools = [
+          ...ownerIntentTools,
+          ...extra.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+          })),
+        ]
+      } catch (err) {
+        console.warn('[direct-browser] tool supply failed:', err instanceof Error ? err.message : err)
+      }
+    }
+    ownerIntentTools = ownerIntentTools.filter((tool) => directBrowserTurnAllowedTools.has(tool.name))
+  }
   // ── The restrictions this turn must keep, even against find_tool ──────────
   //
   // FOUND 2026-07-27 while wiring the ask_user withholding below. `find_tool`
@@ -1375,6 +1461,15 @@ async function* runAlternateProviderTurn(
   // search. find_tool itself is never denied — a skill must never be trapped.
   const turnAllowlist = activeSkills.manifest ? skillAllowlist(activeSkills.manifest) : null
   const turnDenylist = new Set<string>()
+
+  // Direct paired-Chrome work must never silently become Terminal/Mac work.
+  // The skill allowlist intentionally keeps owner-service Mac tools available
+  // in general, so this turn-specific denylist is the final narrow boundary;
+  // find_tool consults the same set and cannot load the fallback back in.
+  if (directBrowserTask) {
+    for (const name of DIRECT_BROWSER_SHELL_DENYLIST) turnDenylist.add(name)
+    ownerIntentTools = ownerIntentTools.filter((tool) => !turnDenylist.has(tool.name))
+  }
 
   // ANSWERING A QUESTION IS NOT THE MOMENT TO ASK ANOTHER ONE (owner report
   // 2026-07-27). He answered a card — "এখন কোনো SEO fix কাজ করার দরকার নেই" —
@@ -1450,7 +1545,7 @@ async function* runAlternateProviderTurn(
   const capKeepNames = [...CORE_PACK, FIND_TOOL_NAME]
   const capRelevantNames = toolSelection.router === 'state'
     ? toolSelection.tools.map((t) => t.name)
-    : matchIntentPacks(lastUserText).flatMap((p) => [...DOMAIN_PACKS[p]])
+    : matchIntentPacks(browserOwnerText).flatMap((p) => [...DOMAIN_PACKS[p]])
   const narrowed = narrowToolsToCap(selectedTools, toolCap, {
     keepNames: capKeepNames,
     relevantNames: capRelevantNames,
@@ -1620,7 +1715,17 @@ async function* runAlternateProviderTurn(
   // exact work (or deliberately parks it). Skipped in listen mode.
   if (!listenMode) try {
     const { getFocusStack, buildFocusSystemNote } = await import('@/agent/lib/conversation-focus')
-    const stack = await getFocusStack(conversationId)
+    const rawStack = await getFocusStack(conversationId)
+    // A broad/older turn may never inherit a newer direct-browser goal from the
+    // conversation-global focus row. Exact browser turns already carry their
+    // own server-owned lane request and do not need this generic focus note.
+    const stack = directBrowserTask
+      ? { active: null, parked: [], awaitingOwner: [] }
+      : {
+          active: rawStack.active?.kind === 'direct_youtube_browser' ? null : rawStack.active,
+          parked: rawStack.parked.filter((focus) => focus.kind !== 'direct_youtube_browser'),
+          awaitingOwner: rawStack.awaitingOwner.filter((focus) => focus.kind !== 'direct_youtube_browser'),
+        }
     let focusNote = buildFocusSystemNote(stack)
     if (focusNote && continuityLive && continuity) {
       const d = continuity.decision
@@ -1876,6 +1981,7 @@ async function* runAlternateProviderTurn(
   let actionGraph: StageExpenseResult | null = null
   if (
     !listenMode
+    && !directBrowserTask
     && headTier === 'light'
     && actionGraphOn
     && !internalTurn
@@ -1891,6 +1997,7 @@ async function* runAlternateProviderTurn(
   let routineGraph: RoutineGraphResult | null = null
   if (
     !listenMode
+    && !directBrowserTask
     && headTier === 'light'
     && !actionGraph?.staged
     && !internalTurn
@@ -2324,8 +2431,24 @@ async function* runAlternateProviderTurn(
     && !isContinuationText(lastUserText)
     && !signal?.aborted
   ) {
-    try {
-      let line = ''
+    if (directBrowserTask) {
+      // This line is displayed and may be spoken before any proof exists. Keep
+      // it server-authored for the witnessed YouTube lane so an unconstrained
+      // model preamble can never leak an unverified "now playing" claim that
+      // later UI/TTS correction cannot retract.
+      const line = 'বুঝেছি বস—visible Chrome-এ YouTube খুলে requested media খুঁজে যাচাই করছি।'
+      spokeSinceProgress = true
+      preambleSpoken = true
+      preambleText = line
+      finalText = line
+      preambleTimelineIndex = timeline.length
+      timeline.push({ t: 'text', text: line, lead: true })
+      yield { type: 'text_delta', delta: line }
+      yield { type: 'preamble', text: line }
+      messages = [...messages, { role: 'assistant', content: line }]
+    } else {
+      try {
+        let line = ''
       let preThinking = ''
       // Owner ruling 2026-08-20 (after reading the official Claude order):
       // THINK FIRST, then the opening line — thought → এক লাইন → tools, matching
@@ -2410,9 +2533,10 @@ async function* runAlternateProviderTurn(
         // here instead of greeting Boss a second time.
         messages = [...messages, { role: 'assistant', content: line }]
       }
-    } catch (err) {
-      // A preamble failure must never cost Boss the actual answer.
-      console.warn('[run-owner-turn] speak-first failed open:', err instanceof Error ? err.message : err)
+      } catch (err) {
+        // A preamble failure must never cost Boss the actual answer.
+        console.warn('[run-owner-turn] speak-first failed open:', err instanceof Error ? err.message : err)
+      }
     }
   }
 
@@ -2422,7 +2546,9 @@ async function* runAlternateProviderTurn(
   // the answer instead. Appended at the END of messages (the self-correct
   // pattern) so the cached prompt prefix is untouched — this is a per-turn
   // volatile fact and must never sit in the cached bytes.
-  const pendingCardsAtStart = await readPendingCards(conversationId)
+  const pendingCardsAtStart = historySnapshot.hasLaterRows
+    ? []
+    : await readPendingCards(conversationId)
   messages = insertControlNote(messages, { role: 'user', content: buildCardStateNote(pendingCardsAtStart) })
 
   // PM-1 — the agent must never be unaware of the mode it is in (owner
@@ -2442,7 +2568,16 @@ async function* runAlternateProviderTurn(
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
-      if (await isTurnCancelRequested(turnId)) { canceled = true; break }
+      if (await isTurnCancelRequested(turnId)) {
+        canceled = true
+        if (directBrowserLane?.state === 'ready') {
+          await revokeDirectYouTubeTurnLaneForSteering(
+            conversationId,
+            directBrowserLane.token,
+          ).catch(() => false)
+        }
+        break
+      }
 
       const prospectivePlanCreatedBeforeRound = toolRecords.some(
         (record) => record.toolName === 'make_plan' && record.status === 'success',
@@ -2475,6 +2610,13 @@ async function* runAlternateProviderTurn(
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        if (directBrowserLane?.state === 'ready') {
+          directBrowserSteeringRevoked = true
+          await revokeDirectYouTubeTurnLaneForSteering(
+            conversationId,
+            directBrowserLane.token,
+          ).catch(() => false)
+        }
         // Boss's own message outranks the cadence machinery — the next rounds
         // serve HIS instruction, never a pending forced update (Codex P1 #816
         // round 8: the flag left set consumed his answer as a cadence update).
@@ -2647,7 +2789,7 @@ async function* runAlternateProviderTurn(
         ...(contractToolMissing ? [requestedContractTool as string] : []),
         ...(planToolMissing ? ['make_plan'] : []),
       ]
-      const iterationTools = requiredMissingTools.length
+      const requiredIterationTools = requiredMissingTools.length
         ? [
             ...budgetedTools,
             ...(await resolveToolsByName([...new Set(requiredMissingTools)])).map((t) => ({
@@ -2657,6 +2799,14 @@ async function* runAlternateProviderTurn(
             })),
           ]
         : budgetedTools
+      // Requirement contracts (plan/save-memory/etc.) are generic controller
+      // conveniences. They may not widen a witnessed direct-browser turn after
+      // its exact positive allowlist has already been selected.
+      const iterationTools = filterDirectBrowserToolInventory(
+        requiredIterationTools,
+        directBrowserTask,
+        directBrowserTurnAllowedTools,
+      )
       if (iteration === 0) turnToolNames = iterationTools.map((t) => t.name)
       // Phase 3 — the EXACT set the provider was given this round; the
       // membership gate below refuses anything outside it.
@@ -2682,7 +2832,7 @@ async function* runAlternateProviderTurn(
         contractTool: contractToolName && iterationTools.some((t) => t.name === contractToolName)
           ? contractToolName
           : null,
-        workflowTool: boundToolName,
+        workflowTool: boundToolWhenShipped(boundToolName, iterationTools.map((tool) => tool.name)),
       })
       const withholdProspectivePlanProse =
         shouldWithholdProspectivePlanRoundProse(roundBoundToolName)
@@ -3105,6 +3255,13 @@ async function* runAlternateProviderTurn(
         // Boss's latest instruction and the stale draft stays audit-only.
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
+          if (directBrowserLane?.state === 'ready') {
+            directBrowserSteeringRevoked = true
+            await revokeDirectYouTubeTurnLaneForSteering(
+              conversationId,
+              directBrowserLane.token,
+            ).catch(() => false)
+          }
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
           // Same rule as the top-of-round claim (Codex P1 #816 round 8): the
           // owner's instruction owns the next rounds — drop any pending
@@ -3393,6 +3550,7 @@ async function* runAlternateProviderTurn(
             error: r.error ?? undefined,
           }))
           const violations = verifyClaimsAgainstLedger(iterationText.trim(), ledger)
+          violations.push(...detectUnverifiedMediaPlayback(browserOwnerText, iterationText.trim(), toolRecords))
           // Card-shape checks (parity with core.ts — the cheap-head path never
           // ran them, which is exactly where weak models break the HARD RULE):
           // a promised-but-unemitted card, and the owner-hit 2026-07-16 case of
@@ -3785,6 +3943,17 @@ async function* runAlternateProviderTurn(
           }
         }
         const started = Date.now()
+        const laneStillCurrent = directBrowserLane?.state === 'ready'
+          ? !directBrowserSteeringRevoked
+            && await isDirectYouTubeTurnLaneCurrent(conversationId, directBrowserLane)
+          : true
+        const directBrowserFallback = directBrowserLane?.state === 'ready' && !laneStillCurrent
+          ? 'DIRECT_BROWSER_LANE_STALE: newer owner turn, expired lease, or unavailable lane state superseded this execution; tool blocked.'
+          : directBrowserTask && !directBrowserTurnAllowedTools.has(call.name)
+          ? directBrowserLaneUnavailable
+            ? `DIRECT_BROWSER_LANE_UNAVAILABLE: durable lane state যাচাই হয়নি; ${call.name} নিষিদ্ধ। শুধু live_browser_status চলতে পারে।`
+            : directBrowserFallbackViolation(true, call.name)
+          : null
         // Careful mode: an R1/R2 write that would normally just run gets staged
         // as a card instead. Stage-mode tools already make their own card, and
         // R3/R4 are handled by the ladder above — this only covers the everyday
@@ -3822,7 +3991,9 @@ async function* runAlternateProviderTurn(
           // flat refusal instead of a card (review bot, #667).
           && getCapability(call.name)?.mode === 'write'
           && conversationId
-        const ownerIntentViolation = personalMode
+        const ownerIntentViolation = directBrowserFallback
+          ? null
+          : personalMode
           ? null
           : validateToolCallAgainstOwnerIntent({
               ownerInstructions: currentOwnerInstructions,
@@ -3844,7 +4015,8 @@ async function* runAlternateProviderTurn(
         // `internal-reminders`, so a reminders grant would otherwise have let it
         // speak over the office camera with no card (review bot, #667).
         const grantCoversThisCall =
-          permissionVerdict === 'auto'
+          !directBrowserFallback
+          && permissionVerdict === 'auto'
           && permissionTier.explicit
           && isFamilyGrantLive(elevationGrant, permissionTier.taskClass, Date.now())
           // …and still true in the DATABASE. A turn runs for a while; Boss can
@@ -3852,7 +4024,7 @@ async function* runAlternateProviderTurn(
           // snapshot would keep authorising work he already cancelled.
           && await (await import('@/agent/lib/standing-grant'))
             .confirmGrantStillCovers(conversationId, permissionTier.taskClass)
-        const aiosGuard = !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
+        const aiosGuard = !directBrowserFallback && !ownerIntentViolation && !grantCoversThisCall && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -3870,7 +4042,7 @@ async function* runAlternateProviderTurn(
           : null
         // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open),
         // identical decision to the native Claude path.
-        const preHookDecision = !ownerIntentViolation
+        const preHookDecision = !directBrowserFallback && !ownerIntentViolation
           ? runPreToolHooks({
               toolName: call.name,
               input: call.input as Record<string, unknown>,
@@ -3880,7 +4052,9 @@ async function* runAlternateProviderTurn(
             })
           : null
         const hookBlocked = preHookDecision && preHookDecision.action === 'block' ? preHookDecision : null
-        const result = ownerIntentViolation
+        const result = directBrowserFallback
+          ? { success: false as const, error: directBrowserFallback }
+          : ownerIntentViolation
           ? { success: false as const, error: ownerIntentViolation.message }
           : hookBlocked
           ? { success: false as const, error: hookBlocked.message }
@@ -3908,13 +4082,21 @@ async function* runAlternateProviderTurn(
               model: model.id,
               klass: 'unknown',
             })
-          : personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, turnId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant })
+          : personalMode && !(directBrowserTask && isDirectBrowserExecutionTool(call.name))
+          ? await executePersonalTool(call.name, call.input, { conversationId, turnId, businessId, turnAuthorization, ownerRequestText: browserOwnerText, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: permissionMode, elevationGrant: elevationGrant, directBrowserTask })
           : await executeTool(call.name, call.input, {
             conversationId,
             businessId,
             modelId: model.id,
             turnId,
+            directBrowserTask,
+            ownerRequestText: browserOwnerText,
+            directBrowserOwnerRequest,
+            directBrowserLaneToken: directBrowserLane?.state === 'ready' ? directBrowserLane.token : undefined,
+            directBrowserSelectedOwnerReply: directBrowserLane?.state === 'ready'
+              ? directBrowserLane.selectedOwnerReply
+              : undefined,
+            directBrowserLaneUnavailable,
             // PM-1: recorded on every tool event so "why did this run / why did
             // this ask" has an answer later. Not enforced until PM-2.
             permissionMode,
@@ -4571,7 +4753,15 @@ async function* runAlternateProviderTurn(
     }
 
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
-    if (canceled) return
+    if (canceled) {
+      if (directBrowserLane?.state === 'ready') {
+        await revokeDirectYouTubeTurnLaneForSteering(
+          conversationId,
+          directBrowserLane.token,
+        ).catch(() => false)
+      }
+      return
+    }
 
     // A plan can first succeed on the final provider iteration. Its immediate
     // projection may transiently return null, leaving no later loop iteration
@@ -4773,6 +4963,89 @@ async function* runAlternateProviderTurn(
         ' — পরের টার্নে এগুলো আবার কোরো না, ঠিক পরের ধাপ থেকে ধরো।'
       finalText += footer
       yield { type: 'text_delta', delta: footer }
+    }
+    const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+      ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
+    if (playbackGate.replaced) {
+      yield {
+        type: 'verification_retry',
+        attempt: MAX_VERIFY_RETRIES,
+        maxAttempts: MAX_VERIFY_RETRIES,
+        categories: ['media_playback_unverified'],
+        snippets: [],
+      }
+      for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+      timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+      finalText = playbackGate.text
+      timeline.push({ t: 'text', text: playbackGate.text })
+      yield { type: 'text_delta', delta: finalText }
+    }
+    if (directBrowserLane?.state === 'ready') {
+      const invalidAskCardSet = emittedAskCards.length > 1
+      const resumableAskCard = emittedAskCards.length === 1 ? emittedAskCards[0] : null
+      const resumableReplies = resumableAskCard
+        ? [...new Set([
+            ...resumableAskCard.options,
+            ...(resumableAskCard.questions ?? []).flatMap((question) => question.options),
+          ])]
+        : undefined
+      const awaitingOwner = !invalidAskCardSet && (
+        Boolean(resumableAskCard) || toolRecords.some(
+        (record) => record.toolName === 'live_browser_pair' && record.status === 'success',
+        )
+      )
+      const laneOutcome = invalidAskCardSet
+        ? 'terminal_blocker' as const
+        : mediaPlaybackGateAuthorizesCompletion(playbackGate)
+        ? 'completed' as const
+        : awaitingOwner
+          ? 'awaiting_owner' as const
+          : taskUnfinished
+            ? 'continuing' as const
+            : 'terminal_blocker' as const
+      const laneSettled = await settleDirectYouTubeTurnLane({
+        conversationId,
+        token: directBrowserLane.token,
+        outcome: laneOutcome,
+        expectedOwnerReplies: laneOutcome === 'awaiting_owner' ? resumableReplies : undefined,
+        expectedAskCardId: laneOutcome === 'awaiting_owner'
+          ? resumableAskCard?.askCardId
+          : undefined,
+      })
+      const askCardsMustClose = emittedAskCards.length > 0 && (
+        laneOutcome !== 'awaiting_owner' || !laneSettled || invalidAskCardSet
+      )
+      const askCardsClosed = !askCardsMustClose || await supersedeDirectYouTubeAskCards(
+        conversationId,
+        emittedAskCards.map((card) => card.askCardId),
+      )
+      if (askCardsMustClose) emittedAskCards.length = 0
+      if (laneOutcome === 'completed') taskUnfinished = false
+      // Every direct-lane transition is authoritative. If awaiting/continuing/
+      // terminal persistence fails, never leave a visible card or prose that
+      // can later escape into the broad lane.
+      if (!laneSettled || invalidAskCardSet || !askCardsClosed) {
+        if (!askCardsMustClose) {
+          await supersedeDirectYouTubeAskCards(
+            conversationId,
+            emittedAskCards.map((card) => card.askCardId),
+          )
+        }
+        emittedAskCards.length = 0
+        taskUnfinished = false
+        yield {
+          type: 'verification_retry',
+          attempt: MAX_VERIFY_RETRIES,
+          maxAttempts: MAX_VERIFY_RETRIES,
+          categories: ['media_playback_unverified'],
+          snippets: [],
+        }
+        for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+        timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+        finalText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+        timeline.push({ t: 'text', text: finalText })
+        yield { type: 'text_delta', delta: finalText }
+      }
     }
     // SK-4 — the pinned skill's `done:` list, checked against what the turn
     // ACTUALLY did. A skill that declares its finish line makes "হয়ে গেছে" a
@@ -5334,8 +5607,72 @@ async function* runAlternateProviderTurn(
             `⏱️ সার্ভারের সময়সীমায় টার্ন থেমেছে${okSteps > 0 ? ` — ${okSteps}টা ধাপ হয়ে গেছে` : ''}।`,
             'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।',
           ].join('\n')
-          const salvageText = [finalText.trim(), salvageSuffix].filter(Boolean).join('\n\n')
-          yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
+          const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+            ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
+          const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
+          let needContinue = abortedBrowserTurn && emittedAskCards.length === 0
+          let salvageText = directBrowserLane?.state === 'unavailable'
+            ? playbackGate.text
+            : [playbackGate.text.trim(), salvageSuffix].filter(Boolean).join('\n\n')
+          if (directBrowserLane?.state === 'ready') {
+            const invalidAskCardSet = emittedAskCards.length > 1
+            const resumableAskCard = emittedAskCards.length === 1 ? emittedAskCards[0] : null
+            const resumableReplies = resumableAskCard
+              ? [...new Set([
+                  ...resumableAskCard.options,
+                  ...(resumableAskCard.questions ?? []).flatMap((question) => question.options),
+                ])]
+              : undefined
+            const laneOutcome = invalidAskCardSet
+              ? 'terminal_blocker' as const
+              : mediaPlaybackGateAuthorizesCompletion(playbackGate)
+              ? 'completed' as const
+              : resumableAskCard
+                ? 'awaiting_owner' as const
+              : needContinue
+                ? 'continuing' as const
+                : 'terminal_blocker' as const
+            const laneSettled = await settleDirectYouTubeTurnLane({
+              conversationId,
+              token: directBrowserLane.token,
+              outcome: laneOutcome,
+              expectedOwnerReplies: laneOutcome === 'awaiting_owner' ? resumableReplies : undefined,
+              expectedAskCardId: laneOutcome === 'awaiting_owner'
+                ? resumableAskCard?.askCardId
+                : undefined,
+            })
+            const askCardsMustClose = emittedAskCards.length > 0 && (
+              laneOutcome !== 'awaiting_owner' || !laneSettled || invalidAskCardSet
+            )
+            const askCardsClosed = !askCardsMustClose || await supersedeDirectYouTubeAskCards(
+              conversationId,
+              emittedAskCards.map((card) => card.askCardId),
+            )
+            if (askCardsMustClose) emittedAskCards.length = 0
+            if (laneOutcome === 'completed') {
+              needContinue = false
+              salvageText = playbackGate.text
+            }
+            if (!laneSettled || invalidAskCardSet || !askCardsClosed) {
+              salvageText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+              needContinue = false
+            }
+          }
+          if (playbackGate.replaced) {
+            for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+            timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+            timeline.push({ t: 'text', text: playbackGate.text })
+            yield {
+              type: 'verification_retry',
+              attempt: MAX_VERIFY_RETRIES,
+              maxAttempts: MAX_VERIFY_RETRIES,
+              categories: ['media_playback_unverified'],
+              snippets: [],
+            }
+            yield { type: 'text_delta', delta: salvageText }
+          } else {
+            yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
+          }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const savedMsg = await (prisma as any).agentMessage.create({
             data: {
@@ -5348,8 +5685,7 @@ async function* runAlternateProviderTurn(
               usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
             },
           })
-          const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
-          yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue: abortedBrowserTurn && emittedAskCards.length === 0 }
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue }
         } catch { /* best-effort — worst case matches the old silent return */ }
       }
       return
@@ -5366,7 +5702,53 @@ async function* runAlternateProviderTurn(
         const suffix =
           `⚠️ মডেল-প্রোভাইডারের error-এ টার্নটা থেমেছে${okSteps > 0 ? ` — ${okSteps}টা ধাপের অগ্রগতি সেভ করা আছে` : ''}। ` +
           'Boss, "continue" বললে ঠিক এখান থেকে চালিয়ে যাব।'
-        const text = [finalText.trim(), suffix].filter(Boolean).join('\n\n')
+        const gate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+          ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
+        let text = directBrowserLane?.state === 'unavailable'
+          ? gate.text
+          : [gate.text.trim(), suffix].filter(Boolean).join('\n\n')
+        if (directBrowserLane?.state === 'ready') {
+          const invalidAskCardSet = emittedAskCards.length > 1
+          const resumableAskCard = emittedAskCards.length === 1 ? emittedAskCards[0] : null
+          const resumableReplies = resumableAskCard
+            ? [...new Set([
+                ...resumableAskCard.options,
+                ...(resumableAskCard.questions ?? []).flatMap((question) => question.options),
+              ])]
+            : undefined
+          const laneOutcome = invalidAskCardSet
+            ? 'terminal_blocker' as const
+            : mediaPlaybackGateAuthorizesCompletion(gate)
+            ? 'completed' as const
+            : resumableAskCard
+              ? 'awaiting_owner' as const
+              : 'continuing' as const
+          const laneSettled = await settleDirectYouTubeTurnLane({
+            conversationId,
+            token: directBrowserLane.token,
+            outcome: laneOutcome,
+            expectedOwnerReplies: laneOutcome === 'awaiting_owner' ? resumableReplies : undefined,
+            expectedAskCardId: laneOutcome === 'awaiting_owner'
+              ? resumableAskCard?.askCardId
+              : undefined,
+          })
+          const askCardsMustClose = emittedAskCards.length > 0 && (
+            laneOutcome !== 'awaiting_owner' || !laneSettled || invalidAskCardSet
+          )
+          const askCardsClosed = !askCardsMustClose || await supersedeDirectYouTubeAskCards(
+            conversationId,
+            emittedAskCards.map((card) => card.askCardId),
+          )
+          if (askCardsMustClose) emittedAskCards.length = 0
+          if (laneOutcome === 'completed') {
+            text = [gate.text.trim(), '⚠️ Final reply-এর পর model provider error করেছে; verified browser outcome-টাই authoritative।']
+              .filter(Boolean)
+              .join('\n\n')
+          }
+          if (!laneSettled || invalidAskCardSet || !askCardsClosed) {
+            text = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+          }
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const savedMsg = await (prisma as any).agentMessage.create({
           data: {
@@ -5412,6 +5794,22 @@ async function* runAlternateProviderTurn(
         return
       }
       await captureAgentError(err, 'agent.head.pinned_down', { conversationId, modelId: model.id })
+      const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+        ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
+      if (playbackGate.replaced) {
+        yield {
+          type: 'verification_retry',
+          attempt: MAX_VERIFY_RETRIES,
+          maxAttempts: MAX_VERIFY_RETRIES,
+          categories: ['media_playback_unverified'],
+          snippets: [],
+        }
+        for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+        timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+        finalText = playbackGate.text
+        timeline.push({ t: 'text', text: playbackGate.text })
+        yield { type: 'text_delta', delta: finalText }
+      }
       await salvagePartialWorkOnError()
       const msg = err instanceof Error ? err.message : String(err)
       yield {
@@ -5464,6 +5862,22 @@ async function* runAlternateProviderTurn(
       }
     }
     await captureAgentError(err, 'agent.provider.error', { conversationId })
+    const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+      ?? hardGateMediaPlaybackFinalText(browserOwnerText, finalText, toolRecords)
+    if (playbackGate.replaced) {
+      yield {
+        type: 'verification_retry',
+        attempt: MAX_VERIFY_RETRIES,
+        maxAttempts: MAX_VERIFY_RETRIES,
+        categories: ['media_playback_unverified'],
+        snippets: [],
+      }
+      for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+      timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+      finalText = playbackGate.text
+      timeline.push({ t: 'text', text: playbackGate.text })
+      yield { type: 'text_delta', delta: finalText }
+    }
     await salvagePartialWorkOnError()
     const msg = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Model error (${model.label}): ${msg}` }
@@ -5512,7 +5926,56 @@ export async function* runOwnerTurn(
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
-  const lastUserText = await loadLastUserTextForTriage(conversationId)
+  const turnOwnerInput = options.turnOwnerInput
+    ?? await loadTurnOwnerInputBinding(conversationId, options.turnId)
+  if (options.turnOwnerInput === undefined) options = { ...options, turnOwnerInput }
+  const lastUserText = turnOwnerInput.state === 'bound'
+    ? turnOwnerInput.text
+    : turnOwnerInput.state === 'unavailable'
+      ? ''
+      : await loadLastUserTextForTriage(conversationId)
+
+  // Routing grammar is not an execution boundary. A YouTube mutation that the
+  // strict witnessed-playback classifier did not admit stops here, before head
+  // routing, correction capture, deterministic workflow/card handlers, tools,
+  // or model prose. The resolver repeats this fail-closed rule for callers that
+  // invoke an individual head directly.
+  if (
+    lastUserText
+    && isPotentialYouTubeComputerUseMutation(lastUserText)
+    && !isDirectYouTubeBrowserTask(lastUserText)
+  ) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const savedMsg = await db.agentMessage.create({
+      data: {
+        conversationId,
+        role: 'assistant',
+        content: [{ type: 'text', text: DIRECT_YOUTUBE_ROUTE_MISS_BLOCKER }],
+        tokensIn: 0,
+        tokensOut: 0,
+        costUsd: 0,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          model: 'server-direct-youtube-route-guard',
+          provider: 'server',
+        },
+      },
+    })
+    await touchConversationActivity(conversationId)
+    yield { type: 'text_delta', delta: DIRECT_YOUTUBE_ROUTE_MISS_BLOCKER }
+    yield {
+      type: 'done',
+      messageId: savedMsg.id,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheCreation: 0,
+      cacheRead: 0,
+      costUsd: 0,
+    }
+    return
+  }
   const decision = await resolveHeadModelId({
     requestedModelId: options.modelId,
     lastUserText,
@@ -5581,7 +6044,16 @@ export async function* runOwnerTurn(
   // sim ≥ 0.95, TTL) — any doubt falls through to the normal agent. Cheap heads
   // (DeepSeek-class) and explicit owner pins bypass entirely; a miss costs one
   // embedding (~$0.000002).
-  if (!options.approveModelSwitch && decision.tier !== 'explicit' && decision.tier !== 'personal' && lastUserText) {
+  if (
+    !options.approveModelSwitch
+    && decision.tier !== 'explicit'
+    && decision.tier !== 'personal'
+    && lastUserText
+    // An imperative browser request must reach the durable direct lane. A
+    // trailing question mark ("Could you play …?") must never let a cached
+    // prose answer bypass execution, proof, or the playback hard gate.
+    && !isDirectYouTubeBrowserTask(lastUserText)
+  ) {
     try {
       const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
       if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {

@@ -40,6 +40,11 @@ import {
 } from './preview-liveness.js'
 
 const POLL_PATH = '/api/assistant/live-browser/poll'
+const AUTHORIZE_PATH = '/api/assistant/live-browser/authorize'
+const UNPAIR_PATH = '/api/assistant/live-browser/unpair'
+// Poll capability handshake. The server must not deliver commands to older
+// Companions that execute immediately without the final /authorize fence.
+const COMPANION_PROTOCOL = 'authorize-v1'
 const RESULT_PATH = '/api/assistant/live-browser/result'
 const FRAME_PATH = '/api/assistant/live-browser/frames'
 const DEFAULT_BASE = 'https://alma-erp-six.vercel.app'
@@ -52,6 +57,9 @@ const CDP_RECOVERY_TIMEOUT_MS = 3_000
 const CDP_DRAIN_TIMEOUT_MS = 3_000
 const DEBUGGER_ATTACH_TIMEOUT_MS = 5_000
 const VISIBLE_TAB_LOOKUP_TIMEOUT_MS = 3_000
+const COMMAND_AUTHORIZATION_TIMEOUT_MS = 5_000
+const COMMAND_EXECUTION_TIMEOUT_MS = 35_000
+const PAGE_SCRIPT_TIMEOUT_MS = 15_000
 // Execute-once outbox: a mutating command may already have changed the page
 // when its result POST loses the network response. Keep that exact result
 // across MV3 worker sleeps/reloads and do not ask for another command until the
@@ -60,6 +68,7 @@ const PENDING_RESULT_KEY = 'pendingCommandResult'
 
 const ALLOWED_ACTIONS = new Set([
   'ping',
+  'get_identity',
   'navigate',
   'read_text',
   'read_dom',
@@ -110,13 +119,14 @@ async function getConfig() {
 // group. Screenshots use the chrome.debugger CDP path so a BACKGROUND tab
 // captures fine and the agent never has to steal the owner's active tab.
 
-async function groupAgentTab(tabId) {
+async function groupAgentTab(tabId, isCurrent = () => true) {
   try {
     // Already sitting in an ALMA group? Keep it — record that group instead of
     // moving the tab into an older stored group (cross-window moves + failed
     // moves were one source of duplicate yellow groups).
     try {
       const tab = await chrome.tabs.get(tabId)
+      if (!isCurrent()) return
       if (tab.groupId && tab.groupId !== -1) {
         const g = await chrome.tabGroups.get(tab.groupId)
         if (g && g.title === 'ALMA') {
@@ -130,14 +140,17 @@ async function groupAgentTab(tabId) {
     if (agentGroupId != null) {
       try {
         await chrome.tabGroups.get(agentGroupId) // still alive?
+        if (!isCurrent()) return
         groupId = await chrome.tabs.group({ tabIds: tabId, groupId: agentGroupId })
       } catch {
         groupId = null // group gone — create a fresh one below
       }
     }
     if (groupId == null) {
+      if (!isCurrent()) return
       groupId = await chrome.tabs.group({ tabIds: tabId })
       try {
+        if (!isCurrent()) return
         await chrome.tabGroups.update(groupId, { title: 'ALMA', color: 'yellow' })
       } catch { /* cosmetic only */ }
     }
@@ -153,12 +166,14 @@ async function groupAgentTab(tabId) {
 // owner ended up with 5+ stale yellow ALMA groups from repeated recreation
 // (owner report 2026-07-12). Prefers a real page over about:blank, most
 // recently used first. Also sweeps leftover about:blank strays from old groups.
-async function adoptExistingAlmaTab() {
+async function adoptExistingAlmaTab(isCurrent = () => true) {
   try {
     const groups = await chrome.tabGroups.query({ title: 'ALMA' })
+    if (!isCurrent()) return null
     if (!groups.length) return null
     const gids = new Set(groups.map((g) => g.id))
     const tabs = (await chrome.tabs.query({})).filter((t) => t.id && gids.has(t.groupId))
+    if (!isCurrent()) return null
     if (!tabs.length) return null
     tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
     const adopted = tabs.find((t) => t.url && !t.url.startsWith('about:')) || tabs[0]
@@ -166,6 +181,7 @@ async function adoptExistingAlmaTab() {
     // so dead groups dissolve instead of piling up in the owner's tab strip.
     for (const t of tabs) {
       if (t.id !== adopted.id && (!t.url || t.url.startsWith('about:'))) {
+        if (!isCurrent()) return null
         try { await chrome.tabs.remove(t.id) } catch { /* already gone */ }
       }
     }
@@ -180,11 +196,13 @@ async function adoptExistingAlmaTab() {
   }
 }
 
-async function getAgentTab(createIfMissing = true) {
+async function getAgentTab(createIfMissing = true, isCurrent = () => true) {
   const { agentTabId } = await chrome.storage.local.get('agentTabId')
+  if (!isCurrent()) return null
   if (agentTabId) {
     try {
       const tab = await chrome.tabs.get(agentTabId)
+      if (!isCurrent()) return null
       if (tab && tab.id) return tab
     } catch {
       /* tab was closed — fall through and adopt/recreate */
@@ -192,15 +210,17 @@ async function getAgentTab(createIfMissing = true) {
   }
   // Stored id dead → reuse the existing ALMA-group tab (page state intact — the
   // task resumes with a look/refresh instead of a from-scratch walk).
-  const adopted = await adoptExistingAlmaTab()
+  const adopted = await adoptExistingAlmaTab(isCurrent)
   if (adopted) return adopted
   if (!createIfMissing) return null
   // Create the work tab IN THE OWNER'S CURRENT WINDOW, active so he sees where
   // the agent works; it immediately joins (or starts) the "ALMA" tab group.
+  if (!isCurrent()) return null
   const tab = await chrome.tabs.create({ url: 'about:blank', active: true })
   if (tab && tab.id) {
     await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: tab.windowId })
-    await groupAgentTab(tab.id)
+    if (!isCurrent()) return null
+    await groupAgentTab(tab.id, isCurrent)
     return tab
   }
   return null
@@ -210,11 +230,14 @@ async function getAgentTab(createIfMissing = true) {
 // popup or a newly-opened tab so subsequent commands act on the right page).
 // The followed tab is pulled into the ALMA group so the whole task stays one
 // visible strip of grouped tabs, Claude-style.
-async function setAgentTab(tabId, windowId) {
+async function setAgentTab(tabId, windowId, isCurrent = () => true) {
+  if (!isCurrent()) return false
   const patch = { agentTabId: tabId }
   if (windowId != null) patch.agentWindowId = windowId
   await chrome.storage.local.set(patch)
-  await groupAgentTab(tabId)
+  if (!isCurrent()) return false
+  await groupAgentTab(tabId, isCurrent)
+  return isCurrent()
 }
 
 // Find the tab the agent should follow to — a link/button often opens a new tab
@@ -241,6 +264,43 @@ async function pickFollowTab(currentTab) {
 // ---- injected page functions (run in the page, not here) -------------------
 
 function pageReadText(arg) {
+  const expectedCurrentUrl = String(arg && arg.expectedCurrentUrl || '')
+  const expectedDocumentId = String(arg && arg.expectedDocumentId || '')
+  let currentUrl = ''
+  let currentDocumentId = ''
+  try {
+    currentUrl = String(location.href)
+    currentDocumentId = String(Math.round(performance.timeOrigin))
+  } catch { /* blocked below */ }
+  const exactObservationRequired = Boolean(arg && (
+    Object.prototype.hasOwnProperty.call(arg, 'expectedCurrentUrl')
+    || Object.prototype.hasOwnProperty.call(arg, 'expectedDocumentId')
+  ))
+  // Direct reads are authorized for one exact renderer document. Do this in
+  // the same injected task that samples the page so an outer tab check cannot
+  // race a SPA/manual navigation and expose the replacement document.
+  if (
+    exactObservationRequired
+    && (
+      !expectedCurrentUrl
+      || !expectedDocumentId
+      || currentUrl !== expectedCurrentUrl
+      || currentDocumentId !== expectedDocumentId
+    )
+  ) {
+    return { __almaObservationBlocked: true }
+  }
+  const requiredHost = String(arg && arg.requiredHost || '').trim().toLowerCase().replace(/^www\./, '')
+  if (requiredHost) {
+    let host = ''
+    try { host = location.hostname.toLowerCase().replace(/^www\./, '') } catch { /* blocked below */ }
+    // `requiredHost` is an audited exact consumer surface, not an eTLD+1
+    // suffix. In particular, youtube.com must never authorize private surfaces
+    // such as studio.youtube.com or music.youtube.com.
+    if (host !== requiredHost) {
+      return { __almaHostBlocked: true }
+    }
+  }
   // Scroll blindness fix (owner report 2026-07-16): the old read returned the
   // first 12k chars with NO hint that more existed below — the model believed
   // it saw the whole page. Now every read carries scroll metrics + an explicit
@@ -248,12 +308,191 @@ function pageReadText(arg) {
   const t = document.body ? document.body.innerText : ''
   const from = Math.max(0, Number(arg && arg.from) || 0)
   const doc = document.documentElement
+  // Playback proof for media tasks. A screenshot can show a video frame while
+  // the player is paused, so expose the live HTMLMediaElement state alongside
+  // the ordinary page text. Keep this metadata content-free: title/query proof
+  // still comes from the page URL/title/text, while this only proves motion.
+  const mediaNodes = Array.from(document.querySelectorAll('video,audio')).slice(0, 6)
+  const youtubeIdentityFromUrl = (value) => {
+    try {
+      const url = new URL(String(value || ''), location.href)
+      const host = url.hostname.toLowerCase().replace(/^www\./, '')
+      if (url.protocol !== 'https:' || host !== 'youtube.com') return null
+      if (url.pathname === '/watch') {
+        const videoId = String(url.searchParams.get('v') || '').trim()
+        return /^[A-Za-z0-9_-]{11}$/.test(videoId)
+          ? { videoId, canonicalUrl: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` }
+          : null
+      }
+      const shortsMatch = url.pathname.match(/^\/shorts\/([^/]+)\/?$/)
+      if (!shortsMatch || !shortsMatch[1]) return null
+      const videoId = decodeURIComponent(shortsMatch[1]).trim()
+      return /^[A-Za-z0-9_-]{11}$/.test(videoId)
+        ? { videoId, canonicalUrl: `https://www.youtube.com/shorts/${encodeURIComponent(videoId)}` }
+        : null
+    } catch { return null }
+  }
+  const elementValue = (node, attribute) => {
+    if (!node) return ''
+    const direct = node[attribute]
+    if (typeof direct === 'string' && direct.trim()) return direct.trim()
+    try { return String(node.getAttribute(attribute) || '').trim() } catch { return '' }
+  }
+  const currentYoutube = youtubeIdentityFromUrl(location.href)
+  const canonicalNode = document.querySelector('link[rel="canonical"]')
+  const canonicalYoutube = youtubeIdentityFromUrl(elementValue(canonicalNode, 'href'))
+  const titleMeta = document.querySelector(
+    'meta[name="title"], meta[property="og:title"], meta[itemprop="name"]',
+  )
+  const canonicalTitle = elementValue(titleMeta, 'content') || String(document.title || '').trim()
+  // Page identity is available only on a settled canonical watch/shorts page.
+  // A results page with an unrelated advancing miniplayer must never inherit
+  // the query title as playback proof.
+  const youtube = currentYoutube
+    && canonicalYoutube
+    && currentYoutube.videoId === canonicalYoutube.videoId
+    && canonicalTitle
+    ? { ...currentYoutube, title: canonicalTitle }
+    : null
+  const youtubePlayerIdentity = (el) => {
+    let player = null
+    try { player = typeof el.closest === 'function' ? el.closest('.html5-video-player') : null } catch { /* no player */ }
+    if (!player) return null
+    let runtimeData = null
+    try {
+      runtimeData = typeof player.getVideoData === 'function' ? player.getVideoData() : null
+    } catch { /* isolated-world or transient player state */ }
+    let titleLink = null
+    try { titleLink = player.querySelector('.ytp-title-link[href]') } catch { /* no title link */ }
+    const linked = youtubeIdentityFromUrl(elementValue(titleLink, 'href'))
+    const attributeVideoId = elementValue(player, 'data-video-id')
+    const videoId = String(runtimeData && runtimeData.video_id || attributeVideoId || linked && linked.videoId || '').trim()
+    const title = String(
+      runtimeData && runtimeData.title
+      || elementValue(titleLink, 'title')
+      || elementValue(titleLink, 'aria-label')
+      || titleLink && titleLink.textContent
+      || '',
+    ).trim()
+    return /^[A-Za-z0-9_-]{11}$/.test(videoId) && title ? { videoId, title } : null
+  }
+  const effectivelyPainted = (node) => {
+    let opacity = 1
+    for (let current = node; current; current = current.parentElement) {
+      const currentStyle = getComputedStyle(current)
+      if (
+        currentStyle.display === 'none'
+        || currentStyle.visibility === 'hidden'
+        || currentStyle.visibility === 'collapse'
+        || currentStyle.contentVisibility === 'hidden'
+      ) return false
+      const layerOpacity = Number.parseFloat(currentStyle.opacity)
+      if (Number.isFinite(layerOpacity)) opacity *= layerOpacity
+      if (opacity <= 0.01) return false
+    }
+    return true
+  }
+  const exposedAt = (el, x, y) => {
+    if (typeof document.elementsFromPoint !== 'function') return false
+    let stack
+    try { stack = document.elementsFromPoint(x, y) } catch { return false }
+    const mediaIndex = stack.indexOf(el)
+    if (mediaIndex < 0) return false
+    return stack.slice(0, mediaIndex).every((hit) => (
+      el.contains(hit)
+      || (typeof hit.contains === 'function' && hit.contains(el))
+      || !effectivelyPainted(hit)
+    ))
+  }
+  const mediaMetrics = mediaNodes.map((el, index) => {
+      const rect = el.getBoundingClientRect()
+      const duration = Number.isFinite(el.duration) ? Math.round(el.duration * 10) / 10 : null
+      const currentTime = Number.isFinite(el.currentTime) ? Math.round(el.currentTime * 10) / 10 : 0
+      const clippedLeft = Math.max(0, rect.left)
+      const clippedTop = Math.max(0, rect.top)
+      const clippedRight = Math.min(window.innerWidth, rect.right)
+      const clippedBottom = Math.min(window.innerHeight, rect.bottom)
+      const clippedWidth = Math.max(0, clippedRight - clippedLeft)
+      const clippedHeight = Math.max(0, clippedBottom - clippedTop)
+      const insetX = Math.min(4, clippedWidth / 4)
+      const insetY = Math.min(4, clippedHeight / 4)
+      const points = clippedWidth > 0 && clippedHeight > 0
+        ? [
+            [(clippedLeft + clippedRight) / 2, (clippedTop + clippedBottom) / 2],
+            [clippedLeft + insetX, clippedTop + insetY],
+            [clippedRight - insetX, clippedTop + insetY],
+            [clippedLeft + insetX, clippedBottom - insetY],
+            [clippedRight - insetX, clippedBottom - insetY],
+          ]
+        : []
+      const exposedPoints = points.map(([x, y]) => exposedAt(el, x, y))
+      const exposedPointCount = exposedPoints.filter(Boolean).length
+      const centerExposed = exposedPoints[0] === true
+      const viewportArea = Math.round(clippedWidth * clippedHeight)
+      const meaningfulViewport = clippedWidth >= 160 && clippedHeight >= 90 && viewportArea >= 14_400
+      const substantialExposure = centerExposed && exposedPointCount >= 3
+      const visible =
+        meaningfulViewport
+        && effectivelyPainted(el)
+        && substantialExposure
+      let mediaId = el.getAttribute('data-alma-media-id')
+      if (!mediaId) {
+        mediaId = typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `m-${Date.now().toString(36)}-${index}`
+        el.setAttribute('data-alma-media-id', mediaId)
+      }
+      const youtubePlayer = youtubePlayerIdentity(el)
+      return {
+        index,
+        mediaId,
+        kind: el.tagName.toLowerCase(),
+        playing: !el.paused && !el.ended && el.readyState >= 2,
+        paused: el.paused,
+        ended: el.ended,
+        muted: el.muted,
+        volume: Math.round(Number(el.volume || 0) * 100) / 100,
+        currentTime,
+        duration,
+        readyState: el.readyState,
+        visible,
+        viewportWidth: Math.round(clippedWidth),
+        viewportHeight: Math.round(clippedHeight),
+        viewportArea,
+        exposedPointCount,
+        centerExposed,
+        area: visible ? viewportArea : 0,
+        ...(youtubePlayer ? {
+          youtubeVideoId: youtubePlayer.videoId,
+          youtubeTitle: youtubePlayer.title,
+        } : {}),
+      }
+    })
+  const primaryArea = Math.max(0, ...mediaMetrics.map((item) => item.area))
+  const mediaItems = mediaMetrics.map(({ area, ...item }) => ({
+    ...item,
+    primary: area > 0 && area === primaryArea,
+  }))
+  // YouTube marks the player root while an ad owns the media clock. Without
+  // this bit an advancing <video> could "prove" the requested song even though
+  // the owner is still watching a pre-roll. Other sites simply report false.
+  const adPlaying = Boolean(document.querySelector(
+    '.html5-video-player.ad-showing, .html5-video-player.ad-interrupting',
+  ))
   return {
     url: location.href,
     title: document.title,
+    documentId: String(Math.round(performance.timeOrigin)),
+    ...(youtube ? { youtube } : {}),
     text: t.slice(from, from + 12000),
     textLength: t.length,
     truncated: t.length > from + 12000,
+    media: {
+      count: mediaItems.length,
+      playing: mediaItems.some((item) => item.playing),
+      adPlaying,
+      items: mediaItems,
+    },
     scroll: {
       y: Math.round(window.scrollY),
       viewport: Math.round(window.innerHeight),
@@ -263,8 +502,86 @@ function pageReadText(arg) {
   }
 }
 
-function pageReadDom() {
+async function pageReadDom(arg) {
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Boolean(effectNonce)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  const expectedCurrentUrl = String(arg && arg.expectedCurrentUrl || '')
+  const expectedDocumentId = String(arg && arg.expectedDocumentId || '')
+  let currentUrl = ''
+  let currentDocumentId = ''
+  try {
+    currentUrl = String(location.href)
+    currentDocumentId = String(Math.round(performance.timeOrigin))
+  } catch { /* blocked below */ }
+  const exactObservationRequired = Boolean(arg && (
+    Object.prototype.hasOwnProperty.call(arg, 'expectedCurrentUrl')
+    || Object.prototype.hasOwnProperty.call(arg, 'expectedDocumentId')
+  ))
+  // Ref generation mutates the page, so bind the identity before even
+  // stamping the observation root or inspecting one DOM element.
+  if (
+    exactObservationRequired
+    && (
+      !expectedCurrentUrl
+      || !expectedDocumentId
+      || currentUrl !== expectedCurrentUrl
+      || currentDocumentId !== expectedDocumentId
+    )
+  ) {
+    return { __almaObservationBlocked: true }
+  }
+  const requiredHost = String(arg && arg.requiredHost || '').trim().toLowerCase().replace(/^www\./, '')
+  if (requiredHost) {
+    let host = ''
+    try { host = location.hostname.toLowerCase().replace(/^www\./, '') } catch { /* blocked below */ }
+    if (host !== requiredHost) {
+      return { __almaHostBlocked: true }
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) return { __almaEffectBlocked: true }
+  if (!effectStillAuthorized()) return { __almaEffectBlocked: true }
   const out = []
+  const domObservationId =
+    (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : String(Date.now()) + '-' + Math.random().toString(36).slice(2))
+  // Changing this root stamp invalidates every earlier receipt immediately,
+  // even if a later part of this LOOK fails before the server stores a nonce.
+  document.documentElement.setAttribute('data-alma-observation-id', domObservationId)
+  // Refs authorize exactly one subsequent receipt-bound action. Clear the
+  // previous observation's stamps so an old e1 cannot silently resolve after a
+  // new look has assigned e1 to a different node in the same SPA document.
+  for (const old of Array.from(document.querySelectorAll('[data-alma-ref]'))) {
+    try {
+      old.removeAttribute('data-alma-ref')
+      old.removeAttribute('data-alma-observation-id')
+    } catch { /* detached/frozen node */ }
+  }
   // Heavy SPAs (Facebook Ads Manager / Business Suite) build everything from divs:
   // options, radios, switches and grid cells are ARIA roles, and many clickables are
   // bare [tabindex] divs. Cover those too, and read the elements IN THE VIEWPORT
@@ -289,7 +606,11 @@ function pageReadDom() {
   const visible = []
   for (const el of all) {
     const r = el.getBoundingClientRect()
-    if (r.width === 0 && r.height === 0) continue
+    // Hidden file inputs are intentionally activated by a visible Upload/Add
+    // button. Include them in the observation so upload_file can still bind to
+    // an exact receipt ref instead of falling back to an arbitrary input.
+    const receiptTarget = el.tagName === 'INPUT' && el.getAttribute('type') === 'file'
+    if (r.width === 0 && r.height === 0 && !receiptTarget) continue
     visible.push({ el, vp: inViewport(r) })
   }
   // In-viewport elements first, DOM order preserved within each group.
@@ -303,15 +624,32 @@ function pageReadDom() {
     const ref = 'e' + ++n
     try {
       el.setAttribute('data-alma-ref', ref)
+      el.setAttribute('data-alma-observation-id', domObservationId)
     } catch {
       /* frozen node — ignore */
     }
+    const fingerprint = JSON.stringify([
+      el.tagName.toLowerCase(),
+      el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : ''),
+      el.getAttribute('role') || '',
+      el.getAttribute('name') || '',
+      el.getAttribute('aria-label') || '',
+      (
+        el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable
+          ? (el.placeholder || '')
+          : (el.innerText || el.value || '')
+      ).trim().replace(/\s+/g, ' ').slice(0, 120),
+      el.getAttribute('href') || '',
+    ])
     out.push({
       ref,
+      fingerprint,
       tag: el.tagName.toLowerCase(),
       type: el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : null),
       role: el.getAttribute('role') || null,
       name: el.getAttribute('name') || el.getAttribute('aria-label') || null,
+      ariaLabel: el.getAttribute('aria-label') || null,
+      href: el.getAttribute('href') || null,
       text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 80),
       // For a <select>, surface its options so the model can pick one by exact text.
       options:
@@ -325,12 +663,56 @@ function pageReadDom() {
       vp,
     })
   }
-  return { url: location.href, title: document.title, elements: out }
+  return {
+    url: location.href,
+    title: document.title,
+    documentId: String(Math.round(performance.timeOrigin)),
+    domObservationId,
+    elements: out,
+  }
+}
+
+function pageObservationIdentity() {
+  return {
+    url: location.href,
+    documentId: String(Math.round(performance.timeOrigin)),
+    domObservationId: document.documentElement.getAttribute('data-alma-observation-id') || '',
+  }
 }
 
 // Live status banner + moving cursor dot — injected so the owner SEES the agent
 // working end-to-end, Claude-extension style. Self-contained, pointer-events off.
-function pageOverlay(arg) {
+async function pageOverlay(arg) {
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Boolean(effectNonce)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized()) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: overlay mutation revoked' }
+  }
   const label = (arg && arg.label) || ''
   const box = { x: arg && arg.x, y: arg && arg.y }
   const root = document.documentElement
@@ -378,7 +760,7 @@ function pageOverlay(arg) {
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
         try {
-          chrome.storage.local.set({ paused: true })
+          chrome.storage.local.set({ paused: true, commandDispatchNonce: '' })
         } catch { /* storage unavailable — popup pause still works */ }
         const t = document.getElementById('__alma_txt__')
         if (t) t.textContent = 'থামানো হয়েছে — popup থেকে আবার চালু করা যাবে'
@@ -439,18 +821,90 @@ function pageOverlay(arg) {
 }
 
 async function pageClick(arg) {
-  const { selector, text, ref } = arg
+  const {
+    selector, text, ref, domObservationId, refFingerprint, expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  const effectExpired = () => ({
+    ok: false,
+    blocked: true,
+    error: 'command_effect_expired: click mutation revoked',
+  })
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   let el = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      el = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch {
       el = null
+    }
+    if (!el || fingerprintOf(el) !== String(refFingerprint || '')) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed node changed' }
     }
   }
   if (!el && selector) {
@@ -567,8 +1021,21 @@ async function pageClick(arg) {
         '" — এই শেষ অপরিবর্তনীয় বাটনটা owner নিজ হাতে চাপবেন (কোড-লেভেল নিরাপত্তা)।',
     }
   }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before click' }
+  }
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before click' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   await sleep(350)
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_ref_generation_failed: DOM observation changed before click' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   const rect = el.getBoundingClientRect()
   const prevOutline = el.style.outline
   el.style.outline = '3px solid #c9a84c'
@@ -582,6 +1049,11 @@ async function pageClick(arg) {
     cur.style.top = cy + 'px'
   }
   await sleep(450)
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_ref_generation_failed: DOM observation changed before click' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   // Click ripple at the exact point — the owner SEES the click land.
   try {
     const rip = document.createElement('div')
@@ -625,11 +1097,72 @@ async function pageClick(arg) {
 }
 
 async function pageType(arg) {
-  const { selector, text, value, submit, ref } = arg
+  const {
+    selector, text, value, submit, ref, domObservationId, refFingerprint,
+    expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  const effectExpired = () => ({
+    ok: false,
+    blocked: true,
+    error: 'command_effect_expired: type mutation revoked',
+  })
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
+  }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
   }
   // Set a value the way React/Vue/Angular controlled inputs actually accept it:
   // go through the element PROTOTYPE's native value setter, then fire a real
@@ -667,10 +1200,22 @@ async function pageType(arg) {
   }
   let el = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      el = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch {
       el = null
+    }
+    if (!el || !receiptTargetStillValid(el)) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed field changed' }
     }
   }
   if (!el && selector) {
@@ -711,12 +1256,24 @@ async function pageType(arg) {
         .filter(visible)[0] || null
   }
   if (!el) return { ok: false, error: 'field not found' }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: field changed before typing' }
+  }
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: field changed before typing' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   el.focus()
   const prevOutline = el.style.outline
   el.style.outline = '3px solid #c9a84c'
   el.style.outlineOffset = '2px'
   await sleep(300)
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: field changed before typing' }
+  }
   // Human-paced typing: grow the value in a few chunks so the owner watches the
   // text being "typed" — each chunk still goes through the framework-safe setter
   // (React/Vue keep the final value), so this is purely visual pacing.
@@ -724,13 +1281,28 @@ async function pageType(arg) {
   if (fullText.length > 3 && fullText.length <= 200) {
     const chunks = Math.min(6, Math.max(3, Math.ceil(fullText.length / 18)))
     for (let ci = 1; ci < chunks; ci++) {
+      if (!(await liveEffectStillAuthorized())) return effectExpired()
+      if (!receiptTargetStillValid(el)) {
+        return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: field changed while typing' }
+      }
+      if (!effectStillAuthorized()) return effectExpired()
       almaSetValue(el, fullText.slice(0, Math.ceil((fullText.length * ci) / chunks)))
       await sleep(90 + Math.random() * 120)
     }
   }
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: field changed before final value' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   almaSetValue(el, fullText)
   if (submit) {
     await sleep(150)
+    if (!(await liveEffectStillAuthorized())) return effectExpired()
+    if (!receiptTargetStillValid(el)) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: field changed before submit' }
+    }
+    if (!effectStillAuthorized()) return effectExpired()
     // Synthetic Enter first — many SPA search boxes listen for keydown even though
     // isTrusted is false. But sites like Google IGNORE untrusted keys, so if Enter
     // wasn't swallowed we submit the enclosing FORM directly. requestSubmit() fires
@@ -774,7 +1346,48 @@ async function pageType(arg) {
   return { ok: true, typed: value == null ? '' : String(value), submitted: Boolean(submit) }
 }
 
-function pageKey(arg) {
+async function pageKey(arg) {
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Boolean(effectNonce)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized()) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: key mutation revoked' }
+  }
+  const expectedCurrentUrl = arg && arg.expectedCurrentUrl
+  const expectedDocumentId = arg && arg.expectedDocumentId
+  const domObservationId = arg && arg.domObservationId
+  if (
+    (expectedCurrentUrl && String(location.href) !== String(expectedCurrentUrl))
+    || (expectedDocumentId && String(Math.round(performance.timeOrigin)) !== String(expectedDocumentId))
+    || (domObservationId
+      && document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId))
+  ) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   const key = String((arg && arg.key) || 'Enter')
   const map = {
     Enter: { keyCode: 13, code: 'Enter', k: 'Enter' },
@@ -800,6 +1413,9 @@ function pageKey(arg) {
   }
   const el =
     document.activeElement && document.activeElement !== document.body ? document.activeElement : document.body
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: key mutation revoked' }
+  }
   const kd = new KeyboardEvent('keydown', opts)
   el.dispatchEvent(kd)
   el.dispatchEvent(new KeyboardEvent('keypress', opts))
@@ -844,19 +1460,89 @@ function pageKey(arg) {
 
 // Pick a value in a native <select>. Custom (ARIA) dropdowns are NOT <select> —
 // for those the model should click the trigger then click the option instead.
-function pageSelect(arg) {
-  const { selector, text, ref, option, value } = arg
+async function pageSelect(arg) {
+  const {
+    selector, text, ref, option, value, domObservationId, refFingerprint,
+    expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: select mutation revoked' }
+  }
   const want = String((option != null ? option : value) == null ? '' : option != null ? option : value)
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   let el = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      el = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch {
       el = null
+    }
+    if (!el || fingerprintOf(el) !== String(refFingerprint || '')) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed select changed' }
     }
   }
   if (!el && selector) {
@@ -897,6 +1583,18 @@ function pageSelect(arg) {
   if (!opt) {
     return { ok: false, error: 'option not found: ' + want, options: opts.slice(0, 20).map((o) => (o.text || '').trim()) }
   }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: select changed before effect' }
+  }
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: select mutation revoked' }
+  }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: select changed before effect' }
+  }
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: select mutation revoked' }
+  }
   el.focus()
   // React-safe: go through the prototype value setter, then fire input + change.
   const desc = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')
@@ -912,13 +1610,75 @@ function pageSelect(arg) {
 // Facebook-class UIs — the portal menu closes the instant the tab blurs or focus
 // shifts between commands (2026-07-12 Ads Manager WhatsApp-number incident).
 async function pagePickOption(arg) {
-  const { selector, text, ref, option } = arg
+  const {
+    selector, text, ref, option, domObservationId, refFingerprint,
+    expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  const effectExpired = () => ({
+    ok: false,
+    blocked: true,
+    error: 'command_effect_expired: dropdown mutation revoked',
+  })
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTriggerStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   const fire = (el) => {
+    if (!effectStillAuthorized()) return false
     const r = el.getBoundingClientRect()
     const mo = {
       bubbles: true,
@@ -942,13 +1702,26 @@ async function pagePickOption(arg) {
       el.dispatchEvent(new MouseEvent('mouseup', mo))
     } catch { /* ignore */ }
     el.click()
+    return true
   }
   // 1) locate the dropdown trigger (ref → selector → visible text/label)
   let trigger = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      trigger = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      trigger = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch { trigger = null }
+    if (!trigger || !receiptTriggerStillValid(trigger)) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed dropdown changed' }
+    }
   }
   if (!trigger && selector) {
     try {
@@ -983,9 +1756,17 @@ async function pagePickOption(arg) {
         .filter((e) => e.childElementCount <= 6 && hay(e).includes(needle))
         .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
       if (chip && (!trigger || chip !== trigger)) {
-        fire(chip)
+        if (!observationDocumentStillValid()) {
+          return { ok: false, blocked: true, error: 'observation_document_changed: page changed before trigger effect' }
+        }
+        if (!(await liveEffectStillAuthorized())) return effectExpired()
+        if (!observationDocumentStillValid()) {
+          return { ok: false, blocked: true, error: 'observation_document_changed: page changed before trigger effect' }
+        }
+        if (!effectStillAuthorized() || !fire(chip)) return effectExpired()
         for (let i = 0; i < 8; i++) {
           await sleep(300)
+          if (!(await liveEffectStillAuthorized())) return effectExpired()
           const t = findTrigger()
           if (t && /combobox|select/i.test(t.getAttribute('role') || t.tagName)) {
             trigger = t
@@ -1015,10 +1796,30 @@ async function pagePickOption(arg) {
     }
   }
   // Native <select> → set value directly (React-safe).
-  if (trigger.tagName === 'SELECT') return pageSelect({ selector, text, ref, option })
+  if (trigger.tagName === 'SELECT') {
+    return pageSelect({
+      selector, text, ref, option, domObservationId, refFingerprint,
+      expectedCurrentUrl, expectedDocumentId,
+      __almaDispatchGeneration: effectGeneration,
+      __almaDispatchNonce: effectNonce,
+      __almaEffectDeadlineMs: effectDeadlineMs,
+    })
+  }
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: dropdown changed before opening' }
+  }
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: dropdown changed before opening' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   trigger.scrollIntoView({ block: 'center' })
   await sleep(200)
-  fire(trigger)
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: dropdown changed before opening' }
+  }
+  if (!effectStillAuthorized() || !fire(trigger)) return effectExpired()
   // 2) wait for the portal menu to render, then click the matching option —
   //    all within this single injected script, so nothing can blur in between.
   const lowWant = want.toLowerCase()
@@ -1040,6 +1841,10 @@ async function pagePickOption(arg) {
   let target = null
   for (let i = 0; i < 12 && !target; i++) {
     await sleep(250)
+    if (!(await liveEffectStillAuthorized())) return effectExpired()
+    if (!receiptTriggerStillValid(trigger)) {
+      return { ok: false, blocked: true, error: 'observation_document_changed: page changed while opening dropdown' }
+    }
     target = findOption()
   }
   if (!target) {
@@ -1048,11 +1853,27 @@ async function pagePickOption(arg) {
       .filter(visible)
       .slice(0, 12)
       .map((e) => (e.innerText || '').trim().slice(0, 60))
-    return { ok: false, error: 'option not found: ' + want, optionsSeen: seen }
+    return {
+      ok: false,
+      error: 'dropdown option unavailable after trigger effect: ' + want,
+      optionsSeen: seen,
+    }
   }
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: page changed before option scroll' }
+  }
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: page changed before option scroll' }
+  }
+  if (!effectStillAuthorized()) return effectExpired()
   target.scrollIntoView({ block: 'center' })
   await sleep(150)
-  fire(target)
+  if (!(await liveEffectStillAuthorized())) return effectExpired()
+  if (!receiptTriggerStillValid(trigger)) {
+    return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: dropdown changed before option click' }
+  }
+  if (!effectStillAuthorized() || !fire(target)) return effectExpired()
   await sleep(400)
   return { ok: true, picked: (target.innerText || '').trim().slice(0, 80) }
 }
@@ -1063,14 +1884,86 @@ async function pagePickOption(arg) {
 // what lets the agent attach its own generated images (e.g. carousel creatives)
 // instead of stopping to ask the owner to drag files in.
 async function pageUploadFile(arg) {
-  const { selector, text, ref, b64, filename, mime } = arg
+  const {
+    selector, text, ref, b64, filename, mime, domObservationId, refFingerprint,
+    expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: upload mutation revoked' }
+  }
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 || r.height > 0 || e.type === 'file' // file inputs are often hidden
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   let input = null
   if (ref) {
-    try { input = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]') } catch { input = null }
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
+    try {
+      input = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
+    } catch { input = null }
+    if (!input || fingerprintOf(input) !== String(refFingerprint || '')) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed file input changed' }
+    }
   }
   if (!input && selector) {
     try { input = document.querySelector(selector) } catch { input = null }
@@ -1103,6 +1996,18 @@ async function pageUploadFile(arg) {
     for (const f of Array.from(input.files)) dt.items.add(f)
   }
   dt.items.add(file)
+  if (!receiptTargetStillValid(input)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: file input changed before effect' }
+  }
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: upload mutation revoked' }
+  }
+  if (!receiptTargetStillValid(input)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: file input changed before effect' }
+  }
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: upload mutation revoked' }
+  }
   input.files = dt.files
   input.dispatchEvent(new Event('input', { bubbles: true }))
   input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -1111,18 +2016,87 @@ async function pageUploadFile(arg) {
 
 // Bring a specific element into view (center) so the next click/read is precise
 // on a long page. Targets by ref → selector → visible text.
-function pageScrollTo(arg) {
-  const { selector, text, ref } = arg
+async function pageScrollTo(arg) {
+  const {
+    selector, text, ref, domObservationId, refFingerprint, expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 || r.height > 0
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   let el = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      el = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch {
       el = null
+    }
+    if (!el || fingerprintOf(el) !== String(refFingerprint || '')) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed target changed' }
     }
   }
   if (!el && selector) {
@@ -1146,14 +2120,81 @@ function pageScrollTo(arg) {
       null
   }
   if (!el) return { ok: false, error: 'element not found to scroll to' }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before scroll' }
+  }
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before scroll' }
+  }
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
   el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })
   return { ok: true, scrolledTo: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 60) }
 }
 
-function pageScroll(arg) {
+async function pageScroll(arg) {
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Boolean(effectNonce)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized()) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
+  const expectedCurrentUrl = arg && arg.expectedCurrentUrl
+  const expectedDocumentId = arg && arg.expectedDocumentId
+  const domObservationId = arg && arg.domObservationId
+  if (
+    (expectedCurrentUrl && String(location.href) !== String(expectedCurrentUrl))
+    || (expectedDocumentId && String(Math.round(performance.timeOrigin)) !== String(expectedDocumentId))
+    || (domObservationId
+      && document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId))
+  ) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   const by = Number(arg && arg.by) || 600
   // 'instant' (not smooth): the server's sweep loop reads right after scrolling,
   // and a smooth scroll is still mid-flight when the read fires.
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
+  if (
+    (expectedCurrentUrl && String(location.href) !== String(expectedCurrentUrl))
+    || (expectedDocumentId && String(Math.round(performance.timeOrigin)) !== String(expectedDocumentId))
+    || (domObservationId
+      && document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId))
+  ) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: scroll mutation revoked' }
+  }
   window.scrollBy({ top: by, behavior: 'instant' })
   const doc = document.documentElement
   const pageHeight = Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0)
@@ -1172,18 +2213,87 @@ function pageScroll(arg) {
 // Move the mouse over an element (by ref → selector → visible text) to reveal
 // hover-only menus / tooltips before clicking them. Dispatches the full pointer +
 // mouse enter/over sequence so hover-driven UIs (dropdown menus, submenus) open.
-function pageHover(arg) {
-  const { selector, text, ref } = arg
+async function pageHover(arg) {
+  const {
+    selector, text, ref, domObservationId, refFingerprint, expectedCurrentUrl, expectedDocumentId,
+  } = arg
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized() || !effectNonce) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: hover mutation revoked' }
+  }
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
+  const fingerprintOf = (node) => JSON.stringify([
+    node.tagName.toLowerCase(),
+    node.getAttribute('type') || (node.tagName === 'SELECT' ? 'select' : ''),
+    node.getAttribute('role') || '',
+    node.getAttribute('name') || '',
+    node.getAttribute('aria-label') || '',
+    (
+      node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+        ? (node.placeholder || '')
+        : (node.innerText || node.value || '')
+    ).trim().replace(/\s+/g, ' ').slice(0, 120),
+    node.getAttribute('href') || '',
+  ])
+  const observationDocumentStillValid = () => (
+    (!expectedCurrentUrl || String(location.href) === String(expectedCurrentUrl))
+    && (!expectedDocumentId || String(Math.round(performance.timeOrigin)) === String(expectedDocumentId))
+    && (!domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') === String(domObservationId))
+  )
+  const receiptTargetStillValid = (node) => observationDocumentStillValid() && (!ref || (
+    node.getAttribute('data-alma-observation-id') === String(domObservationId)
+    && fingerprintOf(node) === String(refFingerprint || '')
+  ))
+  if (!observationDocumentStillValid()) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: run a new LOOK' }
+  }
   let el = null
   if (ref) {
+    if (
+      !domObservationId
+      || document.documentElement.getAttribute('data-alma-observation-id') !== String(domObservationId)
+    ) {
+      return { ok: false, blocked: true, error: 'observation_ref_generation_failed: run a new LOOK' }
+    }
     try {
-      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+      el = document.querySelector(
+        '[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]' +
+        '[data-alma-observation-id="' + String(domObservationId).replace(/"/g, '') + '"]',
+      )
     } catch {
       el = null
+    }
+    if (!el || fingerprintOf(el) !== String(refFingerprint || '')) {
+      return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: observed target changed' }
     }
   }
   if (!el && selector) {
@@ -1207,6 +2317,18 @@ function pageHover(arg) {
       null
   }
   if (!el) return { ok: false, error: 'element not found to hover' }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before hover' }
+  }
+  if (!(await liveEffectStillAuthorized()) || !effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: hover mutation revoked' }
+  }
+  if (!receiptTargetStillValid(el)) {
+    return { ok: false, blocked: true, error: 'observation_document_changed: target changed before hover' }
+  }
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: hover mutation revoked' }
+  }
   el.scrollIntoView({ block: 'center', inline: 'center' })
   const r = el.getBoundingClientRect()
   const cx = r.left + r.width / 2
@@ -1220,6 +2342,74 @@ function pageHover(arg) {
     }
   }
   return { ok: true, hovered: (el.innerText || el.getAttribute('aria-label') || el.tagName || '').trim().slice(0, 60) }
+}
+
+// Receipt-bound navigation must validate and mutate in ONE renderer task. A
+// tabs.get/executeScript check followed later by chrome.tabs.update leaves a
+// gap where the owner or an SPA can move to another page and the stale command
+// can overwrite it. location.assign is invoked synchronously only after the
+// current renderer proves it is still the observed document/generation.
+async function pageNavigateAtomic(arg) {
+  const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
+  const effectNonce = String(arg && arg.__almaDispatchNonce || '')
+  const effectDeadlineMs = Number(arg && arg.__almaEffectDeadlineMs)
+  const effectStillAuthorized = () => (
+    Number.isSafeInteger(effectGeneration)
+    && Boolean(effectNonce)
+    && Number.isFinite(effectDeadlineMs)
+    && Date.now() < effectDeadlineMs
+  )
+  const liveEffectStillAuthorized = async () => {
+    if (!effectStillAuthorized()) return false
+    try {
+      const state = await chrome.storage.local.get([
+        'paused', 'token', 'commandDispatchGeneration', 'commandDispatchNonce',
+      ])
+      return (
+        effectStillAuthorized()
+        && state.paused !== true
+        && typeof state.token === 'string'
+        && Boolean(state.token)
+        && Number(state.commandDispatchGeneration) === effectGeneration
+        && String(state.commandDispatchNonce || '') === effectNonce
+      )
+    } catch {
+      return false
+    }
+  }
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: navigation mutation revoked' }
+  }
+  const targetUrl = String(arg && arg.targetUrl || '')
+  const expectedCurrentUrl = String(arg && arg.expectedCurrentUrl || '')
+  const expectedDocumentId = String(arg && arg.expectedDocumentId || '')
+  const expectedDomObservationId = String(arg && arg.domObservationId || '')
+  if (!(await liveEffectStillAuthorized())) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: navigation mutation revoked' }
+  }
+  const liveDomObservationId = document.documentElement
+    ? String(document.documentElement.getAttribute('data-alma-observation-id') || '')
+    : ''
+  if (
+    !targetUrl
+    || !expectedCurrentUrl
+    || !expectedDocumentId
+    || String(location.href) !== expectedCurrentUrl
+    || String(Math.round(performance.timeOrigin)) !== expectedDocumentId
+    || (expectedDomObservationId && liveDomObservationId !== expectedDomObservationId)
+  ) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'observation_document_changed: page identity changed before navigation',
+    }
+  }
+  const previousUrl = String(location.href)
+  if (!effectStillAuthorized()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: navigation mutation revoked' }
+  }
+  location.assign(targetUrl)
+  return { ok: true, url: targetUrl, previousUrl }
 }
 
 // ---- command execution ------------------------------------------------------
@@ -1240,10 +2430,23 @@ function withTimeout(promise, ms, label) {
 }
 
 async function runInPage(tabId, func, arg) {
+  // A timed-out executeScript promise is not canceled by Chrome. Cap the page's
+  // own synchronous mutation guard to this individual injection, not merely to
+  // the wider command deadline, so a script that starts after our 15s failure
+  // result has already won is guaranteed to be inert.
+  const guardedArg = arg && typeof arg === 'object' && Number.isFinite(arg.__almaEffectDeadlineMs)
+    ? {
+        ...arg,
+        __almaEffectDeadlineMs: Math.min(
+          arg.__almaEffectDeadlineMs,
+          Date.now() + PAGE_SCRIPT_TIMEOUT_MS,
+        ),
+      }
+    : arg
   const run = chrome.scripting
-    .executeScript({ target: { tabId }, func, args: arg ? [arg] : [] })
+    .executeScript({ target: { tabId }, func, args: guardedArg ? [guardedArg] : [] })
     .then(([res]) => (res ? res.result : null))
-  return withTimeout(run, 15000, 'page script')
+  return withTimeout(run, PAGE_SCRIPT_TIMEOUT_MS, 'page script')
 }
 
 // Run the same page function in EVERY frame of the tab (main doc + all iframes).
@@ -1277,17 +2480,242 @@ async function runInAllFrames(tabId, func, arg) {
 // all iframes. This is the main "never get stuck on a not-yet-loaded element"
 // guard — async apps (React/SPA) often render the target a beat after the click
 // that triggered it. Returns the first ok result, else the last non-ok result.
-async function actWithRetry(tabId, func, arg) {
-  let last = await runInPage(tabId, func, arg)
+async function actWithRetry(
+  tabId,
+  func,
+  arg,
+  observationPrecondition,
+  isCurrent = () => true,
+  effectAuthority = { dispatchGeneration: 0, dispatchNonce: '', deadlineMs: Number.MAX_SAFE_INTEGER },
+) {
+  const effectCurrent = () => (
+    isCurrent()
+    && Number.isSafeInteger(effectAuthority.dispatchGeneration)
+    && typeof effectAuthority.dispatchNonce === 'string'
+    && Boolean(effectAuthority.dispatchNonce)
+    && Number.isFinite(effectAuthority.deadlineMs)
+    && Date.now() < effectAuthority.deadlineMs
+  )
+  const expired = () => ({
+    ok: false,
+    blocked: true,
+    error: 'command_effect_expired: Pause, Unpair, or command deadline revoked this page mutation',
+  })
+  const refBound = Boolean(arg && arg.ref)
+  const refFingerprint = refBound
+    ? String(
+        observationPrecondition
+        && observationPrecondition.refFingerprints
+        && observationPrecondition.refFingerprints[String(arg.ref)]
+        || '',
+      )
+    : ''
+  const boundArg = {
+    ...(observationPrecondition
+      ? {
+        ...arg,
+        expectedCurrentUrl: observationPrecondition.currentUrl,
+        expectedDocumentId: observationPrecondition.documentId,
+        domObservationId: observationPrecondition.domObservationId,
+        refFingerprint,
+      }
+      : arg),
+    __almaDispatchGeneration: effectAuthority.dispatchGeneration,
+    __almaDispatchNonce: effectAuthority.dispatchNonce,
+    __almaEffectDeadlineMs: effectAuthority.deadlineMs,
+  }
+  if (!effectCurrent()) return expired()
+  if (observationPrecondition) {
+    const gate = await verifyObservationPrecondition(tabId, observationPrecondition, refBound)
+    if (!gate.ok) return gate
+    if (!effectCurrent()) return expired()
+  }
+  if (!effectCurrent()) return expired()
+  let last = await runInPage(tabId, func, boundArg)
   if (last && last.ok) return last
-  for (let i = 0; i < 3 && !(last && last.ok); i++) {
+  const provenPreEffectMiss = (result) => Boolean(
+    result
+    && result.ok === false
+    && result.blocked !== true
+    && /^(?:element not found(?: to (?:scroll to|hover))?|field not found|select not found|dropdown trigger not found|option not found(?::.*)?|file input not found(?:\s+—.*)?)$/i
+      .test(String(result.error || '').trim()),
+  )
+  // A timeout/unknown result may have landed after the page effect. Retrying it
+  // can double-click/type/upload, so only deterministic pre-effect misses are
+  // eligible for another dispatch.
+  if (!provenPreEffectMiss(last)) return last
+  for (let i = 0; i < 3 && provenPreEffectMiss(last); i++) {
     await new Promise((r) => setTimeout(r, 450))
-    last = await runInPage(tabId, func, arg)
+    if (!effectCurrent()) return expired()
+    if (observationPrecondition) {
+      const gate = await verifyObservationPrecondition(tabId, observationPrecondition, refBound)
+      if (!gate.ok) return gate
+      if (!effectCurrent()) return expired()
+    }
+    if (!effectCurrent()) return expired()
+    last = await runInPage(tabId, func, boundArg)
   }
   if (last && last.ok) return last
-  const alt = await runInAllFrames(tabId, func, arg)
+  if (!provenPreEffectMiss(last)) return last
+  // Receipt refs were observed in the top document. Falling through to every
+  // iframe could resolve a colliding e1 in an unobserved document.
+  if (observationPrecondition) return last
+  if (!effectCurrent()) return expired()
+  const alt = await runInAllFrames(tabId, func, boundArg)
   if (alt && alt.ok) return alt
   return last || alt
+}
+
+async function verifyObservationPrecondition(tabId, precondition, requireDomObservationId = false) {
+  const expectedUrl = String(precondition && precondition.currentUrl || '')
+  const expectedDocumentId = String(precondition && precondition.documentId || '')
+  const expectedDomObservationId = String(precondition && precondition.domObservationId || '')
+  if (!expectedUrl || !expectedDocumentId || (requireDomObservationId && !expectedDomObservationId)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'observation_precondition_missing: URL/document/required DOM generation identity missing',
+    }
+  }
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  const tabUrl = String(tab && (tab.pendingUrl || tab.url) || '')
+  if (!tab || tabUrl !== expectedUrl) {
+    return {
+      ok: false,
+      blocked: true,
+      error: `observation_precondition_failed: active agent tab URL changed (expected ${expectedUrl}, got ${tabUrl || 'missing'})`,
+    }
+  }
+  const identity = await runInPage(tabId, pageObservationIdentity)
+  if (
+    !identity
+    || identity.ok === false
+    || String(identity.url || '') !== expectedUrl
+    || String(identity.documentId || '') !== expectedDocumentId
+    || (expectedDomObservationId && String(identity.domObservationId || '') !== expectedDomObservationId)
+  ) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'observation_precondition_failed: active document changed after LOOK; run a new live_browser_look',
+    }
+  }
+  return { ok: true }
+}
+
+// Stamp mute + foreground state only AFTER the injected media sample returns.
+// Pre-sample state has a TOCTOU window: the owner can mute, switch tabs, or move
+// focus to another window while executeScript is in flight.
+async function readPageTextWithPostSampleMute(
+  tabId,
+  from,
+  requireForeground,
+  requiredHost,
+  expectedCurrentUrl,
+  expectedDocumentId,
+  requireExactObservation = false,
+  isCurrent = () => true,
+) {
+  const expectedUrl = String(expectedCurrentUrl || '')
+  const expectedDocument = String(expectedDocumentId || '')
+  const exactObservationRequired = requireExactObservation === true
+    || Boolean(expectedUrl || expectedDocument)
+  if (exactObservationRequired && (!expectedUrl || !expectedDocument)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_missing: expected URL/document identity required',
+    }
+  }
+  if (requireForeground === true) {
+    const before = await chrome.tabs.get(tabId).catch(() => null)
+    if (!isCurrent()) {
+      return { ok: false, blocked: true, error: 'command_effect_expired: foreground mutation revoked' }
+    }
+    if (!before || !Number.isInteger(before.windowId)) {
+      return { ok: false, error: 'foreground_witness_unavailable: tab/window state is missing' }
+    }
+    try {
+      if (!isCurrent()) {
+        return { ok: false, blocked: true, error: 'command_effect_expired: foreground mutation revoked' }
+      }
+      await chrome.windows.update(before.windowId, { focused: true })
+      if (!isCurrent()) {
+        return { ok: false, blocked: true, error: 'command_effect_expired: foreground mutation revoked' }
+      }
+      await chrome.tabs.update(tabId, { active: true })
+    } catch {
+      return { ok: false, error: 'foreground_witness_unavailable: could not foreground the agent tab' }
+    }
+  }
+  const data = await runInPage(tabId, pageReadText, {
+    from,
+    requiredHost,
+    ...(exactObservationRequired ? {
+      expectedCurrentUrl: expectedUrl,
+      expectedDocumentId: expectedDocument,
+    } : {}),
+  })
+  if (!isCurrent()) {
+    return { ok: false, blocked: true, error: 'command_effect_expired: page read continuation revoked' }
+  }
+  if (data && data.__almaObservationBlocked) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_failed: page changed; text was not returned',
+    }
+  }
+  if (data && data.__almaHostBlocked) {
+    return { ok: false, blocked: true, error: 'required_host_mismatch: page text was not read' }
+  }
+  if (
+    exactObservationRequired
+    && (
+      !data
+      || String(data.url || '') !== expectedUrl
+      || String(data.documentId || '') !== expectedDocument
+    )
+  ) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_failed: page changed; text was not returned',
+    }
+  }
+  const postSampleTab = await chrome.tabs.get(tabId).catch(() => null)
+  const postSampleWindow = postSampleTab && Number.isInteger(postSampleTab.windowId)
+    ? await chrome.windows.get(postSampleTab.windowId).catch(() => null)
+    : null
+  if (!postSampleTab || !postSampleWindow) {
+    return {
+      ok: false,
+      error: 'post_sample_browser_state_unavailable: tab/window state could not be verified after media observation',
+    }
+  }
+  const postSampleUrl = String(postSampleTab.pendingUrl || postSampleTab.url || '')
+  if (exactObservationRequired && postSampleUrl !== expectedUrl) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_failed: page changed after sampling; text was not returned',
+    }
+  }
+  if (data && data.media) {
+    data.media.tabMuted = Boolean(postSampleTab.mutedInfo && postSampleTab.mutedInfo.muted)
+    data.media.tabActive = postSampleTab.active === true
+    data.media.windowFocused = postSampleWindow.focused === true
+  }
+  if (
+    requireForeground === true
+    && (postSampleTab.active !== true || postSampleWindow.focused !== true)
+  ) {
+    return {
+      ok: false,
+      error: 'foreground_witness_failed: agent tab/window lost foreground during media observation',
+    }
+  }
+  return { ok: true, data }
 }
 
 // Wait until the tab finishes loading (status === 'complete') instead of a blind
@@ -1329,11 +2757,35 @@ async function waitForTabLoad(tabId, timeoutMs, expectedUrl, previousUrl) {
 
 // Best-effort: paint the status banner in the ALMA tab. Never throws (about:blank
 // / chrome:// pages can't be scripted, and that's fine).
-async function showOverlay(tabId, label) {
+async function showOverlay(
+  tabId,
+  label,
+  isCurrent = () => true,
+  effectAuthority = { dispatchGeneration: 0, dispatchNonce: '', deadlineMs: Number.MAX_SAFE_INTEGER },
+) {
+  if (
+    !isCurrent()
+    || !Number.isSafeInteger(effectAuthority.dispatchGeneration)
+    || typeof effectAuthority.dispatchNonce !== 'string'
+    || !effectAuthority.dispatchNonce
+    || !Number.isFinite(effectAuthority.deadlineMs)
+    || Date.now() >= effectAuthority.deadlineMs
+  ) return false
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, func: pageOverlay, args: [{ label }] })
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: pageOverlay,
+      args: [{
+        label,
+        __almaDispatchGeneration: effectAuthority.dispatchGeneration,
+        __almaDispatchNonce: effectAuthority.dispatchNonce,
+        __almaEffectDeadlineMs: effectAuthority.deadlineMs,
+      }],
+    })
+    return isCurrent() && Date.now() < effectAuthority.deadlineMs
   } catch {
     /* page not scriptable yet — ignore */
+    return false
   }
 }
 
@@ -1359,6 +2811,7 @@ function lockdownMatch(url, domains) {
 }
 
 const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option', 'pick_option', 'upload_file'])
+const RECEIPT_REF_ACTIONS = new Set(['click', 'type', 'select_option', 'pick_option', 'upload_file', 'hover', 'scroll_to'])
 
 // ---- CDP screenshots (chrome.debugger) ---------------------------------------
 // captureVisibleTab only shoots the ACTIVE tab of a window; now that the agent
@@ -1561,6 +3014,93 @@ async function captureAgentTab(
   ))
 }
 
+async function captureExactObservedScreenshot(tab, cmd, isCurrent = () => true) {
+  const expectedUrl = String(cmd && cmd.expectedCurrentUrl || '')
+  const expectedDocumentId = String(cmd && cmd.expectedDocumentId || '')
+  const exactObservationRequired = Boolean(cmd && (
+    Object.prototype.hasOwnProperty.call(cmd, 'expectedCurrentUrl')
+    || Object.prototype.hasOwnProperty.call(cmd, 'expectedDocumentId')
+  ))
+  if (exactObservationRequired && (!expectedUrl || !expectedDocumentId)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_missing: expected URL/document identity required',
+    }
+  }
+  const requiredHost = String(cmd && cmd.requiredHost || '').trim().toLowerCase().replace(/^www\./, '')
+  const hostAllowed = (identity) => {
+    if (!requiredHost || !identity || !identity.url) return !requiredHost
+    try {
+      const host = new URL(identity.url).hostname.toLowerCase().replace(/^www\./, '')
+      return host === requiredHost
+    } catch { return false }
+  }
+  const identityAllowed = (identity) => Boolean(
+    identity
+    && String(identity.url || '') === expectedUrl
+    && String(identity.documentId || '') === expectedDocumentId
+  )
+
+  // CDP/visible-tab capture is outside the page renderer task. Bracket it with
+  // exact document checks and discard the bytes if either edge disagrees.
+  const beforeIdentity = exactObservationRequired || requiredHost
+    ? await runInPage(tab.id, pageObservationIdentity).catch(() => null)
+    : null
+  if (exactObservationRequired && !identityAllowed(beforeIdentity)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_failed: page changed; screenshot was not captured',
+    }
+  }
+  if (requiredHost && !hostAllowed(beforeIdentity)) {
+    return { ok: false, blocked: true, error: 'required_host_mismatch: screenshot was not captured' }
+  }
+
+  const dataUrl = await captureAgentTab(
+    tab,
+    80,
+    COMMAND_CAPTURE_CALL_TIMEOUT_MS,
+    isCurrent,
+    true,
+  )
+  if (!dataUrl) return { ok: false, error: 'could not capture screenshot' }
+
+  const afterIdentity = exactObservationRequired || requiredHost
+    ? await runInPage(tab.id, pageObservationIdentity).catch(() => null)
+    : null
+  if (exactObservationRequired && !identityAllowed(afterIdentity)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'read_observation_precondition_failed: page changed; screenshot was discarded',
+    }
+  }
+  if (requiredHost && !hostAllowed(afterIdentity)) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'required_host_mismatch: screenshot document changed and was discarded',
+    }
+  }
+  if (
+    requiredHost
+    && !exactObservationRequired
+    && (
+      String(afterIdentity && afterIdentity.url || '') !== String(beforeIdentity && beforeIdentity.url || '')
+      || String(afterIdentity && afterIdentity.documentId || '') !== String(beforeIdentity && beforeIdentity.documentId || '')
+    )
+  ) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'required_host_mismatch: screenshot document changed and was discarded',
+    }
+  }
+  return { ok: true, screenshot: dataUrl }
+}
+
 function poisonDebuggerAndReload() {
   if (debuggerPoisoned) return
   debuggerPoisoned = true
@@ -1577,18 +3117,106 @@ chrome.debugger?.onDetach?.addListener(async (source) => {
   if (source && source.tabId === cdpTabId) await chrome.storage.local.remove('cdpTabId')
 })
 
-async function executeCommand(cmd, isCurrent = () => true) {
+async function executeCommand(
+  cmd,
+  isCurrent = () => true,
+  effectAuthority = { dispatchGeneration: 0, dispatchNonce: '', deadlineMs: Number.MAX_SAFE_INTEGER },
+) {
+  const effectCurrent = () => (
+    isCurrent()
+    && Number.isSafeInteger(effectAuthority.dispatchGeneration)
+    && typeof effectAuthority.dispatchNonce === 'string'
+    && Boolean(effectAuthority.dispatchNonce)
+    && Number.isFinite(effectAuthority.deadlineMs)
+    && Date.now() < effectAuthority.deadlineMs
+  )
+  const expired = () => ({
+    ok: false,
+    blocked: true,
+    error: 'command_effect_expired: Pause, Unpair, or command deadline revoked this command',
+  })
+  const rendererArg = (arg = {}) => ({
+    ...arg,
+    __almaDispatchGeneration: effectAuthority.dispatchGeneration,
+    __almaDispatchNonce: effectAuthority.dispatchNonce,
+    __almaEffectDeadlineMs: effectAuthority.deadlineMs,
+  })
+  const showCommandOverlay = async (tabId, label) => {
+    if (!effectCurrent()) return false
+    await showOverlay(tabId, label, effectCurrent, effectAuthority)
+    return effectCurrent()
+  }
+  const act = (tabId, func, arg, precondition) => actWithRetry(
+    tabId,
+    func,
+    arg,
+    precondition,
+    effectCurrent,
+    effectAuthority,
+  )
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
   if (action === 'ping') return { ok: true, data: { pong: true } }
+  if (!effectCurrent()) return expired()
+
+  const tab = await getAgentTab(true, effectCurrent)
+  if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
+  if (!effectCurrent()) return expired()
+
+  if (action === 'get_identity') {
+    const current = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!effectCurrent()) return expired()
+    if (!current) return { ok: false, error: 'tab_identity_unavailable' }
+    const url = String(current.url || '')
+    if (!/^https?:\/\//i.test(url)) {
+      return { ok: true, data: { url, documentId: null } }
+    }
+    const identity = await runInPage(tab.id, pageObservationIdentity)
+    if (!effectCurrent()) return expired()
+    return identity && identity.url
+      ? { ok: true, data: { url: identity.url, documentId: identity.documentId || null } }
+      : { ok: false, error: 'tab_identity_unavailable' }
+  }
+
+  const observationPrecondition = cmd.observationPrecondition || null
+  if (observationPrecondition) {
+    const refBoundAction = RECEIPT_REF_ACTIONS.has(action)
+    const allowedRefs = Array.isArray(observationPrecondition.allowedRefs)
+      ? observationPrecondition.allowedRefs.map(String)
+      : []
+    const refFingerprints = observationPrecondition.refFingerprints
+      && typeof observationPrecondition.refFingerprints === 'object'
+      ? observationPrecondition.refFingerprints
+      : {}
+    if (
+      refBoundAction
+      && (
+        !observationPrecondition.domObservationId
+        || !cmd.ref
+        || !allowedRefs.includes(String(cmd.ref))
+        || !refFingerprints[String(cmd.ref)]
+      )
+    ) {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'observation_ref_failed: action ref/DOM generation was not present in the receipt-bound observation',
+      }
+    }
+    const gate = await verifyObservationPrecondition(tab.id, observationPrecondition, refBoundAction)
+    if (!effectCurrent()) return expired()
+    if (!gate.ok) {
+      await showCommandOverlay(tab.id, 'পেজ বদলে গেছে — আবার LOOK দরকার')
+      if (!effectCurrent()) return expired()
+      return gate
+    }
+  }
+
   if (action === 'wait') {
     const ms = Math.min(Math.max(Number(cmd.ms) || 1000, 0), 30000)
     await new Promise((r) => setTimeout(r, ms))
-    return { ok: true }
+    return effectCurrent() ? { ok: true } : expired()
   }
-
-  const tab = await getAgentTab(true)
-  if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
 
   // Write verbs need the agent tab FOCUSED: since v0.8.0 it lives in the owner's
   // own window, and sites like Facebook close open dropdowns/menus the moment the
@@ -1597,7 +3225,11 @@ async function executeCommand(cmd, isCurrent = () => true) {
   // between rounds. Fronting the tab for interactions mirrors a human session.
   if (WRITE_VERBS.has(action)) {
     try {
-      if (!tab.active) await chrome.tabs.update(tab.id, { active: true })
+      if (!tab.active) {
+        if (!effectCurrent()) return expired()
+        await chrome.tabs.update(tab.id, { active: true })
+        if (!effectCurrent()) return expired()
+      }
     } catch { /* tab gone — the command itself will surface the error */ }
   }
 
@@ -1606,7 +3238,8 @@ async function executeCommand(cmd, isCurrent = () => true) {
   if (WRITE_VERBS.has(action)) {
     const locked = lockdownMatch(tab.url, cmd.lockdownDomains)
     if (locked) {
-      await showOverlay(tab.id, 'সাইটটা lockdown — শুধু পড়া যাবে')
+      await showCommandOverlay(tab.id, 'সাইটটা lockdown — শুধু পড়া যাবে')
+      if (!effectCurrent()) return expired()
       return {
         ok: false,
         blocked: true,
@@ -1621,115 +3254,222 @@ async function executeCommand(cmd, isCurrent = () => true) {
 
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
+    if (cmd.bootstrapOnly === true && String(tab.url || '') !== 'about:blank') {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'bootstrap_navigation_blocked: ALMA tab is not about:blank; LOOK first and use a receipt-bound ACT',
+      }
+    }
     const previousUrl = tab.url || ''
-    await chrome.tabs.update(tab.id, { url: cmd.url })
+    if (observationPrecondition) {
+      if (!effectCurrent()) return expired()
+      const started = await runInPage(tab.id, pageNavigateAtomic, {
+        ...rendererArg({
+          targetUrl: cmd.url,
+          expectedCurrentUrl: observationPrecondition.currentUrl,
+          expectedDocumentId: observationPrecondition.documentId,
+          domObservationId: observationPrecondition.domObservationId,
+        }),
+      })
+      if (!effectCurrent()) return expired()
+      if (!started || !started.ok) {
+        return started || {
+          ok: false,
+          blocked: true,
+          error: 'observation_document_changed: navigation precondition could not be revalidated',
+        }
+      }
+    } else {
+      if (!effectCurrent()) return expired()
+      await chrome.tabs.update(tab.id, { url: cmd.url })
+      if (!effectCurrent()) return expired()
+    }
     // Front the ALMA tab (inside the owner's own window) so he SEES each page as
     // it loads — Claude-in-Chrome behaviour. Screenshots don't need this (CDP
     // captures background tabs); it's purely the "watch live" moment.
     try {
+      if (!effectCurrent()) return expired()
       await chrome.tabs.update(tab.id, { active: true })
+      if (!effectCurrent()) return expired()
     } catch {
       /* tab gone — next getAgentTab recreates */
     }
     await waitForTabLoad(tab.id, 15000, cmd.url, previousUrl)
+    if (!effectCurrent()) return expired()
     const landed = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!effectCurrent()) return expired()
     if (!landed || !tabReachedNavigation(landed, cmd.url, previousUrl)) {
       return {
         ok: false,
         error: `navigation_not_committed: tab stayed at ${String(landed && landed.url || previousUrl || 'unknown')}`,
       }
     }
-    await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
+    await showCommandOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
+    if (!effectCurrent()) return expired()
     return { ok: true, data: { url: cmd.url } }
   }
   if (action === 'go_back') {
     try {
+      if (!effectCurrent()) return expired()
       await chrome.tabs.goBack(tab.id)
+      if (!effectCurrent()) return expired()
     } catch {
       return { ok: false, error: 'no page to go back to' }
     }
     await waitForTabLoad(tab.id, 12000)
-    await showOverlay(tab.id, 'পিছনে যাচ্ছে…')
+    if (!effectCurrent()) return expired()
+    await showCommandOverlay(tab.id, 'পিছনে যাচ্ছে…')
+    if (!effectCurrent()) return expired()
     return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
-    const dataUrl = await captureAgentTab(
-      tab,
-      80,
-      COMMAND_CAPTURE_CALL_TIMEOUT_MS,
-      isCurrent,
-      true,
-    )
-    if (!dataUrl) return { ok: false, error: 'could not capture screenshot' }
-    return { ok: true, screenshot: dataUrl }
+    return captureExactObservedScreenshot(tab, cmd, effectCurrent)
   }
   if (action === 'read_text') {
     const current = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!effectCurrent()) return expired()
     if (!current || !/^https?:\/\//i.test(current.url || '')) {
       return { ok: false, error: `tab_not_readable: ${String(current && current.url || 'missing')}` }
     }
-    await showOverlay(tab.id, 'পেজ পড়ছে…')
-    return { ok: true, data: await runInPage(tab.id, pageReadText, { from: cmd.from }) }
+    await showCommandOverlay(tab.id, 'পেজ পড়ছে…')
+    if (!effectCurrent()) return expired()
+    const exactObservationRequired = Boolean(cmd && (
+      Object.prototype.hasOwnProperty.call(cmd, 'expectedCurrentUrl')
+      || Object.prototype.hasOwnProperty.call(cmd, 'expectedDocumentId')
+    ))
+    const readResult = await readPageTextWithPostSampleMute(
+      tab.id,
+      cmd.from,
+      cmd.requireForeground === true,
+      cmd.requiredHost,
+      cmd.expectedCurrentUrl,
+      cmd.expectedDocumentId,
+      exactObservationRequired,
+      effectCurrent,
+    )
+    return effectCurrent() ? readResult : expired()
   }
   if (action === 'read_dom') {
     const current = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!effectCurrent()) return expired()
     if (!current || !/^https?:\/\//i.test(current.url || '')) {
       return { ok: false, error: `tab_not_readable: ${String(current && current.url || 'missing')}` }
     }
-    await showOverlay(tab.id, 'পেজ দেখছে…')
-    return { ok: true, data: await runInPage(tab.id, pageReadDom) }
+    await showCommandOverlay(tab.id, 'পেজ দেখছে…')
+    if (!effectCurrent()) return expired()
+    const expectedUrl = String(cmd.expectedCurrentUrl || '')
+    const expectedDocumentId = String(cmd.expectedDocumentId || '')
+    const exactObservationRequired = Boolean(cmd && (
+      Object.prototype.hasOwnProperty.call(cmd, 'expectedCurrentUrl')
+      || Object.prototype.hasOwnProperty.call(cmd, 'expectedDocumentId')
+    ))
+    if (exactObservationRequired && (!expectedUrl || !expectedDocumentId)) {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'read_observation_precondition_missing: expected URL/document identity required',
+      }
+    }
+    const data = await runInPage(tab.id, pageReadDom, rendererArg({
+      requiredHost: cmd.requiredHost,
+      ...(exactObservationRequired ? {
+        expectedCurrentUrl: expectedUrl,
+        expectedDocumentId,
+      } : {}),
+    }))
+    if (!effectCurrent()) return expired()
+    if (data && data.__almaEffectBlocked) return expired()
+    if (data && data.__almaObservationBlocked) {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'read_observation_precondition_failed: page changed; DOM was not returned',
+      }
+    }
+    if (data && data.__almaHostBlocked) {
+      return { ok: false, blocked: true, error: 'required_host_mismatch: page DOM was not read' }
+    }
+    if (
+      exactObservationRequired
+      && (
+        !data
+        || String(data.url || '') !== expectedUrl
+        || String(data.documentId || '') !== expectedDocumentId
+      )
+    ) {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'read_observation_precondition_failed: page changed; DOM was not returned',
+      }
+    }
+    return { ok: true, data }
   }
   if (action === 'scroll') {
-    await showOverlay(tab.id, 'স্ক্রল করছে…')
-    return await runInPage(tab.id, pageScroll, { by: cmd.by })
+    await showCommandOverlay(tab.id, 'স্ক্রল করছে…')
+    if (!effectCurrent()) return expired()
+    return await act(tab.id, pageScroll, { by: cmd.by }, observationPrecondition)
   }
   if (action === 'click') {
-    await showOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    await showCommandOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
     // actWithRetry: tolerate an element that renders a beat late + search iframes.
-    return await actWithRetry(tab.id, pageClick, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
+    return await act(
+      tab.id,
+      pageClick,
+      { selector: cmd.selector, text: cmd.text, ref: cmd.ref },
+      observationPrecondition,
+    )
   }
   if (action === 'type') {
-    await showOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
-    const r = await actWithRetry(tab.id, pageType, {
+    await showCommandOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
+    const r = await act(tab.id, pageType, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       value: cmd.value,
       submit: Boolean(cmd.submit),
-    })
+    }, observationPrecondition)
+    if (!effectCurrent()) return expired()
     if (r && r.ok && cmd.submit) await waitForTabLoad(tab.id, 12000)
     return r
   }
   if (action === 'select_option') {
-    await showOverlay(tab.id, 'অপশন বাছছে: ' + String(cmd.option || cmd.value || '').slice(0, 40))
-    return await actWithRetry(tab.id, pageSelect, {
+    await showCommandOverlay(tab.id, 'অপশন বাছছে: ' + String(cmd.option || cmd.value || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
+    return await act(tab.id, pageSelect, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       option: cmd.option,
       value: cmd.value,
-    })
+    }, observationPrecondition)
   }
   if (action === 'pick_option') {
-    await showOverlay(tab.id, 'ড্রপডাউন থেকে বাছছে: ' + String(cmd.option || '').slice(0, 40))
+    await showCommandOverlay(tab.id, 'ড্রপডাউন থেকে বাছছে: ' + String(cmd.option || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
     // Atomic open+choose — one injected script, so the menu can't blur-close
     // between the trigger click and the option click.
-    return await actWithRetry(tab.id, pagePickOption, {
+    return await act(tab.id, pagePickOption, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       option: cmd.option,
-    })
+    }, observationPrecondition)
   }
   if (action === 'upload_file') {
     const src = String(cmd.url || '')
     if (!/^https:\/\//i.test(src) || /^(https:\/\/)(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(src)) {
       return { ok: false, error: 'upload_file needs a public https url' }
     }
-    await showOverlay(tab.id, 'ফাইল বসাচ্ছে: ' + (cmd.filename || src.split('/').pop() || '').slice(0, 40))
+    await showCommandOverlay(tab.id, 'ফাইল বসাচ্ছে: ' + (cmd.filename || src.split('/').pop() || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
     let resp
     try {
       resp = await withTimeout(fetch(src), 20000, 'file download')
+      if (!effectCurrent()) return expired()
       if (resp && resp.ok === false && resp.error) return resp // withTimeout shape
     } catch (err) {
       return { ok: false, error: 'file download failed: ' + (err && err.message ? err.message : String(err)) }
@@ -1740,6 +3480,7 @@ async function executeCommand(cmd, isCurrent = () => true) {
       return { ok: false, error: 'unsupported file type: ' + mime + ' (image/video/pdf only)' }
     }
     const buf = await resp.arrayBuffer()
+    if (!effectCurrent()) return expired()
     if (buf.byteLength > 15 * 1024 * 1024) return { ok: false, error: 'file too large (>15MB)' }
     // ArrayBuffer → base64 (executeScript args must be JSON-serializable)
     let bin = ''
@@ -1749,57 +3490,83 @@ async function executeCommand(cmd, isCurrent = () => true) {
     }
     const b64 = btoa(bin)
     const fname = cmd.filename || decodeURIComponent((src.split('/').pop() || 'upload').split('?')[0]) || 'upload'
-    return await actWithRetry(tab.id, pageUploadFile, {
+    return await act(tab.id, pageUploadFile, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       b64,
       filename: fname,
       mime,
-    })
+    }, observationPrecondition)
   }
   if (action === 'hover') {
-    await showOverlay(tab.id, 'হোভার করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
-    return await actWithRetry(tab.id, pageHover, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
+    await showCommandOverlay(tab.id, 'হোভার করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
+    return await act(
+      tab.id,
+      pageHover,
+      { selector: cmd.selector, text: cmd.text, ref: cmd.ref },
+      observationPrecondition,
+    )
   }
   if (action === 'scroll_to') {
-    await showOverlay(tab.id, 'স্ক্রল করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
-    return await actWithRetry(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
+    await showCommandOverlay(tab.id, 'স্ক্রল করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    if (!effectCurrent()) return expired()
+    return await act(
+      tab.id,
+      pageScrollTo,
+      { selector: cmd.selector, text: cmd.text, ref: cmd.ref },
+      observationPrecondition,
+    )
   }
   if (action === 'switch_tab') {
     const picked = await pickFollowTab(tab)
+    if (!effectCurrent()) return expired()
     if (!picked) return { ok: false, error: 'no other tab to switch to' }
     try {
+      if (!effectCurrent()) return expired()
       await chrome.tabs.update(picked.id, { active: true })
+      if (!effectCurrent()) return expired()
     } catch {
       return { ok: false, error: 'could not switch tab' }
     }
     // setAgentTab also pulls the followed tab into the ALMA tab group.
-    await setAgentTab(picked.id, picked.windowId)
+    await setAgentTab(picked.id, picked.windowId, effectCurrent)
+    if (!effectCurrent()) return expired()
     await waitForTabLoad(picked.id, 12000)
-    await showOverlay(picked.id, 'নতুন ট্যাবে গেছে')
+    if (!effectCurrent()) return expired()
+    await showCommandOverlay(picked.id, 'নতুন ট্যাবে গেছে')
+    if (!effectCurrent()) return expired()
     return { ok: true, data: { url: picked.url || '', title: picked.title || '' } }
   }
   if (action === 'close_tab') {
     // Close the newest extra tab (e.g. a popup) and fall back to the agent tab.
     const extra = await pickFollowTab(tab)
+    if (!effectCurrent()) return expired()
     if (!extra) return { ok: false, error: 'no extra tab to close' }
     try {
+      if (!effectCurrent()) return expired()
       await chrome.tabs.remove(extra.id)
+      if (!effectCurrent()) return expired()
     } catch {
       return { ok: false, error: 'could not close tab' }
     }
-    await setAgentTab(tab.id, tab.windowId)
+    await setAgentTab(tab.id, tab.windowId, effectCurrent)
+    if (!effectCurrent()) return expired()
     try {
+      if (!effectCurrent()) return expired()
       await chrome.tabs.update(tab.id, { active: true })
+      if (!effectCurrent()) return expired()
     } catch {
       /* ignore */
     }
     return { ok: true, data: { closed: extra.url || extra.id } }
   }
   if (action === 'press') {
-    await showOverlay(tab.id, 'কী চাপছে: ' + String(cmd.key || 'Enter').slice(0, 20))
-    const r = await runInPage(tab.id, pageKey, { key: cmd.key })
+    await showCommandOverlay(tab.id, 'কী চাপছে: ' + String(cmd.key || 'Enter').slice(0, 20))
+    if (!effectCurrent()) return expired()
+    const r = await act(tab.id, pageKey, { key: cmd.key }, observationPrecondition)
+    if (!effectCurrent()) return expired()
     // Enter often triggers navigation/submit — give the page a moment to settle.
     if (r && r.ok && String(cmd.key || 'Enter') === 'Enter') await waitForTabLoad(tab.id, 12000)
     return r
@@ -2018,6 +3785,232 @@ function applyPreviewGrant(raw, base, token) {
   void capturePreviewFrame()
 }
 
+async function commandDispatchPaused() {
+  try {
+    const state = await chrome.storage.local.get('paused')
+    return Boolean(state.paused)
+  } catch {
+    // Losing the local kill-switch state must never become permission to act.
+    return true
+  }
+}
+
+async function commandDispatchTokenMatches(expectedToken) {
+  if (typeof expectedToken !== 'string' || !expectedToken) return false
+  try {
+    const state = await chrome.storage.local.get('token')
+    return typeof state.token === 'string' && state.token === expectedToken
+  } catch {
+    // Storage failure cannot preserve the exact pairing authority captured by
+    // the poll, so it must revoke this dispatch instead of permitting an act.
+    return false
+  }
+}
+
+// A Promise.race timeout does not cancel the losing async branch. Pause/Unpair
+// therefore revoke a monotonically increasing local generation synchronously;
+// every command captures one generation and all later continuations compare it
+// again before they may reach a browser/page mutation.
+let commandDispatchGeneration = Math.floor(Math.random() * (Number.MAX_SAFE_INTEGER - 1)) + 1
+let activeCommandDispatchNonce = ''
+
+function persistCommandDispatchRevocation() {
+  try {
+    return Promise.resolve(chrome.storage.local.set({
+      commandDispatchGeneration,
+      commandDispatchNonce: '',
+    })).then(() => true, () => false)
+  } catch {
+    return Promise.resolve(false)
+  }
+}
+
+function revokeCommandDispatchAuthority() {
+  commandDispatchGeneration = (commandDispatchGeneration % (Number.MAX_SAFE_INTEGER - 1)) + 1
+  activeCommandDispatchNonce = ''
+  // The in-memory bump is synchronous. The durable marker is what a renderer
+  // task queued inside Chrome can observe after this worker has already moved
+  // on (or restarted).
+  return persistCommandDispatchRevocation()
+}
+
+function createCommandDispatchNonce() {
+  try {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID()
+    }
+  } catch { /* fallback below */ }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
+
+async function dispatchAuthorizedPolledCommand(baseUrl, token, cmd, isCurrent = () => true) {
+  const commandId = String(cmd && cmd.id || '')
+  const capturedGeneration = commandDispatchGeneration
+  const dispatchStillCurrent = () => (
+    isCurrent()
+    && commandDispatchGeneration === capturedGeneration
+  )
+  if (!commandId) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_authorization_failed: polled command id is missing',
+    }
+  }
+
+  // The long-poll captures one exact pairing authority. Unpair/re-pair may
+  // replace it while the poll is outstanding; never authorize under a token
+  // the owner's current local state has already revoked.
+  if (!(await commandDispatchTokenMatches(token))) {
+    stopPreviewCapture()
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_dispatch_unpaired: pairing token changed before authorization',
+    }
+  }
+
+  // Re-read the local kill switch at the last boundary before asking the
+  // server. The poll may have started while active and returned after the owner
+  // pressed Pause.
+  if (await commandDispatchPaused()) {
+    stopPreviewCapture()
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_dispatch_paused: owner paused Companion before authorization',
+    }
+  }
+
+  let exchange
+  try {
+    exchange = await withTimeout(
+      fetch(`${baseUrl}${AUTHORIZE_PATH}`, {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ commandId }),
+      }).then(async (response) => ({
+        response,
+        body: await response.json().catch(() => ({})),
+      })),
+      COMMAND_AUTHORIZATION_TIMEOUT_MS,
+      'command authorization',
+    )
+  } catch (err) {
+    return {
+      ok: false,
+      blocked: true,
+      error: `command_authorization_failed: ${String(err && err.message || err || 'network error').slice(0, 180)}`,
+    }
+  }
+
+  if (!exchange || !exchange.response) {
+    return {
+      ok: false,
+      blocked: true,
+      error: `command_authorization_failed: ${String(exchange && exchange.error || 'authorization response unavailable').slice(0, 180)}`,
+    }
+  }
+  const response = exchange.response
+  const body = exchange.body || {}
+  if (!response.ok || body.authorized !== true) {
+    const detail = String(body.error || body.reason || `HTTP ${response.status || 'denied'}`).slice(0, 180)
+    return {
+      ok: false,
+      blocked: true,
+      error: `command_authorization_denied: ${detail}`,
+    }
+  }
+
+  // Authorization is a permission check, not a lease over the local kill
+  // switch. Pause may land while the POST is in flight, so re-check it at the
+  // exact boundary before the first possible page effect.
+  if (await commandDispatchPaused()) {
+    stopPreviewCapture()
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_dispatch_paused: owner paused Companion before execution',
+    }
+  }
+  // Authorization is bound to the captured device token, but Unpair is local
+  // and can land while that POST is in flight. Make the current stored token
+  // the final asynchronous authority sample immediately before any page work.
+  if (!(await commandDispatchTokenMatches(token))) {
+    stopPreviewCapture()
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_dispatch_unpaired: pairing token changed before execution',
+    }
+  }
+  if (!dispatchStillCurrent()) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_authorization_expired: command dispatch is no longer current',
+    }
+  }
+
+  // A random per-command nonce avoids generation collision across MV3 worker
+  // restarts. Renderer tasks compare this exact durable lease after they begin,
+  // so an old executeScript queued by Chrome cannot inherit a new command's
+  // authority merely because an in-memory counter reset.
+  const dispatchNonce = createCommandDispatchNonce()
+  activeCommandDispatchNonce = dispatchNonce
+  try {
+    await chrome.storage.local.set({
+      commandDispatchGeneration: capturedGeneration,
+      commandDispatchNonce: dispatchNonce,
+    })
+  } catch {
+    activeCommandDispatchNonce = ''
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_authorization_failed: renderer authority could not be persisted',
+    }
+  }
+  if (!dispatchStillCurrent() || activeCommandDispatchNonce !== dispatchNonce) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'command_authorization_expired: command dispatch was revoked before execution',
+    }
+  }
+
+  // The deadline is also carried into every renderer mutation. Promise.race
+  // cannot cancel an executeScript call that Chrome queued but starts later;
+  // the injected function must be inert once this absolute clock has elapsed.
+  const effectAuthority = {
+    dispatchGeneration: capturedGeneration,
+    dispatchNonce,
+    deadlineMs: Date.now() + COMMAND_EXECUTION_TIMEOUT_MS,
+  }
+  const effectStillCurrent = () => (
+    dispatchStillCurrent()
+    && activeCommandDispatchNonce === dispatchNonce
+    && Date.now() < effectAuthority.deadlineMs
+  )
+  const result = await withTimeout(
+    executeCommand(cmd, effectStillCurrent, effectAuthority),
+    COMMAND_EXECUTION_TIMEOUT_MS,
+    cmd.action || 'command',
+  )
+  if (activeCommandDispatchNonce === dispatchNonce) {
+    activeCommandDispatchNonce = ''
+    try {
+      await chrome.storage.local.set({ commandDispatchNonce: '' })
+    } catch {
+      // Deadline + random nonce still keep the abandoned renderer inert. A
+      // storage failure cannot be treated as permission for another command.
+    }
+  }
+  return result
+}
+
 async function pollOnce() {
   const { baseUrl, token, paused } = await getConfig()
   if (!token || paused) {
@@ -2033,12 +4026,16 @@ async function pollOnce() {
     return 'stop'
   }
   let cmd = null
+  let pausedAfterPoll = false
   try {
     const res = await fetch(`${baseUrl}${POLL_PATH}`, {
       method: 'GET',
       cache: 'no-store',
       credentials: 'omit', // the device token is the credential — never a cookie
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-ALMA-Companion-Protocol': COMPANION_PROTOCOL,
+      },
     })
     if (res.status === 401) {
       stopPreviewCapture()
@@ -2049,9 +4046,18 @@ async function pollOnce() {
       await chrome.storage.local.set({ lastError: `server heartbeat failed (${res.status})` })
       return 'retry'
     }
+    // The long-poll may have been outstanding when the owner pressed Pause.
+    // Check before interpreting a delivered command or starting its preview.
+    pausedAfterPoll = await commandDispatchPaused()
+    if (pausedAfterPoll) stopPreviewCapture()
     await chrome.storage.local.set({ lastSuccessfulPollAt: Date.now(), lastError: '' })
     const body = await res.json().catch(() => ({}))
-    applyPreviewGrant(body?.preview, baseUrl, token)
+    // Pause can also land while the response body is being read. This second
+    // local check is the immediate pre-dispatch fence; the dispatcher checks
+    // once more after server authorization and before the effect.
+    pausedAfterPoll = pausedAfterPoll || await commandDispatchPaused()
+    if (pausedAfterPoll) stopPreviewCapture()
+    else applyPreviewGrant(body?.preview, baseUrl, token)
     cmd = body && body.command ? body.command : null
   } catch (err) {
     await chrome.storage.local.set({
@@ -2060,6 +4066,7 @@ async function pollOnce() {
     return 'retry'
   }
   if (!cmd) {
+    if (pausedAfterPoll) return 'stop'
     if (reloadPending) {
       await applyPendingReloadIfQuiescent()
       return 'stop'
@@ -2068,18 +4075,22 @@ async function pollOnce() {
   }
   commandInFlight = true
   try {
-    await setBadge('run')
+    await setBadge(pausedAfterPoll ? 'off' : 'run')
     let result
     const execution = { active: true }
     try {
-      // Whole-command ceiling: even if some await inside executeCommand wedges
-      // (destroyed page context, stuck dialog), the loop must move on and report —
-      // one bad step must never take the companion "offline" for everything after.
-      result = await withTimeout(
-        executeCommand(cmd, () => execution.active),
-        35000,
-        cmd.action || 'command',
-      )
+      result = pausedAfterPoll
+        ? {
+            ok: false,
+            blocked: true,
+            error: 'command_dispatch_paused: owner paused Companion after poll delivery',
+          }
+        : await dispatchAuthorizedPolledCommand(
+            baseUrl,
+            token,
+            cmd,
+            () => execution.active,
+          )
     } catch (err) {
       result = { ok: false, error: err && err.message ? err.message : String(err) }
     } finally {
@@ -2089,8 +4100,8 @@ async function pollOnce() {
     }
     const delivered = await postResult(baseUrl, token, cmd.id, result)
     if (!delivered) return 'retry'
-    await setBadge('on')
-    return 'connected'
+    await setBadge(pausedAfterPoll ? 'off' : 'on')
+    return pausedAfterPoll ? 'stop' : 'connected'
   } finally {
     commandInFlight = false
     if (reloadPending) await applyPendingReloadIfQuiescent()
@@ -2195,9 +4206,80 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.storage.local.remove(['agentTabId', 'agentWindowId', 'agentGroupId', 'cdpTabId'])
   loop()
 })
-chrome.storage.onChanged.addListener((changes) => {
+
+function localMessageRevokesPreview(msg) {
+  return msg?.type === 'unpair' || (msg?.type === 'setPaused' && Boolean(msg.paused))
+}
+
+function handleLocalStorageAuthorityChange(changes) {
+  const authorityRevoked = (
+    changes?.paused?.newValue === true
+    || Boolean(changes?.token)
+  )
+  if (authorityRevoked) {
+    void revokeCommandDispatchAuthority()
+    stopPreviewCapture()
+  }
   if (changes.token || changes.paused) loop()
-})
+}
+
+chrome.storage.onChanged.addListener(handleLocalStorageAuthorityChange)
+
+async function unpairFromServer() {
+  // Direct callers (including recovery/test paths) must revoke before the first
+  // await; the popup listener also does this synchronously as defense in depth.
+  const revocationPersistence = revokeCommandDispatchAuthority()
+  // Pause is local and immediate. Keep the token until the server confirms its
+  // hash is revoked; clearing it first would make a failed/networked revocation
+  // impossible to retry from this browser while another token copy stayed live.
+  await chrome.storage.local.set({
+    paused: true,
+    commandDispatchGeneration,
+    commandDispatchNonce: '',
+  })
+  await revocationPersistence
+  const { baseUrl, token } = await getConfig()
+  await setBadge('off')
+  if (!token) {
+    await chrome.storage.local.remove(PENDING_RESULT_KEY)
+    await chrome.storage.local.set({ token: '', lastError: '' })
+    return { ok: true, revoked: true }
+  }
+
+  try {
+    const exchange = await withTimeout(
+      fetch(`${baseUrl}${UNPAIR_PATH}`, {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'omit',
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(async (response) => ({
+        response,
+        body: await response.json().catch(() => ({})),
+      })),
+      COMMAND_AUTHORIZATION_TIMEOUT_MS,
+      'device unpair',
+    )
+    const body = exchange?.body || {}
+    if (exchange?.response?.status === 202 && body.stopping === true) {
+      const error = 'Unpair অপেক্ষায়—ইতিমধ্যে অনুমোদিত browser step শেষ হলে আবার Unpair চাপুন।'
+      await chrome.storage.local.set({ lastError: error })
+      return { ok: false, stopping: true, error }
+    }
+    if (!exchange?.response?.ok || body.ok !== true || body.revoked !== true) {
+      const error = `Server-side Unpair নিশ্চিত হয়নি: ${String(body.error || `HTTP ${exchange?.response?.status || 'unavailable'}`).slice(0, 140)}`
+      await chrome.storage.local.set({ lastError: error })
+      return { ok: false, error }
+    }
+    await chrome.storage.local.remove(PENDING_RESULT_KEY)
+    await chrome.storage.local.set({ token: '', paused: true, lastError: '' })
+    return { ok: true, revoked: true }
+  } catch (err) {
+    const error = `Server-side Unpair নিশ্চিত হয়নি: ${String(err?.message || err || 'network error').slice(0, 140)}`
+    await chrome.storage.local.set({ lastError: error })
+    return { ok: false, error }
+  }
+}
 
 // If the owner closes the ALMA tab, forget it (and its debugger attachment) so
 // the next command opens a fresh grouped tab.
@@ -2209,6 +4291,14 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
 // Popup ↔ background messaging (pairing / status / kill switch).
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Acknowledge Pause/Unpair only after capture has stopped locally. Waiting
+  // for the existing poll loop is unsafe: it may still own a 1fps timer and an
+  // old bearer-backed preview grant while `looping` makes the restart a no-op.
+  let revocationPersistence = Promise.resolve(true)
+  if (localMessageRevokesPreview(msg)) {
+    revocationPersistence = revokeCommandDispatchAuthority()
+    stopPreviewCapture()
+  }
   ;(async () => {
     if (msg.type === 'status') {
       const c = await getConfig()
@@ -2225,14 +4315,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const r = await pairWithCode(msg.code, msg.baseUrl, msg.deviceName)
       sendResponse(r)
     } else if (msg.type === 'setPaused') {
-      await chrome.storage.local.set({ paused: Boolean(msg.paused) })
+      const paused = Boolean(msg.paused)
+      await chrome.storage.local.set(paused
+        ? {
+            paused: true,
+            commandDispatchGeneration,
+            commandDispatchNonce: '',
+          }
+        : { paused: false })
+      if (paused) await revocationPersistence
       await setBadge(msg.paused ? 'off' : 'on')
       sendResponse({ ok: true })
     } else if (msg.type === 'unpair') {
-      await chrome.storage.local.remove(PENDING_RESULT_KEY)
-      await chrome.storage.local.set({ token: '' })
-      await setBadge('off')
-      sendResponse({ ok: true })
+      sendResponse(await unpairFromServer())
     }
   })()
   return true // async response
@@ -2251,15 +4346,19 @@ async function pairWithCode(code, baseUrlIn, deviceName) {
     if (!res.ok || !body.token) return { ok: false, error: body.error || `pairing failed (${res.status})` }
     // A receipt belongs to the old device token. Never replay page data into a
     // newly paired owner's command namespace.
+    const revocationPersistence = revokeCommandDispatchAuthority()
     await chrome.storage.local.remove(PENDING_RESULT_KEY)
     await chrome.storage.local.set({
       token: body.token,
       baseUrl: base,
       paused: false,
+      commandDispatchGeneration,
+      commandDispatchNonce: '',
       deviceName: deviceName || 'My Chrome',
       lastSuccessfulPollAt: Date.now(),
       lastError: '',
     })
+    await revocationPersistence
     await setBadge('on')
     loop()
     return { ok: true }

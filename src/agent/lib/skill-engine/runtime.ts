@@ -22,9 +22,11 @@ const SKILLS_ROOT = path.join(process.cwd(), 'src', 'agent', 'skills')
 const MAX_SKILL_BODY_CHARS = 6000 // roadmap: activated SKILL.md ≤ ~5k tokens
 // Native rich-output P0 routes are product capabilities, not an experiment.
 // Keep the broad skill engine switch for every other package, but never make
-// image delivery or cited research disappear just because that global rollout
-// switch is off (the live iOS failure on 2026-08-10).
-const ALWAYS_ON_P0_SKILLS = new Set(['alma-image-generation', 'alma-research'])
+// image delivery, cited research, or explicit live-browser work disappear just
+// because that global rollout switch is off. The browser route is deterministic
+// and its narrow allowlist is what prevents an explicit YouTube request from
+// falling back to `run_mac_command` / shell in the legacy production tool diet.
+const ALWAYS_ON_P0_SKILLS = new Set(['alma-image-generation', 'alma-research', 'alma-browser-operator'])
 
 export { isSkillEngineEnabled }
 

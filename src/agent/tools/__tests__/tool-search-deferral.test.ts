@@ -57,4 +57,22 @@ describe('applyToolSearchDeferral', () => {
     expect(withCacheControl.length).toBe(1)
     expect(named(out[out.length - 1]).cache_control).toEqual({ type: 'ephemeral', ttl: '1h' })
   })
+
+  it('never appends provider tool-search inside an exact direct-browser turn', async () => {
+    const { shouldApplyToolSearchDeferral } = await import('@/agent/tools/select-tools')
+    expect(shouldApplyToolSearchDeferral({
+      enabled: true,
+      slimRouterEnabled: false,
+      personalMode: false,
+      businessId: 'ALMA_LIFESTYLE',
+      directBrowserTask: true,
+    })).toBe(false)
+    expect(shouldApplyToolSearchDeferral({
+      enabled: true,
+      slimRouterEnabled: false,
+      personalMode: false,
+      businessId: 'ALMA_LIFESTYLE',
+      directBrowserTask: false,
+    })).toBe(true)
+  })
 })

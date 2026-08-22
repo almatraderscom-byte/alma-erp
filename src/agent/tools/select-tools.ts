@@ -547,6 +547,22 @@ export const TOOL_SEARCH_ENABLED = (() => {
   return process.env.VERCEL_ENV === 'preview'
 })()
 
+/** Provider-native tool search appends a loader outside the ordinary registry
+ * list. An exact witnessed browser lane must therefore suppress it at source. */
+export function shouldApplyToolSearchDeferral(input: {
+  enabled: boolean
+  slimRouterEnabled: boolean
+  personalMode: boolean
+  businessId: AgentBusinessId
+  directBrowserTask: boolean
+}): boolean {
+  return input.enabled
+    && !input.slimRouterEnabled
+    && !input.personalMode
+    && input.businessId !== 'ALMA_TRADING'
+    && !input.directBrowserTask
+}
+
 // Everyday groups whose tools stay fully loaded; everything else defers.
 const TOOL_SEARCH_CORE_GROUPS: ToolGroupName[] = ['base', 'erp', 'staff', 'finance']
 

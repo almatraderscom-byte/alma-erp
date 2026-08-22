@@ -13,6 +13,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
+import { lockDirectYouTubeLaneAuthority } from '@/agent/lib/live-browser/turn-lane'
 
 export type TurnStatus = 'running' | 'done' | 'error' | 'canceled'
 export type TurnClaim = { turnId: string | null; claimed: boolean; status: TurnStatus | null }
@@ -35,18 +36,21 @@ export async function createTurn(
   },
 ): Promise<string | null> {
   try {
-    const row = await db().agentTurn.create({
-      // versions: behavior-artifact stamp (Grok roadmap Phase 0) — which prompt/
-      // tool/router/workflow revisions were live for this turn, for tracing.
-      data: {
-        conversationId,
-        status: 'running',
-        clientMessageId: opts?.clientMessageId ?? null,
-        executionMode: opts?.executionMode ?? null,
-        instructionOrigin: opts?.instructionOrigin ?? null,
-        versions: AGENT_VERSIONS,
-      },
-      select: { id: true },
+    const row = await db().$transaction(async (tx: any) => {
+      await lockDirectYouTubeLaneAuthority(tx, conversationId)
+      return tx.agentTurn.create({
+        // versions: behavior-artifact stamp (Grok roadmap Phase 0) — which prompt/
+        // tool/router/workflow revisions were live for this turn, for tracing.
+        data: {
+          conversationId,
+          status: 'running',
+          clientMessageId: opts?.clientMessageId ?? null,
+          executionMode: opts?.executionMode ?? null,
+          instructionOrigin: opts?.instructionOrigin ?? null,
+          versions: AGENT_VERSIONS,
+        },
+        select: { id: true },
+      })
     })
     return row.id as string
   } catch (err) {
@@ -99,29 +103,33 @@ export async function findOrCreateTurnByClientMessageId(
   executionMode: 'inline' | 'worker',
 ): Promise<{ turn: TurnSnapshot; created: boolean } | null> {
   try {
-    const existing = await db().agentTurn.findFirst({
-      where: { clientMessageId },
-      orderBy: { startedAt: 'desc' },
-      select: TURN_SNAPSHOT_SELECT,
-    })
-    if (existing) return { turn: existing as TurnSnapshot, created: false }
-    try {
-      const row = await db().agentTurn.create({
-        data: { conversationId, status: 'running', clientMessageId, executionMode, versions: AGENT_VERSIONS },
-        select: TURN_SNAPSHOT_SELECT,
-      })
-      return { turn: row as TurnSnapshot, created: true }
-    } catch (err) {
-      // Unique-constraint race: a concurrent retry created it first — return that one.
-      const raced = await db().agentTurn.findFirst({
+    return await db().$transaction(async (tx: any) => {
+      await lockDirectYouTubeLaneAuthority(tx, conversationId)
+      const existing = await tx.agentTurn.findFirst({
         where: { clientMessageId },
         orderBy: { startedAt: 'desc' },
         select: TURN_SNAPSHOT_SELECT,
       })
-      if (raced) return { turn: raced as TurnSnapshot, created: false }
-      throw err
-    }
+      if (existing) return { turn: existing as TurnSnapshot, created: false }
+      const row = await tx.agentTurn.create({
+        data: { conversationId, status: 'running', clientMessageId, executionMode, versions: AGENT_VERSIONS },
+        select: TURN_SNAPSHOT_SELECT,
+      })
+      return { turn: row as TurnSnapshot, created: true }
+    })
   } catch (err) {
+    // A globally unique client id can race across fresh-conversation retries.
+    // The losing transaction observes the committed winner after its rollback.
+    if ((err as { code?: string })?.code === 'P2002') {
+      try {
+        const raced = await db().agentTurn.findFirst({
+          where: { clientMessageId },
+          orderBy: { startedAt: 'desc' },
+          select: TURN_SNAPSHOT_SELECT,
+        })
+        if (raced) return { turn: raced as TurnSnapshot, created: false }
+      } catch { /* fall through to the fail-closed null below */ }
+    }
     console.warn('[turn-status] findOrCreateTurn failed:', err instanceof Error ? err.message : err)
     return null
   }
@@ -194,15 +202,18 @@ export async function claimTurnForRequest(
   executionMode: 'inline' | 'worker' = 'inline',
 ): Promise<TurnClaim> {
   try {
-    const row = await db().agentTurn.create({
-      data: {
-        conversationId,
-        requestId,
-        status: 'running',
-        executionMode,
-        versions: AGENT_VERSIONS,
-      },
-      select: { id: true, status: true },
+    const row = await db().$transaction(async (tx: any) => {
+      await lockDirectYouTubeLaneAuthority(tx, conversationId)
+      return tx.agentTurn.create({
+        data: {
+          conversationId,
+          requestId,
+          status: 'running',
+          executionMode,
+          versions: AGENT_VERSIONS,
+        },
+        select: { id: true, status: true },
+      })
     })
     return { turnId: row.id as string, claimed: true, status: row.status as TurnStatus }
   } catch (err) {
@@ -235,6 +246,7 @@ export async function claimContinuationTurn(
 ): Promise<TurnClaim> {
   try {
     return await db().$transaction(async (tx: any) => {
+      await lockDirectYouTubeLaneAuthority(tx, conversationId)
       const claimed = await tx.agentTurn.updateMany({
         where: {
           id: previousTurnId,
@@ -302,9 +314,12 @@ export async function finalizeTurnIfRunning(
  */
 export async function cancelRunningTurnsForConversation(conversationId: string): Promise<number> {
   try {
-    const res = await db().agentTurn.updateMany({
-      where: { conversationId, status: 'running' },
-      data: { cancelRequested: true, status: 'canceled', finishedAt: new Date() },
+    const res = await db().$transaction(async (tx: any) => {
+      await lockDirectYouTubeLaneAuthority(tx, conversationId)
+      return tx.agentTurn.updateMany({
+        where: { conversationId, status: 'running' },
+        data: { cancelRequested: true, status: 'canceled', finishedAt: new Date() },
+      })
     })
     return (res.count as number) ?? 0
   } catch (err) {

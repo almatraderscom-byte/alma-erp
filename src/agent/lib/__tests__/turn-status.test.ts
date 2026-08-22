@@ -30,6 +30,7 @@ type Row = {
 const h = vi.hoisted(() => {
   const store = new Map<string, Row>()
   const state = { seq: 0 }
+  const queryRaw = vi.fn(async () => [])
   const agentTurn = {
     create: vi.fn(async ({ data, select }: { data: Partial<Row>; select?: Record<string, boolean> }) => {
       if (data.requestId && [...store.values()].some((r) => r.requestId === data.requestId)) {
@@ -85,14 +86,17 @@ const h = vi.hoisted(() => {
       return { count: 1 }
     }),
   }
-  return { store, state, agentTurn }
+  return { store, state, agentTurn, queryRaw }
 })
 const { store } = h
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     agentTurn: h.agentTurn,
-    $transaction: async (fn: (tx: { agentTurn: typeof h.agentTurn }) => unknown) => fn({ agentTurn: h.agentTurn }),
+    $transaction: async (fn: (tx: { agentTurn: typeof h.agentTurn; $queryRaw: typeof h.queryRaw }) => unknown) => fn({
+      agentTurn: h.agentTurn,
+      $queryRaw: h.queryRaw,
+    }),
   },
 }))
 
@@ -107,6 +111,7 @@ import {
 } from '@/agent/lib/turn-status'
 
 beforeEach(() => {
+  vi.clearAllMocks()
   store.clear()
   h.state.seq = 0
 })
@@ -167,6 +172,8 @@ describe('exactly-once request and continuation claims', () => {
     expect(worker.claimed).toBe(false)
     expect(worker.turnId).toBe(direct.turnId)
     expect(store.size).toBe(1)
+    expect(h.queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(h.agentTurn.create.mock.invocationCallOrder[0])
   })
 
   it('consumes a persisted continuation eligibility exactly once', async () => {

@@ -24,6 +24,30 @@ import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildModelIdentityNote, loadPreviousTurnModelId } from '@/agent/lib/models/turn-identity'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildActiveSkills } from '@/agent/lib/skill-engine/runtime'
+import {
+  DIRECT_BROWSER_ALLOWED_TOOL_NAMES,
+  DIRECT_BROWSER_TOOL_NAMES,
+  directBrowserFallbackViolation,
+  isDirectBrowserExecutionTool,
+  sanitizeDirectBrowserFallbackMatches,
+} from '@/agent/lib/live-browser/intent'
+import {
+  DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER,
+  DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES,
+  hardGateUnavailableDirectYouTubeLane,
+  isDirectYouTubeTurnLaneCurrent,
+  resolveDirectYouTubeTurnRequest,
+  revokeDirectYouTubeTurnLaneForSteering,
+  settleDirectYouTubeTurnLane,
+  supersedeDirectYouTubeAskCards,
+  type DirectYouTubeTurnLane,
+} from '@/agent/lib/live-browser/turn-lane'
+import {
+  loadTurnOwnerInputBinding,
+  snapshotTurnHistoryRows,
+  turnScopedOwnerInput,
+  type TurnOwnerInputBinding,
+} from '@/agent/lib/live-browser/turn-owner-input'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
@@ -37,7 +61,7 @@ import { detectVoiceProviderRequest } from '@/agent/lib/voice-provider-intent'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations, shouldSuppressCrossSurfaceForImage } from '@/agent/lib/cross-surface'
-import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
+import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, shouldApplyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { enforcementEnabled, guardToolCall, stageEnforcedToolApproval } from '@/agent/enforcement/enforced-tool-runner'
@@ -114,6 +138,9 @@ import {
   detectMissingCardViolation,
   detectPhantomApprovalWait,
   detectProseChoiceViolation,
+  detectUnverifiedMediaPlayback,
+  hardGateMediaPlaybackFinalText,
+  mediaPlaybackGateAuthorizesCompletion,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
   type ToolLedgerEntry,
@@ -310,6 +337,7 @@ export const MUTATING_TOOLS = new Set([
   'make_ad_creatives', 'make_product_reel',
   'make_plan', 'execute_plan',
   'track_open_task', 'resolve_open_task',
+  'live_browser_act',
 ])
 
 // One-time message injected when the expensive head exhausts its tool-round
@@ -430,27 +458,34 @@ async function resolveFileRef(ref: FileRefBlock): Promise<Anthropic.Messages.Con
  * File refs in user messages are resolved to base64 for the 5 most-recent
  * file-containing messages; older ones get a text placeholder instead.
  */
-async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
-  const rows = await prisma.agentMessage.findMany({
+async function loadHistory(
+  conversationId: string,
+  binding: TurnOwnerInputBinding,
+): Promise<{ messages: ApiMessage[]; snapshotAvailable: boolean; hasLaterRows: boolean }> {
+  const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
-    orderBy: { createdAt: 'asc' },
-    select: { role: true, content: true },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, role: true, content: true, createdAt: true },
   })
+  const snapshot = snapshotTurnHistoryRows(allRows, binding)
+  const rows = snapshot.rows
 
   // Durable ask-card answers, joined into the ask-card history notes below so the
   // model always sees which option the owner actually chose for each question —
   // the bare tapped-option text arrives as a detached user message and used to get
   // bound to the wrong question in long contexts (owner bug 2026-07-12). Fail-open.
   let askAnswers: Map<string, { status: string; selectedOption: string | null }> | undefined
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
-      await (prisma as any).agentAskCard.findMany({
-        where: { conversationId },
-        select: { id: true, status: true, selectedOption: true },
-      })
-    askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
-  } catch { /* fail-open — plain notes */ }
+  if (!snapshot.hasLaterRows) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
+        await (prisma as any).agentAskCard.findMany({
+          where: { conversationId },
+          select: { id: true, status: true, selectedOption: true },
+        })
+      askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
+    } catch { /* fail-open — plain notes */ }
+  }
 
   // Identify indices of user messages that contain file_ref blocks (most-recent first).
   const fileMessageIndices: number[] = []
@@ -558,7 +593,11 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
     result.push({ role: row.role as 'user' | 'assistant', content: apiBlocks })
   }
 
-  return result
+  return {
+    messages: result,
+    snapshotAvailable: snapshot.state === 'ready',
+    hasLaterRows: snapshot.hasLaterRows,
+  }
 }
 
 function blocksOf(msg: ApiMessage): Anthropic.Messages.ContentBlockParam[] {
@@ -754,6 +793,12 @@ export interface RunAgentTurnOptions {
   /** AgentTurn row id — polled each iteration for an owner-requested server-side cancel. */
   turnId?: string | null
   /**
+   * Server-resolved owner message linked to `turnId`. Internal only: a runner
+   * must never infer direct browser authority from the conversation-global
+   * newest message when overlapping turns exist.
+   */
+  turnOwnerInput?: TurnOwnerInputBinding
+  /**
    * Epoch ms when the hosting serverless function will hard-abort (Vercel 300s
    * cap → route sets ~280s). Near this deadline the loop stops offering tools
    * and forces a Bangla progress wrap-up + checkpoint instead of dying silently
@@ -784,6 +829,10 @@ const DEADLINE_WRAPUP_NUDGE =
   'এই টার্নের সময়সীমা প্রায় শেষ (সার্ভার লিমিট) — এখন আর টুল চালানো যাবে না। ' +
   'এ পর্যন্ত কী কী করেছ আর ঠিক কোথায় আছ তা বসকে বাংলায় সংক্ষেপে জানাও, ' +
   'আর কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।'
+
+const DIRECT_YOUTUBE_INTERRUPTED_BLOCKER =
+  '⚠️ এই browser turn provider/connection interruption-এর কারণে safely final করা যায়নি। ' +
+  'তাই playback চলছে বলে দাবি করছি না—requested title-সহ playback requestটি আবার দিন।'
 
 // ── Main agent turn ────────────────────────────────────────────────────────
 
@@ -824,19 +873,30 @@ export async function* runAgentTurn(
   // context occupancy; totalInputTokens is cumulative billing across rounds.
   let lastContextTokens: number | null = null
 
-  let messages: ApiMessage[] = await loadHistory(conversationId)
+  const requestedTurnOwnerInput = options.turnOwnerInput
+    ?? await loadTurnOwnerInputBinding(conversationId, turnId)
+  const loadedHistory = await loadHistory(conversationId, requestedTurnOwnerInput)
+  const turnOwnerInput: TurnOwnerInputBinding = loadedHistory.snapshotAvailable
+    && !loadedHistory.hasLaterRows
+    ? requestedTurnOwnerInput
+    : { state: 'unavailable' }
+  let messages: ApiMessage[] = loadedHistory.messages
 
   // B3 tail compaction (primary cost lever): fold the oldest turns into a running
   // summary that rides the STABLE/cached system block, dropping them from the live
   // window. Row order from loadHistory is 1:1 with DB createdAt asc, so dropOldest
   // lines up with messages.slice(). Fail-open returns dropOldest 0.
   let tailSummary: string | undefined
-  try {
-    const tail = await applyTailCompaction(conversationId)
-    if (tail.dropOldest > 0) messages = messages.slice(tail.dropOldest)
-    if (tail.tailSummary) tailSummary = tail.tailSummary
-  } catch (err) {
-    console.warn('[core] tail compaction failed:', err instanceof Error ? err.message : String(err))
+  // A delayed overlapping turn must not import a compaction summary generated
+  // from messages that were appended after its immutable owner message.
+  if (!loadedHistory.hasLaterRows) {
+    try {
+      const tail = await applyTailCompaction(conversationId)
+      if (tail.dropOldest > 0) messages = messages.slice(tail.dropOldest)
+      if (tail.tailSummary) tailSummary = tail.tailSummary
+    } catch (err) {
+      console.warn('[core] tail compaction failed:', err instanceof Error ? err.message : String(err))
+    }
   }
 
   // If this conversation was seeded from a compaction, prepend the context summary
@@ -846,7 +906,7 @@ export async function* runAgentTurn(
       where: { id: conversationId },
       select: { contextSummary: true },
     })
-    if (conv?.contextSummary && messages.length <= 2) {
+    if (conv?.contextSummary && messages.length <= 2 && !loadedHistory.hasLaterRows) {
       messages = [
         { role: 'user', content: `[পূর্ববর্তী কথোপকথনের সারাংশ]\n${conv.contextSummary}` },
         { role: 'assistant', content: 'বুঝেছি, আগের কথোপকথনের সব প্রসঙ্গ মনে আছে। বলুন বস।' },
@@ -872,20 +932,43 @@ export async function* runAgentTurn(
       : String(m.content)
     if (text.trim()) recentUserTexts.unshift(text.trim())
   }
-  const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
-  let currentOwnerInstructions = lastUserText
+  const historyLastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const scopedOwnerInput = turnScopedOwnerInput(turnOwnerInput, historyLastUserText)
+  const lastUserText = scopedOwnerInput.authoritativeText
+  const directBrowserLane: DirectYouTubeTurnLane | null = scopedOwnerInput.state === 'exact'
+    ? await resolveDirectYouTubeTurnRequest(
+        conversationId,
+        [scopedOwnerInput.authoritativeText],
+        turnId ?? undefined,
+        {
+          askCardId: scopedOwnerInput.askCardId,
+          selectedOption: scopedOwnerInput.authoritativeText,
+        },
+      )
+    : scopedOwnerInput.state === 'unavailable'
+      ? { state: 'unavailable', ownerRequest: scopedOwnerInput.blockerOwnerText, token: null }
+      : null
+  const directBrowserOwnerRequest = directBrowserLane?.ownerRequest ?? null
+  const directBrowserLaneUnavailable = directBrowserLane?.state === 'unavailable'
+  const directBrowserTurnAllowedTools = directBrowserLaneUnavailable
+    ? DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES
+    : DIRECT_BROWSER_ALLOWED_TOOL_NAMES
+  const browserOwnerText = directBrowserOwnerRequest ?? lastUserText
+  let currentOwnerInstructions = browserOwnerText
   // Boss just pointed out a fault. One block, this turn only, telling the head
   // how to answer a correction — concede first, rank the complaints himself,
   // name the failure, then go VERIFY instead of arguing. Appended after the
   // cached prefix, so the prompt cache is untouched (self-correct.ts pattern).
-  const ownerCorrectionNudge = buildOwnerCorrectionNudge(lastUserText)
+  const ownerCorrectionNudge = buildOwnerCorrectionNudge(browserOwnerText)
   if (ownerCorrectionNudge) {
     messages = [...messages, { role: 'user', content: ownerCorrectionNudge }]
   }
   // B6 — this turn's copy of the standing grant. Mutable because a revoke in
   // the middle of a turn must stop covering the calls that follow it.
   let liveGrant = options.elevationGrant ?? null
-  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  const directBrowserTask = directBrowserLane !== null
+  let directBrowserSteeringRevoked = false
+  const turnAuthorization = deriveOwnerTurnAuthorization(browserOwnerText)
   // Harness round 2 — refresh the owner's kv-configured hook rules (block/notify)
   // for this turn. Fail-open inside; a broken rules JSON registers nothing.
   await applyOwnerHookRules()
@@ -910,7 +993,7 @@ export async function* runAgentTurn(
   // reminder path can mistake it for a todo/reminder (the exact bug the owner hit). The
   // head-router has already forced Sonnet for this; here we inject the routing directive.
   const callIntent =
-    !personalMode && lastUserText
+    !directBrowserTask && !personalMode && lastUserText
       ? detectOutboundCallIntent(lastUserText)
       : { isCall: false, hasNumber: false, mode: 'unspecified' as const }
   if (callIntent.isCall) {
@@ -921,7 +1004,7 @@ export async function* runAgentTurn(
   // করিয়ে দিও"): resolve the time DETERMINISTICALLY so the head never misreads
   // "4 tay" as "4 calls" (live-hit 2026-07-17). Only fires when it is clearly a
   // reminder (not an outbound relay call) AND a confident time expression parsed.
-  if (!intakeContextBlock && lastUserText) {
+  if (!directBrowserTask && !intakeContextBlock && lastUserText) {
     try {
       const hint = buildReminderTimeHintBlock(lastUserText)
       if (hint) intakeContextBlock = hint
@@ -933,7 +1016,7 @@ export async function* runAgentTurn(
   // Point 3 (Part A) — owner office on/off toggle. Highest priority owner-initiated
   // signal: declaring "no office today" suspends duties + asks the reason; replies while
   // the off-question is pending are captured here (short-circuits the LLM turn).
-  if (!personalMode && lastUserText) {
+  if (!directBrowserTask && !personalMode && lastUserText) {
     try {
       const { processOfficeToggleReply } = await import('@/agent/lib/office-toggle')
       const toggle = await processOfficeToggleReply(lastUserText, conversationId)
@@ -946,7 +1029,7 @@ export async function* runAgentTurn(
   // Owner approves / rejects a proposal filed by the external Claude co-worker. Only fires
   // when such a request is pending AND recent (so it never hijacks unrelated chat). Approve →
   // hand the head an EXECUTE-NOW context block; reject → short-circuit with a confirmation.
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processCoworkerRequestReply } = await import('@/agent/lib/coworker-request')
       const cw = await processCoworkerRequestReply(lastUserText, conversationId)
@@ -963,7 +1046,7 @@ export async function* runAgentTurn(
   // snooze below — which only paused business chases and left the salah call ringing.
   // Runs BEFORE the pace-reply so a live prayer window wins, and only fires inside the
   // 45-min moral window (outside it → falls through, we never fake a lock).
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { parseSnoozeMs } = await import('@/agent/lib/pending-followup')
       const ms = parseSnoozeMs(lastUserText)
@@ -991,7 +1074,7 @@ export async function* runAgentTurn(
   // Part 2 — owner replies "busy / 30 min por / driving" to a pending-approval reminder:
   // snooze the chase by exactly that long. Guarded (only when a reminder went out recently)
   // so it never hijacks unrelated chat.
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processFollowupPaceReply } = await import('@/agent/lib/pending-followup')
       const pace = await processFollowupPaceReply(lastUserText, conversationId)
@@ -1001,7 +1084,7 @@ export async function* runAgentTurn(
     }
   }
 
-  if (!personalMode && lastUserText && !intakeAutoReply && !callIntent.isCall) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !callIntent.isCall) {
     try {
       const { processOwnerIntakeReply } = await import('@/agent/lib/owner-task-intake')
       const intake = await processOwnerIntakeReply(lastUserText, conversationId)
@@ -1016,7 +1099,7 @@ export async function* runAgentTurn(
   // Point 2 — capture owner's reply to the yesterday-accounting question (reason for
   // missed office work). Saved to memory inside; contextBlock makes the head give a
   // suggestion. Only fires while accounting is pending and intake didn't already handle.
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processOwnerAccountingReply } = await import('@/agent/lib/yesterday-accounting')
       const acc = await processOwnerAccountingReply(lastUserText, conversationId)
@@ -1027,7 +1110,7 @@ export async function* runAgentTurn(
   }
 
   // Point 3 (Part B) — capture owner's reply to the carried-todo follow-up question.
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processOwnerFollowupReply } = await import('@/agent/lib/followup-carryover')
       const fu = await processOwnerFollowupReply(lastUserText, conversationId)
@@ -1040,7 +1123,7 @@ export async function* runAgentTurn(
 
   // Nightly salah muhasaba — capture the owner's reflection reply while muhasaba is
   // pending and turn it into warm encouragement (the soft companion to escalation).
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processMuhasabaReply } = await import('@/agent/lib/salah-muhasaba')
       const mh = await processMuhasabaReply(lastUserText, conversationId, now)
@@ -1054,7 +1137,7 @@ export async function* runAgentTurn(
   // "জামাতে নাকি একা?" question, capture it as a conversational answer (saved to
   // memory) and FORBID turning it into a todo/reminder. Permanent fix for the bug
   // where "eka poreci" became "কালকের জন্য 1টি কাজ".
-  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+  if (!directBrowserTask && !personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
     try {
       const { processJamaatReply } = await import('@/agent/lib/salah-jamaat')
       const jm = await processJamaatReply(lastUserText, conversationId, now)
@@ -1064,7 +1147,7 @@ export async function* runAgentTurn(
     }
   }
 
-  if (!personalMode && lastUserText) {
+  if (!directBrowserTask && !personalMode && lastUserText) {
     const teaching = detectTeachingIntent(lastUserText)
     if (teaching) {
       try {
@@ -1076,7 +1159,7 @@ export async function* runAgentTurn(
     }
   }
 
-  if (!personalMode) {
+  if (!directBrowserTask && !personalMode) {
     const autoMark = await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
     // When the owner's message itself confirmed a waqt, nudge his conscience (prayed) or
     // honour his honesty (qaza/missed). Only when no other intake handler claimed the turn.
@@ -1110,7 +1193,7 @@ export async function* runAgentTurn(
 
   const activeSkillsPromise = personalMode
     ? Promise.resolve(null)
-    : buildActiveSkills(lastUserText, { conversationId })
+    : buildActiveSkills(browserOwnerText, { conversationId })
   const crossSurfacePromise = (async () => {
     if (personalMode || telegramFastPath) return []
     const skills = await activeSkillsPromise
@@ -1149,10 +1232,34 @@ export async function* runAgentTurn(
       console.warn('[core] staffActiveTasksBlock failed:', err instanceof Error ? err.message : String(err))
       return ''
     }),
-    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId }),
+    selectToolsAndGroupsForTurnAsync(browserOwnerText, { personalMode, businessId }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
   ])
-  const selectedTools = filterToolsForOwnerIntent(lastUserText, toolSelection.tools)
+  let selectedTools = filterToolsForOwnerIntent(browserOwnerText, toolSelection.tools)
+  if (directBrowserTask) {
+    selectedTools = selectedTools.filter((tool) => directBrowserTurnAllowedTools.has(tool.name))
+    const present = new Set(selectedTools.map((tool) => tool.name))
+    const required = directBrowserLaneUnavailable
+      ? [...DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES]
+      : [...DIRECT_BROWSER_TOOL_NAMES]
+    const missing = required.filter((name) => !present.has(name))
+    if (missing.length > 0) {
+      try {
+        const browserTools = await resolveToolsByName([...missing])
+        selectedTools = [
+          ...selectedTools,
+          ...browserTools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+          })),
+        ]
+      } catch (err) {
+        console.warn('[direct-browser] native tool supply failed:', err instanceof Error ? err.message : err)
+      }
+    }
+    selectedTools = selectedTools.filter((tool) => directBrowserTurnAllowedTools.has(tool.name))
+  }
   const activeGroups = toolSelection.groups
 
   type ToolRecord = {
@@ -1296,7 +1403,7 @@ export async function* runAgentTurn(
   // ground-before-answer, mandatory save_memory) previously reached only the
   // multi-model path; the native Claude head never saw it. Same volatile zone
   // as that path (per-turn context, cache-safe), same derivation.
-  const ownerRequirements = deriveOwnerTurnRequirements(lastUserText ?? '')
+  const ownerRequirements = deriveOwnerTurnRequirements(browserOwnerText)
   const requirementNote = buildOwnerRequirementNote(ownerRequirements)
   if (requirementNote) {
     volatileText = volatileText ? `${volatileText}\n\n${requirementNote}` : requirementNote
@@ -1307,10 +1414,11 @@ export async function* runAgentTurn(
   // Phase 6 deterministic order: the workflow snapshot LEADS the per-turn
   // context (core → workflow → memory/context), matching run-owner-turn.
   // Fail-open; skipped in personal mode.
-  if (!personalMode) {
+  if (!personalMode && !directBrowserTask) {
     try {
       const wf = await import('@/agent/lib/workflow-run')
-      const runs = await wf.reconcileConversationWorkflows(conversationId)
+      const runs = (await wf.reconcileConversationWorkflows(conversationId))
+        .filter((run) => run.kind !== 'browser_setup')
       const note = wf.buildWorkflowSnapshotNote(runs)
       if (note) volatileText = volatileText ? `${note}\n\n${volatileText}` : note
     } catch (err) {
@@ -1342,7 +1450,13 @@ export async function* runAgentTurn(
   // Skipped when the Slim Head Router is on — the head is already lean, so the two
   // would just stack; the slim profile (select-tools) takes precedence.
   const toolsForModel: Anthropic.Messages.ToolUnion[] =
-    TOOL_SEARCH_ENABLED && !SLIM_ROUTER_ENABLED && !personalMode && businessId !== 'ALMA_TRADING'
+    shouldApplyToolSearchDeferral({
+      enabled: TOOL_SEARCH_ENABLED,
+      slimRouterEnabled: SLIM_ROUTER_ENABLED,
+      personalMode,
+      businessId,
+      directBrowserTask,
+    })
       ? applyToolSearchDeferral(gatedTools)
       : gatedTools
 
@@ -1394,11 +1508,14 @@ export async function* runAgentTurn(
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
   const claimedSteeringIds = new Set<string>()
+  let nativeFinalMessageSaved = false
 
   // What is ACTUALLY in front of Boss — read, not remembered (parity with
   // run-owner-turn; owner incident 2026-07-26). Appended at the END of messages
   // so the cached prompt prefix is untouched.
-  const pendingCardsAtStart = await readPendingCards(conversationId)
+  const pendingCardsAtStart = loadedHistory.hasLaterRows
+    ? []
+    : await readPendingCards(conversationId)
   messages = [...messages, { role: 'user', content: [{ type: 'text', text: buildCardStateNote(pendingCardsAtStart) }] }]
 
   try {
@@ -1409,11 +1526,29 @@ export async function* runAgentTurn(
       // POST, so we poll the flag here each round rather than via an in-memory
       // signal. Stop persisting/answering and exit silently; the cancel endpoint
       // already set the terminal status.
-      if (await isTurnCancelRequested(turnId)) { canceled = true; break }
+      if (await isTurnCancelRequested(turnId)) {
+        canceled = true
+        if (directBrowserLane?.state === 'ready') {
+          await revokeDirectYouTubeTurnLaneForSteering(
+            conversationId,
+            directBrowserLane.token,
+          ).catch(() => false)
+        }
+        break
+      }
 
       const steering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
       for (const item of steering) claimedSteeringIds.add(item.id)
       if (steering.length > 0) {
+        if (directBrowserLane?.state === 'ready') {
+          // Any new owner steering supersedes this in-flight exact task. Local
+          // revocation fails closed even if the durable CAS is unavailable.
+          directBrowserSteeringRevoked = true
+          await revokeDirectYouTubeTurnLaneForSteering(
+            conversationId,
+            directBrowserLane.token,
+          ).catch(() => false)
+        }
         currentOwnerInstructions = [currentOwnerInstructions, ...steering.map((item) => item.prompt)]
           .filter(Boolean)
           .join('\n')
@@ -1584,6 +1719,13 @@ export async function* runAgentTurn(
       if (toolUseBlocks.length === 0 || signal?.aborted) {
         const lateSteering = await claimTurnSteeringMessages(turnId, conversationId, claimedSteeringIds)
         if (lateSteering.length > 0 && !signal?.aborted) {
+          if (directBrowserLane?.state === 'ready') {
+            directBrowserSteeringRevoked = true
+            await revokeDirectYouTubeTurnLaneForSteering(
+              conversationId,
+              directBrowserLane.token,
+            ).catch(() => false)
+          }
           for (const item of lateSteering) claimedSteeringIds.add(item.id)
           currentOwnerInstructions = [currentOwnerInstructions, ...lateSteering.map((item) => item.prompt)]
             .filter(Boolean)
@@ -1638,6 +1780,9 @@ export async function* runAgentTurn(
           const violations: ClaimViolation[] = finalText
             ? verifyClaimsAgainstLedger(finalText, ledger)
             : []
+          if (finalText) {
+            violations.push(...detectUnverifiedMediaPlayback(browserOwnerText, finalText, toolRecords))
+          }
           // A hand-written <tool_response> block is fabricated evidence — parity
           // with run-owner-turn (the native-loop path must not accept what the
           // legacy loop rejects; Codex P1 on #767).
@@ -1744,7 +1889,7 @@ export async function* runAgentTurn(
             .join('\n')
           const REFUSAL_RE = /পারব\s*না|পারি\s*না|পারছি\s*না|parbo\s*na|pari\s*na|সেই\s*সুবিধা\s*নেই|available\s*নেই|এটা\s*করতে\s*পারি?\s*না/i
           if (REFUSAL_RE.test(finalTextForRefusal)) {
-            const { groups: loadedGroups } = selectToolGroupsSync(lastUserText, { personalMode, businessId })
+            const { groups: loadedGroups } = selectToolGroupsSync(browserOwnerText, { personalMode, businessId })
             if (loadedGroups.length <= 3 && loadedGroups.every(g => g === 'base' || g === 'erp' || g === 'staff')) {
               void logRefusalEvent({ conversationId, businessId })
             }
@@ -1795,14 +1940,27 @@ export async function* runAgentTurn(
           }
         }
         const started = Date.now()
-        const ownerIntentViolation = personalMode
+        const laneStillCurrent = directBrowserLane?.state === 'ready'
+          ? !directBrowserSteeringRevoked
+            && await isDirectYouTubeTurnLaneCurrent(conversationId, directBrowserLane)
+          : true
+        const directBrowserFallback = directBrowserLane?.state === 'ready' && !laneStillCurrent
+          ? 'DIRECT_BROWSER_LANE_STALE: newer owner turn, expired lease, or unavailable lane state superseded this execution; tool blocked.'
+          : directBrowserTask && !directBrowserTurnAllowedTools.has(tb.name)
+          ? directBrowserLaneUnavailable
+            ? `DIRECT_BROWSER_LANE_UNAVAILABLE: durable lane state যাচাই হয়নি; ${tb.name} নিষিদ্ধ। শুধু live_browser_status চলতে পারে।`
+            : directBrowserFallbackViolation(true, tb.name)
+          : null
+        const ownerIntentViolation = directBrowserFallback
+          ? null
+          : personalMode
           ? null
           : validateToolCallAgainstOwnerIntent({
               ownerInstructions: currentOwnerInstructions,
               toolName: tb.name,
             })
         // Harness Gap 2 — generic pre-tool hooks (deterministic, fail-open).
-        const preHookDecision = !ownerIntentViolation
+        const preHookDecision = !directBrowserFallback && !ownerIntentViolation
           ? runPreToolHooks({
               toolName: tb.name,
               input: tb.input as Record<string, unknown>,
@@ -1819,6 +1977,7 @@ export async function* runAgentTurn(
         // the documented kill switch (AGENT_NATIVE_ANTHROPIC_LOOP=true) silently
         // loses the card-free behaviour the grant card promised.
         const grantCoversThisCall = await (async () => {
+          if (directBrowserFallback) return false
           const grant = liveGrant
           if (!grant) return false
           // Plan mode is not liftable by a grant — in Plan nothing changes at
@@ -1844,7 +2003,7 @@ export async function* runAgentTurn(
         // Careful to Standard (review bot, #667). Plan mode is already refused by
         // the registry — this is only the staging half.
         const carefulNeedsCard = await (async () => {
-          if (grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
+          if (directBrowserFallback || grantCoversThisCall || ownerIntentViolation || hookBlocked) return false
           if (!conversationId) return false
           if (isReadOnlyPlanControlTool(tb.name, turnAuthorization)) return false
           // Cancelling a permission is never staged — that would trap Boss inside
@@ -1875,7 +2034,7 @@ export async function* runAgentTurn(
           })
           return verdict === 'card'
         })()
-        const aiosGuard = !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && !carefulNeedsCard && enforcementEnabled()
+        const aiosGuard = !directBrowserFallback && !ownerIntentViolation && !hookBlocked && !grantCoversThisCall && !carefulNeedsCard && enforcementEnabled()
           ? guardToolCall({
               identity: {
                 tenantId: String(businessId ?? 'ALMA_LIFESTYLE'),
@@ -1890,7 +2049,9 @@ export async function* runAgentTurn(
               attributes: tb.input as Record<string, unknown>,
             })
           : null
-        const result = ownerIntentViolation
+        const result = directBrowserFallback
+          ? { success: false as const, error: directBrowserFallback }
+          : ownerIntentViolation
           ? { success: false as const, error: ownerIntentViolation.message }
           : hookBlocked
           ? { success: false as const, error: hookBlocked.message }
@@ -1918,10 +2079,18 @@ export async function* runAgentTurn(
               model: chatModel.id,
               klass: 'unknown',
             })
-          : personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, turnId, businessId, turnAuthorization, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant })
+          : personalMode && !(directBrowserTask && isDirectBrowserExecutionTool(tb.name))
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, turnId, businessId, turnAuthorization, ownerRequestText: browserOwnerText, ownerVoicePref, voiceCallInstruction, callbackRequested, permissionMode: options.permissionMode ?? undefined, elevationGrant: liveGrant, directBrowserTask })
           : await executeTool(tb.name, tb.input, {
               conversationId, turnId, businessId, modelId: chatModel.id, turnAuthorization,
+              directBrowserTask,
+              ownerRequestText: browserOwnerText,
+              directBrowserOwnerRequest,
+              directBrowserLaneToken: directBrowserLane?.state === 'ready' ? directBrowserLane.token : undefined,
+              directBrowserSelectedOwnerReply: directBrowserLane?.state === 'ready'
+                ? directBrowserLane.selectedOwnerReply
+                : undefined,
+              directBrowserLaneUnavailable,
               ownerVoicePref, voiceCallInstruction, callbackRequested,
               // The registry runs the canonical guard itself; without these it
               // would refuse the very call the outer bypass just allowed.
@@ -2000,7 +2169,13 @@ export async function* runAgentTurn(
       const permissionChangeInResponse = toolUseBlocks.some(
         (tb) => tb.name === 'revoke_standing_permission' || tb.name === 'request_standing_permission',
       )
-      if (permissionChangeInResponse) {
+      // LOOK creates a one-use receipt and ACT consumes it. Preserve physical
+      // source order for every live-browser sibling; the native read bucket
+      // must never run these calls in parallel and make ledger order untrue.
+      const liveBrowserCallInResponse = executionBlocks.some(
+        (tb) => tb.name.startsWith('live_browser_'),
+      )
+      if (permissionChangeInResponse || liveBrowserCallInResponse) {
         writes.length = 0
         reads.length = 0
         for (const tb of executionBlocks) writes.push(tb)
@@ -2220,6 +2395,15 @@ export async function* runAgentTurn(
         const exec = resultMap.get(tb.id)!
         const { result, durationMs } = exec
 
+        // Native Anthropic has no shipped-tool membership gate. Remove every
+        // direct-browser fallback from find_tool's REAL result before timeline,
+        // ledger, preview, or model transcript serialization can expose it.
+        if (directBrowserTask && tb.name === FIND_TOOL_NAME && result.success) {
+          sanitizeDirectBrowserFallbackMatches(
+            result.data as { matches?: Array<{ name?: unknown }>; note?: unknown } | undefined,
+          )
+        }
+
         const isDelegate = tb.name === 'delegate_to_specialist'
 
         if (!result.success) {
@@ -2428,7 +2612,7 @@ export async function* runAgentTurn(
         const found = resultMap.get(tb.id)?.result.data as { matches?: Array<{ name?: unknown }> } | undefined
         const matchNames = (found?.matches ?? [])
           .map((m) => String(m?.name ?? ''))
-          .filter(Boolean)
+          .filter((name) => Boolean(name) && !(directBrowserTask && !directBrowserTurnAllowedTools.has(name)))
         if (matchNames.length === 0) continue
         const already = new Set<string>([
           ...toolsForModel.map((t) => ('name' in t ? t.name : '')),
@@ -2489,7 +2673,15 @@ export async function* runAgentTurn(
 
     // Owner canceled mid-turn: do not persist a partial assistant reply or emit
     // 'done'. The cancel endpoint already marked the turn canceled.
-    if (canceled) return
+    if (canceled) {
+      if (directBrowserLane?.state === 'ready') {
+        await revokeDirectYouTubeTurnLaneForSteering(
+          conversationId,
+          directBrowserLane.token,
+        ).catch(() => false)
+      }
+      return
+    }
 
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
@@ -2512,6 +2704,89 @@ export async function* runAgentTurn(
         coreTaskUnfinished ? 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।' : '',
       ].filter(Boolean).join('\n\n')
       yield { type: 'text_delta', delta: joinedText }
+    }
+    const playbackGate = hardGateUnavailableDirectYouTubeLane(directBrowserLane)
+      ?? hardGateMediaPlaybackFinalText(browserOwnerText, joinedText, toolRecords)
+    if (playbackGate.replaced) {
+      yield {
+        type: 'verification_retry',
+        attempt: MAX_VERIFY_RETRIES,
+        maxAttempts: MAX_VERIFY_RETRIES,
+        categories: ['media_playback_unverified'],
+        snippets: [],
+      }
+      for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+      timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+      joinedText = playbackGate.text
+      timeline.push({ t: 'text', text: joinedText })
+      yield { type: 'text_delta', delta: joinedText }
+    }
+    if (directBrowserLane?.state === 'ready') {
+      const invalidAskCardSet = emittedAskCards.length > 1
+      const resumableAskCard = emittedAskCards.length === 1 ? emittedAskCards[0] : null
+      const resumableReplies = resumableAskCard
+        ? [...new Set([
+            ...resumableAskCard.options,
+            ...(resumableAskCard.questions ?? []).flatMap((question) => question.options),
+          ])]
+        : undefined
+      const awaitingOwner = !invalidAskCardSet && (
+        Boolean(resumableAskCard) || toolRecords.some(
+        (record) => record.toolName === 'live_browser_pair' && record.status === 'success',
+        )
+      )
+      const laneOutcome = invalidAskCardSet
+        ? 'terminal_blocker' as const
+        : mediaPlaybackGateAuthorizesCompletion(playbackGate)
+        ? 'completed' as const
+        : awaitingOwner
+          ? 'awaiting_owner' as const
+          : coreTaskUnfinished
+            ? 'continuing' as const
+            : 'terminal_blocker' as const
+      const laneSettled = await settleDirectYouTubeTurnLane({
+        conversationId,
+        token: directBrowserLane.token,
+        outcome: laneOutcome,
+        expectedOwnerReplies: laneOutcome === 'awaiting_owner' ? resumableReplies : undefined,
+        expectedAskCardId: laneOutcome === 'awaiting_owner'
+          ? resumableAskCard?.askCardId
+          : undefined,
+      })
+      const askCardsMustClose = emittedAskCards.length > 0 && (
+        laneOutcome !== 'awaiting_owner' || !laneSettled || invalidAskCardSet
+      )
+      const askCardsClosed = !askCardsMustClose || await supersedeDirectYouTubeAskCards(
+        conversationId,
+        emittedAskCards.map((card) => card.askCardId),
+      )
+      if (askCardsMustClose) emittedAskCards.length = 0
+      if (laneOutcome === 'completed') coreTaskUnfinished = false
+      // Every direct-lane transition is authoritative. If awaiting/continuing/
+      // terminal persistence fails, never leave a visible card or prose that
+      // can later escape into the broad lane.
+      if (!laneSettled || invalidAskCardSet || !askCardsClosed) {
+        if (!askCardsMustClose) {
+          await supersedeDirectYouTubeAskCards(
+            conversationId,
+            emittedAskCards.map((card) => card.askCardId),
+          )
+        }
+        emittedAskCards.length = 0
+        coreTaskUnfinished = false
+        yield {
+          type: 'verification_retry',
+          attempt: MAX_VERIFY_RETRIES,
+          maxAttempts: MAX_VERIFY_RETRIES,
+          categories: ['media_playback_unverified'],
+          snippets: [],
+        }
+        for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+        timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+        joinedText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+        timeline.push({ t: 'text', text: joinedText })
+        yield { type: 'text_delta', delta: joinedText }
+      }
     }
     const storedContent: StoredContentBlock[] = [{ type: 'text', text: joinedText }]
     // Append confirm-card breadcrumbs so the approval card (and its eventual
@@ -2539,6 +2814,7 @@ export async function* runAgentTurn(
         usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, context_tokens: lastContextTokens ?? undefined, context_source: lastContextTokens != null ? 'provider_last_round' : undefined, context_measured_at: lastContextTokens != null ? new Date().toISOString() : undefined, model: chatModel.id, apiModel, provider: chatModel.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
+    nativeFinalMessageSaved = true
 
     embedMessageInBackground(savedMsg.id, storedContent)
 
@@ -2623,6 +2899,103 @@ export async function* runAgentTurn(
       needContinue: coreTaskUnfinished,
     }
   } catch (err) {
+    // A provider throw/abort may happen after unverified prose was already
+    // streamed. The normal finalization gate is then unreachable, so replace
+    // the whole visible/persisted answer with a fixed server-authored blocker.
+    // This runs before the ordinary aborted-return on purpose.
+    if (directBrowserTask && !nativeFinalMessageSaved) {
+      let safeText = hardGateUnavailableDirectYouTubeLane(directBrowserLane)?.text
+        ?? DIRECT_YOUTUBE_INTERRUPTED_BLOCKER
+      const emittedCardsClosed = await supersedeDirectYouTubeAskCards(
+        conversationId,
+        emittedAskCards.map((card) => card.askCardId),
+      )
+      emittedAskCards.length = 0
+      if (directBrowserLane?.state === 'ready') {
+        const laneSettled = await settleDirectYouTubeTurnLane({
+          conversationId,
+          token: directBrowserLane.token,
+          outcome: 'terminal_blocker',
+        })
+        if (!laneSettled) safeText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+      }
+      if (!emittedCardsClosed) safeText = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
+      yield {
+        type: 'verification_retry',
+        attempt: MAX_VERIFY_RETRIES,
+        maxAttempts: MAX_VERIFY_RETRIES,
+        categories: ['media_playback_unverified'],
+        snippets: [],
+      }
+      for (const entry of timeline) if (entry.t === 'text') entry.state = 'superseded'
+      timeline.push({ t: 'verify', attempt: MAX_VERIFY_RETRIES, max: MAX_VERIFY_RETRIES })
+      timeline.push({ t: 'text', text: safeText })
+      yield { type: 'text_delta', delta: safeText }
+
+      try {
+        const costUsd = calcModelTurnCostUsd(chatModel, {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cacheWrite: totalCacheCreationTokens,
+          cacheRead: totalCacheReadTokens,
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const db = prisma as any
+        const savedMsg = await db.agentMessage.create({
+          data: {
+            conversationId,
+            role: 'assistant',
+            content: [{ type: 'text', text: safeText }],
+            tokensIn: totalInputTokens,
+            tokensOut: totalOutputTokens,
+            costUsd,
+            usage: {
+              input_tokens: totalInputTokens,
+              output_tokens: totalOutputTokens,
+              cache_creation_input_tokens: totalCacheCreationTokens,
+              cache_read_input_tokens: totalCacheReadTokens,
+              model: chatModel.id,
+              apiModel,
+              provider: chatModel.provider,
+              timeline: timeline.slice(0, 60),
+              interrupted: true,
+            },
+          },
+        })
+        nativeFinalMessageSaved = true
+        embedMessageInBackground(savedMsg.id, [{ type: 'text', text: safeText }])
+        if (toolRecords.length > 0) {
+          await db.agentToolCall.createMany({
+            data: toolRecords.map((record: ToolRecord) => ({
+              messageId: savedMsg.id,
+              toolName: record.toolName,
+              input: record.input,
+              output: record.output,
+              status: record.status,
+              durationMs: record.durationMs,
+              error: record.error,
+            })),
+          })
+        }
+        await touchConversationActivity(conversationId)
+        yield {
+          type: 'done',
+          messageId: savedMsg.id,
+          tokensIn: totalInputTokens,
+          tokensOut: totalOutputTokens,
+          cacheCreation: totalCacheCreationTokens,
+          cacheRead: totalCacheReadTokens,
+          costUsd,
+          needContinue: false,
+        }
+        return
+      } catch (salvageError) {
+        console.warn(
+          '[core] direct-browser interrupted salvage persistence failed:',
+          salvageError instanceof Error ? salvageError.message : salvageError,
+        )
+      }
+    }
     if (signal?.aborted) return
     const requestId = extractAnthropicRequestId(err)
     await captureAgentError(err, 'agent.anthropic.error', { conversationId, requestId })

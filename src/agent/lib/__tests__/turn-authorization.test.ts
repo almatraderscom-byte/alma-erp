@@ -33,6 +33,8 @@ describe('owner turn authorization — model cannot widen owner intent', () => {
     'oi task ta Mustahid ke pathao',
     'ei chobi ta abar banao',
     'campaign ta chalu koro',
+    'ইউটিউবে Coke Studio Bangla গানটা চালাও',
+    'Play Interstellar soundtrack on YouTube',
     'live_browser_act-এর navigate action চালাও, তারপর live_browser_look দিয়ে proof দাও',
   ])('allows an explicit action or recordable fact: %s', (text) => {
     expect(deriveOwnerTurnAuthorization(text).allowMutations).toBe(true)

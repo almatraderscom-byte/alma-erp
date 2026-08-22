@@ -26,6 +26,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import {
   isLiveBrowserEnabled,
   setLiveBrowserEnabled,
+  stopAllLiveBrowserDispatches,
   listOwnerDevices,
 } from '@/agent/lib/live-browser/companion'
 
@@ -132,15 +133,18 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as { action?: string }
   if (body.action === 'stop') {
-    await setLiveBrowserEnabled(false)
     const devices = await listOwnerDevices()
-    if (devices.length) {
-      await prisma.liveBrowserCommand.updateMany({
-        where: { deviceId: { in: devices.map((d) => d.id) }, status: { in: ['queued', 'delivered'] } },
-        data: { status: 'failed', error: 'owner_stop (watch panel)', resolvedAt: new Date() },
-      })
+    const stopped = await stopAllLiveBrowserDispatches(devices.map((device) => device.id))
+    if (stopped.executing > 0) {
+      return NextResponse.json({
+        ok: false,
+        enabled: false,
+        stopping: true,
+        inFlightEffects: stopped.executing,
+        message: 'STOP accepted; an already-authorized browser step is still finishing under preview. Retry when it clears.',
+      }, { status: 202 })
     }
-    return NextResponse.json({ ok: true, enabled: false })
+    return NextResponse.json({ ok: true, enabled: false, stoppedCommands: stopped.stoppedQueuedOrDelivered })
   }
   if (body.action === 'resume') {
     await setLiveBrowserEnabled(true)

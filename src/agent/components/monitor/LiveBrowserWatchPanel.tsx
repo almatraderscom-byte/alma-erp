@@ -15,7 +15,7 @@ interface WatchStep {
   device: string
   action: string
   target: string
-  status: 'queued' | 'delivered' | 'done' | 'failed' | string
+  status: 'queued' | 'delivered' | 'executing' | 'done' | 'failed' | string
   error: string | null
   at: string
   resolvedAt: string | null
@@ -50,8 +50,46 @@ const ACTION_BN: Record<string, string> = {
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   queued: { label: 'অপেক্ষায়', cls: 'border-sky-300/40 bg-sky-400/10 txt-info' },
   delivered: { label: 'চলছে…', cls: 'border-amber-300/40 bg-amber-400/10 txt-warn' },
+  executing: { label: 'অনুমোদিত ধাপ শেষ হচ্ছে…', cls: 'border-amber-300/40 bg-amber-400/10 txt-warn' },
   done: { label: 'হয়েছে', cls: 'border-emerald-300/40 bg-emerald-400/10 txt-pos' },
   failed: { label: 'ব্যর্থ', cls: 'border-red-300/40 bg-red-400/10 txt-neg' },
+}
+
+export function hasExecutingBrowserStep(steps: Array<{ status: string }> | undefined): boolean {
+  return steps?.some((step) => step.status === 'executing') ?? false
+}
+
+export function browserWatchControlAction(
+  enabled: boolean,
+  executing: boolean,
+): 'stop' | 'resume' {
+  // While an authorized step is settling, the only safe action is another
+  // Stop/reconciliation attempt. Never offer Resume against stale `executing`.
+  return enabled || executing ? 'stop' : 'resume'
+}
+
+export function classifyWatchActionResponse(
+  action: 'stop' | 'resume',
+  status: number,
+  body: { stopping?: unknown; inFlightEffects?: unknown; error?: unknown } | null,
+): { kind: 'done' | 'stopping' | 'error'; message: string } {
+  if (status === 202 && body?.stopping === true) {
+    const count = Number(body.inFlightEffects)
+    return {
+      kind: 'stopping',
+      message: Number.isFinite(count) && count > 0
+        ? `⏳ Stop নেওয়া হয়েছে—ইতিমধ্যে অনুমোদিত ${count}টি ধাপ preview-তে শেষ হচ্ছে; নতুন ধাপ চলবে না।`
+        : '⏳ Stop নেওয়া হয়েছে—ইতিমধ্যে অনুমোদিত ধাপটি preview-তে শেষ হচ্ছে; নতুন ধাপ চলবে না।',
+    }
+  }
+  if (status < 200 || status >= 300) {
+    const detail = typeof body?.error === 'string' ? body.error : `HTTP ${status}`
+    return { kind: 'error', message: detail }
+  }
+  return {
+    kind: 'done',
+    message: action === 'stop' ? '⏹ থামিয়ে দিলাম — লাইভ ব্রাউজার বন্ধ' : '▶️ আবার চালু',
+  }
 }
 
 function fmtTime(iso: string | null): string {
@@ -121,8 +159,15 @@ export default function LiveBrowserWatchPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      toast.success(action === 'stop' ? '⏹ থামিয়ে দিলাম — লাইভ ব্রাউজার বন্ধ' : '▶️ আবার চালু')
+      const body = await res.json().catch(() => null) as {
+        stopping?: unknown
+        inFlightEffects?: unknown
+        error?: unknown
+      } | null
+      const outcome = classifyWatchActionResponse(action, res.status, body)
+      if (outcome.kind === 'error') throw new Error(outcome.message)
+      if (outcome.kind === 'stopping') toast(outcome.message, { duration: 7000 })
+      else toast.success(outcome.message)
       await load()
     } catch (err) {
       toast.error(`ব্যর্থ: ${err instanceof Error ? err.message : String(err)}`)
@@ -133,7 +178,10 @@ export default function LiveBrowserWatchPanel() {
 
   const enabled = feed?.enabled === true
   const onlineCount = feed?.devices.filter((d) => d.online).length ?? 0
-  const running = feed?.steps.some((s) => s.status === 'queued' || s.status === 'delivered') ?? false
+  const executing = hasExecutingBrowserStep(feed?.steps)
+  const running = feed?.steps.some((s) => (
+    s.status === 'queued' || s.status === 'delivered' || s.status === 'executing'
+  )) ?? false
 
   return (
     <div className="safe-x mx-auto w-full max-w-5xl px-4 pt-4 md:px-6">
@@ -160,7 +208,7 @@ export default function LiveBrowserWatchPanel() {
           </div>
         </div>
         <p className="px-4 pb-3 pt-1 text-[12px] leading-relaxed text-muted">
-          এজেন্ট আপনার Chrome-এ কী করছে — প্রতিটা ধাপ আর সর্বশেষ স্ক্রিনশট এখানে লাইভ দেখা যায়। লাল বোতামে সব সাথে সাথে থামে।
+          এজেন্ট আপনার Chrome-এ কী করছে — প্রতিটা ধাপ আর সর্বশেষ স্ক্রিনশট এখানে লাইভ দেখা যায়। Stop নতুন ধাপ সাথে সাথে আটকায়; ইতিমধ্যে অনুমোদিত ধাপটি preview-তে শেষ হতে পারে।
         </p>
 
         {/* Controls */}
@@ -168,14 +216,14 @@ export default function LiveBrowserWatchPanel() {
           <button
             type="button"
             disabled={busy || loading}
-            onClick={() => act(enabled ? 'stop' : 'resume')}
+            onClick={() => act(browserWatchControlAction(enabled, executing))}
             className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-50 ${
-              enabled
+              enabled || executing
                 ? 'bg-red-500/20 txt-neg hover:bg-red-500/30'
                 : 'bg-emerald-500/15 txt-pos hover:bg-emerald-500/25'
             }`}
           >
-            {enabled ? '⏹ সব থামাও' : '▶️ আবার চালু করো'}
+            {executing ? '⏳ Stop আবার যাচাই করুন' : enabled ? '⏹ সব থামাও' : '▶️ আবার চালু করো'}
           </button>
           {feed && feed.devices.length > 0 && (
             <span className="ml-auto text-[11px] text-muted">

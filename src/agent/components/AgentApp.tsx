@@ -21,6 +21,9 @@ import { cn } from '@/lib/utils'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
 import { selectSettledProse } from '@/agent/lib/presentation/build-presentation'
+import { supersedeVerificationTimeline } from '@/agent/lib/verification-retry-view'
+import { reduceHeldVoiceReply, settleHeldVoiceReply } from '@/agent/lib/voice-reply-holdback'
+import { removeStoppedAssistantDraft } from '@/agent/lib/stopped-turn-view'
 import {
   addEntry as outboxAdd,
   defaultOutboxStorage,
@@ -428,6 +431,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
   // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.
   const activeTurnIdRef = useRef<string | null>(null)
+  const ownerStoppedTurnRef = useRef(false)
   // Auto-continue: a long browser task dies at the ~280s serverless cap; the server
   // marks the turn `needContinue` and the client claims a structured continuation
   // so the task finishes end-to-end without impersonating the owner. Bounded
@@ -1427,6 +1431,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'verification_retry') {
+          const verificationCategories = Array.isArray(evt.categories) ? evt.categories : []
           // The honesty guard caught a draft that must be rewritten. Keep it in
           // the raw audit timeline as superseded, but remove it from the visible
           // answer accumulator so the owner sees only the verified replacement.
@@ -1440,13 +1445,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantMsgId) return m
-            const timeline = [...(m.timeline ?? [])]
-            // Never supersede the LEADING first line — it is what Boss already
-            // read before the work started, not a draft the rewrite replaces.
-            for (let i = timeline.length - 1; i >= 1; i--) {
-              const e = timeline[i]
-              if (e.t === 'text') { timeline[i] = { ...e, state: 'superseded' }; break }
-            }
+            const timeline = supersedeVerificationTimeline(
+              m.timeline ?? [],
+              verificationCategories,
+            ) as TimelineEntry[]
+            // Normal retries preserve the leading first line. Media hard-gate
+            // replacement cannot: that preamble may itself claim playback, and
+            // no model-authored line is allowed to survive without proof.
             timeline.push({
               t: 'verify',
               attempt: typeof evt.attempt === 'number' ? evt.attempt : 1,
@@ -1706,10 +1711,18 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     } finally {
       if (firstByteTimer) clearTimeout(firstByteTimer)
       setStreaming(false)
+      // React's effect updates this ref on a later tick. A Stop recovery must
+      // resync after the optimistic draft is already gone, so make the terminal
+      // state observable synchronously and then pull authoritative history.
+      streamingRef.current = false
       setStreamStatus(null)
       abortRef.current = null
       activeTurnIdRef.current = null
       pendingFiles.forEach((pf) => URL.revokeObjectURL(pf.previewUrl))
+      if (ownerStoppedTurnRef.current) {
+        ownerStoppedTurnRef.current = false
+        void resyncActiveConversation(finalConvId)
+      }
       // The turn may have created/completed/cancelled a todo via tools — refresh
       // the dock now so the list stays in sync without the 30s poll lag.
       notifyTodosChanged()
@@ -1876,6 +1889,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     onEvent?: (evt: VoiceTurnEvent) => void,
     resumeOpts?: { approve: boolean },
   ): Promise<string | null> => {
+    // Voice cannot retract speech, and a short "continue" may resume a durable
+    // witnessed-browser lane without looking like the original YouTube prompt.
+    // Require the server's terminal event for every voice turn so transport EOF
+    // can never make an unverified draft speakable.
+    const requireAuthoritativeDone: boolean = true
+    let heldReply = { text: '' }
+    const settleVoiceReply = () => {
+      const reply = settleHeldVoiceReply(heldReply, { requireAuthoritativeDone })
+      if (reply) onEvent?.({ type: 'text_delta', delta: reply })
+      return reply || null
+    }
     const body: Record<string, unknown> = { message: text, voice: true }
     if (resumeOpts) body.resume = resumeOpts
     // A voice turn on a fresh console creates a NEW conversation server-side —
@@ -1888,81 +1912,115 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       body.modelId = activeModelId
       body.effortLevel = activeEffort
     }
-    const res = await fetch('/api/assistant/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok || !res.body) return null
+    let res: Response
+    try {
+      res = await fetch('/api/assistant/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } catch (error) {
+      if (!requireAuthoritativeDone) throw error
+      heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
+      return settleVoiceReply()
+    }
+    if (!res.ok || !res.body) {
+      if (!requireAuthoritativeDone) return null
+      heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
+      return settleVoiceReply()
+    }
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
-    let reply = ''
     let convId = activeConvId
-    while (true) {
-      const { done, value } = await reader.read()
-      if (value) buf += decoder.decode(value, { stream: true })
-      const parts = buf.split('\n\n')
-      buf = parts.pop() ?? ''
-      for (const chunk of parts) {
-        if (!chunk.startsWith('data: ')) continue
-        try {
-          const evt = JSON.parse(chunk.slice(6)) as Record<string, unknown>
-          if (evt.type === 'conversation_id') {
-            convId = evt.id as string
-            setActiveConvId(convId)
-          } else if (evt.type === 'text_delta') {
-            reply += evt.delta as string
-            onEvent?.({ type: 'text_delta', delta: evt.delta as string })
-          } else if (evt.type === 'tool_start') {
-            onEvent?.({ type: 'tool_start', id: evt.id as string, name: evt.name as string })
-          } else if (evt.type === 'tool_end') {
-            onEvent?.({
-              type: 'tool_end',
-              id: evt.id as string,
-              success: evt.success as boolean,
-              resultPreview: typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
-            })
-          } else if (evt.type === 'subagent_start') {
-            onEvent?.({ type: 'subagent_start', id: evt.id as string, roleLabel: String(evt.roleLabel ?? 'সহকারী') })
-          } else if (evt.type === 'subagent_end') {
-            onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
-          } else if (evt.type === 'confirm_card') {
-            onEvent?.({
-              type: 'confirm_card',
-              pendingActionId: typeof evt.pendingActionId === 'string' ? evt.pendingActionId : undefined,
-              summary: typeof evt.summary === 'string' ? evt.summary : undefined,
-              costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
-              actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
-            })
-          } else if (evt.type === 'ask_card') {
-            // The head is ASKING the owner something — in voice this must be
-            // spoken, or the turn dies in silence (owner-reported gap #1).
-            onEvent?.({
-              type: 'ask_card',
-              askCardId: String(evt.askCardId ?? ''),
-              question: String(evt.question ?? ''),
-              options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
-              questions: Array.isArray((evt as { questions?: unknown }).questions)
-                ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
-                : undefined,
-            })
-          } else if (evt.type === 'error') {
-            onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
-          } else if (evt.type === 'verification_retry') {
-            onEvent?.({ type: 'verification_retry' })
-          } else if (evt.type === 'model_switch_required') {
-            onEvent?.({ type: 'model_switch_required' })
+    let parsedDone = false
+    let interruptedBeforeDone = false
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (value) buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() ?? ''
+        for (const chunk of parts) {
+          if (!chunk.startsWith('data: ')) continue
+          try {
+            const evt = JSON.parse(chunk.slice(6)) as Record<string, unknown>
+            if (evt.type === 'conversation_id') {
+              convId = evt.id as string
+              setActiveConvId(convId)
+            } else if (evt.type === 'text_delta') {
+              heldReply = reduceHeldVoiceReply(heldReply, {
+                type: 'text_delta',
+                delta: evt.delta as string,
+              })
+            } else if (evt.type === 'tool_start') {
+              onEvent?.({ type: 'tool_start', id: evt.id as string, name: evt.name as string })
+            } else if (evt.type === 'tool_end') {
+              onEvent?.({
+                type: 'tool_end',
+                id: evt.id as string,
+                success: evt.success as boolean,
+                resultPreview: typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
+              })
+            } else if (evt.type === 'subagent_start') {
+              onEvent?.({ type: 'subagent_start', id: evt.id as string, roleLabel: String(evt.roleLabel ?? 'সহকারী') })
+            } else if (evt.type === 'subagent_end') {
+              onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
+            } else if (evt.type === 'confirm_card') {
+              onEvent?.({
+                type: 'confirm_card',
+                pendingActionId: typeof evt.pendingActionId === 'string' ? evt.pendingActionId : undefined,
+                summary: typeof evt.summary === 'string' ? evt.summary : undefined,
+                costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
+                actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
+              })
+            } else if (evt.type === 'ask_card') {
+              // The head is ASKING the owner something — in voice this must be
+              // spoken, or the turn dies in silence (owner-reported gap #1).
+              onEvent?.({
+                type: 'ask_card',
+                askCardId: String(evt.askCardId ?? ''),
+                question: String(evt.question ?? ''),
+                options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
+                questions: Array.isArray((evt as { questions?: unknown }).questions)
+                  ? ((evt as { questions?: unknown }).questions as Array<{ question: string; options: string[] }>)
+                  : undefined,
+              })
+            } else if (evt.type === 'error') {
+              if (requireAuthoritativeDone && !parsedDone) {
+                heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
+                interruptedBeforeDone = true
+              } else {
+                onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
+              }
+            } else if (evt.type === 'verification_retry') {
+              const categories = Array.isArray(evt.categories) ? evt.categories.map(String) : []
+              heldReply = reduceHeldVoiceReply(heldReply, { type: 'verification_retry', categories })
+              onEvent?.({ type: 'verification_retry', categories })
+            } else if (evt.type === 'model_switch_required') {
+              onEvent?.({ type: 'model_switch_required' })
+            } else if (evt.type === 'done') {
+              heldReply = reduceHeldVoiceReply(heldReply, { type: 'done' })
+              parsedDone = true
+            }
+          } catch { /* skip */ }
+        }
+        if (requireAuthoritativeDone && (parsedDone || interruptedBeforeDone)) break
+        if (done) {
+          if (requireAuthoritativeDone && !parsedDone) {
+            heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_end' })
           }
-        } catch { /* skip */ }
+          break
+        }
       }
-      if (done) break
+    } catch (error) {
+      if (!requireAuthoritativeDone) throw error
+      heldReply = reduceHeldVoiceReply(heldReply, { type: 'transport_error' })
     }
-    // The voice turn is persisted server-side but this thread's local state never
-    // saw it — reload the conversation on next open so chat and voice stay one
-    // continuous history for the owner.
+    // If the server assigned a conversation, reload it on next open. This also
+    // reconciles whatever the server persisted when the local stream truncated.
     if (convId) voiceTurnConvRef.current = { id: convId, projectId: turnProjectId }
-    return reply || null
+    return settleVoiceReply()
   }, [activeConvId, activeConvProjectId, activeModelId, activeEffort])
 
   async function stopGeneration() {
@@ -1984,9 +2042,28 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       danger: true,
     })
     if (!ok) return
+    ownerStoppedTurnRef.current = true
     try {
-      await fetch(`/api/assistant/turn/${turnId}/cancel`, { method: 'POST' })
-    } catch { /* best-effort — the local abort below still stops the UI */ }
+      const response = await fetch(`/api/assistant/turn/${turnId}/cancel`, { method: 'POST' })
+      if (response.status === 202) {
+        toast('Stop নেওয়া হয়েছে—ইতিমধ্যে অনুমোদিত একটি browser step preview-তে শেষ হচ্ছে; নতুন step আর চলবে না।', {
+          duration: 7000,
+        })
+      } else if (!response.ok) {
+        toast.error(await readAssistantError(
+          response,
+          'Server-side Stop নিশ্চিত হয়নি। এই স্ক্রিন থামছে, কিন্তু কাজটির status আবার চেক করুন।',
+        ))
+      }
+    } catch {
+      // Local abort only stops this UI stream. Be explicit when the durable
+      // server-side cancel could not be confirmed instead of showing a false Stop.
+      toast.error('Server-side Stop নিশ্চিত হয়নি—connection ফিরলে কাজটির status আবার চেক করুন।')
+    }
+    // The canceled head deliberately persists no assistant reply. Remove every
+    // partial model claim/card from the active optimistic bubble before aborting;
+    // the finally block resyncs only after streamingRef is terminal.
+    setMessages((prev) => removeStoppedAssistantDraft(prev))
     abortRef.current?.abort()
   }
 

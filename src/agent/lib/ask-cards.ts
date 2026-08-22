@@ -72,8 +72,10 @@ export async function answerAskCard(cardId: string, option: string, cause = 'ans
   const card = toView(row)
 
   if (card.status !== 'pending') {
-    // Idempotent success only for the SAME answer; a different one is refused.
-    if ((card.selectedOption ?? '').trim() === option.trim()) {
+    // Idempotent success is limited to a still-valid answered card. A direct
+    // lane supersedes its card when authority ends; accepting the same option
+    // from that closed card would resurrect a stale browser continuation.
+    if (card.status === 'answered' && (card.selectedOption ?? '').trim() === option.trim()) {
       await settleLinkedPlanSteps(cardId)
       return { ok: true, alreadyAnswered: true, card }
     }

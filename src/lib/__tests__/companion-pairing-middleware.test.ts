@@ -16,7 +16,7 @@ import { join } from 'node:path'
  * code the agent generated then failed identically. The owner saw only
  * "Unauthorized" and reasonably assumed the codes were bad.
  *
- * So these three paths must stay public in middleware, and their handlers must
+ * So these device-authenticated paths must stay public in middleware, and their handlers must
  * keep doing the real check. This test pins both halves — a silent removal here
  * would not surface until the owner next tries to pair, possibly months later.
  */
@@ -27,7 +27,10 @@ const MIDDLEWARE = readFileSync(join(ROOT, 'src/proxy.ts'), 'utf8')
 const EXTENSION_PATHS = [
   '/api/assistant/live-browser/pair',
   '/api/assistant/live-browser/poll',
+  '/api/assistant/live-browser/authorize',
   '/api/assistant/live-browser/result',
+  '/api/assistant/live-browser/frames',
+  '/api/assistant/live-browser/unpair',
 ] as const
 
 describe('companion extension paths stay reachable without a session cookie', () => {
@@ -53,7 +56,7 @@ describe('each allowlisted path still authenticates itself', () => {
     expect(companion).toContain('code_expired')
   })
 
-  it.each(['poll', 'result'])('%s verifies the device bearer token', (name) => {
+  it.each(['poll', 'authorize', 'result', 'frames', 'unpair'])('%s verifies the device bearer token', (name) => {
     const route = readFileSync(join(ROOT, `src/app/api/assistant/live-browser/${name}/route.ts`), 'utf8')
     expect(route).toContain('authenticateDevice')
     expect(route).toContain('requireAgentEnabled')
@@ -70,10 +73,11 @@ describe('the extension does not depend on a browser cookie', () => {
   const BACKGROUND = readFileSync(join(ROOT, 'extension/alma-companion/background.js'), 'utf8')
 
   it("every call to our API says credentials: 'omit'", () => {
-    // Three call sites: pair, poll, result. If a fourth is added it must say so too,
-    // otherwise the old invisible-cookie dependency creeps back in.
+    // Pair, poll, authorize, result, and frame upload all opt out explicitly. If
+    // another call site is added it must say so too, otherwise the old
+    // invisible-cookie dependency creeps back in.
     const omits = BACKGROUND.match(/credentials: 'omit'/g) ?? []
-    expect(omits.length).toBeGreaterThanOrEqual(3)
+    expect(omits.length).toBeGreaterThanOrEqual(5)
   })
 
   it('never asks for cookies to be included', () => {

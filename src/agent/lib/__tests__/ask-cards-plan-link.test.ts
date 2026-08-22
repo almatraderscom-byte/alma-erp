@@ -52,4 +52,17 @@ describe('ask-card plan linkage', () => {
     expect(mockPrisma.agentAskCard.updateMany).not.toHaveBeenCalled()
     expect(completePlanStepsLinkedToAskCard).toHaveBeenCalledWith('ask-1')
   })
+
+  it('rejects a same-option retry after the card was superseded', async () => {
+    mockPrisma.agentAskCard.findUnique.mockResolvedValueOnce(card('superseded', 'হ্যাঁ'))
+
+    const { answerAskCard } = await import('@/agent/lib/ask-cards')
+    await expect(answerAskCard('ask-1', 'হ্যাঁ')).resolves.toMatchObject({
+      ok: false,
+      alreadyAnswered: true,
+      reason: 'different_answer_recorded',
+    })
+    expect(mockPrisma.agentAskCard.updateMany).not.toHaveBeenCalled()
+    expect(completePlanStepsLinkedToAskCard).not.toHaveBeenCalled()
+  })
 })

@@ -152,6 +152,18 @@ describe('parallel-call policy (Phase 3 §D)', () => {
   })
 })
 
+describe('direct YouTube browser routing', () => {
+  it.each([
+    'ইউটিউবে একটা মিউজিক প্লে করো',
+    'Play Interstellar soundtrack on YouTube',
+    'youtube e lofi search kore play koro',
+  ])('selects the browser pack with live look and act: %s', (text) => {
+    const packs = matchIntentPacks(text)
+    expect(packs).toContain('browser')
+    expect(assemblePack(packs).names).toEqual(expect.arrayContaining(['live_browser_look', 'live_browser_act']))
+  })
+})
+
 describe('mac pack routing (live-hit 2026-07-31)', () => {
   it('routes his Mac phrasings to the mac pack', () => {
     // Registering the tools and naming them in the prompt was not enough: without

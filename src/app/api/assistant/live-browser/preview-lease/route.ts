@@ -3,8 +3,8 @@ import { type NextRequest } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { resolveOwnerUserIds } from '@/agent/lib/native-owner-push'
 import {
+  cancelLiveBrowserTurn,
   renewBrowserPreviewLease,
-  stopBrowserPreviewLeases,
 } from '@/agent/lib/live-browser/companion'
 import { getJwt } from '@/lib/api-guards'
 import { prisma } from '@/lib/prisma'
@@ -51,7 +51,18 @@ export async function POST(req: NextRequest) {
   })
   const ownedDeviceIds = ownedDevices.map((device) => device.id)
   if (body.on === false) {
-    await stopBrowserPreviewLeases({ deviceIds: ownedDeviceIds, turnId, conversationId })
+    // In a witnessed lane, turning preview off also stops browser work. The
+    // cancel transaction shares command/device locks; if one effect is already
+    // executing we return `stopping` and keep its lease alive until it finishes.
+    const stopped = await cancelLiveBrowserTurn(turnId)
+    if ((stopped.inFlightEffects ?? 0) > 0) {
+      return Response.json({
+        ok: false,
+        stopping: true,
+        inFlightEffects: stopped.inFlightEffects,
+      }, { status: 202 })
+    }
+    if (!stopped.found) return Response.json({ error: 'turn_not_running' }, { status: 409 })
     return Response.json({ ok: true }, { headers: { 'Cache-Control': 'private, no-store' } })
   }
 
