@@ -311,8 +311,28 @@ export async function enqueueTerminalRepair({ redisUrl, data }) {
  *
  * @returns {Promise<{ outcome: 'repaired' | 'already_terminal' | 'failed', seq?: number, error?: string }>}
  */
-export async function repairMissingTerminal({ supabase, turnId, status, terminal = null, publisher = null, redisUrl = null }) {
+export async function repairMissingTerminal({ supabase, turnId, status, terminal = null, publisher = null, redisUrl = null, sleep = null }) {
   try {
+    // A terminal is a terminal wherever it sits: the chat route emits
+    // `conversation_compacted` AFTER `done` and the worker mirrors both, so the
+    // LAST row is not the right question (Codex P1 #837 r4).
+    const { data: terminals, error: terminalError } = await supabase
+      .from('agent_turn_events')
+      .select('seq,type,payload')
+      .eq('turn_id', turnId)
+      .in('type', ['done', 'error'])
+      .order('seq', { ascending: false })
+      .limit(1)
+    if (terminalError) throw terminalError
+    const existing = Array.isArray(terminals) && terminals.length > 0 ? terminals[0] : null
+    if (existing) {
+      // Idempotent for the log — but a retry after a failed publish must still
+      // reach the subscribed tails, so the existing terminal is (re)published;
+      // tails dedupe by seq.
+      const published = await publishRepairedTerminal({ turnId, row: existing, publisher, redisUrl, sleep })
+      if (!published) return { outcome: 'failed', seq: existing.seq, error: 'terminal present but not published' }
+      return { outcome: 'already_terminal', seq: existing.seq }
+    }
     const { data, error } = await supabase
       .from('agent_turn_events')
       .select('seq,type')
@@ -321,7 +341,6 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
       .limit(1)
     if (error) throw error
     const last = Array.isArray(data) && data.length > 0 ? data[0] : null
-    if (last && (last.type === 'done' || last.type === 'error')) return { outcome: 'already_terminal', seq: last.seq }
     const seq = last && typeof last.seq === 'number' ? last.seq + 1 : 0
     const carried = terminal && (terminal.type === 'done' || terminal.type === 'error') ? terminal : null
     const payload = carried ?? {
@@ -333,7 +352,11 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
     if (writeError) throw writeError
     await supabase.from('agent_turns').update({ last_seq: seq }).eq('id', turnId)
     console.warn(`[worker] streamed-turn ${turnId} — repaired missing terminal at seq ${seq} (${payload.type})`)
-    await publishRepairedTerminal({ turnId, row, publisher, redisUrl })
+    // The row is durable, but a tail that already subscribed never polls the
+    // log: an unpublished repair is NOT complete — report failure so the job
+    // retries (the retry takes the already_terminal → republish path).
+    const published = await publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep })
+    if (!published) return { outcome: 'failed', seq, error: 'terminal repaired but not published' }
     return { outcome: 'repaired', seq }
   } catch (err) {
     console.error(`[worker] streamed-turn ${turnId} — terminal repair failed:`, err?.message ?? err)
@@ -341,16 +364,29 @@ export async function repairMissingTerminal({ supabase, turnId, status, terminal
   }
 }
 
-async function publishRepairedTerminal({ turnId, row, publisher, redisUrl }) {
+const REPAIR_PUBLISH_ATTEMPTS = 3
+const REPAIR_PUBLISH_DELAYS_MS = [250, 750]
+
+/** @returns {Promise<boolean>} true when published (or no channel was configured — nothing to reach). */
+async function publishRepairedTerminal({ turnId, row, publisher, redisUrl, sleep }) {
   const owned = !publisher && redisUrl ? new Redis(redisUrl, { maxRetriesPerRequest: null }) : null
   const client = publisher ?? owned
-  if (!client) return
+  if (!client) return true
+  const wait = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const message = JSON.stringify({ seq: row.seq, type: row.type, payload: row.payload })
   try {
-    await client.publish(turnEventChannel(turnId), JSON.stringify({ seq: row.seq, type: row.type, payload: row.payload }))
-  } catch (err) {
-    // The row is durable; a reconnecting tail replays it. Only a tail that is
-    // already subscribed misses out, and that needs Redis to be up anyway.
-    console.warn(`[worker] streamed-turn ${turnId} — repaired terminal publish failed:`, err?.message ?? err)
+    let lastError = null
+    for (let attempt = 0; attempt < REPAIR_PUBLISH_ATTEMPTS; attempt++) {
+      try {
+        await client.publish(turnEventChannel(turnId), message)
+        return true
+      } catch (err) {
+        lastError = err
+      }
+      if (attempt < REPAIR_PUBLISH_ATTEMPTS - 1) await wait(REPAIR_PUBLISH_DELAYS_MS[attempt] ?? 500)
+    }
+    console.warn(`[worker] streamed-turn ${turnId} — repaired terminal publish FAILED after ${REPAIR_PUBLISH_ATTEMPTS} attempts:`, lastError?.message ?? lastError)
+    return false
   } finally {
     if (owned) {
       try { await owned.quit() } catch { owned.disconnect?.() }
