@@ -316,6 +316,41 @@ function canonicalObservedYouTubeVideoId(value: string): string | null {
   }
 }
 
+function canonicalObservedYouTubeResultTarget(value: string): {
+  videoId: string
+  canonicalTargetUrl: string
+} | null {
+  try {
+    const url = new URL(value, 'https://www.youtube.com/')
+    const host = url.hostname.toLowerCase().replace(/^www\./, '')
+    if (url.protocol !== 'https:' || host !== 'youtube.com' || url.hash) return null
+    if (url.pathname === '/watch') {
+      const videoId = url.searchParams.get('v')?.trim() ?? ''
+      if (
+        url.searchParams.getAll('v').length !== 1
+        || !/^[A-Za-z0-9_-]{11}$/.test(videoId)
+      ) return null
+      // Search-result anchors commonly carry playlist/radio/tracking context.
+      // Use those bytes only to identify the witnessed result; the effect below
+      // always navigates to this server-derived canonical URL so Mix/autoplay
+      // parameters never reach the browser.
+      return {
+        videoId,
+        canonicalTargetUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      }
+    }
+    const shorts = url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})$/)
+    return shorts && !url.search
+      ? {
+          videoId: shorts[1],
+          canonicalTargetUrl: `https://www.youtube.com/shorts/${shorts[1]}`,
+        }
+      : null
+  } catch {
+    return null
+  }
+}
+
 /** The direct YouTube slice is intentionally narrower than general browser
  * control: it may search and operate playback, never social/account controls. */
 function directYouTubeTargetAllowed(action: LiveBrowserAction, fingerprint: string): boolean {
@@ -338,7 +373,7 @@ function directYouTubeTargetAllowed(action: LiveBrowserAction, fingerprint: stri
   }
 
   if (observed.href) {
-    return Boolean(canonicalObservedYouTubeVideoId(observed.href))
+    return Boolean(canonicalObservedYouTubeResultTarget(observed.href))
   }
 
   const buttonLike = observed.tag === 'button'
@@ -362,14 +397,15 @@ function observedYouTubeMediaIdentity(fingerprint: string): {
   videoId: string
   title: string
   fingerprint: string
+  canonicalTargetUrl: string
 } | null {
   const observed = parseObservedElementFingerprint(fingerprint)
   if (!observed?.href) return null
-  const videoId = canonicalObservedYouTubeVideoId(observed.href)
+  const target = canonicalObservedYouTubeResultTarget(observed.href)
   const title = [observed.text, observed.name, observed.aria]
     .map((value) => value.trim())
     .find(Boolean) ?? ''
-  return videoId && title ? { videoId, title, fingerprint } : null
+  return target && title ? { ...target, title, fingerprint } : null
 }
 function bumpOscillation(key: string): string | null {
   const now = Date.now()
@@ -1708,6 +1744,7 @@ const live_browser_act: AgentTool = {
       ? input.directBrowserOwnerRequest.trim()
       : ''
     let directTypeValue: string | null = null
+    let directCanonicalTargetUrl: string | null = null
     if (directBrowserTask && action === 'type') {
       const expectedQuery = parseDirectMediaOwnerRequest(ownerRequest, [{
         id: dev.deviceId,
@@ -1827,10 +1864,13 @@ const live_browser_act: AgentTool = {
         const laneToken = typeof input.directBrowserLaneToken === 'string'
           ? input.directBrowserLaneToken
           : ''
+        directCanonicalTargetUrl = mediaIdentity.canonicalTargetUrl
         if (!conversationId || !laneToken || !(await bindDirectYouTubeSelectedMedia({
           conversationId,
           token: laneToken,
-          ...mediaIdentity,
+          videoId: mediaIdentity.videoId,
+          title: mediaIdentity.title,
+          fingerprint: mediaIdentity.fingerprint,
         }))) {
           return {
             success: false,
@@ -1875,6 +1915,7 @@ const live_browser_act: AgentTool = {
       if (requestedRef) params.ref = requestedRef
       if (input.value !== undefined) params.value = directTypeValue ?? input.value
       if (directTypeValue !== null) params.exactValueSubmit = true
+      if (directCanonicalTargetUrl !== null) params.canonicalTargetUrl = directCanonicalTargetUrl
       if (input.option !== undefined) params.option = input.option
       if (input.submit !== undefined) params.submit = Boolean(input.submit)
       if (input.key) params.key = input.key

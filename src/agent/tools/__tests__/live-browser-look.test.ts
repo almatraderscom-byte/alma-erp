@@ -1545,13 +1545,13 @@ describe('live_browser_act receipt transport', () => {
     expect(runCommand).not.toHaveBeenCalled()
   })
 
-  it('blocks playlist/mix result URLs while preserving exact canonical watch and Shorts links', async () => {
+  it('canonicalizes playlist/mix result URLs before dispatch and preserves exact watch/Shorts links', async () => {
     const youtubeClaim = {
       ...claim,
       currentUrl: 'https://www.youtube.com/results?search_query=requested+song',
       allowedRefs: ['e-mix', 'e-watch', 'e-shorts'],
       refFingerprints: {
-        'e-mix': '["a","","link","","","Requested song mix","/watch?v=abcDEF_1234&list=RDabcDEF_1234&start_radio=1"]',
+        'e-mix': '["a","","link","","","Requested song","/watch?v=abcDEF_1234&list=RDabcDEF_1234&start_radio=1&pp=tracking"]',
         'e-watch': '["a","","link","","","Requested song","/watch?v=abcDEF_1234"]',
         'e-shorts': '["a","","link","","","Requested short","/shorts/shortsID001"]',
       },
@@ -1577,9 +1577,19 @@ describe('live_browser_act receipt transport', () => {
       conversationId: 'conv-mix',
       directBrowserLaneToken: 'turn-mix',
     })
-    expect(mix).toMatchObject({ success: false, errorCode: 'workflow_blocked' })
-    expect(runCommand).not.toHaveBeenCalled()
-    expect(bindDirectYouTubeSelectedMedia).not.toHaveBeenCalled()
+    expect(mix.success).toBe(true)
+    expect(bindDirectYouTubeSelectedMedia).toHaveBeenCalledWith(expect.objectContaining({
+      videoId: 'abcDEF_1234',
+      title: 'Requested song',
+    }))
+    const mixClick = runCommand.mock.calls.find((call) => call[1] === 'click')
+    expect(mixClick?.[2]).toMatchObject({
+      ref: 'e-mix',
+      canonicalTargetUrl: 'https://www.youtube.com/watch?v=abcDEF_1234',
+    })
+
+    bindDirectYouTubeSelectedMedia.mockClear()
+    runCommand.mockClear()
 
     const watch = await tool.handler({
       ...baseInput,
@@ -1593,7 +1603,10 @@ describe('live_browser_act receipt transport', () => {
       videoId: 'abcDEF_1234',
       title: 'Requested song',
     }))
-    expect(runCommand.mock.calls.filter((call) => call[1] === 'click')).toHaveLength(1)
+    const watchClick = runCommand.mock.calls.find((call) => call[1] === 'click')
+    expect(watchClick?.[2]).toMatchObject({
+      canonicalTargetUrl: 'https://www.youtube.com/watch?v=abcDEF_1234',
+    })
 
     bindDirectYouTubeSelectedMedia.mockClear()
     runCommand.mockClear()
@@ -1609,7 +1622,10 @@ describe('live_browser_act receipt transport', () => {
       videoId: 'shortsID001',
       title: 'Requested short',
     }))
-    expect(runCommand.mock.calls.filter((call) => call[1] === 'click')).toHaveLength(1)
+    const shortsClick = runCommand.mock.calls.find((call) => call[1] === 'click')
+    expect(shortsClick?.[2]).toMatchObject({
+      canonicalTargetUrl: 'https://www.youtube.com/shorts/shortsID001',
+    })
   })
 
   it('blocks a href-less Play control for a search-only owner request', async () => {

@@ -505,6 +505,60 @@ describe('Companion DOM observation generation', () => {
     expect(button.dispatchEvent).not.toHaveBeenCalled()
   })
 
+  it('opens a witnessed YouTube result through the canonical server target without clicking its mix URL', async () => {
+    const root = new FakeElement('HTML', '') as FakeElement & { appendChild: ReturnType<typeof vi.fn> }
+    root.setAttribute('data-alma-observation-id', 'dom-generation-result')
+    root.appendChild = vi.fn()
+    const resultLink = new FakeElement('A', 'Coldplay - Fix You (Official Video)')
+    resultLink.setAttribute('role', 'link')
+    resultLink.setAttribute('href', '/watch?v=k4V3Mo61fJM&list=RDk4V3Mo61fJM&start_radio=1')
+    resultLink.setAttribute('data-alma-ref', 'e-result')
+    resultLink.setAttribute('data-alma-observation-id', 'dom-generation-result')
+    const assign = vi.fn()
+    const pageClick = runInNewContext(
+      `(${sourceFunction('async function pageClick', '\nasync function pageType')})`,
+      {
+        document: {
+          documentElement: root,
+          querySelector: () => resultLink,
+          getElementById: () => null,
+          createElement: () => ({ className: '', style: {}, remove: vi.fn() }),
+        },
+        location: {
+          href: 'https://www.youtube.com/results?search_query=coldplay+fix+you+official+video',
+          assign,
+        },
+        performance: { timeOrigin: 6000 },
+        chrome: activeRendererChrome(),
+        Date,
+        URL,
+        Array,
+        String,
+        JSON,
+        Math,
+        Promise,
+        setTimeout: (callback: () => void) => { callback() },
+      },
+    ) as (arg: Record<string, unknown>) => Promise<{ ok: boolean; url?: string }>
+
+    await expect(pageClick({
+      ref: 'e-result',
+      domObservationId: 'dom-generation-result',
+      refFingerprint: fingerprintOf(resultLink),
+      expectedCurrentUrl: 'https://www.youtube.com/results?search_query=coldplay+fix+you+official+video',
+      expectedDocumentId: '6000',
+      canonicalTargetUrl: 'https://www.youtube.com/watch?v=k4V3Mo61fJM',
+      ...activeRendererAuthority(),
+    })).resolves.toMatchObject({
+      ok: true,
+      url: 'https://www.youtube.com/watch?v=k4V3Mo61fJM',
+    })
+    expect(assign).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenCalledWith('https://www.youtube.com/watch?v=k4V3Mo61fJM')
+    expect(resultLink.click).not.toHaveBeenCalled()
+    expect(resultLink.dispatchEvent).not.toHaveBeenCalled()
+  })
+
   it('makes a pageClick injection that begins after its absolute deadline inert', async () => {
     const root = new FakeElement('HTML', '')
     root.setAttribute('data-alma-observation-id', 'dom-generation-1')
