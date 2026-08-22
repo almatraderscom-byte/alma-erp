@@ -171,7 +171,7 @@ export async function lockDirectYouTubeLaneAuthority(
   await tx.$queryRaw(Prisma.sql`
     SELECT pg_advisory_xact_lock(
       hashtextextended(${laneId(conversationId)}, 0)
-    )
+    )::text AS lock_token
   `)
 }
 
@@ -182,7 +182,7 @@ async function lockLiveBrowserDispatchAuthority(tx: typeof db): Promise<void> {
   await tx.$queryRaw(Prisma.sql`
     SELECT pg_advisory_xact_lock(
       hashtextextended('alma_live_browser_dispatch_global', 0)
-    ) /* live_browser_dispatch_global */
+    )::text AS lock_token /* live_browser_dispatch_global */
   `)
 }
 

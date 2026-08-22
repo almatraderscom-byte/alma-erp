@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const callOrder: string[] = []
+const advisoryQueries: string[] = []
 const commandFindUnique = vi.fn()
 const commandFindMany = vi.fn()
 const commandFindFirst = vi.fn()
@@ -26,6 +27,7 @@ const transaction = vi.fn(async (callback: (tx: unknown) => unknown) => callback
   $queryRaw: (...args: unknown[]) => {
     const query = args[0] as { strings?: readonly string[] }
     const sql = query?.strings?.join('?') ?? ''
+    if (sql.includes('pg_advisory_xact_lock')) advisoryQueries.push(sql)
     if (sql.includes('live_browser_preview_device')) {
       callOrder.push('device_lock')
       return Promise.resolve([])
@@ -125,6 +127,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks()
   callOrder.length = 0
+  advisoryQueries.length = 0
   commandFindUnique.mockResolvedValue({ status: 'done', result: {}, error: null })
   commandFindMany.mockReset().mockResolvedValue([])
   commandFindFirst.mockReset().mockResolvedValue(null)
@@ -169,6 +172,8 @@ describe('live Browser preview producer ordering', () => {
     })).resolves.toBeNull()
 
     expect(callOrder).toEqual(['authority_lock', 'device_lock', 'owner_current'])
+    expect(advisoryQueries).toHaveLength(2)
+    expect(advisoryQueries.every((sql) => sql.includes('::text AS lock_token'))).toBe(true)
     expect(ownerTurnCurrent).toHaveBeenCalledWith(
       'conv-1',
       'turn-old',
@@ -211,6 +216,8 @@ describe('live Browser preview producer ordering', () => {
     await vi.advanceTimersByTimeAsync(701)
     await expect(resultPromise).resolves.toMatchObject({ ok: true, commandId: 'cmd-1' })
     expect(callOrder).toEqual(['authority_lock', 'dispatch_lock', 'turn', 'command'])
+    expect(advisoryQueries).toHaveLength(2)
+    expect(advisoryQueries.every((sql) => sql.includes('::text AS lock_token'))).toBe(true)
     expect(transaction).toHaveBeenCalledTimes(1)
   })
 

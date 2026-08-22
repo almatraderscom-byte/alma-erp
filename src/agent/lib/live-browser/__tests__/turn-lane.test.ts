@@ -25,7 +25,7 @@ const defaultTurn = vi.hoisted(() => (id: string, conversationId: string = 'conv
 })
 
 const prismaMock = vi.hoisted(() => ({
-  $queryRaw: vi.fn(async () => [{ locked: true }]),
+  $queryRaw: vi.fn(async (_query?: unknown) => [{ locked: true }]),
   $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(prismaMock)),
   agentTurn: {
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
@@ -156,6 +156,17 @@ describe('durable direct YouTube turn lane', () => {
     vi.setSystemTime(NOW)
   })
 
+  it('casts every advisory-lock result before Prisma deserializes it', async () => {
+    const lane = await resolveDirectYouTubeTurnRequest('conv-1', [REQUEST], 'turn-1')
+    expect(lane?.state).toBe('ready')
+
+    const advisoryQueries = prismaMock.$queryRaw.mock.calls
+      .map(([query]) => (query as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .filter((sql) => sql.includes('pg_advisory_xact_lock'))
+    expect(advisoryQueries).toHaveLength(2)
+    expect(advisoryQueries.every((sql) => sql.includes('::text AS lock_token'))).toBe(true)
+  })
+
   it('turns a potential YouTube mutation missed by strict routing into a status-only lane', async () => {
     const wording = 'Please try searching YouTube for Fix You'
     const lane = await resolveDirectYouTubeTurnRequest('conv-1', [wording], 'turn-1')
@@ -207,8 +218,8 @@ describe('durable direct YouTube turn lane', () => {
   it('creates no late pre-Stop lane when STOP wins the global dispatch lock', async () => {
     const turn = defaultTurn('turn-1')
     store.turns.set('turn-1', turn)
-    prismaMock.$queryRaw.mockImplementation(async (query?: { strings?: readonly string[] }) => {
-      const sql = query?.strings?.join('?') ?? ''
+    prismaMock.$queryRaw.mockImplementation(async (query?: unknown) => {
+      const sql = (query as { strings?: readonly string[] } | undefined)?.strings?.join('?') ?? ''
       if (sql.includes('live_browser_dispatch_global')) {
         store.dispatchBoundary = new Date(
           (turn.startedAt as Date).getTime() + 1,

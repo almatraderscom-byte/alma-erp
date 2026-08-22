@@ -49,7 +49,7 @@ async function lockLiveBrowserDispatchAuthority(tx: Prisma.TransactionClient): P
   await tx.$queryRaw(Prisma.sql`
     SELECT pg_advisory_xact_lock(
       hashtextextended('alma_live_browser_dispatch_global', 0)
-    ) /* live_browser_dispatch_global */
+    )::text AS lock_token /* live_browser_dispatch_global */
   `)
 }
 
@@ -607,7 +607,7 @@ async function lockLiveBrowserPreviewDevice(
   await tx.$queryRaw(Prisma.sql`
     SELECT pg_advisory_xact_lock(
       hashtextextended(${`alma_live_browser_preview:${deviceId}`}, 0)
-    ) /* live_browser_preview_device */
+    )::text AS lock_token /* live_browser_preview_device */
   `)
 }
 
