@@ -229,6 +229,36 @@ describe('error salvage keeps the persisted warning in the document (Codex P1 #8
     expect(ownerVisibleTextFromDocument(doc)).toBe(blocker)
   })
 
+  it('queues the lifecycle events so the live reducers see the salvage before the error (r4)', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    const live = { state: createLiveProseState() }
+    const feed = (events: WireEvent[]) => { for (const e of events) live.state = applyProseEvent(live.state, e) }
+    feed(tracker.process(text('প্রথম অংশ')))
+    feed(tracker.process(tool('1')))
+    feed(tracker.process(toolEnd('1')))
+    tracker.salvage(['প্রথম অংশ', suffix].join('\n\n'), { suffix })
+    feed(tracker.drainQueued())
+    const doc = tracker.document('m')
+    expect(visibleProseBlocks(live.state).map((b) => [b.id, b.kind, b.text]))
+      .toEqual(visibleDocumentBlocks(doc.blocks).map((b) => [b.id, b.kind, b.text]))
+    expect(tracker.drainQueued()).toEqual([])   // drained exactly once
+
+    // A replaced salvage text retires the streamed block LIVE too.
+    const replaced = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    const liveR = { state: createLiveProseState() }
+    for (const e of replaced.process(text('ভিডিও চালু করেছি'))) liveR.state = applyProseEvent(liveR.state, e)
+    replaced.salvage('ব্রাউজার lane settle করা যায়নি।')
+    for (const e of replaced.drainQueued()) liveR.state = applyProseEvent(liveR.state, e)
+    expect(visibleProseBlocks(liveR.state).map((b) => b.text)).toEqual(['ব্রাউজার lane settle করা যায়নি।'])
+  })
+
+  it('queues nothing for a v1 turn (legacy clients keep the accumulated text)', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 1, turnId: T })
+    tracker.process(text('অংশ'))
+    tracker.salvage(['অংশ', suffix].join('\n\n'), { suffix })
+    expect(tracker.drainQueued()).toEqual([])
+  })
+
   it('is a no-op when the persisted content already equals the visible prose', () => {
     const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
     tracker.process(text('সম্পূর্ণ উত্তর'))

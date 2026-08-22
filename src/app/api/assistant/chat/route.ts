@@ -1228,6 +1228,10 @@ export async function POST(req: NextRequest) {
           // Also log to stdout so the cause is visible in Vercel runtime logs, not only Sentry.
           console.error('[assistant/chat] stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
           void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
+          // Prose the error salvage committed (settle + the warning block) must
+          // reach the live reducers BEFORE the terminal error — otherwise the
+          // live transcript and the reloaded one differ (Codex P1 #834 r4).
+          for (const evt of proseLifecycle.drainQueued()) emit(evt as AgentEvent)
           emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {

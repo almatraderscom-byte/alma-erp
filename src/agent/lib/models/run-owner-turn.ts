@@ -5688,6 +5688,16 @@ async function* runAlternateProviderTurn(
               categories: ['media_playback_unverified'],
               snippets: [],
             }
+          }
+          if (proseLifecycle?.protocol === 2) {
+            // v2: the tracker is the prose authority for live AND cold. One
+            // salvage of the FINAL salvageText (suffix, gate replacement, or the
+            // lane settlement blocker) yields the supersede/commit events the
+            // live reducers need and the blocks the document persists — the
+            // blocker no longer hides behind a stale stream (Codex P1 #834 r4).
+            proseLifecycle.salvage(salvageText, { suffix: salvageSuffix })
+            for (const evt of proseLifecycle.drainQueued()) yield evt as AgentEvent
+          } else if (playbackGate.replaced) {
             yield { type: 'text_delta', delta: salvageText }
           } else {
             yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
