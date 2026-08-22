@@ -748,10 +748,16 @@ export async function POST(req: NextRequest) {
   // mirror (internal call) reads the stamp the enqueue route persisted, so the
   // same turn never streams two prose families. Voice/native-loop/kill-switch
   // force v1 inside negotiateProseProtocol.
-  const proseProtocol = isInternalCall && turnId
+  let proseProtocol = isInternalCall && turnId
     ? await getTurnProseProtocol(turnId)
     : negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
-  if (!isInternalCall) await setTurnProseProtocol(turnId, proseProtocol)
+  // Stamping is PART of negotiation: if the row cannot carry the protocol,
+  // reconnect readers would announce v1 for a v2 live stream — so the turn
+  // is served as v1 instead (the legacy wire is always safe).
+  if (!isInternalCall && proseProtocol === 2) {
+    const stamped = await setTurnProseProtocol(turnId, proseProtocol)
+    if (!stamped) proseProtocol = 1
+  }
   const proseLifecycle = new ProseLifecycleTracker({ protocol: proseProtocol, turnId })
 
   // P0-2: for a continuation this stamp lands in a DIFFERENT process from the

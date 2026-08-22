@@ -33,6 +33,7 @@ import {
   proseTextFromPresentationV2,
   reconcileProseTimeline,
   timelineFromPresentationV2,
+  withClientErrorBlock,
 } from '@/agent/lib/presentation/prose-timeline'
 
 /** Prose lifecycle v2 capability this client advertises (prose-lifecycle.ts). */
@@ -1632,7 +1633,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           }
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId
-              ? { ...m, streaming: false, text: `⚠️ ${banglaMsg}` }
+              // A v2 message renders only block-addressed prose, so the warning
+              // must be a block too (Codex P1 #834) — v1 keeps the plain text.
+              ? { ...m, streaming: false, ...withClientErrorBlock(m, `⚠️ ${banglaMsg}`) }
               : m
           ))
         }
@@ -1804,7 +1807,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       } else {
         const msg = err instanceof Error ? err.message : String(err)
         setMessages((prev) => prev.map((m) =>
-          m.id === assistantMsgId ? { ...m, streaming: false, text: `⚠️ ${msg}` } : m
+          m.id === assistantMsgId ? { ...m, streaming: false, ...withClientErrorBlock(m, `⚠️ ${msg}`) } : m
         ))
       }
     } finally {
