@@ -5726,8 +5726,8 @@ async function* runAlternateProviderTurn(
     // the deadline-abort path persisted partial progress). If real work already
     // streamed, persist it BEFORE surfacing a terminal error — a provider error
     // makes the work no less real. Fail-open: worst case matches old behavior.
-    const salvagePartialWorkOnError = async (): Promise<void> => {
-      if (canceled || (!finalText.trim() && toolRecords.length === 0)) return
+    const salvagePartialWorkOnError = async (): Promise<string | null> => {
+      if (canceled || (!finalText.trim() && toolRecords.length === 0)) return null
       try {
         const okSteps = toolRecords.filter((r) => r.status === 'success').length
         const suffix =
@@ -5808,7 +5808,9 @@ async function* runAlternateProviderTurn(
             })),
           })
         }
+        return savedMsg.id as string
       } catch { /* best-effort */ }
+      return null
     }
     // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
     // silently"): when the owner explicitly pinned this model on the conversation
@@ -5847,10 +5849,16 @@ async function* runAlternateProviderTurn(
         pushTextEntry({ t: 'text', text: playbackGate.text })
         yield { type: 'text_delta', delta: finalText }
       }
-      await salvagePartialWorkOnError()
+      const salvagedId = await salvagePartialWorkOnError()
+      // The salvage committed prose (settle + warning block): the live reducers
+      // must see it BEFORE the terminal error — this path yields the error
+      // itself, so the route's drain never runs here (Codex P1 #834 r5).
+      for (const evt of proseLifecycle?.drainQueued() ?? []) yield evt as AgentEvent
       const msg = err instanceof Error ? err.message : String(err)
       yield {
         type: 'error',
+        // The salvaged row's id: clients pair the tail by identity (#839 r5).
+        ...(salvagedId ? { messageId: salvagedId } : {}),
         message:
           `⚠️ Boss, এই চ্যাটটা **${model.label}**-এ পিন করা, কিন্তু মডেলটা এখন সাড়া দিচ্ছে না — ` +
           `২ বার চেষ্টা করেছি, আর আপনার অনুমতি ছাড়া চুপচাপ অন্য মডেলে যাইনি। ` +
@@ -5915,9 +5923,14 @@ async function* runAlternateProviderTurn(
       pushTextEntry({ t: 'text', text: playbackGate.text })
       yield { type: 'text_delta', delta: finalText }
     }
-    await salvagePartialWorkOnError()
+    const salvagedId = await salvagePartialWorkOnError()
+    for (const evt of proseLifecycle?.drainQueued() ?? []) yield evt as AgentEvent
     const msg = err instanceof Error ? err.message : String(err)
-    yield { type: 'error', message: `Model error (${model.label}): ${msg}` }
+    yield {
+      type: 'error',
+      ...(salvagedId ? { messageId: salvagedId } : {}),
+      message: `Model error (${model.label}): ${msg}`,
+    }
   }
 }
 
