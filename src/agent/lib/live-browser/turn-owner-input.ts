@@ -191,6 +191,15 @@ export async function isTurnOwnerExecutionCurrent(
         conversationId: normalizedConversationId,
         id: { not: normalizedTurnId },
         startedAt: { gte: current.startedAt },
+        // Only another owner-authored turn can supersede the owner's current
+        // browser authority. Unattended Plan-Driver/heartbeat work is stamped
+        // owner_policy and may start while a witnessed browser turn is waiting
+        // on Chrome; treating that background work as a newer owner instruction
+        // makes the next receipt-bound ACT spuriously stale.
+        OR: [
+          { instructionOrigin: null },
+          { instructionOrigin: 'owner_direct' },
+        ],
       },
       select: { id: true },
     })

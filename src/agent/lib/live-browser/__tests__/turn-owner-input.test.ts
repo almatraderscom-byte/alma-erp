@@ -7,6 +7,7 @@ const store = vi.hoisted(() => ({
     status: string
     cancelRequested: boolean
     startedAt: Date
+    instructionOrigin: 'owner_direct' | 'owner_policy' | null
   }>(),
   messages: new Map<string, {
     id: string
@@ -25,6 +26,7 @@ const prismaMock = vi.hoisted(() => ({
       id: string | { not?: string; notIn?: string[] }
       conversationId: string
       startedAt?: { gte: Date }
+      OR?: Array<{ instructionOrigin: 'owner_direct' | 'owner_policy' | null }>
     } }) => {
       if (store.reject) throw new Error('database unavailable')
       const idFilter = where.id
@@ -38,6 +40,7 @@ const prismaMock = vi.hoisted(() => ({
           && (!idFilter.notIn || !idFilter.notIn.includes(id))
           && row.conversationId === where.conversationId
           && (!where.startedAt || row.startedAt.getTime() >= where.startedAt.gte.getTime())
+          && (!where.OR || where.OR.some((clause) => row.instructionOrigin === clause.instructionOrigin))
         ))
         .map(([id]) => ({ id }))[0] ?? null
     }),
@@ -107,6 +110,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.001Z'),
+      instructionOrigin: null,
     })
     store.turns.set('turn-b', {
       conversationId: 'conv-1',
@@ -114,6 +118,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.002Z'),
+      instructionOrigin: null,
     })
     store.messages.set('msg-a', {
       id: 'msg-a',
@@ -254,6 +259,16 @@ describe('turn-linked owner input', () => {
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-b')).toBe(true)
   })
 
+  it('does not let newer unattended policy work revoke the active owner turn', async () => {
+    const turnB = store.turns.get('turn-b')!
+    turnB.instructionOrigin = 'owner_policy'
+    // A policy turn has no owner-authored message; it is background work under
+    // standing authority, not a new instruction that can supersede turn A.
+    store.messages.delete('msg-b')
+
+    expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(true)
+  })
+
   it('revokes on the newer durable owner message before its AgentTurn is created', async () => {
     store.turns.delete('turn-b')
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(false)
@@ -272,6 +287,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: new Date('2026-08-21T12:00:00.003Z'),
+      instructionOrigin: null,
     })
     store.messages.set('msg-c', {
       id: 'msg-c',
@@ -306,6 +322,7 @@ describe('turn-linked owner input', () => {
       status: 'running',
       cancelRequested: false,
       startedAt: turnA.startedAt,
+      instructionOrigin: null,
     })
     expect(await isTurnOwnerExecutionCurrent('conv-1', 'turn-a')).toBe(false)
 
