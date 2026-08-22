@@ -6129,7 +6129,7 @@ final class AssistantVM {
                         recoverableTurn = descriptor
                         markOutgoingAccepted(clientMessageId: descriptor.clientMessageId)
                     }
-                    adoptAssistantIdentity(status.assistantMessageId)
+                    applyTerminalStatusIdentity(status, matchedOurTurn: true)
                     await finishRecovery(terminalStatus: status.status ?? "done")
                 } else {
                     startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
@@ -6147,14 +6147,16 @@ final class AssistantVM {
                     pendingAutoContinue = true
                     pendingAutoContinueTurnId = tid
                 }
-                adoptAssistantIdentity(status.assistantMessageId)
+                applyTerminalStatusIdentity(status, matchedOurTurn: true)
                 await finishRecovery(terminalStatus: status.status ?? "done")
             } else if trigger == "transport-drop" {
                 // Bounded proof: turn creation can lag the send by a few seconds
                 // (auth, persistence, vision). Poll briefly before declaring failure.
                 startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
             } else {
-                adoptAssistantIdentity(status.assistantMessageId)
+                // Reached only when the terminal row was NOT matched to our
+                // turn: its assistantMessageId belongs to another reply.
+                applyTerminalStatusIdentity(status, matchedOurTurn: false)
                 await finishRecovery(terminalStatus: status.status ?? "done")
             }
         }
@@ -8462,6 +8464,20 @@ final class AssistantVM {
         let box = seqBox
         try await AssistantNet.streamEvents(request: req, buffer: buffer,
                                             onSeq: { box.value = max(box.value, $0) })
+    }
+
+    /// Codex P1 #839 r3: a terminal status names OUR assistant row only when it
+    /// was positively matched to the turn we were watching. The unmatched
+    /// fallback (a stale previous turn, a concurrently completed one) must settle
+    /// WITHOUT adopting that id — pairing the tail with a stranger's row by exact
+    /// identity would overwrite that row's content on the next history merge and
+    /// leave the real reply duplicated or detached.
+    func applyTerminalStatusIdentity(_ status: TurnStatusResponse, matchedOurTurn: Bool) {
+        guard matchedOurTurn else {
+            AlmaTurnLog.event("turn.identityNotAdopted", "unmatched terminal \(status.turnId ?? "-")")
+            return
+        }
+        adoptAssistantIdentity(status.assistantMessageId)
     }
 
     /// R-1 (handoff F-12): bind the streaming tail to the persisted assistant

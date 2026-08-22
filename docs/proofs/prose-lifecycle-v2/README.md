@@ -113,3 +113,35 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
 - #839 P1 + P2 → no positional fallback for a tail that knows its id; identity adopted in
   every terminal polling path. iOS full `AppParityV2Tests` on the stacked top (serial, second
   simulator): **416 tests, 0 failures** (`xcodebuild-test-8.log`).
+
+### 2026-08-23 — Codex round 2, fixed on the stacked branches
+- #834 P1 → 58edc767: the negotiated protocol is stamped when the turn ROW is created (every creation
+  path), so a durable tail / turn-status never sees an unstamped v2 turn.
+- #836 P1 → 487182b0: the pre-replay live subscription is bounded by a deadline (unreachable Redis
+  must not hold back the durable replay and the polling fallback).
+- #837 P1 → 19b20470 + 2a38a550: a missing durable terminal is repaired — inline publisher
+  (`finish()` writes a repair row) and worker (`repairMissingTerminal`); fixture exhausts the
+  8-attempt terminal budget.
+- #838 P1 + P2 → 076a4418: a terminal-only replay (`error: turn_replay_unavailable`, or a log holding
+  only `done`) settles the frozen partial instead of blanking it; prose whose anchors were dropped by
+  compaction keeps DOCUMENT order (rides with the next anchored block).
+- #839: no new findings.
+
+### 2026-08-23 — Codex round 3 (six P1), fixed on the stacked branches
+- #834 P1 → 0bd2d658 `ProseLifecycleTracker.salvage(text, { suffix })`: the error-salvage document
+  carries the persisted failure/continue warning (own `final` block; a replaced salvage text retires
+  the streamed blocks, reason `salvage`; a tool-only turn gets the warning as its only prose).
+  presentation suite on PR-A: 55/55.
+- #836 P1 → d9adf87c: the subscribe deadline timer is cleared once the race settles — the round-2
+  deadline had flipped `subscribeTimedOut` AFTER a successful subscribe and frozen every tail 1.5 s
+  in. tailer suite 14/14 (new: live events delivered well past the deadline).
+- #837 P1 ×3 → 3d7519a0: a lost terminal enqueues a `repair-terminal` BullMQ job (attempts 10,
+  backoff, deterministic id) carrying the REAL `done`/`error`; `repairMissingTerminal()` returns an
+  outcome, PUBLISHES the repaired row on the turn channel (subscribed tails never poll), and a failed
+  repair fails the delivery / the repair job. worker durability 15/15; whole worker suite 150/150.
+- #839 P1 → `applyTerminalStatusIdentity(_:matchedOurTurn:)`: an assistant id is adopted only from a
+  terminal status positively matched to our turn; the unmatched fallback settles without it.
+  iOS full `AppParityV2Tests` on the stacked top (serial, fresh device "ALMA Codex Tests"):
+  **418 tests, 0 failures** (`xcodebuild-test-12.log`). tsc clean; targeted vitest (presentation, tailer, turn-events, turn-status, publisher, fixture drift, visible-progress) 11 files / 101 tests green.
+- Rig: "ALMA Integration Verify" (946F7780) killed the test host even serially; a freshly created
+  iPhone 17 Pro Max device ran the same build fine — keep a dedicated clean test device.

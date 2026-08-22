@@ -5895,6 +5895,20 @@ final class ProseIdentityTests: XCTestCase {
         XCTAssertEqual(vm.messages.filter { $0.role == .assistant }.count, 2)
     }
 
+    func testUnmatchedTerminalStatusNeverLendsItsAssistantId() throws {
+        // Codex P1 #839 r3: recovery found a terminal row that is NOT our turn
+        // (stale previous turn / concurrent completion). Its assistantMessageId
+        // must not bind our streaming tail; a positive match still does.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আমাদের উত্তর", blockId: "t:p1")])
+        let status = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"other-turn","assistantMessageId":"stranger-row"}"#.utf8))
+        vm.applyTerminalStatusIdentity(status, matchedOurTurn: false)
+        XCTAssertNil(vm.messages.last?.serverId, "an unmatched terminal must not lend its row id to our tail")
+        vm.applyTerminalStatusIdentity(status, matchedOurTurn: true)
+        XCTAssertEqual(vm.messages.last?.serverId, "stranger-row")
+    }
+
     func testTailWithKnownIdNeverFallsBackToPositionalPairing() throws {
         // Codex P1 #839: the tail knows its row, but this history page does not
         // carry it yet (not persisted / older page) while an unrelated assistant
