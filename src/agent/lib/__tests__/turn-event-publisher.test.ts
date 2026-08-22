@@ -153,7 +153,12 @@ describe('R-3 round 2 — terminal durability repair (Codex P1 #837)', () => {
     upsertFailures.remaining = 3   // the `done` fails every attempt…
     const pub = createTurnEventPublisher('t7', { coalesceMs: 5_000, retryDelaysMs: [1, 1] })
     pub.emit({ type: 'done', messageId: 'm1' })
-    await new Promise((r) => setTimeout(r, 30))
+    // Wait for the three failing attempts to actually happen (a fixed 30 ms
+    // sleep was flaky under CPU load: storage came back before the last
+    // attempt and the `done` landed instead of being abandoned).
+    const deadline = Date.now() + 5_000
+    while (upsertFailures.remaining > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+    await new Promise((r) => setTimeout(r, 10))
     upsertFailures.remaining = 0   // …storage is back for the repair
     const lastSeq = await pub.finish()
     expect(rows.map((r) => [r.seq, r.type, (r.payload as { message?: string }).message])).toEqual([
