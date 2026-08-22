@@ -43,6 +43,8 @@ export interface TurnTailOptions {
   snapshotLastSeq: number | null
   snapshotStatus: string | null
   replayPageSize?: number
+  /** Delay before the single catch-up retry (tests shorten it). */
+  catchupRetryDelayMs?: number
 }
 
 export interface TurnTailHandle {
@@ -82,21 +84,41 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
     return false
   }
 
-  /** Heal a gap before `evt`: fetch the durable rows between lastSeq and evt.seq. */
-  const healGap = async (evt: TurnEvent) => {
+  /**
+   * Heal a gap before `evt`: fetch the durable rows between lastSeq and evt.seq.
+   * Returns false when the stream was closed (catch-up unavailable) and the
+   * later event must NOT be applied.
+   */
+  const healGap = async (evt: TurnEvent): Promise<boolean> => {
     const expected = dedup.lastSeq + 1
-    if (evt.seq <= expected) return
+    if (evt.seq <= expected) return true
     log('gap_detected', { turnId: opts.turnId, expectedSeq: expected, receivedSeq: evt.seq })
-    let missing: TurnEvent[] = []
-    try {
-      missing = await io.getReplay(dedup.lastSeq, evt.seq - dedup.lastSeq - 1)
-    } catch (err) {
-      log('replay_catchup_failed', { turnId: opts.turnId, error: err instanceof Error ? err.message : String(err) })
+    let missing: TurnEvent[] | null = null
+    for (let attempt = 0; attempt < 2 && missing == null; attempt++) {
+      try {
+        missing = await io.getReplay(dedup.lastSeq, evt.seq - dedup.lastSeq - 1)
+      } catch (err) {
+        log('replay_catchup_failed', { turnId: opts.turnId, attempt: attempt + 1, error: err instanceof Error ? err.message : String(err) })
+        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, opts.catchupRetryDelayMs ?? 250))
+      }
+    }
+    if (missing == null) {
+      // The durable log is the only complete source. Accepting the later event
+      // would move the cursor past rows that may exist and reject them forever
+      // once the database recovers (Codex P1 #836) — close loudly instead.
+      io.control({ type: 'error', message: 'turn_replay_unavailable' })
+      finish()
+      return false
     }
     let healed = 0
     for (const row of missing) {
       if (row.seq >= evt.seq) break
-      if (accept(row)) return
+      if (row.seq !== dedup.lastSeq + 1) {
+        // Catch-up rows must be contiguous: a hole inside the fetched range is
+        // a lost durable write, reported per row (Codex P2 #836).
+        log('gap_unhealed', { turnId: opts.turnId, expectedSeq: dedup.lastSeq + 1, receivedSeq: row.seq })
+      }
+      if (accept(row)) return false
       healed += 1
     }
     if (healed > 0) log('replay_catchup', { turnId: opts.turnId, healed, upTo: dedup.lastSeq })
@@ -105,13 +127,14 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
       // gets everything that exists — but say so loudly instead of pretending.
       log('gap_unhealed', { turnId: opts.turnId, expectedSeq: dedup.lastSeq + 1, receivedSeq: evt.seq })
     }
+    return true
   }
 
   const applyLive = (evt: TurnEvent) => {
     chain = chain
       .then(async () => {
         if (closed) return
-        await healGap(evt)
+        if (!(await healGap(evt))) return
         accept(evt)
       })
       .catch((err) => {

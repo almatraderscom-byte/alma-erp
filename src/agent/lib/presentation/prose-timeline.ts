@@ -106,6 +106,29 @@ export function proseBlocksFromPresentationV2(blocks: AgentPresentationV2['block
   return out
 }
 
+/**
+ * A CLIENT-authored terminal block for a protocol-2 message whose stream ended
+ * in an error (Codex P1 on #834): the v2 render path draws only block-addressed
+ * entries and never appends `msg.text`, so the warning the v1 path put in
+ * `text` was invisible. Appended as a committed final block + placeholder.
+ */
+export function withClientErrorBlock<T extends ProseTimelineEntry>(message: {
+  id: string
+  proseProtocol?: 1 | 2
+  prose?: LiveProseBlock[]
+  timeline?: T[]
+  text: string
+}, errorText: string): { text: string; prose?: LiveProseBlock[]; timeline?: T[] } {
+  if (message.proseProtocol !== 2) return { text: errorText }
+  const id = `client-error:${message.id}`
+  const prose = (message.prose ?? []).filter((b) => b.id !== id)
+  prose.push({ id, kind: 'final', state: 'committed', revision: 1, text: errorText, hidden: false, awaitingReplacement: false })
+  const timeline = ((message.timeline ?? []) as ProseTimelineEntry[]).filter((e) => !(e.t === 'text' && e.blockId === id))
+  timeline.push({ t: 'text', text: errorText, blockId: id, kind: 'final', state: 'committed' })
+  const visible = prose.filter((b) => !b.hidden && b.text.trim())
+  return { text: visible.map((b) => b.text.trim()).join('\n\n'), prose, timeline: timeline as T[] }
+}
+
 /** Owner-visible prose of a cold-loaded v2 message, joined for copy/preview. */
 export function proseTextFromPresentationV2(blocks: AgentPresentationV2['blocks']): string {
   return blocks
