@@ -5770,6 +5770,10 @@ async function* runAlternateProviderTurn(
             text = DIRECT_YOUTUBE_LANE_SETTLEMENT_BLOCKER
           }
         }
+        // Codex P1 #834 r3: the v2 document is read-time authoritative over
+        // `content` — it must carry this salvage text (the warning, or a gate's
+        // replacement), or the cold view shows the partial work as a success.
+        proseLifecycle?.salvage(text, { suffix })
         const salvageMessageId = randomUUID()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const savedMsg = await (prisma as any).agentMessage.create({
