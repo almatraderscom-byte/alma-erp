@@ -1111,12 +1111,34 @@ final class MoreMenuViewController: UITableViewController {
     // Section 0 = Appearance (Dark-mode + Native-screens switches); section 1 = business
     // switcher; 2… = modules. Row (0,1) is the S6 re-entry: this UIKit menu is what the
     // owner sees AFTER turning the SwiftUI screens off, so the way back lives here.
-    override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 2 }
+    /// Role-gated view of the catalog (same gate as the SwiftUI More: AlmaSession.canSee
+    /// + current-business scope). iOS < 17 has no session object → unfiltered, as before.
+    private var visibleSections: [Section] {
+        guard #available(iOS 17.0, *) else { return sections }
+        let s = AlmaSession.shared
+        return sections.compactMap { sec in
+            let items = sec.items.filter { item in
+                let gate = item.path.hasPrefix("native:") ? "/agent" : item.path
+                return AlmaAccess.business(for: gate, current: s.businessId) == s.businessId && s.canSee(gate)
+            }
+            return items.isEmpty ? nil : Section(header: sec.header, items: items)
+        }
+    }
+    private var visibleBusinesses: [Biz] {
+        guard #available(iOS 17.0, *) else { return businesses }
+        let allowed = Set(AlmaSession.shared.allowedBusinesses.map(\.homePath))
+        return businesses.filter { allowed.contains($0.path) }
+    }
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        tableView.reloadData()   // identity may have loaded since the last visit
+    }
+    override func numberOfSections(in tableView: UITableView) -> Int { visibleSections.count + 2 }
     override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int {
-        s == 0 ? 2 : (s == 1 ? businesses.count : sections[s - 2].items.count)
+        s == 0 ? 2 : (s == 1 ? visibleBusinesses.count : visibleSections[s - 2].items.count)
     }
     override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? {
-        s == 0 ? "Appearance" : (s == 1 ? "Switch business" : sections[s - 2].header)
+        s == 0 ? "Appearance" : (s == 1 ? "Switch business" : visibleSections[s - 2].header)
     }
 
     override func tableView(_ t: UITableView, cellForRowAt ip: IndexPath) -> UITableViewCell {
@@ -1155,7 +1177,7 @@ final class MoreMenuViewController: UITableViewController {
             return cell
         }
         if ip.section == 1 {
-            let biz = businesses[ip.row]
+            let biz = visibleBusinesses[ip.row]
             let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
             var cfg = cell.defaultContentConfiguration()
             cfg.text = biz.name
@@ -1169,7 +1191,7 @@ final class MoreMenuViewController: UITableViewController {
             cell.accessoryType = .disclosureIndicator
             return cell
         }
-        let item = sections[ip.section - 2].items[ip.row]
+        let item = visibleSections[ip.section - 2].items[ip.row]
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         var cfg = cell.defaultContentConfiguration()
         cfg.text = item.title
@@ -1198,10 +1220,10 @@ final class MoreMenuViewController: UITableViewController {
         let base = AlmaAPI.baseURL.absoluteString
         let path: String, tabTitle: String, symbol: String
         if ip.section == 1 {
-            let biz = businesses[ip.row]
+            let biz = visibleBusinesses[ip.row]
             path = biz.path; tabTitle = biz.name; symbol = biz.symbol
         } else {
-            let item = sections[ip.section - 2].items[ip.row]
+            let item = visibleSections[ip.section - 2].items[ip.row]
             path = item.path; tabTitle = item.title; symbol = item.icon
         }
         // Native (non-web) rows: the phone companion is a native screen.
@@ -1227,7 +1249,11 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     weak var dashboardVC: UIViewController?  // internal: makeDashboardTab() (SwiftUIShell.swift) mounts it
     private var approvalsBadgeTimer: Timer?
     private var callBarHost: UIViewController?
-    private static let approvalsTabIndex = 3
+    /// Index of the Approvals tab in the CURRENT role-gated bar (nil = not offered).
+    private var approvalsTabIndex: Int?
+    /// Hrefs of the current tabs (home first, More last) — the live tab-root map
+    /// for deep links / notification taps (AlmaNavCoordinator.liveTabRoots).
+    private(set) var tabHrefs: [String] = []
 
     /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
     init(dashboard: UIViewController) {
@@ -1250,13 +1276,24 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // N1–N5 keep running — see makeDashboardTab(). Assistant's builder lives in
         // AssistantSwiftUI.swift (native chat; web fallback keeps the old segmented
         // Chat/Studio/WhatsApp/Monitor/Costs construction verbatim).
-        viewControllers = [
-            makeDashboardTab(),
-            makeOrdersTab(),
-            makeAssistantTab(),
-            makeApprovalsTab(),
-            makeMoreTab(),
-        ]
+        // Role × business gate (owner report 2026-08-22): the bar is built from
+        // AlmaSession (web nav port) — the owner keeps Dashboard / Orders /
+        // Assistant / Approvals / More; every other role gets only pages it may open.
+        if #available(iOS 17.0, *) {
+            #if DEBUG
+            AlmaSession.shared.applyFixtureIfRequested()
+            #endif
+        }
+        viewControllers = buildTabs()
+        if #available(iOS 17.0, *) {
+            Task { @MainActor in await AlmaSession.shared.load() }
+            NotificationCenter.default.addObserver(self, selector: #selector(onSessionChanged),
+                                                   name: .almaSessionChanged, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(onSessionChanged),
+                                                   name: .almaBusinessChanged, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(onForegroundReloadSession),
+                                                   name: UIApplication.willEnterForegroundNotification, object: nil)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(onSwiftUIFlagChanged),
                                                name: .almaSwiftUIFlagChanged, object: nil)
 
@@ -1533,8 +1570,59 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     }
 
     private func setApprovalsBadge(_ count: Int) {
-        guard let vcs = viewControllers, vcs.count > Self.approvalsTabIndex else { return }
-        vcs[Self.approvalsTabIndex].tabBarItem.badgeValue = count > 0 ? "\(count)" : nil
+        guard let index = approvalsTabIndex, let vcs = viewControllers, vcs.count > index else { return }
+        vcs[index].tabBarItem.badgeValue = count > 0 ? "\(count)" : nil
+    }
+
+    /// Build the whole bar for the signed-in role + current business (see
+    /// AlmaShellCatalog.tabHrefs). The kill switch (SwiftUI flag off) and iOS < 17
+    /// keep the pre-gate bar — the owner's escape hatch stays intact.
+    func buildTabs() -> [UIViewController] {
+        var hrefs = ["/", "/orders", "/agent", "/approvals"]
+        if #available(iOS 17.0, *) {
+            let s = AlmaSession.shared
+            hrefs = AlmaShellCatalog.tabHrefs(role: s.effectiveRole, business: s.businessId)
+        }
+        var vcs: [UIViewController] = []
+        for (i, href) in hrefs.enumerated() {
+            vcs.append(i == 0 ? makeHomeTab(href: href) : makeTab(href: href))
+        }
+        vcs.append(makeMoreTab())
+        tabHrefs = hrefs + ["/more"]
+        approvalsTabIndex = hrefs.firstIndex(of: "/approvals")
+        if #available(iOS 17.0, *) {
+            var live: [String: Int] = [:]
+            for (i, h) in hrefs.enumerated() { live[h] = i }
+            if let home = live["/"] { live["/dashboard"] = home }
+            AlmaNavCoordinator.liveTabRoots = live
+        }
+        return vcs
+    }
+
+    /// Rebuild the bar in place (role arrived / changed, business switched). Only
+    /// runs when the composition actually differs, so a no-op load never resets
+    /// the navigation stacks; a real change lands on the new home tab.
+    @objc private func onSessionChanged() {
+        guard #available(iOS 17.0, *) else { return }
+        let s = AlmaSession.shared
+        let next = AlmaShellCatalog.tabHrefs(role: s.effectiveRole, business: s.businessId) + ["/more"]
+        guard next != tabHrefs else {
+            refreshApprovalsBadge()
+            return
+        }
+        AlmaPerfLog.event("shell.rebuildTabs", next.joined(separator: ","))
+        if let presented = presentedViewController { presented.dismiss(animated: false) }
+        setViewControllers(buildTabs(), animated: false)
+        selectedIndex = 0
+        applyTheme()
+        refreshApprovalsBadge()
+    }
+
+    /// Identity can change behind the app's back (role edited by the owner, account
+    /// deactivated) — re-confirm on every foreground, at most once a minute.
+    @objc private func onForegroundReloadSession() {
+        guard #available(iOS 17.0, *) else { return }
+        Task { @MainActor in await AlmaSession.shared.reloadIfStale() }
     }
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
