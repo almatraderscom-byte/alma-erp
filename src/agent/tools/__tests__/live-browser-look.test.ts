@@ -917,7 +917,7 @@ describe('live_browser_look semantic result', () => {
     const tool = LIVE_BROWSER_TOOLS.find((item) => item.name === 'live_browser_look')
     const result = await tool!.handler({
       want: 'both',
-      screenshot: false,
+      screenshot: true,
       directBrowserTask: true,
       conversationId: 'conv-1',
       directBrowserLaneToken: 'turn-playback',
@@ -941,6 +941,9 @@ describe('live_browser_look semantic result', () => {
     expect(runCommand.mock.calls.filter((call) => call[1] === 'read_text')
       .every((call) => (call[2] as { requireForeground?: boolean })?.requireForeground === true))
       .toBe(true)
+    const actions = runCommand.mock.calls.map((call) => call[1])
+    expect(actions.indexOf('screenshot')).toBeLessThan(actions.indexOf('wait'))
+    expect(actions.indexOf('wait')).toBeLessThan(actions.lastIndexOf('read_text'))
     expect(bindDirectYouTubeSoleDevice).toHaveBeenCalledWith({
       conversationId: 'conv-1',
       token: 'turn-playback',

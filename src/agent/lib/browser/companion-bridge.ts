@@ -25,6 +25,7 @@ import {
   isLiveBrowserEnabled,
   pickActiveDevice,
   runCommand,
+  type BrowserActivityContext,
   type LiveBrowserAction,
 } from '@/agent/lib/live-browser/companion'
 
@@ -124,7 +125,10 @@ export interface CompanionRunResult {
  * first failure. The shape mirrors the VPS runner's result so the job-result
  * pipeline, the claim verifier and the owner-facing report all keep working.
  */
-export async function runBrowserTaskOnCompanion(payload: BrowserTaskPayload): Promise<CompanionRunResult> {
+export async function runBrowserTaskOnCompanion(
+  payload: BrowserTaskPayload,
+  activityContext: BrowserActivityContext,
+): Promise<CompanionRunResult> {
   const result: CompanionRunResult = {
     ok: false,
     goal: payload.goal ?? '',
@@ -158,7 +162,7 @@ export async function runBrowserTaskOnCompanion(payload: BrowserTaskPayload): Pr
     }
 
     const { action, params } = translated.command
-    const run = await runCommand(device.id, action, params)
+    const run = await runCommand(device.id, action, params, undefined, activityContext)
     if (!run.ok) {
       result.error = run.error ?? `step ${i + 1} (${action}) failed`
       result.log.push(`#${i + 1} ${action} — ব্যর্থ: ${result.error}`)

@@ -1181,88 +1181,6 @@ const live_browser_look: AgentTool = {
         } else out.textError = r.error ?? r.status
       }
 
-      // A final media check is opt-in so ordinary reads remain fast. A click
-      // acknowledgement or a screenshot of one frame is not playback proof:
-      // sample the page twice and require the same ready media clock to move.
-      const expectedMedia = typeof input.expectedMedia === 'string' ? input.expectedMedia.trim() : ''
-      if (expectedMedia) {
-        const expectedHost = typeof input.expectedHost === 'string' ? input.expectedHost.trim() : undefined
-        if (!firstMediaSnapshot) {
-          out.playbackVerification = {
-            verified: false,
-            expectedMedia,
-            expectedHost: expectedHost ?? null,
-            reasons: ['first_sample_missing'],
-          }
-          out.playbackProof = 'DOM_PROOF_FAILED: প্রথম media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
-        } else {
-          await run('wait', { ms: 900 })
-          const second = await run('read_text')
-          if (!second.ok) {
-            out.playbackVerification = {
-              verified: false,
-              expectedMedia,
-              expectedHost: expectedHost ?? null,
-              reasons: ['second_sample_failed'],
-            }
-            out.playbackProof = 'DOM_PROOF_FAILED: দ্বিতীয় media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
-          } else {
-            const secondSnapshot = second.data as BrowserMediaSnapshot
-            // This is the proof clock. Receipt issuance happens later (after
-            // screenshot/storage/workflow persistence) and must never make an
-            // old media sample look fresh.
-            const playbackObservedAt = new Date().toISOString()
-            const ownerRequest = typeof input.directBrowserOwnerRequest === 'string'
-              ? input.directBrowserOwnerRequest
-              : expectedMedia
-            const conversationId = typeof input.conversationId === 'string'
-              ? input.conversationId
-              : ''
-            const laneToken = typeof input.directBrowserLaneToken === 'string'
-              ? input.directBrowserLaneToken
-              : ''
-            const selectedMediaState = directBrowserTask
-              ? await getDirectYouTubeSelectedMedia(conversationId, laneToken)
-              : null
-            const verification = directBrowserTask && selectedMediaState?.state !== 'selected'
-              ? {
-                  verified: false,
-                  expectedMedia: parseDirectMediaOwnerRequest(
-                    ownerRequest,
-                    [{ id: dev.deviceId, name: dev.name, online: true }],
-                  ).mediaTitle || expectedMedia,
-                  expectedHost: expectedHost ?? null,
-                  progressSeconds: null,
-                  reasons: [selectedMediaState?.state === 'none'
-                    ? 'selected_media_identity_missing'
-                    : 'selected_media_binding_unavailable'],
-                }
-              : verifyBrowserPlayback({
-                  expectedMedia,
-                  expectedHost,
-                  ownerRequest,
-                  ownerDevice: { id: dev.deviceId, name: dev.name, online: true },
-                  ...(selectedMediaState?.state === 'selected'
-                    ? {
-                        selectedMedia: {
-                          videoId: selectedMediaState.videoId,
-                          title: selectedMediaState.title,
-                        },
-                      }
-                    : {}),
-                  before: firstMediaSnapshot,
-                  after: secondSnapshot,
-                })
-            out.playbackObservedAt = playbackObservedAt
-            out.playbackVerification = { ...verification, playbackObservedAt }
-            if (secondSnapshot.media) out.mediaState = secondSnapshot.media
-            out.playbackProof = verification.verified
-              ? `DOM_PROOF_VERIFIED: requested media playing; clock +${verification.progressSeconds}s এগিয়েছে।`
-              : `DOM_PROOF_FAILED: ${verification.reasons.join(', ')}। Playing দাবি কোরো না; ঠিক করে আবার final look দাও।`
-            steps.push(verification.verified ? 'playback-verified:2-samples' : 'playback-failed:2-samples')
-          }
-        }
-      }
       if (want === 'dom' || want === 'both') {
         const r = await run('read_dom')
         if (r.ok) {
@@ -1392,6 +1310,88 @@ const live_browser_look: AgentTool = {
           : null,
         ok: true,
       })
+
+      // A final media check is opt-in so ordinary reads remain fast. It runs
+      // after DOM, screenshot/upload and workflow persistence: the 15-second
+      // proof lease therefore starts at the final media sample, not before the
+      // LOOK's own potentially-slow screenshot work. A click acknowledgement or
+      // one frame is never proof; require the same ready media clock to move.
+      const expectedMedia = typeof input.expectedMedia === 'string' ? input.expectedMedia.trim() : ''
+      if (expectedMedia) {
+        const expectedHost = typeof input.expectedHost === 'string' ? input.expectedHost.trim() : undefined
+        if (!firstMediaSnapshot) {
+          out.playbackVerification = {
+            verified: false,
+            expectedMedia,
+            expectedHost: expectedHost ?? null,
+            reasons: ['first_sample_missing'],
+          }
+          out.playbackProof = 'DOM_PROOF_FAILED: প্রথম media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
+        } else {
+          await run('wait', { ms: 900 })
+          const second = await run('read_text')
+          if (!second.ok) {
+            out.playbackVerification = {
+              verified: false,
+              expectedMedia,
+              expectedHost: expectedHost ?? null,
+              reasons: ['second_sample_failed'],
+            }
+            out.playbackProof = 'DOM_PROOF_FAILED: দ্বিতীয় media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
+          } else {
+            const secondSnapshot = second.data as BrowserMediaSnapshot
+            const playbackObservedAt = new Date().toISOString()
+            const ownerRequest = typeof input.directBrowserOwnerRequest === 'string'
+              ? input.directBrowserOwnerRequest
+              : expectedMedia
+            const conversationId = typeof input.conversationId === 'string'
+              ? input.conversationId
+              : ''
+            const laneToken = typeof input.directBrowserLaneToken === 'string'
+              ? input.directBrowserLaneToken
+              : ''
+            const selectedMediaState = directBrowserTask
+              ? await getDirectYouTubeSelectedMedia(conversationId, laneToken)
+              : null
+            const verification = directBrowserTask && selectedMediaState?.state !== 'selected'
+              ? {
+                  verified: false,
+                  expectedMedia: parseDirectMediaOwnerRequest(
+                    ownerRequest,
+                    [{ id: dev.deviceId, name: dev.name, online: true }],
+                  ).mediaTitle || expectedMedia,
+                  expectedHost: expectedHost ?? null,
+                  progressSeconds: null,
+                  reasons: [selectedMediaState?.state === 'none'
+                    ? 'selected_media_identity_missing'
+                    : 'selected_media_binding_unavailable'],
+                }
+              : verifyBrowserPlayback({
+                  expectedMedia,
+                  expectedHost,
+                  ownerRequest,
+                  ownerDevice: { id: dev.deviceId, name: dev.name, online: true },
+                  ...(selectedMediaState?.state === 'selected'
+                    ? {
+                        selectedMedia: {
+                          videoId: selectedMediaState.videoId,
+                          title: selectedMediaState.title,
+                        },
+                      }
+                    : {}),
+                  before: firstMediaSnapshot,
+                  after: secondSnapshot,
+                })
+            out.playbackObservedAt = playbackObservedAt
+            out.playbackVerification = { ...verification, playbackObservedAt }
+            if (secondSnapshot.media) out.mediaState = secondSnapshot.media
+            out.playbackProof = verification.verified
+              ? `DOM_PROOF_VERIFIED: requested media playing; clock +${verification.progressSeconds}s এগিয়েছে।`
+              : `DOM_PROOF_FAILED: ${verification.reasons.join(', ')}। Playing দাবি কোরো না; ঠিক করে আবার final look দাও।`
+            steps.push(verification.verified ? 'playback-verified:2-samples' : 'playback-failed:2-samples')
+          }
+        }
+      }
 
       return { success: true, data: out, ...(visionImage ? { image: visionImage } : {}) }
     } catch (err) {

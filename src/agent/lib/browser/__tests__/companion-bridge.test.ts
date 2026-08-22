@@ -1,5 +1,18 @@
-import { describe, it, expect } from 'vitest'
-import { translateStep } from '@/agent/lib/browser/companion-bridge'
+import { describe, it, expect, vi } from 'vitest'
+
+const { runCommand, isLiveBrowserEnabled, pickActiveDevice } = vi.hoisted(() => ({
+  runCommand: vi.fn(async () => ({ ok: true, status: 'done', commandId: 'cmd-1' })),
+  isLiveBrowserEnabled: vi.fn(async () => true),
+  pickActiveDevice: vi.fn(async () => ({ id: 'device-1', name: 'Owner Chrome' })),
+}))
+
+vi.mock('@/agent/lib/live-browser/companion', () => ({
+  runCommand,
+  isLiveBrowserEnabled,
+  pickActiveDevice,
+}))
+
+import { runBrowserTaskOnCompanion, translateStep } from '@/agent/lib/browser/companion-bridge'
 import type { BrowserStep } from '@/agent/lib/browser/actions'
 
 /**
@@ -81,5 +94,26 @@ describe('translateStep — the final-submit ban survives the translation', () =
 
   it('still allows an ordinary click that merely contains an innocent word', () => {
     expect(translateStep({ action: 'click', text: 'Search results' }).ok).toBe(true)
+  })
+})
+
+describe('worker-backed Companion execution authority', () => {
+  it('persists the exact approved task turn/conversation on every command', async () => {
+    const activityContext = { turnId: 'turn-approved-1', conversationId: 'conversation-1' }
+    const result = await runBrowserTaskOnCompanion({
+      goal: 'Read the approved page',
+      conversationId: 'conversation-1',
+      steps: [{ action: 'goto', url: 'https://example.com' }],
+      driver: 'companion',
+    }, activityContext)
+
+    expect(result.ok).toBe(true)
+    expect(runCommand).toHaveBeenCalledWith(
+      'device-1',
+      'navigate',
+      { url: 'https://example.com' },
+      undefined,
+      activityContext,
+    )
   })
 })

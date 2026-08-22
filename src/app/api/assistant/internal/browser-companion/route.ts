@@ -13,6 +13,8 @@ import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { runBrowserTaskOnCompanion } from '@/agent/lib/browser/companion-bridge'
+import { claimTurnForRequest, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
+import { prisma } from '@/lib/prisma'
 import type { BrowserTaskPayload } from '@/agent/lib/browser/actions'
 
 export const runtime = 'nodejs'
@@ -43,10 +45,28 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  const body = (await req.json().catch(() => null)) as { payload?: BrowserTaskPayload } | null
-  const payload = body?.payload
-  if (!payload || !Array.isArray(payload.steps)) {
-    return Response.json({ error: 'payload with steps is required' }, { status: 400 })
+  const body = (await req.json().catch(() => null)) as {
+    pendingActionId?: unknown
+    payload?: BrowserTaskPayload
+  } | null
+  const pendingActionId = typeof body?.pendingActionId === 'string' ? body.pendingActionId.trim() : ''
+  if (!pendingActionId) {
+    return Response.json({ error: 'pendingActionId is required' }, { status: 400 })
+  }
+
+  // The worker carries a payload for compatibility, but the approved database
+  // row is the authority. Never execute bytes supplied only by the worker call.
+  const action = await prisma.agentPendingAction.findUnique({
+    where: { id: pendingActionId },
+    select: { type: true, status: true, conversationId: true, payload: true },
+  })
+  if (!action || action.type !== 'browser_action' || action.status !== 'approved') {
+    return Response.json({ error: 'browser_action_not_approved' }, { status: 409 })
+  }
+  const conversationId = action.conversationId?.trim() ?? ''
+  const payload = action.payload as unknown as BrowserTaskPayload
+  if (!conversationId || !payload || !Array.isArray(payload.steps)) {
+    return Response.json({ error: 'approved_browser_action_context_missing' }, { status: 409 })
   }
 
   // Belt and braces on the routing rule: this endpoint exists only for tasks the
@@ -57,6 +77,28 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `driver_mismatch — this endpoint runs companion tasks, got "${payload.driver}"` }, { status: 400 })
   }
 
-  const result = await runBrowserTaskOnCompanion(payload)
-  return Response.json(result, { status: result.ok ? 200 : 200 })
+  // A worker-backed approved task gets its own durable AgentTurn. That exact
+  // turn/conversation context is persisted on every Companion command, so the
+  // authorize-v1 pre-effect fence can apply owner-current, Stop and preview
+  // attribution checks instead of rejecting the legacy path as contextless.
+  const claim = await claimTurnForRequest(
+    conversationId,
+    `browser-action:${pendingActionId}`,
+    'worker',
+  )
+  if (!claim.claimed || !claim.turnId) {
+    return Response.json({ error: 'browser_action_execution_already_claimed' }, { status: 409 })
+  }
+
+  try {
+    const result = await runBrowserTaskOnCompanion(payload, {
+      turnId: claim.turnId,
+      conversationId,
+    })
+    await finalizeTurnIfRunning(claim.turnId, result.ok ? 'done' : 'error')
+    return Response.json(result, { status: 200 })
+  } catch (error) {
+    await finalizeTurnIfRunning(claim.turnId, 'error')
+    throw error
+  }
 }
