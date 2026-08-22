@@ -1341,7 +1341,11 @@ describe('live_browser_act receipt transport', () => {
 
     expect(result.success).toBe(true)
     const typeCall = runCommand.mock.calls.find((call) => call[1] === 'type')
-    expect(typeCall?.[2]).toMatchObject({ value: 'alma', ref: 'e-search' })
+    expect(typeCall?.[2]).toMatchObject({
+      value: 'alma',
+      ref: 'e-search',
+      exactValueSubmit: true,
+    })
   })
 
   it('blocks a standalone Search click so stale page input cannot be submitted', async () => {

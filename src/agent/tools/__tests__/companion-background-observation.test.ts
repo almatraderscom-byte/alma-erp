@@ -413,6 +413,54 @@ describe('Companion DOM observation generation', () => {
     expect(trigger.click).not.toHaveBeenCalled()
   })
 
+  it('submits the exact server-owned search value without letting autocomplete handle Enter', async () => {
+    const root = new FakeElement('HTML', '')
+    root.setAttribute('data-alma-observation-id', 'dom-generation-exact-submit')
+    const input = new FakeElement('INPUT', '')
+    input.placeholder = 'Search'
+    input.setAttribute('type', 'text')
+    input.setAttribute('data-alma-ref', 'e-search')
+    input.setAttribute('data-alma-observation-id', 'dom-generation-exact-submit')
+    const requestSubmit = vi.fn()
+    const form = { requestSubmit, submit: vi.fn() }
+    Object.assign(input, { closest: vi.fn(() => form) })
+    const keyboardEvent = vi.fn(function KeyboardEvent() { return {} })
+    const pageType = runInNewContext(
+      `(${sourceFunction('async function pageType', '\nasync function pageKey')})`,
+      {
+        document: {
+          documentElement: root,
+          querySelector: () => input,
+          querySelectorAll: () => [],
+          activeElement: null,
+        },
+        window: { HTMLInputElement: function HTMLInputElement() {}, HTMLTextAreaElement: function HTMLTextAreaElement() {} },
+        String,
+        JSON,
+        Object,
+        Math,
+        chrome: activeRendererChrome(),
+        InputEvent: function InputEvent() {},
+        Event: function Event() {},
+        KeyboardEvent: keyboardEvent,
+        setTimeout: (resolve: () => void) => { resolve() },
+      },
+    ) as (arg: Record<string, unknown>) => Promise<{ ok: boolean; submitted?: boolean }>
+
+    await expect(pageType({
+      ref: 'e-search',
+      value: 'fix you',
+      submit: true,
+      exactValueSubmit: true,
+      domObservationId: 'dom-generation-exact-submit',
+      refFingerprint: fingerprintOf(input),
+      ...activeRendererAuthority(),
+    })).resolves.toMatchObject({ ok: true, submitted: true })
+    expect(input.value).toBe('fix you')
+    expect(requestSubmit).toHaveBeenCalledOnce()
+    expect(keyboardEvent).not.toHaveBeenCalled()
+  })
+
   it('blocks inside the click injection when navigation lands after the outer precheck', async () => {
     const root = new FakeElement('HTML', '')
     root.setAttribute('data-alma-observation-id', 'dom-generation-1')

@@ -1874,6 +1874,7 @@ const live_browser_act: AgentTool = {
       }
       if (requestedRef) params.ref = requestedRef
       if (input.value !== undefined) params.value = directTypeValue ?? input.value
+      if (directTypeValue !== null) params.exactValueSubmit = true
       if (input.option !== undefined) params.option = input.option
       if (input.submit !== undefined) params.submit = Boolean(input.submit)
       if (input.key) params.key = input.key

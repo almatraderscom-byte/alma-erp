@@ -1098,7 +1098,7 @@ async function pageClick(arg) {
 
 async function pageType(arg) {
   const {
-    selector, text, value, submit, ref, domObservationId, refFingerprint,
+    selector, text, value, submit, exactValueSubmit, ref, domObservationId, refFingerprint,
     expectedCurrentUrl, expectedDocumentId,
   } = arg
   const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
@@ -1303,6 +1303,36 @@ async function pageType(arg) {
       return { ok: false, blocked: true, error: 'observation_ref_fingerprint_failed: field changed before submit' }
     }
     if (!effectStillAuthorized()) return effectExpired()
+    // Direct witnessed search must submit the exact server-owned bytes. Sending
+    // Enter while YouTube's autocomplete is open can synchronously replace the
+    // field with its highlighted suggestion (for example `fix you live`) before
+    // navigation. Skip that key path for exactValueSubmit and submit the form
+    // while the verified value is still authoritative.
+    const form = el.closest && el.closest('form')
+    if (exactValueSubmit) {
+      almaSetValue(el, fullText)
+      if (!effectStillAuthorized()) return effectExpired()
+      if (!form) {
+        return { ok: false, blocked: true, error: 'exact_submit_form_missing: run a new LOOK' }
+      }
+      if (typeof form.requestSubmit === 'function') {
+        try {
+          form.requestSubmit()
+        } catch {
+          try {
+            form.submit()
+          } catch {
+            return { ok: false, blocked: true, error: 'exact_submit_failed: run a new LOOK' }
+          }
+        }
+      } else {
+        try {
+          form.submit()
+        } catch {
+          return { ok: false, blocked: true, error: 'exact_submit_failed: run a new LOOK' }
+        }
+      }
+    } else {
     // Synthetic Enter first — many SPA search boxes listen for keydown even though
     // isTrusted is false. But sites like Google IGNORE untrusted keys, so if Enter
     // wasn't swallowed we submit the enclosing FORM directly. requestSubmit() fires
@@ -1312,7 +1342,6 @@ async function pageType(arg) {
     // avoided: it's flaky because the autocomplete dropdown intercepts the click.
     const kd = almaDispatchKey(el, 'Enter')
     if (!kd.defaultPrevented) {
-      const form = el.closest && el.closest('form')
       if (form) {
         if (typeof form.requestSubmit === 'function') {
           try {
@@ -1338,6 +1367,7 @@ async function pageType(arg) {
         )
         if (btn) btn.click()
       }
+    }
     }
   }
   setTimeout(() => {
@@ -3431,6 +3461,7 @@ async function executeCommand(
       ref: cmd.ref,
       value: cmd.value,
       submit: Boolean(cmd.submit),
+      exactValueSubmit: cmd.exactValueSubmit === true,
     }, observationPrecondition)
     if (!effectCurrent()) return expired()
     if (r && r.ok && cmd.submit) await waitForTabLoad(tab.id, 12000)
