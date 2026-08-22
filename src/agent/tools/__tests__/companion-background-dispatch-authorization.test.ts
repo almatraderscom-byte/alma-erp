@@ -451,6 +451,49 @@ describe('Companion two-phase command dispatch authorization', () => {
       exactValueSubmit: true,
     })
   })
+
+  it('forwards the server-derived canonical result target into pageClick', async () => {
+    const actWithRetry = vi.fn(async () => ({ ok: true }))
+    const execute = runInNewContext(
+      `(${sourceFunction('async function executeCommand', '\n// ---- poll loop')})`,
+      {
+        ALLOWED_ACTIONS: new Set(['click']),
+        WRITE_VERBS: new Set(['click']),
+        RECEIPT_REF_ACTIONS: new Set(['click']),
+        getAgentTab: async () => ({ id: 7, active: true, url: 'https://www.youtube.com/results?search_query=fix+you' }),
+        showOverlay: vi.fn(async () => true),
+        actWithRetry,
+        pageClick: () => undefined,
+        lockdownMatch: () => null,
+        Date,
+        Number,
+        String,
+        Boolean,
+      },
+    ) as (
+      command: Record<string, unknown>,
+      isCurrent: () => boolean,
+      authority: { dispatchGeneration: number; dispatchNonce: string; deadlineMs: number },
+    ) => Promise<CommandResult>
+
+    await expect(execute(
+      {
+        id: 'command-canonical-result-1',
+        action: 'click',
+        ref: 'e-result',
+        canonicalTargetUrl: 'https://www.youtube.com/watch?v=k4V3Mo61fJM',
+      },
+      () => true,
+      { dispatchGeneration: 10, dispatchNonce: 'canonical-result-nonce', deadlineMs: Date.now() + 60_000 },
+    )).resolves.toMatchObject({ ok: true })
+
+    expect(actWithRetry).toHaveBeenCalledOnce()
+    const injectedClickArg = (actWithRetry.mock.calls[0] as unknown[] | undefined)?.[2]
+    expect(injectedClickArg).toMatchObject({
+      ref: 'e-result',
+      canonicalTargetUrl: 'https://www.youtube.com/watch?v=k4V3Mo61fJM',
+    })
+  })
 })
 
 describe('Companion local Pause/Unpair preview revocation', () => {

@@ -823,6 +823,7 @@ async function pageOverlay(arg) {
 async function pageClick(arg) {
   const {
     selector, text, ref, domObservationId, refFingerprint, expectedCurrentUrl, expectedDocumentId,
+    canonicalTargetUrl,
   } = arg
   const effectGeneration = Number(arg && arg.__almaDispatchGeneration)
   const effectNonce = String(arg && arg.__almaDispatchNonce || '')
@@ -855,6 +856,49 @@ async function pageClick(arg) {
     blocked: true,
     error: 'command_effect_expired: click mutation revoked',
   })
+  const canonicalNavigationTarget = (() => {
+    if (!canonicalTargetUrl) return null
+    try {
+      const url = new URL(String(canonicalTargetUrl))
+      const host = url.hostname.toLowerCase()
+      if (
+        url.protocol !== 'https:'
+        || (host !== 'youtube.com' && host !== 'www.youtube.com')
+        || url.hash
+      ) return ''
+      if (url.pathname === '/watch') {
+        const keys = Array.from(url.searchParams.keys())
+        const videoId = url.searchParams.get('v') || ''
+        return keys.length === 1
+          && keys[0] === 'v'
+          && url.searchParams.getAll('v').length === 1
+          && /^[A-Za-z0-9_-]{11}$/.test(videoId)
+          ? {
+              url: `https://www.youtube.com/watch?v=${videoId}`,
+              videoId,
+              kind: 'watch',
+            }
+          : ''
+      }
+      const shorts = url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})$/)
+      return shorts && !url.search
+        ? {
+            url: `https://www.youtube.com/shorts/${shorts[1]}`,
+            videoId: shorts[1],
+            kind: 'shorts',
+          }
+        : ''
+    } catch {
+      return ''
+    }
+  })()
+  if (canonicalTargetUrl && !canonicalNavigationTarget) {
+    return {
+      ok: false,
+      blocked: true,
+      error: 'canonical_target_blocked: invalid direct YouTube result target',
+    }
+  }
   if (!(await liveEffectStillAuthorized())) return effectExpired()
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
@@ -973,6 +1017,38 @@ async function pageClick(arg) {
     }
   }
   if (!el) return { ok: false, error: 'element not found' }
+  if (canonicalNavigationTarget) {
+    try {
+      const observedUrl = new URL(String(el.getAttribute('href') || ''), String(location.href))
+      const observedHost = observedUrl.hostname.toLowerCase()
+      const observedVideoId = canonicalNavigationTarget.kind === 'watch'
+        && observedUrl.pathname === '/watch'
+        ? observedUrl.searchParams.get('v') || ''
+        : canonicalNavigationTarget.kind === 'shorts'
+          ? observedUrl.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})$/)?.[1] || ''
+          : ''
+      if (
+        observedUrl.protocol !== 'https:'
+        || (observedHost !== 'youtube.com' && observedHost !== 'www.youtube.com')
+        || observedUrl.hash
+        || observedUrl.searchParams.getAll('v').length > 1
+        || (canonicalNavigationTarget.kind === 'shorts' && Boolean(observedUrl.search))
+        || observedVideoId !== canonicalNavigationTarget.videoId
+      ) {
+        return {
+          ok: false,
+          blocked: true,
+          error: 'canonical_target_mismatch: target no longer identifies the witnessed result',
+        }
+      }
+    } catch {
+      return {
+        ok: false,
+        blocked: true,
+        error: 'canonical_target_mismatch: witnessed result URL is invalid',
+      }
+    }
+  }
   // FINAL-SUBMIT BAN (enforced in code — mirrors src/agent/lib/browser/final-submit.ts;
   // keep the two regexes in sync). The agent may fill forms and navigate, but the last
   // irreversible Send/Post/Pay/Publish/Confirm/Delete click is the OWNER's. This checks
@@ -1063,6 +1139,19 @@ async function pageClick(arg) {
     document.documentElement.appendChild(rip)
     setTimeout(() => rip.remove(), 650)
   } catch { /* visual only */ }
+  if (canonicalNavigationTarget) {
+    if (!effectStillAuthorized() || !receiptTargetStillValid(el)) return effectExpired()
+    try {
+      location.assign(canonicalNavigationTarget.url)
+      return {
+        ok: true,
+        clicked: (el.innerText || el.value || '').trim().slice(0, 60),
+        url: canonicalNavigationTarget.url,
+      }
+    } catch {
+      return { ok: false, error: 'canonical_navigation_failed' }
+    }
+  }
   // Fire a real pointer+mouse event sequence — many sites (React/SPA, and Facebook
   // in particular) listen on POINTER events and ignore a bare .click(). Then call
   // .click() as backstop.
@@ -3448,7 +3537,12 @@ async function executeCommand(
     return await act(
       tab.id,
       pageClick,
-      { selector: cmd.selector, text: cmd.text, ref: cmd.ref },
+      {
+        selector: cmd.selector,
+        text: cmd.text,
+        ref: cmd.ref,
+        canonicalTargetUrl: cmd.canonicalTargetUrl,
+      },
       observationPrecondition,
     )
   }
