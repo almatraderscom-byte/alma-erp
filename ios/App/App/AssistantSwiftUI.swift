@@ -5694,7 +5694,15 @@ final class AssistantVM {
             let exactIdx = localTail.serverId.flatMap { sid in
                 incoming.firstIndex(where: { $0.role == .assistant && $0.id == sid })
             }
-            if let aIdx = exactIdx ?? incoming.lastIndex(where: { $0.role == .assistant }),
+            // A tail that KNOWS its row must never fall back to position: if that
+            // row is absent from this page (not persisted yet, older page), the
+            // tail stays unpaired and waits — claiming an unrelated last row
+            // would block the real row from taking the identity later
+            // (Codex P1 #839).
+            let positionalIdx = localTail.serverId == nil
+                ? incoming.lastIndex(where: { $0.role == .assistant })
+                : nil
+            if let aIdx = exactIdx ?? positionalIdx,
                exactIdx != nil || aIdx > (lastServerUser ?? -1) {
                 if localIdByServerId[incoming[aIdx].id] == nil {
                     _ = claimLocalRowId(serverId: incoming[aIdx].id, localId: localTail.id,
@@ -6199,6 +6207,7 @@ final class AssistantVM {
                     if s?.status == "running" {
                         self.startRecoveryPolling(cid: cid)
                     } else {
+                        self.adoptAssistantIdentity(s?.assistantMessageId)
                         await self.finishRecovery(terminalStatus: s?.status ?? "done")
                     }
                 }
@@ -6236,6 +6245,7 @@ final class AssistantVM {
                         if self.reconnecting { self.ensureStreamingTail() }
                     } else if sawRunning || !awaitingTurnCreation
                                 || self.isTerminalForOurTurn(s, requireEvidence: true) {
+                        self.adoptAssistantIdentity(s.assistantMessageId)
                         await self.finishRecovery(terminalStatus: s.status ?? "done")
                         return
                     } else if elapsed > 20 {

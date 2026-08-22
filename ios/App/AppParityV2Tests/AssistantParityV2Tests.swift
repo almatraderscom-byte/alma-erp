@@ -5879,6 +5879,36 @@ final class ProseIdentityTests: XCTestCase {
         XCTAssertEqual(vm.messages.filter { $0.role == .assistant }.count, 2)
     }
 
+    func testTailWithKnownIdNeverFallsBackToPositionalPairing() throws {
+        // Codex P1 #839: the tail knows its row, but this history page does not
+        // carry it yet (not persisted / older page) while an unrelated assistant
+        // row is last. It must stay unpaired — not be claimed by that row.
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        var owner = AgentChatMessage(id: "local-owner", role: .user, clientMessageId: "client-3",
+                                     outgoingState: .accepted, text: "রিপোর্ট")
+        owner.createdAt = "2026-08-23T01:20:00.000Z"
+        vm.messages = [owner]
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("স্ট্রিম", blockId: "t:p1"),
+                                 .done(messageId: "server-answer-late", tokensIn: nil, tokensOut: nil, costUsd: nil,
+                                       needContinue: false, apiRounds: nil, cacheCreation: nil,
+                                       cacheRead: nil, roundCostsUsd: nil)])
+        let tailId = try XCTUnwrap(vm.messages.last?.id)
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-owner","clientMessageId":"client-3","role":"user","createdAt":"2026-08-23T01:20:00.000Z","content":[{"type":"text","text":"রিপোর্ট"}]},
+          {"id":"server-unrelated","role":"assistant","createdAt":"2026-08-23T01:20:03.000Z","content":[{"type":"text","text":"অন্য কাজের উত্তর"}]}
+        ]
+        """#.utf8))
+        vm.debugMergeServerMessages(wire)
+
+        let unrelated = try XCTUnwrap(vm.messages.first { $0.serverId == "server-unrelated" })
+        XCTAssertNotEqual(unrelated.id, tailId, "an unrelated last row must not claim the tail")
+        let tail = try XCTUnwrap(vm.messages.first { $0.id == tailId })
+        XCTAssertEqual(tail.serverId, "server-answer-late", "the tail keeps its own identity and waits for its row")
+        XCTAssertEqual(tail.text, "স্ট্রিম")
+    }
+
     func testToolOnlyTailSurvivesAPollThatHasNotPersistedItYet() throws {
         let vm = AssistantVM()
         vm.debugClearChronologyAnchors()

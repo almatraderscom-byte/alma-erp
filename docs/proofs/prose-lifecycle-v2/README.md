@@ -104,3 +104,12 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
 - Rig trap: with Xcode's parallel testing a second simulator ("ALMA Integration Verify")
   hosted the test app and died before XCTest connected ("Test crashed with signal kill
   before establishing connection"); run serially on the explicit device.
+
+### 2026-08-23 — Codex review round (all five PRs), fixed on the stacked branches
+- #834 P1 ×2 → 9c19bfa8 (v2 stream-error block; protocol stamp is part of negotiation).
+- #836 P1 + P2 → fail-closed catch-up + contiguity check (tailer suite 12/12).
+- #837 P1 → terminal counts only once durable; job rejects when none can be stored (worker 8/8).
+- #838 P1 → compaction index map remaps the document anchors (presentation 57/57).
+- #839 P1 + P2 → no positional fallback for a tail that knows its id; identity adopted in
+  every terminal polling path. iOS full `AppParityV2Tests` on the stacked top (serial, second
+  simulator): **416 tests, 0 failures** (`xcodebuild-test-8.log`).
