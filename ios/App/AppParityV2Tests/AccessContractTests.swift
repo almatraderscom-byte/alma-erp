@@ -182,6 +182,27 @@ final class AccessContractTests: XCTestCase {
         session.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
     }
 
+    /// Codex P1 (round 3): a legacy queryless employee link keeps the business the
+    /// shell is in (Trading roster tap → Trading employee); a stamped Lifestyle
+    /// selector still opens the Lifestyle record from inside Trading.
+    @MainActor
+    func testLegacyEmployeeLinkKeepsActiveBusiness() throws {
+        let session = AlmaSession.shared
+        session.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
+        session.setBusiness(.ALMA_TRADING)
+        XCTAssertEqual(AlmaAccess.Context.currentId, "ALMA_TRADING")
+        guard case .native(let legacy) = AlmaNavCoordinator.decide(path: "/employees/EMP-1", openWebForced: { _, _ in }) else {
+            return XCTFail("legacy employee link must stay native")
+        }
+        XCTAssertEqual(try XCTUnwrap(legacy as? AlmaHostingController<EmployeesScreen>).rootView.businessId, "ALMA_TRADING")
+        guard case .native(let stamped) = AlmaNavCoordinator.decide(
+            path: "/employees/EMP-1?business_id=ALMA_LIFESTYLE", openWebForced: { _, _ in }) else {
+            return XCTFail("stamped Lifestyle employee link must stay native")
+        }
+        XCTAssertEqual(try XCTUnwrap(stamped as? AlmaHostingController<EmployeesScreen>).rootView.businessId, "ALMA_LIFESTYLE")
+        session.setBusiness(.ALMA_LIFESTYLE)
+    }
+
     /// Tab bar composition per role × business — the owner-visible outcome.
     func testTabLayoutsPerRole() {
         func tabs(_ role: AlmaRole, _ biz: AlmaBusinessId) -> [String] {

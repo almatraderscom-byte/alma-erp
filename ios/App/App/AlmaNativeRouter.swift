@@ -171,7 +171,12 @@ enum AlmaNativeRouter {
                     businessId: businessId), "Order")
             }
             if let empId = pathParam(clean, after: "/employees/") {
-                guard let businessId = scopedBusinessId(path, expected: "ALMA_LIFESTYLE") else {
+                // Employees is a SHARED route: a legacy queryless link (Payroll /
+                // Approvals name taps) keeps the business the shell is in, so a
+                // Trading roster tap opens the Trading employee (Codex P1, round 3).
+                // A stamped selector must still match the canonical Lifestyle link.
+                guard let businessId = scopedBusinessId(
+                    path, expected: "ALMA_LIFESTYLE", legacyDefault: AlmaAccess.Context.currentId) else {
                     return nil
                 }
                 return host(EmployeesScreen(
@@ -206,8 +211,9 @@ enum AlmaNativeRouter {
     /// Canonical entity links may carry a business selector. Missing selectors
     /// remain valid for legacy internal links; present selectors must match the
     /// route's fixed business before any native model can fetch.
-    private static func scopedBusinessId(_ path: String, expected: String) -> String? {
-        guard let selected = queryValue(path, name: "business_id") else { return expected }
+    private static func scopedBusinessId(_ path: String, expected: String,
+                                         legacyDefault: String? = nil) -> String? {
+        guard let selected = queryValue(path, name: "business_id") else { return legacyDefault ?? expected }
         return selected == expected ? selected : nil
     }
 
