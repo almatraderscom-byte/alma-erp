@@ -2874,6 +2874,31 @@ async function waitForTabLoad(tabId, timeoutMs, expectedUrl, previousUrl) {
   }
 }
 
+async function waitForCanonicalYouTubeNavigation(tabId, timeoutMs, expectedUrl) {
+  const deadline = Date.now() + timeoutMs
+  let wanted = ''
+  try {
+    wanted = new URL(String(expectedUrl)).href
+  } catch {
+    return false
+  }
+  while (Date.now() < deadline) {
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      const actual = String((tab && (tab.pendingUrl || tab.url)) || '')
+      if (tab && tab.status === 'complete' && actual === wanted) {
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        const settled = await chrome.tabs.get(tabId)
+        return String((settled && (settled.pendingUrl || settled.url)) || '') === wanted
+      }
+    } catch {
+      return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  return false
+}
+
 // Best-effort: paint the status banner in the ALMA tab. Never throws (about:blank
 // / chrome:// pages can't be scripted, and that's fine).
 async function showOverlay(
@@ -3534,7 +3559,7 @@ async function executeCommand(
     await showCommandOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
     if (!effectCurrent()) return expired()
     // actWithRetry: tolerate an element that renders a beat late + search iframes.
-    return await act(
+    const result = await act(
       tab.id,
       pageClick,
       {
@@ -3545,6 +3570,22 @@ async function executeCommand(
       },
       observationPrecondition,
     )
+    if (!effectCurrent()) return expired()
+    if (result && result.ok && cmd.canonicalTargetUrl) {
+      const committed = await waitForCanonicalYouTubeNavigation(
+        tab.id,
+        15000,
+        cmd.canonicalTargetUrl,
+      )
+      if (!effectCurrent()) return expired()
+      if (!committed) {
+        return {
+          ok: false,
+          error: 'canonical_navigation_not_committed: selected YouTube result did not finish loading',
+        }
+      }
+    }
+    return result
   }
   if (action === 'type') {
     await showCommandOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))

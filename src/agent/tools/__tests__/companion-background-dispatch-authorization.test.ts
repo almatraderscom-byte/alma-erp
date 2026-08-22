@@ -454,6 +454,7 @@ describe('Companion two-phase command dispatch authorization', () => {
 
   it('forwards the server-derived canonical result target into pageClick', async () => {
     const actWithRetry = vi.fn(async () => ({ ok: true }))
+    const waitForCanonicalYouTubeNavigation = vi.fn(async () => true)
     const execute = runInNewContext(
       `(${sourceFunction('async function executeCommand', '\n// ---- poll loop')})`,
       {
@@ -464,6 +465,7 @@ describe('Companion two-phase command dispatch authorization', () => {
         showOverlay: vi.fn(async () => true),
         actWithRetry,
         pageClick: () => undefined,
+        waitForCanonicalYouTubeNavigation,
         lockdownMatch: () => null,
         Date,
         Number,
@@ -493,6 +495,11 @@ describe('Companion two-phase command dispatch authorization', () => {
       ref: 'e-result',
       canonicalTargetUrl: 'https://www.youtube.com/watch?v=k4V3Mo61fJM',
     })
+    expect(waitForCanonicalYouTubeNavigation).toHaveBeenCalledWith(
+      7,
+      15000,
+      'https://www.youtube.com/watch?v=k4V3Mo61fJM',
+    )
   })
 })
 
