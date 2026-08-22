@@ -144,10 +144,16 @@ export function geminiThinkingBudget(level: EffortLevel, maxOutputTokens = 8192)
     xhigh: 0.65,
     max: 0.7,
   }
-  const cap = Math.max(1024, maxOutputTokens)
-  // Never leave the answer less than a quarter of the allowance (min 512).
-  const ceiling = Math.min(GEMINI_MAX_THINKING_BUDGET, Math.max(512, cap - Math.max(512, Math.floor(cap * 0.25))))
-  return Math.max(512, Math.min(Math.floor(cap * share[level]), ceiling))
+  // The REAL cap — never rounded up. A previous version floored it at 1024 while
+  // the request still carried a smaller `maxOutputTokens`, so a tiny configured
+  // cap could receive a budget equal to (or larger than) the whole allowance
+  // (Codex P2). Everything below is a fraction of what the request actually has.
+  const cap = Math.max(1, Math.floor(maxOutputTokens))
+  const reserve = Math.max(1, Math.ceil(cap * 0.25))   // the answer's share
+  const ceiling = Math.min(GEMINI_MAX_THINKING_BUDGET, cap - reserve)
+  // Too small to both think and answer → 0, which Gemini reads as thinking off.
+  if (ceiling <= 0) return 0
+  return Math.max(0, Math.min(Math.floor(cap * share[level]), ceiling))
 }
 
 /** Google's thinkingLevel enum. Gemini has nothing above `high`. */
