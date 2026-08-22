@@ -8413,13 +8413,19 @@ final class AssistantVM {
     /// live-tail. A FULL replay (afterSeq < 0) rebuilds the tail from scratch —
     /// partial content rendered before a drop is replaced by the authoritative
     /// log, never doubled (the direct stream carries no seq to splice on). The
-    /// wipe fires on the stream's `turn_snapshot` hello, NOT before the request:
-    /// a failed attach must keep the frozen partial on screen.
+    /// wipe is ARMED by the stream's `turn_snapshot` hello and FIRES on the first
+    /// replayed content event (handoff F-09, R-1): a replay that turns out empty
+    /// — durable rows missing — keeps the frozen partial on screen instead of
+    /// replacing it with nothing.
     private var pendingReplayReset = false
+    private var replayWipeArmed = false
 
     private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
         if afterSeq < 0 { pendingReplayReset = true }
-        defer { pendingReplayReset = false }
+        defer {
+            pendingReplayReset = false
+            replayWipeArmed = false
+        }
         var comps = URLComponents(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(turnId)/stream"),
                                   resolvingAgainstBaseURL: false)!
         // `proto`: which prose family this build can reduce (mixed-version safety —
@@ -8469,6 +8475,13 @@ final class AssistantVM {
         if stallRetryAttempt != 0 { stallRetryAttempt = 0 }   // stream is back
         var touchedStream = false
         for ev in events {
+            // Armed by the durable-stream hello: the first replayed CONTENT event
+            // proves the authoritative log has something to rebuild from, so only
+            // now is the frozen partial replaced (never by an empty replay).
+            if replayWipeArmed, ev.isReplayContent {
+                replayWipeArmed = false
+                resetStreamingTailForReplay()
+            }
             switch ev {
             case .conversationId(let id):
                 adoptNewConversationId(id)
@@ -8928,7 +8941,7 @@ final class AssistantVM {
                 }
                 if pendingReplayReset {
                     pendingReplayReset = false
-                    resetStreamingTailForReplay()
+                    replayWipeArmed = true
                 }
                 // The family the replay/tail is served in for THIS client — the
                 // reducer is selected from this, never from the event shapes.
@@ -9028,6 +9041,11 @@ final class AssistantVM {
     /// the turn row contract.
     func debugApplyTurnEvents(_ events: [AgentTurnEvent]) {
         apply(events)
+    }
+
+    /// Tests: behave as if a FULL durable replay was just requested.
+    func debugArmReplayReset() {
+        pendingReplayReset = true
     }
     #endif
 
@@ -18745,15 +18763,23 @@ struct AgentTurnBlocksView: View {
     }
 
     private var displayedBlocks: [AgentChatMessage.TurnBlock] {
-        guard message.blocks.count > Self.maxVisibleBlocks else { return message.blocks }
-        let tailStart = message.blocks.count - Self.maxVisibleBlocks
-        let pinned = message.blocks[..<tailStart].filter { block in
+        Self.boundedBlocks(message.blocks)
+    }
+
+    /// The mounted tail is bounded so a 100-step turn cannot become one enormous
+    /// SwiftUI row — but only ACTIVITY is ever evicted (handoff F-06, R-4). Every
+    /// owner prose block, file, card and owner message outside the window stays
+    /// pinned: the "আগের N ধাপ" summary can recover activity, never a reply.
+    static func boundedBlocks(_ blocks: [AgentChatMessage.TurnBlock]) -> [AgentChatMessage.TurnBlock] {
+        guard blocks.count > maxVisibleBlocks else { return blocks }
+        let tailStart = blocks.count - maxVisibleBlocks
+        let pinned = blocks[..<tailStart].filter { block in
             switch block {
-            case .file, .ownerMessage, .confirmCard, .askCard: return true
-            case .prose, .activity: return false
+            case .file, .ownerMessage, .confirmCard, .askCard, .prose: return true
+            case .activity: return false
             }
         }
-        return Array(pinned) + Array(message.blocks[tailStart...])
+        return Array(pinned) + Array(blocks[tailStart...])
     }
 
     static func makeRenderItems(

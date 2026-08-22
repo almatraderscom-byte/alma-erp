@@ -64,3 +64,7 @@ verified final; the superseded draft "কাজ শেষ, সব ঠিক আ�
 - Tests: `turn-event-publisher.test.ts` (+2: transient retry, permanent hole) 8/8;
   new `worker/src/__tests__/streamed-turn-durability.test.mjs` 6/6 (`node --test`);
   `vitest run src/agent/lib/__tests__ src/app/api/assistant` 257 files / 2367 tests green.
+- iOS re-run after the verification-row mirror (commit c6433252):
+  `ProseLifecycleV2Tests` 10/10 (`xcodebuild-test-4.log`). Note for the rig: the
+  simulator's Face ID *Enrolled* toggle makes the app-lock prompt block the XCTest
+  host ("test runner hung before establishing connection") — keep it OFF for unit runs.
