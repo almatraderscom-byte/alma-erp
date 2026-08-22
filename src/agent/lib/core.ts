@@ -1904,6 +1904,10 @@ export async function* runAgentTurn(
                 const te = timeline[ti]
                 if (te.t === 'text') { te.state = 'superseded'; break }
               }
+              // The cold history rebuilds activity from the persisted timeline:
+              // without this row the live "যাচাই" activity vanished on reload
+              // while the steering/verifier retries kept theirs (Codex P1 #838 r4).
+              timeline.push({ t: 'verify', attempt: 1, max: 1 })
             }
             assistantTurns.pop()
             messages = [
