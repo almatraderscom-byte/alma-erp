@@ -1,0 +1,184 @@
+import { describe, expect, it } from 'vitest'
+import { runTurnTail, type TurnTailIO } from '@/agent/lib/turn-stream-tailer'
+import type { TurnEvent } from '@/agent/lib/turn-events'
+
+/**
+ * Reliability epic R-2 (handoff F-08): the durable-turn tailer must
+ *   - deliver an event published between the replay query and the subscription
+ *     exactly once,
+ *   - heal a sequence gap from the durable log BEFORE applying the later event,
+ *   - never silently accept `n+2` after a missing `n+1`,
+ *   - keep the existing overlap dedupe / terminal / page-cap / fallback contracts.
+ */
+
+const ev = (seq: number, type = 'text_delta'): TurnEvent => ({ seq, type, payload: { type, seq } })
+
+type Harness = {
+  io: TurnTailIO
+  emitted: number[]
+  controls: unknown[]
+  logs: Array<{ event: string; detail: Record<string, unknown> }>
+  finished: () => boolean
+  /** Publish on the live channel (no-op until subscribed). */
+  publish: (evt: TurnEvent) => void
+  subscribed: () => boolean
+}
+
+function harness(opts: {
+  rows: () => TurnEvent[]
+  subscribe?: 'ok' | 'none'
+  /** Runs between the subscription being installed and the replay query. */
+  betweenSubscribeAndReplay?: (h: Harness) => void
+  replayError?: Error
+}): Harness {
+  let onLive: ((evt: TurnEvent) => void) | null = null
+  let finished = false
+  const emitted: number[] = []
+  const controls: unknown[] = []
+  const logs: Harness['logs'] = []
+  const h: Harness = {
+    emitted,
+    controls,
+    logs,
+    finished: () => finished,
+    publish: (evt) => onLive?.(evt),
+    subscribed: () => onLive != null,
+    io: {
+      async getReplay(afterSeq, limit) {
+        if (opts.replayError) throw opts.replayError
+        // The race window: the publisher writes + publishes right after the
+        // subscription exists but before this query resolves.
+        if (opts.betweenSubscribeAndReplay && onLive) {
+          const hook = opts.betweenSubscribeAndReplay
+          opts.betweenSubscribeAndReplay = undefined
+          hook(h)
+        }
+        const rows = opts.rows().filter((r) => r.seq > afterSeq).sort((a, b) => a.seq - b.seq)
+        return typeof limit === 'number' ? rows.slice(0, limit) : rows
+      },
+      async subscribe(cb) {
+        if (opts.subscribe === 'none') return null
+        onLive = cb
+        return { close: async () => { onLive = null } }
+      },
+      poll(afterSeq, cb) {
+        for (const r of opts.rows().filter((r) => r.seq > afterSeq)) cb(r)
+        return { close: async () => {} }
+      },
+      emit(evt) { emitted.push(evt.seq) },
+      control(payload) { controls.push(payload) },
+      finish() { finished = true },
+      log(event, detail) { logs.push({ event, detail }) },
+    },
+  }
+  return h
+}
+
+const base = { turnId: 't1', afterSeq: -1, snapshotLastSeq: null, snapshotStatus: 'running' as const }
+
+describe('turn-stream tailer — replay/subscribe ordering', () => {
+  it('delivers an event published between the replay query and the subscription exactly once', async () => {
+    const rows: TurnEvent[] = [ev(0, 'conversation_id'), ev(1)]
+    const h = harness({
+      rows: () => rows,
+      betweenSubscribeAndReplay: (hh) => {
+        // Durable row lands AND the live publish fires while replay is in flight.
+        rows.push(ev(2))
+        hh.publish(ev(2))
+      },
+    })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    expect(h.subscribed()).toBe(true)
+    expect(h.emitted).toEqual([0, 1, 2])   // seq 2 once — from replay OR buffer, never both
+    h.publish(ev(3, 'done'))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 1, 2, 3])
+    expect(h.finished()).toBe(true)
+  })
+
+  it('heals a gap from the durable log BEFORE applying the later live event', async () => {
+    const rows: TurnEvent[] = [ev(0)]
+    const h = harness({ rows: () => rows })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    // seq 1 was written but its publish was lost; seq 2 arrives live.
+    rows.push(ev(1), ev(2))
+    h.publish(ev(2))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 1, 2])
+    expect(h.logs.map((l) => l.event)).toEqual(['gap_detected', 'replay_catchup'])
+    expect(h.logs[0].detail).toMatchObject({ expectedSeq: 1, receivedSeq: 2 })
+  })
+
+  it('an unhealable gap is logged loudly and the stream continues', async () => {
+    const rows: TurnEvent[] = [ev(0)]
+    const h = harness({ rows: () => rows })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    h.publish(ev(3))   // rows 1–2 never existed durably
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 3])
+    expect(h.logs.map((l) => l.event)).toEqual(['gap_detected', 'gap_unhealed'])
+  })
+
+  it('still dedupes the overlap between replay and live tail', async () => {
+    const rows: TurnEvent[] = [ev(0), ev(1)]
+    const h = harness({ rows: () => rows })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    h.publish(ev(1))   // raced duplicate
+    h.publish(ev(2))
+    await tail.flush()
+    expect(h.emitted).toEqual([0, 1, 2])
+    await tail.close()
+  })
+
+  it('a terminal event inside the replay closes the stream without tailing', async () => {
+    const h = harness({ rows: () => [ev(0), ev(1, 'done'), ev(2)] })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    expect(h.emitted).toEqual([0, 1])
+    expect(h.finished()).toBe(true)
+  })
+
+  it('a replay read failure ends the stream with an explicit error, never a mid-turn live-only tail (F-09)', async () => {
+    const h = harness({ rows: () => [], replayError: new Error('db down') })
+    const tail = runTurnTail(h.io, base)
+    await tail.ready
+    expect(h.controls).toEqual([{ type: 'error', message: 'turn_replay_unavailable' }])
+    expect(h.finished()).toBe(true)
+    expect(h.logs.map((l) => l.event)).toContain('replay_failed')
+  })
+
+  it('page-capped replay emits replay_continue from the cursor', async () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ev(i))
+    const h = harness({ rows: () => rows })
+    const tail = runTurnTail(h.io, { ...base, snapshotLastSeq: 5, replayPageSize: 3 })
+    await tail.ready
+    expect(h.emitted).toEqual([0, 1, 2])
+    expect(h.controls).toEqual([{ type: 'replay_continue', afterSeq: 2 }])
+    expect(h.finished()).toBe(true)
+  })
+
+  it('without a live channel it polls the durable log for a running turn and errors for a settled one', async () => {
+    const running = harness({ rows: () => [ev(0), ev(1)], subscribe: 'none' })
+    const t1 = runTurnTail(running.io, base)
+    await t1.ready
+    expect(running.emitted).toEqual([0, 1])
+    expect(running.finished()).toBe(false)
+
+    const settled = harness({ rows: () => [ev(0)], subscribe: 'none' })
+    const t2 = runTurnTail(settled.io, { ...base, snapshotStatus: 'done' })
+    await t2.ready
+    expect(settled.controls).toEqual([{ type: 'error', message: 'turn_stream_unavailable' }])
+    expect(settled.finished()).toBe(true)
+  })
+
+  it('resumes strictly after the client cursor', async () => {
+    const h = harness({ rows: () => [ev(0), ev(1), ev(2), ev(3)] })
+    const tail = runTurnTail(h.io, { ...base, afterSeq: 1 })
+    await tail.ready
+    expect(h.emitted).toEqual([2, 3])
+  })
+})

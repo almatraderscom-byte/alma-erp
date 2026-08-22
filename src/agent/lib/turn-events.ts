@@ -51,13 +51,17 @@ export function sseFrame(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
 
-/** Replay the durable event log for a turn, oldest first. Fail-open to [].
+/** Replay the durable event log for a turn, oldest first.
  *  `afterSeq` (roadmap 3.5) replays only events NEWER than the client's cursor;
- *  `limit` caps pathological turns while the cursor allows continuation. */
+ *  `limit` caps pathological turns while the cursor allows continuation.
+ *  Default fail-open to [] (advisory callers); the stream endpoint passes
+ *  `throwOnError` because a replay it cannot read must end the stream with an
+ *  explicit error rather than start a live-only tail mid-turn (F-09). */
 export async function getReplayEvents(
   turnId: string,
   afterSeq = -1,
   limit = 5000,
+  opts?: { throwOnError?: boolean },
 ): Promise<TurnEvent[]> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +74,7 @@ export async function getReplayEvents(
     return rows as TurnEvent[]
   } catch (err) {
     console.warn('[turn-events] getReplayEvents failed:', err instanceof Error ? err.message : err)
+    if (opts?.throwOnError) throw err
     return []
   }
 }
