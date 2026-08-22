@@ -9,8 +9,12 @@
  * turn authorization, and an instruction origin that defaulted instead of
  * inheriting.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { delegatedToolContextFrom } from '@/agent/lib/models/subagent'
+
+vi.mock('@/agent/lib/live-browser/turn-owner-input', () => ({
+  isTurnOwnerExecutionCurrent: vi.fn(async () => true),
+}))
 
 const READ_ONLY = { allowed: false, reason: 'owner asked for a status only' } as never
 

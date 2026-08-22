@@ -48,7 +48,7 @@ async function render() {
     el('toggleBtn').style.background = s.paused ? '#c9a84c' : '#e57373'
     el('toggleBtn').style.color = s.paused ? '#1a1505' : '#1a1505'
     el('pauseHint').textContent = s.paused
-      ? 'নিরাপত্তার জন্য থামিয়ে রাখলে এজেন্ট কোনো কমান্ড চালাবে না।'
+      ? (s.lastError || 'নিরাপত্তার জন্য থামিয়ে রাখলে এজেন্ট কোনো কমান্ড চালাবে না।')
       : serverConnected
         ? 'যেকোনো সময় "থামান" চেপে এক ক্লিকে বন্ধ করতে পারবেন।'
         : (s.lastError || `Server: ${s.baseUrl}`)

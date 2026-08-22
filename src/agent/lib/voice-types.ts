@@ -16,6 +16,6 @@ export type VoiceTurnEvent =
   | { type: 'confirm_card'; pendingActionId?: string; summary?: string; costEstimate?: number; actionType?: string; imageModelSelection?: unknown }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[]; questions?: Array<{ question: string; options: string[] }> }
   | { type: 'error'; message?: string }
-  | { type: 'verification_retry' }
+  | { type: 'verification_retry'; categories: string[] }
   | { type: 'model_switch_required' }
   | { type: 'thinking' }

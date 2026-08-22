@@ -47,7 +47,7 @@ describe('SK-6 — the SEO procedure leaves the global requirement note', () => 
     )
     const note = buildOwnerRequirementNote(req, { skillPinned: true })
     expect(note).toContain('Ordered targets')
-    expect(note).toContain('Live Chrome is REQUIRED')
+    expect(note).toContain('Paired live Chrome is REQUIRED')
   })
 
   it('a non-SEO turn is untouched by any of this', () => {

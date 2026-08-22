@@ -8,6 +8,7 @@
  */
 
 import { AGENT_GROUNDING_GATE } from '@/agent/config'
+import { isDirectYouTubeBrowserTask } from '@/agent/lib/live-browser/intent'
 import { DEEP_SCOPE_RE } from '@/agent/lib/turn-authorization'
 
 export interface OwnerTurnRequirements {
@@ -193,7 +194,8 @@ const AUDIT_ASK_RE =
 export function deriveOwnerTurnRequirements(text: string): OwnerTurnRequirements {
   const t = text.trim()
   const targets = extractOrderedWebTargets(t)
-  const liveBrowser = /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
+  const liveBrowser = isDirectYouTubeBrowserTask(t)
+    || /\blive[\s_-]*browser\b|আমার\s*(?:chrome|ক্রোম|browser|ব্রাউজার)|(?:chrome|ক্রোম|browser|ব্রাউজার)\s*(?:use|ব্যবহার|দিয়ে|diye)/i.test(t)
   // A FIX order is not an audit order (owner bug 2026-07-26). "almatraders.com
   // এর SEO অডিটে পাওয়া ছবির alt সমস্যা ঠিক করো" armed the audit contract purely
   // because it contains the words "SEO" and "অডিট" — so the agent produced ANOTHER
@@ -257,7 +259,10 @@ export function buildOwnerRequirementNote(
   const lines: string[] = []
   if (req.targets.length) lines.push(`Ordered targets: ${req.targets.join(' → ')}`)
   if (req.liveBrowser) {
-    lines.push('Live Chrome is REQUIRED: visit and LOOK at at least 5 distinct pages per target; crawler-only completion is forbidden.')
+    lines.push('Paired live Chrome is REQUIRED: LOOK before every single ACT and verify the requested end state; shell/Mac-command fallback is forbidden.')
+    if (req.clientSeo) {
+      lines.push('For this audit, visit and LOOK at at least 5 distinct pages per target; crawler-only completion is forbidden.')
+    }
   }
   if (req.clientSeo && !opts.skillPinned) lines.push('Each target requires its own crawl, executed result, full report read, and download links before moving on.')
   if (req.reportArtifact && !opts.skillPinned) lines.push('A client-ready artifact is REQUIRED; prose alone is not delivery.')

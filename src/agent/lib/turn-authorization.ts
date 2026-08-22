@@ -1,4 +1,5 @@
 import { TOOL_CLASSIFICATION } from '@/agent/tools/capability-classification'
+import { isDirectYouTubeBrowserTask } from '@/agent/lib/live-browser/intent'
 import { resolveClassification } from '@/agent/tools/tool-contract'
 
 /** Trusted, server-derived authorization for one owner message. */
@@ -106,6 +107,7 @@ export function deriveOwnerTurnAuthorization(text: string): OwnerTurnAuthorizati
   }
   if (
     BARE_CONTINUATION_RE.test(t)
+    || isDirectYouTubeBrowserTask(t)
     || EXPLICIT_ACTION_RE.test(t)
     || BANGLISH_IMPERATIVE_RE.test(t)
     || EXPLICIT_LIVE_BROWSER_ACT_RE.test(t)

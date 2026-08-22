@@ -94,6 +94,26 @@ describe('layer 2 — the rules that keywords can never get right', () => {
     }
   })
 
+  it('routes a generic YouTube playback request to witnessed Chrome control', () => {
+    for (const prompt of [
+      'ইউটিউবে একটা মিউজিক প্লে করো',
+      'YouTube-এ Coke Studio Bangla গানটা চালাও',
+      'youtube e lofi music search kore play koro',
+      'Open YouTube and play Interstellar soundtrack',
+    ]) {
+      expect(applyRules(prompt)?.skill).toBe('alma-browser-operator')
+    }
+  })
+
+  it('does not steal YouTube software, content-creation, or recommendation work', () => {
+    expect(applyRules('YouTube Companion integration bug fix করো')?.skill)
+      .not.toBe('alma-browser-operator')
+    expect(applyRules('YouTube-এর জন্য একটা launch video বানাও')?.skill)
+      .toBe('alma-media-video')
+    expect(applyRules('YouTube music নিয়ে একটা market report লেখো')?.skill)
+      .not.toBe('alma-browser-operator')
+  })
+
   it('does not steal software work merely because it mentions Chrome or a browser tool', () => {
     expect(applyRules('Chrome Companion integration bug fix করো')?.skill)
       .not.toBe('alma-browser-operator')

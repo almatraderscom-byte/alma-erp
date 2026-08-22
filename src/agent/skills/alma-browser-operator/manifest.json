@@ -1,7 +1,7 @@
 {
   "name": "alma-browser-operator",
-  "description": "Drives Boss's own paired Chrome — looks at the page, then clicks or types one step at a time — for jobs that only exist behind a login or a portal. Use when Boss says to open Chrome and go do something on a site. It grants no new power: the final Send/Pay/Buy/Confirm/Delete click is refused in code, and passwords, OTP and CAPTCHA are always handed back to him.",
-  "version": "1.0.0",
+  "description": "Drives Boss's own paired Chrome — looks at the page, then clicks or types one step at a time — for interactive website jobs, including searching and playing requested media on YouTube. Use when Boss asks to open or operate a site, not when he only wants information. It grants no new power: the final Send/Pay/Buy/Confirm/Delete click is refused in code, and passwords, OTP and CAPTCHA are always handed back to him.",
+  "version": "1.1.0",
   "publisher": "alma-native",
   "license": "proprietary",
   "businessScopes": [
@@ -32,6 +32,7 @@
       "goal",
       "steps_taken",
       "what_the_page_showed",
+      "semantic_end_state_proof_when_media",
       "where_it_stopped_and_why"
     ]
   },

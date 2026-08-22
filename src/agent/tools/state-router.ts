@@ -22,6 +22,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { universalToolPipelineEnabled } from '@/agent/config'
+import { isDirectYouTubeBrowserTask } from '@/agent/lib/live-browser/intent'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import type { HeadTier } from '@/agent/lib/models/head-router'
 import type { ToolGroupName } from './tool-groups'
@@ -345,6 +346,7 @@ export function matchIntentPacks(text: string): PackKey[] {
   const t = text.trim()
   if (!t) return []
   const hits: PackKey[] = []
+  if (isDirectYouTubeBrowserTask(t)) hits.push('browser')
   for (const rule of INTENT_RULES) {
     if (rule.re.test(t) && !hits.includes(rule.pack)) hits.push(rule.pack)
   }

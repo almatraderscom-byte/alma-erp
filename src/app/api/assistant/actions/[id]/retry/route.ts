@@ -250,7 +250,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       // Serialize the predicate ("no pending card in this conversation") so
       // retries of two different failed source cards cannot both pass it.
       await tx.$queryRaw(Prisma.sql`
-        SELECT pg_advisory_xact_lock(hashtext(${source.conversationId}))
+        SELECT pg_advisory_xact_lock(hashtext(${source.conversationId}))::text AS lock_token
       `)
 
       const duplicate = await tx.agentPendingAction.findUnique({ where: { dedupeKey } })

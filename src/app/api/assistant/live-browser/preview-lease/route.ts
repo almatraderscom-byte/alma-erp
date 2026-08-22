@@ -51,8 +51,20 @@ export async function POST(req: NextRequest) {
   })
   const ownedDeviceIds = ownedDevices.map((device) => device.id)
   if (body.on === false) {
-    await stopBrowserPreviewLeases({ deviceIds: ownedDeviceIds, turnId, conversationId })
-    return Response.json({ ok: true }, { headers: { 'Cache-Control': 'private, no-store' } })
+    // This endpoint owns capture visibility only. The iOS dock calls `on:false`
+    // automatically when a stale renewal finishes after another activity wins;
+    // treating that cleanup as owner Stop would cancel the still-running turn
+    // and its queued commands. Explicit Stop remains on the turn-cancel/watch
+    // endpoints, which carry the stronger intent and dispatch locks.
+    const stoppedLeases = await stopBrowserPreviewLeases({
+      deviceIds: ownedDeviceIds,
+      turnId,
+      conversationId,
+    })
+    return Response.json(
+      { ok: true, stoppedLeases },
+      { headers: { 'Cache-Control': 'private, no-store' } },
+    )
   }
 
   const turn = await prisma.agentTurn.findFirst({

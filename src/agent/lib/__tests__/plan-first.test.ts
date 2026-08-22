@@ -17,6 +17,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: mockPrisma }))
 
 import {
   PLAN_TURN_WITHHELD,
+  boundToolWhenShipped,
   chooseRoundBoundTool,
   filterToolsForPlanTurn,
   isPlanFirstTurn,
@@ -30,6 +31,12 @@ import {
 } from '@/agent/lib/plan-first'
 
 describe('prospective plan binding', () => {
+  it('does not name-bind a workflow tool that the final round inventory filtered out', () => {
+    expect(boundToolWhenShipped('run_mac_command', ['live_browser_look', 'live_browser_act'])).toBeNull()
+    expect(boundToolWhenShipped('live_browser_act', ['live_browser_look', 'live_browser_act']))
+      .toBe('live_browser_act')
+  })
+
   it('puts make_plan before a contract or workflow tool on round zero', () => {
     expect(chooseRoundBoundTool({
       iteration: 0,

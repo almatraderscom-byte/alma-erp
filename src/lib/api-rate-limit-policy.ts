@@ -10,6 +10,7 @@ export interface ApiRateLimitPolicy {
 // backstop; pair-code and owner-session endpoints intentionally stay generic.
 const HIGH_FREQUENCY_DEVICE_PATHS = new Set([
   '/api/assistant/live-browser/poll',
+  '/api/assistant/live-browser/authorize',
   '/api/assistant/live-browser/result',
   '/api/assistant/live-browser/frames',
   '/api/assistant/mac-agent/poll',

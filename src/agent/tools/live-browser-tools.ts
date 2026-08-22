@@ -2,7 +2,7 @@
  * Phase E — owner-facing tools for the LIVE browser companion (the agent driving the
  * owner's OWN Chrome, in his real logged-in session, while he watches).
  *
- *   • set_live_browser     — KV kill-switch ON/OFF (default OFF, no redeploy).
+ *   • set_live_browser     — compatibility stub; only the owner may use Watch Stop/Resume.
  *   • live_browser_pair    — mint a one-time code for the owner to paste into the
  *                            extension (pairing is his physical step; no password).
  *   • live_browser_status  — which of his Chromes are paired + online right now.
@@ -18,10 +18,14 @@
 import type { AgentTool } from './registry'
 import { isFinalSubmitText, FINAL_SUBMIT_BLOCK_MESSAGE } from '@/agent/lib/browser/final-submit'
 import { mirrorLiveBrowserStep } from '@/agent/lib/graph/live-browser-graph'
+import {
+  mediaSelectionMatchesOwnerRequest,
+  verifyBrowserPlayback,
+  type BrowserMediaSnapshot,
+} from '@/agent/lib/live-browser/playback-verifier'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
 import {
   isLiveBrowserEnabled,
-  setLiveBrowserEnabled,
   createPairingTicket,
   listOwnerDevices,
   runCommand,
@@ -35,6 +39,22 @@ import {
   lockdownDomains,
   type SiteTier,
 } from '@/agent/lib/live-browser/trust'
+import {
+  bindDirectYouTubeSelectedMedia,
+  bindDirectYouTubeOwnerTarget,
+  bindDirectYouTubeSoleDevice,
+  getDirectYouTubeDeviceSelection,
+  getDirectYouTubeSelectedMedia,
+  runDirectYouTubeOwnerFencedEffect,
+  stageDirectYouTubeDeviceOptions,
+  type DirectYouTubeDeviceOptionBinding,
+  type DirectYouTubeSelectedMediaState,
+} from '@/agent/lib/live-browser/turn-lane'
+import {
+  normalizeOwnerRequestWords,
+  parseDirectMediaOwnerRequest,
+} from '@/agent/lib/live-browser/media-request'
+import { isYouTubePlaybackRequest } from '@/agent/lib/live-browser/intent'
 
 // ── Oscillation guard (2026-07-12 carousel run: open popup → close → open …) ──
 // Best-effort, per-serverless-instance: the 3rd identical write action on the
@@ -49,18 +69,307 @@ function browserActivityContextOf(input: Record<string, unknown>) {
   return {
     conversationId: typeof input.conversationId === 'string' ? input.conversationId : null,
     turnId: typeof input.turnId === 'string' ? input.turnId : null,
+    directBrowserLaneToken: typeof input.directBrowserLaneToken === 'string'
+      ? input.directBrowserLaneToken
+      : null,
   }
 }
 type BoundBrowserCommand = (
   action: LiveBrowserAction,
   params?: Record<string, unknown>,
 ) => ReturnType<typeof runCommand>
+
+type DirectBrowserReadPrecondition = {
+  expectedCurrentUrl: string
+  expectedDocumentId: string
+}
+
+type ReadTextData = BrowserMediaSnapshot & {
+  textLength?: number
+  truncated?: boolean
+  scroll?: { y?: number; viewport?: number; pageHeight?: number; atBottom?: boolean }
+}
+
 function browserCommandRunner(
   input: Record<string, unknown>,
   deviceId: string,
-): BoundBrowserCommand {
+  requireDirectReadPrecondition = false,
+): {
+  run: BoundBrowserCommand
+  bindDirectReadPrecondition: (value: DirectBrowserReadPrecondition) => void
+} {
   const context = browserActivityContextOf(input)
-  return (action, params) => runCommand(deviceId, action, params, undefined, context)
+  const claim = input.browserObservationClaim as { commandId?: unknown } | undefined
+  let reservedCommandId = typeof claim?.commandId === 'string' ? claim.commandId.trim() : ''
+  let directReadPrecondition: DirectBrowserReadPrecondition | null = null
+  const run: BoundBrowserCommand = async (action, params) => {
+    // A receipt-consumed ACT reserves one durable command id. Use it exactly
+    // once for the primary action; follow-up wait/screenshot reads get fresh ids.
+    const commandId = reservedCommandId || undefined
+    reservedCommandId = ''
+    const directRead = input.directBrowserTask === true
+      && (action === 'read_text' || action === 'read_dom' || action === 'screenshot')
+    // Direct reads are authorized only after the server has observed and
+    // approved one exact URL/document pair. A model-supplied param can never
+    // manufacture this precondition because it lives only in this closure.
+    if (directRead && requireDirectReadPrecondition && !directReadPrecondition) {
+      return {
+        ok: false,
+        status: 'failed',
+        error: 'DIRECT_BROWSER_READ_PRECONDITION_MISSING',
+        commandId: '',
+      }
+    }
+    const boundParams = directRead
+      ? {
+          ...params,
+          requiredHost: 'youtube.com',
+          ...(directReadPrecondition ?? {}),
+          ...(action === 'read_text' ? { requireForeground: true } : {}),
+        }
+      : params
+    const result = await runCommand(
+      deviceId,
+      action,
+      boundParams,
+      undefined,
+      context,
+      commandId,
+    )
+    // The extension enforces the identity at the effect boundary. Re-check the
+    // identity on returned structured reads before any page bytes can reach the
+    // provider, guarding old/misbehaving Companion builds as well.
+    if (
+      directReadPrecondition
+      && result.ok
+      && (action === 'read_text' || action === 'read_dom')
+    ) {
+      const data = result.data as { url?: unknown; documentId?: unknown } | undefined
+      if (
+        String(data?.url ?? '') !== directReadPrecondition.expectedCurrentUrl
+        || String(data?.documentId ?? '') !== directReadPrecondition.expectedDocumentId
+      ) {
+        return {
+          ok: false,
+          status: 'failed',
+          error: 'DIRECT_BROWSER_READ_IDENTITY_CHANGED',
+          commandId: result.commandId,
+        }
+      }
+    }
+    return result
+  }
+  return {
+    run,
+    bindDirectReadPrecondition: (value) => { directReadPrecondition = { ...value } },
+  }
+}
+
+function isCanonicalYouTubeHome(value: unknown): boolean {
+  try {
+    const url = new URL(String(value ?? ''))
+    const host = url.hostname.toLowerCase()
+    return url.protocol === 'https:'
+      && (host === 'youtube.com' || host === 'www.youtube.com')
+      && (url.pathname === '' || url.pathname === '/')
+      && !url.search
+      && !url.hash
+  } catch {
+    return false
+  }
+}
+
+function isYouTubePage(value: unknown): boolean {
+  try {
+    const url = new URL(String(value ?? ''))
+    const host = url.hostname.toLowerCase()
+    return url.protocol === 'https:' && (host === 'youtube.com' || host === 'www.youtube.com')
+  } catch {
+    return false
+  }
+}
+
+function directYouTubeReadScopeAllowed(input: {
+  url: string
+  ownerRequest: string
+  device: { id: string; name: string; online: boolean }
+  selectedMedia: DirectYouTubeSelectedMediaState
+}): boolean {
+  try {
+    const url = new URL(input.url)
+    const host = url.hostname.toLowerCase()
+    if (
+      url.protocol !== 'https:'
+      || (host !== 'youtube.com' && host !== 'www.youtube.com')
+      || url.hash
+    ) return false
+    if (url.pathname === '/' && !url.search) return true
+    if (url.pathname === '/results') {
+      const keys = [...url.searchParams.keys()]
+      if (keys.length !== 1 || keys[0] !== 'search_query') return false
+      const expectedQuery = parseDirectMediaOwnerRequest(
+        input.ownerRequest,
+        [input.device],
+      ).mediaTitle
+      const expected = normalizeOwnerRequestWords(expectedQuery).join(' ')
+      const observed = normalizeOwnerRequestWords(url.searchParams.get('search_query') ?? '').join(' ')
+      return Boolean(expected && observed === expected)
+    }
+    const videoId = canonicalObservedYouTubeVideoId(url.href)
+    return Boolean(
+      videoId
+      && input.selectedMedia.state === 'selected'
+      && input.selectedMedia.videoId === videoId,
+    )
+  } catch {
+    return false
+  }
+}
+
+type ObservedElementFingerprint = {
+  tag: string
+  type: string
+  role: string
+  name: string
+  aria: string
+  text: string
+  href: string
+}
+
+function parseObservedElementFingerprint(value: string): ObservedElementFingerprint | null {
+  try {
+    const fields = JSON.parse(value) as unknown
+    if (!Array.isArray(fields) || fields.length !== 7 || fields.some((field) => typeof field !== 'string')) {
+      return null
+    }
+    const [tag, type, role, name, aria, text, href] = fields as string[]
+    return { tag, type, role, name, aria, text, href }
+  } catch {
+    return null
+  }
+}
+
+const DIRECT_YOUTUBE_PLAYER_CONTROL =
+  /\b(play|pause|replay|next|previous|mute|unmute|volume|fullscreen|theatre|theater|captions?|settings?)\b|প্লে|পজ|চালান|বিরতি|পরবর্তী|আগের|মিউট|আনমিউট|পূর্ণস্ক্রিন/i
+
+const DIRECT_YOUTUBE_ACTION_ALLOWLIST = new Set<LiveBrowserAction>([
+  'navigate', 'wait', 'scroll', 'hover', 'scroll_to', 'type', 'click',
+])
+
+function directYouTubePlaybackControlKind(
+  fingerprint: string,
+): 'track_skip' | 'play_control' | 'unsupported_control' | null {
+  const observed = parseObservedElementFingerprint(fingerprint)
+  if (!observed) return null
+  // Result links are handled by the durable media-selection path below. This
+  // classifier owns only href-less player controls such as Play or Next.
+  if (observed.href) return null
+  const labels = [observed.name, observed.aria, observed.text]
+    .map((value) => value.trim().toLowerCase().replace(/\s+/g, ' '))
+    .filter(Boolean)
+  const semantic = `${observed.role} ${labels.join(' ')}`.toLowerCase()
+  if (/\b(?:next|previous)\b|পরবর্তী|আগের/i.test(semantic)) return 'track_skip'
+  if (!DIRECT_YOUTUBE_PLAYER_CONTROL.test(semantic)) return null
+  const exactPlayLabels = new Set(['play', 'play (k)', 'replay', 'প্লে', 'চালান'])
+  return labels.length > 0 && labels.every((label) => exactPlayLabels.has(label))
+    ? 'play_control'
+    : 'unsupported_control'
+}
+
+function youtubePageVideoId(value: string): string | null {
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase().replace(/^www\./, '')
+    if (url.protocol !== 'https:' || host !== 'youtube.com') return null
+    const videoId = url.pathname === '/watch'
+      ? url.searchParams.get('v')?.trim() ?? ''
+      : url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})\/?$/)?.[1] ?? ''
+    return /^[A-Za-z0-9_-]{11}$/.test(videoId) ? videoId : null
+  } catch {
+    return null
+  }
+}
+
+function canonicalObservedYouTubeVideoId(value: string): string | null {
+  try {
+    const url = new URL(value, 'https://www.youtube.com/')
+    const host = url.hostname.toLowerCase().replace(/^www\./, '')
+    if (url.protocol !== 'https:' || host !== 'youtube.com' || url.hash) return null
+    if (url.pathname === '/watch') {
+      const queryKeys = [...url.searchParams.keys()]
+      const videoId = url.searchParams.get('v')?.trim() ?? ''
+      // Desktop YouTube search results normally carry a benign `pp` search
+      // provenance token. Preserve that audited shape, while rejecting every
+      // playlist/radio/autoplay context (`list`, `index`, `start_radio`, etc.).
+      const safeKeys = queryKeys.every((key) => key === 'v' || key === 'pp')
+      return safeKeys
+        && url.searchParams.getAll('v').length === 1
+        && url.searchParams.getAll('pp').length <= 1
+        && /^[A-Za-z0-9_-]{11}$/.test(videoId)
+        ? videoId
+        : null
+    }
+    const shorts = url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{11})$/)
+    return shorts && !url.search ? shorts[1] : null
+  } catch {
+    return null
+  }
+}
+
+/** The direct YouTube slice is intentionally narrower than general browser
+ * control: it may search and operate playback, never social/account controls. */
+function directYouTubeTargetAllowed(action: LiveBrowserAction, fingerprint: string): boolean {
+  if (action !== 'click' && action !== 'type' && action !== 'hover') return true
+  const observed = parseObservedElementFingerprint(fingerprint)
+  if (!observed) return false
+  const semantic = `${observed.role} ${observed.name} ${observed.aria} ${observed.text}`.toLowerCase()
+  const searchSignal = /\bsearch(?:_query)?\b|সার্চ|খুঁজুন|অনুসন্ধান/i.test(semantic)
+  const prohibited = /\b(subscribe|unsubscribe|like|dislike|comment|reply|share|save|download|account|profile|join|report|delete|edit|notification|history|manage|clear)\b|সাবস্ক্রাইব|লাইক|কমেন্ট|শেয়ার|সেভ|অ্যাকাউন্ট|প্রোফাইল|ইতিহাস|পরিষ্কার|ম্যানেজ/i
+  // Negative controls win before links or search-looking positives. In
+  // particular, "Clear search history" is not the search submit button.
+  if (prohibited.test(semantic)) return false
+
+  if (action === 'type') {
+    const editable = observed.tag === 'input'
+      || observed.tag === 'textarea'
+      || observed.role === 'searchbox'
+      || observed.role === 'combobox'
+    return editable && searchSignal
+  }
+
+  if (observed.href) {
+    return Boolean(canonicalObservedYouTubeVideoId(observed.href))
+  }
+
+  const buttonLike = observed.tag === 'button'
+    || observed.role === 'button'
+    || (observed.tag === 'input' && (observed.type === 'submit' || observed.type === 'button'))
+  const exactSearchLabels = new Set([
+    'search', 'search button', 'submit search',
+    'সার্চ', 'সার্চ করুন', 'খুঁজুন', 'অনুসন্ধান',
+  ])
+  const searchControl = buttonLike && [observed.name, observed.aria, observed.text]
+    .map((value) => value.trim().toLowerCase())
+    .some((value) => exactSearchLabels.has(value))
+  // A standalone Search click would submit whatever mutable value currently
+  // lives in the page field. Direct turns must instead use the exact
+  // server-derived `type(..., submit:true)` operation below.
+  if (searchControl) return action === 'hover'
+  return buttonLike && DIRECT_YOUTUBE_PLAYER_CONTROL.test(semantic)
+}
+
+function observedYouTubeMediaIdentity(fingerprint: string): {
+  videoId: string
+  title: string
+  fingerprint: string
+} | null {
+  const observed = parseObservedElementFingerprint(fingerprint)
+  if (!observed?.href) return null
+  const videoId = canonicalObservedYouTubeVideoId(observed.href)
+  const title = [observed.text, observed.name, observed.aria]
+    .map((value) => value.trim())
+    .find(Boolean) ?? ''
+  return videoId && title ? { videoId, title, fingerprint } : null
 }
 function bumpOscillation(key: string): string | null {
   const now = Date.now()
@@ -136,9 +445,20 @@ async function persistScreenshot(dataUrl: string | null | undefined): Promise<st
  *   • no hint, exactly 1 online → use it.
  *   • no hint, 2+ online → ambiguous: ask the owner which one (list the names).
  */
-async function requireActiveDevice(
-  hint?: string,
-): Promise<{ ok: true; deviceId: string; name: string } | { ok: false; error: string }> {
+function normalizeDeviceTargetText(value: string): string {
+  return normalizeOwnerRequestWords(value).join(' ')
+}
+
+async function requireActiveDevice(input: {
+  hint?: string
+  directBrowserTask: boolean
+  conversationId?: string
+  laneToken?: string
+  ownerRequest?: string
+}): Promise<
+  | { ok: true; deviceId: string; name: string }
+  | { ok: false; error: string; deviceOptions?: DirectYouTubeDeviceOptionBinding[] }
+> {
   if (!(await isLiveBrowserEnabled())) {
     return {
       ok: false,
@@ -166,7 +486,157 @@ async function requireActiveDevice(
     }
   }
 
-  const wanted = (hint ?? '').trim().toLowerCase()
+  if (input.directBrowserTask) {
+    const conversationId = input.conversationId?.trim() ?? ''
+    const laneToken = input.laneToken?.trim() ?? ''
+    if (!conversationId || !laneToken) {
+      return {
+        ok: false,
+        error: 'WORKFLOW_BLOCKED: direct browser device selection-এর durable conversation/lane token নেই।',
+      }
+    }
+    const ownerTarget = parseDirectMediaOwnerRequest(input.ownerRequest ?? '', devices).deviceTarget
+    if (ownerTarget.state === 'ambiguous') {
+      return {
+        ok: false,
+        error:
+          `WORKFLOW_BLOCKED: owner request-এর device target unique নয় (${ownerTarget.names.join(', ')}); ` +
+          'model কোনো device বেছে নিতে পারবে না—exact device card দরকার।',
+      }
+    }
+    if (ownerTarget.state === 'selected' && !ownerTarget.device.online) {
+      return {
+        ok: false,
+        error:
+          `WORKFLOW_BLOCKED: owner explicitly "${ownerTarget.device.name}" target করেছেন, কিন্তু সেই exact paired Chrome-এর fresh heartbeat নেই; ` +
+          'অন্য online device silently ব্যবহার করছি না।',
+      }
+    }
+    const normalizedHint = normalizeDeviceTargetText(input.hint ?? '')
+    if (
+      ownerTarget.state === 'selected'
+      && normalizedHint
+      && !ownerTarget.acceptedHints.includes(normalizedHint)
+    ) {
+      return {
+        ok: false,
+        error:
+          `WORKFLOW_BLOCKED: owner request exact "${ownerTarget.device.name}" target করেছে; ` +
+          `model hint "${input.hint}" দিয়ে অন্য device নির্বাচন করতে পারবে না।`,
+      }
+    }
+    let selection = await getDirectYouTubeDeviceSelection(conversationId, laneToken)
+    if (selection.state === 'none' && ownerTarget.state === 'selected') {
+      selection = await bindDirectYouTubeOwnerTarget({
+        conversationId,
+        token: laneToken,
+        device: {
+          deviceId: ownerTarget.device.id,
+          deviceName: ownerTarget.device.name,
+        },
+      })
+    } else if (selection.state === 'none' && online.length > 1) {
+      selection = await stageDirectYouTubeDeviceOptions({
+        conversationId,
+        token: laneToken,
+        devices: online.map((device) => ({ deviceId: device.id, deviceName: device.name })),
+      })
+    }
+    if (selection.state === 'none' && online.length === 1) {
+      const hinted = (input.hint ?? '').trim()
+      if (hinted && hinted !== online[0].name) {
+        const normalizedHint = hinted.toLocaleLowerCase()
+        const explicitTarget = devices.find((device) => {
+          const name = device.name.trim().toLocaleLowerCase()
+          return name === normalizedHint || name.includes(normalizedHint) || normalizedHint.includes(name)
+        })
+        return {
+          ok: false,
+          error: explicitTarget && !explicitTarget.online
+            ? `WORKFLOW_BLOCKED: explicitly requested paired Chrome "${explicitTarget.name}"-এর fresh heartbeat নেই; sole online "${online[0].name}" silently ব্যবহার করছি না।`
+            : `WORKFLOW_BLOCKED: only online Chrome is "${online[0].name}"; explicit target "${hinted}" silently বদলানো যাবে না।`,
+        }
+      }
+      selection = await bindDirectYouTubeSoleDevice({
+        conversationId,
+        token: laneToken,
+        device: { deviceId: online[0].id, deviceName: online[0].name },
+      })
+    }
+    if (selection.state === 'unavailable') {
+      return {
+        ok: false,
+        error: 'WORKFLOW_BLOCKED: immutable device selection durable lane-এ যাচাই/persist করা যায়নি; নতুন device card দরকার।',
+      }
+    }
+    if (selection.state === 'required') {
+      const optionText = selection.options.map((binding) => `"${binding.option}"`).join(', ')
+      return {
+        ok: false,
+        error:
+          `WORKFLOW_BLOCKED: একাধিক Chrome online; model device নাম/substring দিয়ে card skip করতে পারবে না। ` +
+          `এই exact server-bound options দিয়ে ask card দিন: ${optionText}।`,
+        deviceOptions: selection.options,
+      }
+    }
+    if (selection.state === 'selected') {
+      if (
+        ownerTarget.state === 'selected'
+        && (
+          selection.deviceId !== ownerTarget.device.id
+          || selection.deviceName !== ownerTarget.device.name
+        )
+      ) {
+        return {
+          ok: false,
+          error:
+            `WORKFLOW_BLOCKED: durable device binding "${selection.deviceName}" owner-request target ` +
+            `"${ownerTarget.device.name}"-এর সঙ্গে মেলে না; নতুন direct request/device card দরকার।`,
+        }
+      }
+      const exactId = devices.filter((device) => device.id === selection.deviceId)
+      if (exactId.length !== 1) {
+        return {
+          ok: false,
+          error: 'WORKFLOW_BLOCKED: selected immutable device ID আর exactly one owner-paired Chrome-এ নেই; নতুন device card দরকার।',
+        }
+      }
+      const bound = exactId[0]
+      if (bound.name !== selection.deviceName) {
+        return {
+          ok: false,
+          error: 'WORKFLOW_BLOCKED: selected Chrome snapshot-এর পরে rename/re-pair mismatch হয়েছে; পুরোনো card binding ব্যবহার করা যাবে না।',
+        }
+      }
+      if (!bound.online) {
+        return {
+          ok: false,
+          error: `Boss-এর selected exact Chrome "${selection.deviceName}"-এর fresh server heartbeat নেই; অন্য device silently ব্যবহার করছি না।`,
+        }
+      }
+      const hinted = (input.hint ?? '').trim()
+      const ownerAcceptedHint = ownerTarget.state === 'selected'
+        && ownerTarget.acceptedHints.includes(normalizeDeviceTargetText(hinted))
+      if (
+        hinted
+        && hinted !== selection.deviceName
+        && hinted !== selection.selectedOption
+        && !ownerAcceptedHint
+      ) {
+        return {
+          ok: false,
+          error: `WORKFLOW_BLOCKED: Boss-এর immutable card selection "${selection.selectedOption}"; model অন্য device চাইতে পারবে না।`,
+        }
+      }
+      return { ok: true, deviceId: bound.id, name: bound.name }
+    }
+    return {
+      ok: false,
+      error: 'WORKFLOW_BLOCKED: direct browser device binding resolved to no durable selection.',
+    }
+  }
+
+  const wanted = (input.hint ?? '').trim().toLowerCase()
   if (wanted) {
     const match =
       online.find((d) => d.name.toLowerCase() === wanted) ||
@@ -176,7 +646,7 @@ async function requireActiveDevice(
       return {
         ok: false,
         error:
-          `"${hint}" নামের কোনো অনলাইন Chrome পেলাম না, Boss। এখন অনলাইন আছে: ` +
+          `"${input.hint}" নামের কোনো অনলাইন Chrome পেলাম না, Boss। এখন অনলাইন আছে: ` +
           `${online.map((d) => d.name).join(', ')}। কোনটা ব্যবহার করব?`,
       }
     }
@@ -194,6 +664,31 @@ async function requireActiveDevice(
   return { ok: true, deviceId: online[0].id, name: online[0].name }
 }
 
+/** Revalidate the immutable device selected by LOOK without doing another
+ * display-name lookup. listOwnerDevices is already owner-scoped and excludes
+ * revoked/unpaired rows, so an exact online id match is the dispatch lease. */
+async function requireClaimedActiveDevice(
+  deviceId: string,
+): Promise<{ ok: true; deviceId: string; name: string } | { ok: false; error: string }> {
+  if (!(await isLiveBrowserEnabled())) {
+    return { ok: false, error: 'লাইভ ব্রাউজার এখন বন্ধ আছে, Boss। নতুন live_browser_look দিয়ে আবার শুরু করুন।' }
+  }
+  const device = (await listOwnerDevices()).find((candidate) => candidate.id === deviceId)
+  if (!device) {
+    return {
+      ok: false,
+      error: 'LOOK-এ ব্যবহৃত Chrome device আর owner-paired নেই; নতুন live_browser_look দরকার।',
+    }
+  }
+  if (!device.online) {
+    return {
+      ok: false,
+      error: 'LOOK-এ ব্যবহৃত exact Chrome device-এর fresh server heartbeat নেই; নতুন live_browser_look দরকার।',
+    }
+  }
+  return { ok: true, deviceId: device.id, name: device.name }
+}
+
 function formatHeartbeatAge(ageMs: number): string {
   const seconds = Math.max(0, Math.floor(ageMs / 1000))
   if (seconds < 60) return `${seconds} সেকেন্ড`
@@ -205,33 +700,18 @@ function formatHeartbeatAge(ageMs: number): string {
 const set_live_browser: AgentTool = {
   name: 'set_live_browser',
   description:
-    "Turn the LIVE browser companion ON or OFF (KV kill-switch, no redeploy, default OFF). " +
-    'When ON, the agent can drive the owner\'s own Chrome (his logged-in tabs) through the ' +
-    'ALMA Companion extension while he watches. Pass `enabled` true/false. Owner-facing — ' +
-    'confirm in Bangla. Turning ON does nothing until the owner has paired his Chrome.',
+    'Legacy compatibility stub. The model may not change the global LIVE browser switch. ' +
+    'The owner must use Stop/Resume in the Live Browser Watch panel.',
   input_schema: {
     type: 'object' as const,
     properties: { enabled: { type: 'boolean', description: 'true = ON, false = OFF' } },
     required: ['enabled'],
   },
-  handler: async (input) => {
-    try {
-      const enabled = Boolean(input.enabled)
-      await setLiveBrowserEnabled(enabled)
-      return {
-        success: true,
-        data: {
-          enabled,
-          message: enabled
-            ? 'লাইভ ব্রাউজার চালু করলাম, Boss। এবার আপনার Chrome-এ ALMA Companion এক্সটেনশনটা যুক্ত থাকলে ' +
-              'আমি আপনার নিজের লগইন দিয়ে কাজ করতে পারব, আপনি লাইভ দেখবেন। যুক্ত করা না থাকলে "pair code দাও" বলুন।'
-            : 'লাইভ ব্রাউজার বন্ধ করলাম, Boss — এখন আমি আপনার Chrome-এ কিছু করতে পারব না।',
-        },
-      }
-    } catch (err) {
-      return { success: false, error: String(err) }
-    }
-  },
+  handler: async () => ({
+    success: false,
+    error:
+      'OWNER_CONTROL_REQUIRED: global live-browser switch model বদলাতে পারবে না। Boss নিজে Live Browser Watch panel থেকে Stop/Resume করবেন।',
+  }),
 }
 
 const live_browser_pair: AgentTool = {
@@ -250,26 +730,43 @@ const live_browser_pair: AgentTool = {
   },
   handler: async (input) => {
     try {
-      if (!(await isLiveBrowserEnabled())) {
+      const perform = async () => {
+        if (!(await isLiveBrowserEnabled())) {
+          return {
+            success: false,
+            error:
+              'আগে লাইভ ব্রাউজার চালু করতে হবে, Boss — "live browser চালু করো" বলুন, তারপর কোড নিন।',
+          }
+        }
+        const ticket = await createPairingTicket(String(input.deviceName ?? '') || undefined)
+        const mins = Math.round((ticket.expiresAt.getTime() - Date.now()) / 60000)
         return {
-          success: false,
-          error:
-            'আগে লাইভ ব্রাউজার চালু করতে হবে, Boss — "live browser চালু করো" বলুন, তারপর কোড নিন।',
+          success: true,
+          data: {
+            code: ticket.code,
+            expiresInMinutes: mins,
+            message:
+              `আপনার এক-বারের পেয়ারিং কোড: ${ticket.code} (প্রায় ${mins} মিনিট চলবে), Boss।\n` +
+              'আপনার Chrome-এ ALMA Companion এক্সটেনশন খুলে কোডটা বসান — তাহলে শুধু আমি, আপনার নিজের ' +
+              'লগইন দিয়ে, এই ব্রাউজারে কাজ করতে পারব আর আপনি সব লাইভ দেখবেন।',
+          },
         }
       }
-      const ticket = await createPairingTicket(String(input.deviceName ?? '') || undefined)
-      const mins = Math.round((ticket.expiresAt.getTime() - Date.now()) / 60000)
-      return {
-        success: true,
-        data: {
-          code: ticket.code,
-          expiresInMinutes: mins,
-          message:
-            `আপনার এক-বারের পেয়ারিং কোড: ${ticket.code} (প্রায় ${mins} মিনিট চলবে), Boss।\n` +
-            'আপনার Chrome-এ ALMA Companion এক্সটেনশন খুলে কোডটা বসান — তাহলে শুধু আমি, আপনার নিজের ' +
-            'লগইন দিয়ে, এই ব্রাউজারে কাজ করতে পারব আর আপনি সব লাইভ দেখবেন।',
-        },
+      if (input.directBrowserTask === true) {
+        const fenced = await runDirectYouTubeOwnerFencedEffect({
+          conversationId: String(input.conversationId ?? ''),
+          token: String(input.directBrowserLaneToken ?? ''),
+          effect: perform,
+        })
+        if (!fenced.authorized) {
+          return {
+            success: false,
+            error: 'DIRECT_BROWSER_OWNER_FENCE_BLOCKED: newer owner input or stale lane; pairing ticket not minted.',
+          }
+        }
+        return fenced.value
       }
+      return await perform()
     } catch (err) {
       const msg = String(err)
       return {
@@ -340,6 +837,15 @@ const live_browser_look: AgentTool = {
     'wall, blocking modal, captcha, error page, search results, feed, checkout) with a Bangla hint each. ' +
     'OBEY the hints FIRST (dismiss the banner/modal, report the login/captcha to Boss) BEFORE the task — ' +
     'an overlay is not "the site is broken".\n' +
+    'MEDIA PLAYBACK PROOF: for pages with <video>/<audio>, `mediaState` reports count, playing, paused, ' +
+    'currentTime and duration. Never claim music/video is playing from a screenshot alone; require ' +
+    '`playbackVerification.verified=true`. For the final proof look, pass `expectedMedia` (the requested ' +
+    'song/video title) and `expectedHost` (for YouTube: "youtube.com"); the tool samples twice and proves ' +
+    'the media clock advanced, the title/host match, and an ad is not playing.\n' +
+    'ONE-USE ACT RECEIPT: every successful look returns `observationReceipt`, exact `device`, immutable ' +
+    '`deviceId`, `currentUrl`, `documentId`, and (for DOM reads) `domObservationId`. Echo the receipt and ' +
+    'exact device into ONE live_browser_act; the server keeps the immutable device/DOM/ref fingerprint binding. Then look again before ' +
+    'any next act.\n' +
     'SCROLL DISCIPLINE (important): the screenshot shows ONLY the current viewport and page text may be ' +
     'TRUNCATED — check the returned `scrollInfo` (y / pageHeight / atBottom) before claiming you saw the ' +
     'whole page. For a long article/feed/product list pass `sweep: true` — the tool then scrolls through ' +
@@ -367,24 +873,146 @@ const live_browser_look: AgentTool = {
         type: 'string',
         description: 'Optional: filter the returned elements to those whose text/label contains this (case-insensitive). Screenshot/text unaffected.',
       },
+      expectedMedia: {
+        type: 'string',
+        description:
+          'Optional final-state verifier: requested song/video title. Takes two DOM media samples and returns playbackVerification.',
+      },
+      expectedHost: {
+        type: 'string',
+        description:
+          'Optional hostname required by playback verification (for example "youtube.com"). Use with expectedMedia.',
+      },
       device: {
         type: 'string',
         description:
-          'Optional: which paired Chrome to use when several are online, by name (e.g. "Windows", "Mac"). Omit if only one is connected.',
+          'Optional for ordinary browsing: paired Chrome display name. In a direct witnessed YouTube lane with multiple online devices this field cannot choose a device; use the exact server-emitted ask-card options and the durable owner selection.',
       },
     },
     required: [],
   },
   handler: async (input) => {
-    const dev = await requireActiveDevice(input.device as string | undefined)
-    if (!dev.ok) return { success: false, error: dev.error }
-    const run = browserCommandRunner(input, dev.deviceId)
+    const directBrowserTask = input.directBrowserTask === true
+    if (directBrowserTask) {
+      if (input.sweep === true || (typeof input.scrollBy === 'number' && input.scrollBy !== 0)) {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_LOOK_MUTATION_BLOCKED: witnessed YouTube turn-এ LOOK scroll/sweep করে page বদলাতে পারবে না। ' +
+            'আগের receipt দিয়ে live_browser_act করো, তারপর নতুন LOOK নাও।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      if (input.url !== undefined && !isCanonicalYouTubeHome(input.url)) {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_BOOTSTRAP_BLOCKED: LOOK কেবল নতুন about:blank ALMA tab-কে https://www.youtube.com/ home-এ bootstrap করতে পারে; ' +
+            'deep/search/watch URL guess করা নিষিদ্ধ।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+    }
+    const dev = await requireActiveDevice({
+      hint: input.device as string | undefined,
+      directBrowserTask,
+      conversationId: typeof input.conversationId === 'string' ? input.conversationId : undefined,
+      laneToken: typeof input.directBrowserLaneToken === 'string'
+        ? input.directBrowserLaneToken
+        : undefined,
+      ownerRequest: typeof input.directBrowserOwnerRequest === 'string'
+        ? input.directBrowserOwnerRequest
+        : undefined,
+    })
+    if (!dev.ok) {
+      return {
+        success: false,
+        error: dev.error,
+        ...(dev.deviceOptions ? { data: { requiredDeviceOptions: dev.deviceOptions } } : {}),
+      }
+    }
+    const { run, bindDirectReadPrecondition } = browserCommandRunner(input, dev.deviceId, true)
     try {
       const steps: string[] = []
       if (typeof input.url === 'string' && /^https?:\/\//i.test(input.url)) {
-        const nav = await run('navigate', { url: input.url })
+        const nav = await run('navigate', {
+          url: input.url,
+          ...(directBrowserTask ? { bootstrapOnly: true } : {}),
+        })
         if (!nav.ok) return { success: false, error: `নেভিগেট ব্যর্থ: ${nav.error ?? nav.status}` }
         steps.push(`navigated:${input.url}`)
+      }
+      if (directBrowserTask) {
+        let identity = await run('get_identity')
+        let identityUrl = identity.ok
+          ? String((identity.data as { url?: unknown } | undefined)?.url ?? '')
+          : ''
+        let identityDocumentId = identity.ok
+          ? String((identity.data as { documentId?: unknown } | undefined)?.documentId ?? '')
+          : ''
+        // The only receipt-free mutation in this slice is first-use bootstrap
+        // from the dedicated ALMA tab's about:blank to canonical YouTube home.
+        if (identity.ok && identityUrl === 'about:blank' && input.url === undefined) {
+          const nav = await run('navigate', {
+            url: 'https://www.youtube.com/',
+            bootstrapOnly: true,
+          })
+          if (!nav.ok) {
+            return {
+              success: false,
+              error: `DIRECT_BROWSER_BOOTSTRAP_FAILED: canonical YouTube home খোলা যায়নি (${nav.error ?? nav.status})`,
+              errorCode: 'workflow_blocked',
+              retryable: false,
+            }
+          }
+          steps.push('bootstrapped:https://www.youtube.com/')
+          identity = await run('get_identity')
+          identityUrl = identity.ok
+            ? String((identity.data as { url?: unknown } | undefined)?.url ?? '')
+            : ''
+          identityDocumentId = identity.ok
+            ? String((identity.data as { documentId?: unknown } | undefined)?.documentId ?? '')
+            : ''
+        }
+        if (!identity.ok || !identityDocumentId || !isYouTubePage(identityUrl)) {
+          return {
+            success: false,
+            error:
+              'DIRECT_BROWSER_LOOK_HOST_BLOCKED: dedicated ALMA tab এখন YouTube page নয়; off-host text/DOM/screenshot পড়া বা provider-এ ফেরত দেওয়া হয়নি। ' +
+              'Tabটি about:blank করে নতুন request দিন, অথবা owner নিজে YouTube home খুলুন।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+        const conversationId = typeof input.conversationId === 'string' ? input.conversationId : ''
+        const laneToken = typeof input.directBrowserLaneToken === 'string'
+          ? input.directBrowserLaneToken
+          : ''
+        const ownerRequest = typeof input.directBrowserOwnerRequest === 'string'
+          ? input.directBrowserOwnerRequest
+          : ''
+        const selectedMedia = await getDirectYouTubeSelectedMedia(conversationId, laneToken)
+        if (!directYouTubeReadScopeAllowed({
+          url: identityUrl,
+          ownerRequest,
+          device: { id: dev.deviceId, name: dev.name, online: true },
+          selectedMedia,
+        })) {
+          return {
+            success: false,
+            error:
+              'DIRECT_BROWSER_LOOK_SCOPE_BLOCKED: YouTube consumer pageটি এই turn-এর home, exact owner-query results, বা durable selected video নয়; ' +
+              'history/subscriptions/purchases/account content পড়া বা screenshot করা হয়নি।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+        bindDirectReadPrecondition({
+          expectedCurrentUrl: identityUrl,
+          expectedDocumentId: identityDocumentId,
+        })
       }
       if (typeof input.scrollBy === 'number' && input.scrollBy !== 0) {
         await run('scroll', { by: input.scrollBy })
@@ -392,7 +1020,7 @@ const live_browser_look: AgentTool = {
       }
 
       const want = (input.want as string) || 'both'
-      const out: Record<string, unknown> = { device: dev.name, steps }
+      const out: Record<string, unknown> = { device: dev.name, deviceId: dev.deviceId, steps }
 
       // Perception honesty (owner incident 2026-07-11: the head read a transient
       // FB skeleton, saw "This content isn't available right now" and reported a
@@ -409,6 +1037,10 @@ const live_browser_look: AgentTool = {
       // advisory in this one read.
       const { sandwichWrap, scanForInjection, injectionWarningBn } = await import('@/agent/lib/live-browser/guard')
       let pageUrl: string | undefined
+      let pageDocumentId: string | undefined
+      let pageDomObservationId: string | undefined
+      let documentChangedDuringLook = false
+      let firstMediaSnapshot: BrowserMediaSnapshot | null = null
       let textReadOk = false
       let domReadOk = false
       if (want === 'text' || want === 'both') {
@@ -426,16 +1058,9 @@ const live_browser_look: AgentTool = {
         }
         if (r.ok) {
           textReadOk = true
-          interface ReadTextData {
-            url?: string
-            title?: string
-            text?: string
-            textLength?: number
-            truncated?: boolean
-            scroll?: { y?: number; viewport?: number; pageHeight?: number; atBottom?: boolean }
-          }
           let pageData = r.data as ReadTextData | undefined
           if (pageData?.url) pageUrl = pageData.url
+          if (pageData?.documentId) pageDocumentId = pageData.documentId
           let rawText = typeof pageData?.text === 'string' ? pageData.text : JSON.stringify(pageData ?? {})
 
           // ── Scroll competence (owner report 2026-07-16: the model never
@@ -509,6 +1134,15 @@ const live_browser_look: AgentTool = {
           if (pageData?.scroll) {
             out.scrollInfo = pageData.scroll
           }
+          if (pageData?.media) {
+            out.mediaState = pageData.media
+            out.mediaObservation = pageData.media.playing
+              ? 'SINGLE_SAMPLE_ONLY: HTML media playing=true দেখা গেছে; এটা final playback proof নয়—two-sample verification দরকার।'
+              : pageData.media.count
+                ? 'SINGLE_SAMPLE_ONLY: media element আছে, কিন্তু playing=false/paused। Play control click করে আবার look করো।'
+                : 'SINGLE_SAMPLE_ONLY: এই page-এ কোনো HTML media element পাওয়া যায়নি।'
+          }
+          firstMediaSnapshot = pageData ?? null
           if (!input.sweep && (pageData?.truncated || (pageData?.scroll && !pageData.scroll.atBottom))) {
             out.readNote =
               'সতর্কতা: এটা পুরো পেজ নয় — নিচে আরো content আছে' +
@@ -546,12 +1180,22 @@ const live_browser_look: AgentTool = {
           }
         } else out.textError = r.error ?? r.status
       }
+
       if (want === 'dom' || want === 'both') {
         const r = await run('read_dom')
         if (r.ok) {
           domReadOk = true
-          const domData = r.data as { url?: string; elements?: unknown } | undefined
+          const domData = r.data as {
+            url?: string
+            documentId?: string
+            domObservationId?: string
+            elements?: unknown
+          } | undefined
+          if (pageUrl && domData?.url && pageUrl !== domData.url) documentChangedDuringLook = true
+          if (pageDocumentId && domData?.documentId && pageDocumentId !== domData.documentId) documentChangedDuringLook = true
           if (domData?.url) pageUrl = pageUrl ?? domData.url
+          if (domData?.documentId) pageDocumentId = pageDocumentId ?? domData.documentId
+          if (domData?.domObservationId) pageDomObservationId = domData.domObservationId
           const elements = domData?.elements ?? r.data
           const scan = scanForInjection(JSON.stringify(elements).slice(0, 20000))
           if (scan.flagged && !out.injectionAlert) {
@@ -586,6 +1230,17 @@ const live_browser_look: AgentTool = {
       // data — weak heads lose track of where they are on long tasks and start
       // re-navigating from the main view (2026-07-12 carousel wandering).
       if (pageUrl) out.currentUrl = pageUrl
+      if (pageDocumentId) out.documentId = pageDocumentId
+      if (pageDomObservationId) out.domObservationId = pageDomObservationId
+      if (documentChangedDuringLook) {
+        return {
+          success: false,
+          error:
+            'LIVE_BROWSER_DOCUMENT_CHANGED_DURING_LOOK: text/DOM sample নেওয়ার মাঝখানে tab navigate করেছে। ' +
+            'এই mixed observation থেকে act করা নিরাপদ নয়; current page settle হলে নতুন live_browser_look দাও।',
+          data: out,
+        }
+      }
       // Page intelligence (2026-07-16): recognise the UI situation (cookie
       // wall, login gate, modal, captcha, error page, feed…) and hand the
       // model the Bangla playbook hint — deterministic, free, every look.
@@ -656,6 +1311,88 @@ const live_browser_look: AgentTool = {
         ok: true,
       })
 
+      // A final media check is opt-in so ordinary reads remain fast. It runs
+      // after DOM, screenshot/upload and workflow persistence: the 15-second
+      // proof lease therefore starts at the final media sample, not before the
+      // LOOK's own potentially-slow screenshot work. A click acknowledgement or
+      // one frame is never proof; require the same ready media clock to move.
+      const expectedMedia = typeof input.expectedMedia === 'string' ? input.expectedMedia.trim() : ''
+      if (expectedMedia) {
+        const expectedHost = typeof input.expectedHost === 'string' ? input.expectedHost.trim() : undefined
+        if (!firstMediaSnapshot) {
+          out.playbackVerification = {
+            verified: false,
+            expectedMedia,
+            expectedHost: expectedHost ?? null,
+            reasons: ['first_sample_missing'],
+          }
+          out.playbackProof = 'DOM_PROOF_FAILED: প্রথম media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
+        } else {
+          await run('wait', { ms: 900 })
+          const second = await run('read_text')
+          if (!second.ok) {
+            out.playbackVerification = {
+              verified: false,
+              expectedMedia,
+              expectedHost: expectedHost ?? null,
+              reasons: ['second_sample_failed'],
+            }
+            out.playbackProof = 'DOM_PROOF_FAILED: দ্বিতীয় media sample পাওয়া যায়নি। Playing দাবি কোরো না।'
+          } else {
+            const secondSnapshot = second.data as BrowserMediaSnapshot
+            const playbackObservedAt = new Date().toISOString()
+            const ownerRequest = typeof input.directBrowserOwnerRequest === 'string'
+              ? input.directBrowserOwnerRequest
+              : expectedMedia
+            const conversationId = typeof input.conversationId === 'string'
+              ? input.conversationId
+              : ''
+            const laneToken = typeof input.directBrowserLaneToken === 'string'
+              ? input.directBrowserLaneToken
+              : ''
+            const selectedMediaState = directBrowserTask
+              ? await getDirectYouTubeSelectedMedia(conversationId, laneToken)
+              : null
+            const verification = directBrowserTask && selectedMediaState?.state !== 'selected'
+              ? {
+                  verified: false,
+                  expectedMedia: parseDirectMediaOwnerRequest(
+                    ownerRequest,
+                    [{ id: dev.deviceId, name: dev.name, online: true }],
+                  ).mediaTitle || expectedMedia,
+                  expectedHost: expectedHost ?? null,
+                  progressSeconds: null,
+                  reasons: [selectedMediaState?.state === 'none'
+                    ? 'selected_media_identity_missing'
+                    : 'selected_media_binding_unavailable'],
+                }
+              : verifyBrowserPlayback({
+                  expectedMedia,
+                  expectedHost,
+                  ownerRequest,
+                  ownerDevice: { id: dev.deviceId, name: dev.name, online: true },
+                  ...(selectedMediaState?.state === 'selected'
+                    ? {
+                        selectedMedia: {
+                          videoId: selectedMediaState.videoId,
+                          title: selectedMediaState.title,
+                        },
+                      }
+                    : {}),
+                  before: firstMediaSnapshot,
+                  after: secondSnapshot,
+                })
+            out.playbackObservedAt = playbackObservedAt
+            out.playbackVerification = { ...verification, playbackObservedAt }
+            if (secondSnapshot.media) out.mediaState = secondSnapshot.media
+            out.playbackProof = verification.verified
+              ? `DOM_PROOF_VERIFIED: requested media playing; clock +${verification.progressSeconds}s এগিয়েছে।`
+              : `DOM_PROOF_FAILED: ${verification.reasons.join(', ')}। Playing দাবি কোরো না; ঠিক করে আবার final look দাও।`
+            steps.push(verification.verified ? 'playback-verified:2-samples' : 'playback-failed:2-samples')
+          }
+        }
+      }
+
       return { success: true, data: out, ...(visionImage ? { image: visionImage } : {}) }
     } catch (err) {
       return { success: false, error: String(err) }
@@ -673,18 +1410,17 @@ const live_browser_act: AgentTool = {
     'available; never report acting as broken or unavailable. After ' +
     'acting it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your own eyes ' +
     'before the next step.\n' +
-    'MULTIPLE CHROMES: if the owner has more than one Chrome paired (e.g. Mac + Windows) and both are ' +
-    'online, pass `device` with his chosen name ("Windows"/"Mac"); if you act without it and it is ' +
-    'ambiguous the tool will ask which one — relay that and wait for his choice.\n' +
+    'RECEIPT BINDING: pass the exact `device` and one-use `observationReceipt` returned by the immediately ' +
+    'preceding successful live_browser_look. The server also binds the immutable deviceId, URL/document, DOM generation, ' +
+    'observed ref and semantic fingerprint; missing/mismatched values are blocked before any browser effect.\n' +
     'HOVER: action="hover" moves the mouse over an element (by selector/text/ref) to reveal hover menus ' +
     'or tooltips before clicking.\n' +
     'ROBUST: click/type/select_option/scroll_to auto wait-and-retry briefly if the element has not ' +
     'loaded yet, so a not-yet-rendered target does not fail on the first try.\n' +
     'HUMAN-LIKE OPERATION: prefer clicking the on-page UI (menus, search, buttons, tabs, links you can ' +
-    'see in the screenshot/elements) over typing guessed URLs. Locate a target by its visible `text` ' +
-    'when you can; use a CSS `selector` only when you actually see it in the elements list. On big / ' +
-    'crowded pages, call live_browser_look (read_dom) first — each element comes back with a stable ' +
-    '`ref` (e.g. "e12"); pass that `ref` to click/type/select_option/scroll_to for a precise hit. Use ' +
+    'see in the screenshot/elements) over typing guessed URLs. For click/type/select_option/pick_option/' +
+    'upload_file/hover/scroll_to, an exact `ref` from the immediately preceding look is mandatory; arbitrary selector/' +
+    'text targeting is not authorized. On big/crowded pages use look.find to obtain the intended ref. Use ' +
     'scroll_to to bring an element into view before clicking it. Always live_browser_look after acting ' +
     'to confirm what happened, then decide the next single step.\n' +
     'TYPING is React/modern-app safe (it uses the native value setter, so controlled inputs like ' +
@@ -722,10 +1458,10 @@ const live_browser_act: AgentTool = {
     'draft; closing the compose window with the X also saves it) and then tell the owner the draft is ' +
     'ready for HIS review — NEVER click Send (it is code-blocked anyway) and never delete/archive mail.\n' +
     'Params by action: ' +
-    'click → `selector`/`text`/`ref`; hover → `selector`/`text`/`ref`; type → (`selector`/`text`/`ref` ' +
-    'to find the field) + `value` (+ optional `submit`); press → `key` (e.g. "Enter", "Tab", "Escape"); select_option → ' +
-    '(`selector`/`text`/`ref` to find the <select>) + `option` (visible option text); scroll → `by` ' +
-    '(pixels, negative = up); scroll_to → `selector`/`text`/`ref`; navigate → `url` (http(s), use a ' +
+    'click/hover/scroll_to → observed `ref`; type → observed `ref` + `value` (+ optional `submit`); ' +
+    'press → `key` (e.g. "Enter", "Tab", "Escape"); select_option/pick_option → observed `ref` + `option`; ' +
+    'upload_file → observed file-input `ref` + public https `url`; scroll → `by` ' +
+    '(pixels, negative = up); navigate → `url` (http(s), use a ' +
     'real HOME URL not a guessed path); go_back / switch_tab / close_tab → (none); wait → `ms`.',
   input_schema: {
     type: 'object' as const,
@@ -750,12 +1486,12 @@ const live_browser_act: AgentTool = {
         ],
         description: 'What to do.',
       },
-      selector: { type: 'string', description: 'CSS selector of the target element.' },
-      text: { type: 'string', description: 'Visible text to locate the element/field by.' },
+      selector: { type: 'string', description: 'Advisory target context only; receipt-bound element actions still require an observed ref.' },
+      text: { type: 'string', description: 'Advisory target label/final-submit check; receipt-bound element actions still require an observed ref.' },
       ref: {
         type: 'string',
         description:
-          'Stable element ref from live_browser_look read_dom (e.g. "e12"); most precise target.',
+          'Element ref from the immediately preceding live_browser_look DOM generation (e.g. "e12"); its observed semantic fingerprint must still match.',
       },
       value: { type: 'string', description: 'Text to type (for action=type).' },
       option: {
@@ -780,13 +1516,19 @@ const live_browser_act: AgentTool = {
       device: {
         type: 'string',
         description:
-          'Optional: which paired Chrome to act in when several are online, by name (e.g. "Windows", "Mac"). Omit if only one is connected.',
+          'Exact concrete Chrome device returned by the immediately preceding live_browser_look.',
+      },
+      observationReceipt: {
+        type: 'string',
+        description:
+          'One-use receipt returned by the immediately preceding successful live_browser_look in this turn.',
       },
     },
-    required: ['action'],
+    required: ['action', 'device', 'observationReceipt'],
   },
   handler: async (input) => {
     const action = String(input.action ?? '') as LiveBrowserAction
+    const directBrowserTask = input.directBrowserTask === true
     const allowed = new Set([
       'click',
       'type',
@@ -804,6 +1546,125 @@ const live_browser_act: AgentTool = {
       'wait',
     ])
     if (!allowed.has(action)) return { success: false, error: `unsupported action: ${action}` }
+    if (directBrowserTask && !DIRECT_YOUTUBE_ACTION_ALLOWLIST.has(action)) {
+      return {
+        success: false,
+        error:
+          `DIRECT_BROWSER_ACTION_BLOCKED: ${action} witnessed YouTube lane-এর exact action allowlist-এ নেই। ` +
+          'Visible safe ref দিয়ে click/type/hover/scroll_to, plain scroll/wait, অথবা canonical YouTube-home navigate ব্যবহার করো।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    if (directBrowserTask && action === 'navigate' && !isCanonicalYouTubeHome(input.url)) {
+      return {
+        success: false,
+        error:
+          'DIRECT_BROWSER_NAVIGATION_BLOCKED: witnessed YouTube turn-এ navigate কেবল https://www.youtube.com/ home-এ যেতে পারে। ' +
+          'গান খোঁজা ও চালানো visible search box/result refs দিয়ে করো; deep/watch URL guess কোরো না।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+
+    const observation = (input.browserObservationClaim ?? null) as {
+      observationReceipt?: unknown
+      device?: unknown
+      deviceId?: unknown
+      currentUrl?: unknown
+      documentId?: unknown
+      domObservationId?: unknown
+      allowedRefs?: unknown
+      refFingerprints?: unknown
+    } | null
+    const observationReceipt = typeof observation?.observationReceipt === 'string' ? observation.observationReceipt : ''
+    const observationDevice = typeof observation?.device === 'string' ? observation.device : ''
+    const observationDeviceId = typeof observation?.deviceId === 'string' ? observation.deviceId : ''
+    const observationUrl = typeof observation?.currentUrl === 'string' ? observation.currentUrl : ''
+    const observationDocumentId = typeof observation?.documentId === 'string' ? observation.documentId : ''
+    const observationDomObservationId = typeof observation?.domObservationId === 'string'
+      ? observation.domObservationId
+      : ''
+    const observationRefs = Array.isArray(observation?.allowedRefs)
+      ? observation.allowedRefs.filter((ref): ref is string => typeof ref === 'string')
+      : []
+    const observationRefFingerprints = observation?.refFingerprints
+      && typeof observation.refFingerprints === 'object'
+      && !Array.isArray(observation.refFingerprints)
+      ? Object.fromEntries(
+          Object.entries(observation.refFingerprints as Record<string, unknown>)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        )
+      : {}
+    if (!observationReceipt || !observationDevice || !observationDeviceId || !observationUrl || !observationDocumentId) {
+      return {
+        success: false,
+        error: 'browser_observation_claim_missing: act must pass the central one-use receipt gate',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    if (
+      String(input.observationReceipt ?? '') !== observationReceipt
+      || String(input.device ?? '').trim().toLocaleLowerCase() !== observationDevice.trim().toLocaleLowerCase()
+    ) {
+      return {
+        success: false,
+        error: 'browser_observation_claim_mismatch: receipt/device changed after central admission',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    if (
+      directBrowserTask
+      && !isYouTubePage(observationUrl)
+      && action !== 'wait'
+      && !(action === 'navigate' && isCanonicalYouTubeHome(input.url))
+    ) {
+      return {
+        success: false,
+        error:
+          'DIRECT_BROWSER_HOST_BLOCKED: receipt-এর observed page YouTube নয়। ' +
+          'এই lane-এ কেবল canonical YouTube home navigate (বা wait) করা যাবে; ওই page-এ click/type/scroll করা যাবে না।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    const refBoundActions = new Set<LiveBrowserAction>([
+      'click', 'type', 'select_option', 'pick_option', 'upload_file', 'hover', 'scroll_to',
+    ])
+    const requestedRef = typeof input.ref === 'string' ? input.ref.trim() : ''
+    if (
+      refBoundActions.has(action)
+      && (
+        !observationDomObservationId
+        || !requestedRef
+        || !observationRefs.includes(requestedRef)
+        || !observationRefFingerprints[requestedRef]
+      )
+    ) {
+      return {
+        success: false,
+        error:
+          'browser_observation_ref_mismatch: target ref and DOM generation must come from the receipt-bound look',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    if (
+      directBrowserTask
+      && (action === 'click' || action === 'type' || action === 'hover')
+      && !directYouTubeTargetAllowed(action, observationRefFingerprints[requestedRef] ?? '')
+    ) {
+      return {
+        success: false,
+        error:
+          'DIRECT_BROWSER_TARGET_BLOCKED: witnessed YouTube lane শুধু search field/control, playback control, ' +
+          'বা observed /watch ও /shorts result link-এ কাজ করতে পারে; social/account control নিষিদ্ধ।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
 
     // Phase 55 — security quarantine: after a critical incident (injection
     // driving an effect, secret egress, envelope violation) ALL browser acting
@@ -841,12 +1702,158 @@ const live_browser_act: AgentTool = {
       return { success: false, error: FINAL_SUBMIT_BLOCK_MESSAGE }
     }
 
-    const dev = await requireActiveDevice(input.device as string | undefined)
+    const dev = await requireClaimedActiveDevice(observationDeviceId)
     if (!dev.ok) return { success: false, error: dev.error }
-    const run = browserCommandRunner(input, dev.deviceId)
+    const ownerRequest = typeof input.directBrowserOwnerRequest === 'string'
+      ? input.directBrowserOwnerRequest.trim()
+      : ''
+    let directTypeValue: string | null = null
+    if (directBrowserTask && action === 'type') {
+      const expectedQuery = parseDirectMediaOwnerRequest(ownerRequest, [{
+        id: dev.deviceId,
+        name: dev.name,
+        online: true,
+      }]).mediaTitle.trim()
+      const suppliedValue = typeof input.value === 'string' ? input.value.trim() : ''
+      const normalizedExpected = normalizeOwnerRequestWords(expectedQuery).join(' ')
+      const normalizedSupplied = normalizeOwnerRequestWords(suppliedValue).join(' ')
+      if (!normalizedExpected || normalizedSupplied !== normalizedExpected) {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_TYPE_VALUE_BLOCKED: YouTube search value exact server-parsed owner media query-এর সাথে মেলেনি; model-authored extra text টাইপ করা হয়নি।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      if (input.submit !== true) {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_SEARCH_SUBMIT_REQUIRED: direct YouTube search must type the exact server-derived query and submit it atomically; standalone Search clicks are blocked.',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      // Dispatch server-derived text, never the model-authored spelling/bytes.
+      directTypeValue = expectedQuery
+    }
+    if (directBrowserTask && action === 'click') {
+      const observedTarget = parseObservedElementFingerprint(
+        observationRefFingerprints[requestedRef] ?? '',
+      )
+      const playbackControl = directYouTubePlaybackControlKind(
+        observationRefFingerprints[requestedRef] ?? '',
+      )
+      if (playbackControl && !isYouTubePlaybackRequest(ownerRequest)) {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_SEARCH_ONLY: owner playback চাননি; কোনো player control click করা যাবে না।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      if (playbackControl === 'track_skip') {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_TRACK_SKIP_BLOCKED: Next/Previous selected video identity বদলে দেয়; নতুন observed result click ছাড়া এটি অনুমোদিত নয়।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      if (playbackControl === 'unsupported_control') {
+        return {
+          success: false,
+          error:
+            'DIRECT_BROWSER_PLAYER_SETTING_BLOCKED: direct playback turn শুধু observed Play/Replay control অনুমোদন করে; Pause/Mute/Volume/Fullscreen/Captions/Settings owner-authorized নয়।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      if (playbackControl === 'play_control') {
+        const conversationId = typeof input.conversationId === 'string' ? input.conversationId : ''
+        const laneToken = typeof input.directBrowserLaneToken === 'string'
+          ? input.directBrowserLaneToken
+          : ''
+        const selected = await getDirectYouTubeSelectedMedia(conversationId, laneToken)
+        const receiptVideoId = youtubePageVideoId(observationUrl)
+        if (selected.state !== 'selected' || !receiptVideoId || receiptVideoId !== selected.videoId) {
+          return {
+            success: false,
+            error:
+              'DIRECT_BROWSER_PLAYBACK_CONTROL_BLOCKED: control click-এর receipt URL exact durable selected videoId-এর page নয়; নতুন LOOK/result selection দরকার।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+      }
+      if (observedTarget?.href) {
+        const mediaIdentity = observedYouTubeMediaIdentity(
+          observationRefFingerprints[requestedRef] ?? '',
+        )
+        if (!mediaIdentity) {
+          return {
+            success: false,
+            error: 'DIRECT_BROWSER_MEDIA_BINDING_BLOCKED: observed YouTube result-এর canonical video identity/title নেই।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+        if (!isYouTubePlaybackRequest(ownerRequest)) {
+          return {
+            success: false,
+            error:
+              'DIRECT_BROWSER_SEARCH_ONLY: owner শুধু YouTube search চেয়েছেন; result খুলে playback শুরু করার authority নেই।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+        if (!ownerRequest || !mediaSelectionMatchesOwnerRequest(
+          ownerRequest,
+          mediaIdentity.title,
+          [{ id: dev.deviceId, name: dev.name, online: true }],
+        )) {
+          return {
+            success: false,
+            error:
+              `DIRECT_BROWSER_MEDIA_TARGET_MISMATCH: observed result "${mediaIdentity.title}" owner-request media title-এর exact safe match নয়; click করা হয়নি।`,
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+        const conversationId = typeof input.conversationId === 'string' ? input.conversationId : ''
+        const laneToken = typeof input.directBrowserLaneToken === 'string'
+          ? input.directBrowserLaneToken
+          : ''
+        if (!conversationId || !laneToken || !(await bindDirectYouTubeSelectedMedia({
+          conversationId,
+          token: laneToken,
+          ...mediaIdentity,
+        }))) {
+          return {
+            success: false,
+            error: 'DIRECT_BROWSER_MEDIA_BINDING_BLOCKED: selected result identity durable lane-এ bind করা যায়নি; click করা হয়নি।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+        }
+      }
+    }
+    const { run } = browserCommandRunner(input, dev.deviceId)
 
     try {
-      const params: Record<string, unknown> = {}
+      const params: Record<string, unknown> = {
+        observationPrecondition: {
+          observationReceipt,
+          currentUrl: observationUrl,
+          documentId: observationDocumentId,
+          domObservationId: observationDomObservationId || undefined,
+          allowedRefs: observationRefs,
+          refFingerprints: observationRefFingerprints,
+        },
+      }
       // §5.4 lockdown enforcement: write verbs carry the current lockdown-domain
       // list; the extension checks the ACTIVE tab's real hostname against it and
       // refuses (covers redirects/tab switches this server never saw). Navigate to
@@ -858,10 +1865,15 @@ const live_browser_act: AgentTool = {
           if (locked.length) params.lockdownDomains = locked
         } catch { /* best-effort — extension simply gets no list */ }
       }
-      if (input.selector) params.selector = input.selector
-      if (input.text) params.text = input.text
-      if (input.ref) params.ref = input.ref
-      if (input.value !== undefined) params.value = input.value
+      // Receipt-bound element actions resolve only the observed ref. Do not
+      // ship selector/text fallbacks: if the stamped node disappeared, fail and
+      // LOOK again instead of clicking a different element with similar text.
+      if (!refBoundActions.has(action)) {
+        if (input.selector) params.selector = input.selector
+        if (input.text) params.text = input.text
+      }
+      if (requestedRef) params.ref = requestedRef
+      if (input.value !== undefined) params.value = directTypeValue ?? input.value
       if (input.option !== undefined) params.option = input.option
       if (input.submit !== undefined) params.submit = Boolean(input.submit)
       if (input.key) params.key = input.key
@@ -877,19 +1889,15 @@ const live_browser_act: AgentTool = {
       const oscKey = `${conversationIdOf(input)}:${action}:${String(input.text ?? input.ref ?? input.selector ?? input.url ?? '')}`
       const oscNote = isWriteVerb ? bumpOscillation(oscKey) : null
 
-      // SYSTEM-LEVEL RETRY (owner rule 2026-07-12: এক চেষ্টায় fail মানেই হাল ছাড়া না) —
-      // transient misses (element/option not rendered yet, section still animating)
-      // get two silent re-runs ~1.6s apart BEFORE the model ever sees a failure.
-      // Real failures (lockdown, final-submit block, bad params) don't match and
-      // surface immediately.
-      const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found|step_timeout|page script timed out/i
-      let res = await run(action, params)
-      for (let attempt = 0; attempt < 2 && !res.ok && TRANSIENT_RE.test(String(res.error ?? '')); attempt++) {
-        await run('wait', { ms: 1600 })
-        res = await run(action, params)
-      }
+      // Exactly one durable command per consumed receipt. The Companion may
+      // retry proven pre-effect DOM misses inside that same command, but the
+      // server never creates a second command: otherwise pending-state crash
+      // reconciliation could observe command #1 terminal while command #2 was
+      // still about to mutate the page.
+      const res = await run(action, params)
       const out: Record<string, unknown> = {
         device: dev.name,
+        deviceId: dev.deviceId,
         action,
         ok: res.ok,
         status: res.status,
@@ -906,10 +1914,13 @@ const live_browser_act: AgentTool = {
         if (action === 'scroll' && resScroll.atBottom) out.scrollNote = 'পেজের একদম নিচে পৌঁছে গেছ — আর scroll করার কিছু নেই।'
       }
 
-      // Follow-up screenshot so BOTH the owner (link) and the head model (vision
-      // image) see the effect of the action (skip for plain waits).
+      // A direct YouTube ACT may navigate. Its old LOOK receipt cannot authorize
+      // reading the resulting page, and a same-host owner navigation could expose
+      // history/account content. Require a fresh scoped LOOK instead of taking a
+      // host-only post-effect screenshot. Non-direct legacy flows keep the old
+      // convenience capture.
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
-      if (res.ok && action !== 'wait') {
+      if (res.ok && action !== 'wait' && !directBrowserTask) {
         const shot = await captureScreenshotWithRetry(run)
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)

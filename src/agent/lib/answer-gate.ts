@@ -63,6 +63,9 @@ export const GATE_DENY_RE = new RegExp(
     '৳|\\btk\\b|টাকা|koto\\b|কত',
     // actions the agent must actually perform
     'banaw|banao|বানাও|lekho|লেখ|likhe|kore\\s*dao|করে\\s*দাও|পাঠাও|pathao|send|post|পোস্ট|ছবি|image|ক্যাম্পেইন|campaign|call|কল|delete|মুছ|ডিলিট|approve|reject',
+    // GUI/browser actions are work, even when politely phrased as a question.
+    // Cache answers cannot prove that an action happened.
+    '\\b(open|search|find|play|watch|listen|put\\s+on)\\b|youtube|ইউটিউব|খোল|খুল|সার্চ|খুঁজ|প্লে|চালাও|চালিয়ে|চালিয়ে|বাজাও|বাজিয়ে|বাজিয়ে|দেখাও|শোনাও|শুনাও',
     // salah — always a real turn (auto-mark, conscience nudges live there)
     'নামাজ|নামায|namaz|salah|সালাত|ফজর|যোহর|জোহর|আসর|মাগরিব|এশা|ইশা',
   ].join('|'),

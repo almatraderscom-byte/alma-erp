@@ -614,17 +614,57 @@ export async function reconcileConversationWorkflows(conversationId: string): Pr
 }
 
 /**
- * Merge a facts patch WITHOUT a state transition (no version bump, no event) —
- * pure bookkeeping like the live-browser session snapshot, updated on every
- * action. Last write wins; never throws.
+ * Merge a facts patch without a state transition/event. The merge still uses
+ * stateVersion CAS and advances the version: an unversioned read+write here
+ * could otherwise overwrite a concurrently consumed browser receipt while
+ * leaving its version unchanged. Best-effort callers retain the no-throw API.
  */
 export async function updateWorkflowFacts(runId: string, patch: Record<string, unknown>): Promise<void> {
   try {
-    const row = await db.workflowRun.findUnique({ where: { id: runId }, select: { facts: true } })
-    if (!row) return
-    const merged = { ...((row.facts as Record<string, unknown> | null) ?? {}), ...patch }
-    await db.workflowRun.update({ where: { id: runId }, data: { facts: merged } })
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const row = await db.workflowRun.findUnique({
+        where: { id: runId },
+        select: { facts: true, stateVersion: true },
+      })
+      if (!row) return
+      const merged = { ...((row.facts as Record<string, unknown> | null) ?? {}), ...patch }
+      const saved = await replaceWorkflowFactsIfVersion({
+        runId,
+        expectedVersion: Number(row.stateVersion),
+        facts: merged,
+      })
+      if (saved) return
+    }
   } catch { /* bookkeeping must never break a tool call */ }
+}
+
+/**
+ * Replace a run's facts only while its stateVersion still matches the caller's
+ * snapshot. Browser observation receipts use this as a one-use claim: two acts
+ * may read the same ready receipt, but only one can advance the version and
+ * mark it pending. Unlike updateWorkflowFacts this deliberately throws on DB
+ * failure so effect admission can fail closed.
+ */
+export async function replaceWorkflowFactsIfVersion(opts: {
+  runId: string
+  expectedVersion: number
+  facts: Record<string, unknown>
+}): Promise<WorkflowRunView | null> {
+  const changed = await db.workflowRun.updateMany({
+    where: {
+      id: opts.runId,
+      stateVersion: opts.expectedVersion,
+      status: { in: ['active', 'waiting_owner', 'waiting_worker'] },
+    },
+    data: {
+      facts: opts.facts,
+      stateVersion: { increment: 1 },
+    },
+  })
+  if (changed.count === 0) return null
+  const row = await db.workflowRun.findUnique({ where: { id: opts.runId }, select: VIEW_SELECT })
+  if (!row) throw new Error(`workflow_run_not_found_after_fact_cas: ${opts.runId}`)
+  return toView(row)
 }
 
 /**

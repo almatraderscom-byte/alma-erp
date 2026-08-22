@@ -1,6 +1,12 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { Prisma } from '@prisma/client'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { isPotentialYouTubeComputerUseMutation } from '@/agent/lib/live-browser/intent'
+import {
+  directYouTubeLaneIdForConversation,
+  lockDirectYouTubeLaneAuthority,
+} from '@/agent/lib/live-browser/turn-lane'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
@@ -30,6 +36,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return Response.json({ error: 'clientMessageId_and_content_required' }, { status: 400 })
   }
   if (message.length > 20_000) return Response.json({ error: 'message_too_long' }, { status: 413 })
+  const requiresFreshDirectTurn = isPotentialYouTubeComputerUseMutation(message)
 
   const turn = await prisma.agentTurn.findUnique({
     where: { id: turnId },
@@ -61,26 +68,102 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
 
   try {
-    const row = await prisma.agentMessage.create({
-      data: {
-        conversationId: turn.conversationId,
-        clientRequestId: clientMessageId,
-        role: 'user',
-        content,
-        usage: {
-          steering: {
-            targetTurnId: turnId,
-            status: 'queued',
-            queuedAt: new Date().toISOString(),
+    const row = await prisma.$transaction(async (tx) => {
+      // Linearize steering acceptance against direct-browser command enqueue.
+      // Both paths lock the deterministic lane row. If this transaction wins,
+      // the lane is abandoned before the steering message becomes accepted,
+      // so an in-flight old handler cannot queue a later browser effect.
+      await lockDirectYouTubeLaneAuthority(tx, turn.conversationId)
+      const lanes = await tx.$queryRaw<Array<{
+        id: string
+        status: string
+        currentStep: string | null
+        version: number
+        artifacts: unknown
+      }>>(Prisma.sql`
+        SELECT "id", "status", "current_step" AS "currentStep", "version", "artifacts"
+        FROM "agent_conversation_focuses"
+        WHERE "id" = ${directYouTubeLaneIdForConversation(turn.conversationId)}
+        FOR UPDATE
+      `)
+      const lane = lanes[0]
+      const laneArtifacts = lane?.artifacts && typeof lane.artifacts === 'object' && !Array.isArray(lane.artifacts)
+        ? lane.artifacts as Record<string, unknown>
+        : {}
+      const laneToken = typeof laneArtifacts.laneToken === 'string'
+        ? laneArtifacts.laneToken.trim()
+        : ''
+      const laneBelongsToTurn = laneToken === turnId
+      const targetOwnsOpenDirectLane = Boolean(
+        lane
+        && laneBelongsToTurn
+        && (lane.status === 'active' || lane.status === 'awaiting_owner'),
+      )
+      if (lane && targetOwnsOpenDirectLane) {
+        const revokedAt = new Date()
+        const revoked = await tx.agentConversationFocus.updateMany({
+          where: { id: lane.id, version: lane.version },
+          data: {
+            status: 'abandoned',
+            currentStep: 'steered_by_owner',
+            blocker: 'owner_steering_revoked_lane',
+            leaseUntil: revokedAt,
+            completedAt: revokedAt,
+            version: lane.version + 1,
+          },
+        })
+        if (revoked.count !== 1) throw new Error('direct_browser_lane_revoke_conflict')
+        await tx.agentFocusEvent.create({
+          data: {
+            focusId: lane.id,
+            conversationId: turn.conversationId,
+            type: 'abandoned',
+            fromStatus: lane.status,
+            toStatus: 'abandoned',
+            version: lane.version + 1,
+            cause: 'owner_steering',
+            detail: { fromStep: lane.currentStep, targetTurnId: turnId },
+          },
+        })
+      }
+
+      const currentTurn = await tx.agentTurn.findUnique({
+        where: { id: turnId },
+        select: { status: true },
+      })
+      if (currentTurn?.status !== 'running') throw new Error('turn_not_running_during_steer')
+
+      // A direct browser request needs a new immutable AgentTurn binding; and a
+      // steering message aimed at an existing direct lane must not keep running
+      // under that lane's now-revoked token. Return 409 without persisting—the
+      // client outbox already retries 409s as a normal turn after this stream.
+      if (requiresFreshDirectTurn || targetOwnsOpenDirectLane) return null
+
+      const created = await tx.agentMessage.create({
+        data: {
+          conversationId: turn.conversationId,
+          clientRequestId: clientMessageId,
+          role: 'user',
+          content,
+          usage: {
+            steering: {
+              targetTurnId: turnId,
+              status: 'queued',
+              queuedAt: new Date().toISOString(),
+            },
           },
         },
-      },
-      select: { id: true },
+        select: { id: true },
+      })
+      await tx.agentConversation.update({
+        where: { id: turn.conversationId },
+        data: { updatedAt: new Date() },
+      })
+      return created
     })
-    await prisma.agentConversation.update({
-      where: { id: turn.conversationId },
-      data: { updatedAt: new Date() },
-    })
+    if (!row) {
+      return Response.json({ error: 'direct_browser_requires_fresh_turn', turnId }, { status: 409 })
+    }
     return Response.json({ success: true, messageId: row.id, duplicate: false, turnId })
   } catch (err) {
     // A retry can race the first request between findUnique and create. The

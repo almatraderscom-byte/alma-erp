@@ -555,6 +555,9 @@ export async function executePersonalTool(
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+    ownerRequestText: typeof serverContext.ownerRequestText === 'string'
+      ? serverContext.ownerRequestText
+      : undefined,
     // The personal toolbox is not exempt from the mode. Without this, Plan let a
     // routine personal write (`add_bill`) execute on the native loop — the one
     // promise Plan makes is that nothing changes (review bot, #667).
@@ -756,6 +759,16 @@ interface ToolRunContext {
   conversationId?: string
   businessId?: string
   turnId?: string
+  /** Server-derived canonical owner request that keeps a direct-browser lane
+   * bound across short continuation turns; never accepted from model input. */
+  directBrowserOwnerRequest?: string
+  /** Exact turn-linked owner text used only for executor-side fail-closed
+   * detection when a YouTube computer-use phrase misses routing. */
+  ownerRequestText?: string
+  /** Server-owned execution fence for the exact witnessed YouTube lane. */
+  directBrowserTask?: boolean
+  directBrowserLaneToken?: string
+  directBrowserLaneUnavailable?: boolean
   /** PM-1 — the permission mode this call ran under. Recorded, not yet enforced. */
   permissionMode?: string
   /** B6 — a live, family-scoped grant. Read alongside the mode, never instead. */
@@ -840,6 +853,174 @@ export async function runRegisteredTool(
     risk: cap.risk,
     argsKey,
     ...(ctx.permissionMode ? { permissionMode: ctx.permissionMode } : {}),
+  }
+
+  // Executor-level closed lane. Head selection is defense in depth, not the
+  // authority boundary: stale/forged tool calls still reach this one registry.
+  // This helper is intentionally called both at admission and again at the
+  // last possible point before the handler. The second call closes the async
+  // TOCTOU window while workflow/policy/receipt state is being persisted.
+  const directBrowserLaneViolation = async (): Promise<string | null> => {
+    try {
+      if (ctx.conversationId && ctx.turnId) {
+        const ownerTurn = await import('@/agent/lib/live-browser/turn-owner-input')
+        if (!await ownerTurn.isTurnOwnerExecutionCurrent(ctx.conversationId, ctx.turnId)) {
+          return 'OWNER_TURN_SUPERSEDED: a newer owner turn, equal-time ambiguous turn, Stop, or unavailable turn store revoked this execution.'
+        }
+      }
+      const intent = await import('@/agent/lib/live-browser/intent')
+      if (!ctx.directBrowserTask) {
+        return ctx.ownerRequestText
+          && intent.isPotentialYouTubeComputerUseMutation(ctx.ownerRequestText)
+          ? 'DIRECT_BROWSER_LANE_REQUIRED: YouTube computer-use mutation exact witnessed lane/token ছাড়া কোনো tool execute করতে পারবে না।'
+          : null
+      }
+      const lane = await import('@/agent/lib/live-browser/turn-lane')
+      const allowed = ctx.directBrowserLaneUnavailable
+        ? lane.DIRECT_YOUTUBE_LANE_UNAVAILABLE_TOOL_NAMES
+        : intent.DIRECT_BROWSER_ALLOWED_TOOL_NAMES
+      if (!allowed.has(tool.name)) {
+        return `DIRECT_BROWSER_FALLBACK_BLOCKED: ${tool.name} exact witnessed YouTube lane-এ allowed নয়।`
+      }
+      if (ctx.directBrowserLaneUnavailable) return null
+      const current = Boolean(
+        ctx.conversationId
+        && ctx.directBrowserLaneToken
+        && await lane.isDirectYouTubeTurnLaneTokenCurrent(
+          ctx.conversationId,
+          ctx.directBrowserLaneToken,
+        ),
+      )
+      return current
+        ? null
+        : 'DIRECT_BROWSER_LANE_STALE: newer owner turn, expired lease, or unavailable durable lane state superseded this execution.'
+    } catch {
+      // A state/import failure must never widen a direct lane into ordinary
+      // tool authority. Treat it exactly like a stale durable fence.
+      return 'DIRECT_BROWSER_LANE_STALE: durable lane state could not be revalidated before execution.'
+    }
+  }
+
+  let reservedDirectAskCardId: string | null = null
+  const reserveDirectBrowserAskCard = async (): Promise<ToolResult | null> => {
+    if (
+      !ctx.directBrowserTask
+      || ctx.directBrowserLaneUnavailable
+      || tool.name !== 'ask_user'
+    ) return null
+    if (!ctx.conversationId || !ctx.directBrowserLaneToken) {
+      return {
+        success: false,
+        error: 'DIRECT_BROWSER_ASK_CARD_RESERVATION_FAILED: durable lane token অসম্পূর্ণ।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    try {
+      const lane = await import('@/agent/lib/live-browser/turn-lane')
+      const reservation = await lane.reserveDirectYouTubeAskCard({
+        conversationId: ctx.conversationId,
+        token: ctx.directBrowserLaneToken,
+      })
+      if (!reservation?.askCardId) {
+        return {
+          success: false,
+          error: 'DIRECT_BROWSER_ASK_CARD_RESERVATION_FAILED: card origin durable lane-এ reserve হয়নি।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      reservedDirectAskCardId = reservation.askCardId
+      return null
+    } catch {
+      return {
+        success: false,
+        error: 'DIRECT_BROWSER_ASK_CARD_RESERVATION_FAILED: durable lane store unavailable।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+  }
+
+  // A direct-lane ask card is an authority-bearing continuation token. Bind it
+  // to the durable lane before its successful tool result can reach either head
+  // or the UI; turn-end settlement is too late if Stop/provider failure lands in
+  // between. The lane helper supersedes a card fail-closed on any mismatch.
+  const bindDirectBrowserAskCard = async (result: ToolResult): Promise<ToolResult> => {
+    if (
+      !ctx.directBrowserTask
+      || ctx.directBrowserLaneUnavailable
+      || tool.name !== 'ask_user'
+      || !result.success
+    ) return result
+    const data = result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+      ? result.data as Record<string, unknown>
+      : {}
+    const askCardId = typeof data.askCardId === 'string' ? data.askCardId.trim() : ''
+    const options = Array.isArray(data.options)
+      ? data.options.filter((option): option is string => typeof option === 'string').map((option) => option.trim()).filter(Boolean)
+      : []
+    if (!ctx.conversationId || !ctx.directBrowserLaneToken || !askCardId || options.length < 2) {
+      return {
+        success: false,
+        error: 'DIRECT_BROWSER_ASK_CARD_BINDING_FAILED: card identity/options বা durable lane token অসম্পূর্ণ।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+    try {
+      const lane = await import('@/agent/lib/live-browser/turn-lane')
+      if (!reservedDirectAskCardId || askCardId !== reservedDirectAskCardId) {
+        if (askCardId && ctx.conversationId) {
+          await lane.supersedeDirectYouTubeAskCards(ctx.conversationId, [askCardId])
+        }
+        return {
+          success: false,
+          error: 'DIRECT_BROWSER_ASK_CARD_BINDING_FAILED: created card reserved owner-turn identity-এর সাথে মেলেনি।',
+          errorCode: 'workflow_blocked',
+          retryable: false,
+        }
+      }
+      const bound = await lane.bindDirectYouTubeAskCard({
+        conversationId: ctx.conversationId,
+        token: ctx.directBrowserLaneToken,
+        askCardId,
+        options,
+      })
+      return bound
+        ? result
+        : {
+            success: false,
+            error: 'DIRECT_BROWSER_ASK_CARD_BINDING_FAILED: card durable lane-এ atomically bind হয়নি।',
+            errorCode: 'workflow_blocked',
+            retryable: false,
+          }
+    } catch {
+      return {
+        success: false,
+        error: 'DIRECT_BROWSER_ASK_CARD_BINDING_FAILED: durable lane store unavailable।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+  }
+
+  const admissionViolation = await directBrowserLaneViolation()
+  if (admissionViolation) {
+      void logToolEvent({
+        ...baseEvent,
+        success: false,
+        errorClass: 'workflow_blocked',
+        errorCode: 'direct_browser_lane_blocked',
+        latencyMs: Date.now() - started,
+        detail: { ...capDetail, execution: 'rejected' },
+      })
+      return {
+        success: false,
+        error: admissionViolation,
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
   }
 
   if (!isToolAllowedForOwnerTurn(tool.name, ctx.turnAuthorization)) {
@@ -1031,6 +1212,8 @@ export async function runRegisteredTool(
   // (owner incident 2026-07-26 — draft_seo_fixes staged nothing, then "একই কাজ
   // এই টার্নে আগেই হয়েছে").
   let claimedKey: string | undefined
+  let browserActReceiptClaimed = false
+  let browserActObservationClaim: import('@/agent/lib/workflow-guards').BrowserObservationClaim | undefined
   const releaseClaimOnFailure = async () => {
     if (!claimedKey) return
     const key = claimedKey
@@ -1040,6 +1223,26 @@ export async function runRegisteredTool(
       releaseEffectClaim(key)
     } catch (err) {
       console.warn('[registry] claim release failed:', err instanceof Error ? err.message : err)
+    }
+  }
+  const persistBrowserActOutcome = async (
+    result: Pick<ToolResult, 'success' | 'errorCode'>,
+    path: 'pre_dispatch' | 'handler' | 'throw' | 'effect_engine',
+    data?: unknown,
+  ) => {
+    if (!browserActReceiptClaimed) return
+    try {
+      const wg = await import('@/agent/lib/workflow-guards')
+      await wg.persistLiveBrowserActOutcome(input ?? {}, data, ctx, {
+        success: result.success,
+        path,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+      })
+    } catch (err) {
+      // The receipt was already atomically changed to pending. Never reopen it
+      // after an outcome write failure: pending is the fail-safe state and a
+      // new successful look is required before another effect.
+      console.warn('[registry] live-browser outcome persist failed; receipt remains pending:', err instanceof Error ? err.message : err)
     }
   }
   {
@@ -1129,9 +1332,44 @@ export async function runRegisteredTool(
     }
   }
 
+  // P0 live-computer safety: this gate is intentionally independent of
+  // AGENT_WORKFLOW_GUARDS and requires context even when advisory workflow
+  // guards are disabled. It atomically consumes exactly one look receipt after
+  // all policy gates pass but before either direct or effect-engine dispatch.
+  if (tool.name === 'live_browser_act') {
+    try {
+      const wg = await import('@/agent/lib/workflow-guards')
+      const receiptResult = await wg.consumeLiveBrowserObservationReceipt(input ?? {}, ctx)
+      if (receiptResult.blocked) {
+        await releaseClaimOnFailure()
+        void logToolEvent({
+          ...baseEvent,
+          success: false,
+          errorClass: 'workflow_blocked',
+          errorCode: 'workflow_blocked',
+          latencyMs: Date.now() - started,
+          detail: { ...capDetail, argsValidation: 'passed', guard: receiptResult.guard },
+        })
+        return { success: false, error: receiptResult.error, errorCode: 'workflow_blocked', retryable: false }
+      }
+      browserActObservationClaim = receiptResult.claim
+      browserActReceiptClaimed = true
+    } catch (err) {
+      await releaseClaimOnFailure()
+      console.warn('[registry] live-browser receipt consume failed closed:', err instanceof Error ? err.message : err)
+      return {
+        success: false,
+        error: 'WORKFLOW_BLOCKED: browser observation receipt atomically যাচাই/consume করা যায়নি; নতুন live_browser_look দরকার।',
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+    }
+  }
+
   try {
     const handlerContext = { ...serverContext }
     delete handlerContext.turnAuthorization
+    if (browserActObservationClaim) handlerContext.browserObservationClaim = browserActObservationClaim
 
     // PM-5 — the turn's own rules, in one place a delegating tool can forward.
     // `turnAuthorization` is stripped above so it never reaches a handler as a
@@ -1144,6 +1382,12 @@ export async function runRegisteredTool(
       ...(ctx.turnAuthorization ? { turnAuthorization: ctx.turnAuthorization } : {}),
       ...(ctx.instructionOrigin ? { instructionOrigin: ctx.instructionOrigin } : {}),
       ...(ctx.elevationGrant ? { elevationGrant: ctx.elevationGrant } : {}),
+    }
+
+    const askCardReservationFailure = await reserveDirectBrowserAskCard()
+    if (askCardReservationFailure) {
+      await releaseClaimOnFailure()
+      return askCardReservationFailure
     }
 
     // Phase 53/65: route direct write effects through the exactly-once effect
@@ -1163,13 +1407,28 @@ export async function runRegisteredTool(
         envelope: guardEnvelope,
         input: input ?? {},
         execute: async () => {
-          const r = await tool.handler({ ...input, ...handlerContext })
+          const finalViolation = await directBrowserLaneViolation()
+          if (finalViolation) {
+            return {
+              success: false,
+              error: finalViolation,
+              errorCode: 'workflow_blocked',
+              retryable: false,
+            }
+          }
+          const r = await bindDirectBrowserAskCard(
+            await tool.handler({ ...input, ...handlerContext }),
+          )
           return { success: r.success, data: r.data, error: r.error, errorCode: r.errorCode, retryable: r.retryable }
         },
       })
-      const effectResult: ToolResult = outcome.ok
+      const rawEffectResult: ToolResult = outcome.ok
         ? { success: true, data: outcome.result }
         : { success: false, error: outcome.error, errorCode: outcome.errorCode ?? 'effect_failed', retryable: outcome.state === 'failed_retryable' }
+      // Effect replay may bypass the execute callback. Re-bind idempotently on
+      // the returned result so a replayed card cannot skip awaiting_owner.
+      const effectResult = await bindDirectBrowserAskCard(rawEffectResult)
+      await persistBrowserActOutcome(effectResult, 'effect_engine', effectResult.data)
       if (!effectResult.success) await releaseClaimOnFailure()
       void logToolEvent({
         ...baseEvent,
@@ -1182,7 +1441,72 @@ export async function runRegisteredTool(
       return effectResult
     }
 
-    const result = await tool.handler({ ...input, ...handlerContext })
+    const finalViolation = await directBrowserLaneViolation()
+    if (finalViolation) {
+      const blockedResult: ToolResult = {
+        success: false,
+        error: finalViolation,
+        errorCode: 'workflow_blocked',
+        retryable: false,
+      }
+      await persistBrowserActOutcome(blockedResult, 'pre_dispatch')
+      await releaseClaimOnFailure()
+      void logToolEvent({
+        ...baseEvent,
+        success: false,
+        errorClass: 'workflow_blocked',
+        errorCode: 'direct_browser_lane_blocked',
+        latencyMs: Date.now() - started,
+        detail: { ...capDetail, argsValidation: 'passed', execution: 'pre_dispatch_rejected' },
+      })
+      return blockedResult
+    }
+
+    let result = await bindDirectBrowserAskCard(
+      await tool.handler({ ...input, ...handlerContext }),
+    )
+    await persistBrowserActOutcome(
+      {
+        success: result.success,
+        ...(!result.success ? { errorCode: result.errorCode ?? classifyErrorCode(result.error) } : {}),
+      },
+      'handler',
+      result.data,
+    )
+
+    // A successful look is actionable only after its one-use receipt is
+    // durably stored. Emit the same concrete identity the stored receipt binds.
+    if (tool.name === 'live_browser_look' && result.success) {
+      try {
+        const wg = await import('@/agent/lib/workflow-guards')
+        const receipt = await wg.recordLiveBrowserLookReceipt(result.data, ctx)
+        result = {
+          ...result,
+          data: {
+            ...((result.data ?? {}) as Record<string, unknown>),
+            ...receipt,
+          },
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        void logToolEvent({
+          ...baseEvent,
+          success: false,
+          errorClass: 'workflow_state',
+          errorCode: 'browser_observation_unavailable',
+          latencyMs: Date.now() - started,
+          detail: { ...capDetail, argsValidation: 'passed', lastError: message.slice(0, 300) },
+        })
+        return {
+          success: false,
+          error:
+            'LIVE_BROWSER_LOOK_UNAVAILABLE: page পড়া গেছে, কিন্তু turn/device/URL-bound observation receipt durably store করা যায়নি। ' +
+            'এই result থেকে act কোরো না; state service ঠিক হলে নতুন live_browser_look দাও।',
+          errorCode: 'browser_observation_unavailable',
+          retryable: true,
+        }
+      }
+    }
     // Phase 64: feed the real outcome back to the autonomy ladder (agent-
     // initiated effects only — ladderTaskClass is unset otherwise).
     if (ladderTaskClass) void feedLadderOutcome(ladderTaskClass, result.success)
@@ -1217,13 +1541,15 @@ export async function runRegisteredTool(
             console.warn('[registry] client SEO workflow hook failed:', err instanceof Error ? err.message : err)
           }
         }
-        void import('@/agent/lib/workflow-guards')
-          .then((wg) =>
-            wg.WORKFLOW_HOOKED_TOOLS.has(tool.name)
-              ? wg.onWorkflowToolExecuted(tool.name, input ?? {}, result.data, ctx)
-              : undefined,
-          )
-          .catch(() => {})
+        const persistWorkflowState = async () => {
+          const wg = await import('@/agent/lib/workflow-guards')
+          if (wg.WORKFLOW_HOOKED_TOOLS.has(tool.name)) {
+            await wg.onWorkflowToolExecuted(tool.name, input ?? {}, result.data, ctx)
+          }
+        }
+        if (tool.name !== 'live_browser_look' && tool.name !== 'live_browser_act') {
+          void persistWorkflowState().catch(() => {})
+        }
       }
       return result
     }
@@ -1231,13 +1557,6 @@ export async function runRegisteredTool(
     // duplicate-suppression key back so the head's corrected (or identical)
     // retry is judged on its own merits.
     await releaseClaimOnFailure()
-    // Failed live-browser act → record it so the §H navigation guard permits a
-    // retry of the same target (fail-open bookkeeping).
-    if (ctx.conversationId && tool.name === 'live_browser_act') {
-      void import('@/agent/lib/workflow-guards')
-        .then((wg) => wg.onWorkflowToolFailed(tool.name, input ?? {}, ctx))
-        .catch(() => {})
-    }
     const errorCode = result.errorCode ?? classifyErrorCode(result.error)
     const retryable = result.retryable ?? isRetryableErrorCode(errorCode)
     void logToolEvent({
@@ -1255,6 +1574,7 @@ export async function runRegisteredTool(
     await releaseClaimOnFailure()
     const errorCode = classifyErrorCode(String(err))
     const thrownRetryable = isRetryableErrorCode(errorCode)
+    await persistBrowserActOutcome({ success: false, errorCode }, 'throw')
     void logToolEvent({
       ...baseEvent,
       success: false,
@@ -1302,6 +1622,14 @@ export async function executeTool(
     businessId,
     turnId,
     permissionMode: typeof serverContext.permissionMode === 'string' ? serverContext.permissionMode : undefined,
+    directBrowserTask: serverContext.directBrowserTask === true,
+    directBrowserLaneToken: typeof serverContext.directBrowserLaneToken === 'string'
+      ? serverContext.directBrowserLaneToken
+      : undefined,
+    directBrowserLaneUnavailable: serverContext.directBrowserLaneUnavailable === true,
+    ownerRequestText: typeof serverContext.ownerRequestText === 'string'
+      ? serverContext.ownerRequestText
+      : undefined,
     elevationGrant: (serverContext.elevationGrant as ToolRunContext['elevationGrant']) ?? null,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
     driveClientSeoBatch: serverContext.driveClientSeoBatch === true,

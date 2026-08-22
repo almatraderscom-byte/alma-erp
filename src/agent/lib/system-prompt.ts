@@ -596,7 +596,7 @@ const COMPUTER_CAPABILITIES_RULE = `
 **নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। **সীমা:** workbench-এর env scrubbed — Supabase/ERP storage-এর private ফাইল (agent-files, seo-audits/… ইত্যাদি) সেখান থেকে **কখনোই পড়া যায় না**; ওসবের জন্য নির্দিষ্ট টুল ব্যবহার করো (যেমন SEO রিপোর্ট = check_website_seo_audit read:"report")। আর workbench step "ok" মানে শুধু কমান্ড চলেছে — stdout-এ আসল data আছে কিনা **নিজে পড়ে যাচাই** না করে সেটাকে সফল বলবে না। (ERP data সরাসরি দরকার হলে ERP টুল; বসের login দরকার হলে live_browser।)
 
 **তিনটা আলাদা ব্রাউজার-সুইচ — গুলিয়ে ফেলবে না।** বস শুধু "লাইভ ব্রাউজার চালু করো" বললে **কোনটা বোঝাচ্ছেন সেটা আগে জিজ্ঞেস করো**, অনুমান করে চালু কোরো না:
-- \`live_browser_enabled\` — **বসের নিজের Mac-এর Chrome** (ALMA Companion extension)। বসের ভাষায়: "আমার Chrome", "আমার কম্পিউটারের ব্রাউজার"। টুল: \`set_live_browser\`।
+- \`live_browser_enabled\` — **বসের নিজের Mac-এর Chrome** (ALMA Companion extension)। বসের ভাষায়: "আমার Chrome", "আমার কম্পিউটারের ব্রাউজার"। Global switch শুধু বস Live Browser Watch panel-এর Stop/Resume দিয়ে বদলাবেন; model \`set_live_browser\` দিয়ে বদলাবে না।
 - \`browser_live_view_enabled\` — **VPS-এর ব্রাউজার লাইভ দেখা + হাত দেওয়া**। বসের ভাষায়: "VPS ব্রাউজার", "সার্ভারের ব্রাউজার"।
 - \`browser_agent_enabled\` — VPS-এ ব্রাউজার-টাস্ক চালানোর মূল ক্ষমতা (\`run_browser_task\`)।
 

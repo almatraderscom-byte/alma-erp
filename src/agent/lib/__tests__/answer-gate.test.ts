@@ -24,6 +24,8 @@ describe('answer gate — deny rules (never gated)', () => {
     expect(isGateableQuestion('ekta post banao facebook er jonno?')).toBe(false)
     expect(isGateableQuestion('Rakib ke call koro?')).toBe(false)
     expect(isGateableQuestion('order ta delete korbo kivabe?')).toBe(false)
+    expect(isGateableQuestion('Could you play Fix You on YouTube?')).toBe(false)
+    expect(isGateableQuestion('ইউটিউবে Fix You গানটা চালিয়ে দেবে?')).toBe(false)
   })
 
   it('salah never gates', () => {

@@ -10,10 +10,14 @@
  * These tests pin both halves: a real effect still blocks its duplicate, and a
  * failed one hands the key back.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { guardToolCall, clearEffectClaims } from '@/agent/lib/policy/tool-guard'
 import { runRegisteredTool, type AgentTool } from '@/agent/tools/registry'
 import { resolveClassification } from '@/agent/tools/tool-contract'
+
+vi.mock('@/agent/lib/live-browser/turn-owner-input', () => ({
+  isTurnOwnerExecutionCurrent: vi.fn(async () => true),
+}))
 
 const stageSeo = resolveClassification({ domain: 'seo', mode: 'stage', risk: 'medium' })
 const ctx = { surface: 'owner' as const, conversationId: 'conv-1', turnId: 'turn-1', businessId: 'ALMA_LIFESTYLE' }

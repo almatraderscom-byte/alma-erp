@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   messageUpsert: vi.fn(),
   conversationUpdate: vi.fn(),
   readKv: vi.fn(),
+  advisorySql: [] as string[],
 }))
 
 vi.mock('@/agent/lib/guards', () => ({ requireAgentEnabled: () => null }))
@@ -102,6 +103,7 @@ function request() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.advisorySql.length = 0
   transactionTail = Promise.resolve()
   mocks.rows.splice(0, mocks.rows.length, source())
   process.env.AGENT_INTERNAL_TOKEN = 'internal-test-token'
@@ -142,7 +144,10 @@ beforeEach(() => {
   })
   mocks.transaction.mockImplementation((fn: (tx: unknown) => unknown) => {
     const run = transactionTail.then(() => fn({
-      $queryRaw: vi.fn(async () => [{ pg_advisory_xact_lock: null }]),
+      $queryRaw: vi.fn(async (query: { strings?: readonly string[] }) => {
+        mocks.advisorySql.push(query.strings?.join('?') ?? '')
+        return [{ lock_token: '' }]
+      }),
       agentPendingAction: {
         findUnique: mocks.findUnique,
         findFirst: mocks.findFirst,
@@ -203,6 +208,9 @@ describe('POST /api/assistant/actions/:id/retry', () => {
       }),
     }))
     expect(mocks.rows.find((row) => row.id === 'failed-source')?.status).toBe('failed')
+    expect(mocks.advisorySql).toEqual([
+      expect.stringContaining('pg_advisory_xact_lock(hashtext(?))::text AS lock_token'),
+    ])
   })
 
   it('dedupes concurrent retry taps to one new pending card', async () => {

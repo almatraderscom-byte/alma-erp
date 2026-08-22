@@ -21,6 +21,7 @@
  */
 import { selectSkills } from '@/agent/lib/skill-engine/loader'
 import type { SkillIndex, SkillMetadata } from '@/agent/lib/skill-engine/types'
+import { isDirectYouTubeBrowserTask } from '@/agent/lib/live-browser/intent'
 
 export type RouteLayer = 'rule' | 'keyword' | 'model' | 'none'
 
@@ -280,12 +281,20 @@ const LIVE_BROWSER_TOOL_REF =
   /\blive_browser_(?:act|look|status|pair|trust)\b|\bset_live_browser\b/i
 const OWNER_CHROME_SURFACE =
   /(?:\b(?:my|amar)\s+chrome\b|আমার\s+Chrome|\bchrome\s+companion\b|\balma\s+companion\b|\blive\s+browser\b|লাইভ\s+ব্রাউজার)/i
+/**
+ * A named website can itself be the surface when the owner asks for an
+ * unmistakably interactive job. YouTube playback is the first deliberately
+ * narrow slice: without it, "YouTube-এ গানটা play করো" falls through to the
+ * unrestricted head and becomes a shell `open -a` command instead of a
+ * witnessed browser task.
+ */
 const BROWSER_OPERATION =
-  /(?:navigate|open|খোল|খুল|যাও|দেখ|look|read|title|url|heading|click|type|pair|status|verify|verification)/i
+  /(?:navigate|open|search|find|play|watch|খোল|খুল|সার্চ|খুঁজ|প্লে|চালাও|যাও|দেখ|look|read|title|url|heading|click|type|pair|status|verify|verification)/i
 const LIVE_BROWSER_OPERATOR_ASK = (text: string): boolean =>
   !SOFTWARE_WORK_REF.test(text)
   && (LIVE_BROWSER_TOOL_REF.test(text)
-    || (OWNER_CHROME_SURFACE.test(text) && BROWSER_OPERATION.test(text)))
+    || (OWNER_CHROME_SURFACE.test(text) && BROWSER_OPERATION.test(text))
+    || isDirectYouTubeBrowserTask(text))
 /**
  * "notun chat khulo" — a fresh conversation in one of those apps. The verb is
  * REQUIRED: with it optional, "new chat bug ta fix koro" (a bug report about

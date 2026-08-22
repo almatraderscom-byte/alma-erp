@@ -54,7 +54,7 @@ function isPublicApiOrShare(pathname: string) {
   if (pathname === '/api/assistant/voice-call/sip-voicemail') return true
   // ALMA Companion extension (the owner's own Chrome). These endpoints carry a DEVICE
   // token, not a session cookie: `pair` redeems a single-use, 10-minute, owner-issued
-  // code, and `poll`/`result` present a bearer token stored only as a hash. Each
+  // code, and `poll`/`authorize`/`result` present a bearer token stored only as a hash. Each
   // re-checks in its own handler, all behind requireAgentEnabled + the
   // `live_browser_enabled` kill-switch.
   //
@@ -67,8 +67,10 @@ function isPublicApiOrShare(pathname: string) {
   // handlers that actually understand these tokens; the cookie was never the check.
   if (pathname === '/api/assistant/live-browser/pair') return true
   if (pathname === '/api/assistant/live-browser/poll') return true
+  if (pathname === '/api/assistant/live-browser/authorize') return true
   if (pathname === '/api/assistant/live-browser/result') return true
   if (pathname === '/api/assistant/live-browser/frames') return true
+  if (pathname === '/api/assistant/live-browser/unpair') return true
   // Same three-endpoint shape for the Mac daemon, and the same reason: it holds a
   // bearer token, not a browser cookie, and each handler authenticates that token
   // itself (constant-time hash compare). Missing this made every pairing attempt

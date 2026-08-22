@@ -45,6 +45,14 @@ describe('skill-engine runtime bridge (gated)', () => {
     expect(block).toContain('alma-research')
   })
 
+  it('keeps explicit YouTube control on the paired-browser lane when the broad switch is off', async () => {
+    const block = await buildActiveSkillsBlock('ইউটিউবে Coke Studio Bangla গানটা চালাও')
+
+    expect(block).toContain('alma-browser-operator')
+    expect(block).toContain('live_browser_look')
+    expect(block).toContain('shell command নয়')
+  })
+
   it('continues an existing P0 image pin when a short follow-up does not re-match the rule', async () => {
     mockPrisma.agentConversation.findUnique.mockResolvedValue({
       pinnedSkill: 'alma-image-generation',

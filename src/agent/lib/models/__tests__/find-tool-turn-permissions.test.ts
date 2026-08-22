@@ -14,6 +14,7 @@
  * These tests pin that contract.
  */
 import { describe, it, expect } from 'vitest'
+import { DIRECT_BROWSER_SHELL_DENYLIST } from '@/agent/lib/live-browser/intent'
 import { filterFindToolResultForTurn } from '@/agent/lib/models/run-owner-turn'
 
 const result = (names: string[], note?: string) => ({
@@ -55,6 +56,20 @@ describe('filterFindToolResultForTurn — the find_tool → membership_gate dead
     expect(refused).toEqual(['ask_user'])
     expect(res.data.matches.map((m) => m.name)).toEqual(['get_sales_summary'])
     expect(String(res.data.note)).toContain('ask_user')
+  })
+
+  it('does not let a direct browser turn rediscover a shell fallback', () => {
+    const denied = [...DIRECT_BROWSER_SHELL_DENYLIST]
+    const res = result([...denied, 'live_browser_act'])
+    const { permitted, refused } = filterFindToolResultForTurn(res, {
+      already: new Set(),
+      turnDenylist: DIRECT_BROWSER_SHELL_DENYLIST,
+      turnAllowlist: new Set(['live_browser_act']),
+    })
+
+    expect(permitted).toEqual(['live_browser_act'])
+    expect(refused).toEqual(denied)
+    expect(res.data.matches.map((match) => match.name)).toEqual(['live_browser_act'])
   })
 
   it('leaves the result untouched when everything found is permitted', () => {

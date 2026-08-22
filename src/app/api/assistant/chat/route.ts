@@ -53,7 +53,9 @@ import {
 } from '@/lib/agent-api/business-context'
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
 import { liveVoiceDisconnectCancellation } from '@/agent/lib/live-voice-cancel-policy'
+import { verificationRetryBaseText } from '@/agent/lib/verification-retry-view'
 import { type ChatMode, chatModeForPermission } from '@/agent/lib/chat-mode'
+import { lockDirectYouTubeLaneAuthority } from '@/agent/lib/live-browser/turn-lane'
 import {
   type PermissionMode,
   type ElevationGrant,
@@ -589,13 +591,22 @@ export async function POST(req: NextRequest) {
         userContent.push(buildVisionNoteBlock(visionText))
       }
 
-      const savedUserMsg = await prisma.agentMessage.create({
-        data: {
-          conversationId,
-          clientRequestId,
-          role: 'user',
-          content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
-        },
+      // Linearize accepted owner input against the final browser enqueue/claim
+      // fence. If the browser command wins, it was authorized before this owner
+      // message existed; if this write wins, every older command sees the newer
+      // row and fails closed before delivery.
+      const persistedConversationId = conversationId
+      if (!persistedConversationId) throw new Error('conversation id missing before owner message persistence')
+      const savedUserMsg = await prisma.$transaction(async (tx) => {
+        await lockDirectYouTubeLaneAuthority(tx, persistedConversationId)
+        return tx.agentMessage.create({
+          data: {
+            conversationId: persistedConversationId,
+            clientRequestId,
+            role: 'user',
+            content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
+          },
+        })
       })
       savedUserMessageId = savedUserMsg.id
       // B2: embed the owner turn for later semantic recall (best-effort; the SSE
@@ -870,9 +881,10 @@ export async function POST(req: NextRequest) {
         else if (event.type === 'preamble') preambleText = event.text
         else if (event.type === 'verification_retry') {
           // Drop the unverified draft so the final telegram reply is the truthful
-          // retry only — but KEEP the spoken first line: Boss already read it and
-          // the rewrite is not replacing it (owner rule 2026-07-25).
-          finalText = preambleText ? `${preambleText}\n\n` : ''
+          // retry only. A normal self-correction keeps the spoken first line, but
+          // a media hard gate must also remove it: model-authored preamble text is
+          // not proof and may itself contain the unsupported "now playing" claim.
+          finalText = verificationRetryBaseText(preambleText, event.categories)
           console.warn(
             `[assistant/chat] verification retry ${event.attempt}/${event.maxAttempts}`,
             { conversationId, categories: event.categories },
