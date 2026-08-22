@@ -158,6 +158,11 @@
 		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
 		F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */; };
 		F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */; };
+		ACCE5500000000000000B001 /* AlmaAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A001 /* AlmaAccess.swift */; };
+		ACCE5500000000000000B002 /* AlmaSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A002 /* AlmaSession.swift */; };
+		ACCE5500000000000000B003 /* AlmaShellCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A003 /* AlmaShellCatalog.swift */; };
+		ACCE5500000000000000B004 /* RoleDeskSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A004 /* RoleDeskSwiftUI.swift */; };
+		ACCE5500000000000000B005 /* AccessContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACCE5500000000000000A005 /* AccessContractTests.swift */; };
 		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
 		F2AA7700000000000000B080 /* DashboardSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A080 /* DashboardSwiftUI.swift */; };
 		F2AA7700000000000000B099 /* PersonalLedgerSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A099 /* PersonalLedgerSwiftUI.swift */; };
@@ -387,6 +392,11 @@
 		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownPeopleSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentGrowthSwiftUI.swift; sourceTree = "<group>"; };
+		ACCE5500000000000000A001 /* AlmaAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaAccess.swift; sourceTree = "<group>"; };
+		ACCE5500000000000000A002 /* AlmaSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaSession.swift; sourceTree = "<group>"; };
+		ACCE5500000000000000A003 /* AlmaShellCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaShellCatalog.swift; sourceTree = "<group>"; };
+		ACCE5500000000000000A004 /* RoleDeskSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoleDeskSwiftUI.swift; sourceTree = "<group>"; };
+		ACCE5500000000000000A005 /* AccessContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessContractTests.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A080 /* DashboardSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A099 /* PersonalLedgerSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalLedgerSwiftUI.swift; sourceTree = "<group>"; };
@@ -534,6 +544,10 @@
 				A7C100000000000000000001 /* VoicePreviews */,
 				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
 				F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */,
+				ACCE5500000000000000A001 /* AlmaAccess.swift */,
+				ACCE5500000000000000A002 /* AlmaSession.swift */,
+				ACCE5500000000000000A003 /* AlmaShellCatalog.swift */,
+				ACCE5500000000000000A004 /* RoleDeskSwiftUI.swift */,
 				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
 				F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */,
 				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
@@ -649,6 +663,7 @@
 				C2A2A0000000000000000038 /* LiveVoiceWorkFollowThroughTests.swift */,
 				C2A2A0000000000000000040 /* LiveVoiceDroppedRequestRecoveryTests.swift */,
 				C2A2A0000000000000000024 /* AgentSessionSurfaceTests.swift */,
+				ACCE5500000000000000A005 /* AccessContractTests.swift */,
 				D3C300000000000000000004 /* LiveVoiceLifecycleReducerTests.swift */,
 				E5D500000000000000000004 /* LiveVoiceOutputPCMEnvelopeTests.swift */,
 				F6A600000000000000000004 /* LiveVoiceAccessibilityLayoutPolicyTests.swift */,
@@ -1077,6 +1092,10 @@
 				A7C100000000000000000007 /* AlmaLiveVoicePreview.swift in Sources */,
 				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,
 				F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */,
+				ACCE5500000000000000B001 /* AlmaAccess.swift in Sources */,
+				ACCE5500000000000000B002 /* AlmaSession.swift in Sources */,
+				ACCE5500000000000000B003 /* AlmaShellCatalog.swift in Sources */,
+				ACCE5500000000000000B004 /* RoleDeskSwiftUI.swift in Sources */,
 				F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */,
 				F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */,
 				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
@@ -1174,6 +1193,7 @@
 				C2A2A0000000000000000036 /* LiveVoiceWorkFollowThroughTests.swift in Sources */,
 				C2A2A000000000000000003E /* LiveVoiceDroppedRequestRecoveryTests.swift in Sources */,
 				C2A2A0000000000000000022 /* AgentSessionSurfaceTests.swift in Sources */,
+				ACCE5500000000000000B005 /* AccessContractTests.swift in Sources */,
 				D3C300000000000000000002 /* LiveVoiceLifecycleReducerTests.swift in Sources */,
 				E5D500000000000000000002 /* LiveVoiceOutputPCMEnvelopeTests.swift in Sources */,
 				F6A600000000000000000002 /* LiveVoiceAccessibilityLayoutPolicyTests.swift in Sources */,

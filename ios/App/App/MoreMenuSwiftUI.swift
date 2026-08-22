@@ -336,6 +336,7 @@ struct MoreMenuScreen: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = MoreVM()
+    @State private var session = AlmaSession.shared
     @State private var showBusinessSheet = false
     @State private var showProfileSheet = false
 
@@ -345,58 +346,20 @@ struct MoreMenuScreen: View {
     fileprivate struct MenuItem { let title: String; let icon: String; let path: String }
     fileprivate struct MenuGroup { let header: String; let icon: String; let items: [MenuItem] }
 
-    private static var groups: [MenuGroup] {
-        // P3 mobile companion: "native:companion" is a sentinel — that row pushes the
-        // NATIVE companion screen (openCompanion) instead of a web view.
-        // Owner feedback 2026-07-17: NO duplicates — the Hub is the ONE agent
-        // directory; the More menu keeps only the Hub + the native-sentinel row.
-        let agentItems: [MenuItem] = [
-            MenuItem(title: "Agent Hub",       icon: "square.grid.2x2.fill",             path: "/agent/hub"),
-            MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
-            MenuItem(title: "কল হিস্টরি",       icon: "phone.badge.waveform.fill",        path: "native:agent-calls"),
-            MenuItem(title: "Agent Loader",    icon: "sparkles.rectangle.stack.fill",    path: "native:spinner-preview"),
-        ]
-        return [
-        MenuGroup(header: "Agent", icon: "sparkles", items: agentItems),
-        MenuGroup(header: "Workspace", icon: "square.grid.2x2", items: [
-            MenuItem(title: "My Desk",         icon: "person.crop.square", path: "/portal"),
-            MenuItem(title: "Office",          icon: "building.2",         path: "/portal/office"),
-            MenuItem(title: "Product Images",  icon: "photo.on.rectangle", path: "/agent/catalog-images"),
-            MenuItem(title: "Creative Studio", icon: "wand.and.stars",     path: "/agent/creative-studio"),
-        ]),
-        MenuGroup(header: "Money", icon: "banknote", items: [
-            MenuItem(title: "Finance",  icon: "banknote",          path: "/finance"),
-            MenuItem(title: "Expenses", icon: "creditcard",        path: "/expenses"),
-            MenuItem(title: "Payroll",  icon: "dollarsign.circle", path: "/payroll"),
-            MenuItem(title: "Invoices", icon: "doc.text",          path: "/invoice"),
-        ]),
-        MenuGroup(header: "Operations", icon: "gearshape.2", items: [
-            MenuItem(title: "Inventory",      icon: "shippingbox", path: "/inventory"),
-            MenuItem(title: "Activity",       icon: "bolt",        path: "/activity"),
-            MenuItem(title: "Task Spotlight", icon: "target",      path: "/operations/task-spotlight"),
-            MenuItem(title: "Archive",        icon: "archivebox",  path: "/operations/business-archive"),
-        ]),
-        MenuGroup(header: "People", icon: "person.2", items: [
-            MenuItem(title: "Employees",  icon: "person.2",                           path: "/employees"),
-            MenuItem(title: "Attendance", icon: "calendar.badge.clock",               path: "/attendance"),
-            MenuItem(title: "CRM",        icon: "person.crop.circle.badge.checkmark", path: "/crm"),
-        ]),
-        MenuGroup(header: "Insights", icon: "chart.bar", items: [
-            MenuItem(title: "Analytics", icon: "chart.bar", path: "/analytics"),
-            MenuItem(title: "Insights",  icon: "lightbulb", path: "/insights"),
-            MenuItem(title: "Briefing",  icon: "newspaper", path: "/briefing"),
-            MenuItem(title: "Audit",     icon: "checklist", path: "/audit"),
-        ]),
-        MenuGroup(header: "Settings", icon: "gearshape", items: [
-            MenuItem(title: "Users",         icon: "person.3",           path: "/settings/users"),
-            MenuItem(title: "Notifications", icon: "bell.badge",         path: "/settings/notifications"),
-            MenuItem(title: "Branding",      icon: "paintpalette",       path: "/settings/branding"),
-            MenuItem(title: "SMS",           icon: "message",            path: "/settings/sms"),
-            MenuItem(title: "Telegram Ops",  icon: "paperplane",         path: "/settings/telegram-ops"),
-            MenuItem(title: "Database",      icon: "cylinder.split.1x2", path: "/settings/database"),
-            MenuItem(title: "Session",       icon: "key",                path: "/settings/session"),
-        ]),
-        ]
+    /// Role × business gated menu (owner report 2026-08-22): the curated catalog
+    /// (AlmaShellCatalog) filtered through AlmaSession — the web nav port — so a
+    /// user only ever sees rows the web sidebar would show them. Rows that are
+    /// tabs are dropped; empty groups vanish; anything the web nav still offers
+    /// that the catalog doesn't name lands in a trailing "আরও" group.
+    private var groups: [MenuGroup] {
+        let s = session
+        let tabs = AlmaShellCatalog.tabHrefs(role: s.effectiveRole, business: s.businessId)
+        return AlmaShellCatalog.moreGroups(role: s.effectiveRole, business: s.businessId,
+                                           tabHrefs: tabs, canSee: { s.canSee($0) })
+            .map { g in
+                MenuGroup(header: g.header, icon: g.symbol,
+                          items: g.items.map { MenuItem(title: $0.title, icon: $0.symbol, path: $0.path) })
+            }
     }
 
     /// The owner's 3 businesses. Switching is just navigation — the ERP derives the
@@ -439,7 +402,7 @@ struct MoreMenuScreen: View {
                 MoreHeroRow(vm: vm, openPath: openPath)
                 // Appearance/Security switches live in the PROFILE sheet now (owner
                 // spec 2026-07-08): More is pure navigation, profile is personal.
-                ForEach(Self.groups, id: \.header) { group in
+                ForEach(groups, id: \.header) { group in
                     groupRow(group)
                 }
             }
@@ -474,7 +437,9 @@ struct MoreMenuScreen: View {
                 cardBg: cardBg, rootBg: rootBg,
                 select: { biz in
                     showBusinessSheet = false
-                    openPath(biz.path, biz.name)
+                    // Native business switch (web BusinessContext parity): the shell
+                    // rebuilds the tab bar for this business and lands on its home.
+                    if let id = AlmaBusinessId(rawValue: biz.bizId) { session.setBusiness(id) }
                 })
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
@@ -496,12 +461,11 @@ struct MoreMenuScreen: View {
         }
     }
 
-    /// Businesses the sheet offers: filtered by the server's access list once known,
-    /// all three while identity is still loading (server enforces access anyway).
+    /// Businesses the sheet offers — exactly the signed-in user's business access
+    /// (AlmaSession; the owner always has all three).
     private var allowedBusinesses: [Biz] {
-        guard !vm.allowedBusinessIds.isEmpty else { return Self.businesses }
-        let allowed = Self.businesses.filter { vm.allowedBusinessIds.contains($0.bizId) }
-        return allowed.isEmpty ? Self.businesses : allowed
+        let allowed = Set(session.allowedBusinesses.map(\.rawValue))
+        return Self.businesses.filter { allowed.contains($0.bizId) }
     }
 
     // ── Nav group row (Settings-style: tap PUSHES the group's own page — owner
@@ -1117,7 +1081,7 @@ private struct MoreProfileSheet: View {
                 if let email = vm.email, !email.isEmpty {
                     Text(email).font(.footnote).foregroundStyle(.secondary)
                 }
-                Text(vm.isOwner ? "Owner" : "Staff")
+                Text(vm.isOwner ? "Owner" : AlmaSession.shared.effectiveRole.label)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(vm.isOwner ? coral : violet)
                     .padding(.horizontal, 10).padding(.vertical, 3)
@@ -1374,6 +1338,9 @@ private struct MoreProfileSheet: View {
         }
         await purgeSessionCookies()
         AlmaAPI.shared.invalidateCookieCache()
+        // Fail closed: drop role / business access so the shell rebuilds to the
+        // least-privilege bar before anyone else signs in on this phone.
+        AlmaSession.shared.signedOut()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         dismiss()
         openPath("/login", "Login")

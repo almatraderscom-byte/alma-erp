@@ -31,7 +31,15 @@ enum AlmaNavCoordinator {
         case tabRoot(Int)
         case web(reason: String)
         case unknown
+        /// The signed-in role may not open this page (web: proxy.ts redirect /
+        /// ActorContext bounce). Checked BEFORE classification so a denied route
+        /// is never even instantiated.
+        case denied
     }
+
+    /// The role-gated bar's live tab roots (href → index), set by the shell on
+    /// every (re)build. Falls back to `tabRootIndex` before the first build.
+    static var liveTabRoots: [String: Int] = [:]
 
     // MARK: - Contract allowlists (mirror ios/route-contract.json — checker-enforced)
 
@@ -84,7 +92,16 @@ enum AlmaNavCoordinator {
         let bare = path.split(separator: "?").first.map(String.init) ?? path
         let hasQuery = path.dropFirst(bare.count).count > 1 // "?" alone isn't a query
 
-        if let index = tabRootIndex[bare], !hasQuery {
+        // Role × business gate first (AlmaSession = the web's roles.ts port).
+        // Public pages (share links, privacy) are not ERP routes and pass.
+        if !publicWebRoutes.contains(bare),
+           !publicWebPrefixes.contains(where: { bare.hasPrefix($0) }),
+           !AlmaSession.shared.canSee(bare) {
+            return .denied
+        }
+
+        let roots = liveTabRoots.isEmpty ? tabRootIndex : liveTabRoots
+        if let index = roots[bare], !hasQuery {
             return .tabRoot(index)
         }
 
@@ -100,7 +117,7 @@ enum AlmaNavCoordinator {
                 return .native(native)
             }
             if AlmaNativeRouter.screen(for: bare, openWebForced: { _, _ in }) != nil
-                || tabRootIndex[bare] != nil {
+                || roots[bare] != nil {
                 return .web(reason: "query-context")
             }
             // fall through to allowlist / unknown below using the bare path

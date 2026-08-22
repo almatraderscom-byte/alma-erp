@@ -106,6 +106,9 @@ private enum NativeLoginFlow {
         }
         // AlmaAPI's lazy sync must not overwrite the new session with stale WK state.
         AlmaAPI.shared.invalidateCookieCache()
+        // Role × business access for THIS account (may differ from the last one
+        // on this phone) — the shell rebuilds its tab bar from the answer.
+        if #available(iOS 17.0, *) { await AlmaSession.shared.reload() }
         NotificationCenter.default.post(name: .almaAuthenticationDidRestore, object: nil)
         return confirmed.name ?? confirmed.email
     }
