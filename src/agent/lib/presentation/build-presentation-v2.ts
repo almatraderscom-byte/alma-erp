@@ -133,18 +133,26 @@ export function buildAgentPresentationV2(
       ? firstThinkIndex
       : -1
 
+  // Unanchored blocks (anchor dropped by compaction, or never anchored) keep
+  // their DOCUMENT order: each one rides with the next anchored block after it
+  // and is emitted just before that block; only those after the last anchored
+  // block trail at the end (Codex P2 #838 — the old "append all at the end"
+  // reordered p0…p19 behind p20…p79 when protected entries exceeded the cap).
   const anchored = new Map<number, typeof visible>()
-  const unanchored: typeof visible = []
+  const trailing: typeof visible = []
+  let pendingUnanchored: typeof visible = []
   for (const b of visible) {
     if (b === lead && deferLeadUntil >= 0) continue
     if (b.timelineIndex != null && b.timelineIndex < timeline.length) {
       const list = anchored.get(b.timelineIndex) ?? []
-      list.push(b)
+      list.push(...pendingUnanchored, b)
+      pendingUnanchored = []
       anchored.set(b.timelineIndex, list)
     } else {
-      unanchored.push(b)
+      pendingUnanchored.push(b)
     }
   }
+  trailing.push(...pendingUnanchored)
 
   if (timeline.length > 0) {
     timeline.forEach((e, i) => {
@@ -206,9 +214,9 @@ export function buildAgentPresentationV2(
     }
   }
   if (lead) emitProse(lead)
-  // Blocks whose anchor fell past the persisted timeline window (or never had
-  // one) keep their place at the end, in document order — never dropped.
-  for (const b of unanchored) emitProse(b)
+  // Blocks after the last anchored one keep their place at the end, in
+  // document order — never dropped.
+  for (const b of trailing) emitProse(b)
   for (const b of visible) emitProse(b)
 
   const contentBlocks = Array.isArray(input.content)

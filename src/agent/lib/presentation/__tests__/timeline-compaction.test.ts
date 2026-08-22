@@ -103,3 +103,21 @@ describe('compaction keeps prose anchors pointing at the stored entries (Codex P
     expect(staleSeq.indexOf('prose:শেষ ধাপের আপডেট')).not.toBe(update)
   })
 })
+
+describe('prose whose anchors were dropped keeps document order (Codex P2 #838)', () => {
+  it('p0…p79 stays p0…p79 after only the last 60 protected entries survive', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: 'turn-order' })
+    const timeline: Array<Record<string, unknown>> = []
+    for (let i = 0; i < 80; i++) {
+      tracker.process({ type: 'progress_update', label: 'r', stage: 'round' })
+      tracker.process({ type: 'text_delta', delta: `p${i}` })
+      tracker.anchorTimeline(timeline.length)
+      timeline.push({ t: 'text', text: `p${i}` })
+    }
+    const stored = compactTimelineWithIndexMap(timeline, 60)
+    const doc = tracker.document('m', { remapTimelineIndex: (i) => stored.indexMap[i] })
+    const p = buildAgentPresentationV2({ messageId: 'm', timeline: stored.timeline, document: doc })
+    const texts = p.blocks.filter((b) => b.type === 'prose').map((b) => (b as { text: string }).text)
+    expect(texts).toEqual(Array.from({ length: 80 }, (_, i) => `p${i}`))
+  })
+})
