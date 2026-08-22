@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { createHash, randomUUID } from 'crypto'
-import { compactTimelineForStorage } from '@/agent/lib/presentation/timeline-compaction'
+import { compactTimelineWithIndexMap } from '@/agent/lib/presentation/timeline-compaction'
 import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, DEEP_TURN_MAX_ITERATIONS, LONG_RUN_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET, AGENT_CONSTITUTION, CONSTITUTION_REINJECT_EVERY, AGENT_STYLE, promptToolTruthEnabled, universalToolPipelineEnabled, speakFirstEnabled, toolMembershipGateMode, STANDARD_HEAD_TOOL_BUDGET, PROGRESS_UPDATE_EVERY, maxProgressNudgesFor, headToolBudgetFor, maxIntentNudgesFor, type TurnWorkClass } from '@/agent/config'
 import { computeHeadToolCap, narrowToolsToCap } from '@/agent/lib/models/head-tool-cap'
@@ -5258,7 +5258,12 @@ async function* runAlternateProviderTurn(
     // Prose lifecycle v2: the id is chosen BEFORE the insert so the authoritative
     // block document can name its own message and land in the same write.
     const assistantMessageId = randomUUID()
-    const presentationV2 = proseLifecycle?.document(assistantMessageId)
+    // Compact ONCE and hand the document the same index map, so block anchors
+    // point into the timeline that is actually stored (Codex P1 #838).
+    const storedTimeline = compactTimelineWithIndexMap(timeline)
+    const presentationV2 = proseLifecycle?.document(assistantMessageId, {
+      remapTimelineIndex: (i) => storedTimeline.indexMap[i],
+    })
     const savedMsg = await db.agentMessage.create({
       data: {
         id: assistantMessageId,
@@ -5288,7 +5293,7 @@ async function* runAlternateProviderTurn(
           grounding: ownerRequirements.groundingRequired
             ? { required: true, satisfiedBy: groundingEvidence(toolRecords) }
             : undefined,
-          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined, presentationV2 },
+          api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, duration_ms: Date.now() - turnStartedAtMs, timeline: storedTimeline.timeline.length > 0 ? storedTimeline.timeline : undefined, workSteps: runtimeFinalSnapshot ? [runtimeFinalSnapshot] : undefined, presentationV2 },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -5694,6 +5699,7 @@ async function* runAlternateProviderTurn(
             yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
           }
           const salvageMessageId = randomUUID()
+          const salvageTimeline = compactTimelineWithIndexMap(timeline)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const savedMsg = await (prisma as any).agentMessage.create({
             data: {
@@ -5704,7 +5710,7 @@ async function* runAlternateProviderTurn(
               costUsd: totalActualCostUsd != null
                 ? roundUsd(totalActualCostUsd)
                 : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined, presentationV2: proseLifecycle?.document(salvageMessageId) },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
             },
           })
           yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue }
@@ -5772,6 +5778,7 @@ async function* runAlternateProviderTurn(
           }
         }
         const salvageMessageId = randomUUID()
+        const salvageTimeline = compactTimelineWithIndexMap(timeline)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const savedMsg = await (prisma as any).agentMessage.create({
           data: {
@@ -5782,7 +5789,7 @@ async function* runAlternateProviderTurn(
             costUsd: totalActualCostUsd != null
               ? roundUsd(totalActualCostUsd)
               : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens, reasoningTokens: model.provider === 'xai' ? totalReasoningTokens : 0 }),
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? compactTimelineForStorage(timeline) : undefined, presentationV2: proseLifecycle?.document(salvageMessageId) },
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: salvageTimeline.timeline.length > 0 ? salvageTimeline.timeline : undefined, presentationV2: proseLifecycle?.document(salvageMessageId, { remapTimelineIndex: (i) => salvageTimeline.indexMap[i] }) },
           },
         })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
