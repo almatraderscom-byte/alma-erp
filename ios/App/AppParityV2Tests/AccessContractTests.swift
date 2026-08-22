@@ -203,6 +203,31 @@ final class AccessContractTests: XCTestCase {
         session.setBusiness(.ALMA_LIFESTYLE)
     }
 
+    /// Codex P1 (round 6): Trading HR taps the queryless `/employees/{id}` links that
+    /// Payroll / Approvals still emit. Web: proxy.ts judges `/employees/*` under the
+    /// Lifestyle roots (path prefix, not cookie) → allowed; BusinessContext keeps
+    /// Trading (`legacy` kind) → the page loads the Trading roster. Native must match.
+    @MainActor
+    func testTradingHrOpensLegacyEmployeeLinkLikeWeb() throws {
+        let session = AlmaSession.shared
+        session.applyFixture(role: .HR, access: AlmaBusinessId.all)
+        session.setBusiness(.ALMA_TRADING)
+        XCTAssertTrue(session.canSee("/employees/EMP-1"), "proxy.ts allows HR on /employees/* regardless of the active business")
+        guard case .native(let vc) = AlmaNavCoordinator.decide(path: "/employees/EMP-1", openWebForced: { _, _ in }) else {
+            return XCTFail("Trading HR legacy employee link must stay native, not .denied")
+        }
+        XCTAssertEqual(try XCTUnwrap(vc as? AlmaHostingController<EmployeesScreen>).rootView.businessId, "ALMA_TRADING")
+        // The role rule itself is unchanged: a Trading STAFF user still has no employee page.
+        session.applyFixture(role: .STAFF, access: AlmaBusinessId.all)
+        session.setBusiness(.ALMA_TRADING)
+        XCTAssertFalse(session.canSee("/employees/EMP-1"))
+        if case .denied = AlmaNavCoordinator.decide(path: "/employees/EMP-1", openWebForced: { _, _ in }) {} else {
+            XCTFail("Trading STAFF must be denied the employee page like the web redirect")
+        }
+        session.applyFixture(role: .SUPER_ADMIN, access: AlmaBusinessId.all)
+        session.setBusiness(.ALMA_LIFESTYLE)
+    }
+
     /// Tab bar composition per role × business — the owner-visible outcome.
     func testTabLayoutsPerRole() {
         func tabs(_ role: AlmaRole, _ biz: AlmaBusinessId) -> [String] {

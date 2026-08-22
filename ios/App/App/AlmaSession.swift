@@ -115,7 +115,11 @@ final class AlmaSession {
         if bare.hasPrefix("/login") || bare.hasPrefix("/forgot-password")
             || bare.hasPrefix("/reset-password") || bare.hasPrefix("/invoice/share") { return true }
         guard allowedBusinesses.contains(business) else { return false }
-        return AlmaAccess.isPathAllowedForRole(bare, role: effectiveRole, business: business)
+        // proxy.ts parity: the role rule runs under the path-prefix business, not the
+        // one the shell is in. Trading HR may open a queryless /employees/{id} from
+        // Payroll / Approvals exactly as on the web (the Lifestyle HR roots allow it;
+        // BusinessContext keeps Trading, so the router shows the Trading roster).
+        return AlmaAccess.isPathAllowedForRole(bare, role: effectiveRole, business: AlmaAccess.proxyBusiness(for: bare))
     }
 
     /// `business_id` selector stamped on canonical Agent entity links

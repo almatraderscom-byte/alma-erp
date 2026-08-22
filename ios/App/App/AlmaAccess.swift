@@ -445,4 +445,15 @@ enum AlmaAccess {
         if isRouteAllowed(path, business: current) { return current }
         return .ALMA_LIFESTYLE
     }
+
+    /// `src/proxy.ts`: the server role gate evaluates a page under the business its
+    /// PATH PREFIX names — `/trading*` → Trading, `/digital*` → CDIT, everything
+    /// else → Lifestyle — never under the business cookie. A shared-ops route such
+    /// as `/employees/{id}` is therefore judged with the Lifestyle roots even while
+    /// the user works in Trading (Codex P1: Trading HR legacy employee links).
+    static func proxyBusiness(for path: String) -> AlmaBusinessId {
+        if path.hasPrefix("/trading") { return .ALMA_TRADING }
+        if path.hasPrefix("/digital") { return .CREATIVE_DIGITAL_IT }
+        return .ALMA_LIFESTYLE
+    }
 }
