@@ -148,6 +148,9 @@ const delegate_to_specialist: AgentTool = {
         roleLabel: result.roleLabel,
         summary: result.summary,
         toolsUsed: result.toolsUsed,
+        // Exact links only; the owner executor validates this explicit field
+        // again before it can reach final-reply linkification.
+        entityLinks: result.entityLinks,
       },
     }
   },

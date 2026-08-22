@@ -300,6 +300,12 @@ final class AlmaSession {
         let parts = raw.split(separator: ":", maxSplits: 1).map(String.init)
         let r = AlmaRole.normalize(parts.first)
         let access = parts.count > 1 ? AlmaBusinessId.parseAccess(parts[1]) : AlmaBusinessId.all
+        applyFixture(role: r, access: access)
+    }
+
+    /// Pin an identity (DEBUG only) — the sim self-test hook above and unit
+    /// tests that exercise the navigation gate with a known role.
+    func applyFixture(role r: AlmaRole, access: [AlmaBusinessId]) {
         apply(Snapshot(userId: "fixture", role: r, isOwner: r == .SUPER_ADMIN,
                        businessAccess: access, name: "Fixture \(r.label)"))
         authed = true

@@ -7,6 +7,7 @@ import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { buildMessageCursorWhere, buildMessagesPagePlan } from '@/agent/lib/messages-page'
 import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
+import { mergeAgentEntityLinks, type AgentEntityLink } from '@/agent/lib/entity-links'
 import {
   IMAGE_WORKER_CAPABILITY_KV_KEY,
   imageModelAvailability,
@@ -410,6 +411,9 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       ? (u.round_costs_usd as unknown[]).filter((n): n is number => typeof n === 'number')
       : undefined
     const timeline = Array.isArray(u.timeline) ? u.timeline : undefined
+    const entityLinks = Array.isArray(u.entityLinks)
+      ? mergeAgentEntityLinks(u.entityLinks as AgentEntityLink[])
+      : undefined
     return {
       ...m,
       clientMessageId: m.clientRequestId ?? undefined,
@@ -449,6 +453,10 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
       timeline,
+      // Verified, provider-neutral ALMA destinations used by the reply. Clients
+      // can route the relative href natively; the Markdown text remains the
+      // backwards-compatible rendering contract.
+      entityLinks: entityLinks?.length ? entityLinks : undefined,
       // Build 103 Issue 3 — durable work-step tracker snapshot(s) anchored to
       // this assistant message; cold history equals the settled live tracker.
       // Plan trackers come from agent_plans; unplanned runtime trackers ride

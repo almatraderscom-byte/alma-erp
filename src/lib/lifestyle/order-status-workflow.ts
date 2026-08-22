@@ -21,6 +21,7 @@ import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { logEvent } from '@/lib/logger'
 import { handleOrderCommissionStatus, resolveOrderHandlerUser } from '@/lib/payroll-compensation'
 import { enqueueCourierUpdateSms } from '@/services/sms/events'
+import { orderDetailPath } from '@/lib/order-links'
 
 /** The only status words the ERP stores. Anything else is a bug upstream. */
 export const VALID_ORDER_STATUSES = new Set([
@@ -152,15 +153,15 @@ export async function applyOrderStatusChange(
       dedupeKey: `order-status:${id}:${nextStatus}`,
       metadata: { orderId: id, previousStatus, status: nextStatus, result, commission, businessId },
     }),
-    // Role matrix (notification-routing.ts) + the resolved handler; ?q= lands
-    // the tap on this order instead of the bare list.
+    // Role matrix (notification-routing.ts) + the resolved handler; the canonical
+    // record route opens this exact order instead of a generic filtered list.
     notifyRoles(NOTIFY_ROLES.orderStatusChanged, {
       businessId,
       type: 'ORDER_ASSIGNED',
       priority,
       title,
       message,
-      actionUrl: `/orders?q=${encodeURIComponent(String(id))}`,
+      actionUrl: orderDetailPath(String(id)),
     }),
     notifyUser({
       userId: handler?.id,
@@ -169,7 +170,7 @@ export async function applyOrderStatusChange(
       priority,
       title,
       message,
-      actionUrl: `/orders?q=${encodeURIComponent(String(id))}`,
+      actionUrl: orderDetailPath(String(id)),
     }),
   ])
 

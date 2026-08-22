@@ -10,9 +10,15 @@ import type { HREmployeesApi } from '@/types/hr'
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   try {
+    const token = await getJwt(req)
+    const businessId = String(p.business_id || 'ALMA_LIFESTYLE')
+    if (!token?.sub) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!businessAllowed(token.businessAccess as string, businessId)) {
+      return NextResponse.json({ error: 'Business not permitted for this user.' }, { status: 403 })
+    }
     const data = await serverGet<HREmployeesApi>('hr_employees', p, 0)
     if (p.include_users === '1') {
-      const users = await linkedEmployeeUsers(req, String(p.business_id || 'ALMA_LIFESTYLE'), data)
+      const users = await linkedEmployeeUsers(req, businessId, data)
       if ('error' in users) return users.error
       return NextResponse.json({ ...data, users }, { headers: { 'Cache-Control': 'private, no-store' } })
     }

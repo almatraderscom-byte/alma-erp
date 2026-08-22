@@ -137,6 +137,18 @@ struct OrdersListResponse: Decodable {
     }
 }
 
+/// GET /api/orders/orders?id=… returns one exact order, including records outside
+/// the list screen's current 30-day window.
+struct OrderDetailResponse: Decodable {
+    let order: AlmaOrder?
+    let error: String?
+
+    func exactOrder(for id: String) -> AlmaOrder? {
+        guard order?.id == id else { return nil }
+        return order
+    }
+}
+
 /// The web page's date chips, replicated exactly (server-side startDate/endDate,
 /// dates in Asia/Dhaka — the business day the whole ERP runs on).
 enum OrdersDateFilter: Equatable {
@@ -346,6 +358,7 @@ enum OrdIdentity {
 @Observable
 @MainActor
 final class OrdersVM {
+    let businessId: String
     /// The FULL window (all statuses), exactly as the server returns it — already
     /// archive-stripped. Every chip count + KPI is derived from THIS, so the numbers
     /// can never disagree with the cards on screen (the server's summary counts archived
@@ -372,6 +385,10 @@ final class OrdersVM {
     var error: String? = nil
     var authExpired = false
 
+    init(businessId: String = "ALMA_LIFESTYLE") {
+        self.businessId = businessId
+    }
+
     func load() async {
         loading = true
         error = nil
@@ -384,7 +401,7 @@ final class OrdersVM {
             // keeps every count exactly equal to the cards you see when you tap it.
             let resp: OrdersListResponse = try await AlmaAPI.shared.get(
                 "/api/orders/orders",
-                query: ["business_id": "ALMA_LIFESTYLE",
+                query: ["business_id": businessId,
                         "payment": payment,
                         "source": source,
                         "startDate": start,
@@ -405,6 +422,31 @@ final class OrdersVM {
             authExpired = true
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Resolve a deep-linked order through the endpoint's exact-id branch instead
+    /// of relying on whichever date/filter window happens to be visible.
+    func loadOrder(id rawId: String) async -> AlmaOrder? {
+        let id = rawId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return nil }
+        error = nil
+        do {
+            let response: OrderDetailResponse = try await AlmaAPI.shared.get(
+                "/api/orders/orders",
+                query: ["id": id, "business_id": businessId])
+            guard let order = response.exactOrder(for: id) else {
+                error = response.error ?? "অর্ডারটি পাওয়া যায়নি।"
+                return nil
+            }
+            authExpired = false
+            return order
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return nil
+        } catch {
+            self.error = error.localizedDescription
+            return nil
         }
     }
 
@@ -464,7 +506,7 @@ final class OrdersVM {
 @available(iOS 17.0, *)
 struct OrdersScreen: View {
     @Environment(\.colorScheme) private var colorScheme
-    @State private var vm = OrdersVM()
+    @State private var vm: OrdersVM
     @State private var selected: AlmaOrder? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
     @State private var showCustomDates = false
@@ -475,6 +517,19 @@ struct OrdersScreen: View {
     /// NP-8 (OP-09): login fallback + optional web mirror only — every order
     /// workflow (create/detail/status/edit/delete-request/invoice) is native.
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// `/orders/<id>` and `/orders?focus=<id>` both land on this exact native
+    /// detail sheet, even when the order is outside the current list window.
+    let focusOrderId: String?
+    let businessId: String
+
+    init(openWeb: @escaping (_ path: String, _ title: String) -> Void,
+         focusOrderId: String? = nil,
+         businessId: String = "ALMA_LIFESTYLE") {
+        self.openWeb = openWeb
+        self.focusOrderId = focusOrderId
+        self.businessId = businessId
+        _vm = State(initialValue: OrdersVM(businessId: businessId))
+    }
 
     var body: some View {
         ScrollView {
@@ -514,7 +569,12 @@ struct OrdersScreen: View {
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
         .dismissKeyboardOnTap()   // tap empty space to close the search keyboard
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            if let focusOrderId, selected == nil {
+                selected = await vm.loadOrder(id: focusOrderId)
+            }
+        }
         .sheet(item: $selected) { order in
             OrderDetailSheet(order: order, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])

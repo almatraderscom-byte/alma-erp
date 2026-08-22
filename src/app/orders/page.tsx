@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import { Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useUpdateStatus } from '@/hooks/useERP'
+import { useOrder, useUpdateStatus } from '@/hooks/useERP'
 import { useOrdersData } from '@/contexts/OrdersDataContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
@@ -35,6 +35,8 @@ import { useActor } from '@/contexts/ActorContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { can } from '@/lib/roles'
 import { canEditOrder, canRequestOrderDelete } from '@/lib/order-access'
+import { exactFocusedOrder, orderFocusIdForBusiness } from '@/lib/order-links'
+import { resolveEntityRouteBusiness } from '@/lib/businesses'
 import { shareSlugAlma } from '@/lib/pdf/format'
 
 const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Delivered','RETURNED_PAID','RETURNED_UNPAID','RETURNED','CANCELLED']
@@ -747,6 +749,21 @@ function OrdersPageContent() {
   const mdUp = useMdUp()
   const searchParams = useSearchParams()
   const router = useRouter()
+  const { businessId, allowedBusinessIds } = useBusiness()
+  const rawFocusOrderId = searchParams.get('focus')
+  const entityRoute = resolveEntityRouteBusiness(
+    '/orders',
+    searchParams.get('business_id'),
+    businessId,
+    allowedBusinessIds,
+    { hasExactEntityFocus: Boolean(rawFocusOrderId?.trim()) },
+  )
+  const focusBusinessId = entityRoute.kind === 'authorized'
+    ? entityRoute.businessId
+    : entityRoute.kind === 'legacy'
+      ? businessId
+      : null
+  const focusOrderId = orderFocusIdForBusiness(focusBusinessId, rawFocusOrderId)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [status,   setStatus]   = useState('')
@@ -766,7 +783,10 @@ function OrdersPageContent() {
   }, [searchParams, router, mdUp])
 
   const { orders: allOrders, loading, initialLoading, error, refetch, enabled } = useOrdersData()
-  const { businessId } = useBusiness()
+  // Exact deep links must not depend on the global date range. The shared orders
+  // list intentionally contains only that range, while this endpoint fetches one
+  // record by id and can therefore open an older order reliably.
+  const { data: focusedOrderData } = useOrder(focusOrderId, focusBusinessId ?? undefined)
   const { range, label: rangeLabel } = useDateRange()
 
   const dateFiltered = useMemo(
@@ -780,6 +800,16 @@ function OrdersPageContent() {
   )
 
   const orders = useMemo(() => sortOrders(filtered, sort), [filtered, sort])
+  const focusedOrder = exactFocusedOrder(focusOrderId, focusedOrderData?.order)
+  // URL-owned focus takes precedence over a manually selected row without
+  // copying async query data into local state. Changing/removing `focus`
+  // therefore cannot leave a stale focused drawer behind.
+  const selectedOrder = focusOrderId ? focusedOrder : selected
+
+  const closeSelectedOrder = useCallback(() => {
+    setSelected(null)
+    if (focusOrderId) router.replace('/orders', { scroll: false })
+  }, [focusOrderId, router])
   const tableLoading = initialLoading && allOrders.length === 0
   useLayoutEffect(() => {
     setRowWindow({ start: 0, end: ORDER_WINDOW_SIZE })
@@ -1061,7 +1091,7 @@ function OrdersPageContent() {
       </PageEnter>
 
       {/* Mobile FAB — left side so Agent FAB stays bottom-right */}
-      {!showNew && !selected && (
+      {!showNew && !selectedOrder && !focusOrderId && (
         <Link
           href="/orders/new"
           className="fixed bottom-[calc(6.25rem+env(safe-area-inset-bottom))] left-4 z-40 flex h-14 min-w-[44px] items-center gap-2 rounded-2xl border border-gold-dim/50 bg-gold/90 px-4 text-sm font-bold text-black shadow-lg shadow-gold/20 transition-transform active:scale-[0.96] md:hidden"
@@ -1082,11 +1112,11 @@ function OrdersPageContent() {
         />
       )}
       <AnimatePresence>
-        {selected && !showNew && (
+        {selectedOrder && !showNew && (
           <OrderDrawer
-            order={selected}
-            onClose={() => setSelected(null)}
-            onStatusChange={() => { refetch(); setSelected(null) }}
+            order={selectedOrder}
+            onClose={closeSelectedOrder}
+            onStatusChange={() => { refetch(); closeSelectedOrder() }}
           />
         )}
       </AnimatePresence>
