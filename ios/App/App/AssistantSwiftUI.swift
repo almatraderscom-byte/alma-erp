@@ -8962,12 +8962,20 @@ final class AssistantVM {
             case .proseSupersede(let id, let replacementId, let reason):
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }), messages[i].proseProtocol == 2 {
+                    let wasVisible = messages[i].visibleProseBlocks.contains { $0.id == id }
                     messages[i].applyProseSupersede(id: id, replacementId: replacementId)
                     messages[i].syncProseBlocks()
                     // A verifier/contract rewrite of a visible block is the
                     // "নিজে যাচাই করে ঠিক করেছে" signal; housekeeping retirements are not.
-                    if replacementId != nil, reason != "empty", reason != "prospective_plan" {
+                    // Mirror the v1 live row so live and cold show the same
+                    // verification activity (the cold projection has a `verify` entry).
+                    if replacementId != nil, wasVisible, reason != "empty", reason != "prospective_plan" {
+                        requestLiveMode("thinking")
                         messages[i].selfCorrected = true
+                        let label = AgentChatMessage.verifyLabel(attempt: 1, max: 1)
+                        messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
+                        messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                            messages[i].blocks, chunk: label, messageId: messages[i].id)
                     }
                     touchedStream = true
                 }

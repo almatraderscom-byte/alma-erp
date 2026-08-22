@@ -1246,7 +1246,23 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           // the shape of individual events (mixed-version safety).
           if (typeof evt.agentProseProtocol === 'number') proseProtocolBox.current = evt.agentProseProtocol === 2 ? 2 : 1
         } else if (evt.type === 'prose_start' || evt.type === 'prose_commit' || evt.type === 'prose_supersede') {
-          if (proseProtocolBox.current === 2) applyProse(evt, true)
+          if (proseProtocolBox.current === 2) {
+            const rewrite = evt.type === 'prose_supersede'
+              && typeof evt.replacementBlockId === 'string'
+              && evt.reason !== 'empty' && evt.reason !== 'prospective_plan'
+            applyProse(evt, true)
+            if (rewrite) {
+              // Mirror the v1 live verification row so live and cold show the
+              // same activity (the settled projection carries a `verify` entry).
+              setStreamMode('searching')
+              setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
+              setMessages((prev) => prev.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, selfCorrected: true, timeline: [...(m.timeline ?? []), { t: 'verify', attempt: 1, max: 1 }] }
+                  : m,
+              ))
+            }
+          }
         } else if (evt.type === 'personal_mode') {
           setActivePersonalMode(evt.active === true)
         } else if (evt.type === 'steering_delivered') {

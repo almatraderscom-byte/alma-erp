@@ -30,3 +30,13 @@ v1 for legacy clients), non-destructive iOS/web reducers.
   v2 progress, legacy v1 wipe still intact, verifier hidden-replacement swap, cold
   `presentationV2` decode, snapshot protocol selection, typed wire decode, block-aware
   event buffer).
+- PR-A: https://github.com/almatraderscom-byte/alma-erp/pull/834 (branch
+  `claude/ios-agent-reply-persistence-f7ca82`, base `main` @ 21df2bf0).
+
+### 2026-08-23 — simulator proof (native reducer, iPhone 17 Pro Max / iOS 26.5)
+`sim-prose-v2-golden-settled.png`: the app launched with `ALMA_PROSE_V2_FIXTURE=1`
+replays the golden v2 transcript through the LIVE reducer (not a hand-built block
+list). Visible after settlement: lead → "আগে স্টক দেখছি… (২ গুদাম)" (progress, after
+tool A started twice) → tool cluster → "এ পর্যন্ত ২টা ধাপ সফল…" (forced update) →
+verified final; the superseded draft "কাজ শেষ, সব ঠিক আছে Boss!" is gone;
+"🔁 নিজে যাচাই করে ঠিক করেছে" badge present; 15 tokens footer from `done`.
