@@ -2012,6 +2012,10 @@ async function* runAlternateProviderTurn(
     if (routineGraphOn) {
       routineGraph = await runRoutineTurnGraph(lastUserText, {
         model,
+        // A routine turn's formatting call IS its answer, so the owner's level
+        // travels with it (Codex P2). Auto stays thinking-free as before.
+        effort: headEffort,
+        effortDialect: headEffortDialect,
         businessId,
         conversationId,
         turnId,

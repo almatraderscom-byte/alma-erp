@@ -19,9 +19,11 @@
  *    header. Opus 4.8 accepts low|medium|high|xhigh|max; Sonnet 4.6 predates
  *    `xhigh`. Haiku 4.5 REJECTS `effort` entirely — it is a pre-4.6 model, so its
  *    depth dial is `thinking: {type:'enabled', budget_tokens:N}` instead.
- *  - Google (Gemini 3.x / 2.5): `generationConfig.thinkingConfig.thinkingLevel`
- *    = minimal|low|medium|high (ai.google.dev/gemini-api/docs/thinking). There is
- *    no level above `high`, so Gemini models do not offer max/xhigh at all.
+ *  - Google Gemini 3.x: `generationConfig.thinkingConfig.thinkingLevel` =
+ *    minimal|low|medium|high (ai.google.dev/gemini-api/docs/thinking). There is no
+ *    level above `high`, so no Gemini offers max/xhigh at all.
+ *  - Google Gemini 2.5: `thinkingBudget` TOKENS, not a level — 2.5 answers
+ *    `400 Thinking level is not supported for this model` (live probe 2026-08-22).
  *  - OpenAI (Responses API): `reasoning: { effort }`. gpt-5.6 Luna documents
  *    none|low|medium|high|xhigh|max; gpt-5.5 stops at xhigh.
  *  - OpenRouter / xAI: `reasoning: { effort }` — OpenRouter normalizes the same
@@ -45,8 +47,17 @@ export type EffortDialect =
   | 'anthropic_effort'
   /** Anthropic pre-4.6 (Haiku 4.5) — `thinking: { type:'enabled', budget_tokens }` */
   | 'anthropic_budget'
-  /** Google — `generationConfig.thinkingConfig.thinkingLevel` */
+  /** Google Gemini 3.x — `generationConfig.thinkingConfig.thinkingLevel` */
   | 'gemini_thinking_level'
+  /**
+   * Google Gemini 2.5 — `generationConfig.thinkingConfig.thinkingBudget`.
+   * 2.5 REJECTS the level form outright: probed against the live API on
+   * 2026-08-22, `gemini-2.5-flash` + `thinkingLevel` returns
+   * `400 Thinking level is not supported for this model`, while a budget works
+   * (thoughtsTokenCount 43 at 2048, 0 at 0). The adapter's retry ladder was
+   * hiding that failure as a silent extra round-trip.
+   */
+  | 'gemini_thinking_budget'
   /** OpenAI Responses API — `reasoning: { effort }` */
   | 'openai_effort'
   /** OpenRouter / xAI (OpenAI dialect) — `reasoning: { enabled, effort }` */
@@ -112,6 +123,37 @@ export function anthropicThinkingBudget(level: EffortLevel, maxTokens: number): 
   const ceiling = Math.max(1024, maxTokens - 512)
   const budget = Math.floor(maxTokens * share[level])
   return Math.max(1024, Math.min(budget, ceiling))
+}
+
+/**
+ * Gemini 2.5's thinking BUDGET, in tokens.
+ *
+ * Gemini bills thinking against the SAME output allowance as the answer, so the
+ * budget has to be derived from this request's `maxOutputTokens` — a flat 8192
+ * for High under an 8192 cap lets a hard turn spend the whole allowance on
+ * thoughts and emit no answer at all (Codex P2). A slice is reserved for the
+ * reply, and the result stays inside Google's documented 0–24576 range.
+ */
+export const GEMINI_MAX_THINKING_BUDGET = 24_576
+
+export function geminiThinkingBudget(level: EffortLevel, maxOutputTokens = 8192): number {
+  const share: Record<EffortLevel, number> = {
+    low: 0.25,
+    medium: 0.4,
+    high: 0.55,
+    xhigh: 0.65,
+    max: 0.7,
+  }
+  // The REAL cap — never rounded up. A previous version floored it at 1024 while
+  // the request still carried a smaller `maxOutputTokens`, so a tiny configured
+  // cap could receive a budget equal to (or larger than) the whole allowance
+  // (Codex P2). Everything below is a fraction of what the request actually has.
+  const cap = Math.max(1, Math.floor(maxOutputTokens))
+  const reserve = Math.max(1, Math.ceil(cap * 0.25))   // the answer's share
+  const ceiling = Math.min(GEMINI_MAX_THINKING_BUDGET, cap - reserve)
+  // Too small to both think and answer → 0, which Gemini reads as thinking off.
+  if (ceiling <= 0) return 0
+  return Math.max(0, Math.min(Math.floor(cap * share[level]), ceiling))
 }
 
 /** Google's thinkingLevel enum. Gemini has nothing above `high`. */
