@@ -297,6 +297,7 @@ export async function claimTurnForRequest(
 export async function claimContinuationTurn(
   conversationId: string,
   previousTurnId: string,
+  proseProtocol?: ProseProtocol | null,
 ): Promise<TurnClaim> {
   try {
     return await db().$transaction(async (tx: any) => {
@@ -328,7 +329,7 @@ export async function claimContinuationTurn(
           continuationOfTurnId: previousTurnId,
           status: 'running',
           executionMode: 'inline',
-          versions: AGENT_VERSIONS,
+          versions: turnVersionsFor(proseProtocol),
         },
         select: { id: true, status: true },
       })
