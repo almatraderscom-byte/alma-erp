@@ -23,7 +23,12 @@ export interface TurnTailIO {
   /** Durable rows newer than `afterSeq`, oldest first, at most `limit`. */
   getReplay(afterSeq: number, limit?: number): Promise<TurnEvent[]>
   /** Live channel subscription; null when no live channel is configured. */
-  subscribe(onEvent: (evt: TurnEvent) => void): Promise<{ close: () => Promise<void> } | null>
+  /**
+   * `signal` aborts an attempt that outlives the subscription deadline: an
+   * ioredis client with maxRetriesPerRequest:null reconnects forever, so a
+   * `.then(close)` on the pending promise would never run (Codex P1 #836 r4).
+   */
+  subscribe(onEvent: (evt: TurnEvent) => void, signal?: AbortSignal): Promise<{ close: () => Promise<void> } | null>
   /** Database polling fallback when there is no live channel. */
   poll(afterSeq: number, onEvent: (evt: TurnEvent) => void): { close: () => Promise<void> }
   /** Emit one accepted event to the client. */
@@ -163,8 +168,9 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
     //    but never wait on it longer than the deadline: already-persisted rows
     //    must flow even while the live channel is down.
     const subscribeTimeoutMs = opts.subscribeTimeoutMs ?? 1500
+    const subscribeAbort = new AbortController()
     try {
-      const attempt = io.subscribe(onLive)
+      const attempt = io.subscribe(onLive, subscribeAbort.signal)
       const deadlineTimer: { id?: ReturnType<typeof setTimeout> } = {}
       const deadline = new Promise<null>((resolve) => {
         deadlineTimer.id = setTimeout(() => { subscribeTimedOut = true; resolve(null) }, subscribeTimeoutMs)
@@ -180,8 +186,11 @@ export function runTurnTail(io: TurnTailIO, opts: TurnTailOptions): TurnTailHand
       }
       if (subscribeTimedOut) {
         log('subscribe_timeout', { turnId: opts.turnId, afterMs: subscribeTimeoutMs })
-        // A late subscription must not leak — and must not become a second
-        // delivery path next to the polling fallback.
+        // Tear the attempt down NOW: an unreachable Redis keeps the client
+        // reconnecting forever, so waiting for the promise would leak one
+        // client per stream for the whole outage. A late success (closed by
+        // the handler below) must not become a second delivery path either.
+        subscribeAbort.abort()
         void attempt.then((late) => { void late?.close() }).catch(() => {})
         sub = null
       }

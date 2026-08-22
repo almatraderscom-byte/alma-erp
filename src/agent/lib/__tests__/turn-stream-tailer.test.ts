@@ -22,6 +22,8 @@ type Harness = {
   /** Publish on the live channel (no-op until subscribed). */
   publish: (evt: TurnEvent) => void
   subscribed: () => boolean
+  /** The abort signal the tailer handed to the last subscribe attempt. */
+  subscribeSignal: () => AbortSignal | undefined
 }
 
 function harness(opts: {
@@ -34,6 +36,7 @@ function harness(opts: {
   catchupFailures?: number
 }): Harness {
   let onLive: ((evt: TurnEvent) => void) | null = null
+  let subscribeSignal: AbortSignal | undefined
   let finished = false
   const emitted: number[] = []
   const controls: unknown[] = []
@@ -45,6 +48,7 @@ function harness(opts: {
     finished: () => finished,
     publish: (evt) => onLive?.(evt),
     subscribed: () => onLive != null,
+    subscribeSignal: () => subscribeSignal,
     io: {
       async getReplay(afterSeq, limit) {
         if (opts.replayError) throw opts.replayError
@@ -62,7 +66,8 @@ function harness(opts: {
         const rows = opts.rows().filter((r) => r.seq > afterSeq).sort((a, b) => a.seq - b.seq)
         return typeof limit === 'number' ? rows.slice(0, limit) : rows
       },
-      async subscribe(cb) {
+      async subscribe(cb, signal) {
+        subscribeSignal = signal
         if (opts.subscribe === 'none') return null
         if (opts.subscribe === 'hang') await new Promise(() => {})   // Redis unreachable: never settles
         onLive = cb
@@ -228,6 +233,16 @@ describe('turn-stream tailer — replay/subscribe ordering', () => {
     expect(h.emitted).toEqual([0, 1])   // replayed + polled despite the hung subscribe
     expect(h.logs.map((l) => l.event)).toContain('subscribe_timeout')
     expect(h.finished()).toBe(false)
+    // The attempt is torn down, not left reconnecting forever (Codex P1 r4).
+    expect(h.subscribeSignal()?.aborted).toBe(true)
+  })
+
+  it('a subscription that won the race is never aborted', async () => {
+    const h = harness({ rows: () => [ev(0)] })
+    const tail = runTurnTail(h.io, { ...base, subscribeTimeoutMs: 10 })
+    await tail.ready
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(h.subscribeSignal()?.aborted).toBe(false)
   })
 
   it('a subscription that won the race keeps delivering after the deadline would have fired (Codex P1 r3)', async () => {
