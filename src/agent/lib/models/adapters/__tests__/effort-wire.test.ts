@@ -161,7 +161,11 @@ describe('Gemini wire', () => {
       effort: 'high', effortDialect: 'gemini_thinking_budget',
     }))
     const cfg = googleCapture.generationConfig?.thinkingConfig as Record<string, unknown>
-    expect(cfg.thinkingBudget).toBe(8192)
+    const budget = cfg.thinkingBudget as number
+    expect(budget).toBeGreaterThan(0)
+    // Thinking is billed against the same output allowance as the answer.
+    const cap = (googleCapture.generationConfig?.maxOutputTokens as number | undefined) ?? 8192
+    expect(budget).toBeLessThan(cap)
     expect(cfg).not.toHaveProperty('thinkingLevel')
     expect(cfg.includeThoughts).toBe(true)
   })

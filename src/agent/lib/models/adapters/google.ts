@@ -50,7 +50,8 @@ export function buildGeminiGenerationConfig(
   // silent retry — the ladder hid that until the live probe on 2026-08-22.
   if (effort) {
     if (dialect === 'gemini_thinking_budget') {
-      thinkingConfig.thinkingBudget = geminiThinkingBudget(effort)
+      // Derived from THIS request's output cap — thinking and answer share it.
+      thinkingConfig.thinkingBudget = geminiThinkingBudget(effort, gen.maxTokens)
     } else {
       thinkingConfig.thinkingLevel = geminiThinkingLevel(effort)
     }

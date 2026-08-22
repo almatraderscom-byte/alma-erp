@@ -126,18 +126,28 @@ export function anthropicThinkingBudget(level: EffortLevel, maxTokens: number): 
 }
 
 /**
- * Gemini 2.5's thinking BUDGET, in tokens. Google's documented range for
- * 2.5-flash is 0–24576 (0 = thinking off, -1 = dynamic); these steps keep every
- * level inside it and keep "more level = more thinking" true.
+ * Gemini 2.5's thinking BUDGET, in tokens.
+ *
+ * Gemini bills thinking against the SAME output allowance as the answer, so the
+ * budget has to be derived from this request's `maxOutputTokens` — a flat 8192
+ * for High under an 8192 cap lets a hard turn spend the whole allowance on
+ * thoughts and emit no answer at all (Codex P2). A slice is reserved for the
+ * reply, and the result stays inside Google's documented 0–24576 range.
  */
-export function geminiThinkingBudget(level: EffortLevel): number {
-  switch (level) {
-    case 'low': return 1024
-    case 'medium': return 4096
-    case 'high': return 8192
-    case 'xhigh': return 12288
-    case 'max': return 16384
+export const GEMINI_MAX_THINKING_BUDGET = 24_576
+
+export function geminiThinkingBudget(level: EffortLevel, maxOutputTokens = 8192): number {
+  const share: Record<EffortLevel, number> = {
+    low: 0.25,
+    medium: 0.4,
+    high: 0.55,
+    xhigh: 0.65,
+    max: 0.7,
   }
+  const cap = Math.max(1024, maxOutputTokens)
+  // Never leave the answer less than a quarter of the allowance (min 512).
+  const ceiling = Math.min(GEMINI_MAX_THINKING_BUDGET, Math.max(512, cap - Math.max(512, Math.floor(cap * 0.25))))
+  return Math.max(512, Math.min(Math.floor(cap * share[level]), ceiling))
 }
 
 /** Google's thinkingLevel enum. Gemini has nothing above `high`. */

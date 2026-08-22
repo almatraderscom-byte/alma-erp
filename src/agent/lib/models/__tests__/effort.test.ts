@@ -131,12 +131,19 @@ describe('registry effort declarations', () => {
     }
   })
 
-  it('maps every level to a budget inside Gemini 2.5\'s documented range', () => {
-    const budgets = (['low', 'medium', 'high', 'xhigh', 'max'] as const).map(geminiThinkingBudget)
-    for (const b of budgets) {
-      expect(b).toBeGreaterThan(0)
-      expect(b).toBeLessThanOrEqual(24_576)
+  it('keeps the Gemini budget inside the range AND under the output cap', () => {
+    const levels = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+    for (const cap of [8192, 2048, 65_536]) {
+      const budgets = levels.map((l) => geminiThinkingBudget(l, cap))
+      for (const b of budgets) {
+        expect(b).toBeGreaterThan(0)
+        expect(b).toBeLessThanOrEqual(24_576)
+        // Thinking shares the output allowance — the answer must still fit.
+        expect(b, `cap=${cap}`).toBeLessThan(cap)
+      }
+      expect([...budgets], `cap=${cap}`).toEqual([...budgets].sort((a, b) => a - b))
     }
-    expect([...budgets]).toEqual([...budgets].sort((a, b) => a - b))
+    // The reported bug: High under the default 8192 cap must not eat it all.
+    expect(geminiThinkingBudget('high', 8192)).toBeLessThan(8192)
   })
 })
