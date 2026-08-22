@@ -4,7 +4,7 @@
  * constitutional rules block on every non-read tool, and the registry path
  * enforces the guard before any handler runs.
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CAPABILITIES, getCapability } from '@/agent/tools/capability-manifest'
 import { executeTool } from '@/agent/tools/registry'
 import {
@@ -15,6 +15,10 @@ import {
 } from '@/agent/lib/policy/tool-guard'
 import { buildActionEnvelope, signEnvelope } from '@/agent/lib/policy/capability-token'
 import { dataClassFor, DATA_CLASSES } from '@/agent/lib/policy/data-classification'
+
+vi.mock('@/agent/lib/live-browser/turn-owner-input', () => ({
+  isTurnOwnerExecutionCurrent: vi.fn(async () => true),
+}))
 
 const NOW = 1_752_700_000_000 // fixed clock for determinism
 
