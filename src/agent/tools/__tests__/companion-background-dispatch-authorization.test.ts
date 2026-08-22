@@ -331,7 +331,9 @@ describe('Companion two-phase command dispatch authorization', () => {
     const showOverlay = vi.fn(() => new Promise<void>((resolve) => {
       resolveOverlay = resolve
     }))
-    const actWithRetry = vi.fn(async () => ({ ok: true }))
+    const actWithRetry = vi.fn<(...args: unknown[]) => Promise<{ ok: boolean }>>(
+      async (..._args: unknown[]) => ({ ok: true }),
+    )
     const execute = runInNewContext(
       `(${sourceFunction('async function executeCommand', '\n// ---- poll loop')})`,
       {
@@ -402,6 +404,52 @@ describe('Companion two-phase command dispatch authorization', () => {
       error: expect.stringContaining('command_effect_expired'),
     })
     expect(fixture.actWithRetry).not.toHaveBeenCalled()
+  })
+
+  it('forwards the exact-value submit marker into the page type injection', async () => {
+    const actWithRetry = vi.fn(async () => ({ ok: true }))
+    const execute = runInNewContext(
+      `(${sourceFunction('async function executeCommand', '\n// ---- poll loop')})`,
+      {
+        ALLOWED_ACTIONS: new Set(['type']),
+        WRITE_VERBS: new Set(['type']),
+        RECEIPT_REF_ACTIONS: new Set(['type']),
+        getAgentTab: async () => ({ id: 7, active: true, url: 'https://www.youtube.com/' }),
+        showOverlay: vi.fn(async () => true),
+        actWithRetry,
+        pageType: () => undefined,
+        lockdownMatch: () => null,
+        waitForTabLoad: vi.fn(async () => undefined),
+        Date,
+        Number,
+        String,
+        Boolean,
+      },
+    ) as (
+      command: Record<string, unknown>,
+      isCurrent: () => boolean,
+      authority: { dispatchGeneration: number; dispatchNonce: string; deadlineMs: number },
+    ) => Promise<CommandResult>
+
+    await expect(execute(
+      {
+        id: 'command-exact-search-1',
+        action: 'type',
+        value: 'fix you',
+        submit: true,
+        exactValueSubmit: true,
+      },
+      () => true,
+      { dispatchGeneration: 9, dispatchNonce: 'exact-search-nonce', deadlineMs: Date.now() + 60_000 },
+    )).resolves.toMatchObject({ ok: true })
+
+    expect(actWithRetry).toHaveBeenCalledOnce()
+    const injectedTypeArg = (actWithRetry.mock.calls[0] as unknown[] | undefined)?.[2]
+    expect(injectedTypeArg).toMatchObject({
+      value: 'fix you',
+      submit: true,
+      exactValueSubmit: true,
+    })
   })
 })
 
