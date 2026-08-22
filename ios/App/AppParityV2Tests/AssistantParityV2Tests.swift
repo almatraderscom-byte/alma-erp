@@ -5809,6 +5809,22 @@ final class ProseRetentionTests: XCTestCase {
         XCTAssertEqual(shown.filter { if case .activity = $0 { return true }; return false }.count, 24 - 1)
     }
 
+    func testTerminalOnlyReplayKeepsTheFrozenPartial() {
+        // Codex P1 #838: the durable rows are gone (replay error) or the log holds
+        // only `done` — the frozen partial must survive and simply settle.
+        for terminal in [AgentTurnEvent.turnError(message: "turn_replay_unavailable"),
+                         .done(messageId: "m", tokensIn: nil, tokensOut: nil, costUsd: nil, needContinue: false,
+                               apiRounds: nil, cacheCreation: nil, cacheRead: nil, roundCostsUsd: nil)] {
+            let vm = AssistantVM()
+            vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
+            vm.debugArmReplayReset()
+            vm.debugApplyTurnEvents([.turnSnapshot(turnId: "t1", conversationId: "c1", status: "running",
+                                                   lastSeq: 3, agentProseProtocol: 2)])
+            vm.debugApplyTurnEvents([terminal])
+            XCTAssertEqual(vm.messages.last?.text, "frozen partial", "terminal-only replay must not blank the screen: \(terminal)")
+        }
+    }
+
     func testReplayWipeWaitsForTheFirstReplayedContentEvent() {
         let vm = AssistantVM()
         vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("frozen partial", blockId: "t:p1")])
