@@ -21,7 +21,22 @@ export function compactTimelineForStorage<T extends CompactableTimelineEntry>(
   timeline: readonly T[],
   cap = 60,
 ): T[] {
-  if (timeline.length <= cap) return [...timeline]
+  return compactTimelineWithIndexMap(timeline, cap).timeline
+}
+
+/**
+ * Same compaction, plus the old→new index map the prose-lifecycle document
+ * needs: its blocks are anchored by ORIGINAL timeline index (Codex P1 #838 —
+ * storing shifted entries with unshifted anchors put cold prose beside the
+ * wrong activity). A dropped entry maps to -1.
+ */
+export function compactTimelineWithIndexMap<T extends CompactableTimelineEntry>(
+  timeline: readonly T[],
+  cap = 60,
+): { timeline: T[]; indexMap: number[] } {
+  if (timeline.length <= cap) {
+    return { timeline: [...timeline], indexMap: timeline.map((_, i) => i) }
+  }
   const kept: Array<{ entry: T; index: number }> = timeline.map((entry, index) => ({ entry, index }))
   const drop = (kind: string) => {
     for (let i = 0; i < kept.length && kept.length > cap; ) {
@@ -39,5 +54,7 @@ export function compactTimelineForStorage<T extends CompactableTimelineEntry>(
     }
     while (kept.length > cap) kept.shift()
   }
-  return kept.map((k) => k.entry)
+  const indexMap = new Array<number>(timeline.length).fill(-1)
+  kept.forEach((k, newIndex) => { indexMap[k.index] = newIndex })
+  return { timeline: kept.map((k) => k.entry), indexMap }
 }

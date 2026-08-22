@@ -119,3 +119,25 @@ describe('prose-timeline — cold load from presentation v2', () => {
     ])
   })
 })
+
+describe('prose-timeline — client error block (Codex P1 #834)', () => {
+  it('a v2 message ending in a stream error gets a committed final block the v2 path renders', async () => {
+    const { withClientErrorBlock } = await import('../prose-timeline')
+    const v2 = {
+      id: 'stream-1',
+      proseProtocol: 2 as const,
+      prose: [{ id: 't:p1', kind: 'progress' as const, state: 'committed' as const, revision: 1, text: 'আগে স্টক দেখছি', hidden: false, awaitingReplacement: false }],
+      timeline: [{ t: 'text' as const, text: 'আগে স্টক দেখছি', blockId: 't:p1', kind: 'progress' as const, state: 'committed' as const }],
+      text: 'আগে স্টক দেখছি',
+    }
+    const out = withClientErrorBlock(v2, '⚠️ সার্ভার ব্যস্ত')
+    expect(out.prose?.map((b) => b.id)).toEqual(['t:p1', 'client-error:stream-1'])
+    expect(out.timeline?.map((e) => (e.t === 'text' ? e.blockId : e.t))).toEqual(['t:p1', 'client-error:stream-1'])
+    expect(out.text).toBe('আগে স্টক দেখছি\n\n⚠️ সার্ভার ব্যস্ত')
+    // idempotent on a second error
+    const again = withClientErrorBlock({ ...v2, ...out }, '⚠️ আবার')
+    expect(again.prose?.filter((b) => b.id === 'client-error:stream-1')).toHaveLength(1)
+    // v1 messages keep the plain text contract
+    expect(withClientErrorBlock({ id: 'x', text: '', proseProtocol: 1 }, '⚠️ e')).toEqual({ text: '⚠️ e' })
+  })
+})

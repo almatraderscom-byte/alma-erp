@@ -224,14 +224,23 @@ export async function getTurnProseProtocol(turnId: string | null | undefined): P
 /**
  * Record the negotiated prose protocol on an already-created turn row (the
  * chat route creates some turns through paths that predate negotiation).
- * Fail-open: a missing stamp simply reads as protocol 1 for later readers.
+ * Returns true only when the stamp is durably on the row. The caller must
+ * treat false as "this turn is protocol 1": reconnect readers (durable stream,
+ * turn-status) derive the protocol from the row, and a v2 live stream over an
+ * unstamped row would hand block-addressed events to a client running the
+ * legacy reducer (Codex P1 #834).
  */
-export async function setTurnProseProtocol(turnId: string | null | undefined, proseProtocol: ProseProtocol): Promise<void> {
-  if (!turnId || proseProtocol !== 2) return
+export async function setTurnProseProtocol(turnId: string | null | undefined, proseProtocol: ProseProtocol): Promise<boolean> {
+  if (proseProtocol !== 2) return true
+  if (!turnId) return false
   try {
-    await db().agentTurn.updateMany({ where: { id: turnId }, data: { versions: turnVersionsFor(proseProtocol) } })
+    const res = await db().agentTurn.updateMany({ where: { id: turnId }, data: { versions: turnVersionsFor(proseProtocol) } })
+    const count = typeof res?.count === 'number' ? res.count : 0
+    if (count < 1) console.warn('[turn-status] setTurnProseProtocol stamped 0 rows for', turnId)
+    return count >= 1
   } catch (err) {
     console.warn('[turn-status] setTurnProseProtocol failed:', err instanceof Error ? err.message : err)
+    return false
   }
 }
 

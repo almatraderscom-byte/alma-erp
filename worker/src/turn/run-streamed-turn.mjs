@@ -61,6 +61,8 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
   let sawDone = false
   let sawError = null
   let durableHoles = 0
+  /** 'done' | 'error' whose durable write failed every attempt. */
+  let terminalLost = null
 
   // A retried job must continue the durable sequence, never overwrite rows a
   // previous attempt already wrote (upsert with update:{} would keep the old
@@ -164,26 +166,43 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot, de
           } catch {
             continue
           }
-          await emit(event)
-          if (event?.type === 'done') sawDone = true
-          else if (event?.type === 'error') sawError = event.message || 'turn_error'
+          const stored = await emit(event)
+          // A terminal counts only once it is durable (Codex P1 #837): an
+          // unstored `done`/`error` must not let this job resolve while the
+          // tailing client waits forever for a terminal that never reached
+          // the log.
+          if (stored) {
+            if (event?.type === 'done') sawDone = true
+            else if (event?.type === 'error') sawError = event.message || 'turn_error'
+          } else if (event?.type === 'done' || event?.type === 'error') {
+            terminalLost = event.type
+          }
         }
       }
     }
 
-    // The upstream stream ended without a terminal event: the turn died (hard
-    // cap, crash, cancel). Say so — a synthetic `done` without a messageId used
-    // to tell the client a canceled/partial turn had succeeded.
+    // The upstream stream ended without a (durable) terminal event: the turn
+    // died (hard cap, crash, cancel) or its terminal could not be stored. Say
+    // so — a synthetic `done` without a messageId used to tell the client a
+    // canceled/partial turn had succeeded.
     if (!sawDone && !sawError) {
-      sawError = 'turn_stream_ended_without_terminal'
-      await emit({ type: 'error', message: sawError })
+      const message = terminalLost ? `turn_terminal_not_durable:${terminalLost}` : 'turn_stream_ended_without_terminal'
+      const stored = await emit({ type: 'error', message })
+      if (!stored) {
+        // Nothing durable marks this turn finished. Surface it to BullMQ so the
+        // job is retried (seq resumes from the durable max) instead of
+        // resolving as if it had succeeded.
+        throw new Error(`streamed-turn ${turnId}: terminal event could not be stored durably`)
+      }
+      sawError = message
     }
 
     console.log(`[worker] streamed-turn ${turnId} — ${sawError ? `ended with error "${sawError}"` : 'done'} (${seq} events, ${durableHoles} durable holes, ${Date.now() - startedAt}ms)`)
   } catch (err) {
     sawError = err.message
     console.error(`[worker] streamed-turn ${turnId} failed:`, err.message)
-    await emit({ type: 'error', message: err.message })
+    const stored = await emit({ type: 'error', message: err.message })
+    if (!stored) throw err
   } finally {
     // Owner ping for a slow turn that finished while they were away (mirrors A1).
     const elapsed = Date.now() - startedAt
