@@ -27,7 +27,6 @@ import {
   isRunningTurnForConversation,
   findOrCreateTurnByClientMessageId,
   getTurnProseProtocol,
-  setTurnProseProtocol,
   findTurnByClientMessageId,
   getTurnSnapshot,
   linkTurnUserMessage,
@@ -40,6 +39,7 @@ import {
   ProseLifecycleTracker,
   negotiateProseProtocol,
   withProseLifecycle,
+  type ProseProtocol,
 } from '@/agent/lib/presentation/prose-lifecycle'
 import { claimTurnSteeringMessages } from '@/agent/lib/turn-steering'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
@@ -268,6 +268,15 @@ export async function POST(req: NextRequest) {
     && typeof body.autoContinueFromTurnId === 'string'
       ? body.autoContinueFromTurnId.trim()
       : ''
+  // Prose lifecycle v2 (handoff F-01…F-04): ONE protocol per turn, negotiated
+  // BEFORE the turn row exists so it is stamped at creation — a durable observer
+  // (15 s worker fallback, a reconnecting client) that attaches the moment the
+  // row becomes visible must already read the right family (Codex P1 #834).
+  // Internal worker mirrors read the stamp the enqueue route persisted instead.
+  const requestedProseProtocol = isInternalCall
+    ? 1
+    : negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
+
   const clientRequestId =
     typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId.trim())
       ? body.clientRequestId.trim()
@@ -544,7 +553,7 @@ export async function POST(req: NextRequest) {
     // If the 15s VPS fallback already won this request id, this direct path exits
     // without creating another user row or running the task a second time.
     if (!isInternalCall && !resume && !autoContinueFromTurnId && clientRequestId) {
-      const claim = await claimTurnForRequest(conversationId, clientRequestId)
+      const claim = await claimTurnForRequest(conversationId, clientRequestId, 'inline', requestedProseProtocol)
       if (!claim.claimed) {
         return Response.json(
           { error: 'request_already_claimed', turnId: claim.turnId, status: claim.status, conversationId },
@@ -712,7 +721,7 @@ export async function POST(req: NextRequest) {
   if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
     turnId = body.turnId
   } else if (autoContinueFromTurnId) {
-    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId)
+    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId, requestedProseProtocol)
     if (!claim.claimed || !claim.turnId) {
       clearTimeout(turnCapTimer)
       return Response.json(
@@ -724,7 +733,7 @@ export async function POST(req: NextRequest) {
   } else if (claimedRequestTurnId) {
     turnId = claimedRequestTurnId
   } else if (clientMessageId) {
-    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline')
+    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline', requestedProseProtocol)
     if (r && !r.created) {
       clearTimeout(turnCapTimer)
       return Response.json({
@@ -739,24 +748,20 @@ export async function POST(req: NextRequest) {
     }
     turnId = r?.turn.id ?? null
   } else {
-    turnId = await createTurn(conversationId!, { executionMode: 'inline' })
+    turnId = await createTurn(conversationId!, { executionMode: 'inline', proseProtocol: requestedProseProtocol })
   }
   if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
-  // Prose lifecycle v2 (handoff F-01…F-04): ONE protocol per turn. A direct
-  // client negotiates here and the choice is stamped on the turn row; a worker
-  // mirror (internal call) reads the stamp the enqueue route persisted, so the
-  // same turn never streams two prose families. Voice/native-loop/kill-switch
-  // force v1 inside negotiateProseProtocol.
-  let proseProtocol = isInternalCall && turnId
+  // The protocol the turn ROW carries is the one every observer will read —
+  // the row was created with the negotiated value above. Re-read it so a
+  // creation path that could not stamp (fail-open createTurn → null id, a
+  // claimed pre-existing row) serves the legacy wire instead of a v2 stream
+  // nobody announced (Codex P1 #834, both rounds).
+  const proseProtocol: ProseProtocol = turnId
     ? await getTurnProseProtocol(turnId)
-    : negotiateProseProtocol({ requested: body.agentProseProtocol, voiceTurn: body.voice === true })
-  // Stamping is PART of negotiation: if the row cannot carry the protocol,
-  // reconnect readers would announce v1 for a v2 live stream — so the turn
-  // is served as v1 instead (the legacy wire is always safe).
-  if (!isInternalCall && proseProtocol === 2) {
-    const stamped = await setTurnProseProtocol(turnId, proseProtocol)
-    if (!stamped) proseProtocol = 1
+    : 1
+  if (requestedProseProtocol === 2 && proseProtocol !== 2) {
+    console.warn('[assistant/chat] prose protocol v2 requested but the turn row is not stamped — serving v1', { turnId })
   }
   const proseLifecycle = new ProseLifecycleTracker({ protocol: proseProtocol, turnId })
 
