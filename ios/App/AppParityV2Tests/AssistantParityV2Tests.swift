@@ -5909,6 +5909,25 @@ final class ProseIdentityTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.serverId, "stranger-row")
     }
 
+    func testPollingMatchRequiresTurnIdOrSendTimeEvidence() throws {
+        // Codex P1 #839 r4: the polling path decides adoption with
+        // isTerminalForOurTurn(requireEvidence: true) — only our turn id or a
+        // startedAt that matches our send counts; a concurrent turn does not.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আমাদের উত্তর", blockId: "t:p1")])
+        vm.debugSetCurrentTurnId("our-turn")
+        let ours = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"our-turn","assistantMessageId":"our-row"}"#.utf8))
+        let other = try JSONDecoder().decode(TurnStatusResponse.self, from: Data(
+            #"{"status":"done","turnId":"concurrent-turn","assistantMessageId":"stranger-row"}"#.utf8))
+        XCTAssertTrue(vm.debugIsTerminalForOurTurn(ours, requireEvidence: true))
+        XCTAssertFalse(vm.debugIsTerminalForOurTurn(other, requireEvidence: true))
+        vm.applyTerminalStatusIdentity(other, matchedOurTurn: vm.debugIsTerminalForOurTurn(other, requireEvidence: true))
+        XCTAssertNil(vm.messages.last?.serverId)
+        vm.applyTerminalStatusIdentity(ours, matchedOurTurn: vm.debugIsTerminalForOurTurn(ours, requireEvidence: true))
+        XCTAssertEqual(vm.messages.last?.serverId, "our-row")
+    }
+
     func testTailWithKnownIdNeverFallsBackToPositionalPairing() throws {
         // Codex P1 #839: the tail knows its row, but this history page does not
         // carry it yet (not persisted / older page) while an unrelated assistant

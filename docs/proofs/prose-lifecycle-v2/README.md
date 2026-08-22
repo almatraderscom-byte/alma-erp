@@ -145,3 +145,32 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
   **418 tests, 0 failures** (`xcodebuild-test-12.log`). tsc clean; targeted vitest (presentation, tailer, turn-events, turn-status, publisher, fixture drift, visible-progress) 11 files / 101 tests green.
 - Rig: "ALMA Integration Verify" (946F7780) killed the test host even serially; a freshly created
   iPhone 17 Pro Max device ran the same build fine — keep a dedicated clean test device.
+
+### 2026-08-23 — Codex round 4 (seven P1), fixed on the stacked branches
+- #834 P1 ×2 → 81928aba: `salvage()` now QUEUES the supersede/start/commit events and
+  `drainQueued()` hands them out — the chat route emits them before the terminal `error`, the
+  runner yields them on the deadline path — so the live reducers land on the transcript a reload
+  shows; the deadline-abort salvage (gate replacement / lane settlement blocker) goes through the
+  tracker for v2, so the persisted document carries the blocker. presentation suite 57/57 (new:
+  live reducer == document after salvage; v1 queues nothing).
+- #836 P1 → 87f74e46: the tailer hands the subscribe attempt an `AbortSignal` and aborts it when
+  the deadline wins; `subscribeTurnEvents` disconnects the client on abort (no infinite reconnect
+  loop per stream during a Redis outage). tailer suite 15/15 (hung attempt aborted; a won race
+  never aborted).
+- #837 P1 ×2 → e5da6648: a repaired terminal counts only once PUBLISHED (bounded in-process publish
+  retries; an unpublished repair reports `failed` so the job retries, and `already_terminal`
+  republishes the existing terminal — tails dedupe by seq); a terminal is found with
+  `in('type', ['done','error'])`, not "last row", so `done` + `conversation_compacted` is no longer
+  mis-repaired. worker durability 18/18; whole worker suite 153/153.
+- #838 P1 → 0ca2ae8c: the native-loop act-now retry appends `{ t: 'verify' }` to the timeline
+  (cold history keeps the row like the steering/verifier retries).
+- #839 P1 → the status-polling path decides adoption with
+  `isTerminalForOurTurn(requireEvidence: true)` through `applyTerminalStatusIdentity` — a
+  concurrent turn's terminal settles the UI but never lends its assistant id. Unit test
+  `testPollingMatchRequiresTurnIdOrSendTimeEvidence` (debug seams for currentTurnId / the match).
+  iOS full `AppParityV2Tests` on the stacked top (fresh device "ALMA Codex Tests"):
+  **419 tests, 0 failures** (`xcodebuild-test-13.log`). tsc clean; targeted vitest 12 files / 124 tests.
+- Full `src/agent` vitest on the stacked top: 6726 pass, 17 fail in 6 files (vision/simulate tool
+  routing, tool-search deferral, dynamic toolset, behaviour-parity, style-gate) — the SAME files
+  fail on a clean `origin/main` checkout (10/40 in those files), i.e. pre-existing, environment
+  dependent, untouched by this stack.

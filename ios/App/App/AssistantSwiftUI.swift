@@ -9098,6 +9098,10 @@ final class AssistantVM {
     }
 
     /// Tests: behave as if a FULL durable replay was just requested.
+    func debugSetCurrentTurnId(_ id: String?) { currentTurnId = id }
+    func debugIsTerminalForOurTurn(_ st: TurnStatusResponse, requireEvidence: Bool) -> Bool {
+        isTerminalForOurTurn(st, requireEvidence: requireEvidence)
+    }
     func debugArmReplayReset() {
         pendingReplayReset = true
     }
