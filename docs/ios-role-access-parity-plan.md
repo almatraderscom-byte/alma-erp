@@ -1,6 +1,6 @@
 # iOS Role / Permission Parity — Diagnosis + Plan
 
-Date: 2026-08-22 · Branch: `claude/ios-user-permission-nav-97f3b3` · Status: **diagnosis done, awaiting owner go**
+Date: 2026-08-22 · Branch: `claude/ios-user-permission-nav-97f3b3` · Status: **all 10 steps implemented + sim-verified 2026-08-22; TestFlight gated on owner check**
 
 ## 1. Owner report
 
@@ -114,3 +114,24 @@ New: `AlmaSession.swift`, `AlmaAccess.swift`, `AlmaNav.swift`, `RoleDashboardSwi
 Edited: `SpikeNativeShell.swift` (tabs, UIKit More, badge index), `SwiftUIShell.swift` (tab builders, onOpenPath, tab rebuild), `MoreMenuSwiftUI.swift`, `AlmaNavCoordinator.swift`, `DashboardSwiftUI.swift`, `NativeLoginSwiftUI.swift`, the Step-4 business-id screens, the Step-8 screens, `AlmaAppIntents.swift`, `.github` workflow for the contract check. Web touch limited to Step 9 + the generator script (no ERP behaviour change).
 
 Suggested batching: **PR-1** = Steps 1-3 + 5-7 (nav parity, the owner-visible fix). **PR-2** = Step 4 (business-aware native). **PR-3** = Step 8 (write gates). **PR-4 (web)** = Step 9. One TestFlight after PR-1..3 are sim-proven.
+
+## 7. Delivered (2026-08-22, branch `claude/ios-user-permission-nav-97f3b3`)
+
+| Step | Where | Status |
+|---|---|---|
+| 1 AlmaSession | `ios/App/App/AlmaSession.swift` | done — one `/api/users/me` fetch, per-host cache, reload on login/foreground, wipe on sign-out, `ALMA_ACCESS_FIXTURE` DEBUG hook |
+| 2 AlmaAccess / AlmaNav | `ios/App/App/AlmaAccess.swift` | done — statement-for-statement port of roles.ts / businesses.ts / business-access.ts |
+| 3 Contract | `src/lib/__tests__/access-contract.test.ts` → `ios/access-contract.json` → `AppParityV2Tests/AccessContractTests.swift` (11 tests) | done — `npm run access-contract:update` regenerates; vitest fails when stale; Swift test asserts 1,425 role×business×path cases + nav lists + capabilities + tab layouts |
+| 4 Business-aware screens | Finance, Employees, Portal, Portal expense, Expenses, Attendance, Wallet route, Task Spotlight, Payroll/PaymentAccounts/SMS/Telegram/Diagnostics/Archive defaults | done — `AlmaAccess.Context.currentId` replaces hard-coded `ALMA_LIFESTYLE` |
+| 5 Tab bar | `AlmaShellCatalog.tabHrefs` + `SpikeNativeShell.buildTabs` / `SwiftUIShell.makeHomeTab` / `makeTab` | done — rebuilt in place on identity/business change; owner's bar unchanged |
+| 6 More menu | `AlmaShellCatalog.moreGroups` + `MoreMenuSwiftUI` + UIKit `MoreMenuViewController` | done — current-business web nav only, empty groups dropped, trailing "আরও" catch-all |
+| 7 Nav gate | `AlmaNavCoordinator.decide` → `.denied`; `pushSmart` alert; live tab roots | done |
+| 8 Capability gates | Expenses, Inventory (+Supplier import), Employees, Users, Digital ×3, Branding, Payroll approvals, CRM sync, Trading quick-nav; Orders/Trading via seeded `OrdIdentity` | done |
+| 9 Server gate | `src/proxy.ts` `apiRoleDenied`: `/api/dashboard` owner/admin only | done |
+| 10 Proof | simulator (iPhone 17 Pro Max, iOS 26.5) | done — see below |
+
+Sim evidence (screenshots in session scratchpad): owner bar unchanged · Trading STAFF = Trading/Accounts/Telegram/My Desk + More(Workspace, Settings) + switcher shows Trading only + `/finance` deep link → "এই পেজে আপনার অ্যাক্সেস নেই" · HR = Employees/Attendance/Payroll/My Desk · Lifestyle STAFF = RoleDesk (no P&L)/Orders/Invoice/My Desk · ADMIN = Dashboard/Orders/Approvals/Invoice + More without Agent/Employees/Audit/Branding · real demo sign-in (sales1@ STAFF, hr@ HR on alma-erp-demo) rebuilt the bar from the live `/api/users/me` answer; sign-out → least-privilege bar + native login pushed.
+
+Known web quirks mirrored on purpose: a STAFF in the CDIT business has no pages on the web either (only Session/Notifications), so the native bar shows just that; `/trading/analytics?view=reports` keeps the web page (query route).
+
+Pre-existing, not touched: `scripts/iosp0-route-contract-check.mjs` (phone-console routes) and `scripts/ios-feature-parity-check.mjs` (openWeb counts) already fail on main.

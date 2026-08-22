@@ -281,6 +281,8 @@ final class AlmaSession {
         authed = false
         loaded = false
         UserDefaults.standard.removeObject(forKey: Self.cacheKey)
+        // The next account may not have this business — start it from its own default.
+        UserDefaults.standard.removeObject(forKey: Self.businessKey)
         persistEffectiveBusiness()
         authVersion += 1
         if snapshot != before {
