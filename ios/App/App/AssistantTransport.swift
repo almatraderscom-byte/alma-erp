@@ -912,7 +912,9 @@ enum AgentTurnEvent: Sendable {
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
               roundCostsUsd: [Double]?)
-    case turnError(message: String)
+    /// `messageId` = the assistant row the server salvaged before failing
+    /// (partial work + warning) — bound exactly like `done.messageId`.
+    case turnError(message: String, messageId: String? = nil)
     /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
     case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?,
                       agentProseProtocol: Int? = nil, assistantMessageId: String? = nil)
@@ -1051,7 +1053,8 @@ enum AgentTurnEvent: Sendable {
                          cacheCreation: ev.cacheCreation, cacheRead: ev.cacheRead,
                          roundCostsUsd: ev.roundCostsUsd)
         case "error":
-            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
+            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন",
+                              messageId: ev.messageId)
         case "turn_snapshot":
             self = .turnSnapshot(turnId: ev.turnId, conversationId: ev.conversationId,
                                  status: ev.status, lastSeq: ev.lastSeq,

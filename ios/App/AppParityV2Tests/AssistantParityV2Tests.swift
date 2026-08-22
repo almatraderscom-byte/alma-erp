@@ -5928,6 +5928,23 @@ final class ProseIdentityTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.serverId, "our-row")
     }
 
+    func testSalvagedErrorReplyBindsItsExactRow() throws {
+        // Codex P1 #839 r5: a provider failure after partial work persists a
+        // salvaged assistant row and the terminal `error` carries its id.
+        let vm = AssistantVM()
+        vm.debugApplyTurnEvents([.turnProtocol(2), .textDelta("আংশিক কাজ", blockId: "t:p1")])
+        let dto = try JSONDecoder().decode(AgentSSEEvent.self, from: Data(
+            #"{"type":"error","message":"provider down","messageId":"salvaged-row-3"}"#.utf8))
+        vm.debugApplyTurnEvents([AgentTurnEvent(dto: dto)])
+        XCTAssertEqual(vm.messages.last?.serverId, "salvaged-row-3")
+        XCTAssertEqual(vm.messages.last?.text, "আংশিক কাজ", "the partial work stays on screen")
+
+        // An error without an id binds nothing (unchanged behaviour).
+        let plain = AssistantVM()
+        plain.debugApplyTurnEvents([.turnProtocol(2), .textDelta("x", blockId: "t:p1"), .turnError(message: "boom")])
+        XCTAssertNil(plain.messages.last?.serverId)
+    }
+
     func testTailWithKnownIdNeverFallsBackToPositionalPairing() throws {
         // Codex P1 #839: the tail knows its row, but this history page does not
         // carry it yet (not persisted / older page) while an unrelated assistant

@@ -8972,12 +8972,19 @@ final class AssistantVM {
                 thinkingLive = false
                 settleLiveMode()
                 AlmaAgentTickHaptic.turnCompleted()
-            case .turnError(let message):
+            case .turnError(let message, let salvagedMessageId):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     messages[i].suppressedRawToolEnvelope = nil
                     // Verification never produced a terminal replacement; retain
                     // the complete draft the owner can already see.
                     messages[i].verificationReplacementText = nil
+                    // The server persisted a salvaged row (partial work + warning)
+                    // before failing: bind it by identity so finalizeTurn pairs the
+                    // tail with THAT row, never positionally with a concurrent one
+                    // (Codex P1 #839 r5).
+                    if let salvagedMessageId, !salvagedMessageId.isEmpty {
+                        messages[i].serverId = salvagedMessageId
+                    }
                 }
                 sawTerminalEvent = true
                 thinkingLive = false

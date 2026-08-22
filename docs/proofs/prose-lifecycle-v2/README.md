@@ -174,3 +174,26 @@ conversation `21fc9c93-ad82-4418-9009-1ae391cee8cf`, prompt
   routing, tool-search deferral, dynamic toolset, behaviour-parity, style-gate) — the SAME files
   fail on a clean `origin/main` checkout (10/40 in those files), i.e. pre-existing, environment
   dependent, untouched by this stack.
+
+### 2026-08-23 — Codex round 5 (five P1), fixed on the stacked branches
+- #834 P1 → 1f36ff9d: both provider-failure paths in the runner yield their own `error`, so the
+  route's drain never ran there — the runner now yields `drainQueued()` right before the error.
+  Same commit carries the server half of #839: `salvagePartialWorkOnError()` returns the persisted
+  row id and the terminal `error` names it (`messageId`, AgentEvent type + protocol schema).
+  presentation + schema-drift suites 59/59.
+- #837 P1 ×2 → b21a97a8: the repair-job enqueue gets 3 attempts with backoff (a total failure =
+  Postgres AND Redis down — logged loudly, never swallowed); the repair-owned Redis client fails
+  fast (bounded retries, no offline queue, connect timeout) and every publish attempt is bounded by
+  a timeout, so a reconnecting client can never park the concurrency-1 worker. worker durability
+  20/20; whole worker suite 155/155.
+- #838 P1 → 3afe8a6e: compaction protects the FIRST non-empty thinking row (the lead is deferred
+  until after it) — thought → lead → tool survives a cap cut; the long-tool-run test now asserts
+  the lead right after its first thought. presentation suite 65/65.
+- #839 P1 → iOS `.turnError(message:messageId:)`: the reducer binds the salvaged row id to the
+  streaming tail exactly like `done.messageId`, so `finalizeTurn` pairs by identity. Unit test
+  `testSalvagedErrorReplyBindsItsExactRow` (decodes the real `AgentSSEEvent`). iOS full
+  `AppParityV2Tests` on the stacked top (fresh device "ALMA Codex Tests"): **420 tests, 0 failures**
+  (`xcodebuild-test-14.log`). tsc clean; targeted vitest 12 files / 124 tests (one timing-flaky publisher test hardened, 69de4daf).
+- Rig: the owner's E2E device is now a dedicated simulator "ALMA Preview E2E"
+  (B69646A2-9D94-4404-9CCC-CE14280CA915) — another session's `xcodebuild test` (derivedData
+  `/tmp/alma-dd-integration`) kept re-installing its plain build on "ALMA Build 102".
