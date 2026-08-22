@@ -153,6 +153,7 @@ export async function isTurnOwnerExecutionCurrent(
         cancelRequested: true,
         startedAt: true,
         userMessageId: true,
+        instructionOrigin: true,
       },
     })
     if (!current || current.status !== 'running' || current.cancelRequested) return false
@@ -190,6 +191,24 @@ export async function isTurnOwnerExecutionCurrent(
         return steering.targetTurnId !== normalizedTurnId
       })
       if (supersedingOwnerInput) return false
+    }
+    if (current.instructionOrigin === 'owner_policy') {
+      const activeOwnerTurn = await client.agentTurn.findFirst({
+        where: {
+          conversationId: normalizedConversationId,
+          id: { not: normalizedTurnId },
+          status: 'running',
+          cancelRequested: false,
+          OR: [
+            { instructionOrigin: null },
+            { instructionOrigin: 'owner_direct' },
+          ],
+        },
+        select: { id: true },
+      })
+      // Policy work may coexist in the conversation, but it must never gain
+      // parallel browser authority while an owner-authored turn is active.
+      if (activeOwnerTurn) return false
     }
     const competing = await client.agentTurn.findFirst({
       where: {
