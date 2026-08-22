@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   anthropicThinkingBudget,
   clampEffort,
+  geminiThinkingBudget,
   geminiThinkingLevel,
   parseEffortSetting,
   type EffortSupport,
@@ -91,7 +92,10 @@ describe('registry effort declarations', () => {
   it('never offers a level a provider dialect cannot express', () => {
     for (const model of MODEL_REGISTRY) {
       if (!model.effort) continue
-      if (model.effort.dialect === 'gemini_thinking_level') {
+      if (
+        model.effort.dialect === 'gemini_thinking_level'
+        || model.effort.dialect === 'gemini_thinking_budget'
+      ) {
         // Gemini's enum stops at high — offering max here would be a lie.
         expect(model.effort.levels, model.id).not.toContain('max')
         expect(model.effort.levels, model.id).not.toContain('xhigh')
@@ -104,6 +108,7 @@ describe('registry effort declarations', () => {
       anthropic_effort: ['anthropic'],
       anthropic_budget: ['anthropic'],
       gemini_thinking_level: ['google'],
+      gemini_thinking_budget: ['google'],
       openai_effort: ['openai'],
       openrouter_effort: ['openrouter', 'xai'],
     }
@@ -115,5 +120,23 @@ describe('registry effort declarations', () => {
 
   it('keeps Haiku 4.5 on the budget dialect — it REJECTS output_config.effort', () => {
     expect(getModel('claude-haiku-4-5').effort?.dialect).toBe('anthropic_budget')
+  })
+
+  it('keeps Gemini 2.5 on the BUDGET dialect and 3.x on the LEVEL dialect', () => {
+    // Live probe 2026-08-22: 2.5-flash + thinkingLevel → 400 "Thinking level is
+    // not supported for this model"; a budget works. 3.x accepts the level.
+    expect(getModel('gemini-2.5-flash').effort?.dialect).toBe('gemini_thinking_budget')
+    for (const id of ['gemini-3.1-pro', 'gemini-3.5-flash', 'gemini-3.1-flash-lite']) {
+      expect(getModel(id).effort?.dialect, id).toBe('gemini_thinking_level')
+    }
+  })
+
+  it('maps every level to a budget inside Gemini 2.5\'s documented range', () => {
+    const budgets = (['low', 'medium', 'high', 'xhigh', 'max'] as const).map(geminiThinkingBudget)
+    for (const b of budgets) {
+      expect(b).toBeGreaterThan(0)
+      expect(b).toBeLessThanOrEqual(24_576)
+    }
+    expect([...budgets]).toEqual([...budgets].sort((a, b) => a - b))
   })
 })

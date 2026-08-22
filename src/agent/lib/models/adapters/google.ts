@@ -2,7 +2,12 @@ import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-
 import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { sanitizeSchemaForGemini } from '@/agent/lib/models/adapters/gemini-schema'
 import { resolveGenerationParams, type NeutralGenerationParams } from '@/agent/lib/models/generation-params'
-import { geminiThinkingLevel, type EffortDialect, type EffortLevel } from '@/agent/lib/models/effort'
+import {
+  geminiThinkingBudget,
+  geminiThinkingLevel,
+  type EffortDialect,
+  type EffortLevel,
+} from '@/agent/lib/models/effort'
 
 /**
  * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice to
@@ -29,6 +34,7 @@ export function buildGeminiGenerationConfig(
   withThoughts: boolean,
   gen: NeutralGenerationParams,
   effort?: EffortLevel | null,
+  dialect?: EffortDialect,
 ): Record<string, unknown> | undefined {
   const cfg: Record<string, unknown> = {}
   // Owner's thinking level rides the SAME thinkingConfig object as includeThoughts
@@ -38,7 +44,17 @@ export function buildGeminiGenerationConfig(
   // knobs: a turn that opted out of the thought stream still honours the level.
   const thinkingConfig: Record<string, unknown> = {}
   if (withThoughts) thinkingConfig.includeThoughts = true
-  if (effort) thinkingConfig.thinkingLevel = geminiThinkingLevel(effort)
+  // TWO Gemini generations, two different keys. 3.x takes `thinkingLevel`; 2.5
+  // rejects it outright ("Thinking level is not supported for this model") and
+  // wants `thinkingBudget` tokens. Sending the wrong one costs a 400 plus a
+  // silent retry — the ladder hid that until the live probe on 2026-08-22.
+  if (effort) {
+    if (dialect === 'gemini_thinking_budget') {
+      thinkingConfig.thinkingBudget = geminiThinkingBudget(effort)
+    } else {
+      thinkingConfig.thinkingLevel = geminiThinkingLevel(effort)
+    }
+  }
   if (Object.keys(thinkingConfig).length) cfg.thinkingConfig = thinkingConfig
   if (gen.maxTokens !== undefined) cfg.maxOutputTokens = gen.maxTokens
   if (gen.temperature !== undefined) {
@@ -157,7 +173,11 @@ export class GoogleAdapter implements ProviderAdapter {
     const gen = resolveGenerationParams({ thinking: args.thinking })
     // Only Gemini's own dialect belongs in generationConfig; a level resolved for
     // another provider (Auto head that changed mid-job) is ignored, never guessed at.
-    const effortLevel = args.effortDialect === 'gemini_thinking_level' ? args.effort ?? null : null
+    const geminiDialect =
+      args.effortDialect === 'gemini_thinking_level' || args.effortDialect === 'gemini_thinking_budget'
+        ? args.effortDialect
+        : undefined
+    const effortLevel = geminiDialect ? args.effort ?? null : null
     const open = (withThoughts: boolean, keepEffort = true) => {
       const genModel = this.client.getGenerativeModel({
         model: args.apiModel,
@@ -167,7 +187,8 @@ export class GoogleAdapter implements ProviderAdapter {
         // different keys, and a model that rejects thought STREAMING may still
         // honour `thinkingLevel` (Codex P2). Only the final bare attempt below
         // drops the level too, so one unknown key can still never strand a turn.
-        generationConfig: buildGeminiGenerationConfig(withThoughts, gen, keepEffort ? effortLevel : null) as any,
+        generationConfig: buildGeminiGenerationConfig(
+          withThoughts, gen, keepEffort ? effortLevel : null, geminiDialect) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -349,8 +349,11 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.3,
     outPerM: 2.5,
     thinking: 'level',
+    // 2.5 is the BUDGET generation: `thinkingLevel` 400s here ("Thinking level is
+    // not supported for this model" — probed live 2026-08-22), so the level maps
+    // to `thinkingBudget` tokens instead. 3.x keeps the level dialect.
     effort: {
-      dialect: 'gemini_thinking_level',
+      dialect: 'gemini_thinking_budget',
       levels: ['low', 'medium', 'high'],
       providerDefault: 'medium',
     },

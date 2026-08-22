@@ -154,6 +154,18 @@ describe('Gemini wire', () => {
     expect(googleCapture.generationConfig?.thinkingConfig).toEqual({ includeThoughts: true })
   })
 
+  it('Gemini 2.5 gets a thinkingBUDGET — it 400s on thinkingLevel', async () => {
+    const { GoogleAdapter } = await import('@/agent/lib/models/adapters/google')
+    await drain(new GoogleAdapter('k').streamTurn({
+      ...BASE, apiModel: 'gemini-2.5-flash', thinking: 'level',
+      effort: 'high', effortDialect: 'gemini_thinking_budget',
+    }))
+    const cfg = googleCapture.generationConfig?.thinkingConfig as Record<string, unknown>
+    expect(cfg.thinkingBudget).toBe(8192)
+    expect(cfg).not.toHaveProperty('thinkingLevel')
+    expect(cfg.includeThoughts).toBe(true)
+  })
+
   it('ignores a level resolved for ANOTHER provider (no guessing)', async () => {
     const { GoogleAdapter } = await import('@/agent/lib/models/adapters/google')
     await drain(new GoogleAdapter('k').streamTurn({

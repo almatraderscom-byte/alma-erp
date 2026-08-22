@@ -34,6 +34,7 @@ import { getGraphCheckpointer, checkpointConfigFor } from '@/agent/lib/graph/gra
 import { getAlmaMemoryStore } from '@/agent/lib/graph/memory-store'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import type { ModelEntry } from '@/agent/lib/models/registry'
+import type { EffortDialect, EffortLevel } from '@/agent/lib/models/effort'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 import type { OwnerTurnAuthorization } from '@/agent/lib/turn-authorization'
 
@@ -316,6 +317,15 @@ const RoutineState = Annotation.Root({
 
 export interface RoutineGraphDeps {
   model: ModelEntry
+  /**
+   * The owner's thinking level for this chat, already clamped to `model`
+   * (effort.ts). On a routine turn the formatting call below IS the answer, so an
+   * EXPLICIT level has to reach it — otherwise picking High/Max silently did
+   * nothing for exactly the questions that take this path (Codex P2). Absent/null
+   * = Auto, which keeps the fast thinking-free formatting this path was built for.
+   */
+  effort?: EffortLevel | null
+  effortDialect?: EffortDialect
   businessId: AgentBusinessId
   conversationId?: string
   turnId?: string | null
@@ -419,7 +429,11 @@ export async function runRoutineTurnGraph(
             },
           ],
           tools: [],
-          thinking: 'none',
+          // Auto keeps this node thinking-free (its whole point is a fast, cheap
+          // format of data already fetched); an explicit pick is honoured.
+          thinking: deps.effort ? deps.model.thinking : 'none',
+          effort: deps.effort ?? null,
+          effortDialect: deps.effortDialect,
           signal: deps.signal,
         })) {
           if (ev.type === 'text_delta') text += ev.text
