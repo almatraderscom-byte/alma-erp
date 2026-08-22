@@ -10,6 +10,18 @@ let focuses: Row[] = []
 let events: Row[] = []
 let nextId = 1
 
+const ownerFence = vi.hoisted(() => ({
+  current: true,
+  lock: vi.fn(async () => undefined),
+}))
+
+vi.mock('@/agent/lib/live-browser/turn-lane', () => ({
+  lockDirectYouTubeLaneAuthority: ownerFence.lock,
+}))
+vi.mock('@/agent/lib/live-browser/turn-owner-input', () => ({
+  isTurnOwnerExecutionCurrent: vi.fn(async () => ownerFence.current),
+}))
+
 function matches(row: Row, where: Row): boolean {
   for (const [k, v] of Object.entries(where)) {
     if (v && typeof v === 'object' && 'in' in (v as Row)) {
@@ -20,40 +32,56 @@ function matches(row: Row, where: Row): boolean {
 }
 
 vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    agentConversationFocus: {
-      findMany: async ({ where, take }: { where: Row; take?: number }) =>
-        focuses.filter((r) => matches(r, where)).slice(0, take ?? 100),
-      findFirst: async ({ where }: { where: Row }) => focuses.find((r) => matches(r, where)) ?? null,
-      findUnique: async ({ where }: { where: Row }) => focuses.find((r) => r.id === where.id) ?? null,
-      create: async ({ data }: { data: Row }) => {
-        const row = {
-          id: `focus-${nextId++}`,
-          version: 1,
-          status: 'active',
-          currentStep: null, completedSteps: null, lastEffectId: null, lastErrorClass: null,
-          blocker: null, nextActions: null, completionCriteria: null, surface: null,
-          checkpointTaskRef: null, openTaskId: null, pendingActionId: null, askCardId: null,
-          workflowRunId: null,
-          updatedAt: new Date(), createdAt: new Date(),
-          ...data,
-        }
-        focuses.push(row)
-        return row
+  prisma: (() => {
+    let transactionTail = Promise.resolve()
+    const prismaMock: Record<string, unknown> = {
+      agentConversationFocus: {
+        findMany: async ({ where, take }: { where: Row; take?: number }) =>
+          focuses.filter((r) => matches(r, where)).slice(0, take ?? 100),
+        findFirst: async ({ where }: { where: Row }) => focuses.find((r) => matches(r, where)) ?? null,
+        findUnique: async ({ where }: { where: Row }) => focuses.find((r) => r.id === where.id) ?? null,
+        create: async ({ data }: { data: Row }) => {
+          const row = {
+            id: `focus-${nextId++}`,
+            version: 1,
+            status: 'active',
+            currentStep: null, completedSteps: null, lastEffectId: null, lastErrorClass: null,
+            blocker: null, nextActions: null, completionCriteria: null, surface: null,
+            checkpointTaskRef: null, openTaskId: null, pendingActionId: null, askCardId: null,
+            workflowRunId: null,
+            updatedAt: new Date(), createdAt: new Date(),
+            ...data,
+          }
+          focuses.push(row)
+          return row
+        },
+        updateMany: async ({ where, data }: { where: Row; data: Row }) => {
+          const hits = focuses.filter((r) => matches(r, where))
+          for (const r of hits) Object.assign(r, data, { updatedAt: new Date() })
+          return { count: hits.length }
+        },
       },
-      updateMany: async ({ where, data }: { where: Row; data: Row }) => {
-        const hits = focuses.filter((r) => matches(r, where))
-        for (const r of hits) Object.assign(r, data, { updatedAt: new Date() })
-        return { count: hits.length }
+      agentFocusEvent: {
+        create: async ({ data }: { data: Row }) => {
+          events.push({ id: `ev-${events.length + 1}`, createdAt: new Date(), ...data })
+          return events[events.length - 1]
+        },
       },
-    },
-    agentFocusEvent: {
-      create: async ({ data }: { data: Row }) => {
-        events.push({ id: `ev-${events.length + 1}`, createdAt: new Date(), ...data })
-        return events[events.length - 1]
-      },
-    },
-  },
+    }
+    prismaMock.$queryRaw = async () => [{ lock_token: 'ok' }]
+    prismaMock.$transaction = async (callback: (tx: Record<string, unknown>) => Promise<unknown>) => {
+      const previous = transactionTail
+      let release!: () => void
+      transactionTail = new Promise<void>((resolve) => { release = resolve })
+      await previous
+      try {
+        return await callback(prismaMock)
+      } finally {
+        release()
+      }
+    }
+    return prismaMock
+  })(),
 }))
 
 import {
@@ -73,6 +101,8 @@ beforeEach(() => {
   focuses = []
   events = []
   nextId = 1
+  ownerFence.current = true
+  ownerFence.lock.mockClear()
 })
 
 describe('stack semantics', () => {
@@ -130,6 +160,47 @@ describe('workflow-run bridge', () => {
     expect(first!.id).toBe(second!.id)
     expect(focuses).toHaveLength(1)
     expect(first!.nextActions).toEqual(['post_to_facebook'])
+  })
+
+  it('serializes concurrent focus restoration for the same workflow run', async () => {
+    const [first, second] = await Promise.all([
+      ensureFocusForWorkflowRun(run),
+      ensureFocusForWorkflowRun(run),
+    ])
+    expect(first!.id).toBe(second!.id)
+    expect(focuses).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'created')).toHaveLength(1)
+  })
+
+  it('atomically reactivates a reused parked workflow focus', async () => {
+    const browserFocus = await ensureFocusForWorkflowRun(run)
+    const otherFocus = await createFocus({ conversationId: 'c1', goal: 'Other work' })
+    expect((await getFocusStack('c1')).active?.id).toBe(otherFocus!.id)
+
+    const restored = await ensureFocusForWorkflowRun(run, 'browser_receipt_reuse', { activateExisting: true })
+
+    const stack = await getFocusStack('c1')
+    expect(restored!.id).toBe(browserFocus!.id)
+    expect(stack.active?.id).toBe(browserFocus!.id)
+    expect(stack.parked.map((focus) => focus.id)).toContain(otherFocus!.id)
+    expect(events.some((event) => event.focusId === browserFocus!.id && event.type === 'resumed')).toBe(true)
+  })
+
+  it('does not restore a stale turn over a newer owner focus', async () => {
+    const browserFocus = await ensureFocusForWorkflowRun(run)
+    const newerFocus = await createFocus({ conversationId: 'c1', goal: 'Newer owner work' })
+    ownerFence.current = false
+
+    const restored = await ensureFocusForWorkflowRun(run, 'browser_receipt_reuse', {
+      activateExisting: true,
+      ownerFence: { conversationId: 'c1', turnId: 'turn-stale' },
+    })
+
+    const stack = await getFocusStack('c1')
+    expect(restored).toBeNull()
+    expect(ownerFence.lock).toHaveBeenCalledTimes(1)
+    expect(stack.active?.id).toBe(newerFocus!.id)
+    expect(stack.parked.map((focus) => focus.id)).toContain(browserFocus!.id)
   })
 
   it('syncFocusWithWorkflowRun mirrors step/status/blocker and closes on terminal', async () => {

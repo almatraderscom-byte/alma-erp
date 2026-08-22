@@ -6,12 +6,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * fail closed when a fresh observation cannot be established.
  */
 
-const { store, makeModel, control } = vi.hoisted(() => {
+const { store, makeModel, control, focusMock } = vi.hoisted(() => {
   type HRow = Record<string, unknown>
   const store: { workflowRun: HRow[]; workflowRunEvent: HRow[]; agentOpenTask: HRow[]; agentPendingAction: HRow[]; agentKvSetting: HRow[]; liveBrowserCommand: HRow[] } = {
     workflowRun: [], workflowRunEvent: [], agentOpenTask: [], agentPendingAction: [], agentKvSetting: [], liveBrowserCommand: [],
   }
-  const control = { failNextWorkflowRunUpdateMany: false }
+  const control = { failNextWorkflowRunUpdateMany: false, failAllWorkflowRunUpdateMany: false }
+  const focusMock = {
+    ensureFocusForWorkflowRun: vi.fn(async () => null),
+    syncFocusWithWorkflowRun: vi.fn(async () => undefined),
+  }
   let idSeq = 0
   const matches = (row: HRow, where: HRow): boolean =>
     Object.entries(where).every(([k, v]) => {
@@ -56,7 +60,10 @@ const { store, makeModel, control } = vi.hoisted(() => {
       return { ...row }
     },
     updateMany: async ({ where, data }: { where: HRow; data: HRow }) => {
-      if (table === store.workflowRun && control.failNextWorkflowRunUpdateMany) {
+      if (table === store.workflowRun && (
+        control.failAllWorkflowRunUpdateMany
+        || control.failNextWorkflowRunUpdateMany
+      )) {
         control.failNextWorkflowRunUpdateMany = false
         throw new Error('simulated workflow persistence failure')
       }
@@ -72,7 +79,7 @@ const { store, makeModel, control } = vi.hoisted(() => {
       return { ...created }
     },
   })
-  return { store, makeModel, control }
+  return { store, makeModel, control, focusMock }
 })
 
 vi.mock('@/lib/prisma', () => ({
@@ -92,6 +99,8 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 
+vi.mock('@/agent/lib/conversation-focus', () => focusMock)
+
 import {
   checkWorkflowGuards,
   consumeLiveBrowserObservationReceipt,
@@ -110,6 +119,9 @@ beforeEach(() => {
   store.agentKvSetting.length = 0
   store.liveBrowserCommand.length = 0
   control.failNextWorkflowRunUpdateMany = false
+  control.failAllWorkflowRunUpdateMany = false
+  focusMock.ensureFocusForWorkflowRun.mockClear()
+  focusMock.syncFocusWithWorkflowRun.mockClear()
   delete process.env.AGENT_WORKFLOW_GUARDS
 })
 
@@ -597,6 +609,63 @@ describe('post-execution hooks feed the machine', () => {
     })?.browserSession
     expect(session?.currentUrl).toBe('https://x.com')
     expect(session).toMatchObject({ lastAction: 'look', lastTurnId: 'turn-1', lastDevice: 'My Mac Chrome' })
+    expect(focusMock.ensureFocusForWorkflowRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let direct browser receipt bookkeeping park the direct lane focus', async () => {
+    await onWorkflowToolExecuted('live_browser_look', {}, {
+      currentUrl: 'https://www.youtube.com/',
+      device: 'My Mac Chrome',
+      deviceId: 'device-mac-1',
+      documentId: 'doc-youtube-1',
+    }, {
+      ...ctx,
+      directBrowserOwnerRequest: 'Play Fix You on YouTube.',
+    })
+
+    expect(store.workflowRun).toHaveLength(1)
+    expect(store.workflowRun[0]).toMatchObject({ kind: 'browser_setup', state: 'session_active' })
+    expect(focusMock.ensureFocusForWorkflowRun).not.toHaveBeenCalled()
+  })
+
+  it('restores workflow focus when an ordinary browser task reuses a direct receipt run', async () => {
+    const observation = {
+      currentUrl: 'https://www.youtube.com/',
+      device: 'My Mac Chrome',
+      deviceId: 'device-mac-1',
+      documentId: 'doc-youtube-1',
+    }
+    await onWorkflowToolExecuted('live_browser_look', {}, observation, {
+      ...ctx,
+      directBrowserOwnerRequest: 'Play Fix You on YouTube.',
+    })
+    expect(focusMock.ensureFocusForWorkflowRun).not.toHaveBeenCalled()
+
+    await onWorkflowToolExecuted('live_browser_look', {}, observation, ctx)
+
+    expect(store.workflowRun).toHaveLength(1)
+    expect(focusMock.ensureFocusForWorkflowRun).toHaveBeenCalledTimes(1)
+    expect(focusMock.ensureFocusForWorkflowRun).toHaveBeenCalledWith(
+      expect.objectContaining({ id: store.workflowRun[0].id, kind: 'browser_setup' }),
+      'browser_receipt_reuse',
+      {
+        activateExisting: true,
+        ownerFence: { conversationId: 'conv1', turnId: 'turn-1' },
+      },
+    )
+  })
+
+  it('does not restore ordinary focus when LOOK receipt persistence fails', async () => {
+    control.failAllWorkflowRunUpdateMany = true
+
+    await onWorkflowToolExecuted('live_browser_look', {}, {
+      currentUrl: 'https://www.youtube.com/',
+      device: 'My Mac Chrome',
+      deviceId: 'device-mac-1',
+      documentId: 'doc-youtube-1',
+    }, ctx)
+
+    expect(focusMock.ensureFocusForWorkflowRun).not.toHaveBeenCalled()
   })
 
   it('a resuming run\'s first look re-opens the working step (§H resume-by-look)', async () => {

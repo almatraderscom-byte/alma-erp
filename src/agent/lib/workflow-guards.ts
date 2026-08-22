@@ -342,6 +342,7 @@ export async function recordLiveBrowserLookReceipt(
   if (!identity.currentUrl) throw new Error('browser_observation_url_required')
   if (!identity.documentId) throw new Error('browser_observation_document_required')
 
+  const directBrowserOwnerRequest = textField(ctx.directBrowserOwnerRequest)
   let run = await activeRunOfKind(conversationId, 'browser_setup')
   if (!run) {
     const tpl = getWorkflowTemplate('browser_setup')
@@ -352,12 +353,15 @@ export async function recordLiveBrowserLookReceipt(
       goal: `লাইভ ব্রাউজার কাজ (look: ${identity.currentUrl.slice(0, 120)})`,
       state: tpl?.entry,
       nextAllowedTools: nextAllowedToolsFor('browser_setup', tpl?.entry ?? 'session_active'),
+      // Receipt workflows are internal ledgers. Focus is restored explicitly
+      // below for ordinary browser work, while the deterministic direct lane
+      // remains the sole authority focus between LOOK and ACT.
+      suppressConversationFocus: true,
     })
   }
   if (!run) throw new Error('browser_observation_run_unavailable')
 
   const now = new Date()
-  const directBrowserOwnerRequest = textField(ctx.directBrowserOwnerRequest)
   const receipt: BrowserObservationReceipt = {
     observationReceipt: randomBytes(18).toString('base64url'),
     device: identity.device,
@@ -415,16 +419,35 @@ export async function recordLiveBrowserLookReceipt(
 
   // Resume-by-look is useful continuity state, but receipt durability is the
   // safety boundary. A concurrent transition may win without invalidating it.
+  let focusRun = stored
   if (stored.state === 'resuming') {
     const { transitionWorkflowRun } = await import('./workflow-run')
-    await transitionWorkflowRun({
+    const transitioned = await transitionWorkflowRun({
       runId: stored.id,
       expectedVersion: stored.stateVersion,
       toStatus: 'active',
       toState: 'session_active',
       cause: 'auto',
       nextAllowedTools: nextAllowedToolsFor('browser_setup', 'session_active'),
-    }).catch(() => {})
+    }).catch(() => null)
+    if (transitioned) focusRun = transitioned
+  }
+  if (!directBrowserOwnerRequest) {
+    const { ensureFocusForWorkflowRun } = await import('./conversation-focus')
+    await ensureFocusForWorkflowRun({
+      id: focusRun.id,
+      conversationId: focusRun.conversationId,
+      businessId: focusRun.businessId,
+      kind: focusRun.kind,
+      goal: focusRun.goal,
+      status: focusRun.status,
+      state: focusRun.state,
+      nextAllowedTools: focusRun.nextAllowedTools,
+      pendingActionId: focusRun.pendingActionId,
+    }, 'browser_receipt_reuse', {
+      activateExisting: true,
+      ownerFence: { conversationId, turnId },
+    })
   }
   return receipt
 }

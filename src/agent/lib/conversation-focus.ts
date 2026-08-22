@@ -326,26 +326,136 @@ export async function ensureFocusForWorkflowRun(run: {
   state: string
   nextAllowedTools?: string[] | null
   pendingActionId?: string | null
-}, cause = 'turn'): Promise<FocusView | null> {
+}, cause = 'turn', options: {
+  activateExisting?: boolean
+  ownerFence?: { conversationId: string; turnId: string }
+} = {}): Promise<FocusView | null> {
   if (!run.conversationId) return null
+  if (options.ownerFence && options.ownerFence.conversationId !== run.conversationId) return null
   try {
-    const existing: Record<string, unknown> | null = await db.agentConversationFocus.findFirst({
-      where: { workflowRunId: run.id, status: { in: ['active', 'parked', 'awaiting_owner'] } },
-      select: SELECT,
+    const result: {
+      view: FocusView
+      created: boolean
+      parked?: { id: string; version: number }
+      resumed?: { fromStatus: string; version: number }
+    } | null = await db.$transaction(async (tx: typeof db) => {
+      if (options.ownerFence) {
+        const [{ lockDirectYouTubeLaneAuthority }, { isTurnOwnerExecutionCurrent }] = await Promise.all([
+          import('./live-browser/turn-lane'),
+          import('./live-browser/turn-owner-input'),
+        ])
+        await lockDirectYouTubeLaneAuthority(tx, options.ownerFence.conversationId)
+        if (!await isTurnOwnerExecutionCurrent(
+          options.ownerFence.conversationId,
+          options.ownerFence.turnId,
+          tx,
+        )) return null
+      }
+      await tx.$queryRaw`
+        SELECT pg_advisory_xact_lock(
+          hashtext(${`workflow-focus:${run.id}`})
+        )::text AS lock_token
+      `
+      const focusStatus = run.status === 'waiting_owner' ? 'awaiting_owner' : 'active'
+      let parkedEvent: { id: string; version: number } | undefined
+      const parkCurrentActive = async (exceptId?: string): Promise<void> => {
+        const active: Record<string, unknown> | null = await tx.agentConversationFocus.findFirst({
+          where: { conversationId: run.conversationId, status: 'active' },
+          select: SELECT,
+        })
+        if (!active || active.id === exceptId) return
+        const nextVersion = (active.version as number) + 1
+        const parked = await tx.agentConversationFocus.updateMany({
+          where: { id: active.id as string, version: active.version as number },
+          data: { status: 'parked', version: nextVersion },
+        })
+        if (parked.count === 1) {
+          parkedEvent = { id: active.id as string, version: nextVersion }
+        }
+      }
+
+      const existing: Record<string, unknown> | null = await tx.agentConversationFocus.findFirst({
+        where: { workflowRunId: run.id, status: { in: ['active', 'parked', 'awaiting_owner'] } },
+        select: SELECT,
+      })
+      if (existing) {
+        if (!options.activateExisting || focusStatus !== 'active' || existing.status === 'active') {
+          return { view: toView(existing), created: false }
+        }
+        await parkCurrentActive(existing.id as string)
+        const nextVersion = (existing.version as number) + 1
+        const resumed = await tx.agentConversationFocus.updateMany({
+          where: { id: existing.id as string, version: existing.version as number },
+          data: { status: 'active', version: nextVersion },
+        })
+        if (resumed.count !== 1) throw new FocusVersionConflictError(existing.id as string, existing.version as number)
+        const row: Record<string, unknown> = await tx.agentConversationFocus.findUnique({
+          where: { id: existing.id as string },
+          select: SELECT,
+        })
+        return {
+          view: toView(row),
+          created: false,
+          parked: parkedEvent,
+          resumed: { fromStatus: existing.status as string, version: nextVersion },
+        }
+      }
+
+      if (focusStatus === 'active') {
+        await parkCurrentActive()
+      }
+
+      const row = await tx.agentConversationFocus.create({
+        data: {
+          conversationId: run.conversationId,
+          businessId: run.businessId ?? 'ALMA_LIFESTYLE',
+          status: focusStatus,
+          goal: run.goal.slice(0, 2000),
+          kind: run.kind,
+          workflowRunId: run.id,
+          pendingActionId: run.pendingActionId ?? null,
+          currentStep: run.state,
+          nextActions: run.nextAllowedTools ?? undefined,
+        },
+        select: SELECT,
+      })
+      return { view: toView(row), created: true, parked: parkedEvent }
     })
-    if (existing) return toView(existing)
-    return await createFocus({
-      conversationId: run.conversationId,
-      businessId: run.businessId,
-      goal: run.goal,
-      kind: run.kind,
-      workflowRunId: run.id,
-      currentStep: run.state,
-      nextActions: run.nextAllowedTools ?? undefined,
-      pendingActionId: run.pendingActionId ?? null,
-      status: run.status === 'waiting_owner' ? 'awaiting_owner' : 'active',
-      cause,
-    })
+    if (!result) return null
+    if (result.parked) {
+      await appendEvent({
+        focusId: result.parked.id,
+        conversationId: run.conversationId,
+        type: 'parked',
+        fromStatus: 'active',
+        toStatus: 'parked',
+        version: result.parked.version,
+        cause,
+        detail: { patch: { status: 'parked' } },
+      })
+    }
+    if (result.resumed) {
+      await appendEvent({
+        focusId: result.view.id,
+        conversationId: run.conversationId,
+        type: 'resumed',
+        fromStatus: result.resumed.fromStatus,
+        toStatus: 'active',
+        version: result.resumed.version,
+        cause,
+      })
+    } else if (result.created) {
+      await appendEvent({
+        focusId: result.view.id,
+        conversationId: run.conversationId,
+        type: 'created',
+        toStatus: result.view.status,
+        version: 1,
+        cause,
+        detail: { goal: run.goal.slice(0, 200), kind: run.kind },
+      })
+    }
+    return result.view
   } catch (err) {
     console.warn('[conversation-focus] ensure-for-run failed open:', err instanceof Error ? err.message : err)
     return null

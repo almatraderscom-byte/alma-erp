@@ -91,6 +91,12 @@ export async function createWorkflowRun(input: {
   nextAllowedTools?: string[]
   pendingActionId?: string | null
   cause?: string
+  /**
+   * Some workflows are only internal effect ledgers. A direct witnessed
+   * browser lane already owns the conversation focus and must not be parked by
+   * the generic browser_setup receipt store.
+   */
+  suppressConversationFocus?: boolean
 }): Promise<WorkflowRunView> {
   const row = await db.workflowRun.create({
     data: {
@@ -115,24 +121,26 @@ export async function createWorkflowRun(input: {
   // Phase 32: every templated run gets a conversation-focus row automatically —
   // the durable "where we are" record the continuity resolver binds to.
   // Fail-open: focus is the continuation layer, the run stays canonical.
-  try {
-    const { ensureFocusForWorkflowRun } = await import('@/agent/lib/conversation-focus')
-    await ensureFocusForWorkflowRun(
-      {
-        id: row.id,
-        conversationId: row.conversationId,
-        businessId: input.businessId,
-        kind: row.kind,
-        goal: row.goal,
-        status: row.status,
-        state: row.state,
-        nextAllowedTools: (row.nextAllowedTools as string[] | null) ?? null,
-        pendingActionId: row.pendingActionId,
-      },
-      input.cause ?? 'turn',
-    )
-  } catch (err) {
-    console.warn('[workflow-run] focus ensure failed open:', err instanceof Error ? err.message : err)
+  if (!input.suppressConversationFocus) {
+    try {
+      const { ensureFocusForWorkflowRun } = await import('@/agent/lib/conversation-focus')
+      await ensureFocusForWorkflowRun(
+        {
+          id: row.id,
+          conversationId: row.conversationId,
+          businessId: input.businessId,
+          kind: row.kind,
+          goal: row.goal,
+          status: row.status,
+          state: row.state,
+          nextAllowedTools: (row.nextAllowedTools as string[] | null) ?? null,
+          pendingActionId: row.pendingActionId,
+        },
+        input.cause ?? 'turn',
+      )
+    } catch (err) {
+      console.warn('[workflow-run] focus ensure failed open:', err instanceof Error ? err.message : err)
+    }
   }
   return toView(row)
 }
@@ -680,6 +688,7 @@ export async function ensureActiveWorkflowRun(opts: {
   state?: string
   facts?: Record<string, unknown>
   nextAllowedTools?: string[]
+  suppressConversationFocus?: boolean
 }): Promise<WorkflowRunView | null> {
   try {
     const active = await listActiveWorkflowRuns(opts.conversationId)
@@ -695,6 +704,7 @@ export async function ensureActiveWorkflowRun(opts: {
       facts: opts.facts,
       nextAllowedTools: opts.nextAllowedTools,
       cause: 'auto',
+      suppressConversationFocus: opts.suppressConversationFocus,
     })
   } catch {
     return null
