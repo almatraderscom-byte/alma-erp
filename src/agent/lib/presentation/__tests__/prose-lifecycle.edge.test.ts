@@ -267,3 +267,44 @@ describe('error salvage keeps the persisted warning in the document (Codex P1 #8
     expect(tracker.document('m')).toEqual(before)
   })
 })
+
+describe('a server switch notice stays apart from the lead (Codex P1 #834 r6)', () => {
+  const notice = '⚙️ Boss, **Gemini Flash** Monitor-এ OFF করা আছে — এই মেসেজটা **Gemini Pro** দিয়ে চালাচ্ছি।\n\n'
+  it('commits the notice as its own progress block and only the preamble text as the lead', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    const live = { state: createLiveProseState() }
+    const feed = (events: WireEvent[]) => { for (const e of events) live.state = applyProseEvent(live.state, e) }
+    feed(tracker.process(text(notice)))
+    feed(tracker.process(text('Boss, দেখছি।')))
+    feed(tracker.process({ type: 'preamble', text: 'Boss, দেখছি।' }))
+    expect(tracker.visibleBlocks().map((b) => [b.kind, b.text.trim()])).toEqual([
+      ['progress', notice.trim()],
+      ['lead', 'Boss, দেখছি।'],
+    ])
+    // Live reducer agrees block for block (the commit text is authoritative).
+    expect(visibleProseBlocks(live.state).map((b) => [b.kind, b.text.trim()])).toEqual([
+      ['progress', notice.trim()],
+      ['lead', 'Boss, দেখছি।'],
+    ])
+    // The delegated run then works and answers; the notice never becomes the final.
+    feed(tracker.process(tool('1')))
+    feed(tracker.process(toolEnd('1')))
+    feed(tracker.process(round(2)))
+    feed(tracker.process(text('চূড়ান্ত উত্তর')))
+    feed(tracker.process(done))
+    const doc = tracker.document('m')
+    expect(visibleDocumentBlocks(doc.blocks).map((b) => [b.kind, b.text.trim()])).toEqual([
+      ['progress', notice.trim()],
+      ['lead', 'Boss, দেখছি।'],
+      ['final', 'চূড়ান্ত উত্তর'],
+    ])
+    expect(visibleProseBlocks(live.state).map((b) => b.kind)).toEqual(['progress', 'lead', 'final'])
+  })
+
+  it('a plain preamble (no notice) is unchanged: one lead block', () => {
+    const tracker = new ProseLifecycleTracker({ protocol: 2, turnId: T })
+    tracker.process(text('Boss, দেখছি।'))
+    tracker.process({ type: 'preamble', text: 'Boss, দেখছি।' })
+    expect(tracker.visibleBlocks().map((b) => [b.kind, b.text])).toEqual([['lead', 'Boss, দেখছি।']])
+  })
+})
