@@ -6161,10 +6161,12 @@ final class AgentMessageTimeLabelTests: XCTestCase {
         XCTAssertNil(AgentMessageTimeLabel.parse(""))
     }
 
-    func testSendStampsCreatedAtSoTheDividerShowsImmediately() {
+    func testSendStampsSentAtNotCreatedAtSoTheReadWatermarkIsUntouched() {
         let vm = AssistantVM()
         vm.debugAppendLocalOwnerMessage(text: "হ্যালো")
-        XCTAssertNotNil(AgentMessageTimeLabel.parse(vm.messages.last?.createdAt),
-                        "a freshly sent owner message must carry a parseable send time")
+        XCTAssertNotNil(AgentMessageTimeLabel.parse(vm.messages.last?.sentAt),
+                        "a freshly sent owner message must carry a parseable send time for the divider")
+        XCTAssertNil(vm.messages.last?.createdAt,
+                     "the optimistic stamp must stay off createdAt — markConversationRead reads that (Codex P1 #841)")
     }
 }

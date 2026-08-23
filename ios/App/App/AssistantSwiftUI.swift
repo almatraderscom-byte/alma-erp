@@ -1814,6 +1814,12 @@ struct AgentChatMessage: Identifiable, Equatable {
     var roundCostsUsd: [Double]?
     var costUsd: String?
     var createdAt: String?
+    /// Optimistic send time of a local-only owner row — display only (the
+    /// time divider). Never `createdAt`: that feeds the read watermark
+    /// (`markConversationRead` takes the max createdAt across mounted rows), and
+    /// a local stamp later than an unseen persisted reply would advance
+    /// `last_read_at` past it (Codex P1 #841).
+    var sentAt: String?
     var isStreaming = false
     /// Live-only quarantine for a provider-emitted JSON tool envelope. Some
     /// OpenRouter heads briefly send their tool request as text before the
@@ -12187,8 +12193,9 @@ final class AssistantVM {
         owner.fileRefs = files
         owner.localImages = selected.compactMap(\.image)
         // Stamped at send so the time divider above this message is right from
-        // the first frame; the server row's createdAt replaces it on merge.
-        owner.createdAt = AgentMessageTimeLabel.isoNow()
+        // the first frame; the server row's createdAt takes over on merge. Kept
+        // OFF createdAt so the read watermark never sees an optimistic time.
+        owner.sentAt = AgentMessageTimeLabel.isoNow()
         messages.append(owner)
     }
 
@@ -15254,7 +15261,7 @@ struct AgentMessageTimeDivider: View {
     let pal: AgentPalette
 
     var body: some View {
-        if let date = AgentMessageTimeLabel.parse(message.createdAt) {
+        if let date = AgentMessageTimeLabel.parse(message.createdAt ?? message.sentAt) {
             HStack(spacing: 12) {
                 AgentWavyRule().stroke(pal.muted.opacity(0.35), lineWidth: 1)
                     .frame(height: 6)
