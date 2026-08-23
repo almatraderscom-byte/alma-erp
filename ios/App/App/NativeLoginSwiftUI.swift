@@ -193,7 +193,10 @@ struct NativeLoginScreen: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(AlmaSwiftTheme.rootBg(scheme).ignoresSafeArea())
-        .toolbar(.hidden, for: .navigationBar)
+        // Bar hiding is owned by the shell (AlmaNativeRouter marks this host as a
+        // takeover; AlmaNavigationController hides/restores). The SwiftUI
+        // `.toolbar(.hidden)` that used to sit here flushed late during the pop
+        // and left the More tab's bar hidden → next pushed page had no back.
     }
 
     private var monogram: some View {

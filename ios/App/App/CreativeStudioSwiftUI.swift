@@ -640,6 +640,9 @@ struct CSStudioSettings: Decodable {
 // MARK: - Static content (mirrors constants.ts)
 
 enum CS {
+    /// Width the tab headers leave for the screen-level fixed back button (38pt + 11pt gap).
+    static let fixedBackSlot: CGFloat = 49
+
     static func url(_ raw: String?) -> URL? {
         guard let raw, !raw.isEmpty else { return nil }
         if raw.hasPrefix("cs-asset:") { return URL(string: raw) }   // bundled sample image
@@ -2010,9 +2013,19 @@ struct CreativeStudioScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var vm = CreativeStudioVM()
     @State private var tab: CSTab
-    @State private var popNav: (() -> Void)?
+    /// Reference holder for the UIKit nav (set from viewWillAppear). Deliberately NOT
+    /// SwiftUI state: writing a @State from that UIKit callback landed inside SwiftUI's
+    /// own update and logged `AttributeGraph: cycle detected` twice on every open — after
+    /// which the tab content subtree silently stopped updating (sim-caught 2026-08-24).
+    @State private var navHandle = CSNavHandle()
     /// Home quick-create → V4 production desk (Projects · Review · Campaign · Voice · Operations).
     @State private var v4Desk: CSV4WorkspaceScreen.Section?
+    /// The top fade mounts one update AFTER first render. Empirical (sim-bisected
+    /// 2026-08-24, iOS 26.5): if the fade's UIKit blur exists during this screen's
+    /// FIRST render, SwiftUI stops applying the tab-content swap for the life of the
+    /// screen (tab bar moves, content stays). A fade inserted on any later update is
+    /// harmless — Create/Gallery carried their own for months without issue.
+    @State private var fadeMounted = false
     /// Web fallback for anything not yet native (finishing editor, drive auth, etc.).
     let openWeb: (_ path: String, _ title: String) -> Void
 
@@ -2022,28 +2035,53 @@ struct CreativeStudioScreen: View {
         _tab = State(initialValue: initialTab)
     }
 
+    @ViewBuilder
+    private var tabContent: some View {
+        switch tab {
+        case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { navHandle.pop() }, openDesk: { v4Desk = $0 })
+        case .create:  CSCreateTab(vm: vm, back: { tab = .home })
+        case .gallery: CSGalleryTab(vm: vm, go: { tab = $0 })
+        case .video:   CSVideoTab(vm: vm)
+        case .audio:   CSAudioTab(vm: vm)
+        case .library: CSLibraryTab(vm: vm, openWeb: openWeb)
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             AgentAuroraBackground()
-            CSNavPopper { popNav = $0 }.frame(width: 0, height: 0).allowsHitTesting(false)
 
-            Group {
-                switch tab {
-                case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { popNav?() }, openDesk: { v4Desk = $0 })
-                case .create:  CSCreateTab(vm: vm, back: { tab = .home })
-                case .gallery: CSGalleryTab(vm: vm, go: { tab = $0 })
-                case .video:   CSVideoTab(vm: vm)
-                case .audio:   CSAudioTab(vm: vm)
-                case .library: CSLibraryTab(vm: vm, openWeb: openWeb)
-                }
-            }
-            .transition(.opacity)
+            // Pre-existing bug, sim-bisected 2026-08-24: with each tab carrying its own
+            // `.claudeTopFade` (a UIViewRepresentable blur) SwiftUI never removed the
+            // Home subtree when `tab` changed — the tab bar moved, the content did not
+            // (হোম stayed while তৈরি/ভিডিও were selected). Dropping only that modifier
+            // from Home fixed it, so the fade now lives ONCE here, outside the keyed
+            // subtree, and the content is keyed on the tab for an explicit swap.
+            tabContent
+                .id(tab)
+                .transition(.opacity)
+
+            // Sibling, NOT a modifier on the content, and mounted AFTER first render:
+            // both are required or the tab swap freezes (see fadeMounted docs).
+            if fadeMounted { ClaudeTopFadeOverlay() }
 
             CSTabBar(tab: $tab)
         }
         .animation(.easeInOut(duration: 0.28), value: tab)
         .background(AgentPalette(scheme).bg0.ignoresSafeArea())
-        .task { await vm.loadAll() }
+        // FIXED back button (owner report 2026-08-23: the chevron scrolled away with
+        // the header). Lives at screen level, above every tab's ScrollView, aligned to
+        // the same 58pt/18pt origin the tab headers reserve for it, so it never moves.
+        .overlay(alignment: .topLeading) {
+            Button { navHandle.pop(); CSHaptic.tap() } label: {
+                Image(systemName: "chevron.left")
+                    .accessibilityLabel("পেছনে").font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 58).padding(.leading, 18)
+        }
+        .task { fadeMounted = true; await vm.loadAll() }
         .sheet(item: $v4Desk) { desk in
             CSV4WorkspaceScreen(seedProject: vm.activeProject, initialSection: desk) { project in
                 Task { await vm.activateProject(project) }
@@ -2073,7 +2111,6 @@ struct CreativeStudioScreen: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -2195,18 +2232,14 @@ private struct CSHomeTab: View {
             }
             .padding(.horizontal, 18)
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.loadAll() }
     }
 
     private var header: some View {
         HStack(spacing: 11) {
-            Button { exit(); CSHaptic.tap() } label: {
-                Image(systemName: "chevron.left")
-                    .accessibilityLabel("পেছনে").font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
-            }.buttonStyle(.plain)
+            // Slot for the screen-level FIXED back button (CreativeStudioScreen overlay).
+            Color.clear.frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text((vm.config?.organization ?? "ALMA Lifestyle").uppercased())
                     .font(.system(size: 10, weight: .bold)).tracking(1.4)
@@ -2217,7 +2250,7 @@ private struct CSHomeTab: View {
             Spacer()
             HStack(spacing: 5) {
                 Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(AgentPalette.coralLt)
-                Text("\(almaBn(vm.gallery.filter { !$0.id.hasPrefix("sample-") }.count))টি").font(.system(size: 12.5, weight: .bold)).monospacedDigit()
+                Text("\(almaBn(vm.gallery.filter { !$0.id.hasPrefix("sample-") }.count))টি asset").font(.system(size: 12.5, weight: .bold)).monospacedDigit()
             }
             .foregroundStyle(AgentPalette(scheme).ink)
             .padding(.vertical, 7).padding(.horizontal, 12)
@@ -2226,40 +2259,97 @@ private struct CSHomeTab: View {
         .padding(.top, 58)
     }
 
-    /// Web header brand/project picker — the active project is the production scope for
-    /// Create, Gallery, saved identities and every paid confirmation.
+    /// Web header brand/project picker — the active project is the folder every
+    /// Create / Gallery / paid run lands in. Redesigned 2026-08-23 (owner: "production
+    /// scope" meant nothing to him): plain-Bangla label, product thumb, one explainer
+    /// line, and a clear "বদলান" affordance. Same Menu + same activateProject wiring.
     private var projectSwitcher: some View {
         Menu {
             if vm.projects.isEmpty {
-                Text("কোনো writable project নেই")
+                Text("কোনো project নেই — নিচে নতুন project বানান")
             }
             ForEach(vm.projects) { p in
                 Button {
                     Task { await vm.activateProject(p) }
                 } label: {
-                    if p.id == vm.activeProject?.id {
-                        Label("\(p.name)\(p.product.map { " · \($0.code)" } ?? "")", systemImage: "checkmark")
-                    } else {
-                        Text("\(p.name)\(p.product.map { " · \($0.code)" } ?? "")")
+                    Label {
+                        Text(p.name)
+                        Text(Self.projectSubtitle(p))
+                    } icon: {
+                        Image(systemName: p.id == vm.activeProject?.id ? "checkmark.circle.fill" : "folder")
                     }
                 }
             }
             Divider()
-            Button { openDesk(.projects) } label: { Label("নতুন project / সব project", systemImage: "folder.badge.plus") }
+            Button { openDesk(.projects) } label: { Label("সব project দেখুন / নতুন বানান", systemImage: "folder.badge.plus") }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "lock.shield.fill").font(.system(size: 14)).foregroundStyle(AgentPalette.coralLt)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("PRODUCTION SCOPE").font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(AgentPalette.coralLt)
-                    Text(vm.activeProject?.name ?? "Project বাছুন").font(.system(size: 13.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
-                    Text(vm.activeProject.map { "\($0.product?.code ?? "No ERP product") · \($0.currentRecipe?.name ?? "No recipe") · \(almaBn($0.assetCount ?? 0)) assets" } ?? "Create/Gallery/paid run সব এই scope-এ")
-                        .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    projectThumb
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("বর্তমান PROJECT").font(.system(size: 9.5, weight: .bold)).tracking(1.1)
+                            .foregroundStyle(AgentPalette.coralLt)
+                        Text(vm.activeProject?.name ?? "কোনো project বাছা নেই")
+                            .font(.system(size: 15, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
+                        Text(vm.activeProject.map(Self.projectSubtitle) ?? "ছবি বা ভিডিও বানাতে আগে একটা project বাছুন")
+                            .font(.system(size: 11)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    HStack(spacing: 4) {
+                        Text(vm.activeProject == nil ? "বাছুন" : "বদলান").font(.system(size: 12, weight: .bold))
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .bold))
+                    }
+                    .foregroundStyle(AgentPalette(scheme).ink)
+                    .padding(.vertical, 7).padding(.horizontal, 10)
+                    .background(AgentPalette.coral.opacity(scheme == .dark ? 0.22 : 0.14), in: Capsule())
                 }
-                Spacer()
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
+                .padding(.horizontal, 13).padding(.vertical, 12)
+
+                Divider().overlay(Color.white.opacity(scheme == .dark ? 0.08 : 0.35))
+
+                HStack(spacing: 7) {
+                    Image(systemName: "info.circle").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coralLt)
+                    Text("এখানে যা বানাবেন — ছবি, ভিডিও, ভয়েস — সব এই project-এর ভেতরেই জমা হবে।")
+                        .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
+                        .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+                }
+                .padding(.horizontal, 13).padding(.vertical, 9)
             }
-            .padding(.vertical, 10).padding(.horizontal, 13).csGlass(scheme, corner: 16)
+            .csGlass(scheme, corner: 18)
         }
+        .buttonStyle(.plain)
+    }
+
+    /// 44pt product thumbnail for the active project, or a folder glyph.
+    @ViewBuilder
+    private var projectThumb: some View {
+        let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
+        if let url = vm.activeProject?.productPreviewURL {
+            CSPhoto(url: url, ratio: 1).frame(width: 44, height: 44).clipShape(shape)
+                .overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        } else {
+            Image(systemName: vm.activeProject == nil ? "folder.badge.questionmark" : "folder.fill")
+                .font(.system(size: 17, weight: .semibold)).foregroundStyle(AgentPalette.coralLt)
+                .frame(width: 44, height: 44)
+                .background(AgentPalette.coral.opacity(0.12), in: shape)
+        }
+    }
+
+    /// "110-ADULT · কুর্তা · ১২টি asset" — product first, the rest only when present.
+    private static func projectSubtitle(_ p: CSProjectSummary) -> String {
+        var parts: [String] = []
+        if let product = p.product {
+            let name = product.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // "110-ADULT · 110 ADULT" is noise — skip a name that is just the code restyled.
+            let fold: (String) -> String = { $0.lowercased().filter { $0.isLetter || $0.isNumber } }
+            parts.append(name.isEmpty || fold(name) == fold(product.code) ? product.code : "\(product.code) · \(name)")
+        } else {
+            parts.append("কোনো প্রোডাক্ট যুক্ত নেই")
+        }
+        if let recipe = p.currentRecipe?.name, !recipe.isEmpty { parts.append(recipe) }
+        parts.append("\(almaBn(p.assetCount ?? 0))টি asset")
+        return parts.joined(separator: " · ")
     }
 
     private var searchField: some View {
@@ -2618,7 +2708,6 @@ private struct CSCreateTab: View {
                 Color.clear.frame(height: 130)
             }
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .scrollDismissesKeyboard(.interactively)
         // The engine chips need the saved settings even when the Library tab was
         // never opened this session.
@@ -2694,11 +2783,8 @@ private struct CSCreateTab: View {
 
     private var header: some View {
         HStack(spacing: 11) {
-            Button { back(); CSHaptic.tap() } label: {
-                Image(systemName: "chevron.left")
-                    .accessibilityLabel("পেছনে").font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
-            }.buttonStyle(.plain)
+            // Slot for the screen-level FIXED back button (CreativeStudioScreen overlay).
+            Color.clear.frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text("নতুন জেনারেশন").font(.system(size: 10, weight: .bold)).tracking(1.2).foregroundStyle(AgentPalette.coralLt)
                 Text("ক্রিয়েটিভ বানাও").font(.system(size: 19, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
@@ -3713,7 +3799,7 @@ private struct CSGalleryTab: View {
                         .font(.system(size: 10, weight: .bold)).tracking(1.2)
                         .foregroundStyle(AgentPalette.coralLt).lineLimit(1)
                     Text("গ্যালারি").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
-                }.padding(.top, 58).padding(.horizontal, 18)
+                }.padding(.top, 58).padding(.horizontal, 18).padding(.leading, CS.fixedBackSlot)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -3817,7 +3903,6 @@ private struct CSGalleryTab: View {
                 Color.clear.frame(height: 96)
             }
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.loadAll() }
         // Poll ONLY while something is rendering (web parity: 4s rhythm, stop when idle).
         .task(id: vm.pendingCount > 0) {
@@ -4044,7 +4129,7 @@ private struct CSVideoTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("রিল স্টুডিও · zero-LLM রেসিপি").font(.system(size: 10, weight: .bold)).tracking(1.1).foregroundStyle(AgentPalette.coralLt)
                     Text("ভিডিও").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
-                }.padding(.top, 58).padding(.horizontal, 18)
+                }.padding(.top, 58).padding(.horizontal, 18).padding(.leading, CS.fixedBackSlot)
 
                 Text("Gallery ছবি/avatar থেকে Veo রিল, অথবা নিজের শুট করা ভিডিও → zero-LLM রেসিপি। দুটোই Gallery-তে আসে।")
                     .font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
@@ -4064,7 +4149,6 @@ private struct CSVideoTab: View {
                 Color.clear.frame(height: 110)
             }
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.loadVideoStudio() }
         .task { await vm.loadVideoStudio() }
@@ -4421,7 +4505,7 @@ private struct CSAudioTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("মিউজিক · ভয়েস · SFX").font(.system(size: 10, weight: .bold)).tracking(1.1).foregroundStyle(AgentPalette.coralLt)
                     Text("অডিও ল্যাব").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
-                }.padding(.top, 58)
+                }.padding(.top, 58).padding(.leading, CS.fixedBackSlot)
                 Text("মিউজিক, উইশ গান, আপনার ভয়েস — সব এক জায়গায়। খরচ আগে দেখানো হয়; ফলাফল Gallery-তে আসে।")
                     .font(.system(size: 12)).foregroundStyle(AgentPalette(scheme).muted)
 
@@ -4436,7 +4520,6 @@ private struct CSAudioTab: View {
                 Color.clear.frame(height: 100)
             }.padding(.horizontal, 18)
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .scrollDismissesKeyboard(.interactively)
         .task { await vm.loadAudioLab() }
         .refreshable { await vm.loadAudioLab() }
@@ -4672,7 +4755,7 @@ private struct CSLibraryTab: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("মডেল + ফিনিশিং + সেটিংস").font(.system(size: 10, weight: .bold)).tracking(1.1).foregroundStyle(AgentPalette.coralLt)
                     Text("লাইব্রেরি").font(.system(size: 30, weight: .heavy)).foregroundStyle(AgentPalette(scheme).ink)
-                }.padding(.top, 58).padding(.horizontal, 18)
+                }.padding(.top, 58).padding(.horizontal, 18).padding(.leading, CS.fixedBackSlot)
 
                 v4WorkspaceCard.padding(.horizontal, 18).padding(.top, 14)
 
@@ -4716,7 +4799,6 @@ private struct CSLibraryTab: View {
                 Color.clear.frame(height: 110)
             }
         }
-        .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.loadAll(); await vm.loadLibraryExtras() }
         .task { await vm.loadLibraryExtras() }
         .scrollDismissesKeyboard(.interactively)
@@ -6669,32 +6751,23 @@ enum CSHaptic {
 }
 
 /// The screen is a full-screen takeover (its own header + floating tab bar). This
-/// zero-size representable hides the pushed UIKit nav bar at the UIKit level (reliable
-/// even when hosted in a plain UINavigationController — the SwiftUI `.toolbar(.hidden)`
-/// modifier alone doesn't always propagate there), restores it on exit, and hands the
-/// header's back button a pop closure. The edge-swipe back still works too.
-@available(iOS 17.0, *)
-private struct CSNavPopper: UIViewControllerRepresentable {
-    let onReady: (@escaping () -> Void) -> Void
-    func makeUIViewController(context: Context) -> Controller { let c = Controller(); c.onReady = onReady; return c }
-    func updateUIViewController(_ vc: Controller, context: Context) {}
-
-    final class Controller: UIViewController {
-        var onReady: ((@escaping () -> Void) -> Void)?
-        private var wasHidden = false
-        override func viewDidLoad() { super.viewDidLoad(); view.isUserInteractionEnabled = false }
-        override func viewWillAppear(_ animated: Bool) {
-            super.viewWillAppear(animated)
-            if let nav = navigationController {
-                wasHidden = nav.isNavigationBarHidden
-                nav.setNavigationBarHidden(true, animated: animated)
-                onReady? { [weak nav] in nav?.popViewController(animated: true) }
-            }
-        }
-        override func viewWillDisappear(_ animated: Bool) {
-            super.viewWillDisappear(animated)
-            navigationController?.setNavigationBarHidden(wasHidden, animated: animated)
-        }
+/// zero-size representable hands the fixed back button a pop closure. It no longer
+/// hides/restores the UIKit nav bar itself: the shell's AlmaNavigationController
+/// derives the bar state from the host's `almaHidesNavigationBar` flag (set by
+/// AlmaNativeRouter) on every show — the old per-screen hide + restore, doubled by
+/// a SwiftUI `.toolbar(.hidden)`, could leave the More tab's bar hidden after exit
+/// so the next pushed page had no back button (owner report 2026-08-23).
+/// Pops the shell nav the studio is pushed on. Resolved from the window at tap time —
+/// no representable child controller inside the screen's ZStack (the old CSNavPopper
+/// sat there and the tab content subtree stopped updating; sim-caught 2026-08-24).
+final class CSNavHandle {
+    @MainActor
+    func pop() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let root = scenes.flatMap(\.windows).first(where: \.isKeyWindow)?.rootViewController
+        var nav = (root as? UITabBarController)?.selectedViewController as? UINavigationController
+        if nav == nil { nav = root as? UINavigationController }
+        if let nav, nav.viewControllers.count > 1 { nav.popViewController(animated: true) }
     }
 }
 
