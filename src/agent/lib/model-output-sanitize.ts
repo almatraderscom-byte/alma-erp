@@ -118,6 +118,31 @@ const FENCED_TOOL_JSON =
   /```[a-z0-9_ \t-]*\r?\n\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"(?:arguments|input|parameters)"\s*:[\s\S]*?\}\s*\r?\n?(?:```|$)/gi
 
 /**
+ * The SIXTH shape — Gemini 3.7 Flash via OpenRouter, speak-first round, his
+ * screen 2026-08-23: `<｜DSML｜tool_calls> <｜DSML｜invoke name="get_inventory_status">
+ * </｜DSML｜invoke> </｜DSML｜tool_calls>` glued to the end of the Bangla opening
+ * line. Anthropic-style invoke/parameter markup wrapped in a `｜DSML｜` sentinel
+ * (fullwidth pipe, exactly like DeepSeek's `<｜tool▁calls▁begin｜>`; the ASCII
+ * pipe is accepted too). The tag-name regexes above never see it because the
+ * name starts with a pipe, so the whole block walked through every net.
+ */
+const DSML_TAG = '<\\/?[|｜]DSML[|｜][a-z_]+\\b[^>]*>'
+const DSML_BLOCK = new RegExp(
+  '<[|｜]DSML[|｜]tool_calls>[\\s\\S]*?(?:<\\/[|｜]DSML[|｜]tool_calls>|$)', 'gi',
+)
+const DSML_BLOCK_COMPLETE = new RegExp(
+  '<[|｜]DSML[|｜]tool_calls>[\\s\\S]*?<\\/[|｜]DSML[|｜]tool_calls>', 'gi',
+)
+// An invoke/parameter element on its own (no tool_calls wrapper), body and all.
+const DSML_ELEMENT_BLOCK = new RegExp(
+  '<[|｜]DSML[|｜](invoke|parameter)\\b[^>]*>[\\s\\S]*?(?:<\\/[|｜]DSML[|｜]\\1>|$)', 'gi',
+)
+const DSML_ELEMENT_BLOCK_COMPLETE = new RegExp(
+  '<[|｜]DSML[|｜](invoke|parameter)\\b[^>]*>[\\s\\S]*?<\\/[|｜]DSML[|｜]\\1>', 'gi',
+)
+const DSML_STRAY = new RegExp(DSML_TAG, 'gi')
+
+/**
  * The streaming-safe subset of STRAY_MARKERS: closing tags and the pipe
  * sentinels only. Opening tags stay out — a held opener must survive the
  * push-time strip or its body leaks (see createMarkupStreamFilter).
@@ -139,7 +164,7 @@ const STRAY_MARKERS =
  * runs first. Any pattern added above must have its opening marker added here.
  */
 const HAS_TOOL_MARKUP =
-  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
+  /<tool_call|<arg_key|<parameter\b|<function_(?:calls|results)|<invoke\b|tool▁call|<\|tool|<[|｜]DSML[|｜]|```[^\n]*(?:tool|function)[ _-]?calls?|```[^\n]*\r?\n\s*\{\s*"name"\s*:|"type"\s*:\s*"tool_(?:use|call)"|\{\s*"name"\s*:\s*"[a-z_][a-z0-9_]*"\s*,\s*"(?:arguments|input|parameters)"\s*:/i
 
 /**
  * Complete-block variants of the `$`-tailed patterns above, for STREAMING use.
@@ -171,6 +196,14 @@ export function stripToolCallMarkup(
   if (!HAS_TOOL_MARKUP.test(text)) return text
   const streaming = opts?.streaming === true
   const cleaned = text
+    // Sentinel-wrapped block first, as a unit: its body is invoke/parameter
+    // markup whose tags the later nets cannot see behind the ｜DSML｜ prefix.
+    .replace(streaming ? DSML_BLOCK_COMPLETE : DSML_BLOCK, '')
+    .replace(streaming ? DSML_ELEMENT_BLOCK_COMPLETE : DSML_ELEMENT_BLOCK, '')
+    // A lone sentinel tag (stream cut mid-block, or an unwrapped invoke) is
+    // never prose either way — safe in streaming because holdFrom keeps an
+    // unclosed DSML opener back until its block completes.
+    .replace(DSML_STRAY, '')
     // Fences first: the block is removed WITH its contents, so a stripped call
     // cannot leave an empty ``` card behind.
     .replace(streaming ? FENCED_TOOL_BLOCK_COMPLETE : FENCED_TOOL_BLOCK, '')
@@ -299,7 +332,9 @@ function isToolishTag(name: string): boolean {
  * `<tag>` was recognised here (Codex P1 #771).
  */
 function toolishOpenerAt(s: string): number {
-  const re = /<([a-z_][a-z0-9_]*)(?:\s[^<>]*)?>/gi
+  // Optional ｜DSML｜ sentinel prefix (sixth shape) — the captured name is what
+  // follows it, so `<｜DSML｜tool_calls>` is judged as `tool_calls`.
+  const re = /<(?:[|｜]DSML[|｜])?([a-z_][a-z0-9_]*)(?:\s[^<>]*)?>/gi
   for (let m = re.exec(s); m; m = re.exec(s)) {
     if (isToolishTag(m[1])) return m.index
   }
@@ -315,7 +350,7 @@ function toolishOpenerAt(s: string): number {
  * (flush() drops an unclosed block).
  */
 const CONFIRMED_TOOL_OPENER =
-  /^(?:<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
+  /^(?:<[|｜]DSML[|｜](?:tool_calls|invoke|parameter)\b|<tool_call>|<function_(?:calls|results)>|<invoke\b|<parameter\b|```[ \t]*(?:tool|tool_call|tool_code|function_calls?)\b|```[ \t]*(?:[a-z0-9_-]*[ \t]*)?(?:tool|function)[ _-]?calls?\b)/i
 
 
 /**
