@@ -1289,6 +1289,44 @@ final class AssistantParityV2Tests: XCTestCase {
                        "the delivered steer remains a separate canonical owner row")
     }
 
+    /// Recovery cold-reload duplicate (production incident, sim-verified 2026-08-24).
+    ///
+    /// `openConversation(recoveringPersistedTurn:)` mounts history FIRST, so the
+    /// finished assistant row is already on screen under its own server id. Then
+    /// `recoverTurnState` attaches an exact-turn replay tail, which learns the
+    /// same server id from the replayed `done`. The claim renames the INCOMING
+    /// copy to the tail's local id, leaving the already-mounted row with no
+    /// incoming counterpart — reconciliation keeps it, and one durable message
+    /// renders twice with identical tokens and cost.
+    func testRecoveryTailClaimingAnAlreadyMountedServerRowDoesNotDuplicateIt() throws {
+        let vm = AssistantVM()
+        vm.debugClearChronologyAnchors()
+        let owner = AgentChatMessage(
+            id: "server-user", role: .user, text: "ekhon koyta baje")
+        var mountedAnswer = AgentChatMessage(
+            id: "server-answer", role: .assistant, text: "বস, এখন রাত ২টা ৫৪ মিনিট।")
+        mountedAnswer.createdAt = "2026-08-23T20:54:09.000Z"
+        var replayTail = AgentChatMessage(
+            id: "stream-recovered", role: .assistant, text: "বস, এখন রাত ২টা ৫৪ মিনিট।")
+        replayTail.serverId = "server-answer"
+        vm.messages = [owner, mountedAnswer, replayTail]
+
+        let wire = try JSONDecoder().decode([AgentMessageWire].self, from: Data(#"""
+        [
+          {"id":"server-user","role":"user","createdAt":"2026-08-23T20:53:57.000Z","content":[{"type":"text","text":"ekhon koyta baje"}]},
+          {"id":"server-answer","role":"assistant","createdAt":"2026-08-23T20:54:09.000Z","content":[{"type":"text","text":"বস, এখন রাত ২টা ৫৪ মিনিট।"}]}
+        ]
+        """#.utf8))
+
+        vm.debugMergeServerMessages(wire)
+
+        let answers = vm.messages.filter { $0.role == .assistant }
+        XCTAssertEqual(answers.count, 1,
+                       "one durable assistant message must render exactly once after recovery")
+        XCTAssertEqual(answers.first?.serverId ?? answers.first?.id, "server-answer")
+        XCTAssertEqual(vm.messages.map(\.role), [.user, .assistant])
+    }
+
     func testExactSteerAfterAnonymousInitialSendDoesNotMoveInitialBubbleToBottom() throws {
         let vm = AssistantVM()
         vm.debugClearChronologyAnchors()

@@ -5665,6 +5665,22 @@ final class AssistantVM {
             return false
         }
         localIdByServerId[serverId] = localId
+        // Recovery cold-reload duplicate (production incident, sim-verified
+        // 2026-08-24). `openConversation(recoveringPersistedTurn:)` mounts
+        // history FIRST, so the finished row is already on screen under its own
+        // server id; the exact-turn replay tail then learns that same id from
+        // the replayed `done` and claims it here. The claim renames the INCOMING
+        // copy to `localId`, which leaves the already-mounted row with no
+        // counterpart in `incomingById` — reconciliation keeps it, and one
+        // durable message renders twice (identical tokens and cost, one DB row).
+        // The claiming row now owns that identity, so retire the stale twin.
+        if serverId != localId, messages.contains(where: { $0.id == localId }) {
+            let before = messages.count
+            messages.removeAll { $0.id == serverId }
+            if messages.count != before {
+                AlmaTurnLog.event("sync.duplicateServerRowRetired", "server=\(serverId.suffix(8))")
+            }
+        }
         return true
     }
 
